@@ -12,7 +12,7 @@
 
 ## Milestone 1 — first controllable device
 
-- [ ] Validate current discovery build on a real Director
+- [x] Validate current discovery build on a real Director
 - [ ] Capture representative `GetDevices({})` shapes from the test system
 - [ ] Implement Light V2 adapter
 - [ ] Read light state
@@ -34,7 +34,7 @@
   - [x] `devices.list`
   - [ ] `devices.get`
   - [ ] light control methods
-- [ ] Validate CORS / Local Network Access behavior on real Director
+- [x] Validate CORS / Local Network Access behavior on real Director
 
 ## Milestone 3 — PWA
 
