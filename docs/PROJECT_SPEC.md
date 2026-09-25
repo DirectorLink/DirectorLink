@@ -200,17 +200,22 @@ Implemented:
 - normalized in-memory registry
 - Composer-visible discovery status
 
-### Step 3 — next
+### Step 3 — Light V2 adapter
 
-Implement the first real device adapter:
+Implemented in `v0.1.0-alpha.3`, pending real-system command validation:
 
-- Light V2
-- state read/subscription
-- on/off
-- brightness
-- normalized C4Bridge light actions
+- Light V2 proxy detection
+- state variable `1000`
+- brightness variable `1001` when present
+- default-on brightness variable `1006` when present
+- variable subscriptions/live registry updates
+- normalized `on`
+- normalized `off`
+- normalized `set_brightness`
+- dedicated `GET /v1/lights` endpoint
+- PWA Light controls
 
-Do not start scheduler/PWA work until the first end-to-end light control path is proven.
+C4Bridge sends control only to the Light V2 proxy ID. It does not address backing protocol drivers directly.
 
 
 ### PWA shell — implemented ahead of transport
