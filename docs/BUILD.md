@@ -52,4 +52,25 @@ and also performs a runtime version check.
 
 ## Release policy
 
-During early development, `dist/C4Bridge.c4z` may be committed as a convenience test build. Source files remain authoritative; the package should always be reproducible with `scripts/build.py`.
+Built `.c4z` files are **not committed to `main`**.
+
+The repository source is authoritative. Every official build is produced by GitHub Actions from the versioned source and attached to a GitHub Release.
+
+Release assets:
+
+```text
+C4Bridge.c4z
+SHA256SUMS.txt
+```
+
+The release version is stored in the repository root `VERSION` file. Updating `VERSION` on `main` triggers the release workflow, which:
+
+1. verifies the source version matches `VERSION`;
+2. builds `C4Bridge.c4z`;
+3. validates the package;
+4. calculates SHA-256;
+5. creates the `v<version>` Git tag;
+6. creates the GitHub Release;
+7. uploads the driver and checksum.
+
+Versions containing a hyphen, for example `0.1.0-alpha.1`, are published as GitHub prereleases.
