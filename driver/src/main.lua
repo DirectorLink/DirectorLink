@@ -141,7 +141,7 @@ local function startLanApi()
         log = log,
         onStatus = function(isOnline, status)
             if isOnline then
-                updateProperty("API Status", "Online - paired owner alpha")
+                updateProperty("API Status", "Online - pairing enabled")
             else
                 updateProperty("API Status", "Offline (" .. tostring(status) .. ")")
             end
