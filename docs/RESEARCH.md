@@ -105,7 +105,9 @@ Control4's Light V2 proxy defines:
 - Light Brightness Percent variable ID `1001` for dimmers
 - Default On Preset Brightness variable ID `1006`
 - `SET_BRIGHTNESS_TARGET` as the current brightness control command
-- `LIGHT_BRIGHTNESS_TARGET` as the target parameter
+- `LIGHT_BRIGHTNESS_TARGET_PRESET_ID` for preset targets
+- `LIGHT_BRIGHTNESS_TARGET_PERCENT` for a 0–100 percentage target
+- `RATE` in milliseconds, with `RATE = 0` equivalent to an immediate set-level operation
 - `C4:SendToDevice(proxyId, command, params)` for sending a command to another project device
 - `C4:RegisterVariableListener(deviceId, variableId)` plus `OnWatchedVariableChanged` for live state updates
 

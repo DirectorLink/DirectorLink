@@ -17,8 +17,8 @@
 - [x] Implement Light V2 adapter
 - [x] Read light state
 - [x] Subscribe to state changes
-- [x] ON/OFF implemented; real-system validation pending
-- [x] Set brightness implemented; real-system validation pending
+- [x] ON/OFF implemented; alpha.3 exposed a parameter bug, corrected in alpha.4; validation pending
+- [x] Set brightness implemented with `LIGHT_BRIGHTNESS_TARGET_PERCENT`; validation pending
 - [ ] Validate on OS 3.3.x/3.4.x before broad compatibility claims
 
 ## Milestone 2 — local API/security

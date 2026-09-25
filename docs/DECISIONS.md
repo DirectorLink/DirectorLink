@@ -113,7 +113,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 - variable 1001 = Light Brightness Percent when the device is dimmable
 - variable 1006 = Default On Preset Brightness when available
 
-**Control contract:** normalized C4Bridge actions are translated to the Light V2 `SET_BRIGHTNESS_TARGET` command using `LIGHT_BRIGHTNESS_TARGET`.
+**Control contract:** normalized C4Bridge actions are translated to `SET_BRIGHTNESS_TARGET`. On/Off use static `LIGHT_BRIGHTNESS_TARGET_PRESET_ID` values 1/2; explicit brightness uses `LIGHT_BRIGHTNESS_TARGET_PERCENT` with `RATE = 0`.
 
 **Why:** The proxy is Control4's abstraction boundary. It lets C4Bridge support Control4, Zigbee, Z-Wave and third-party lighting drivers through one documented interface instead of learning each protocol driver's private command set.
 

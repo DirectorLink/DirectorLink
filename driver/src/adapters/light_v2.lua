@@ -2,7 +2,6 @@ local LightV2 = {}
 
 local VARIABLE_STATE = 1000
 local VARIABLE_BRIGHTNESS = 1001
-local VARIABLE_DEFAULT_ON = 1006
 
 local tracked = {}
 
@@ -53,14 +52,12 @@ function LightV2.initialize(device)
     end
 
     local brightnessValue = safeGetVariable(device.id, VARIABLE_BRIGHTNESS)
-    local defaultOnValue = clampPercent(safeGetVariable(device.id, VARIABLE_DEFAULT_ON))
     local dimmable = brightnessValue ~= nil
     local brightness = dimmable and clampPercent(brightnessValue) or nil
     local power = boolValue(stateValue)
 
     tracked[device.id] = {
         dimmable = dimmable,
-        defaultOn = (defaultOnValue and defaultOnValue > 0) and defaultOnValue or 100,
     }
 
     device.supported = true
@@ -135,10 +132,25 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessTarget(deviceId, target)
+local function sendBrightnessPercent(deviceId, percent)
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
-            LIGHT_BRIGHTNESS_TARGET = target,
+            LIGHT_BRIGHTNESS_TARGET_PERCENT = percent,
+            RATE = 0,
+        })
+    end)
+
+    if not ok then
+        return false, tostring(err)
+    end
+
+    return true
+end
+
+local function sendBrightnessPreset(deviceId, presetId)
+    local ok, err = pcall(function()
+        C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
+            LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId,
         })
     end)
 
@@ -158,12 +170,21 @@ function LightV2.execute(device, action, params)
         }
     end
 
-    local target
+    local sent
+    local sendError
+    local result = {
+        device_id = device.id,
+        action = action,
+    }
 
     if action == "on" then
-        target = info.defaultOn
+        -- Light V2 static preset ID 1 is the configured "On" preset.
+        sent, sendError = sendBrightnessPreset(device.id, 1)
+        result.requested_preset_id = 1
     elseif action == "off" then
-        target = 0
+        -- Light V2 static preset ID 2 is the configured "Off" preset.
+        sent, sendError = sendBrightnessPreset(device.id, 2)
+        result.requested_preset_id = 2
     elseif action == "set_brightness" then
         if not info.dimmable then
             return false, {
@@ -172,13 +193,17 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        target = clampPercent(params and (params.value or params.brightness))
+        local target = clampPercent(params and (params.value or params.brightness))
         if target == nil then
             return false, {
                 code = "INVALID_BRIGHTNESS",
                 message = "Brightness must be a number from 0 to 100",
             }
         end
+
+        sent, sendError = sendBrightnessPercent(device.id, target)
+        result.requested_brightness_percent = target
+        result.rate_ms = 0
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
@@ -186,7 +211,6 @@ function LightV2.execute(device, action, params)
         }
     end
 
-    local sent, sendError = sendBrightnessTarget(device.id, target)
     if not sent then
         return false, {
             code = "CONTROL4_COMMAND_FAILED",
@@ -194,11 +218,7 @@ function LightV2.execute(device, action, params)
         }
     end
 
-    return true, {
-        device_id = device.id,
-        action = action,
-        requested_brightness = target,
-    }
+    return true, result
 end
 
 function LightV2.reset()
