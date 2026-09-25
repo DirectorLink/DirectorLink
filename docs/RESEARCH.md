@@ -148,3 +148,31 @@ and after reboot the project instance loaded `C4Bridge (1).c4z`.
 This indicates repeated browser downloads with Windows filename suffixes can create a second Control4 driver filename instead of replacing the canonical package. The update test procedure now requires selecting a file named exactly `C4Bridge.c4z`.
 
 Alpha.6 also adds lifecycle diagnostics so the next update test can distinguish `DIT_UPDATING` from `DIT_STARTUP`.
+
+
+## Alpha.6 KNX dimmer snapshot
+
+The alpha.6 snapshot proved C4Bridge itself reached the tested KNX dimmer path correctly. For example, C4Bridge sent `SET_BRIGHTNESS_TARGET` with `PERCENT=48` to proxy 459 and Director immediately sent a payload to the KNX Tunneling Gateway.
+
+The same snapshot showed an observable serialization difference:
+
+- C4Bridge via `C4:SendToDevice`: `PERCENT` serialized as XML `type="INT"`
+- Control4 app via Director broker REST: `PERCENT` serialized as XML `type="number"`
+
+The physical KNX dimmer responds to the Control4 app path but not the C4Bridge DriverWorks path.
+
+Control4's DriverWorks API documentation explicitly demonstrates driver-to-light dimming using:
+
+```lua
+C4:SendToDevice(lightId, "RAMP_TO_LEVEL", {
+    LEVEL = 60,
+    TIME = 3000,
+})
+```
+
+Alpha.7 therefore uses `RAMP_TO_LEVEL` for Light V2 proxies backed by `knx_dimmer.c4i`.
+
+The snapshot also showed no Light V2 variable 1001 update after normal percentage changes from the stock Control4 app. Variable 1001 did update on a full dynamic On. Therefore KNX brightness feedback is treated as unavailable rather than falsely timing out.
+
+Reference:
+- https://control4.github.io/docs-driverworks-api/#sendtodevice
