@@ -7,7 +7,7 @@
   <creator>C4Bridge contributors</creator>
   <created>09/25/2026 00:00</created>
   <modified>09/25/2026 00:00</modified>
-  <version>1</version>
+  <version>2</version>
 
   <control>lua_gen</control>
   <driver>DriverWorks</driver>
