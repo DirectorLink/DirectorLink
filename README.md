@@ -109,7 +109,6 @@ The alpha.2 build connects this PWA directly to the C4Bridge driver on the user'
 
 The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static application intended for Cloudflare Pages.
 
-Cloudflare setup instructions: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)
 
 The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access request, Bearer-token authentication, and live read-only room/device discovery from the Director.
 
