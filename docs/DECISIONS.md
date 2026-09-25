@@ -91,3 +91,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Cloudflare configuration:** root `web`, build command `exit 0`, output directory `.`.
 
 **Revisit:** A framework/build tool may be introduced later if the device dashboard, state management, routing, or component complexity justifies it.
+
+
+## ADR-016 — Read-only HTTP transport spike on port 41999
+
+**Decision:** Validate browser-to-Director communication with a minimal HTTP/1.1 server implemented on DriverWorks `C4:CreateServer`, listening on fixed TCP port `41999`.
+
+**Why fixed port:** A public browser cannot discover Director's random ephemeral DriverWorks socket port. A known port gives the PWA a deterministic local endpoint without LAN scanning.
+
+**Security:** Read-only routes require a random per-install Bearer token persisted encrypted on Director. CORS is restricted to official C4Bridge origins.
+
+**Status:** Alpha integration decision. Re-evaluate port configurability and final pairing/authentication after testing on real systems.
