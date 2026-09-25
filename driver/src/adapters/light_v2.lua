@@ -2,7 +2,6 @@ local LightV2 = {}
 
 local VARIABLE_STATE = 1000
 local VARIABLE_BRIGHTNESS = 1001
-local VARIABLE_DEFAULT_ON = 1006
 
 local tracked = {}
 
@@ -53,14 +52,12 @@ function LightV2.initialize(device)
     end
 
     local brightnessValue = safeGetVariable(device.id, VARIABLE_BRIGHTNESS)
-    local defaultOnValue = clampPercent(safeGetVariable(device.id, VARIABLE_DEFAULT_ON))
     local dimmable = brightnessValue ~= nil
     local brightness = dimmable and clampPercent(brightnessValue) or nil
     local power = boolValue(stateValue)
 
     tracked[device.id] = {
         dimmable = dimmable,
-        defaultOn = (defaultOnValue and defaultOnValue > 0) and defaultOnValue or 100,
     }
 
     device.supported = true
