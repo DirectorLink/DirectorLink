@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="C4Bridge">
+  <rect width="512" height="512" rx="112" fill="#0f172a"/>
+  <path d="M92 167h113v44h-67v90h67v44H92z" fill="#fff"/>
+  <path d="M229 167h50v91h34v-91h50v91h38v44h-38v43h-50v-43h-84z" fill="#fff"/>
+  <path d="M92 378h309" stroke="#246bfe" stroke-width="24" stroke-linecap="round"/>
+</svg>
