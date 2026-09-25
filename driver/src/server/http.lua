@@ -204,11 +204,24 @@ local function lightList()
     }
 end
 
+local function diagnosticsList()
+    local entries = {}
+    if config.diagnostics and config.diagnostics.list then
+        entries = config.diagnostics.list()
+    end
+
+    return {
+        ok = true,
+        diagnostics = entries,
+    }
+end
+
 local GET_ROUTES = {
     ["/v1/system/info"] = systemInfo,
     ["/v1/rooms"] = roomList,
     ["/v1/devices"] = deviceList,
     ["/v1/lights"] = lightList,
+    ["/v1/diagnostics"] = diagnosticsList,
 }
 
 local function actionErrorStatus(error)
