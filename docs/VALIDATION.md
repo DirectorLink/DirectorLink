@@ -55,3 +55,23 @@ Required:
 - normalized `set_brightness`
 - expose only light actions through the C4Bridge API
 - keep unsupported/raw devices non-controllable
+
+
+## 2026-09-25 — alpha.4 Light V2 control
+
+Real-system Light V2 On/Off control succeeded on the same Director test system.
+
+### Confirmed
+
+- PWA -> C4Bridge authenticated LAN API works
+- normalized `on` action works
+- normalized `off` action works
+- Light V2 proxy routing works
+- corrected `SET_BRIGHTNESS_TARGET` preset mapping works
+- state returned to the PWA is usable for confirmation
+
+### Still to validate for the light milestone
+
+- dimmer brightness percentage control
+- state changes initiated outside C4Bridge (wall keypad / Navigator / Composer)
+- driver update/reload behavior without rebooting Director
