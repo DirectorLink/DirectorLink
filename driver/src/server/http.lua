@@ -19,6 +19,7 @@ local STATUS_TEXT = {
     [404] = "Not Found",
     [405] = "Method Not Allowed",
     [409] = "Conflict",
+    [429] = "Too Many Requests",
     [500] = "Internal Server Error",
 }
 
@@ -135,7 +136,7 @@ local function unauthorized(handle, origin)
         ok = false,
         error = {
             code = "UNAUTHORIZED",
-            message = "Valid C4Bridge API token required",
+            message = "Valid C4Bridge owner credential required",
         },
     }, origin)
 end
@@ -164,7 +165,7 @@ local function systemInfo()
             version = config.version.BRIDGE_VERSION,
             protocol = config.version.PROTOCOL_VERSION,
             api_port = API_PORT,
-            api_mode = "light-control-alpha",
+            api_mode = "paired-owner-alpha",
         },
         director = {
             version = config.directorVersion,
@@ -180,6 +181,7 @@ local function systemInfo()
             longitude = properties.Longitude,
         },
         discovery = config.registry.counts(),
+        pairing = config.pairing and config.pairing.status and config.pairing.status() or nil,
     }
 end
 
@@ -223,6 +225,62 @@ local GET_ROUTES = {
     ["/v1/lights"] = lightList,
     ["/v1/diagnostics"] = diagnosticsList,
 }
+
+local function handlePairing(handle, request, origin)
+    if request.method ~= "POST" or request.path ~= "/v1/pair" then
+        return false
+    end
+
+    if not config.pairing or not config.pairing.verify then
+        sendResponse(handle, 500, {
+            ok = false,
+            error = {
+                code = "PAIRING_UNAVAILABLE",
+                message = "C4Bridge pairing is unavailable",
+            },
+        }, origin)
+        return true
+    end
+
+    local code = request.headers["x-c4bridge-pairing-code"]
+    if not code or code == "" then
+        sendResponse(handle, 400, {
+            ok = false,
+            error = {
+                code = "PAIRING_CODE_REQUIRED",
+                message = "Pairing code is required",
+            },
+        }, origin)
+        return true
+    end
+
+    local ok, result = config.pairing.verify(code)
+    if not ok then
+        local status = 403
+        if result and result.code == "PAIRING_RATE_LIMITED" then
+            status = 429
+        elseif result and result.code == "PAIRING_UNAVAILABLE" then
+            status = 500
+        end
+
+        sendResponse(handle, status, {
+            ok = false,
+            error = result,
+        }, origin)
+        return true
+    end
+
+    sendResponse(handle, 200, {
+        ok = true,
+        credential = {
+            scheme = result.scheme,
+            token = result.token,
+        },
+        pairing_count = result.pairing_count,
+    }, origin)
+
+    return true
+end
 
 local function actionErrorStatus(error)
     local code = error and error.code
@@ -347,7 +405,7 @@ function HttpServer.onData(handle, raw)
     if request.method == "OPTIONS" then
         sendResponse(handle, 204, nil, origin, {
             "Access-Control-Allow-Methods: GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers: Authorization, Content-Type",
+            "Access-Control-Allow-Headers: Authorization, Content-Type, X-C4Bridge-Pairing-Code",
             "Access-Control-Max-Age: 600",
             "Access-Control-Allow-Private-Network: true",
         })
@@ -359,6 +417,10 @@ function HttpServer.onData(handle, raw)
             ok = false,
             error = { code = "METHOD_NOT_ALLOWED", message = "Only GET and POST are available" },
         }, origin)
+        return
+    end
+
+    if handlePairing(handle, request, origin) then
         return
     end
 
