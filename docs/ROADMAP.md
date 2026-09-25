@@ -18,7 +18,7 @@
 - [x] Read light state
 - [x] Subscribe to state changes
 - [x] ON/OFF implemented and validated on a real Director in alpha.4
-- [x] Set brightness implemented with `LIGHT_BRIGHTNESS_TARGET_PERCENT`; real-system validation pending
+- [x] Set brightness now uses legacy-compatible `RAMP_TO_LEVEL` (`LEVEL`, `TIME = 0`); real-system validation pending
 - [ ] Validate on OS 3.3.x/3.4.x before broad compatibility claims
 
 ## Milestone 2 — local API/security
