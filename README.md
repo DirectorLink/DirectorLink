@@ -28,7 +28,11 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 ### 1. Download C4Bridge
 
-Download the current test build: **[C4Bridge.c4z](https://raw.githubusercontent.com/IsraelCIL/C4Bridge/main/dist/C4Bridge.c4z)**
+Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
+
+Current alpha build: **[C4Bridge v0.1.0-alpha.1](https://github.com/IsraelCIL/C4Bridge/releases/download/v0.1.0-alpha.1/C4Bridge.c4z)**
+
+Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
 ### 2. Install Composer Pro
 
@@ -67,7 +71,11 @@ If the status shows an error, capture the C4Bridge Lua log and open a GitHub iss
 
 Automatic self-update is intentionally **not** part of V1.
 
-For now, update the installed driver manually through Composer Pro using the newer `C4Bridge.c4z`. Do not remove and re-add the project instance unless an update specifically requires it.
+For now, update the installed driver manually through Composer Pro using the `C4Bridge.c4z` asset from the desired GitHub Release.
+
+To downgrade, download `C4Bridge.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; once C4Bridge begins storing persistent scenes/schedules/accounts, release notes will state whether a downgrade is safe.
+
+Do not remove and re-add the project instance unless a release specifically requires it.
 
 ## Design principle
 
