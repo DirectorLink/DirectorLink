@@ -204,11 +204,9 @@ function HttpServer.start()
 end
 
 function HttpServer.stop()
-    if online then
-        pcall(function()
-            C4:DestroyServer(API_PORT)
-        end)
-    end
+    pcall(function()
+        C4:DestroyServer(API_PORT)
+    end)
     online = false
 end
 
