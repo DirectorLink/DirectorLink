@@ -183,6 +183,24 @@
             <div id="light-list" class="light-list"></div>
           </article>
 
+          <article class="panel result-panel climate-panel">
+            <div class="lights-heading">
+              <div>
+                <p class="eyebrow">STEP 4</p>
+                <h2>Climate</h2>
+                <p class="panel-note">
+                  Live Thermostat V2 state from Director. Alpha.9 is read-only so we can
+                  validate your real thermostat contract before enabling HVAC writes.
+                </p>
+              </div>
+              <button id="refresh-climate-button" class="button button-secondary" type="button">
+                Refresh climate
+              </button>
+            </div>
+            <p id="climate-message" class="form-message" role="status" aria-live="polite"></p>
+            <div id="climate-list" class="climate-list"></div>
+          </article>
+
           <div class="result-columns">
             <article class="panel result-panel">
               <h2>Rooms</h2>
