@@ -1,3 +1,5 @@
+local Diagnostics = require("src.core.diagnostics")
+
 local LightV2 = {}
 
 local VARIABLE_STATE = 1000
@@ -117,6 +119,12 @@ function LightV2.onVariableChanged(device, variableId, value)
 
     if variableId == VARIABLE_STATE then
         device.state.power = boolValue(value)
+        Diagnostics.info("light_state", "state variable changed", {
+            device_id = device.id,
+            variable_id = VARIABLE_STATE,
+            value = value,
+            power = device.state.power,
+        })
         return true
     end
 
@@ -125,6 +133,12 @@ function LightV2.onVariableChanged(device, variableId, value)
         if brightness ~= nil then
             device.state.brightness = brightness
             device.state.power = brightness > 0
+            Diagnostics.info("light_state", "brightness variable changed", {
+                device_id = device.id,
+                variable_id = VARIABLE_BRIGHTNESS,
+                value = value,
+                brightness = brightness,
+            })
             return true
         end
     end
@@ -132,11 +146,18 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessTarget(deviceId, target)
+local function sendBrightnessPercent(deviceId, target)
+    -- Real-system director logs show the native Control4/Composer path for this
+    -- Light V2 proxy sends SET_BRIGHTNESS_TARGET with PERCENT=<0..100>.
+    Diagnostics.info("light_command", "sending dimmer target", {
+        device_id = deviceId,
+        command = "SET_BRIGHTNESS_TARGET",
+        params = { PERCENT = target },
+    })
+
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
-            LIGHT_BRIGHTNESS_TARGET = target,
-            RATE = 0,
+            PERCENT = target,
         })
     end)
 
@@ -148,6 +169,12 @@ local function sendBrightnessTarget(deviceId, target)
 end
 
 local function sendBrightnessPreset(deviceId, presetId)
+    Diagnostics.info("light_command", "sending light preset", {
+        device_id = deviceId,
+        command = "SET_BRIGHTNESS_TARGET",
+        params = { LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId },
+    })
+
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
             LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId,
@@ -201,9 +228,9 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        sent, sendError = sendBrightnessTarget(device.id, target)
+        sent, sendError = sendBrightnessPercent(device.id, target)
         result.requested_brightness = target
-        result.rate_ms = 0
+        result.command_parameter = "PERCENT"
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
@@ -212,12 +239,18 @@ function LightV2.execute(device, action, params)
     end
 
     if not sent then
+        Diagnostics.error("light_command", "Control4 command failed", {
+            device_id = device.id,
+            action = action,
+            error = sendError,
+        })
         return false, {
             code = "CONTROL4_COMMAND_FAILED",
             message = "Director rejected the light command: " .. tostring(sendError),
         }
     end
 
+    Diagnostics.info("light_command", "Control4 command dispatched", result)
     return true, result
 end
 

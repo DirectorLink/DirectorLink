@@ -117,3 +117,34 @@ References:
 - https://control4.github.io/docs-driverworks-proxyprotocol/
 - https://control4.github.io/docs-driverworks-api/
 - https://github.com/snap-one/docs-driverworks/tree/master/driver_development_training/sample_light_driver
+
+
+## Snapshot findings — 2026-09-25
+
+A real Director snapshot resolved both active alpha issues.
+
+### Dimmer command
+
+For the tested Light V2 proxy, the working native path in Director logs used:
+
+```text
+SET_BRIGHTNESS_TARGET
+PERCENT = <0..100>
+```
+
+C4Bridge alpha.5 was sending a different parameter shape and the light did not change. Alpha.6 therefore uses the exact `PERCENT` parameter observed in the working Director path.
+
+### Driver update/reload
+
+The Director filesystem contained both:
+
+```text
+C4Bridge.c4z
+C4Bridge (1).c4z
+```
+
+and after reboot the project instance loaded `C4Bridge (1).c4z`.
+
+This indicates repeated browser downloads with Windows filename suffixes can create a second Control4 driver filename instead of replacing the canonical package. The update test procedure now requires selecting a file named exactly `C4Bridge.c4z`.
+
+Alpha.6 also adds lifecycle diagnostics so the next update test can distinguish `DIT_UPDATING` from `DIT_STARTUP`.

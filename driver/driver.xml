@@ -7,7 +7,7 @@
   <creator>C4Bridge contributors</creator>
   <created>09/25/2026 00:00</created>
   <modified>09/25/2026 00:00</modified>
-  <version>5</version>
+  <version>6</version>
 
   <control>lua_gen</control>
   <driver>DriverWorks</driver>
@@ -56,6 +56,36 @@
       <property>
         <name>Supported Lights</name>
         <default>0</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Reload Counter</name>
+        <default>0</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Init Type</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Init Time</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Destroy Type</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Destroy Time</name>
+        <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>

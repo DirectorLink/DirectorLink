@@ -75,3 +75,25 @@ Real-system Light V2 On/Off control succeeded on the same Director test system.
 - dimmer brightness percentage control
 - state changes initiated outside C4Bridge (wall keypad / Navigator / Composer)
 - driver update/reload behavior without rebooting Director
+
+
+## 2026-09-25 — Snapshot diagnosis — dimmer and updates
+
+A Director snapshot captured the failed alpha.5 dimmer attempt and the native working path.
+
+### Dimmer
+
+Working native commands to the tested Light V2 proxy used:
+
+```text
+SET_BRIGHTNESS_TARGET
+PERCENT = <level>
+```
+
+C4Bridge alpha.5 used a different parameter shape. Alpha.6 changes the adapter to match the captured native command exactly.
+
+### Driver update
+
+The snapshot showed both `C4Bridge.c4z` and `C4Bridge (1).c4z` installed. After reboot the project instance loaded the suffixed filename.
+
+Alpha.6 update validation must use a local file named exactly `C4Bridge.c4z` and inspect the new lifecycle diagnostics before rebooting.

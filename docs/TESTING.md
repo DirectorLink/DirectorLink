@@ -1,38 +1,82 @@
 # C4Bridge Alpha Test
 
-## Current test release
+## Current release
 
-`v0.1.0-alpha.5`
+`v0.1.0-alpha.6`
 
-On/Off is already validated on the real Control4 system. This test is specifically for dimmer brightness.
+This build tests two things:
 
-## Update
+1. the log-verified dimmer command;
+2. whether using the canonical package filename fixes live driver updates.
 
-Update the existing C4Bridge driver in Composer. Do not remove/re-add the C4Bridge instance.
+## A. Prepare the file correctly
 
-Expected:
+Before opening Composer, make sure the downloaded file is named exactly:
 
-- Bridge Version: `0.1.0-alpha.5`
-- Status: `Ready (light adapter initialized)`
-- API Status: `Online - light control alpha`
+```text
+C4Bridge.c4z
+```
 
-## Dimmer test
+If Windows downloaded `C4Bridge (1).c4z`, rename or remove the older copy first.
+
+## B. Update without rebooting
+
+1. In System Design, right-click the existing **C4Bridge** instance.
+2. Choose **Update Driver**.
+3. Select the correctly named `C4Bridge.c4z`.
+4. Wait 10–15 seconds.
+5. Re-select C4Bridge.
+
+Record:
+
+- Bridge Version
+- Reload Counter
+- Last Init Type
+- Last Init Time
+- Last Destroy Type
+- Last Destroy Time
+
+Expected hot-update result:
+
+```text
+Bridge Version: 0.1.0-alpha.6
+Last Init Type: DIT_UPDATING
+```
+
+If the version does not change, do not wait two minutes. Capture the lifecycle fields, then reboot and compare them again.
+
+## C. Dimmer test
 
 Choose one visible dimmable light.
 
 1. Confirm On/Off still works.
 2. Set brightness to **30%**.
-3. Confirm the physical light changes.
-4. Wait for the PWA to confirm Director-reported state.
+3. Confirm the physical level changes.
+4. Wait for the PWA state confirmation.
 5. Set brightness to **70%**.
 6. Confirm again.
 
-Expected command:
+Alpha.6 sends:
 
 ```text
 SET_BRIGHTNESS_TARGET
-LIGHT_BRIGHTNESS_TARGET = 30 (or 70)
-RATE = 0
+PERCENT = 30
 ```
 
-If dimming still fails, report the light name, proxy ID, current displayed brightness, requested brightness, and the exact PWA confirmation/error text.
+or the requested value.
+
+## D. Diagnostics
+
+The authenticated API now exposes:
+
+```text
+GET /v1/diagnostics
+```
+
+Recent entries include:
+
+- lifecycle init/destroy events;
+- exact light command and parameters;
+- watched state/brightness variable changes.
+
+This allows targeted debugging without another full controller snapshot.

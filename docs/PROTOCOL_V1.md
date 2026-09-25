@@ -89,6 +89,7 @@ Read:
 - `GET /v1/rooms`
 - `GET /v1/devices`
 - `GET /v1/lights`
+- `GET /v1/diagnostics` (authenticated alpha diagnostics; recent lifecycle/command/state trace)
 
 Light actions:
 

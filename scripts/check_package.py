@@ -105,9 +105,9 @@ def check_light_adapter():
         "VARIABLE_STATE = 1000",
         "VARIABLE_BRIGHTNESS = 1001",
         'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
-        "LIGHT_BRIGHTNESS_TARGET = target",
         "LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId",
-        "RATE = 0",
+        'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
+        "PERCENT = target",
         "C4:RegisterVariableListener",
     ]
 
@@ -120,6 +120,17 @@ def check_light_adapter():
         fail("LAN API is missing /v1/lights")
     if "/v1/devices/(%d+)/actions/" not in server:
         fail("LAN API is missing normalized device action routing")
+    if "/v1/diagnostics" not in server:
+        fail("LAN API is missing authenticated diagnostics endpoint")
+
+    root = ET.parse(DRIVER / "driver.xml").getroot()
+    property_names = {
+        node.findtext("name")
+        for node in root.findall("./config/properties/property")
+    }
+    for name in ("Reload Counter", "Last Init Type", "Last Init Time", "Last Destroy Type", "Last Destroy Time"):
+        if name not in property_names:
+            fail(f"driver.xml missing lifecycle diagnostic property: {name}")
 
 
 def check_package(files):
