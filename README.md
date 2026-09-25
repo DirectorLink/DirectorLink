@@ -105,7 +105,7 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.6 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, a Director-log-verified dimmer command, and update diagnostics on port `41999`.
+The alpha.7 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, KNX-specific DriverWorks dimmer compatibility, and update diagnostics on port `41999`.
 
 ## Web app
 
