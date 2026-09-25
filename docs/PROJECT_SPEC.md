@@ -227,7 +227,6 @@ The initial Cloudflare Pages PWA shell is implemented under `web/`:
 
 The PWA does not yet make Director requests. The service worker explicitly ignores all cross-origin requests so future LAN traffic is never cached or proxied by the web shell.
 
-Cloudflare deployment configuration is documented in `docs/CLOUDFLARE.md`.
 
 
 ### Read-only LAN API spike — alpha.2
