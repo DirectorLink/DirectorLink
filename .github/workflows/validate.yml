@@ -25,3 +25,11 @@ jobs:
 
       - name: Validate package
         run: python scripts/check_package.py
+
+      - name: Validate web/PWA
+        run: python scripts/check_web.py
+
+      - name: Check web JavaScript syntax
+        run: |
+          node --check web/app.js
+          node --check web/sw.js
