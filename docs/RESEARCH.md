@@ -95,3 +95,23 @@ Chrome 142+ gates public-site requests to local/private addresses behind Local N
 Reference:
 - https://developer.chrome.com/blog/local-network-access
 - https://developer.chrome.com/release-notes/142
+
+
+## Light V2 state and control
+
+Control4's Light V2 proxy defines:
+
+- Light State variable ID `1000`
+- Light Brightness Percent variable ID `1001` for dimmers
+- Default On Preset Brightness variable ID `1006`
+- `SET_BRIGHTNESS_TARGET` as the current brightness control command
+- `LIGHT_BRIGHTNESS_TARGET` as the target parameter
+- `C4:SendToDevice(proxyId, command, params)` for sending a command to another project device
+- `C4:RegisterVariableListener(deviceId, variableId)` plus `OnWatchedVariableChanged` for live state updates
+
+Control4 recommends the Brightness Target API for Light V2 on OS 3.3.0 and newer.
+
+References:
+- https://control4.github.io/docs-driverworks-proxyprotocol/
+- https://control4.github.io/docs-driverworks-api/
+- https://github.com/snap-one/docs-driverworks/tree/master/driver_development_training/sample_light_driver
