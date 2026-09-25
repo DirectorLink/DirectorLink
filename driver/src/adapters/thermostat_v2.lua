@@ -55,7 +55,7 @@ local function fahrenheitToCelsius(value)
         return nil
     end
     local c = (f - 32) * 5 / 9
-    return math.floor(c * 10 + 0.5) / 10
+    return math.floor(c + 0.5)
 end
 
 local function normalizeMode(value)
@@ -140,15 +140,24 @@ function Climate.initialize(device)
         hvacModes = { "Off", "Heat", "Cool" }
     end
 
+    local hasCool = false
+    for _, mode in ipairs(hvacModes) do
+        if lower(mode) == "cool" then
+            hasCool = true
+            break
+        end
+    end
+
     local fanModes = {}
-    if fanMode ~= nil then
-        -- The real test system exposes these modes through GET_SETUP.
-        -- Keep this conservative until dynamic fan-mode capability discovery lands.
+    local hasFanControl = fanMode ~= nil and hasCool
+    if hasFanControl then
+        -- The AC zones in the real test system expose Low/Medium/High.
+        -- Heat-only floor zones intentionally do not expose fan controls here.
         fanModes = { "Low", "Medium", "High" }
     end
 
     tracked[device.id] = {
-        hasFanMode = fanMode ~= nil,
+        hasFanMode = hasFanControl,
         hvacModes = hvacModes,
         fanModes = fanModes,
     }
@@ -160,13 +169,13 @@ function Climate.initialize(device)
         single_setpoint = true,
         temperature_unit = "C",
         target_temperature_min_c = 16,
-        target_temperature_max_c = 32,
+        target_temperature_max_c = hasCool and 25 or 32,
     }
     device.actions = {
         "set_hvac_mode",
         "set_temperature",
     }
-    if fanMode ~= nil then
+    if hasFanControl then
         table.insert(device.actions, "set_fan_mode")
     end
 
@@ -309,10 +318,11 @@ function Climate.execute(device, action, params)
 
     if action == "set_temperature" then
         local target = tonumber(params and (params.value or params.celsius))
-        if not target or target < 16 or target > 32 then
+        local maxTarget = device.capabilities and device.capabilities.target_temperature_max_c or 32
+        if not target or target < 16 or target > maxTarget then
             return false, {
                 code = "INVALID_TEMPERATURE",
-                message = "Temperature must be between 16 and 32 Celsius",
+                message = "Temperature is outside this thermostat's C4Bridge range",
             }
         end
 
