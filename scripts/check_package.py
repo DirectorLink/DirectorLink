@@ -10,6 +10,8 @@ from zipfile import ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "driver"
 PACKAGE = ROOT / "dist" / "C4Bridge.c4z"
+VERSION_FILE = ROOT / "VERSION"
+VERSION_SOURCE = DRIVER / "src" / "core" / "version.lua"
 
 
 def fail(message):
@@ -50,6 +52,20 @@ def check_xml():
         fail("V1 must keep auto_update=false")
 
 
+def check_version():
+    if not VERSION_FILE.is_file():
+        fail("VERSION file is missing")
+
+    version = VERSION_FILE.read_text(encoding="utf-8").strip()
+    if not version:
+        fail("VERSION is empty")
+
+    source = VERSION_SOURCE.read_text(encoding="utf-8")
+    expected = f'Version.BRIDGE_VERSION = "{version}"'
+    if expected not in source:
+        fail(f"driver source version does not match VERSION ({version})")
+
+
 def check_requires(files):
     module_paths = set(files)
     pattern = re.compile(r"""require\s*\(\s*["']([^"']+)["']\s*\)""")
@@ -87,6 +103,7 @@ def check_package(files):
 def main():
     files = source_files()
     check_xml()
+    check_version()
     check_requires(files)
     check_package(files)
     print(f"OK: validated {len(files)} packaged files")
