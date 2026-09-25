@@ -228,3 +228,27 @@ The initial Cloudflare Pages PWA shell is implemented under `web/`:
 The PWA does not yet make Director requests. The service worker explicitly ignores all cross-origin requests so future LAN traffic is never cached or proxied by the web shell.
 
 Cloudflare deployment configuration is documented in `docs/CLOUDFLARE.md`.
+
+
+### Read-only LAN API spike — alpha.2
+
+For the first browser-to-Director validation, C4Bridge exposes a minimal HTTP server on TCP port `41999`.
+
+Security/transport rules for this alpha:
+
+- HTTP is LAN-only; the public app remains HTTPS.
+- Chrome Local Network Access permission gates the public-to-local browser request.
+- Every data endpoint requires a per-install Bearer token.
+- Token is generated with `C4:UUID("RANDOM")`.
+- Token is persisted encrypted on Director.
+- Browser CORS is restricted to official C4Bridge origins.
+- The API is read-only.
+- The token is manually copied from Composer only for this alpha test.
+
+Routes:
+
+- `GET /v1/system/info`
+- `GET /v1/rooms`
+- `GET /v1/devices`
+
+This is an integration spike, not the final pairing UX. Successful real-Director testing will inform the final owner pairing/session design.
