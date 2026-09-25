@@ -24,8 +24,8 @@
 ## Milestone 2 — local API/security
 
 - [x] Implement first browser-compatible HTTP LAN transport spike on OS 3.3+
-- [ ] Define final pairing flow (alpha.2 uses manual per-install token)
-- [ ] Generate/store owner credential
+- [x] Define and implement one-owner pairing flow (alpha.8)
+- [x] Generate/store encrypted owner credential
 - [x] Authenticate alpha read-only requests with Bearer token
 - [ ] Implement protocol v1 methods:
   - [x] `system.info`
@@ -33,7 +33,7 @@
   - [x] `rooms.list`
   - [x] `devices.list`
   - [ ] `devices.get`
-  - [ ] light control methods
+  - [x] light control methods
 - [x] Validate CORS / Local Network Access behavior on real Director
 
 ## Milestone 3 — PWA
@@ -47,7 +47,7 @@
 - [ ] Connect GitHub repository to Cloudflare Pages
 - [ ] Attach `c4bridge.io`
 - [ ] Local Network Access request flow
-- [ ] Pairing
+- [x] Pairing
 - [ ] Rooms/devices dashboard
 - [ ] Light UI
 
