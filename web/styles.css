@@ -792,3 +792,63 @@ footer a {
     margin-left: 0;
   }
 }
+
+
+.climate-panel {
+  margin: 0 30px 22px;
+  padding: 26px;
+  box-shadow: none;
+  border-color: rgba(36, 107, 254, 0.2);
+}
+
+.climate-list {
+  max-height: 620px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.climate-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(420px, 1.3fr);
+  gap: 24px;
+  align-items: center;
+  padding: 17px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.climate-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.climate-select,
+.climate-temp {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: #fff;
+}
+
+.climate-temp {
+  width: 76px;
+}
+
+@media (max-width: 860px) {
+  .climate-panel {
+    margin: 0 0 22px;
+  }
+
+  .climate-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .climate-controls {
+    justify-content: flex-start;
+  }
+}
