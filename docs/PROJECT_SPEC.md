@@ -159,6 +159,16 @@ Use project location/time-zone data exposed by Director. Solar calculations shou
 
 A plugin architecture may be added later for niche functionality. A Hebrew/Jewish calendar module was discussed but is **explicitly excluded from C4Bridge core and V1**; if ever implemented, it should be optional.
 
+## Distribution and versioning
+
+- Official `C4Bridge.c4z` binaries are distributed through **GitHub Releases**
+- The repository `VERSION` file contains the semantic release version
+- Alpha/beta versions are GitHub prereleases
+- Release assets include `C4Bridge.c4z` and `SHA256SUMS.txt`
+- Users may install a newer or older release manually through Composer Pro
+- Downgrade safety is release-specific once persistent data formats exist
+- No automatic in-driver update is part of V1
+
 ## Licensing
 
 Apache License 2.0.
