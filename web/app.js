@@ -240,7 +240,7 @@ function lightStateLabel(light) {
 
 async function refreshLights(showMessage = false) {
   if (!activeSession) {
-    return;
+    return [];
   }
 
   const response = await apiRequest(
@@ -254,6 +254,48 @@ async function refreshLights(showMessage = false) {
   if (showMessage) {
     setLightMessage(`Refreshed ${lights.length} light states.`, "success");
   }
+
+  return lights;
+}
+
+function lightActionConfirmed(light, action, value) {
+  if (!light?.state) {
+    return false;
+  }
+
+  if (action === "on") {
+    return light.state.power === true;
+  }
+
+  if (action === "off") {
+    return light.state.power === false;
+  }
+
+  if (action === "set_brightness") {
+    const actual = Number(light.state.brightness);
+    const expected = Number(value);
+    return Number.isFinite(actual) &&
+      Number.isFinite(expected) &&
+      Math.abs(actual - expected) <= 3;
+  }
+
+  return false;
+}
+
+async function waitForLightConfirmation(lightId, action, value) {
+  const deadline = Date.now() + 5000;
+
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    const lights = await refreshLights(false);
+    const updated = lights.find((candidate) => Number(candidate.id) === Number(lightId));
+
+    if (updated && lightActionConfirmed(updated, action, value)) {
+      return updated;
+    }
+  }
+
+  return null;
 }
 
 async function runLightAction(light, action, value, control) {
@@ -286,12 +328,21 @@ async function runLightAction(light, action, value, control) {
       { method: "POST" }
     );
 
-    setLightMessage(`Command accepted for ${light.name}.`, "success");
+    setLightMessage(`Command sent to ${light.name}; waiting for Director state…`);
 
-    // The Control4 command is asynchronous. Give the protocol driver time to
-    // report its real state back through the Light V2 proxy variables.
-    await new Promise((resolve) => window.setTimeout(resolve, 900));
-    await refreshLights(false);
+    const confirmed = await waitForLightConfirmation(light.id, action, value);
+
+    if (confirmed) {
+      setLightMessage(
+        `${light.name}: ${lightStateLabel(confirmed)} confirmed by Director.`,
+        "success"
+      );
+    } else {
+      setLightMessage(
+        `${light.name}: command was sent, but Director did not confirm the requested state within 5 seconds.`,
+        "error"
+      );
+    }
   } catch (error) {
     setLightMessage(
       `${light.name}: ${error.message || "light command failed"}`,
