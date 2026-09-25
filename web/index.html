@@ -155,6 +155,24 @@
 
           <div id="result-summary" class="result-summary"></div>
 
+          <article class="panel result-panel lights-panel">
+            <div class="lights-heading">
+              <div>
+                <p class="eyebrow">STEP 3</p>
+                <h2>Lights</h2>
+                <p class="panel-note">
+                  Live Light V2 state from Director. Commands are sent through normalized
+                  C4Bridge actions only.
+                </p>
+              </div>
+              <button id="refresh-lights-button" class="button button-secondary" type="button">
+                Refresh states
+              </button>
+            </div>
+            <p id="light-action-message" class="form-message" role="status" aria-live="polite"></p>
+            <div id="light-list" class="light-list"></div>
+          </article>
+
           <div class="result-columns">
             <article class="panel result-panel">
               <h2>Rooms</h2>
