@@ -202,7 +202,7 @@ Implemented:
 
 ### Step 3 — Light V2 adapter
 
-Implemented in `v0.1.0-alpha.6`, with On/Off validated and log-verified dimmer validation pending:
+Implemented in `v0.1.0-alpha.7`, with On/Off validated and KNX DriverWorks dimmer validation pending:
 
 - Light V2 proxy detection
 - state variable `1000`
