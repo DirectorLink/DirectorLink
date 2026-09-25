@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build after this integration lands: **C4Bridge v0.1.0-alpha.3**ntegration lands: **C4Bridge v0.1.0-alpha.2**
+Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.4**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -103,7 +103,7 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.3 build connects this PWA directly to C4Bridge on the LAN and adds normalized Light V2 state/control on port `41999`.
+The alpha.4 build connects the PWA directly to C4Bridge on the LAN and includes corrected normalized Light V2 state/control on port `41999`.
 
 ## Web app
 
