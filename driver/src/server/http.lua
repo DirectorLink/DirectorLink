@@ -225,10 +225,12 @@ function HttpServer.onStatusChanged(port, status)
     end
 end
 
-function HttpServer.onConnectionStatusChanged(handle, port, status, clientIp)
-    if tonumber(port) == API_PORT or tostring(status) == "ONLINE" then
-        log("client " .. tostring(clientIp or "?") .. " " .. tostring(status))
-    end
+function HttpServer.onConnectionStatusChanged(handle, remotePort, status, clientIp)
+    log(
+        "client " .. tostring(clientIp or "?") ..
+        ":" .. tostring(remotePort or "?") ..
+        " " .. tostring(status)
+    )
 end
 
 function HttpServer.onData(handle, raw)
