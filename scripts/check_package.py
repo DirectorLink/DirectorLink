@@ -133,9 +133,10 @@ def check_light_adapter():
         "VARIABLE_HVAC_MODES_LIST = 1120",
         "VARIABLE_TEMPERATURE_C = 1131",
         "VARIABLE_SINGLE_SETPOINT_F = 1149",
-        'C4:SendToDevice(deviceId, "SET_MODE_HVAC"',
-        'C4:SendToDevice(deviceId, "SET_MODE_FAN"',
-        'C4:SendToDevice(deviceId, "SET_SETPOINT_SINGLE"',
+        'C4:SendToDevice(deviceId, command, params)',
+        '"SET_MODE_HVAC"',
+        '"SET_MODE_FAN"',
+        '"SET_SETPOINT_SINGLE"',
         "CELSIUS = target",
     ):
         if token not in climate:
