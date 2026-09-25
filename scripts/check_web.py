@@ -84,8 +84,14 @@ def main():
         fail("web app must use the documented alpha API port 41999")
     if 'targetAddressSpace: "local"' not in app:
         fail("web app must annotate local-network fetches")
-    if "Authorization:" not in app or "Bearer" not in app:
+    if "Authorization" not in app or "Bearer" not in app:
         fail("web app must authenticate LAN API requests")
+    if '"/v1/pair"' not in app:
+        fail("web app must support owner pairing")
+    if "X-C4Bridge-Pairing-Code" not in app:
+        fail("web app must send the short pairing code in a dedicated header")
+    if "localStorage.setItem(TOKEN_STORAGE_KEY" not in app:
+        fail("web app must persist the paired owner credential locally")
     if '"/v1/lights"' not in app:
         fail("web app must load normalized lights")
     if '{ method: "POST" }' not in app:
@@ -100,6 +106,10 @@ def main():
     index = (WEB / "index.html").read_text(encoding="utf-8")
     if 'id="light-list"' not in index:
         fail("web app is missing the Light V2 control panel")
+    if 'id="pairing-code"' not in index:
+        fail("web app is missing the pairing-code input")
+    if 'id="api-token"' in index:
+        fail("web app must not expose the old manual API-token input")
 
     print("OK: C4Bridge web/PWA shell validated")
 

@@ -7,7 +7,7 @@
   <creator>C4Bridge contributors</creator>
   <created>09/25/2026 00:00</created>
   <modified>09/25/2026 00:00</modified>
-  <version>7</version>
+  <version>8</version>
 
   <control>lua_gen</control>
   <driver>DriverWorks</driver>
@@ -86,6 +86,18 @@
       <property>
         <name>Last Destroy Time</name>
         <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Pairing Code</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Pairing Status</name>
+        <default>Starting...</default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>

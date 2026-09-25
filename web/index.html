@@ -42,7 +42,7 @@
               <span class="status-dot" aria-hidden="true"></span>
               <div>
                 <strong id="bridge-status-title">Ready to connect</strong>
-                <p id="bridge-status-text">Enter the Director IP and API token from Composer.</p>
+                <p id="bridge-status-text">Enter the Director IP and pair this browser once.</p>
               </div>
             </div>
             <div class="status-grid">
@@ -72,8 +72,8 @@
               <p class="eyebrow">FIRST SETUP</p>
               <h2>Director address</h2>
               <p>
-                Enter the Director address and the alpha API token shown in the
-                C4Bridge Properties pane in Composer.
+                Enter the Director address and the short Pairing Code shown in the
+                C4Bridge Properties pane in Composer. The long owner credential stays hidden.
               </p>
             </div>
 
@@ -97,19 +97,25 @@
                 <code>41999</code>
               </p>
 
-              <label for="api-token">API token</label>
+              <label for="pairing-code">Pairing code</label>
               <input
-                id="api-token"
-                name="api-token"
-                type="password"
-                autocomplete="off"
+                id="pairing-code"
+                name="pairing-code"
+                type="text"
+                inputmode="numeric"
+                autocomplete="one-time-code"
                 spellcheck="false"
-                placeholder="Paste API Token from Composer"
+                maxlength="8"
+                pattern="[0-9]{8}"
+                placeholder="8-digit code from Composer"
               />
-              <p class="field-help">Stored only in this browser for the alpha test.</p>
+              <p class="field-help">
+                Enter this only when pairing a new browser. The code is never stored here and
+                rotates after a successful pairing.
+              </p>
 
               <button id="connect-button" class="button button-primary connect-button" type="button">
-                Connect &amp; test
+                Pair &amp; connect
               </button>
               <p id="director-message" class="form-message" role="status" aria-live="polite"></p>
             </form>
@@ -132,12 +138,16 @@
                 <dd id="saved-director">Not set</dd>
               </div>
               <div>
+                <dt>Pairing</dt>
+                <dd id="saved-pairing">Not paired</dd>
+              </div>
+              <div>
                 <dt>LAN API</dt>
                 <dd id="api-connection-status">Not connected</dd>
               </div>
             </dl>
             <p class="panel-note">
-              Clicking <strong>Connect &amp; test</strong> makes the first LAN request. Chrome
+              Clicking <strong>Pair &amp; connect</strong> makes the first LAN request. Chrome
               should ask whether <code>app.c4bridge.io</code> may access devices on your local
               network. Allow it to continue.
             </p>

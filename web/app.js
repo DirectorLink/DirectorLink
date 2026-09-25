@@ -4,12 +4,13 @@ const API_PORT = 41999;
 
 const directorForm = document.querySelector("#director-form");
 const directorInput = document.querySelector("#director-host");
-const apiTokenInput = document.querySelector("#api-token");
+const pairingCodeInput = document.querySelector("#pairing-code");
 const connectButton = document.querySelector("#connect-button");
 const directorMessage = document.querySelector("#director-message");
 const savedDirector = document.querySelector("#saved-director");
 const secureContext = document.querySelector("#secure-context");
 const serviceWorkerStatus = document.querySelector("#service-worker-status");
+const savedPairing = document.querySelector("#saved-pairing");
 const apiConnectionStatus = document.querySelector("#api-connection-status");
 const installButton = document.querySelector("#install-button");
 const bridgeStatusTitle = document.querySelector("#bridge-status-title");
@@ -72,27 +73,21 @@ function refreshSavedDirector() {
     savedDirector.textContent = "Not set";
   }
 
-  if (token) {
-    apiTokenInput.value = token;
-  }
+  savedPairing.textContent = token ? "Paired in this browser" : "Not paired";
+  connectButton.textContent = token ? "Connect" : "Pair & connect";
 }
 
 function saveSetup() {
   const host = normalizeDirectorHost(directorInput.value);
-  const token = apiTokenInput.value.trim();
 
   if (!host) {
     throw new Error("Enter a private IPv4 address or .local hostname without a port.");
   }
-  if (!token) {
-    throw new Error("Paste the API Token shown in the C4Bridge Composer properties.");
-  }
 
   localStorage.setItem(DIRECTOR_STORAGE_KEY, host);
-  localStorage.setItem(TOKEN_STORAGE_KEY, token);
   refreshSavedDirector();
 
-  return { host, token };
+  return { host };
 }
 
 function apiUrl(host, path) {
@@ -102,13 +97,16 @@ function apiUrl(host, path) {
 async function apiRequest(host, token, path, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8000);
+  const headers = { ...(options.headers || {}) };
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
   try {
     const response = await fetch(apiUrl(host, path), {
       method: options.method || "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       cache: "no-store",
       signal: controller.signal,
       targetAddressSpace: "local",
@@ -129,6 +127,32 @@ async function apiRequest(host, token, path, options = {}) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+async function pairBrowser(host, pairingCode) {
+  const code = String(pairingCode || "").trim();
+  if (!/^\d{8}$/.test(code)) {
+    const error = new Error("Enter the 8-digit Pairing Code shown in Composer.");
+    error.code = "PAIRING_REQUIRED";
+    throw error;
+  }
+
+  const response = await apiRequest(host, null, "/v1/pair", {
+    method: "POST",
+    headers: {
+      "X-C4Bridge-Pairing-Code": code,
+    },
+  });
+
+  const token = response?.credential?.token;
+  if (!token) {
+    throw new Error("C4Bridge paired, but no owner credential was returned.");
+  }
+
+  localStorage.setItem(TOKEN_STORAGE_KEY, token);
+  pairingCodeInput.value = "";
+  refreshSavedDirector();
+  return token;
 }
 
 function text(value, fallback = "—") {
@@ -470,7 +494,25 @@ async function connectAndTest() {
   );
 
   try {
-    const { host, token } = saveSetup();
+    const { host } = saveSetup();
+    const pairingCode = pairingCodeInput.value.trim();
+    let token = localStorage.getItem(TOKEN_STORAGE_KEY);
+
+    if (pairingCode) {
+      setConnectionState(
+        "Pairing this browser…",
+        "Verifying the short code directly with C4Bridge on your LAN.",
+        "Pairing…"
+      );
+      token = await pairBrowser(host, pairingCode);
+    }
+
+    if (!token) {
+      const error = new Error("Enter the Pairing Code shown in the C4Bridge Composer properties.");
+      error.code = "PAIRING_REQUIRED";
+      throw error;
+    }
+
     activeSession = { host, token };
 
     const info = await apiRequest(host, token, "/v1/system/info");
@@ -507,15 +549,24 @@ async function connectAndTest() {
 
     const isUnauthorized = error.status === 401;
     const isAbort = error.name === "AbortError";
+    const isPairingError =
+      error.code === "PAIRING_REQUIRED" ||
+      error.code === "PAIRING_CODE_INVALID" ||
+      error.code === "PAIRING_CODE_EXPIRED" ||
+      error.code === "PAIRING_RATE_LIMITED";
 
     let message;
     if (isUnauthorized) {
-      message = "Director reached, but the API token was rejected.";
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      refreshSavedDirector();
+      message = "Saved owner credential was rejected. Enter the current Pairing Code from Composer.";
+    } else if (isPairingError) {
+      message = error.message;
     } else if (isAbort) {
       message = "Connection timed out. Check the Director IP, API status, and LAN.";
     } else {
       message =
-        "Could not reach C4Bridge. Allow Local Network Access and verify the Director IP, API port 41999, and token.";
+        "Could not reach C4Bridge. Allow Local Network Access and verify the Director IP and API port 41999.";
     }
 
     setConnectionState("Connection failed", message, "Failed");

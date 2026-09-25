@@ -118,3 +118,26 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Why:** The proxy is Control4's abstraction boundary. It lets C4Bridge support Control4, Zigbee, Z-Wave and third-party lighting drivers through one documented interface instead of learning each protocol driver's private command set.
 
 **Safety:** A device is not marked controllable unless its Light V2 state variable exists and C4Bridge can register the required state listener.
+
+
+## ADR-018 — One-owner local pairing
+
+**Decision:** V1 uses a short local pairing code to provision one long-lived owner Bearer credential to a browser.
+
+**Owner credential:**
+- generated randomly with `C4:UUID("RANDOM")`
+- persisted encrypted on Director
+- never displayed in Composer after alpha.8
+- stored locally by each paired browser
+
+**Pairing code:**
+- 8 numeric digits
+- visible in the C4Bridge Composer properties
+- valid for 15 minutes
+- rotated after every successful pairing
+- five failed attempts per minute trigger a 60-second lock
+- never persisted by the PWA
+
+**Transport:** `POST /v1/pair` is the only unauthenticated application route. The code is sent in the `X-C4Bridge-Pairing-Code` header, not in a URL.
+
+**Why:** Homeowners should not copy long API secrets from Composer. Pairing keeps the long credential private while preserving the local-first, no-cloud-relay architecture.

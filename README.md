@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.7**
+Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.8**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -105,14 +105,14 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.7 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, KNX-specific DriverWorks dimmer compatibility, and update diagnostics on port `41999`.
+The alpha.8 build adds one-owner local pairing: Composer shows a short rotating Pairing Code, while the long encrypted owner credential stays hidden and is stored only by paired browsers.
 
 ## Web app
 
 The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static application intended for Cloudflare Pages.
 
 
-The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access request, Bearer-token authentication, and live read-only room/device discovery from the Director.
+The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access permission, one-time owner pairing, authenticated LAN control, and live room/device/light discovery from Director.
 
 ## First milestone
 
