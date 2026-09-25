@@ -54,12 +54,12 @@ After the first successful Pages deployment:
 2. Go to **Custom domains**.
 3. Add **app.c4bridge.io**.
 4. Because the domain is already managed in the same Cloudflare account, allow Cloudflare to configure the required DNS record.
-5. Optionally add **www.app.c4bridge.io**.
+5. The production app is now attached at **app.c4bridge.io**.
 
 The canonical production origin for the application should be:
 
 ```text
-https://app.app.c4bridge.io
+https://app.c4bridge.io
 ```
 
 ## Build watch paths
@@ -78,14 +78,14 @@ This optimization is optional; it is not required for correctness.
 
 The public site is served over HTTPS. Browser requests from a public origin to a private/local network are security-sensitive and are gated by Local Network Access rules in modern Chromium.
 
-The future Director transport should:
+The alpha.2 Director transport:
 
-- be initiated by a clear user action;
-- use the saved Director IP or `.local` hostname;
-- support browser CORS behavior;
-- support Local Network Access permission;
-- authenticate every request;
-- never expose raw Control4 commands to the browser;
-- not be intercepted/cached by the service worker.
+- is initiated by the explicit **Connect & test** user action;
+- uses the saved Director IP or `.local` hostname;
+- serves CORS only to official C4Bridge origins;
+- requests Chrome Local Network Access permission;
+- authenticates every data request with a per-install Bearer token;
+- exposes only read-only normalized discovery data;
+- is not intercepted/cached by the service worker.
 
-The current PWA shell does **not** attempt a Director connection until the DriverWorks LAN endpoint is implemented and tested.
+The current alpha uses HTTP port `41999` on the Director. This is a real-system transport validation before the final pairing/session design.
