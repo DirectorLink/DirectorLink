@@ -86,6 +86,16 @@ def main():
         fail("web app must annotate local-network fetches")
     if "Authorization:" not in app or "Bearer" not in app:
         fail("web app must authenticate LAN API requests")
+    if '"/v1/lights"' not in app:
+        fail("web app must load normalized lights")
+    if '{ method: "POST" }' not in app:
+        fail("web app must use POST for device actions")
+    if "set_brightness" not in app:
+        fail("web app must expose normalized brightness control")
+
+    index = (WEB / "index.html").read_text(encoding="utf-8")
+    if 'id="light-list"' not in index:
+        fail("web app is missing the Light V2 control panel")
 
     print("OK: C4Bridge web/PWA shell validated")
 
