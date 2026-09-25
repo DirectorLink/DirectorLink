@@ -1,6 +1,6 @@
 # C4Bridge Protocol v1
 
-This document defines the logical API shape. Transport and authentication are intentionally not frozen until the LAN transport proof-of-concept is complete.
+This document defines the logical API shape. The LAN transport remains an HTTP alpha, while the V1 one-owner pairing model is now defined.
 
 ## Envelope
 
@@ -91,6 +91,14 @@ Read:
 - `GET /v1/lights`
 - `GET /v1/diagnostics` (authenticated alpha diagnostics; recent lifecycle/command/state trace)
 
+Pairing:
+
+- `POST /v1/pair`
+- no Bearer credential is required for this one route
+- the browser sends the current 8-digit code in `X-C4Bridge-Pairing-Code`
+- a successful exchange returns the long owner Bearer credential
+- pairing codes expire after 15 minutes, rotate after success, and are rate-limited
+
 Light actions:
 
 - `POST /v1/devices/{id}/actions/on`
@@ -99,4 +107,4 @@ Light actions:
 
 These route names are C4Bridge semantics. Clients must never send raw DriverWorks/Control4 command names.
 
-All routes require the paired/alpha credential. The current alpha uses a manually copied Bearer token; the transport shape may evolve when the final pairing/session flow is implemented.
+Every route except `POST /v1/pair` requires the paired owner Bearer credential. The owner credential is generated with `C4:UUID("RANDOM")`, persisted encrypted on Director, and stored only in the paired browser. Composer shows only the short rotating pairing code; the long credential is not displayed.
