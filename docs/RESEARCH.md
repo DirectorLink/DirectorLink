@@ -55,3 +55,27 @@ Control4's documented manual-driver flow is:
 
 Reference:
 https://docs.control4.com/help/c4/software/cpro/dealer-composer-help/content/composerpro_userguide/adding_drivers_manually.htm
+
+
+## Cloudflare Pages
+
+Cloudflare Pages supports GitHub-connected projects and preview deployments. For a framework-free static site, C4Bridge uses:
+
+- root directory: `web`
+- build command: `exit 0`
+- output directory: `.`
+- production branch: `main`
+
+References:
+- https://developers.cloudflare.com/pages/get-started/git-integration/
+- https://developers.cloudflare.com/pages/configuration/build-configuration/
+
+## Browser Local Network Access
+
+C4Bridge's public HTTPS PWA must connect to a private/local Director address. Chromium's Local Network Access model gates these requests behind browser permission. Private IP literals and `.local` hostnames are recognized as local-network targets; fetch also supports the `targetAddressSpace` hint in Chromium.
+
+WebSocket local-network restrictions are also covered by the Local Network Access model in current Chromium releases.
+
+References:
+- https://developer.chrome.com/blog/local-network-access
+- https://developer.chrome.com/blog/chrome-147-beta

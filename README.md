@@ -99,6 +99,14 @@ Control4 Director
 Existing Control4 devices
 ```
 
+## Web app
+
+The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static application intended for Cloudflare Pages.
+
+Cloudflare setup instructions: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)
+
+The current web build includes the installable/offline application shell and Director-address onboarding. The browser-to-Director transport is intentionally disabled until the authenticated browser-compatible LAN endpoint is implemented in the driver.
+
 ## First milestone
 
 1. Detect Director version and reject versions below 3.3.0.

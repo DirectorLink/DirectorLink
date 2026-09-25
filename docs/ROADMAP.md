@@ -38,13 +38,18 @@
 
 ## Milestone 3 — PWA
 
-- [ ] Cloudflare Pages app
-- [ ] Director IP onboarding
-- [ ] Local Network Access permission flow
+- [x] Static Cloudflare Pages application shell
+- [x] Director IP/local-hostname onboarding storage
+- [x] PWA manifest + service worker/offline shell
+- [x] 192px/512px install icons
+- [x] Pages security headers
+- [x] Cloudflare deployment documentation
+- [ ] Connect GitHub repository to Cloudflare Pages
+- [ ] Attach `c4bridge.io`
+- [ ] Local Network Access request flow
 - [ ] Pairing
 - [ ] Rooms/devices dashboard
 - [ ] Light UI
-- [ ] PWA install/offline shell
 
 ## Milestone 4 — more adapters
 

@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="C4Bridge — local-first Control4 management for homeowners." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>C4Bridge</title>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="C4Bridge home">
+          <span class="brand-mark" aria-hidden="true">C4</span>
+          <span>C4Bridge</span>
+        </a>
+        <div class="topbar-actions">
+          <span class="build-badge">Preview</span>
+          <button id="install-button" class="button button-secondary hidden" type="button">
+            Install app
+          </button>
+        </div>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-copy">
+            <p class="eyebrow">LOCAL-FIRST CONTROL4 MANAGEMENT</p>
+            <h1 id="hero-title">Your Control4.<br />Local. Simple.</h1>
+            <p class="hero-text">
+              C4Bridge runs inside Director. This web app will connect directly to your
+              C4Bridge driver over your home LAN — no cloud relay for control.
+            </p>
+          </div>
+
+          <div class="status-card">
+            <div class="status-row">
+              <span class="status-dot" aria-hidden="true"></span>
+              <div>
+                <strong>PWA shell ready</strong>
+                <p>LAN transport is intentionally not enabled yet.</p>
+              </div>
+            </div>
+            <div class="status-grid">
+              <div>
+                <span>Hosting</span>
+                <strong>Cloudflare Pages</strong>
+              </div>
+              <div>
+                <span>Runtime</span>
+                <strong>Director LAN</strong>
+              </div>
+              <div>
+                <span>Cloud relay</span>
+                <strong>None</strong>
+              </div>
+              <div>
+                <span>Minimum OS</span>
+                <strong>3.3.0+</strong>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-grid" aria-label="C4Bridge setup">
+          <article class="panel panel-primary">
+            <div class="panel-heading">
+              <p class="eyebrow">FIRST SETUP</p>
+              <h2>Director address</h2>
+              <p>
+                Save the Director address you will use when the local C4Bridge API is enabled.
+                It stays in this browser only.
+              </p>
+            </div>
+
+            <form id="director-form" class="director-form">
+              <label for="director-host">Director IP or local hostname</label>
+              <div class="input-row">
+                <input
+                  id="director-host"
+                  name="director-host"
+                  type="text"
+                  inputmode="url"
+                  autocomplete="off"
+                  spellcheck="false"
+                  placeholder="192.168.1.50"
+                  aria-describedby="director-help"
+                />
+                <button class="button button-primary" type="submit">Save</button>
+              </div>
+              <p id="director-help" class="field-help">
+                Example: <code>192.168.1.50</code> or <code>director.local</code>
+              </p>
+              <p id="director-message" class="form-message" role="status" aria-live="polite"></p>
+            </form>
+          </article>
+
+          <article class="panel">
+            <p class="eyebrow">BROWSER CHECK</p>
+            <h2>Local access readiness</h2>
+            <dl class="diagnostic-list">
+              <div>
+                <dt>Secure context</dt>
+                <dd id="secure-context">Checking…</dd>
+              </div>
+              <div>
+                <dt>Service worker</dt>
+                <dd id="service-worker-status">Checking…</dd>
+              </div>
+              <div>
+                <dt>Saved Director</dt>
+                <dd id="saved-director">Not set</dd>
+              </div>
+            </dl>
+            <p class="panel-note">
+              When C4Bridge makes its first real LAN request, supported Chromium browsers can
+              request Local Network Access permission. C4Bridge will trigger that only from an
+              explicit user action.
+            </p>
+          </article>
+        </section>
+
+        <section class="architecture" aria-labelledby="architecture-title">
+          <p class="eyebrow">ARCHITECTURE</p>
+          <h2 id="architecture-title">Cloud-hosted UI. Local control path.</h2>
+          <div class="flow" role="list" aria-label="C4Bridge connection path">
+            <div class="flow-node" role="listitem">
+              <span>1</span>
+              <strong>c4bridge.io</strong>
+              <small>Static PWA on Cloudflare Pages</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">→</div>
+            <div class="flow-node" role="listitem">
+              <span>2</span>
+              <strong>Your browser</strong>
+              <small>Local Network Access permission</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">→</div>
+            <div class="flow-node" role="listitem">
+              <span>3</span>
+              <strong>C4Bridge.c4z</strong>
+              <small>Authenticated LAN API on Director</small>
+            </div>
+            <div class="flow-arrow" aria-hidden="true">→</div>
+            <div class="flow-node" role="listitem">
+              <span>4</span>
+              <strong>Control4</strong>
+              <small>DriverWorks + existing project</small>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <span>C4Bridge is independent and not affiliated with Control4 or Snap One.</span>
+        <a href="https://github.com/IsraelCIL/C4Bridge" rel="noreferrer">GitHub</a>
+      </footer>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -80,3 +80,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Release contents:** `C4Bridge.c4z`, `SHA256SUMS.txt`, and release notes.
 
 **Version source:** root `VERSION` file using semantic versioning. Versions with a prerelease suffix such as `-alpha.1` are published as prereleases.
+
+
+## ADR-015 — Start the PWA without a frontend framework
+
+**Decision:** The first C4Bridge PWA is plain HTML, CSS, and JavaScript hosted directly from the repository `web/` directory.
+
+**Why:** The current UI is small, this removes Node/framework dependencies from deployment, and it lets us prove the harder browser-to-LAN transport before committing to a larger frontend stack.
+
+**Cloudflare configuration:** root `web`, build command `exit 0`, output directory `.`.
+
+**Revisit:** A framework/build tool may be introduced later if the device dashboard, state management, routing, or component complexity justifies it.
