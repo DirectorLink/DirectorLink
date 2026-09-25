@@ -7,7 +7,7 @@
   <creator>C4Bridge contributors</creator>
   <created>09/25/2026 00:00</created>
   <modified>09/25/2026 00:00</modified>
-  <version>1</version>
+  <version>2</version>
 
   <control>lua_gen</control>
   <driver>DriverWorks</driver>
@@ -49,6 +49,24 @@
       </property>
       <property>
         <name>Discovery Summary</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Status</name>
+        <default>Offline</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Port</name>
+        <default>41999</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Token</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>

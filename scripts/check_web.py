@@ -79,6 +79,14 @@ def main():
     if 'requestUrl.origin !== self.location.origin' not in service_worker:
         fail("service worker must explicitly ignore cross-origin/LAN requests")
 
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    if "const API_PORT = 41999;" not in app:
+        fail("web app must use the documented alpha API port 41999")
+    if 'targetAddressSpace: "local"' not in app:
+        fail("web app must annotate local-network fetches")
+    if "Authorization:" not in app or "Bearer" not in app:
+        fail("web app must authenticate LAN API requests")
+
     print("OK: C4Bridge web/PWA shell validated")
 
 

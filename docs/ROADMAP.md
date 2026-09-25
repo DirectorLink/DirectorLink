@@ -23,18 +23,18 @@
 
 ## Milestone 2 — local API/security
 
-- [ ] Choose and prove browser-compatible LAN transport on OS 3.3+
-- [ ] Define pairing flow
+- [x] Implement first browser-compatible HTTP LAN transport spike on OS 3.3+
+- [ ] Define final pairing flow (alpha.2 uses manual per-install token)
 - [ ] Generate/store owner credential
-- [ ] Authenticate every request
+- [x] Authenticate alpha read-only requests with Bearer token
 - [ ] Implement protocol v1 methods:
-  - [ ] `system.info`
+  - [x] `system.info`
   - [ ] `discovery.refresh`
-  - [ ] `rooms.list`
-  - [ ] `devices.list`
+  - [x] `rooms.list`
+  - [x] `devices.list`
   - [ ] `devices.get`
   - [ ] light control methods
-- [ ] CORS / Local Network Access behavior
+- [ ] Validate CORS / Local Network Access behavior on real Director
 
 ## Milestone 3 — PWA
 

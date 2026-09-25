@@ -63,7 +63,7 @@ C4Bridge.c4z
 SHA256SUMS.txt
 ```
 
-The release version is stored in the repository root `VERSION` file. Updating `VERSION` on `main` triggers the release workflow, which:
+The user-facing semantic release version is stored in the repository root `VERSION` file. The Control4 driver metadata version is a separate monotonically increasing integer stored in `DRIVER_VERSION` and mirrored by `<version>` in `driver.xml`. Updating `VERSION` on `main` triggers the release workflow, which:
 
 1. verifies the source version matches `VERSION`;
 2. builds `C4Bridge.c4z`;

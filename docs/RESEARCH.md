@@ -79,3 +79,19 @@ WebSocket local-network restrictions are also covered by the Local Network Acces
 References:
 - https://developer.chrome.com/blog/local-network-access
 - https://developer.chrome.com/blog/chrome-147-beta
+
+
+## Browser-to-Director HTTP transport
+
+DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10 and can accept multiple TCP clients. C4Bridge alpha.2 uses it as a small HTTP/1.1 server with header delimiter `\r\n\r\n`.
+
+C4Bridge minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
+
+Reference:
+- https://control4.github.io/docs-driverworks-api/
+
+Chrome 142+ gates public-site requests to local/private addresses behind Local Network Access permission. Current Chrome can exempt known local destinations (private IP literals, `.local`, or fetch requests annotated with `targetAddressSpace: "local"`) from mixed-content blocking after the permission decision.
+
+Reference:
+- https://developer.chrome.com/blog/local-network-access
+- https://developer.chrome.com/release-notes/142

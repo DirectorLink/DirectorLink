@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build: **[C4Bridge v0.1.0-alpha.1](https://github.com/IsraelCIL/C4Bridge/releases/download/v0.1.0-alpha.1/C4Bridge.c4z)**
+Current alpha build after this integration lands: **C4Bridge v0.1.0-alpha.2**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -99,13 +99,19 @@ Control4 Director
 Existing Control4 devices
 ```
 
+## Live web app
+
+**https://app.c4bridge.io**
+
+The alpha.2 build connects this PWA directly to the C4Bridge driver on the user's LAN through an authenticated read-only HTTP API on port `41999`.
+
 ## Web app
 
 The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static application intended for Cloudflare Pages.
 
 Cloudflare setup instructions: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)
 
-The current web build includes the installable/offline application shell and Director-address onboarding. The browser-to-Director transport is intentionally disabled until the authenticated browser-compatible LAN endpoint is implemented in the driver.
+The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access request, Bearer-token authentication, and live read-only room/device discovery from the Director.
 
 ## First milestone
 
