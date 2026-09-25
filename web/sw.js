@@ -1,4 +1,4 @@
-const CACHE_NAME = "c4bridge-shell-v3";
+const CACHE_NAME = "c4bridge-shell-v4";
 const SHELL = [
   "/",
   "/index.html",
