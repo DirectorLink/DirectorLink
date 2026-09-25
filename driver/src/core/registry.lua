@@ -33,8 +33,34 @@ function Registry.replace(normalized)
     Registry.refreshedAt = os.time()
 end
 
+local function sortedList(values)
+    local result = {}
+    for _, value in pairs(values or {}) do
+        table.insert(result, value)
+    end
+
+    table.sort(result, function(a, b)
+        local aName = string.lower(tostring(a.name or ""))
+        local bName = string.lower(tostring(b.name or ""))
+        if aName == bName then
+            return tonumber(a.id or 0) < tonumber(b.id or 0)
+        end
+        return aName < bName
+    end)
+
+    return result
+end
+
 function Registry.getDevice(id)
     return Registry.devices[tonumber(id)]
+end
+
+function Registry.roomList()
+    return sortedList(Registry.rooms)
+end
+
+function Registry.deviceList()
+    return sortedList(Registry.devices)
 end
 
 function Registry.counts()
