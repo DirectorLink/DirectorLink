@@ -202,16 +202,16 @@ Implemented:
 
 ### Step 3 — Light V2 adapter
 
-Implemented in `v0.1.0-alpha.3`, pending real-system command validation:
+Implemented in `v0.1.0-alpha.4`, pending corrected real-system command validation:
 
 - Light V2 proxy detection
 - state variable `1000`
 - brightness variable `1001` when present
 - default-on brightness variable `1006` when present
 - variable subscriptions/live registry updates
-- normalized `on`
-- normalized `off`
-- normalized `set_brightness`
+- normalized `on` → Light V2 preset ID 1
+- normalized `off` → Light V2 preset ID 2
+- normalized `set_brightness` → `LIGHT_BRIGHTNESS_TARGET_PERCENT` + `RATE = 0`
 - dedicated `GET /v1/lights` endpoint
 - PWA Light controls
 
