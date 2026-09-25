@@ -53,6 +53,24 @@
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
+      <property>
+        <name>API Status</name>
+        <default>Offline</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Port</name>
+        <default>41999</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Token</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
     </properties>
   </config>
 
