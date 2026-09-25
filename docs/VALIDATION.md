@@ -97,3 +97,18 @@ C4Bridge alpha.5 used a different parameter shape. Alpha.6 changes the adapter t
 The snapshot showed both `C4Bridge.c4z` and `C4Bridge (1).c4z` installed. After reboot the project instance loaded the suffixed filename.
 
 Alpha.6 update validation must use a local file named exactly `C4Bridge.c4z` and inspect the new lifecycle diagnostics before rebooting.
+
+
+## 2026-09-25 — alpha.6 KNX dimmer trace
+
+The real Director snapshot confirms:
+
+- alpha.6 is loaded as C4Bridge device 572;
+- C4Bridge receives slider requests from the PWA;
+- C4Bridge dispatches `SET_BRIGHTNESS_TARGET PERCENT=<value>` to KNX-backed Light V2 proxies;
+- Director sends a payload to the KNX Tunneling Gateway immediately after each C4Bridge command;
+- the stock Control4 app uses the same command/parameter names but its broker serializes `PERCENT` as XML `type="number"`, while DriverWorks serializes C4Bridge's value as `type="INT"`;
+- the physical dimmer works from the stock app but not from the alpha.6 DriverWorks path;
+- KNX Light V2 variable 1001 does not provide reliable post-dim level feedback.
+
+Alpha.7 changes only KNX-backed dimmer brightness to the documented DriverWorks `RAMP_TO_LEVEL` path and marks brightness feedback unavailable for those devices.
