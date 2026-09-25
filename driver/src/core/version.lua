@@ -1,6 +1,6 @@
 local Version = {}
 
-Version.BRIDGE_VERSION = "0.1.0-alpha.5"
+Version.BRIDGE_VERSION = "0.1.0-alpha.6"
 Version.PROTOCOL_VERSION = 1
 Version.MIN_OS = { major = 3, minor = 3, patch = 0 }
 
