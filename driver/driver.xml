@@ -90,6 +90,18 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Pairing Code</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Pairing Status</name>
+        <default>Starting...</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>API Status</name>
         <default>Offline</default>
         <type>STRING</type>
