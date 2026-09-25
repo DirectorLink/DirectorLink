@@ -105,9 +105,10 @@ def check_light_adapter():
         "VARIABLE_STATE = 1000",
         "VARIABLE_BRIGHTNESS = 1001",
         'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
-        "LIGHT_BRIGHTNESS_TARGET = target",
         "LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId",
-        "RATE = 0",
+        'C4:SendToDevice(deviceId, "RAMP_TO_LEVEL"',
+        "LEVEL = target",
+        "TIME = 0",
         "C4:RegisterVariableListener",
     ]
 
