@@ -1,0 +1,71 @@
+# Architecture Decision Record
+
+This file records decisions that should not be silently changed.
+
+## ADR-001 — Director OS baseline
+
+**Decision:** Minimum supported version is **3.3.0**.
+
+**Why:** OS 3.3 provides a cleaner modern DriverWorks baseline while keeping compatibility with the older OS 3 family that C4Bridge targets.
+
+## ADR-002 — Installation is out of scope
+
+**Decision:** C4Bridge assumes `C4Bridge.c4z` is installed. The project does not care how the user obtained permission/access to install it.
+
+**Consequence:** No jailbreak dependency and no dealer-specific runtime dependency.
+
+## ADR-003 — Director is the runtime dependency
+
+**Decision:** C4Bridge talks to Director from inside a DriverWorks driver.
+
+**Rejected:** Building the core around Composer Pro or the external `/api/v1` Director REST interface.
+
+## ADR-004 — Cloudflare frontend, local control
+
+**Decision:** Host the PWA on Cloudflare Pages, but have the browser connect directly to C4Bridge on the LAN.
+
+**Consequence:** Browser Local Network Access permission and correct CORS/private-network handling are part of onboarding.
+
+## ADR-005 — LAN only in V1
+
+**Decision:** No C4Bridge-hosted remote-control relay in V1.
+
+## ADR-006 — One owner
+
+**Decision:** One paired owner identity/account in V1. Multi-user/roles are deferred.
+
+## ADR-007 — Adapter-based devices
+
+**Decision:** Normalize devices and add explicit proxy-family adapters. Unknown devices remain unsupported rather than receiving guessed commands.
+
+## ADR-008 — C4Bridge owns automation
+
+**Decision:** Scenes, schedules, and automations are C4Bridge-native. Do not import Composer programming/schedules/scenes.
+
+## ADR-009 — Internal scheduler
+
+**Decision:** Do not depend on the Composer Scheduler Agent as the primary automation engine. C4Bridge will persist schedules and execute actions itself using Director timers/time/location APIs.
+
+## ADR-010 — No automatic C4Z update in V1
+
+**Decision:** Updates are manual through Composer initially.
+
+## ADR-011 — Discovery source
+
+**Decision:** Prefer structured DriverWorks tables:
+- `C4:GetDevices({})`
+- `C4:GetProjectHierarchy()`
+
+rather than parsing the entire project XML when structured APIs already provide the required data.
+
+**Reason:** Less fragile and easier to normalize across versions.
+
+## ADR-012 — User-facing entity identity
+
+**Decision:** Proxy entities are the primary homeowner-facing devices. Backing protocol drivers are retained as relationship metadata and not shown as duplicate controllable entities.
+
+Standalone/combo drivers without proxy relationships may appear as unsupported entities.
+
+## ADR-013 — Apache-2.0
+
+**Decision:** C4Bridge uses Apache License 2.0.

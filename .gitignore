@@ -1,0 +1,5 @@
+# Local build/temp files
+build/
+*.tmp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,203 @@
+# C4Bridge Project Specification
+
+This file is the durable source of truth for the C4Bridge project. It exists so development can continue without relying on any previous chat or private context.
+
+## Product goal
+
+C4Bridge is an open-source, local-first management platform for **Control4 homeowners**.
+
+It is intended for homeowners who want straightforward day-to-day device control and automation without having to use the full Composer Pro interface for routine changes.
+
+C4Bridge is **not** a clone of Composer Pro and is not intended to replace advanced project engineering.
+
+## Core product boundary
+
+C4Bridge begins from one assumption:
+
+> `C4Bridge.c4z` is already installed in the Control4 project.
+
+How it was installed is outside the project scope. A homeowner may ask an integrator to install it, install it themselves if they have appropriate access, or use another installation workflow.
+
+After installation, C4Bridge depends on **Director**, not Composer.
+
+## Supported platform
+
+- Minimum Director OS: **3.3.0**
+- Target: **3.3.x and newer**, including later 3.x and 4.x/X4 where compatibility is confirmed
+- Public C4Bridge API must remain stable across Director versions
+- Director-version differences belong in the internal compatibility layer
+
+## V1 architecture
+
+```text
+Cloudflare Pages PWA
+        |
+        | static HTML / JS / CSS
+        v
+Browser
+        |
+        | Local Network Access permission
+        | authenticated direct LAN connection
+        v
+C4Bridge.c4z
+        |
+        | Control4 DriverWorks APIs
+        v
+Control4 Director
+        |
+        v
+Existing Control4 project/devices
+```
+
+Cloudflare is **not** a relay. Control commands and project data are not intended to pass through C4Bridge cloud infrastructure in V1.
+
+## V1 connectivity
+
+- LAN only
+- No remote-control cloud service
+- No Internet-exposed C4Bridge port
+- No port forwarding recommendation
+- Remote users can use their own VPN/Tailscale/WireGuard outside the scope of C4Bridge
+- Browser frontend is hosted on Cloudflare Pages and should become an installable/cacheable PWA
+
+## V1 authentication
+
+- One owner account only
+- First-use pairing flow
+- Authenticated API even on LAN
+- No default/shared password
+- Credentials must not depend on Control4 cloud credentials
+- Exact request-signing/session design will be frozen when the LAN transport is implemented
+
+## V1 device scope
+
+Initial device families:
+
+1. Lights
+2. HVAC / thermostat / climate
+3. Shades / blinds / motorized covers/windows
+
+Policy for everything else:
+
+- Discover it
+- Show it
+- Mark it as **unsupported**
+- Add adapters one device/proxy family at a time
+
+Do not send guessed raw commands to unknown devices.
+
+## Control4 abstraction
+
+The public API must never require a client to know Control4 command names.
+
+Example:
+
+```text
+C4Bridge API:
+set_brightness(70)
+
+Internal adapter:
+Control4 proxy-specific command
+```
+
+The normalized entity model should preserve:
+
+- proxy ID
+- proxy driver filename
+- room
+- protocol driver relationship
+- protocol driver ID/name/filename
+- normalized kind
+- supported/unsupported status
+- capabilities/state when adapters implement them
+
+## Project ownership
+
+C4Bridge owns its own:
+
+- scenes/routines
+- schedules
+- automations
+
+C4Bridge does **not** import or depend on:
+
+- Composer programming
+- Composer schedules
+- Composer scenes
+- Composer agents as the primary automation engine
+
+## V1 scheduler scope
+
+Later V1 scheduler work will support:
+
+- fixed clock time
+- day-of-week rules
+- sunrise
+- sunset
+- positive/negative sunrise/sunset offsets
+- persistent schedules that survive Director restart
+- C4Bridge scenes as schedule actions
+
+The scheduler will run inside C4Bridge/Director so a PC, browser, or phone does not need to remain online.
+
+## Solar data
+
+Use project location/time-zone data exposed by Director. Solar calculations should run locally so ordinary schedules do not require Internet access.
+
+## Not in V1
+
+- adding/removing arbitrary Control4 drivers
+- editing bindings
+- Composer-style programming editor
+- importing Composer programming
+- Control4 project upgrades
+- C4Bridge cloud remote-access relay
+- automatic `.c4z` self-update
+- generic execution of raw commands against unknown devices
+
+## Optional/deferred extensions
+
+A plugin architecture may be added later for niche functionality. A Hebrew/Jewish calendar module was discussed but is **explicitly excluded from C4Bridge core and V1**; if ever implemented, it should be optional.
+
+## Licensing
+
+Apache License 2.0.
+
+## Current implementation milestone
+
+### Step 1 — bootstrap/package
+
+Complete:
+
+- repository initialized
+- Apache-2.0
+- DriverWorks `.c4z` source structure
+- minimum OS metadata
+- runtime OS version gate
+- architecture and protocol documentation
+
+### Step 2 — project discovery
+
+Implemented:
+
+- Director/project metadata
+- project hierarchy
+- all devices via `C4:GetDevices({})`
+- hierarchy normalization
+- room fallback from device records
+- proxy/protocol relationship preservation
+- known proxy classification
+- normalized in-memory registry
+- Composer-visible discovery status
+
+### Step 3 — next
+
+Implement the first real device adapter:
+
+- Light V2
+- state read/subscription
+- on/off
+- brightness
+- normalized C4Bridge light actions
+
+Do not start scheduler/PWA work until the first end-to-end light control path is proven.

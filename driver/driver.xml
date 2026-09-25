@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<devicedata>
+  <copyright>Copyright 2026 C4Bridge contributors</copyright>
+  <manufacturer>C4Bridge</manufacturer>
+  <name>C4Bridge</name>
+  <model>C4Bridge</model>
+  <creator>C4Bridge contributors</creator>
+  <created>09/25/2026 00:00</created>
+  <modified>09/25/2026 00:00</modified>
+  <version>1</version>
+
+  <control>lua_gen</control>
+  <driver>DriverWorks</driver>
+  <minimum_os_version>3.3.0</minimum_os_version>
+  <auto_update>false</auto_update>
+
+  <config>
+    <script file="driver.lua"></script>
+    <properties>
+      <property>
+        <name>Status</name>
+        <default>Starting...</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Bridge Version</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Director Version</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>System Type</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Project Location</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Discovery Summary</name>
+        <default></default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+    </properties>
+  </config>
+
+  <combo>true</combo>
+  <proxies>
+    <proxy>C4Bridge</proxy>
+  </proxies>
+</devicedata>

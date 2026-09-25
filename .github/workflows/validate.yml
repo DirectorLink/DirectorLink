@@ -1,0 +1,27 @@
+name: Validate C4Bridge
+
+on:
+  push:
+    branches: ["main", "dev/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Rebuild driver
+        run: python scripts/build.py
+
+      - name: Validate package
+        run: python scripts/check_package.py

@@ -22,6 +22,53 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - Director location/timezone used for solar scheduling
 - No automatic `.c4z` self-update in V1
 
+## Installation
+
+C4Bridge itself does not depend on Composer Pro during normal operation. Composer is only one way to install the `C4Bridge.c4z` driver into a Control4 project.
+
+### 1. Download C4Bridge
+
+Download the current test build: **[C4Bridge.c4z](https://raw.githubusercontent.com/IsraelCIL/C4Bridge/main/dist/C4Bridge.c4z)**
+
+### 2. Install Composer Pro
+
+If you need Composer Pro for the initial driver installation, this project currently provides the following Control4-hosted installer link:
+
+**Composer Pro 2026.3.18.506**
+
+https://update2.control4.com/release/2026.3.18.506-res+Composer/win/ComposerPro-2026.3.18.506-res.exe
+
+C4Bridge does not depend on this specific Composer version after the driver has been installed.
+
+### 3. Add the driver to Composer
+
+1. Open Composer Pro and connect to your Director.
+2. In the top menu, choose **Driver → Add or Update Driver**.
+3. Select `C4Bridge.c4z`.
+4. Go to **System Design**.
+5. Select any room in the project tree. C4Bridge only needs one instance in the project; the room is not functionally important.
+6. Open the **Search** tab in the Items pane.
+7. Make sure **Local** drivers are included and search for **C4Bridge**.
+8. Double-click or drag **C4Bridge** into the selected room.
+9. Select the C4Bridge device and check its Properties.
+
+For the current discovery build, a successful install should show:
+
+- **Bridge Version:** current C4Bridge build
+- **Status:** `Ready (discovery complete)`
+- **Director Version:** your Director OS version
+- **System Type:** controller type reported by Director
+- **Project Location:** project city/country when configured
+- **Discovery Summary:** number of rooms, normalized devices, protocol drivers, recognized proxy types, and unsupported devices
+
+If the status shows an error, capture the C4Bridge Lua log and open a GitHub issue.
+
+### Updating C4Bridge
+
+Automatic self-update is intentionally **not** part of V1.
+
+For now, update the installed driver manually through Composer Pro using the newer `C4Bridge.c4z`. Do not remove and re-add the project instance unless an update specifically requires it.
+
 ## Design principle
 
 C4Bridge depends on **Director**, not Composer.
@@ -63,3 +110,8 @@ Early development. The protocol and driver internals are not yet stable.
 C4Bridge is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
 
 Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
+
+
+## License
+
+C4Bridge is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

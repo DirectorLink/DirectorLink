@@ -1,0 +1,7 @@
+<Driver type="c4z" name="C4Bridge" squishLua="false">
+  <Items>
+    <Item type="file" name="driver.xml" />
+    <Item type="file" name="driver.lua" />
+    <Item type="dir" name="src" recurse="true" />
+  </Items>
+</Driver>
