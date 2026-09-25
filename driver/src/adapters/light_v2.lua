@@ -80,6 +80,7 @@ function LightV2.initialize(device)
     device.capabilities = {
         on_off = true,
         brightness = dimmable,
+        brightness_control = dimmable and not knxDimmer,
         brightness_feedback = dimmable and not knxDimmer,
     }
     device.state = {
@@ -87,7 +88,7 @@ function LightV2.initialize(device)
         brightness = brightness,
     }
     device.actions = { "on", "off" }
-    if dimmable then
+    if dimmable and not knxDimmer then
         table.insert(device.actions, "set_brightness")
     end
 
@@ -256,6 +257,13 @@ function LightV2.execute(device, action, params)
             }
         end
 
+        if info.knx_dimmer then
+            return false, {
+                code = "ACTION_NOT_SUPPORTED",
+                message = "KNX percentage dimming is temporarily disabled pending issue #11",
+            }
+        end
+
         local target = clampPercent(params and (params.value or params.brightness))
         if target == nil then
             return false, {
@@ -264,15 +272,9 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        if info.knx_dimmer then
-            sent, sendError = sendRampToLevel(device.id, target)
-            result.control_path = "knx_ramp_to_level"
-            result.command = "RAMP_TO_LEVEL"
-        else
-            sent, sendError = sendBrightnessPercent(device.id, target)
-            result.control_path = "light_v2_percent"
-            result.command = "SET_BRIGHTNESS_TARGET"
-        end
+        sent, sendError = sendBrightnessPercent(device.id, target)
+        result.control_path = "light_v2_percent"
+        result.command = "SET_BRIGHTNESS_TARGET"
         result.requested_brightness = target
     else
         return false, {
