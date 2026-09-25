@@ -120,6 +120,27 @@ def check_light_adapter():
         if token not in source:
             fail(f"Light V2 adapter missing required contract: {token}")
 
+    climate_path = DRIVER / "src" / "adapters" / "thermostat_v2.lua"
+    if not climate_path.is_file():
+        fail("Thermostat V2 adapter is missing")
+
+    climate = climate_path.read_text(encoding="utf-8")
+    for token in (
+        "VARIABLE_HVAC_MODE = 1104",
+        "VARIABLE_FAN_MODE = 1105",
+        "VARIABLE_HVAC_STATE = 1107",
+        "VARIABLE_IS_CONNECTED = 1112",
+        "VARIABLE_HVAC_MODES_LIST = 1120",
+        "VARIABLE_TEMPERATURE_C = 1131",
+        "VARIABLE_SINGLE_SETPOINT_F = 1149",
+        'C4:SendToDevice(deviceId, "SET_MODE_HVAC"',
+        'C4:SendToDevice(deviceId, "SET_MODE_FAN"',
+        'C4:SendToDevice(deviceId, "SET_SETPOINT_SINGLE"',
+        "CELSIUS = target",
+    ):
+        if token not in climate:
+            fail(f"Thermostat V2 adapter missing required contract: {token}")
+
     pairing_path = DRIVER / "src" / "auth" / "pairing.lua"
     if not pairing_path.is_file():
         fail("owner pairing module is missing")
@@ -139,6 +160,8 @@ def check_light_adapter():
     server = (DRIVER / "src" / "server" / "http.lua").read_text(encoding="utf-8")
     if "/v1/lights" not in server:
         fail("LAN API is missing /v1/lights")
+    if "/v1/climate" not in server:
+        fail("LAN API is missing /v1/climate")
     if "/v1/devices/(%d+)/actions/" not in server:
         fail("LAN API is missing normalized device action routing")
     if "/v1/diagnostics" not in server:
@@ -163,6 +186,7 @@ def check_light_adapter():
         "Last Destroy Time",
         "Pairing Code",
         "Pairing Status",
+        "Supported Climate",
     ):
         if name not in property_names:
             fail(f"driver.xml missing lifecycle diagnostic property: {name}")
