@@ -11,12 +11,14 @@ local online = false
 
 local STATUS_TEXT = {
     [200] = "OK",
+    [202] = "Accepted",
     [204] = "No Content",
     [400] = "Bad Request",
     [401] = "Unauthorized",
     [403] = "Forbidden",
     [404] = "Not Found",
     [405] = "Method Not Allowed",
+    [409] = "Conflict",
     [500] = "Internal Server Error",
 }
 
@@ -28,6 +30,30 @@ end
 
 local function trim(value)
     return (tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function urlDecode(value)
+    value = tostring(value or ""):gsub("+", " ")
+    return (value:gsub("%%(%x%x)", function(hex)
+        return string.char(tonumber(hex, 16))
+    end))
+end
+
+local function parseQuery(target)
+    local result = {}
+    local query = target:match("%?(.*)$")
+    if not query or query == "" then
+        return result
+    end
+
+    for pair in query:gmatch("[^&]+") do
+        local key, value = pair:match("^([^=]+)=?(.*)$")
+        if key then
+            result[urlDecode(key)] = urlDecode(value)
+        end
+    end
+
+    return result
 end
 
 local function parseRequest(raw)
@@ -46,12 +72,11 @@ local function parseRequest(raw)
         headers[string.lower(trim(name))] = trim(value)
     end
 
-    local path = target:match("^([^?]+)") or target
-
     return {
         method = method,
         target = target,
-        path = path,
+        path = target:match("^([^?]+)") or target,
+        query = parseQuery(target),
         headers = headers,
         origin = headers["origin"],
     }
@@ -139,7 +164,7 @@ local function systemInfo()
             version = config.version.BRIDGE_VERSION,
             protocol = config.version.PROTOCOL_VERSION,
             api_port = API_PORT,
-            api_mode = "read-only-alpha",
+            api_mode = "light-control-alpha",
         },
         director = {
             version = config.directorVersion,
@@ -172,11 +197,67 @@ local function deviceList()
     }
 end
 
-local ROUTES = {
+local function lightList()
+    return {
+        ok = true,
+        lights = config.registry.lightList(),
+    }
+end
+
+local GET_ROUTES = {
     ["/v1/system/info"] = systemInfo,
     ["/v1/rooms"] = roomList,
     ["/v1/devices"] = deviceList,
+    ["/v1/lights"] = lightList,
 }
+
+local function actionErrorStatus(error)
+    local code = error and error.code
+    if code == "DEVICE_NOT_FOUND" then
+        return 404
+    end
+    if code == "DEVICE_NOT_SUPPORTED" or code == "ACTION_NOT_SUPPORTED" then
+        return 409
+    end
+    if code == "INVALID_BRIGHTNESS" then
+        return 400
+    end
+    return 500
+end
+
+local function handleDeviceAction(handle, request, origin)
+    local id, action = request.path:match("^/v1/devices/(%d+)/actions/([a-z_]+)$")
+    if not id or not action then
+        return false
+    end
+
+    if not config.actions or not config.actions.execute then
+        sendResponse(handle, 500, {
+            ok = false,
+            error = {
+                code = "ACTION_ENGINE_UNAVAILABLE",
+                message = "C4Bridge action engine is unavailable",
+            },
+        }, origin)
+        return true
+    end
+
+    local ok, result = config.actions.execute(tonumber(id), action, request.query)
+    if not ok then
+        sendResponse(handle, actionErrorStatus(result), {
+            ok = false,
+            error = result,
+        }, origin)
+        return true
+    end
+
+    sendResponse(handle, 202, {
+        ok = true,
+        accepted = result,
+    }, origin)
+
+    return true
+end
 
 function HttpServer.port()
     return API_PORT
@@ -252,19 +333,18 @@ function HttpServer.onData(handle, raw)
 
     if request.method == "OPTIONS" then
         sendResponse(handle, 204, nil, origin, {
-            "Access-Control-Allow-Methods: GET, OPTIONS",
+            "Access-Control-Allow-Methods: GET, POST, OPTIONS",
             "Access-Control-Allow-Headers: Authorization, Content-Type",
             "Access-Control-Max-Age: 600",
-            -- Harmless for current LNA and useful for older PNA-era Chromium.
             "Access-Control-Allow-Private-Network: true",
         })
         return
     end
 
-    if request.method ~= "GET" then
+    if request.method ~= "GET" and request.method ~= "POST" then
         sendResponse(handle, 405, {
             ok = false,
-            error = { code = "METHOD_NOT_ALLOWED", message = "Only GET is available in this alpha API" },
+            error = { code = "METHOD_NOT_ALLOWED", message = "Only GET and POST are available" },
         }, origin)
         return
     end
@@ -274,7 +354,19 @@ function HttpServer.onData(handle, raw)
         return
     end
 
-    local handler = ROUTES[request.path]
+    if request.method == "POST" then
+        if handleDeviceAction(handle, request, origin) then
+            return
+        end
+
+        sendResponse(handle, 404, {
+            ok = false,
+            error = { code = "NOT_FOUND", message = "Unknown C4Bridge action route" },
+        }, origin)
+        return
+    end
+
+    local handler = GET_ROUTES[request.path]
     if not handler then
         sendResponse(handle, 404, {
             ok = false,
