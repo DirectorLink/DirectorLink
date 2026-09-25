@@ -457,7 +457,7 @@ function renderLights(lights) {
 
     controls.append(offButton, onButton);
 
-    if (light.capabilities?.brightness) {
+    if (light.capabilities?.brightness && light.capabilities?.brightness_control !== false) {
       const brightnessWrap = document.createElement("label");
       brightnessWrap.className = "brightness-control";
 
