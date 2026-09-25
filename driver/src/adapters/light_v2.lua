@@ -80,9 +80,31 @@ function LightV2.initialize(device)
 
     -- Register only variables that actually exist. RegisterVariableListener invokes
     -- OnWatchedVariableChanged immediately after successful registration.
-    C4:RegisterVariableListener(device.id, VARIABLE_STATE)
+    local stateListenerOk, stateListenerError = pcall(function()
+        C4:RegisterVariableListener(device.id, VARIABLE_STATE)
+    end)
+
+    if not stateListenerOk then
+        tracked[device.id] = nil
+        device.supported = false
+        device.adapter_error = "Unable to watch Light State: " .. tostring(stateListenerError)
+        return false, device.adapter_error
+    end
+
     if dimmable then
-        C4:RegisterVariableListener(device.id, VARIABLE_BRIGHTNESS)
+        local brightnessListenerOk, brightnessListenerError = pcall(function()
+            C4:RegisterVariableListener(device.id, VARIABLE_BRIGHTNESS)
+        end)
+
+        if not brightnessListenerOk then
+            pcall(function()
+                C4:UnregisterVariableListener(device.id, VARIABLE_STATE)
+            end)
+            tracked[device.id] = nil
+            device.supported = false
+            device.adapter_error = "Unable to watch brightness: " .. tostring(brightnessListenerError)
+            return false, device.adapter_error
+        end
     end
 
     return true
