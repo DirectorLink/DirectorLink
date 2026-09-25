@@ -2,50 +2,71 @@
 
 ## Current release
 
-`v0.1.0-alpha.7`
+`v0.1.0-alpha.8`
 
-This build specifically tests the DriverWorks compatibility path for KNX dimmers.
+This build validates the one-owner pairing flow.
 
-## Update test
+## 1. Update C4Bridge
 
-Use a local file named exactly `C4Bridge.c4z`.
-
-Right-click the existing C4Bridge instance -> **Update Driver**.
-
-Before rebooting, check:
-
-- Bridge Version
-- Reload Counter
-- Last Init Type
-- Last Init Time
-- Last Destroy Type
-- Last Destroy Time
-
-If hot update succeeds, expected:
+Use a local file named exactly:
 
 ```text
-Bridge Version: 0.1.0-alpha.7
-Last Init Type: DIT_UPDATING
+C4Bridge.c4z
 ```
 
-## KNX dimmer test
+Update the existing C4Bridge instance.
 
-Choose one light backed by `knx_dimmer.c4i`.
+Because the separate update/reload issue is still open, if the running version does not change, record the lifecycle properties before rebooting/re-adding.
 
-1. Verify On/Off still works.
-2. Set brightness to **30%**.
-3. Confirm physical brightness.
-4. Set brightness to **70%**.
-5. Confirm physical brightness.
+Expected:
 
-Alpha.7 sends:
+- Bridge Version: `0.1.0-alpha.8`
+- Pairing Code: 8 digits
+- Pairing Status: ready
+- API Token: `Hidden - use Pairing Code`
+- API Status: `Online - paired owner alpha`
 
-```text
-RAMP_TO_LEVEL
-LEVEL = 30 (or 70)
-TIME = 0
-```
+## 2. Pair a browser
 
-For these KNX dimmers, C4Bridge does not require variable 1001 to confirm the requested level because the real snapshot showed the stock Control4 app also does not receive brightness-variable feedback after percentage changes.
+1. Open `https://app.c4bridge.io`.
+2. Enter the Director IP.
+3. Enter the 8-digit **Pairing Code** from Composer.
+4. Click **Pair & connect**.
+5. Allow Chrome Local Network Access if prompted.
 
-If physical dimming still fails, collect one snapshot after one C4Bridge 30% command and one Control4-app 30% command so the two KNX gateway paths can be compared directly.
+Expected:
+
+- browser connects;
+- project data loads;
+- Composer's Pairing Code changes immediately after success;
+- Pairing Status increments the paired-browser count;
+- the long owner credential is not displayed to the user.
+
+## 3. Reconnect without Composer
+
+Reload the page or close/reopen it.
+
+Expected:
+
+- the browser shows **Paired in this browser**;
+- no pairing code is needed;
+- **Connect** uses the saved owner credential.
+
+## 4. Invalid code
+
+From a different browser/private window, enter a wrong code.
+
+Expected:
+
+- pairing is rejected;
+- the long owner credential is never returned;
+- repeated failures are rate-limited.
+
+## 5. Existing controls
+
+Confirm one already-known light still works with:
+
+- On
+- Off
+
+Percentage dimming on the tested KNX path is deferred and is not part of alpha.8 acceptance.
