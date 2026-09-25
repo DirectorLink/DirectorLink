@@ -54,6 +54,12 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Supported Lights</name>
+        <default>0</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>API Status</name>
         <default>Offline</default>
         <type>STRING</type>
