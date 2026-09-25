@@ -62,12 +62,15 @@ Cloudflare is **not** a relay. Control commands and project data are not intende
 
 ## V1 authentication
 
-- One owner account only
-- First-use pairing flow
+- One owner identity only
+- First-use local pairing flow
 - Authenticated API even on LAN
 - No default/shared password
-- Credentials must not depend on Control4 cloud credentials
-- Exact request-signing/session design will be frozen when the LAN transport is implemented
+- Credentials do not depend on Control4 cloud credentials
+- Director stores one random owner Bearer credential encrypted
+- Composer exposes only an 8-digit short pairing code, never the long credential
+- Pairing codes expire after 15 minutes, rotate after successful pairing, and are rate-limited
+- A paired browser stores the long owner credential locally and reuses it for normal LAN API requests
 
 ## V1 device scope
 
@@ -254,4 +257,4 @@ Routes:
 - `GET /v1/rooms`
 - `GET /v1/devices`
 
-This is an integration spike, not the final pairing UX. Successful real-Director testing will inform the final owner pairing/session design.
+The manual-token flow was the alpha.2 integration spike. Alpha.8 replaces it with the V1 one-owner pairing flow while retaining Bearer authentication internally.
