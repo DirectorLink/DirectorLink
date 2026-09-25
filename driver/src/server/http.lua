@@ -206,6 +206,13 @@ local function lightList()
     }
 end
 
+local function climateList()
+    return {
+        ok = true,
+        climate = config.registry.climateList(),
+    }
+end
+
 local function diagnosticsList()
     local entries = {}
     if config.diagnostics and config.diagnostics.list then
@@ -223,6 +230,7 @@ local GET_ROUTES = {
     ["/v1/rooms"] = roomList,
     ["/v1/devices"] = deviceList,
     ["/v1/lights"] = lightList,
+    ["/v1/climate"] = climateList,
     ["/v1/diagnostics"] = diagnosticsList,
 }
 
