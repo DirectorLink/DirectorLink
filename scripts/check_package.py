@@ -12,6 +12,7 @@ DRIVER = ROOT / "driver"
 PACKAGE = ROOT / "dist" / "C4Bridge.c4z"
 VERSION_FILE = ROOT / "VERSION"
 VERSION_SOURCE = DRIVER / "src" / "core" / "version.lua"
+DRIVER_VERSION_FILE = ROOT / "DRIVER_VERSION"
 
 
 def fail(message):
@@ -66,6 +67,20 @@ def check_version():
         fail(f"driver source version does not match VERSION ({version})")
 
 
+def check_driver_version():
+    if not DRIVER_VERSION_FILE.is_file():
+        fail("DRIVER_VERSION file is missing")
+
+    expected = DRIVER_VERSION_FILE.read_text(encoding="utf-8").strip()
+    if not expected.isdigit():
+        fail(f"DRIVER_VERSION must be an integer, got {expected!r}")
+
+    root = ET.parse(DRIVER / "driver.xml").getroot()
+    actual = (root.findtext("version") or "").strip()
+    if actual != expected:
+        fail(f"driver.xml version {actual!r} does not match DRIVER_VERSION {expected!r}")
+
+
 def check_requires(files):
     module_paths = set(files)
     pattern = re.compile(r"""require\s*\(\s*["']([^"']+)["']\s*\)""")
@@ -104,6 +119,7 @@ def main():
     files = source_files()
     check_xml()
     check_version()
+    check_driver_version()
     check_requires(files)
     check_package(files)
     print(f"OK: validated {len(files)} packaged files")
