@@ -210,7 +210,7 @@ Implemented in `v0.1.0-alpha.7`, with On/Off validated and KNX DriverWorks dimme
 - variable subscriptions/live registry updates
 - normalized `on` → Light V2 preset ID 1
 - normalized `off` → Light V2 preset ID 2
-- normalized `set_brightness` → `SET_BRIGHTNESS_TARGET` with `PERCENT = 0..100`
+- normalized `set_brightness` → adapter-selected compatibility path; KNX dimmers use `RAMP_TO_LEVEL` with `LEVEL` + `TIME = 0`, other Light V2 dimmers use `SET_BRIGHTNESS_TARGET` + `PERCENT`
 - dedicated `GET /v1/lights` endpoint
 - PWA Light controls
 
