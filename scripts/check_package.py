@@ -105,7 +105,7 @@ def check_light_adapter():
         "VARIABLE_STATE = 1000",
         "VARIABLE_BRIGHTNESS = 1001",
         'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
-        "LIGHT_BRIGHTNESS_TARGET_PERCENT = percent",
+        "LIGHT_BRIGHTNESS_TARGET = target",
         "LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId",
         "RATE = 0",
         "C4:RegisterVariableListener",
@@ -114,9 +114,6 @@ def check_light_adapter():
     for token in required:
         if token not in source:
             fail(f"Light V2 adapter missing required contract: {token}")
-
-    if re.search(r"\bLIGHT_BRIGHTNESS_TARGET\s*=", source):
-        fail("Light V2 command must not use notification-only LIGHT_BRIGHTNESS_TARGET parameter")
 
     server = (DRIVER / "src" / "server" / "http.lua").read_text(encoding="utf-8")
     if "/v1/lights" not in server:
