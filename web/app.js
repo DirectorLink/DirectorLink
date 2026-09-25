@@ -23,6 +23,9 @@ const deviceList = document.querySelector("#device-list");
 const lightList = document.querySelector("#light-list");
 const lightActionMessage = document.querySelector("#light-action-message");
 const refreshLightsButton = document.querySelector("#refresh-lights-button");
+const climateList = document.querySelector("#climate-list");
+const climateMessage = document.querySelector("#climate-message");
+const refreshClimateButton = document.querySelector("#refresh-climate-button");
 
 let installPrompt = null;
 let activeSession = null;
@@ -53,6 +56,14 @@ function setLightMessage(message, type = "") {
   lightActionMessage.className = "form-message";
   if (type) {
     lightActionMessage.classList.add(type);
+  }
+}
+
+function setClimateMessage(message, type = "") {
+  climateMessage.textContent = message;
+  climateMessage.className = "form-message";
+  if (type) {
+    climateMessage.classList.add(type);
   }
 }
 
@@ -171,6 +182,7 @@ function renderSummary(info) {
     ["Devices", info.discovery?.devices],
     ["Recognized", info.discovery?.recognized],
     ["Lights", info.discovery?.supported_lights],
+    ["Climate", info.discovery?.supported_climate],
   ];
 
   resultSummary.replaceChildren(
@@ -482,11 +494,123 @@ function renderLights(lights) {
   }
 }
 
+function temperatureLabel(value, scale) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "—";
+  }
+
+  const rounded = Math.round(number * 10) / 10;
+  return `${rounded}°${scale || ""}`;
+}
+
+function renderClimate(devices) {
+  climateList.replaceChildren();
+
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No supported Thermostat V2 devices were initialized.";
+    climateList.append(empty);
+    return;
+  }
+
+  for (const climate of devices) {
+    const item = document.createElement("article");
+    item.className = "climate-card";
+
+    const heading = document.createElement("div");
+    heading.className = "climate-card-heading";
+
+    const identity = document.createElement("div");
+    const name = document.createElement("strong");
+    const meta = document.createElement("small");
+
+    name.textContent = text(climate.name, `Thermostat ${climate.id}`);
+    meta.textContent = [
+      climate.room_name || (climate.room_id ? `Room ${climate.room_id}` : null),
+      `ID ${climate.id}`,
+      climate.state?.connected === false ? "Offline" : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+
+    identity.append(name, meta);
+
+    const badge = document.createElement("span");
+    badge.className = "kind-badge supported";
+    badge.textContent = "read-only";
+
+    heading.append(identity, badge);
+
+    const grid = document.createElement("div");
+    grid.className = "climate-state-grid";
+
+    const fields = [
+      ["Temperature", temperatureLabel(climate.state?.temperature, climate.state?.scale)],
+      ["HVAC mode", text(climate.state?.hvac_mode)],
+      ["HVAC state", text(climate.state?.hvac_state)],
+      ["Heat setpoint", temperatureLabel(climate.state?.heat_setpoint, climate.state?.scale)],
+      ["Cool setpoint", temperatureLabel(climate.state?.cool_setpoint, climate.state?.scale)],
+      ["Fan mode", text(climate.state?.fan_mode)],
+    ];
+
+    for (const [label, value] of fields) {
+      const field = document.createElement("div");
+      const key = document.createElement("span");
+      const val = document.createElement("strong");
+      key.textContent = label;
+      val.textContent = value;
+      field.append(key, val);
+      grid.append(field);
+    }
+
+    const modes = Array.isArray(climate.state?.allowed_hvac_modes)
+      ? climate.state.allowed_hvac_modes
+      : [];
+
+    if (modes.length) {
+      const modeNote = document.createElement("p");
+      modeNote.className = "climate-modes";
+      modeNote.textContent = `Available HVAC modes: ${modes.join(", ")}`;
+      item.append(heading, grid, modeNote);
+    } else {
+      item.append(heading, grid);
+    }
+
+    climateList.append(item);
+  }
+}
+
+async function refreshClimate(showMessage = false) {
+  if (!activeSession) {
+    return [];
+  }
+
+  const response = await apiRequest(
+    activeSession.host,
+    activeSession.token,
+    "/v1/climate"
+  );
+  const climate = Array.isArray(response.climate) ? response.climate : [];
+  renderClimate(climate);
+
+  if (showMessage) {
+    setClimateMessage(
+      `Refreshed ${climate.length} thermostat state${climate.length === 1 ? "" : "s"}.`,
+      "success"
+    );
+  }
+
+  return climate;
+}
+
 async function connectAndTest() {
   projectResult.classList.add("hidden");
   connectButton.disabled = true;
   setDirectorMessage("");
   setLightMessage("");
+  setClimateMessage("");
   setConnectionState(
     "Connecting to Director…",
     "Chrome may ask for Local Network Access permission.",
@@ -517,10 +641,11 @@ async function connectAndTest() {
 
     const info = await apiRequest(host, token, "/v1/system/info");
 
-    const [roomsResponse, devicesResponse, lightsResponse] = await Promise.all([
+    const [roomsResponse, devicesResponse, lightsResponse, climateResponse] = await Promise.all([
       apiRequest(host, token, "/v1/rooms"),
       apiRequest(host, token, "/v1/devices"),
       apiRequest(host, token, "/v1/lights"),
+      apiRequest(host, token, "/v1/climate"),
     ]);
 
     const rooms = Array.isArray(roomsResponse.rooms) ? roomsResponse.rooms : [];
@@ -530,17 +655,21 @@ async function connectAndTest() {
     const lights = Array.isArray(lightsResponse.lights)
       ? lightsResponse.lights
       : [];
+    const climate = Array.isArray(climateResponse.climate)
+      ? climateResponse.climate
+      : [];
 
     connectedVersion.textContent = `v${text(info.bridge?.version, "?")}`;
     renderSummary(info);
     renderLights(lights);
+    renderClimate(climate);
     renderRooms(rooms);
     renderDevices(devices);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.length} rooms, ${devices.length} normalized devices, and ${lights.length} controllable lights returned directly from Director.`,
+      `${rooms.length} rooms, ${devices.length} normalized devices, ${lights.length} supported lights, and ${climate.length} thermostat${climate.length === 1 ? "" : "s"} returned directly from Director.`,
       "Connected"
     );
     setDirectorMessage("Director connection succeeded.", "success");
@@ -598,6 +727,18 @@ refreshLightsButton.addEventListener("click", async () => {
     setLightMessage(error.message || "Unable to refresh light states.", "error");
   } finally {
     refreshLightsButton.disabled = false;
+  }
+});
+
+refreshClimateButton.addEventListener("click", async () => {
+  refreshClimateButton.disabled = true;
+  setClimateMessage("Refreshing thermostat states…");
+  try {
+    await refreshClimate(true);
+  } catch (error) {
+    setClimateMessage(error.message || "Unable to refresh thermostat states.", "error");
+  } finally {
+    refreshClimateButton.disabled = false;
   }
 });
 
