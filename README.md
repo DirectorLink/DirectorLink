@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.6**
+Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.7**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -105,7 +105,7 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.6 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, a Director-log-verified dimmer command, and update diagnostics on port `41999`.
+The alpha.7 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, KNX-specific DriverWorks dimmer compatibility, and update diagnostics on port `41999`.
 
 ## Web app
 

@@ -108,6 +108,11 @@ def check_light_adapter():
         "LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId",
         'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
         "PERCENT = target",
+        'C4:SendToDevice(deviceId, "RAMP_TO_LEVEL"',
+        "LEVEL = target",
+        "TIME = 0",
+        "knx_dimmer.c4i",
+        "brightness_feedback",
         "C4:RegisterVariableListener",
     ]
 

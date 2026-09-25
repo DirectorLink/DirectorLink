@@ -94,6 +94,8 @@ def main():
         fail("web app must expose normalized brightness control")
     if "waitForLightConfirmation" not in app:
         fail("web app must confirm commands using Director-reported light state")
+    if "brightness_feedback" not in app:
+        fail("web app must handle dimmers without brightness feedback")
 
     index = (WEB / "index.html").read_text(encoding="utf-8")
     if 'id="light-list"' not in index:

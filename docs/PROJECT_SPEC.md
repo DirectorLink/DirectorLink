@@ -202,7 +202,7 @@ Implemented:
 
 ### Step 3 — Light V2 adapter
 
-Implemented in `v0.1.0-alpha.6`, with On/Off validated and log-verified dimmer validation pending:
+Implemented in `v0.1.0-alpha.7`, with On/Off validated and KNX DriverWorks dimmer validation pending:
 
 - Light V2 proxy detection
 - state variable `1000`
@@ -210,7 +210,7 @@ Implemented in `v0.1.0-alpha.6`, with On/Off validated and log-verified dimmer v
 - variable subscriptions/live registry updates
 - normalized `on` → Light V2 preset ID 1
 - normalized `off` → Light V2 preset ID 2
-- normalized `set_brightness` → `SET_BRIGHTNESS_TARGET` with `PERCENT = 0..100`
+- normalized `set_brightness` → adapter-selected compatibility path; KNX dimmers use `RAMP_TO_LEVEL` with `LEVEL` + `TIME = 0`, other Light V2 dimmers use `SET_BRIGHTNESS_TARGET` + `PERCENT`
 - dedicated `GET /v1/lights` endpoint
 - PWA Light controls
 
