@@ -57,12 +57,6 @@ local function recordInit(driverInitType)
     persistValue(LAST_INIT_TYPE_KEY, initType)
     persistValue(LAST_INIT_TIME_KEY, initTime)
 
-    updateProperty("Reload Counter", count)
-    updateProperty("Last Init Type", initType)
-    updateProperty("Last Init Time", initTime)
-    updateProperty("Last Destroy Type", readPersisted(LAST_DESTROY_TYPE_KEY, ""))
-    updateProperty("Last Destroy Time", readPersisted(LAST_DESTROY_TIME_KEY, ""))
-
     Diagnostics.info("lifecycle", "driver init", {
         type = initType,
         time = initTime,
@@ -86,6 +80,14 @@ end
 
 updateProperty = function(name, value)
     C4:UpdateProperty(name, tostring(value or ""))
+end
+
+local function updateLifecycleProperties()
+    updateProperty("Reload Counter", readPersisted(RELOAD_COUNT_KEY, "0"))
+    updateProperty("Last Init Type", readPersisted(LAST_INIT_TYPE_KEY, ""))
+    updateProperty("Last Init Time", readPersisted(LAST_INIT_TIME_KEY, ""))
+    updateProperty("Last Destroy Type", readPersisted(LAST_DESTROY_TYPE_KEY, ""))
+    updateProperty("Last Destroy Time", readPersisted(LAST_DESTROY_TIME_KEY, ""))
 end
 
 local function readDirectorVersion()
@@ -193,6 +195,7 @@ function OnDriverLateInit(driverInitType)
 
     updateProperty("Bridge Version", Version.BRIDGE_VERSION)
     updateProperty("Director Version", STATE.directorVersion or "Unknown")
+    updateLifecycleProperties()
 
     if not STATE.supported then
         updateProperty("Status", "Unsupported Director OS (requires 3.3.0+)")
