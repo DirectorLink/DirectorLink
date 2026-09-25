@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build: **[C4Bridge v0.1.0-alpha.1](https://github.com/IsraelCIL/C4Bridge/releases/download/v0.1.0-alpha.1/C4Bridge.c4z)**
+Current alpha build after this integration lands: **C4Bridge v0.1.0-alpha.2**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -98,6 +98,12 @@ Control4 Director
         v
 Existing Control4 devices
 ```
+
+## Live web app
+
+**https://app.c4bridge.io**
+
+The alpha.2 build connects this PWA directly to the C4Bridge driver on the user's LAN through an authenticated read-only HTTP API on port `41999`.
 
 ## Web app
 
