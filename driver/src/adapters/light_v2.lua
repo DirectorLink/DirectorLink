@@ -181,30 +181,6 @@ local function sendBrightnessPercent(deviceId, target)
     return true
 end
 
-local function sendRampToLevel(deviceId, target)
-    -- Control4 explicitly documents this as the DriverWorks-to-light form.
-    -- Use it for KNX dimmers where the broker/app PERCENT path serializes
-    -- differently from C4:SendToDevice and real testing showed no physical change.
-    Diagnostics.info("light_command", "sending KNX dimmer ramp", {
-        device_id = deviceId,
-        command = "RAMP_TO_LEVEL",
-        params = { LEVEL = target, TIME = 0 },
-    })
-
-    local ok, err = pcall(function()
-        C4:SendToDevice(deviceId, "RAMP_TO_LEVEL", {
-            LEVEL = target,
-            TIME = 0,
-        })
-    end)
-
-    if not ok then
-        return false, tostring(err)
-    end
-
-    return true
-end
-
 local function sendBrightnessPreset(deviceId, presetId)
     Diagnostics.info("light_command", "sending light preset", {
         device_id = deviceId,
