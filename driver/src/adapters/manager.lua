@@ -52,7 +52,7 @@ function Manager.initialize(deviceRegistry, logFunction)
                     attached[tonumber(id)] = nil
                     device.supported = false
                     device.adapter_error = tostring(err or "adapter initialization failed")
-                    log("unsupported light " .. tostring(id) .. ": " .. tostring(device.adapter_error))
+                    log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
                 else
                     initialized = initialized + 1
                     initializedCounts.total = initializedCounts.total + 1
