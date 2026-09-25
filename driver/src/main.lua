@@ -19,6 +19,8 @@ local STATE = {
     apiToken = nil,
 }
 
+local updateProperty
+
 local function log(message)
     print("[C4Bridge] " .. tostring(message))
     Diagnostics.info("driver", tostring(message))
@@ -82,7 +84,7 @@ local function recordDestroy(driverInitType)
     })
 end
 
-local function updateProperty(name, value)
+updateProperty = function(name, value)
     C4:UpdateProperty(name, tostring(value or ""))
 end
 
