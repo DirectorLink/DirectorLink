@@ -40,6 +40,16 @@ local function safeGetVariable(deviceId, variableId)
     return nil
 end
 
+local function hasProtocolDriver(device, driverName)
+    local expected = string.lower(tostring(driverName or ""))
+    for _, protocol in ipairs(device.protocols or {}) do
+        if string.lower(tostring(protocol.driver or "")) == expected then
+            return true
+        end
+    end
+    return false
+end
+
 function LightV2.matches(device)
     local driver = string.lower(tostring(device and device.proxy and device.proxy.driver or ""))
     return driver == "light_v2.c4i" or driver == "light_v2.c4z"
@@ -58,8 +68,11 @@ function LightV2.initialize(device)
     local brightness = dimmable and clampPercent(brightnessValue) or nil
     local power = boolValue(stateValue)
 
+    local knxDimmer = dimmable and hasProtocolDriver(device, "knx_dimmer.c4i")
+
     tracked[device.id] = {
         dimmable = dimmable,
+        knx_dimmer = knxDimmer,
     }
 
     device.supported = true
@@ -67,6 +80,7 @@ function LightV2.initialize(device)
     device.capabilities = {
         on_off = true,
         brightness = dimmable,
+        brightness_feedback = dimmable and not knxDimmer,
     }
     device.state = {
         power = power,
@@ -147,9 +161,7 @@ function LightV2.onVariableChanged(device, variableId, value)
 end
 
 local function sendBrightnessPercent(deviceId, target)
-    -- Real-system director logs show the native Control4/Composer path for this
-    -- Light V2 proxy sends SET_BRIGHTNESS_TARGET with PERCENT=<0..100>.
-    Diagnostics.info("light_command", "sending dimmer target", {
+    Diagnostics.info("light_command", "sending brightness target", {
         device_id = deviceId,
         command = "SET_BRIGHTNESS_TARGET",
         params = { PERCENT = target },
@@ -158,6 +170,30 @@ local function sendBrightnessPercent(deviceId, target)
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
             PERCENT = target,
+        })
+    end)
+
+    if not ok then
+        return false, tostring(err)
+    end
+
+    return true
+end
+
+local function sendRampToLevel(deviceId, target)
+    -- Control4 explicitly documents this as the DriverWorks-to-light form.
+    -- Use it for KNX dimmers where the broker/app PERCENT path serializes
+    -- differently from C4:SendToDevice and real testing showed no physical change.
+    Diagnostics.info("light_command", "sending KNX dimmer ramp", {
+        device_id = deviceId,
+        command = "RAMP_TO_LEVEL",
+        params = { LEVEL = target, TIME = 0 },
+    })
+
+    local ok, err = pcall(function()
+        C4:SendToDevice(deviceId, "RAMP_TO_LEVEL", {
+            LEVEL = target,
+            TIME = 0,
         })
     end)
 
@@ -228,9 +264,16 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        sent, sendError = sendBrightnessPercent(device.id, target)
+        if info.knx_dimmer then
+            sent, sendError = sendRampToLevel(device.id, target)
+            result.control_path = "knx_ramp_to_level"
+            result.command = "RAMP_TO_LEVEL"
+        else
+            sent, sendError = sendBrightnessPercent(device.id, target)
+            result.control_path = "light_v2_percent"
+            result.command = "SET_BRIGHTNESS_TARGET"
+        end
         result.requested_brightness = target
-        result.command_parameter = "PERCENT"
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
