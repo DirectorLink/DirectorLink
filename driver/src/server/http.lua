@@ -33,7 +33,7 @@ local function trim(value)
 end
 
 local function urlDecode(value)
-    value = tostring(value or ""):gsub("+", " ")
+    value = tostring(value or ""):gsub("%+", " ")
     return (value:gsub("%%(%x%x)", function(hex)
         return string.char(tonumber(hex, 16))
     end))
