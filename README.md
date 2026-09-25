@@ -111,7 +111,7 @@ The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static a
 
 Cloudflare setup instructions: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)
 
-The current web build includes the installable/offline application shell and Director-address onboarding. The browser-to-Director transport is intentionally disabled until the authenticated browser-compatible LAN endpoint is implemented in the driver.
+The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access request, Bearer-token authentication, and live read-only room/device discovery from the Director.
 
 ## First milestone
 
