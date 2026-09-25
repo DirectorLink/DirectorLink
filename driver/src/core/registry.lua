@@ -75,11 +75,24 @@ function Registry.lightList()
     return sortedList(lights)
 end
 
+function Registry.climateList()
+    local climate = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "climate" and device.supported == true then
+            climate[id] = device
+        end
+    end
+
+    return sortedList(climate)
+end
+
 function Registry.counts()
     local recognized = 0
     local unsupported = 0
     local supported = 0
     local supportedLights = 0
+    local supportedClimate = 0
 
     for _, device in pairs(Registry.devices) do
         if device.recognized then
@@ -92,6 +105,8 @@ function Registry.counts()
             supported = supported + 1
             if device.kind == "light" then
                 supportedLights = supportedLights + 1
+            elseif device.kind == "climate" then
+                supportedClimate = supportedClimate + 1
             end
         end
     end
@@ -105,6 +120,7 @@ function Registry.counts()
         unsupported = unsupported,
         supported = supported,
         supported_lights = supportedLights,
+        supported_climate = supportedClimate,
     }
 end
 
