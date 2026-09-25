@@ -1,14 +1,17 @@
 local LightV2 = require("src.adapters.light_v2")
+local ThermostatV2 = require("src.adapters.thermostat_v2")
 
 local Manager = {}
 
 local adapters = {
     LightV2,
+    ThermostatV2,
 }
 
 local attached = {}
 local registry = nil
 local logger = nil
+local initializedCounts = { total = 0, light = 0, climate = 0 }
 
 local function log(message)
     if logger then
@@ -20,6 +23,7 @@ function Manager.initialize(deviceRegistry, logFunction)
     registry = deviceRegistry
     logger = logFunction
     attached = {}
+    initializedCounts = { total = 0, light = 0, climate = 0 }
 
     pcall(function()
         C4:UnregisterAllVariableListeners()
@@ -48,17 +52,30 @@ function Manager.initialize(deviceRegistry, logFunction)
                     attached[tonumber(id)] = nil
                     device.supported = false
                     device.adapter_error = tostring(err or "adapter initialization failed")
-                    log("unsupported light " .. tostring(id) .. ": " .. tostring(device.adapter_error))
+                    log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
                 else
                     initialized = initialized + 1
+                    initializedCounts.total = initializedCounts.total + 1
+                    local kind = tostring(device.kind or "")
+                    if initializedCounts[kind] ~= nil then
+                        initializedCounts[kind] = initializedCounts[kind] + 1
+                    end
                 end
                 break
             end
         end
     end
 
-    log("initialized " .. tostring(initialized) .. " controllable light proxies")
+    log("initialized " .. tostring(initialized) .. " controllable proxies")
     return initialized
+end
+
+function Manager.counts()
+    return {
+        total = initializedCounts.total,
+        light = initializedCounts.light,
+        climate = initializedCounts.climate,
+    }
 end
 
 function Manager.onVariableChanged(deviceId, variableId, value)
@@ -129,6 +146,7 @@ function Manager.shutdown()
 
     attached = {}
     registry = nil
+    initializedCounts = { total = 0, light = 0, climate = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

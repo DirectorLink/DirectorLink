@@ -23,6 +23,9 @@ const deviceList = document.querySelector("#device-list");
 const lightList = document.querySelector("#light-list");
 const lightActionMessage = document.querySelector("#light-action-message");
 const refreshLightsButton = document.querySelector("#refresh-lights-button");
+const climateList = document.querySelector("#climate-list");
+const climateActionMessage = document.querySelector("#climate-action-message");
+const refreshClimateButton = document.querySelector("#refresh-climate-button");
 
 let installPrompt = null;
 let activeSession = null;
@@ -171,6 +174,7 @@ function renderSummary(info) {
     ["Devices", info.discovery?.devices],
     ["Recognized", info.discovery?.recognized],
     ["Lights", info.discovery?.supported_lights],
+    ["Climate", info.discovery?.supported_climate],
   ];
 
   resultSummary.replaceChildren(
@@ -482,11 +486,150 @@ function renderLights(lights) {
   }
 }
 
+
+function setClimateMessage(message, type = "") {
+  climateActionMessage.textContent = message;
+  climateActionMessage.className = "form-message";
+  if (type) climateActionMessage.classList.add(type);
+}
+
+function climateStateLabel(device) {
+  const current = Number(device.state?.current_temperature_c);
+  const target = Number(device.state?.target_temperature_c);
+  const parts = [];
+  if (Number.isFinite(current)) parts.push(`Current ${current}°C`);
+  if (Number.isFinite(target)) parts.push(`Target ${target}°C`);
+  if (device.state?.hvac_mode) parts.push(String(device.state.hvac_mode));
+  if (device.state?.fan_mode) parts.push(`fan ${device.state.fan_mode}`);
+  return parts.join(" · ") || "State unavailable";
+}
+
+async function refreshClimate(showMessage = false) {
+  if (!activeSession) return [];
+  const response = await apiRequest(activeSession.host, activeSession.token, "/v1/climate");
+  const devices = Array.isArray(response.climate) ? response.climate : [];
+  renderClimate(devices);
+  if (showMessage) setClimateMessage(`Refreshed ${devices.length} climate devices.`, "success");
+  return devices;
+}
+
+async function runClimateAction(device, action, value, control) {
+  if (!activeSession) {
+    setClimateMessage("Connect to Director first.", "error");
+    return;
+  }
+  if (control) control.disabled = true;
+  setClimateMessage(`Sending climate command to ${device.name}…`);
+  try {
+    await apiRequest(
+      activeSession.host,
+      activeSession.token,
+      `/v1/devices/${device.id}/actions/${action}?value=${encodeURIComponent(value)}`,
+      { method: "POST" }
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    await refreshClimate(false);
+    setClimateMessage(`${device.name}: command sent to Director.`, "success");
+  } catch (error) {
+    setClimateMessage(`${device.name}: ${error.message || "climate command failed"}`, "error");
+  } finally {
+    if (control) control.disabled = false;
+  }
+}
+
+function renderClimate(devices) {
+  climateList.replaceChildren();
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No supported Thermostat V2 devices were initialized.";
+    climateList.append(empty);
+    return;
+  }
+
+  for (const device of devices) {
+    const row = document.createElement("div");
+    row.className = "climate-row";
+
+    const identity = document.createElement("div");
+    identity.className = "light-identity";
+    const name = document.createElement("strong");
+    name.textContent = text(device.name, `Climate ${device.id}`);
+    const meta = document.createElement("small");
+    meta.textContent = [
+      device.room_name || null,
+      `ID ${device.id}`,
+      device.state?.connected === false ? "offline" : "online",
+    ].filter(Boolean).join(" · ");
+    const state = document.createElement("span");
+    state.className = "light-state";
+    state.textContent = climateStateLabel(device);
+    identity.append(name, meta, state);
+
+    const controls = document.createElement("div");
+    controls.className = "climate-controls";
+
+    const modeSelect = document.createElement("select");
+    modeSelect.className = "climate-select";
+    for (const mode of device.capabilities?.hvac_modes || []) {
+      const option = document.createElement("option");
+      option.value = String(mode).toLowerCase();
+      option.textContent = String(mode);
+      option.selected = String(device.state?.hvac_mode || "").toLowerCase() === option.value;
+      modeSelect.append(option);
+    }
+    modeSelect.addEventListener("change", () =>
+      runClimateAction(device, "set_hvac_mode", modeSelect.value, modeSelect)
+    );
+    controls.append(modeSelect);
+
+    const fanModes = device.capabilities?.fan_modes || [];
+    if (fanModes.length) {
+      const fanSelect = document.createElement("select");
+      fanSelect.className = "climate-select";
+      for (const mode of fanModes) {
+        const option = document.createElement("option");
+        option.value = String(mode).toLowerCase();
+        option.textContent = String(mode);
+        option.selected = String(device.state?.fan_mode || "").toLowerCase() === option.value;
+        fanSelect.append(option);
+      }
+      fanSelect.addEventListener("change", () =>
+        runClimateAction(device, "set_fan_mode", fanSelect.value, fanSelect)
+      );
+      controls.append(fanSelect);
+    }
+
+    const temp = document.createElement("input");
+    temp.className = "climate-temp";
+    temp.type = "number";
+    temp.min = String(device.capabilities?.target_temperature_min_c ?? 16);
+    temp.max = String(device.capabilities?.target_temperature_max_c ?? 32);
+    temp.step = "1";
+    temp.value = Number.isFinite(Number(device.state?.target_temperature_c))
+      ? String(Math.round(Number(device.state.target_temperature_c)))
+      : "22";
+
+    const setButton = document.createElement("button");
+    setButton.type = "button";
+    setButton.className = "button light-button";
+    setButton.textContent = "Set °C";
+    setButton.addEventListener("click", () =>
+      runClimateAction(device, "set_temperature", temp.value, setButton)
+    );
+
+    controls.append(temp, setButton);
+    row.append(identity, controls);
+    climateList.append(row);
+  }
+}
+
 async function connectAndTest() {
   projectResult.classList.add("hidden");
   connectButton.disabled = true;
   setDirectorMessage("");
   setLightMessage("");
+  setClimateMessage("");
   setConnectionState(
     "Connecting to Director…",
     "Chrome may ask for Local Network Access permission.",
@@ -517,10 +660,11 @@ async function connectAndTest() {
 
     const info = await apiRequest(host, token, "/v1/system/info");
 
-    const [roomsResponse, devicesResponse, lightsResponse] = await Promise.all([
+    const [roomsResponse, devicesResponse, lightsResponse, climateResponse] = await Promise.all([
       apiRequest(host, token, "/v1/rooms"),
       apiRequest(host, token, "/v1/devices"),
       apiRequest(host, token, "/v1/lights"),
+      apiRequest(host, token, "/v1/climate"),
     ]);
 
     const rooms = Array.isArray(roomsResponse.rooms) ? roomsResponse.rooms : [];
@@ -530,17 +674,21 @@ async function connectAndTest() {
     const lights = Array.isArray(lightsResponse.lights)
       ? lightsResponse.lights
       : [];
+    const climate = Array.isArray(climateResponse.climate)
+      ? climateResponse.climate
+      : [];
 
     connectedVersion.textContent = `v${text(info.bridge?.version, "?")}`;
     renderSummary(info);
     renderLights(lights);
+    renderClimate(climate);
     renderRooms(rooms);
     renderDevices(devices);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.length} rooms, ${devices.length} normalized devices, and ${lights.length} controllable lights returned directly from Director.`,
+      `${rooms.length} rooms, ${devices.length} normalized devices, ${lights.length} lights, and ${climate.length} climate devices returned directly from Director.`,
       "Connected"
     );
     setDirectorMessage("Director connection succeeded.", "success");
@@ -588,6 +736,18 @@ directorForm.addEventListener("submit", (event) => {
 });
 
 connectButton.addEventListener("click", connectAndTest);
+
+refreshClimateButton.addEventListener("click", async () => {
+  refreshClimateButton.disabled = true;
+  setClimateMessage("Refreshing climate state…");
+  try {
+    await refreshClimate(true);
+  } catch (error) {
+    setClimateMessage(error.message || "Unable to refresh climate state.", "error");
+  } finally {
+    refreshClimateButton.disabled = false;
+  }
+});
 
 refreshLightsButton.addEventListener("click", async () => {
   refreshLightsButton.disabled = true;

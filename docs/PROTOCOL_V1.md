@@ -89,6 +89,7 @@ Read:
 - `GET /v1/rooms`
 - `GET /v1/devices`
 - `GET /v1/lights`
+- `GET /v1/climate`
 - `GET /v1/diagnostics` (authenticated alpha diagnostics; recent lifecycle/command/state trace)
 
 Pairing:
@@ -108,3 +109,10 @@ Light actions:
 These route names are C4Bridge semantics. Clients must never send raw DriverWorks/Control4 command names.
 
 Every route except `POST /v1/pair` requires the paired owner Bearer credential. The owner credential is generated with `C4:UUID("RANDOM")`, persisted encrypted on Director, and stored only in the paired browser. Composer shows only the short rotating pairing code; the long credential is not displayed.
+
+
+Climate actions:
+
+- `POST /v1/devices/{id}/actions/set_hvac_mode?value=off|heat|cool`
+- `POST /v1/devices/{id}/actions/set_fan_mode?value=low|medium|high`
+- `POST /v1/devices/{id}/actions/set_temperature?value=<celsius>`

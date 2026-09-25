@@ -30,7 +30,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build after this fix lands: **C4Bridge v0.1.0-alpha.8**
+Current alpha build after this change lands: **C4Bridge v0.1.0-alpha.9**
 
 Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
 
@@ -105,7 +105,7 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.8 build adds one-owner local pairing: Composer shows a short rotating Pairing Code, while the long encrypted owner credential stays hidden and is stored only by paired browsers.
+The alpha.9 build keeps one-owner pairing and adds the first Thermostat V2 climate adapter with live state, HVAC mode, fan mode, and Celsius single-setpoint control.
 
 ## Web app
 

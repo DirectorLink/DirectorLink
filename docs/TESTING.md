@@ -2,71 +2,64 @@
 
 ## Current release
 
-`v0.1.0-alpha.8`
+`v0.1.0-alpha.9`
 
-This build validates the one-owner pairing flow.
+This build validates Thermostat V2 state and HVAC commands.
 
-## 1. Update C4Bridge
+## Update
 
-Use a local file named exactly:
+Use a local file named exactly `C4Bridge.c4z`.
 
-```text
-C4Bridge.c4z
-```
+Expected after the new driver is actually loaded:
 
-Update the existing C4Bridge instance.
-
-Because the separate update/reload issue is still open, if the running version does not change, record the lifecycle properties before rebooting/re-adding.
-
-Expected:
-
-- Bridge Version: `0.1.0-alpha.8`
-- Pairing Code: 8 digits
-- Pairing Status: ready
-- API Token: `Hidden - use Pairing Code`
+- Bridge Version: `0.1.0-alpha.9`
+- Supported Climate: greater than zero
 - API Status: `Online - pairing enabled`
 
-## 2. Pair a browser
+Owner pairing from alpha.8 should continue working.
 
-1. Open `https://app.c4bridge.io`.
-2. Enter the Director IP.
-3. Enter the 8-digit **Pairing Code** from Composer.
-4. Click **Pair & connect**.
-5. Allow Chrome Local Network Access if prompted.
+## HVAC panel
+
+Hard-refresh `https://app.c4bridge.io` and connect using the already-paired browser.
 
 Expected:
 
-- browser connects;
-- project data loads;
-- Composer's Pairing Code changes immediately after success;
-- Pairing Status increments the paired-browser count;
-- the long owner credential is not displayed to the user.
+- a new HVAC panel appears;
+- Thermostat V2 devices are listed;
+- current temperature, target temperature, HVAC mode and fan mode are visible where supported.
 
-## 3. Reconnect without Composer
+## Test one AC zone first
 
-Reload the page or close/reopen it.
+Use one known visible AC zone.
+
+1. Set HVAC mode to Off and confirm the real Control4 state.
+2. Set mode to Cool and confirm it changes.
+3. Change target temperature to 22°C and confirm.
+4. Change fan from Low to Medium and back.
+
+Do not test every zone until one known AC zone works end-to-end.
+
+## Heat-only zone
+
+After the AC test succeeds, open one floor-heating thermostat.
 
 Expected:
 
-- the browser shows **Paired in this browser**;
-- no pairing code is needed;
-- **Connect** uses the saved owner credential.
+- HVAC modes should not show Cool;
+- no AC-style fan controls should be presented;
+- target temperature can extend higher than normal AC zones.
 
-## 4. Invalid code
+## Internal mapping
 
-From a different browser/private window, enter a wrong code.
+```text
+set_hvac_mode(cool)
+  -> SET_MODE_HVAC { MODE = "Cool" }
 
-Expected:
+set_fan_mode(medium)
+  -> SET_MODE_FAN { MODE = "Medium" }
 
-- pairing is rejected;
-- the long owner credential is never returned;
-- repeated failures are rate-limited.
+set_temperature(22)
+  -> SET_SETPOINT_SINGLE { CELSIUS = 22 }
+```
 
-## 5. Existing controls
-
-Confirm one already-known light still works with:
-
-- On
-- Off
-
-Percentage dimming on the tested KNX path is deferred and is not part of alpha.8 acceptance.
+If a command fails, capture a snapshot immediately after one C4Bridge command and one Control4-app command on the same thermostat.

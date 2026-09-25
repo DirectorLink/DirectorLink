@@ -94,6 +94,11 @@ def main():
         fail("web app must persist the paired owner credential locally")
     if '"/v1/lights"' not in app:
         fail("web app must load normalized lights")
+    if '"/v1/climate"' not in app:
+        fail("web app must load normalized climate devices")
+    for action in ("set_hvac_mode", "set_fan_mode", "set_temperature"):
+        if action not in app:
+            fail(f"web app missing climate action: {action}")
     if '{ method: "POST" }' not in app:
         fail("web app must use POST for device actions")
     if "set_brightness" not in app:
@@ -106,6 +111,8 @@ def main():
     index = (WEB / "index.html").read_text(encoding="utf-8")
     if 'id="light-list"' not in index:
         fail("web app is missing the Light V2 control panel")
+    if 'id="climate-list"' not in index:
+        fail("web app is missing the climate control panel")
     if 'id="pairing-code"' not in index:
         fail("web app is missing the pairing-code input")
     if 'id="api-token"' in index:

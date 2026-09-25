@@ -210,13 +210,15 @@ function OnDriverLateInit(driverInitType)
     Registry.reset()
     Registry.replace(normalized)
 
-    local supportedLights = AdapterManager.initialize(Registry, log)
+    AdapterManager.initialize(Registry, log)
+    local adapterCounts = AdapterManager.counts()
 
     local metadata = Registry.metadata
     updateProperty("System Type", metadata.systemType or "Unknown")
     updateProperty("Project Location", projectLocation(metadata))
     updateProperty("Discovery Summary", discoverySummary())
-    updateProperty("Supported Lights", supportedLights)
+    updateProperty("Supported Lights", adapterCounts.light)
+    updateProperty("Supported Climate", adapterCounts.climate)
     local pairingOk, pairingError = Pairing.initialize({
         updateProperty = updateProperty,
         log = log,
@@ -229,7 +231,7 @@ function OnDriverLateInit(driverInitType)
         return
     end
 
-    updateProperty("Status", "Ready (light adapter initialized)")
+    updateProperty("Status", "Ready (device adapters initialized)")
 
     log("discovery complete: " .. discoverySummary())
 
