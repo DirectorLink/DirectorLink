@@ -258,3 +258,29 @@ Routes:
 - `GET /v1/devices`
 
 The manual-token flow was the alpha.2 integration spike. Alpha.8 replaces it with the V1 one-owner pairing flow while retaining Bearer authentication internally.
+
+
+### Thermostat V2 — alpha.9
+
+The first climate adapter is implemented against the real Director command shapes captured from the stock Control4 UI.
+
+State currently normalized from Thermostat V2 includes:
+- current temperature in Celsius
+- single target setpoint
+- HVAC mode
+- HVAC state
+- fan mode where applicable
+- connection state
+- allowed HVAC mode list
+
+Normalized actions:
+- `set_hvac_mode`
+- `set_fan_mode`
+- `set_temperature`
+
+Internal commands used on the real test system:
+- `SET_MODE_HVAC { MODE = ... }`
+- `SET_MODE_FAN { MODE = ... }`
+- `SET_SETPOINT_SINGLE { CELSIUS = ... }`
+
+C4Bridge exposes only actions supported by the normalized device capabilities. Heat-only zones do not receive cooling controls.
