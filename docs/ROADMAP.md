@@ -53,7 +53,7 @@
 
 ## Milestone 4 — more adapters
 
-- [ ] Climate / thermostat
+- [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [ ] Cover / blind / motorized window
 - [ ] Expand unsupported-device diagnostics
 
