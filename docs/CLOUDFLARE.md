@@ -5,7 +5,7 @@ C4Bridge uses Cloudflare Pages only to host the static PWA. Cloudflare is **not*
 ## Target architecture
 
 ```text
-c4bridge.io
+app.c4bridge.io
     |
     | HTTPS static assets
     v
@@ -52,14 +52,14 @@ After the first successful Pages deployment:
 
 1. Open the Pages project.
 2. Go to **Custom domains**.
-3. Add **c4bridge.io**.
+3. Add **app.c4bridge.io**.
 4. Because the domain is already managed in the same Cloudflare account, allow Cloudflare to configure the required DNS record.
-5. Optionally add **www.c4bridge.io**.
+5. Optionally add **www.app.c4bridge.io**.
 
 The canonical production origin for the application should be:
 
 ```text
-https://c4bridge.io
+https://app.app.c4bridge.io
 ```
 
 ## Build watch paths
