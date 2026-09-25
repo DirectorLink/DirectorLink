@@ -113,7 +113,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 - variable 1001 = Light Brightness Percent when the device is dimmable
 - variable 1006 = Default On Preset Brightness when available
 
-**Control contract:** On/Off use `SET_BRIGHTNESS_TARGET` with static preset IDs 1/2 and are validated on a real Director. Explicit brightness uses `SET_BRIGHTNESS_TARGET` with `PERCENT = 0..100`, matching the exact command captured in the real Director logs for the tested Light V2 proxy.
+**Control contract:** On/Off use `SET_BRIGHTNESS_TARGET` with static preset IDs 1/2 and are validated on a real Director. Explicit brightness is adapter-selected: `knx_dimmer.c4i` uses DriverWorks-documented `RAMP_TO_LEVEL` (`LEVEL`, `TIME = 0`); other Light V2 dimmers currently use `SET_BRIGHTNESS_TARGET` with `PERCENT`.
 
 **Why:** The proxy is Control4's abstraction boundary. It lets C4Bridge support Control4, Zigbee, Z-Wave and third-party lighting drivers through one documented interface instead of learning each protocol driver's private command set.
 
