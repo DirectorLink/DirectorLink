@@ -19,8 +19,12 @@ const connectedVersion = document.querySelector("#connected-version");
 const resultSummary = document.querySelector("#result-summary");
 const roomList = document.querySelector("#room-list");
 const deviceList = document.querySelector("#device-list");
+const lightList = document.querySelector("#light-list");
+const lightActionMessage = document.querySelector("#light-action-message");
+const refreshLightsButton = document.querySelector("#refresh-lights-button");
 
 let installPrompt = null;
+let activeSession = null;
 
 function normalizeDirectorHost(value) {
   let host = value.trim();
@@ -40,6 +44,14 @@ function setDirectorMessage(message, type = "") {
   directorMessage.className = "form-message";
   if (type) {
     directorMessage.classList.add(type);
+  }
+}
+
+function setLightMessage(message, type = "") {
+  lightActionMessage.textContent = message;
+  lightActionMessage.className = "form-message";
+  if (type) {
+    lightActionMessage.classList.add(type);
   }
 }
 
@@ -87,13 +99,13 @@ function apiUrl(host, path) {
   return `http://${host}:${API_PORT}${path}`;
 }
 
-async function apiFetch(host, token, path) {
+async function apiRequest(host, token, path, options = {}) {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 8000);
 
   try {
     const response = await fetch(apiUrl(host, path), {
-      method: "GET",
+      method: options.method || "GET",
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -109,6 +121,7 @@ async function apiFetch(host, token, path) {
         body?.error?.message || `C4Bridge returned HTTP ${response.status}`;
       const error = new Error(message);
       error.status = response.status;
+      error.code = body?.error?.code;
       throw error;
     }
 
@@ -133,6 +146,7 @@ function renderSummary(info) {
     ["Rooms", info.discovery?.rooms],
     ["Devices", info.discovery?.devices],
     ["Recognized", info.discovery?.recognized],
+    ["Lights", info.discovery?.supported_lights],
   ];
 
   resultSummary.replaceChildren(
@@ -204,8 +218,8 @@ function renderDevices(devices) {
       .join(" · ");
 
     const badge = document.createElement("span");
-    badge.className = `kind-badge ${device.recognized ? "recognized" : ""}`;
-    badge.textContent = text(device.kind, "unsupported");
+    badge.className = `kind-badge ${device.supported ? "supported" : device.recognized ? "recognized" : ""}`;
+    badge.textContent = device.supported ? "supported" : text(device.kind, "unsupported");
 
     main.append(name, meta);
     item.append(main, badge);
@@ -213,10 +227,180 @@ function renderDevices(devices) {
   }
 }
 
+function lightStateLabel(light) {
+  const power = light.state?.power === true;
+  const brightness = Number(light.state?.brightness);
+
+  if (light.capabilities?.brightness && Number.isFinite(brightness)) {
+    return `${power ? "On" : "Off"} · ${brightness}%`;
+  }
+
+  return power ? "On" : "Off";
+}
+
+async function refreshLights(showMessage = false) {
+  if (!activeSession) {
+    return;
+  }
+
+  const response = await apiRequest(
+    activeSession.host,
+    activeSession.token,
+    "/v1/lights"
+  );
+  const lights = Array.isArray(response.lights) ? response.lights : [];
+  renderLights(lights);
+
+  if (showMessage) {
+    setLightMessage(`Refreshed ${lights.length} light states.`, "success");
+  }
+}
+
+async function runLightAction(light, action, value, control) {
+  if (!activeSession) {
+    setLightMessage("Connect to Director first.", "error");
+    return;
+  }
+
+  const previousDisabled = control?.disabled;
+  if (control) {
+    control.disabled = true;
+  }
+
+  const suffix =
+    action === "set_brightness"
+      ? `?value=${encodeURIComponent(value)}`
+      : "";
+
+  setLightMessage(
+    action === "set_brightness"
+      ? `Setting ${light.name} to ${value}%…`
+      : `Turning ${light.name} ${action}…`
+  );
+
+  try {
+    await apiRequest(
+      activeSession.host,
+      activeSession.token,
+      `/v1/devices/${light.id}/actions/${action}${suffix}`,
+      { method: "POST" }
+    );
+
+    setLightMessage(`Command accepted for ${light.name}.`, "success");
+
+    // The Control4 command is asynchronous. Give the protocol driver time to
+    // report its real state back through the Light V2 proxy variables.
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    await refreshLights(false);
+  } catch (error) {
+    setLightMessage(
+      `${light.name}: ${error.message || "light command failed"}`,
+      "error"
+    );
+  } finally {
+    if (control) {
+      control.disabled = previousDisabled || false;
+    }
+  }
+}
+
+function renderLights(lights) {
+  lightList.replaceChildren();
+
+  if (!lights.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No supported Light V2 devices were initialized.";
+    lightList.append(empty);
+    return;
+  }
+
+  for (const light of lights) {
+    const item = document.createElement("div");
+    item.className = "light-row";
+
+    const identity = document.createElement("div");
+    identity.className = "light-identity";
+
+    const name = document.createElement("strong");
+    const meta = document.createElement("small");
+    const state = document.createElement("span");
+
+    name.textContent = text(light.name, `Light ${light.id}`);
+    meta.textContent = [
+      light.room_name || (light.room_id ? `Room ${light.room_id}` : null),
+      `ID ${light.id}`,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    state.className = `light-state ${light.state?.power ? "is-on" : ""}`;
+    state.textContent = lightStateLabel(light);
+
+    identity.append(name, meta, state);
+
+    const controls = document.createElement("div");
+    controls.className = "light-controls";
+
+    const offButton = document.createElement("button");
+    offButton.type = "button";
+    offButton.className = "button light-button";
+    offButton.textContent = "Off";
+    offButton.addEventListener("click", () =>
+      runLightAction(light, "off", null, offButton)
+    );
+
+    const onButton = document.createElement("button");
+    onButton.type = "button";
+    onButton.className = "button light-button light-button-on";
+    onButton.textContent = "On";
+    onButton.addEventListener("click", () =>
+      runLightAction(light, "on", null, onButton)
+    );
+
+    controls.append(offButton, onButton);
+
+    if (light.capabilities?.brightness) {
+      const brightnessWrap = document.createElement("label");
+      brightnessWrap.className = "brightness-control";
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "100";
+      slider.step = "1";
+      slider.value = String(
+        Number.isFinite(Number(light.state?.brightness))
+          ? Number(light.state.brightness)
+          : light.state?.power
+            ? 100
+            : 0
+      );
+      slider.setAttribute("aria-label", `${light.name} brightness`);
+
+      const output = document.createElement("output");
+      output.textContent = `${slider.value}%`;
+
+      slider.addEventListener("input", () => {
+        output.textContent = `${slider.value}%`;
+      });
+      slider.addEventListener("change", () =>
+        runLightAction(light, "set_brightness", slider.value, slider)
+      );
+
+      brightnessWrap.append(slider, output);
+      controls.append(brightnessWrap);
+    }
+
+    item.append(identity, controls);
+    lightList.append(item);
+  }
+}
+
 async function connectAndTest() {
   projectResult.classList.add("hidden");
   connectButton.disabled = true;
   setDirectorMessage("");
+  setLightMessage("");
   setConnectionState(
     "Connecting to Director…",
     "Chrome may ask for Local Network Access permission.",
@@ -225,34 +409,40 @@ async function connectAndTest() {
 
   try {
     const { host, token } = saveSetup();
+    activeSession = { host, token };
 
-    // The first fetch intentionally originates from this user click so Chrome can
-    // surface its Local Network Access permission prompt.
-    const info = await apiFetch(host, token, "/v1/system/info");
+    const info = await apiRequest(host, token, "/v1/system/info");
 
-    const [roomsResponse, devicesResponse] = await Promise.all([
-      apiFetch(host, token, "/v1/rooms"),
-      apiFetch(host, token, "/v1/devices"),
+    const [roomsResponse, devicesResponse, lightsResponse] = await Promise.all([
+      apiRequest(host, token, "/v1/rooms"),
+      apiRequest(host, token, "/v1/devices"),
+      apiRequest(host, token, "/v1/lights"),
     ]);
 
     const rooms = Array.isArray(roomsResponse.rooms) ? roomsResponse.rooms : [];
     const devices = Array.isArray(devicesResponse.devices)
       ? devicesResponse.devices
       : [];
+    const lights = Array.isArray(lightsResponse.lights)
+      ? lightsResponse.lights
+      : [];
 
     connectedVersion.textContent = `v${text(info.bridge?.version, "?")}`;
     renderSummary(info);
+    renderLights(lights);
     renderRooms(rooms);
     renderDevices(devices);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.length} rooms and ${devices.length} normalized devices returned directly from Director.`,
+      `${rooms.length} rooms, ${devices.length} normalized devices, and ${lights.length} controllable lights returned directly from Director.`,
       "Connected"
     );
-    setDirectorMessage("Read-only Step 2 API test succeeded.", "success");
+    setDirectorMessage("Director connection succeeded.", "success");
   } catch (error) {
+    activeSession = null;
+
     const isUnauthorized = error.status === 401;
     const isAbort = error.name === "AbortError";
 
@@ -285,6 +475,18 @@ directorForm.addEventListener("submit", (event) => {
 });
 
 connectButton.addEventListener("click", connectAndTest);
+
+refreshLightsButton.addEventListener("click", async () => {
+  refreshLightsButton.disabled = true;
+  setLightMessage("Refreshing light states…");
+  try {
+    await refreshLights(true);
+  } catch (error) {
+    setLightMessage(error.message || "Unable to refresh light states.", "error");
+  } finally {
+    refreshLightsButton.disabled = false;
+  }
+});
 
 secureContext.textContent = window.isSecureContext ? "Ready (HTTPS)" : "HTTPS required";
 

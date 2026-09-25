@@ -102,3 +102,19 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Security:** Read-only routes require a random per-install Bearer token persisted encrypted on Director. CORS is restricted to official C4Bridge origins.
 
 **Status:** Alpha integration decision. Re-evaluate port configurability and final pairing/authentication after testing on real systems.
+
+
+## ADR-017 — Control lights through the Light V2 proxy
+
+**Decision:** C4Bridge controls lighting entities by their Light V2 **proxy IDs**, not by sending commands directly to backing protocol drivers.
+
+**State contract:**
+- variable 1000 = Light State
+- variable 1001 = Light Brightness Percent when the device is dimmable
+- variable 1006 = Default On Preset Brightness when available
+
+**Control contract:** normalized C4Bridge actions are translated to the Light V2 `SET_BRIGHTNESS_TARGET` command using `LIGHT_BRIGHTNESS_TARGET`.
+
+**Why:** The proxy is Control4's abstraction boundary. It lets C4Bridge support Control4, Zigbee, Z-Wave and third-party lighting drivers through one documented interface instead of learning each protocol driver's private command set.
+
+**Safety:** A device is not marked controllable unless its Light V2 state variable exists and C4Bridge can register the required state listener.

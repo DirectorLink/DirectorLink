@@ -153,8 +153,8 @@ function Normalize.devices(rawDevices, bridgeDeviceId)
                     kind = classification.kind,
                     recognized = classification.recognized,
 
-                    -- Step 2 is discovery only. A device becomes supported when
-                    -- a real control adapter is implemented and tested.
+                    -- Normalization never guesses control support. Adapters enable
+                    -- support only after their required state contract is verified.
                     supported = false,
 
                     proxy = {

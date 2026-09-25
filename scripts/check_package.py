@@ -95,6 +95,32 @@ def check_requires(files):
                 fail(f"{archive_path} requires missing module {target}")
 
 
+def check_light_adapter():
+    path = DRIVER / "src" / "adapters" / "light_v2.lua"
+    if not path.is_file():
+        fail("Light V2 adapter is missing")
+
+    source = path.read_text(encoding="utf-8")
+    required = [
+        "VARIABLE_STATE = 1000",
+        "VARIABLE_BRIGHTNESS = 1001",
+        "VARIABLE_DEFAULT_ON = 1006",
+        'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
+        "LIGHT_BRIGHTNESS_TARGET = target",
+        "C4:RegisterVariableListener",
+    ]
+
+    for token in required:
+        if token not in source:
+            fail(f"Light V2 adapter missing required contract: {token}")
+
+    server = (DRIVER / "src" / "server" / "http.lua").read_text(encoding="utf-8")
+    if "/v1/lights" not in server:
+        fail("LAN API is missing /v1/lights")
+    if "/v1/devices/(%d+)/actions/" not in server:
+        fail("LAN API is missing normalized device action routing")
+
+
 def check_package(files):
     if not PACKAGE.is_file():
         fail("dist/C4Bridge.c4z is missing; run python scripts/build.py")
@@ -121,6 +147,7 @@ def main():
     check_version()
     check_driver_version()
     check_requires(files)
+    check_light_adapter()
     check_package(files)
     print(f"OK: validated {len(files)} packaged files")
 

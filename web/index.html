@@ -72,7 +72,7 @@
               <p class="eyebrow">FIRST SETUP</p>
               <h2>Director address</h2>
               <p>
-                Enter the Director address and the read-only alpha API token shown in the
+                Enter the Director address and the alpha API token shown in the
                 C4Bridge Properties pane in Composer.
               </p>
             </div>
@@ -148,12 +148,30 @@
           <div class="result-heading">
             <div>
               <p class="eyebrow">LIVE DIRECTOR DATA</p>
-              <h2 id="project-result-title">C4Bridge discovery result</h2>
+              <h2 id="project-result-title">C4Bridge live project</h2>
             </div>
             <span id="connected-version" class="build-badge"></span>
           </div>
 
           <div id="result-summary" class="result-summary"></div>
+
+          <article class="panel result-panel lights-panel">
+            <div class="lights-heading">
+              <div>
+                <p class="eyebrow">STEP 3</p>
+                <h2>Lights</h2>
+                <p class="panel-note">
+                  Live Light V2 state from Director. Commands are sent through normalized
+                  C4Bridge actions only.
+                </p>
+              </div>
+              <button id="refresh-lights-button" class="button button-secondary" type="button">
+                Refresh states
+              </button>
+            </div>
+            <p id="light-action-message" class="form-message" role="status" aria-live="polite"></p>
+            <div id="light-list" class="light-list"></div>
+          </article>
 
           <div class="result-columns">
             <article class="panel result-panel">
@@ -186,7 +204,7 @@
             <div class="flow-node" role="listitem">
               <span>3</span>
               <strong>C4Bridge.c4z</strong>
-              <small>Authenticated LAN API on Director</small>
+              <small>Authenticated normalized API on Director</small>
             </div>
             <div class="flow-arrow" aria-hidden="true">→</div>
             <div class="flow-node" role="listitem">

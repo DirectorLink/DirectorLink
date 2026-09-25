@@ -63,15 +63,36 @@ function Registry.deviceList()
     return sortedList(Registry.devices)
 end
 
+function Registry.lightList()
+    local lights = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "light" and device.supported == true then
+            lights[id] = device
+        end
+    end
+
+    return sortedList(lights)
+end
+
 function Registry.counts()
     local recognized = 0
     local unsupported = 0
+    local supported = 0
+    local supportedLights = 0
 
     for _, device in pairs(Registry.devices) do
         if device.recognized then
             recognized = recognized + 1
         else
             unsupported = unsupported + 1
+        end
+
+        if device.supported then
+            supported = supported + 1
+            if device.kind == "light" then
+                supportedLights = supportedLights + 1
+            end
         end
     end
 
@@ -82,6 +103,8 @@ function Registry.counts()
         protocols = count(Registry.protocols),
         recognized = recognized,
         unsupported = unsupported,
+        supported = supported,
+        supported_lights = supportedLights,
     }
 end
 

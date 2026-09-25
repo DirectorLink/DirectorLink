@@ -639,3 +639,156 @@ footer a {
     margin: 14px 22px 18px;
   }
 }
+
+
+.lights-panel {
+  margin: 0 30px 22px;
+  padding: 26px;
+  box-shadow: none;
+  border-color: rgba(36, 107, 254, 0.2);
+}
+
+.lights-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.lights-heading .panel-note {
+  max-width: 650px;
+}
+
+.light-list {
+  max-height: 560px;
+  overflow: auto;
+  border-top: 1px solid var(--line);
+}
+
+.light-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(340px, 1.2fr);
+  gap: 24px;
+  align-items: center;
+  padding: 17px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.light-identity strong,
+.light-identity small,
+.light-state {
+  display: block;
+}
+
+.light-identity strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.light-identity small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.light-state {
+  width: fit-content;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: #697586;
+  background: #edf1f5;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.light-state.is-on {
+  color: #087b4b;
+  background: rgba(24, 166, 106, 0.1);
+}
+
+.light-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.light-button {
+  min-width: 58px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fff;
+}
+
+.light-button-on {
+  border-color: rgba(36, 107, 254, 0.28);
+  color: #fff;
+  background: var(--accent);
+}
+
+.light-button-on:hover {
+  background: var(--accent-dark);
+}
+
+.brightness-control {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) 45px;
+  gap: 9px;
+  align-items: center;
+  width: min(250px, 100%);
+  margin-left: 8px;
+}
+
+.brightness-control input[type="range"] {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+  accent-color: var(--accent);
+  background: transparent;
+}
+
+.brightness-control output {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: right;
+}
+
+.kind-badge.supported {
+  border-color: rgba(24, 166, 106, 0.2);
+  color: #087b4b;
+  background: rgba(24, 166, 106, 0.08);
+}
+
+@media (max-width: 860px) {
+  .light-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .light-controls {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .lights-panel {
+    margin: 0 0 22px;
+  }
+}
+
+@media (max-width: 560px) {
+  .lights-heading {
+    flex-direction: column;
+  }
+
+  .brightness-control {
+    width: 100%;
+    margin-left: 0;
+  }
+}

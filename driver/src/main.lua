@@ -3,6 +3,7 @@ local Registry = require("src.core.registry")
 local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
 local HttpServer = require("src.server.http")
+local AdapterManager = require("src.adapters.manager")
 
 local API_TOKEN_KEY = "c4bridge_api_token"
 
@@ -79,12 +80,13 @@ local function startLanApi()
     HttpServer.init({
         token = STATE.apiToken,
         registry = Registry,
+        actions = AdapterManager,
         version = Version,
         directorVersion = STATE.directorVersion,
         log = log,
         onStatus = function(isOnline, status)
             if isOnline then
-                updateProperty("API Status", "Online - read-only alpha")
+                updateProperty("API Status", "Online - light control alpha")
             else
                 updateProperty("API Status", "Offline (" .. tostring(status) .. ")")
             end
@@ -151,15 +153,22 @@ function OnDriverLateInit(driverInitType)
     Registry.reset()
     Registry.replace(normalized)
 
+    local supportedLights = AdapterManager.initialize(Registry, log)
+
     local metadata = Registry.metadata
     updateProperty("System Type", metadata.systemType or "Unknown")
     updateProperty("Project Location", projectLocation(metadata))
     updateProperty("Discovery Summary", discoverySummary())
-    updateProperty("Status", "Ready (discovery complete)")
+    updateProperty("Supported Lights", supportedLights)
+    updateProperty("Status", "Ready (light adapter initialized)")
 
     log("discovery complete: " .. discoverySummary())
 
     startLanApi()
+end
+
+function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+    AdapterManager.onVariableChanged(idDevice, idVariable, strValue)
 end
 
 function OnServerStatusChanged(port, status)
@@ -176,5 +185,6 @@ end
 
 function OnDriverDestroyed(driverInitType)
     HttpServer.stop()
+    AdapterManager.shutdown()
     log("destroyed (" .. tostring(driverInitType) .. ")")
 end
