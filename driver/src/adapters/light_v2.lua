@@ -132,11 +132,14 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessTarget(deviceId, target)
+local function sendBrightnessLevel(deviceId, target)
+    -- Compatibility path for dimmers whose protocol driver does not advertise
+    -- or honor the newer Brightness Target API. Control4 documents
+    -- RAMP_TO_LEVEL for SendToDevice and legacy dimmers.
     local ok, err = pcall(function()
-        C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
-            LIGHT_BRIGHTNESS_TARGET = target,
-            RATE = 0,
+        C4:SendToDevice(deviceId, "RAMP_TO_LEVEL", {
+            LEVEL = target,
+            TIME = 0,
         })
     end)
 
@@ -201,9 +204,10 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        sent, sendError = sendBrightnessTarget(device.id, target)
+        sent, sendError = sendBrightnessLevel(device.id, target)
         result.requested_brightness = target
-        result.rate_ms = 0
+        result.compatibility_command = "RAMP_TO_LEVEL"
+        result.time_ms = 0
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
