@@ -24,7 +24,7 @@ Expected:
 - Pairing Code: 8 digits
 - Pairing Status: ready
 - API Token: `Hidden - use Pairing Code`
-- API Status: `Online - paired owner alpha`
+- API Status: `Online - pairing enabled`
 
 ## 2. Pair a browser
 
