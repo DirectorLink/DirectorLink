@@ -629,6 +629,7 @@ async function connectAndTest() {
   connectButton.disabled = true;
   setDirectorMessage("");
   setLightMessage("");
+  setClimateMessage("");
   setConnectionState(
     "Connecting to Director…",
     "Chrome may ask for Local Network Access permission.",
@@ -659,10 +660,11 @@ async function connectAndTest() {
 
     const info = await apiRequest(host, token, "/v1/system/info");
 
-    const [roomsResponse, devicesResponse, lightsResponse] = await Promise.all([
+    const [roomsResponse, devicesResponse, lightsResponse, climateResponse] = await Promise.all([
       apiRequest(host, token, "/v1/rooms"),
       apiRequest(host, token, "/v1/devices"),
       apiRequest(host, token, "/v1/lights"),
+      apiRequest(host, token, "/v1/climate"),
     ]);
 
     const rooms = Array.isArray(roomsResponse.rooms) ? roomsResponse.rooms : [];
@@ -672,17 +674,21 @@ async function connectAndTest() {
     const lights = Array.isArray(lightsResponse.lights)
       ? lightsResponse.lights
       : [];
+    const climate = Array.isArray(climateResponse.climate)
+      ? climateResponse.climate
+      : [];
 
     connectedVersion.textContent = `v${text(info.bridge?.version, "?")}`;
     renderSummary(info);
     renderLights(lights);
+    renderClimate(climate);
     renderRooms(rooms);
     renderDevices(devices);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.length} rooms, ${devices.length} normalized devices, and ${lights.length} controllable lights returned directly from Director.`,
+      `${rooms.length} rooms, ${devices.length} normalized devices, ${lights.length} lights, and ${climate.length} climate devices returned directly from Director.`,
       "Connected"
     );
     setDirectorMessage("Director connection succeeded.", "success");
@@ -730,6 +736,18 @@ directorForm.addEventListener("submit", (event) => {
 });
 
 connectButton.addEventListener("click", connectAndTest);
+
+refreshClimateButton.addEventListener("click", async () => {
+  refreshClimateButton.disabled = true;
+  setClimateMessage("Refreshing climate state…");
+  try {
+    await refreshClimate(true);
+  } catch (error) {
+    setClimateMessage(error.message || "Unable to refresh climate state.", "error");
+  } finally {
+    refreshClimateButton.disabled = false;
+  }
+});
 
 refreshLightsButton.addEventListener("click", async () => {
   refreshLightsButton.disabled = true;
