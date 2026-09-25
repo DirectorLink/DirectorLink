@@ -211,3 +211,20 @@ Implement the first real device adapter:
 - normalized C4Bridge light actions
 
 Do not start scheduler/PWA work until the first end-to-end light control path is proven.
+
+
+### PWA shell — implemented ahead of transport
+
+The initial Cloudflare Pages PWA shell is implemented under `web/`:
+
+- framework-free HTML/CSS/JavaScript
+- installable web manifest
+- offline application shell via service worker
+- Director IP/local-hostname storage
+- browser readiness diagnostics
+- security headers
+- raster/SVG application icons
+
+The PWA does not yet make Director requests. The service worker explicitly ignores all cross-origin requests so future LAN traffic is never cached or proxied by the web shell.
+
+Cloudflare deployment configuration is documented in `docs/CLOUDFLARE.md`.
