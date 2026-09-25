@@ -5,8 +5,8 @@ local Normalize = require("src.control4.normalize")
 local HttpServer = require("src.server.http")
 local AdapterManager = require("src.adapters.manager")
 local Diagnostics = require("src.core.diagnostics")
+local Pairing = require("src.auth.pairing")
 
-local API_TOKEN_KEY = "c4bridge_api_token"
 local RELOAD_COUNT_KEY = "c4bridge_reload_count"
 local LAST_INIT_TYPE_KEY = "c4bridge_last_init_type"
 local LAST_INIT_TIME_KEY = "c4bridge_last_init_time"
@@ -16,7 +16,6 @@ local LAST_DESTROY_TIME_KEY = "c4bridge_last_destroy_time"
 local STATE = {
     directorVersion = nil,
     supported = false,
-    apiToken = nil,
 }
 
 local updateProperty
@@ -98,22 +97,6 @@ local function readDirectorVersion()
     return info.version
 end
 
-local function ensureApiToken()
-    local token = C4:PersistGetValue(API_TOKEN_KEY, true)
-    if type(token) == "string" and token ~= "" then
-        return token
-    end
-
-    local generated, err = C4:UUID("RANDOM")
-    if not generated then
-        log("unable to generate API token: " .. tostring(err))
-        return nil
-    end
-
-    C4:PersistSetValue(API_TOKEN_KEY, generated, true)
-    return generated
-end
-
 local function projectLocation(metadata)
     local properties = metadata.properties or {}
     local parts = {}
@@ -141,13 +124,15 @@ local function discoverySummary()
 end
 
 local function startLanApi()
-    if not STATE.apiToken then
-        updateProperty("API Status", "Offline (token generation failed)")
+    local ownerToken = Pairing.ownerToken()
+    if not ownerToken then
+        updateProperty("API Status", "Offline (owner credential unavailable)")
         return
     end
 
     HttpServer.init({
-        token = STATE.apiToken,
+        token = ownerToken,
+        pairing = Pairing,
         registry = Registry,
         actions = AdapterManager,
         diagnostics = Diagnostics,
@@ -156,7 +141,7 @@ local function startLanApi()
         log = log,
         onStatus = function(isOnline, status)
             if isOnline then
-                updateProperty("API Status", "Online - light control alpha")
+                updateProperty("API Status", "Online - paired owner alpha")
             else
                 updateProperty("API Status", "Offline (" .. tostring(status) .. ")")
             end
@@ -164,7 +149,7 @@ local function startLanApi()
     })
 
     updateProperty("API Port", HttpServer.port())
-    updateProperty("API Token", STATE.apiToken)
+    updateProperty("API Token", "Hidden - use Pairing Code")
     updateProperty("API Status", "Starting...")
 
     local started, err = HttpServer.start()
@@ -187,7 +172,6 @@ function OnDriverInit(driverInitType)
         return
     end
 
-    STATE.apiToken = ensureApiToken()
 end
 
 function OnDriverLateInit(driverInitType)
@@ -233,6 +217,18 @@ function OnDriverLateInit(driverInitType)
     updateProperty("Project Location", projectLocation(metadata))
     updateProperty("Discovery Summary", discoverySummary())
     updateProperty("Supported Lights", supportedLights)
+    local pairingOk, pairingError = Pairing.initialize({
+        updateProperty = updateProperty,
+        log = log,
+    })
+    if not pairingOk then
+        local message = "Pairing init failed: " .. tostring(pairingError)
+        log(message)
+        updateProperty("Status", message)
+        updateProperty("API Status", "Disabled (pairing failed)")
+        return
+    end
+
     updateProperty("Status", "Ready (light adapter initialized)")
 
     log("discovery complete: " .. discoverySummary())
