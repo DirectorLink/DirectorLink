@@ -132,14 +132,12 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessLevel(deviceId, target)
-    -- Compatibility path for dimmers whose protocol driver does not advertise
-    -- or honor the newer Brightness Target API. Control4 documents
-    -- RAMP_TO_LEVEL for SendToDevice and legacy dimmers.
+local function sendBrightnessPercent(deviceId, target)
+    -- Real-system director logs show the native Control4/Composer path for this
+    -- Light V2 proxy sends SET_BRIGHTNESS_TARGET with PERCENT=<0..100>.
     local ok, err = pcall(function()
-        C4:SendToDevice(deviceId, "RAMP_TO_LEVEL", {
-            LEVEL = target,
-            TIME = 0,
+        C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
+            PERCENT = target,
         })
     end)
 
@@ -204,10 +202,9 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        sent, sendError = sendBrightnessLevel(device.id, target)
+        sent, sendError = sendBrightnessPercent(device.id, target)
         result.requested_brightness = target
-        result.compatibility_command = "RAMP_TO_LEVEL"
-        result.time_ms = 0
+        result.command_parameter = "PERCENT"
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
