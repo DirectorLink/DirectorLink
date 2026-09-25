@@ -120,6 +120,22 @@ def check_light_adapter():
         if token not in source:
             fail(f"Light V2 adapter missing required contract: {token}")
 
+    pairing_path = DRIVER / "src" / "auth" / "pairing.lua"
+    if not pairing_path.is_file():
+        fail("owner pairing module is missing")
+
+    pairing = pairing_path.read_text(encoding="utf-8")
+    for token in (
+        'C4:PersistGetValue(key, encrypted == true)',
+        'C4:PersistSetValue(key, tostring(value or ""), encrypted == true)',
+        'MAX_FAILED_ATTEMPTS = 5',
+        'LOCK_SECONDS = 60',
+        'CODE_TTL_SECONDS = 15 * 60',
+        'C4:UUID("RANDOM")',
+    ):
+        if token not in pairing:
+            fail(f"pairing module missing security contract: {token}")
+
     server = (DRIVER / "src" / "server" / "http.lua").read_text(encoding="utf-8")
     if "/v1/lights" not in server:
         fail("LAN API is missing /v1/lights")
@@ -127,13 +143,27 @@ def check_light_adapter():
         fail("LAN API is missing normalized device action routing")
     if "/v1/diagnostics" not in server:
         fail("LAN API is missing authenticated diagnostics endpoint")
+    if 'request.path ~= "/v1/pair"' not in server:
+        fail("LAN API is missing owner pairing route")
+    if 'x-c4bridge-pairing-code' not in server:
+        fail("pairing route must use the dedicated pairing-code header")
+    if "PAIRING_RATE_LIMITED" not in server:
+        fail("pairing route must handle rate limiting")
 
     root = ET.parse(DRIVER / "driver.xml").getroot()
     property_names = {
         node.findtext("name")
         for node in root.findall("./config/properties/property")
     }
-    for name in ("Reload Counter", "Last Init Type", "Last Init Time", "Last Destroy Type", "Last Destroy Time"):
+    for name in (
+        "Reload Counter",
+        "Last Init Type",
+        "Last Init Time",
+        "Last Destroy Type",
+        "Last Destroy Time",
+        "Pairing Code",
+        "Pairing Status",
+    ):
         if name not in property_names:
             fail(f"driver.xml missing lifecycle diagnostic property: {name}")
 
