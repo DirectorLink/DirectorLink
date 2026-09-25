@@ -23,6 +23,9 @@ const deviceList = document.querySelector("#device-list");
 const lightList = document.querySelector("#light-list");
 const lightActionMessage = document.querySelector("#light-action-message");
 const refreshLightsButton = document.querySelector("#refresh-lights-button");
+const climateList = document.querySelector("#climate-list");
+const climateActionMessage = document.querySelector("#climate-action-message");
+const refreshClimateButton = document.querySelector("#refresh-climate-button");
 
 let installPrompt = null;
 let activeSession = null;
@@ -171,6 +174,7 @@ function renderSummary(info) {
     ["Devices", info.discovery?.devices],
     ["Recognized", info.discovery?.recognized],
     ["Lights", info.discovery?.supported_lights],
+    ["Climate", info.discovery?.supported_climate],
   ];
 
   resultSummary.replaceChildren(
