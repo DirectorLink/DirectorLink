@@ -18,7 +18,7 @@
 - [x] Read light state
 - [x] Subscribe to state changes
 - [x] ON/OFF implemented and validated on a real Director in alpha.4
-- [x] Set brightness has a KNX-specific `RAMP_TO_LEVEL` DriverWorks path in alpha.7; real-system validation pending
+- [ ] KNX percentage dimming deferred to issue #11; On/Off remains validated
 - [ ] Validate on OS 3.3.x/3.4.x before broad compatibility claims
 
 ## Milestone 2 — local API/security
