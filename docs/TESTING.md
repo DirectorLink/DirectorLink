@@ -2,94 +2,80 @@
 
 ## Current test release
 
-`v0.1.0-alpha.2`
+`v0.1.0-alpha.3`
 
-This test validates the complete read-only path:
+This test validates the first full device-control path:
 
 ```text
 app.c4bridge.io
-    -> Chrome Local Network Access
-    -> http://DIRECTOR_IP:41999
-    -> C4Bridge token authentication
-    -> Step 2 DeviceRegistry
+    -> Local Network Access
+    -> C4Bridge authenticated LAN API
+    -> normalized Light V2 adapter
+    -> C4:SendToDevice(proxy ID, SET_BRIGHTNESS_TARGET)
+    -> real light
+    -> Light V2 variable feedback
+    -> C4Bridge registry
+    -> browser state
 ```
 
-## 1. Update the driver
+## 1. Update C4Bridge
 
-Download `C4Bridge.c4z` from GitHub Release `v0.1.0-alpha.2`.
+Download `C4Bridge.c4z` from GitHub Release `v0.1.0-alpha.3`.
 
-In Composer Pro use **Driver -> Add or Update Driver** / **Update Driver** to update the existing C4Bridge instance. Do not remove the instance.
+Use Composer Pro to update the existing C4Bridge driver. Do not remove the existing C4Bridge project instance.
 
-## 2. Verify Composer properties
+## 2. Verify Composer
 
-Select C4Bridge in Composer and verify:
+Expected:
 
-- **Bridge Version** = `0.1.0-alpha.2`
-- **Status** = `Ready (discovery complete)`
-- **API Status** = `Online - read-only alpha`
-- **API Port** = `41999`
-- **API Token** = a UUID-like value
-- **Discovery Summary** contains non-zero project counts as appropriate
+- **Bridge Version:** `0.1.0-alpha.3`
+- **Status:** `Ready (light adapter initialized)`
+- **Supported Lights:** greater than 0 on a project with Light V2 devices
+- **API Status:** `Online - light control alpha`
+- **API Port:** `41999`
 
-If **API Status** is not online, do not continue to the browser test. Capture the C4Bridge Lua log.
+The API token should remain the same after a normal driver update.
 
-## 3. Browser test
+## 3. Connect the PWA
 
-Use current desktop Chrome while connected to the same LAN as Director.
-
-1. Open **https://app.c4bridge.io**.
-2. Enter the Director LAN IPv4 address, e.g. `192.168.1.50`.
-3. Paste the **API Token** from Composer.
+1. Open **https://app.c4bridge.io** in current Chrome.
+2. Enter the Director LAN IP.
+3. Enter the API token from Composer.
 4. Click **Connect & test**.
-5. When Chrome asks whether the site may access devices on the local network, choose **Allow**.
-6. Wait for the live discovery view.
+5. Allow Local Network Access if asked.
 
-Expected result:
+The discovery view should now include a **Lights** panel.
 
-- status changes to **Connected to C4Bridge**
-- Bridge version and Director version appear
-- room/device totals appear
-- rooms are listed
-- normalized devices are listed with their proxy type/driver metadata
+## 4. State validation before control
 
-## API endpoints
+Choose one nearby light.
 
-All data endpoints require:
+Confirm:
 
-```http
-Authorization: Bearer <API_TOKEN>
-```
+- light name/room is correct;
+- displayed On/Off state matches reality;
+- if dimmable, displayed brightness is plausible.
 
-Available in alpha.2:
+If state is wrong, stop and report the light name, proxy ID, displayed state, and real state before sending a command.
 
-- `GET /v1/system/info`
-- `GET /v1/rooms`
-- `GET /v1/devices`
+## 5. Control one test light
 
-Port: `41999`
+Use one known light only:
 
-Allowed browser origins:
+- press **Off**;
+- confirm only that light turns off;
+- press **On**;
+- confirm only that light turns on;
+- for a dimmer, set a clearly visible brightness such as 30% or 70%.
 
-- `https://app.c4bridge.io`
-- `https://c4bridge.io`
+Then press **Refresh states** and verify the browser matches the physical result.
 
-## Failure clues
+## 6. External state feedback
 
-**Token rejected**
-- Browser says the Director was reached but token was rejected.
-- Re-copy the API Token from Composer.
+Change the same light from an existing Control4 interface or physical wall control, then press **Refresh states** in C4Bridge.
 
-**Timeout / cannot reach**
-- confirm phone/PC and Director are on the same LAN
-- confirm Director IP
-- confirm Composer says API Status is Online
-- confirm port 41999 is not blocked by LAN/firewall rules
+Expected: the new state is returned from the Light V2 proxy variables.
 
-**No Local Network Access prompt / blocked**
-- use current Chrome
-- check the site permission for Local Network Access
-- reload the page and click Connect & test again
+## Safety boundary
 
-## Safety
-
-Alpha.2 is read-only. It does not send commands to lights, HVAC, shades, bindings, Composer programming, or schedules.
+Alpha.3 only exposes normalized actions for devices successfully initialized by the Light V2 adapter. Unsupported/unknown devices remain non-controllable.
