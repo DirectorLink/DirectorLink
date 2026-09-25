@@ -73,6 +73,8 @@ Automatic self-update is intentionally **not** part of V1.
 
 For now, update the installed driver manually through Composer Pro using the `C4Bridge.c4z` asset from the desired GitHub Release.
 
+**Important:** before updating, make sure the local file is named exactly `C4Bridge.c4z`. Do not select `C4Bridge (1).c4z`, `C4Bridge (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
+
 To downgrade, download `C4Bridge.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; once C4Bridge begins storing persistent scenes/schedules/accounts, release notes will state whether a downgrade is safe.
 
 Do not remove and re-add the project instance unless a release specifically requires it.
@@ -103,7 +105,7 @@ Existing Control4 devices
 
 **https://app.c4bridge.io**
 
-The alpha.6 build connects the PWA directly to C4Bridge on the LAN with validated On/Off and a legacy-compatible dimmer control path on port `41999`.
+The alpha.6 build connects the PWA directly to C4Bridge on the LAN with validated On/Off, a Director-log-verified dimmer command, and update diagnostics on port `41999`.
 
 ## Web app
 
