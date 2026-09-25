@@ -112,3 +112,13 @@ The real Director snapshot confirms:
 - KNX Light V2 variable 1001 does not provide reliable post-dim level feedback.
 
 Alpha.7 changes only KNX-backed dimmer brightness to the documented DriverWorks `RAMP_TO_LEVEL` path and marks brightness feedback unavailable for those devices.
+
+
+## 2026-09-25 — alpha.8 owner pairing
+
+Real-system owner pairing succeeded. A short Composer Pairing Code successfully provisioned the browser owner credential, and the paired browser reconnects without manually copying the long API token.
+
+
+## 2026-09-25 — HVAC command capture
+
+A real Director snapshot captured the stock Control4 UI controlling a Thermostat V2 proxy with `SET_MODE_HVAC {MODE}`, `SET_MODE_FAN {MODE}`, and `SET_SETPOINT_SINGLE {CELSIUS}`. These exact command shapes are the basis of alpha.9.
