@@ -132,10 +132,10 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessPercent(deviceId, percent)
+local function sendBrightnessTarget(deviceId, target)
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
-            LIGHT_BRIGHTNESS_TARGET_PERCENT = percent,
+            LIGHT_BRIGHTNESS_TARGET = target,
             RATE = 0,
         })
     end)
@@ -201,8 +201,8 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        sent, sendError = sendBrightnessPercent(device.id, target)
-        result.requested_brightness_percent = target
+        sent, sendError = sendBrightnessTarget(device.id, target)
+        result.requested_brightness = target
         result.rate_ms = 0
     else
         return false, {
