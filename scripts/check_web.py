@@ -16,6 +16,8 @@ REQUIRED = [
     "manifest.webmanifest",
     "sw.js",
     "icons/icon.svg",
+    "icons/icon-192.png",
+    "icons/icon-512.png",
     "_headers",
 ]
 
@@ -59,6 +61,10 @@ def main():
 
     if not manifest["icons"]:
         fail("manifest must include at least one icon")
+
+    icon_sizes = {icon.get("sizes") for icon in manifest["icons"]}
+    if "192x192" not in icon_sizes or "512x512" not in icon_sizes:
+        fail("manifest must include 192x192 and 512x512 icons")
 
     parser = IndexParser()
     parser.feed((WEB / "index.html").read_text(encoding="utf-8"))
