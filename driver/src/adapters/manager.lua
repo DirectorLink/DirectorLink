@@ -1,9 +1,11 @@
 local LightV2 = require("src.adapters.light_v2")
+local ClimateV2 = require("src.adapters.climate_v2")
 
 local Manager = {}
 
 local adapters = {
     LightV2,
+    ClimateV2,
 }
 
 local attached = {}
@@ -32,6 +34,8 @@ function Manager.initialize(deviceRegistry, logFunction)
     end
 
     local initialized = 0
+    local supportedLights = 0
+    local supportedClimate = 0
 
     for id, device in pairs(registry.devices or {}) do
         for _, adapter in ipairs(adapters) do
@@ -48,17 +52,26 @@ function Manager.initialize(deviceRegistry, logFunction)
                     attached[tonumber(id)] = nil
                     device.supported = false
                     device.adapter_error = tostring(err or "adapter initialization failed")
-                    log("unsupported light " .. tostring(id) .. ": " .. tostring(device.adapter_error))
+                    log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
                 else
                     initialized = initialized + 1
+                    if device.kind == "light" then
+                        supportedLights = supportedLights + 1
+                    elseif device.kind == "climate" then
+                        supportedClimate = supportedClimate + 1
+                    end
                 end
                 break
             end
         end
     end
 
-    log("initialized " .. tostring(initialized) .. " controllable light proxies")
-    return initialized
+    log(
+        "initialized " .. tostring(initialized) ..
+        " supported proxies (" .. tostring(supportedLights) ..
+        " lights, " .. tostring(supportedClimate) .. " climate)"
+    )
+    return supportedLights, supportedClimate
 end
 
 function Manager.onVariableChanged(deviceId, variableId, value)
