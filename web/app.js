@@ -231,6 +231,10 @@ function lightStateLabel(light) {
   const power = light.state?.power === true;
   const brightness = Number(light.state?.brightness);
 
+  if (light.capabilities?.brightness_feedback === false) {
+    return `${power ? "On" : "Off"} · level feedback unavailable`;
+  }
+
   if (light.capabilities?.brightness && Number.isFinite(brightness)) {
     return `${power ? "On" : "Off"} · ${brightness}%`;
   }
@@ -328,20 +332,27 @@ async function runLightAction(light, action, value, control) {
       { method: "POST" }
     );
 
-    setLightMessage(`Command sent to ${light.name}; waiting for Director state…`);
-
-    const confirmed = await waitForLightConfirmation(light.id, action, value);
-
-    if (confirmed) {
+    if (action === "set_brightness" && light.capabilities?.brightness_feedback === false) {
       setLightMessage(
-        `${light.name}: ${lightStateLabel(confirmed)} confirmed by Director.`,
+        `${light.name}: brightness command sent (${value}%). This KNX driver does not report level feedback to Director.`,
         "success"
       );
     } else {
-      setLightMessage(
-        `${light.name}: command was sent, but Director did not confirm the requested state within 5 seconds.`,
-        "error"
-      );
+      setLightMessage(`Command sent to ${light.name}; waiting for Director state…`);
+
+      const confirmed = await waitForLightConfirmation(light.id, action, value);
+
+      if (confirmed) {
+        setLightMessage(
+          `${light.name}: ${lightStateLabel(confirmed)} confirmed by Director.`,
+          "success"
+        );
+      } else {
+        setLightMessage(
+          `${light.name}: command was sent, but Director did not confirm the requested state within 5 seconds.`,
+          "error"
+        );
+      }
     }
   } catch (error) {
     setLightMessage(
