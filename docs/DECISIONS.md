@@ -69,3 +69,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 ## ADR-013 — Apache-2.0
 
 **Decision:** C4Bridge uses Apache License 2.0.
+
+
+## ADR-014 — GitHub Releases are the binary distribution channel
+
+**Decision:** Do not commit built `C4Bridge.c4z` binaries to `main`. Publish official binaries as versioned GitHub Release assets.
+
+**Why:** Users can clearly upgrade/downgrade, release binaries stay tied to immutable tags, and source history remains clean.
+
+**Release contents:** `C4Bridge.c4z`, `SHA256SUMS.txt`, and release notes.
+
+**Version source:** root `VERSION` file using semantic versioning. Versions with a prerelease suffix such as `-alpha.1` are published as prereleases.
