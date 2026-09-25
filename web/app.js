@@ -486,6 +486,144 @@ function renderLights(lights) {
   }
 }
 
+
+function setClimateMessage(message, type = "") {
+  climateActionMessage.textContent = message;
+  climateActionMessage.className = "form-message";
+  if (type) climateActionMessage.classList.add(type);
+}
+
+function climateStateLabel(device) {
+  const current = Number(device.state?.current_temperature_c);
+  const target = Number(device.state?.target_temperature_c);
+  const parts = [];
+  if (Number.isFinite(current)) parts.push(`Current ${current}°C`);
+  if (Number.isFinite(target)) parts.push(`Target ${target}°C`);
+  if (device.state?.hvac_mode) parts.push(String(device.state.hvac_mode));
+  if (device.state?.fan_mode) parts.push(`fan ${device.state.fan_mode}`);
+  return parts.join(" · ") || "State unavailable";
+}
+
+async function refreshClimate(showMessage = false) {
+  if (!activeSession) return [];
+  const response = await apiRequest(activeSession.host, activeSession.token, "/v1/climate");
+  const devices = Array.isArray(response.climate) ? response.climate : [];
+  renderClimate(devices);
+  if (showMessage) setClimateMessage(`Refreshed ${devices.length} climate devices.`, "success");
+  return devices;
+}
+
+async function runClimateAction(device, action, value, control) {
+  if (!activeSession) {
+    setClimateMessage("Connect to Director first.", "error");
+    return;
+  }
+  if (control) control.disabled = true;
+  setClimateMessage(`Sending climate command to ${device.name}…`);
+  try {
+    await apiRequest(
+      activeSession.host,
+      activeSession.token,
+      `/v1/devices/${device.id}/actions/${action}?value=${encodeURIComponent(value)}`,
+      { method: "POST" }
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 800));
+    await refreshClimate(false);
+    setClimateMessage(`${device.name}: command sent to Director.`, "success");
+  } catch (error) {
+    setClimateMessage(`${device.name}: ${error.message || "climate command failed"}`, "error");
+  } finally {
+    if (control) control.disabled = false;
+  }
+}
+
+function renderClimate(devices) {
+  climateList.replaceChildren();
+  if (!devices.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = "No supported Thermostat V2 devices were initialized.";
+    climateList.append(empty);
+    return;
+  }
+
+  for (const device of devices) {
+    const row = document.createElement("div");
+    row.className = "climate-row";
+
+    const identity = document.createElement("div");
+    identity.className = "light-identity";
+    const name = document.createElement("strong");
+    name.textContent = text(device.name, `Climate ${device.id}`);
+    const meta = document.createElement("small");
+    meta.textContent = [
+      device.room_name || null,
+      `ID ${device.id}`,
+      device.state?.connected === false ? "offline" : "online",
+    ].filter(Boolean).join(" · ");
+    const state = document.createElement("span");
+    state.className = "light-state";
+    state.textContent = climateStateLabel(device);
+    identity.append(name, meta, state);
+
+    const controls = document.createElement("div");
+    controls.className = "climate-controls";
+
+    const modeSelect = document.createElement("select");
+    modeSelect.className = "climate-select";
+    for (const mode of device.capabilities?.hvac_modes || []) {
+      const option = document.createElement("option");
+      option.value = String(mode).toLowerCase();
+      option.textContent = String(mode);
+      option.selected = String(device.state?.hvac_mode || "").toLowerCase() === option.value;
+      modeSelect.append(option);
+    }
+    modeSelect.addEventListener("change", () =>
+      runClimateAction(device, "set_hvac_mode", modeSelect.value, modeSelect)
+    );
+    controls.append(modeSelect);
+
+    const fanModes = device.capabilities?.fan_modes || [];
+    if (fanModes.length) {
+      const fanSelect = document.createElement("select");
+      fanSelect.className = "climate-select";
+      for (const mode of fanModes) {
+        const option = document.createElement("option");
+        option.value = String(mode).toLowerCase();
+        option.textContent = String(mode);
+        option.selected = String(device.state?.fan_mode || "").toLowerCase() === option.value;
+        fanSelect.append(option);
+      }
+      fanSelect.addEventListener("change", () =>
+        runClimateAction(device, "set_fan_mode", fanSelect.value, fanSelect)
+      );
+      controls.append(fanSelect);
+    }
+
+    const temp = document.createElement("input");
+    temp.className = "climate-temp";
+    temp.type = "number";
+    temp.min = String(device.capabilities?.target_temperature_min_c ?? 16);
+    temp.max = String(device.capabilities?.target_temperature_max_c ?? 32);
+    temp.step = "1";
+    temp.value = Number.isFinite(Number(device.state?.target_temperature_c))
+      ? String(Math.round(Number(device.state.target_temperature_c)))
+      : "22";
+
+    const setButton = document.createElement("button");
+    setButton.type = "button";
+    setButton.className = "button light-button";
+    setButton.textContent = "Set °C";
+    setButton.addEventListener("click", () =>
+      runClimateAction(device, "set_temperature", temp.value, setButton)
+    );
+
+    controls.append(temp, setButton);
+    row.append(identity, controls);
+    climateList.append(row);
+  }
+}
+
 async function connectAndTest() {
   projectResult.classList.add("hidden");
   connectButton.disabled = true;
