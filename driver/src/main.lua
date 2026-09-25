@@ -86,7 +86,7 @@ local function startLanApi()
         log = log,
         onStatus = function(isOnline, status)
             if isOnline then
-                updateProperty("API Status", "Online - read-only alpha")
+                updateProperty("API Status", "Online - light control alpha")
             else
                 updateProperty("API Status", "Offline (" .. tostring(status) .. ")")
             end
