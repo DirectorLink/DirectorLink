@@ -29,8 +29,10 @@ VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 SOURCE_VERSION_LINE = 'Version.BRIDGE_VERSION = "dev"'
 SPEC_MODULE = "src/api/openapi_spec.lua"
 
-# Fixed timestamp so the same source always produces the same package bytes.
+# Fixed zip metadata so the same source produces the same package bytes on every OS:
+# a constant timestamp, and "Unix" as the creating system (Python defaults to the host OS).
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
+ZIP_CREATE_SYSTEM = 3
 
 
 def fail(message):
@@ -104,6 +106,7 @@ def write_package(entries):
         for name in sorted(entries):
             info = ZipInfo(name, date_time=ZIP_DATE)
             info.compress_type = ZIP_DEFLATED
+            info.create_system = ZIP_CREATE_SYSTEM
             info.external_attr = 0o644 << 16
             archive.writestr(info, entries[name].encode("utf-8"))
 
@@ -112,7 +115,7 @@ def main():
     version, driver_version = read_version()
     spec = load_spec(version)
     write_package(package_entries(version, driver_version, spec))
-    SPEC_JSON.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    SPEC_JSON.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Built {PACKAGE} (version {version}, Control4 driver version {driver_version})")
     print(f"Wrote {SPEC_JSON}")
 
