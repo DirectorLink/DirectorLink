@@ -62,15 +62,12 @@ Cloudflare is **not** a relay. Control commands and project data are not intende
 
 ## V1 authentication
 
-- One owner identity only
-- First-use local pairing flow
-- Authenticated API even on LAN
-- No default/shared password
-- Credentials do not depend on Control4 cloud credentials
-- Director stores one random owner Bearer credential encrypted
-- Composer exposes only an 8-digit short pairing code, never the long credential
-- Pairing codes expire after 15 minutes, rotate after successful pairing, and are rate-limited
-- A paired browser stores the long owner credential locally and reuses it for normal LAN API requests
+- One owner; every client (browser, phone, Home Assistant, script) gets its own named API key
+- Authenticated API even on LAN: `Authorization: Bearer <api key>` on every route except health, the API description and pairing
+- No default/shared password; credentials do not depend on Control4 cloud credentials
+- Keys are random, stored encrypted on Director, listed without secrets and revocable (through the API, or all at once with a Composer action)
+- First key (0.2.0): exchange the 8-digit Composer pairing code — valid 15 minutes, rotated after use, rate-limited
+- Planned (0.3.0): approve new clients from the Control4 app so Composer is no longer needed after installation
 
 ## V1 device scope
 
@@ -160,14 +157,13 @@ Use project location/time-zone data exposed by Director. Solar calculations shou
 
 ## Optional/deferred extensions
 
-A plugin architecture may be added later for niche functionality. A Hebrew/Jewish calendar module was discussed but is **explicitly excluded from C4Bridge core and V1**; if ever implemented, it should be optional.
+A plugin architecture may be added later for niche functionality. A Jewish-calendar module — Shabbat and holiday times as schedule triggers — is planned for later as an optional module inside the driver; it is not part of the first scheduler release.
 
 ## Distribution and versioning
 
 - Official `C4Bridge.c4z` binaries are distributed through **GitHub Releases**
-- The repository `VERSION` file contains the semantic release version
-- Alpha/beta versions are GitHub prereleases
-- Release assets include `C4Bridge.c4z` and `SHA256SUMS.txt`
+- The repository `VERSION` file holds the `MAJOR.MINOR.PATCH` release version (no suffixes) and is the only version to edit
+- Release assets include `C4Bridge.c4z`, `openapi.json` and `SHA256SUMS.txt`
 - Users may install a newer or older release manually through Composer Pro
 - Downgrade safety is release-specific once persistent data formats exist
 - No automatic in-driver update is part of V1
@@ -232,32 +228,22 @@ The initial Cloudflare Pages PWA shell is implemented under `web/`:
 - security headers
 - raster/SVG application icons
 
-The PWA does not yet make Director requests. The service worker explicitly ignores all cross-origin requests so future LAN traffic is never cached or proxied by the web shell.
+The PWA talks to the driver's LAN API directly. The service worker ignores all cross-origin requests so LAN traffic is never cached or proxied by the web shell. An API console page (`web/console.html`) lists every endpoint from the live API description and follows the bridge log.
 
 
 
-### Read-only LAN API spike — alpha.2
+### LAN API — 0.2.0
 
-For the first browser-to-Director validation, C4Bridge exposes a minimal HTTP server on TCP port `41999`.
+The LAN API is described by `api/openapi.yaml` (OpenAPI 3.1) and served on TCP port `41999`:
 
-Security/transport rules for this alpha:
+- HTTP on the LAN only; the public app remains HTTPS
+- Chrome Local Network Access permission gates the public-to-local browser request
+- API keys (Bearer) on every route except health, the API description and pairing
+- CORS restricted to official C4Bridge origins, plus localhost for development
+- logical resources: system, rooms, devices, lights, thermostats, logs, API keys
+- `PATCH` with the desired state, answered with `202 Accepted`; RFC 9457 errors
 
-- HTTP is LAN-only; the public app remains HTTPS.
-- Chrome Local Network Access permission gates the public-to-local browser request.
-- Every data endpoint requires a per-install Bearer token.
-- Token is generated with `C4:UUID("RANDOM")`.
-- Token is persisted encrypted on Director.
-- Browser CORS is restricted to official C4Bridge origins.
-- The API is read-only.
-- The token is manually copied from Composer only for this alpha test.
-
-Routes:
-
-- `GET /v1/system/info`
-- `GET /v1/rooms`
-- `GET /v1/devices`
-
-The manual-token flow was the alpha.2 integration spike. Alpha.8 replaces it with the V1 one-owner pairing flow while retaining Bearer authentication internally.
+See `api/README.md` for conventions and examples. The alpha routes (`/v1/system/info`, `/v1/climate`, `/v1/devices/{id}/actions/...`, `/v1/diagnostics`, header-based `/v1/pair`) were removed in 0.2.0.
 
 
 ### Thermostat V2 — alpha.9
@@ -284,3 +270,5 @@ Internal commands used on the real test system:
 - `SET_SETPOINT_SINGLE { CELSIUS = ... }`
 
 C4Bridge exposes only actions supported by the normalized device capabilities. Heat-only zones do not receive cooling controls.
+
+Since 0.2.0 these are exposed through `PATCH /v1/thermostats/{id}` as `mode`, `fan_speed` and `target_temperature`; the command names above stay internal to the adapter.

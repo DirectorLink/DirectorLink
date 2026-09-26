@@ -20,7 +20,10 @@ jobs:
         with:
           python-version: "3.x"
 
-      - name: Install Lua 5.1 syntax checker
+      - name: Install Python tools
+        run: pip install -r requirements-dev.txt
+
+      - name: Install Lua 5.1
         run: |
           sudo apt-get update
           sudo apt-get install -y lua5.1
@@ -28,16 +31,23 @@ jobs:
       - name: Check Lua syntax
         run: find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
 
-      - name: Rebuild driver
+      - name: Run driver tests
+        run: lua5.1 driver/tests/run.lua
+
+      - name: Check API spec against the driver
+        run: python scripts/check_api.py
+
+      - name: Build driver
         run: python scripts/build.py
 
       - name: Validate package
         run: python scripts/check_package.py
 
-      - name: Validate web/PWA
+      - name: Check live responses against the API spec
+        run: python scripts/check_contract.py
+
+      - name: Validate web app
         run: python scripts/check_web.py
 
       - name: Check web JavaScript syntax
-        run: |
-          node --check web/app.js
-          node --check web/sw.js
+        run: for file in web/*.js; do node --check "$file"; done

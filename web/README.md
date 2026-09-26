@@ -1,23 +1,15 @@
 # C4Bridge Web PWA
 
-This directory is the Cloudflare Pages frontend for C4Bridge.
+This directory is the Cloudflare Pages frontend for C4Bridge. It is framework-free HTML, CSS and JavaScript and needs no build step.
 
-## Current status
+## Pages
 
-The PWA shell is implemented:
-
-- responsive UI
-- installable web-app manifest
-- offline shell via service worker
-- local Director address storage
-- browser/security diagnostics
-- architecture/status screen
-
-The LAN transport is intentionally **not implemented yet**. The browser cannot speak the DriverWorks TCP server directly, so C4Bridge must first expose a browser-compatible authenticated HTTP/WebSocket endpoint on Director.
+- `index.html` + `app.js` — dashboard: pair a browser, then read and control lights and thermostats
+- `console.html` + `console.js` — API console: loads the API description from the controller, lists every endpoint, sends requests, and follows the bridge log
+- `api-client.js` — shared client for the LAN API (API port, API key storage, `fetch` with `targetAddressSpace: "local"`)
+- `sw.js` — offline shell; it never intercepts controller/LAN requests
 
 ## Cloudflare Pages settings
-
-Connect the GitHub repository `IsraelCIL/C4Bridge` to Cloudflare Pages with:
 
 | Setting | Value |
 | --- | --- |
@@ -27,24 +19,18 @@ Connect the GitHub repository `IsraelCIL/C4Bridge` to Cloudflare Pages with:
 | Build command | `exit 0` |
 | Build output directory | `.` |
 
-No environment variables are required for the current shell.
+No environment variables are required. Every merge to `main` deploys, so web changes must go out together with the driver version they need.
 
-After the first deployment, attach:
+## Local development
 
-- `c4bridge.io` as the production custom domain
-- optionally `www.c4bridge.io`, redirected to `c4bridge.io`
+The driver accepts `http://localhost` origins, so the app can be tested against a real controller before it is deployed:
+
+```bash
+python -m http.server 8080 --directory web
+```
+
+Then open `http://localhost:8080`. Without a controller, run `python scripts/dev_server.py` as well and use `localhost` as the controller address (see `docs/BUILD.md`).
 
 ## Local Network Access
 
-The production site must be served over HTTPS. Modern Chromium browsers gate requests from a public HTTPS origin to local-network devices behind Local Network Access permission.
-
-The future C4Bridge transport must:
-
-1. be initiated by an explicit user action;
-2. target the user-configured Director IP/local hostname;
-3. handle CORS correctly;
-4. handle browser Local Network Access requirements;
-5. authenticate every C4Bridge request;
-6. never rely on a cloud relay for normal V1 control.
-
-The service worker intentionally ignores all cross-origin requests so LAN traffic is never cached or proxied by the PWA.
+The production site is served over HTTPS and talks to the controller over plain HTTP on the LAN. Chromium browsers gate these requests behind Local Network Access permission; requests to private IP literals or `.local` hostnames, annotated with `targetAddressSpace: "local"`, are allowed after the user grants it.

@@ -122,3 +122,27 @@ Real-system owner pairing succeeded. A short Composer Pairing Code successfully 
 ## 2026-09-25 — HVAC command capture
 
 A real Director snapshot captured the stock Control4 UI controlling a Thermostat V2 proxy with `SET_MODE_HVAC {MODE}`, `SET_MODE_FAN {MODE}`, and `SET_SETPOINT_SINGLE {CELSIUS}`. These exact command shapes are the basis of alpha.9.
+
+
+## 2026-09-26 — v0.2.0 OpenAPI API
+
+Installed as a Composer driver update on the same test system (Director `3.4.3.727848-res`, `XDT_CORE1`).
+
+### Confirmed
+
+- The DriverWorks TCP server works without a delimiter: the driver assembles requests itself and reads JSON bodies by `Content-Length` (pairing and `PATCH` requests).
+- Pairing with the Composer code issues a named API key; the paired web app loads system, rooms, devices, lights and thermostats.
+- Lights on/off through `PATCH /v1/lights/{id}` (three KNX switches) and an AC zone mode and setpoint change through `PATCH /v1/thermostats/{id}`, confirmed on the real devices.
+- Browser preflights (CORS and Private Network Access) from a web app served on localhost.
+- The Composer **Log Level** property changes the recorded level immediately.
+- 83 real responses — every room, every thermostat, lights, devices, logs, API keys and error responses — validated against `api/openapi.yaml` with zero schema errors.
+
+### Project as seen through the API
+
+- 20 rooms, all on a floor; 195 devices: 111 lights, 22 thermostats, 15 covers (recognized, not controllable yet), 47 other.
+- Lights: 2 dimmable KNX dimmers (level not reported), the rest on/off.
+- Thermostats: 14 AC zones (off/heat/cool, fan low/medium/high) and 8 floor-heating zones (off/heat, no fan).
+
+### Performance
+
+Inside the driver most requests take 3–35 ms. Seen from a LAN client, the full device list takes about 60 ms and 500 log entries about 85 ms.

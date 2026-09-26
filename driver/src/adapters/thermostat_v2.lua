@@ -1,4 +1,4 @@
-local Diagnostics = require("src.core.diagnostics")
+local Log = require("src.core.log")
 
 local Climate = {}
 
@@ -189,7 +189,7 @@ function Climate.initialize(device)
         fan_mode = fanMode and lower(fanMode) or nil,
     }
 
-    Diagnostics.info("climate", "initialized thermostat", {
+    Log.info("climate", "initialized thermostat", {
         device_id = device.id,
         hvac_modes = hvacModes,
         fan_mode = fanMode,
@@ -232,7 +232,7 @@ function Climate.onVariableChanged(device, variableId, value)
         return false
     end
 
-    Diagnostics.info("climate_state", "thermostat variable changed", {
+    Log.debug("climate_state", "thermostat variable changed", {
         device_id = device.id,
         variable_id = variableId,
         value = value,
@@ -241,7 +241,7 @@ function Climate.onVariableChanged(device, variableId, value)
 end
 
 local function send(deviceId, command, params)
-    Diagnostics.info("climate_command", "sending thermostat command", {
+    Log.info("climate_command", "sending thermostat command", {
         device_id = deviceId,
         command = command,
         params = params,

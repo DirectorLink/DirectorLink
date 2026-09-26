@@ -6,8 +6,9 @@
   <model>C4Bridge</model>
   <creator>C4Bridge contributors</creator>
   <created>09/25/2026 00:00</created>
-  <modified>09/25/2026 00:00</modified>
-  <version>9</version>
+  <modified>09/26/2026 00:00</modified>
+  <!-- scripts/build.py stamps this from the VERSION file (major*10000 + minor*100 + patch). -->
+  <version>0</version>
 
   <control>lua_gen</control>
   <driver>DriverWorks</driver>
@@ -16,6 +17,16 @@
 
   <config>
     <script file="driver.lua"></script>
+    <actions>
+      <action>
+        <name>New Pairing Code</name>
+        <command>NEW_PAIRING_CODE</command>
+      </action>
+      <action>
+        <name>Revoke All API Keys</name>
+        <command>REVOKE_API_KEYS</command>
+      </action>
+    </actions>
     <properties>
       <property>
         <name>Status</name>
@@ -24,46 +35,70 @@
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Bridge Version</name>
+        <name>Version</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Director Version</name>
+        <name>Controller OS</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>System Type</name>
+        <name>Location</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Project Location</name>
+        <name>Inventory</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Discovery Summary</name>
-        <default></default>
+        <name>API Status</name>
+        <default>Offline</default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Supported Lights</name>
+        <name>API Port</name>
+        <default>41999</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>API Keys</name>
         <default>0</default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>
       <property>
-        <name>Supported Climate</name>
-        <default>0</default>
+        <name>Pairing Code</name>
+        <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Pairing Status</name>
+        <default>Starting...</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Log Level</name>
+        <type>LIST</type>
+        <items>
+          <item>Debug</item>
+          <item>Info</item>
+          <item>Warning</item>
+          <item>Error</item>
+        </items>
+        <default>Info</default>
+        <readonly>false</readonly>
       </property>
       <property>
         <name>Reload Counter</name>
@@ -91,36 +126,6 @@
       </property>
       <property>
         <name>Last Destroy Time</name>
-        <default></default>
-        <type>STRING</type>
-        <readonly>true</readonly>
-      </property>
-      <property>
-        <name>Pairing Code</name>
-        <default></default>
-        <type>STRING</type>
-        <readonly>true</readonly>
-      </property>
-      <property>
-        <name>Pairing Status</name>
-        <default>Starting...</default>
-        <type>STRING</type>
-        <readonly>true</readonly>
-      </property>
-      <property>
-        <name>API Status</name>
-        <default>Offline</default>
-        <type>STRING</type>
-        <readonly>true</readonly>
-      </property>
-      <property>
-        <name>API Port</name>
-        <default>41999</default>
-        <type>STRING</type>
-        <readonly>true</readonly>
-      </property>
-      <property>
-        <name>API Token</name>
         <default></default>
         <type>STRING</type>
         <readonly>true</readonly>

@@ -1,65 +1,70 @@
-# C4Bridge Alpha Test
+# C4Bridge Test Plan
 
 ## Current release
 
-`v0.1.0-alpha.9`
+`v0.2.0` — the OpenAPI release. The API changed completely, so browsers paired with an alpha build must pair again.
 
-This build validates Thermostat V2 state and HVAC commands.
+## 1. Install
 
-## Update
+Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
-Use a local file named exactly `C4Bridge.c4z`.
+Expected in the C4Bridge properties once the new driver is loaded:
 
-Expected after the new driver is actually loaded:
+- Version: `0.2.0`
+- Status: `Ready`
+- API Status: `Online`
+- Inventory: rooms, devices, lights and thermostats (the test system: 20 rooms, 111 lights, 22 thermostats)
+- Pairing Code: 8 digits; Pairing Status: `Ready until HH:MM`
+- Log Level: `Info`
 
-- Bridge Version: `0.1.0-alpha.9`
-- Supported Climate: greater than zero
-- API Status: `Online - pairing enabled`
+## 2. Request bodies
 
-Owner pairing from alpha.8 should continue working.
+The driver runs the DriverWorks TCP server without a delimiter and reads bodies by `Content-Length` (confirmed on Director 3.4.3). Check it first after every update:
 
-## HVAC panel
+1. Pair (next step). If pairing hangs or times out, body handling does not work on this Director — capture the log and stop.
+2. `PATCH /v1/lights/{id}` with `{"on": true}` must answer `202` within a second.
 
-Hard-refresh `https://app.c4bridge.io` and connect using the already-paired browser.
+## 3. Pair and connect
 
-Expected:
+1. Open `https://app.c4bridge.io` (or a local copy, see step 7), enter the controller IP and the Pairing Code, and click **Pair & connect**.
+2. Expect rooms, devices, lights and thermostats to load. The Pairing Code in Composer changes after pairing and **API Keys** shows `1`.
 
-- a new HVAC panel appears;
-- Thermostat V2 devices are listed;
-- current temperature, target temperature, HVAC mode and fan mode are visible where supported.
+## 4. Lights and thermostats
 
-## Test one AC zone first
+Repeat the alpha checks through the new API:
 
-Use one known visible AC zone.
+- a KNX switch: on and off, confirmed by the controller
+- a dimmable light: set 40%, confirmed (KNX dimmers report "level not reported")
+- one AC zone: mode Off → Cool, target 22 °C, fan Low → Medium
+- one floor-heating zone: no Cool mode and no fan controls offered
 
-1. Set HVAC mode to Off and confirm the real Control4 state.
-2. Set mode to Cool and confirm it changes.
-3. Change target temperature to 22°C and confirm.
-4. Change fan from Low to Medium and back.
+## 5. API console
 
-Do not test every zone until one known AC zone works end-to-end.
+Open **API console** from the dashboard, click **Load API** and check:
 
-## Heat-only zone
+- every endpoint is listed, grouped by tag
+- `GET /v1/system` returns controller, location and inventory
+- `GET /v1/devices?type=light&room_id=<id>` filters
+- an invalid `PATCH` (for example `{"brightness": 150}`) returns `400` with `code: INVALID_FIELD`
+- **Follow** in the log panel shows new `api` entries as requests are made
 
-After the AC test succeeds, open one floor-heating thermostat.
+## 6. API keys and logs
 
-Expected:
+- `POST /v1/api-keys` with `{"name": "Test"}` returns a key once; `GET /v1/api-keys` lists it without the secret
+- `DELETE /v1/api-keys/{id}` makes that key return `401`
+- `PATCH /v1/logs/settings` with `{"level": "debug"}` changes the Composer **Log Level** to Debug; set it back to `info` afterwards
+- Composer action **Revoke All API Keys** makes every browser need a new pairing
 
-- HVAC modes should not show Cool;
-- no AC-style fan controls should be presented;
-- target temperature can extend higher than normal AC zones.
+## 7. Testing the web app before it is deployed
 
-## Internal mapping
+The driver accepts `http://localhost` origins, so the web app can be tested from this PC:
 
-```text
-set_hvac_mode(cool)
-  -> SET_MODE_HVAC { MODE = "Cool" }
-
-set_fan_mode(medium)
-  -> SET_MODE_FAN { MODE = "Medium" }
-
-set_temperature(22)
-  -> SET_SETPOINT_SINGLE { CELSIUS = 22 }
+```bash
+python -m http.server 8080 --directory web
 ```
 
-If a command fails, capture a snapshot immediately after one C4Bridge command and one Control4-app command on the same thermostat.
+Then open `http://localhost:8080`.
+
+## If something fails
+
+Collect `GET /v1/logs?level=debug` (after setting the level to debug), the Composer properties, and the C4Bridge lines from the Director driver log.

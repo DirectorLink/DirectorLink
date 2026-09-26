@@ -23,23 +23,31 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install Python tools
+        run: pip install -r requirements-dev.txt
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
       - name: Read version
         id: version
         shell: bash
         run: |
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Invalid VERSION: $VERSION"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must be MAJOR.MINOR.PATCH, got: $VERSION"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify driver source version
-        shell: bash
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          grep -F "Version.BRIDGE_VERSION = \"$VERSION\"" driver/src/core/version.lua
+      - name: Run driver tests
+        run: lua5.1 driver/tests/run.lua
+
+      - name: Check API spec against the driver
+        run: python scripts/check_api.py
 
       - name: Build driver
         run: python scripts/build.py
@@ -47,9 +55,12 @@ jobs:
       - name: Validate package
         run: python scripts/check_package.py
 
-      - name: Create checksum
+      - name: Check live responses against the API spec
+        run: python scripts/check_contract.py
+
+      - name: Create checksums
         shell: bash
-        run: sha256sum dist/C4Bridge.c4z > SHA256SUMS.txt
+        run: (cd dist && sha256sum C4Bridge.c4z openapi.json) > SHA256SUMS.txt
 
       - name: Publish GitHub Release
         env:
@@ -57,7 +68,6 @@ jobs:
         shell: bash
         run: |
           TAG="${{ steps.version.outputs.tag }}"
-          VERSION="${{ steps.version.outputs.version }}"
           NOTES="docs/releases/$TAG.md"
 
           if gh release view "$TAG" >/dev/null 2>&1; then
@@ -68,6 +78,7 @@ jobs:
           ARGS=(
             "$TAG"
             "dist/C4Bridge.c4z"
+            "dist/openapi.json"
             "SHA256SUMS.txt"
             --repo "$GITHUB_REPOSITORY"
             --target "$GITHUB_SHA"
@@ -78,10 +89,6 @@ jobs:
             ARGS+=(--notes-file "$NOTES")
           else
             ARGS+=(--generate-notes)
-          fi
-
-          if [[ "$VERSION" == *-* ]]; then
-            ARGS+=(--prerelease)
           fi
 
           gh release create "${ARGS[@]}"

@@ -103,6 +103,8 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Status:** Alpha integration decision. Re-evaluate port configurability and final pairing/authentication after testing on real systems.
 
+**Superseded by ADR-019 in 0.2.0.** The fixed port 41999 stays; the read-only alpha routes were replaced by the OpenAPI contract.
+
 
 ## ADR-017 — Control lights through the Light V2 proxy
 
@@ -141,3 +143,48 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Transport:** `POST /v1/pair` is the only unauthenticated application route. The code is sent in the `X-C4Bridge-Pairing-Code` header, not in a URL.
 
 **Why:** Homeowners should not copy long API secrets from Composer. Pairing keeps the long credential private while preserving the local-first, no-cloud-relay architecture.
+
+**Superseded by ADR-021 in 0.2.0.** Pairing now issues named API keys instead of one shared owner credential, and the code moved from a header to the JSON body of `POST /v1/auth/pair`.
+
+
+## ADR-019 — OpenAPI-first REST API with logical names
+
+**Decision:** `api/openapi.yaml` (OpenAPI 3.1) is the contract for the LAN API. Resources use logical names — `rooms`, `devices`, `lights`, `thermostats`, `logs`, `api-keys` — and state changes are `PATCH` requests with the desired state (`{"on": true}`), answered with `202 Accepted`. Errors use RFC 9457 Problem Details with a stable `code`.
+
+**Why:** A standard description lets any client (the web app, Postman, Home Assistant, scripts) use the API without knowing Control4. Control4 command names, proxy IDs and variable numbers stay inside the adapters.
+
+**Consequences:**
+- `scripts/check_api.py` fails CI when the spec and `driver/src/api/routes.lua` differ in any method, path or public flag.
+- The build embeds the spec so the driver serves it at `/v1/openapi.json`; releases publish it as `openapi.json`.
+- The driver uses its own JSON encoder/decoder (`src/core/json.lua`) for deterministic output (explicit `[]` and `null`) and so the API layer can be tested in plain Lua.
+- The HTTP server runs without a delimiter and assembles requests itself, so request bodies (`Content-Length`) are supported.
+
+## ADR-020 — One repository for API, driver and web app
+
+**Decision:** The API contract, driver and web app stay in this repository (`api/`, `driver/`, `web/`), with the web app deployed by Cloudflare from `web/`.
+
+**Why:** While the API is changing, most changes touch the spec, driver and web app together; one pull request keeps them consistent and CI checks them together. The Jewish-calendar module (later) and the automation engine ship inside the `.c4z` anyway.
+
+**Revisit:** Split a part into its own repository when it gets an independent lifecycle or other consumers (most likely a reusable calendar library, then the web app).
+
+## ADR-021 — API keys
+
+**Decision:** Every route except health, the API description and pairing requires `Authorization: Bearer <api key>`. Keys are named, stored encrypted on Director (at most 20), listed without secrets, and revocable through the API or all at once with the Composer action **Revoke All API Keys**.
+
+**First key (0.2.0):** exchange the 8-digit Composer pairing code at `POST /v1/auth/pair` (15-minute code, rotated after use, 5 failures per minute lock pairing for 60 seconds).
+
+**Planned (0.3.0):** replace the Composer code with approval from the Control4 app — C4Bridge adds a button the homeowner presses to approve a pending request — so no Composer access is needed after installation.
+
+**Why keys and not an open LAN API:** the API can operate door, gate and garage relays through KNX; without a key anything on the home network could.
+
+## ADR-022 — Versions are MAJOR.MINOR.PATCH with one source
+
+**Decision:** `VERSION` holds a plain `MAJOR.MINOR.PATCH` version with no pre-release suffix and is the only version to edit. The build stamps it into `version.lua`, the API description and `driver.xml`, where Control4's integer version is derived as `MAJOR*10000 + MINOR*100 + PATCH`.
+
+**Why:** One place to change, and the Control4 driver version always increases with the release version. `0.x` releases already signal that the project is in development.
+
+## ADR-023 — Driver log served by the API
+
+**Decision:** The driver keeps its last 500 log entries in memory and serves them at `GET /v1/logs` (filters by level, category and sequence number); the level is set with `PATCH /v1/logs/settings` or the Composer **Log Level** property. Entries also go to the Director driver log.
+
+**Scope:** C4Bridge's own log only. Director's system logs are outside the driver sandbox and contain other drivers' data, so they are not exposed over the LAN. Fields such as keys, tokens and pairing codes are redacted before logging.

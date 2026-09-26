@@ -25,16 +25,15 @@
 
 - [x] Implement first browser-compatible HTTP LAN transport spike on OS 3.3+
 - [x] Define and implement one-owner pairing flow (alpha.8)
-- [x] Generate/store encrypted owner credential
-- [x] Authenticate alpha read-only requests with Bearer token
-- [ ] Implement protocol v1 methods:
-  - [x] `system.info`
-  - [ ] `discovery.refresh`
-  - [x] `rooms.list`
-  - [x] `devices.list`
-  - [ ] `devices.get`
-  - [x] light control methods
 - [x] Validate CORS / Local Network Access behavior on real Director
+- [x] OpenAPI 3.1 contract with logical resources, checked against the driver in CI (0.2.0)
+- [x] Named API keys: create, list, revoke; Composer "Revoke All API Keys" (0.2.0)
+- [x] Request bodies, `PATCH` state changes, RFC 9457 errors (0.2.0)
+- [x] Driver log API with levels and filters (0.2.0)
+- [x] Driver tests against a fake Director (0.2.0)
+- [x] Validate 0.2.0 request-body handling on a real Director
+- [ ] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
+- [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA
 
@@ -48,13 +47,14 @@
 - [ ] Attach `c4bridge.io`
 - [ ] Local Network Access request flow
 - [x] Pairing
+- [x] API console: every endpoint from the live API description, live log (0.2.0)
 - [ ] Rooms/devices dashboard
 - [ ] Light UI
 
 ## Milestone 4 — more adapters
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
-- [ ] Cover / blind / motorized window
+- [ ] Cover / blind / motorized window (next: the test system has 15 KNX blinds)
 - [ ] Expand unsupported-device diagnostics
 
 ## Milestone 5 — C4Bridge scenes
@@ -73,6 +73,7 @@
 - [ ] Solar offsets
 - [ ] Run C4Bridge scenes/actions
 - [ ] Recalculate after reboot/timezone/location changes
+- [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
 
 ## Deferred
 
