@@ -10,7 +10,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
 | Names | Logical resources — rooms, devices, lights, thermostats. No Control4 command names, proxy IDs or variable numbers. |
-| Authentication | `Authorization: Bearer <api key>` on every route except `GET /v1/health`, `GET /v1/openapi.json` and `POST /v1/auth/pair`. |
+| Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, access requests (`/v1/auth/requests`) and pairing. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. The answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -19,6 +19,17 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Versioning | Breaking changes get a new path prefix (`/v2`). `info.version` is the bridge release. |
 
 ## Getting a key
+
+**With the Control4 app (recommended).** Ask for access, press **C4Bridge Access** in the Control4 app within 2 minutes, then collect the key once:
+
+```bash
+curl -X POST http://192.168.1.201:41999/v1/auth/requests -H "Content-Type: application/json" -d '{"name": "My laptop"}'
+# -> {"id": "<request id>", "status": "pending", ...}   now press C4Bridge Access
+curl http://192.168.1.201:41999/v1/auth/requests/<request id>
+# -> {"status": "approved", "api_key": {"key": "ak_...", ...}}
+```
+
+**With the pairing code (fallback).**
 
 1. Read the 8-digit **Pairing Code** in the C4Bridge properties in Composer.
 2. Exchange it for a key (the code then changes):

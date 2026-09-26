@@ -67,7 +67,7 @@ Cloudflare is **not** a relay. Control commands and project data are not intende
 - No default/shared password; credentials do not depend on Control4 cloud credentials
 - Keys are random, stored encrypted on Director, listed without secrets and revocable (through the API, or all at once with a Composer action)
 - First key (0.2.0): exchange the 8-digit Composer pairing code — valid 15 minutes, rotated after use, rate-limited
-- Planned (0.3.0): approve new clients from the Control4 app so Composer is no longer needed after installation
+- Since 0.3.0: approve new clients with the **C4Bridge Access** button in the Control4 app, so Composer is no longer needed after installation (the pairing code remains a fallback)
 
 ## V1 device scope
 

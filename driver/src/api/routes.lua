@@ -7,6 +7,9 @@ return {
     { method = "GET", path = "/v1/system", handler = "system.info" },
 
     { method = "POST", path = "/v1/auth/pair", handler = "auth.pair", public = true },
+    { method = "POST", path = "/v1/auth/requests", handler = "auth.create_request", public = true },
+    { method = "GET", path = "/v1/auth/requests/{requestId}", handler = "auth.get_request", public = true },
+    { method = "DELETE", path = "/v1/auth/requests/{requestId}", handler = "auth.delete_request", public = true },
     { method = "GET", path = "/v1/api-keys", handler = "auth.list_keys" },
     { method = "POST", path = "/v1/api-keys", handler = "auth.create_key" },
     { method = "DELETE", path = "/v1/api-keys/{keyId}", handler = "auth.delete_key" },

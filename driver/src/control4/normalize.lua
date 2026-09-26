@@ -137,7 +137,10 @@ function Normalize.devices(rawDevices, bridgeDeviceId)
 
     for rawId, raw in pairs(rawDevices or {}) do
         local id = toId(rawId)
-        if id and id ~= bridgeDeviceId and type(raw) == "table" then
+        -- C4Bridge's own proxies (the C4Bridge Access button) are not homeowner devices.
+        local ownProxy = bridgeDeviceId ~= nil and type(raw) == "table" and type(raw.protocol) == "table"
+            and (raw.protocol[bridgeDeviceId] ~= nil or raw.protocol[tostring(bridgeDeviceId)] ~= nil)
+        if id and id ~= bridgeDeviceId and not ownProxy and type(raw) == "table" then
             local hasProtocol = type(raw.protocol) == "table" and next(raw.protocol) ~= nil
             local isBackingProtocol = type(raw.proxies) == "table" and next(raw.proxies) ~= nil
 

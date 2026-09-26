@@ -29,7 +29,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current build: **C4Bridge v0.2.0**
+Current build: **C4Bridge v0.3.0**
 
 Each release keeps its own `C4Bridge.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
@@ -62,13 +62,14 @@ A successful install shows:
 - **Controller OS:** your Director OS version
 - **Inventory:** the number of rooms, devices, lights and thermostats found
 - **API Status:** `Online`
-- **Pairing Code:** 8 digits used to pair the first browser
+- **Access Request:** what is waiting for approval with the C4Bridge Access button
+- **Pairing Code:** 8 digits, a fallback way to pair a browser
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the C4Bridge Lua log and open a GitHub issue.
 
 ### 4. Pair a browser
 
-Open **https://app.c4bridge.io**, enter the controller IP and the Pairing Code, and click **Pair & connect**. The browser receives its own API key; the code changes after every use.
+Open **https://app.c4bridge.io**, enter the controller IP and click **Request access**, then press **C4Bridge Access** in your Control4 app within 2 minutes. The browser receives its own API key. (The 8-digit Pairing Code in the C4Bridge properties is a fallback.)
 
 ### Updating C4Bridge
 

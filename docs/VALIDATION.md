@@ -146,3 +146,26 @@ Installed as a Composer driver update on the same test system (Director `3.4.3.7
 ### Performance
 
 Inside the driver most requests take 3–35 ms. Seen from a LAN client, the full device list takes about 60 ms and 500 log entries about 85 ms.
+
+
+## 2026-09-26 — v0.3.0 C4Bridge Access button
+
+Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from the Director logs.
+
+### Driver structure
+
+- As a combo driver (first 0.3.0 build) the Director created only the combined device; the button proxy never appeared. Every working button driver on the system (door/garage relays, DoorBird, experience buttons) is a protocol device (item type 6) with a `uibutton` child proxy (type 7).
+- Without `<combo>`, `AddDevice` created **C4Bridge** (protocol device) and **C4Bridge Access** (`uibutton` proxy, binding 5001) in the same room.
+
+### Button visibility
+
+- Control4 adds new buttons hidden. Composer's Navigators view shows one by sending the room `SET_SECURITY_DEVICE_ORDER` with `DEVICE_DATA_XML` — the visible Security entries (hidden 0) followed by the hidden ones (hidden 1). `GET_SECURITY_DEVICES` returns the visible list; with `hidden = 1` it returns the hidden list. Special entries are listed unsigned (4294966301) and written signed (-995).
+- The driver now does this itself 5 seconds after being added: confirmed — `SET_SECURITY_DEVICE_ORDER` on the room, "C4Bridge Access is now visible in the Control4 app (Security)", and the button appeared in the Control4 app without opening Composer.
+
+### Approval
+
+- Access requested from the web app → the button pressed in the Control4 app → API key issued, within 4 seconds; a press with nothing waiting is ignored.
+
+### Driver updates (issue #8)
+
+- Composer's connection sync copies a new `.c4z` into the Director's driver store (`/opt/control4/var/drivers/c4z`), but no reload command reaches the Director and the running instance keeps its old code until a reboot. Adding a device (`AddDevice`) or booting loads the new code immediately (`Attempting to load file` → `loadC4Z: Extracting` → `Lua driver loaded successfully`). A right-click **Update Driver** has not been captured yet.

@@ -9,9 +9,11 @@ info:
     the home LAN. Resources use logical names — rooms, devices, lights, thermostats. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
-    **Authentication.** Every operation except health, this API description and pairing needs an
-    API key: `Authorization: Bearer <api key>`. Get the first key by pairing with the 8-digit code
-    shown in the C4Bridge properties in Composer, then create more keys under `/v1/api-keys`.
+    **Authentication.** Every operation except health, this API description, access requests and
+    pairing needs an API key: `Authorization: Bearer <api key>`. Get the first key with an access
+    request that the homeowner approves with the **C4Bridge Access** button in the Control4 app
+    (`/v1/auth/requests`), or with the 8-digit pairing code shown in Composer. Create more keys
+    under `/v1/api-keys`.
 
     **Changing state.** Send the desired state with `PATCH`. The bridge answers `202 Accepted` once
     the command has been handed to the controller. The returned object holds the last state the
@@ -136,6 +138,83 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/auth/requests:
+    post:
+      tags: [Auth]
+      operationId: createAccessRequest
+      summary: Ask for an API key, approved in the Control4 app
+      description: |
+        The **C4Bridge Access** button in the Control4 app turns orange. When the homeowner presses
+        it within 2 minutes, the request is approved and the requester collects its key once with
+        `GET /v1/auth/requests/{requestId}`. Only one request can wait at a time, and at most five
+        can be made in ten minutes. Keep the returned `id` secret: it is how the key is collected.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessRequestCreate"
+            example:
+              name: Chrome on my laptop
+      responses:
+        "201":
+          description: Waiting for the button to be pressed.
+          headers:
+            Location:
+              description: Path of the new request.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Another request is already waiting (`REQUEST_PENDING`), or the key limit is reached (`KEY_LIMIT_REACHED`).
+          headers:
+            Retry-After:
+              $ref: "#/components/headers/RetryAfter"
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /v1/auth/requests/{requestId}:
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      tags: [Auth]
+      operationId: getAccessRequest
+      summary: Check an access request and collect the key
+      description: |
+        While the request waits, `status` is `pending`. After the button is pressed, the first
+        call returns `status: approved` with the new key in `api_key`; the request is then used up
+        and later calls return 404.
+      security: []
+      responses:
+        "200":
+          description: The request, with the key once approved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Auth]
+      operationId: cancelAccessRequest
+      summary: Cancel a waiting access request
+      security: []
+      responses:
+        "204":
+          description: Cancelled; the button returns to idle.
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /v1/api-keys:
     get:
@@ -548,6 +627,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{32}$"
     KeyId:
       name: keyId
       in: path
@@ -758,6 +844,38 @@ components:
           minLength: 1
           maxLength: 64
           description: A name for the new key, e.g. the browser or app using it.
+
+    AccessRequestCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Shown in Composer while waiting, and used as the key's name.
+
+    AccessRequest:
+      type: object
+      required: [id, name, status, expires_at, api_key]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved]
+        expires_at:
+          type: string
+          format: date-time
+          description: When the request (or, once approved, the chance to collect the key) runs out.
+        api_key:
+          description: The new key — present only in the one response that hands it over.
+          oneOf:
+            - $ref: "#/components/schemas/NewApiKey"
+            - type: "null"
 
     ApiKeyCreate:
       type: object

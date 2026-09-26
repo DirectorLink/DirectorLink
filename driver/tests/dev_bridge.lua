@@ -2,6 +2,7 @@
 -- Protocol (hex keeps it binary-safe through text-mode pipes on Windows):
 --   in:  "<handle> <hex bytes>\n"   (empty hex = the client disconnected)
 --   out: "<closed 0|1> <hex response bytes>\n"
+--   in:  "press\n" presses the C4Bridge Access button; out: "0 \n"
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -36,6 +37,11 @@ io.flush()
 
 local offsets = {}
 for line in io.lines() do
+    if line:match("^press") then
+        ReceivedFromProxy(5001, "SELECT", {})
+        io.write("0 \n")
+        io.flush()
+    end
     local handle, hex = line:match("^(%d+) ?(%x*)$")
     if handle then
         handle = tonumber(handle)

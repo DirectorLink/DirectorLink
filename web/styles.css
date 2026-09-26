@@ -1016,3 +1016,24 @@ footer a {
     justify-content: flex-start;
   }
 }
+
+/* Pairing code as a secondary option */
+
+.pairing-option {
+  margin-top: 20px;
+}
+
+.pairing-option summary {
+  cursor: pointer;
+  color: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.pairing-option[open] summary {
+  margin-bottom: 14px;
+}
+
+.connect-button + .connect-button {
+  margin-top: 10px;
+}

@@ -173,9 +173,17 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **First key (0.2.0):** exchange the 8-digit Composer pairing code at `POST /v1/auth/pair` (15-minute code, rotated after use, 5 failures per minute lock pairing for 60 seconds).
 
-**Planned (0.3.0):** replace the Composer code with approval from the Control4 app — C4Bridge adds a button the homeowner presses to approve a pending request — so no Composer access is needed after installation.
+**Since 0.3.0:** the first key comes from approval in the Control4 app: the driver adds a **C4Bridge Access** experience button (a `uibutton` proxy on binding 5001); a client calls `POST /v1/auth/requests`, the homeowner presses the button within 2 minutes, and the client collects its key once with the secret request id. One request waits at a time, 5 per 10 minutes. The Composer pairing code stays as a fallback.
 
 **Why keys and not an open LAN API:** the API can operate door, gate and garage relays through KNX; without a key anything on the home network could.
+
+## ADR-024 — C4Bridge is a protocol driver with a button proxy, not a combo driver
+
+**Decision (0.3.0):** `driver.xml` declares no `<combo>`; the C4Bridge protocol device runs the Lua code and owns one `uibutton` proxy on binding 5001 (**C4Bridge Access**).
+
+**Why:** Real-system testing showed that for a combo driver the Director creates only the combined device and never the extra button proxy. Every working button driver on the test system (door and garage relays, DoorBird, experience buttons) is a protocol device (item type 6) with a `uibutton` child proxy (type 7).
+
+**Consequence:** Moving from the 0.2.x combo layout needs a one-time remove and re-add in Composer. `check_package.py` fails if `<combo>` comes back. Discovery skips the bridge's own proxies.
 
 ## ADR-022 — Versions are MAJOR.MINOR.PATCH with one source
 
