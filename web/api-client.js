@@ -47,6 +47,12 @@ export function clearApiKey() {
   localStorage.removeItem(API_KEY_STORAGE_KEY);
 }
 
+// Chromium's Local Network Access: the controller is on the LAN ("local"); a fake controller on
+// this computer (scripts/dev_server.py) is "loopback", and a mismatch blocks the request.
+export function addressSpace(host) {
+  return /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i.test(host) ? "loopback" : "local";
+}
+
 export function apiUrl(host, path) {
   return `http://${host}:${API_PORT}${path}`;
 }
@@ -74,7 +80,7 @@ export async function apiRequest(host, path, { method = "GET", apiKey, body, tim
       body: payload,
       cache: "no-store",
       signal: controller.signal,
-      targetAddressSpace: "local",
+      targetAddressSpace: addressSpace(host),
     });
     const text = await response.text();
     let data = null;
@@ -106,7 +112,7 @@ export async function apiImage(host, path, { apiKey, timeoutMs = 12000 } = {}) {
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
       cache: "no-store",
       signal: controller.signal,
-      targetAddressSpace: "local",
+      targetAddressSpace: addressSpace(host),
     });
     if (!response.ok) {
       let problem = null;

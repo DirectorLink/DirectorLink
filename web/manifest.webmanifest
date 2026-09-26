@@ -2,12 +2,12 @@
   "name": "C4Bridge",
   "short_name": "C4Bridge",
   "id": "/",
-  "description": "Local-first Control4 management for homeowners.",
+  "description": "Control your Control4 home over your own network.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#eef2f6",
-  "theme_color": "#0f172a",
+  "background_color": "#f5f5f4",
+  "theme_color": "#f5f5f4",
   "prefer_related_applications": false,
   "icons": [
     {

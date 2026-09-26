@@ -17,11 +17,17 @@ const FILES = {
   "/app.js": "app",
   "/console.js": "console",
   "/api-client.js": "client",
+  "/console.css": "body{}",
+  "/theme-boot.js": "boot",
+  "/i18n/en.js": "en",
+  "/i18n/he.js": "he",
   "/manifest.webmanifest": "{}",
   "/icons/icon.svg": "<svg/>",
   "/icons/icon-192.png": "png",
   "/icons/icon-512.png": "png",
 };
+// The app's ES modules (web/js/**) are precached too.
+for (const [, path] of SOURCE.matchAll(/"(\/js\/[^"]+\.js)"/g)) FILES[path] = `module ${path}`;
 const REDIRECTS = { "/index.html": "/", "/console.html": "/console" };
 
 // Node's Response cannot be constructed as "basic" or "redirected"; set them the way a browser
@@ -154,14 +160,14 @@ test("install saves every page under each path, without redirects", async () => 
     assert.equal(saved.redirected, false, `${path} is stored without the redirect flag`);
     assert.match(await saved.text(), new RegExp(body));
   }
-  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/icons/icon-512.png"]) {
+  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/i18n/he.js", "/icons/icon-512.png"]) {
     assert.ok(await cache.match(asset), `${asset} is cached`);
   }
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["c4bridge-shell-v9", "c4bridge-shell-v10"] });
-  assert.deepEqual(await storage.keys(), ["c4bridge-shell-v11"]);
+  const { storage } = await startWorker({ oldCaches: ["c4bridge-shell-v11", "c4bridge-shell-v12"] });
+  assert.deepEqual(await storage.keys(), ["c4bridge-shell-v13"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {

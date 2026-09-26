@@ -1,314 +1,46 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" dir="ltr" data-palette="graphite" data-theme="light">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0f172a" />
-    <meta name="description" content="C4Bridge — local-first Control4 management for homeowners." />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f5f5f4" />
+    <meta name="description" content="C4Bridge — control your Control4 home over your own network." />
     <meta name="color-scheme" content="light dark" />
+    <!-- Saved palette, theme and text direction, before the first paint. -->
+    <script src="/theme-boot.js"></script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap"
+    />
     <link rel="stylesheet" href="/styles.css" />
     <title>C4Bridge</title>
   </head>
   <body>
-    <div class="page-shell">
-      <header class="topbar">
-        <a class="brand" href="/" aria-label="C4Bridge home">
-          <span class="brand-mark" aria-hidden="true">C4</span>
-          <span>C4Bridge</span>
-        </a>
-        <div class="topbar-actions">
-          <span class="build-badge">Preview</span>
-          <a class="button button-secondary nav-button" href="/console.html">API console</a>
-          <button id="install-button" class="button button-secondary hidden" type="button">
-            Install app
-          </button>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div class="app">
+      <nav id="tabbar" class="tabbar" aria-label="Main">
+        <a class="tab" href="#/" data-tab="home"><span class="tab-label">Home</span></a>
+        <a class="tab" href="#/cameras" data-tab="cameras"><span class="tab-label">Cameras</span></a>
+        <a class="tab" href="#/climate" data-tab="climate"><span class="tab-label">Climate</span></a>
+        <a class="tab" href="#/settings" data-tab="settings"><span class="tab-label">Settings</span></a>
+      </nav>
+      <main id="main" class="main" tabindex="-1">
+        <div id="view" class="view">
+          <div class="boot" role="status">
+            <img src="/icons/icon.svg" alt="" width="56" height="56" />
+            <p>C4Bridge</p>
+          </div>
+          <noscript>
+            <p class="notice notice-error">C4Bridge needs JavaScript. <a href="/console.html">API console</a></p>
+          </noscript>
         </div>
-      </header>
-
-      <main>
-        <section class="hero" aria-labelledby="hero-title">
-          <div class="hero-copy">
-            <p class="eyebrow">LOCAL-FIRST CONTROL4 MANAGEMENT</p>
-            <h1 id="hero-title">Your Control4.<br />Local. Simple.</h1>
-            <p class="hero-text">
-              C4Bridge runs inside Director. This web app will connect directly to your
-              C4Bridge driver over your home LAN — no cloud relay for control.
-            </p>
-          </div>
-
-          <div class="status-card">
-            <div class="status-row">
-              <span class="status-dot" aria-hidden="true"></span>
-              <div>
-                <strong id="bridge-status-title">Ready to connect</strong>
-                <p id="bridge-status-text">Enter the Director IP and pair this browser once.</p>
-              </div>
-            </div>
-            <div class="status-grid">
-              <div>
-                <span>Hosting</span>
-                <strong>Cloudflare Pages</strong>
-              </div>
-              <div>
-                <span>Runtime</span>
-                <strong>Director LAN</strong>
-              </div>
-              <div>
-                <span>Cloud relay</span>
-                <strong>None</strong>
-              </div>
-              <div>
-                <span>Minimum OS</span>
-                <strong>3.3.0+</strong>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section class="panel-grid" aria-label="C4Bridge setup">
-          <article class="panel panel-primary">
-            <div class="panel-heading">
-              <p class="eyebrow">FIRST SETUP</p>
-              <h2>Director address</h2>
-              <p>
-                Enter the controller address, then click <strong>Request access</strong> and press
-                <strong>C4Bridge Access</strong> in your Control4 app. The browser receives its own
-                API key — no Composer needed.
-              </p>
-            </div>
-
-            <form id="director-form" class="director-form">
-              <label for="director-host">Director IP or local hostname</label>
-              <div class="input-row">
-                <input
-                  id="director-host"
-                  name="director-host"
-                  type="text"
-                  inputmode="url"
-                  autocomplete="off"
-                  spellcheck="false"
-                  placeholder="192.168.1.50"
-                  aria-describedby="director-help"
-                />
-                <button class="button button-primary" type="submit">Save</button>
-              </div>
-              <p id="director-help" class="field-help">
-                Example: <code>192.168.1.50</code> or <code>director.local</code>. API port:
-                <code>41999</code>
-              </p>
-
-              <details class="pairing-option">
-                <summary>Use a pairing code instead</summary>
-                <label for="pairing-code">Pairing code</label>
-                <input
-                  id="pairing-code"
-                  name="pairing-code"
-                  type="text"
-                  inputmode="numeric"
-                  autocomplete="one-time-code"
-                  spellcheck="false"
-                  maxlength="8"
-                  pattern="[0-9]{8}"
-                  placeholder="8-digit code from Composer"
-                />
-                <p class="field-help">
-                  The code is shown in the C4Bridge properties in Composer. It is never stored here
-                  and changes after every use.
-                </p>
-              </details>
-
-              <button id="connect-button" class="button button-primary connect-button" type="button">
-                Request access
-              </button>
-              <button id="cancel-access-button" class="button button-secondary connect-button hidden" type="button">
-                Cancel request
-              </button>
-              <p id="director-message" class="form-message" role="status" aria-live="polite"></p>
-            </form>
-          </article>
-
-          <article class="panel">
-            <p class="eyebrow">BROWSER CHECK</p>
-            <h2>Local access readiness</h2>
-            <dl class="diagnostic-list">
-              <div>
-                <dt>Secure context</dt>
-                <dd id="secure-context">Checking…</dd>
-              </div>
-              <div>
-                <dt>Service worker</dt>
-                <dd id="service-worker-status">Checking…</dd>
-              </div>
-              <div>
-                <dt>Offline copy</dt>
-                <dd id="offline-status">Checking…</dd>
-              </div>
-              <div>
-                <dt>Saved Director</dt>
-                <dd id="saved-director">Not set</dd>
-              </div>
-              <div>
-                <dt>Pairing</dt>
-                <dd id="saved-pairing">Not paired</dd>
-              </div>
-              <div>
-                <dt>LAN API</dt>
-                <dd id="api-connection-status">Not connected</dd>
-              </div>
-            </dl>
-            <p class="panel-note">
-              Clicking <strong>Pair &amp; connect</strong> makes the first LAN request. Chrome
-              should ask whether <code>app.c4bridge.io</code> may access devices on your local
-              network. Allow it to continue.
-            </p>
-            <p class="panel-note">
-              The app is saved on this device, so it still opens when the internet is down —
-              control keeps working as long as your home network is up.
-            </p>
-          </article>
-        </section>
-
-        <section id="project-result" class="project-result hidden" aria-labelledby="project-result-title">
-          <div class="result-heading">
-            <div>
-              <p class="eyebrow">LIVE DIRECTOR DATA</p>
-              <h2 id="project-result-title">C4Bridge live project</h2>
-            </div>
-            <span id="connected-version" class="build-badge"></span>
-          </div>
-
-          <div id="result-summary" class="result-summary"></div>
-
-          <article class="panel result-panel lights-panel">
-            <div class="lights-heading">
-              <div>
-                <p class="eyebrow">LIGHTS</p>
-                <h2>Lights</h2>
-                <p class="panel-note">
-                  Live state from the controller. Changes are confirmed by reading the light
-                  back after each command.
-                </p>
-              </div>
-              <button id="refresh-lights-button" class="button button-secondary" type="button">
-                Refresh states
-              </button>
-            </div>
-            <p id="light-action-message" class="form-message" role="status" aria-live="polite"></p>
-            <div id="light-list" class="light-list"></div>
-          </article>
-
-
-          <article class="panel result-panel cameras-panel">
-            <div class="lights-heading">
-              <div>
-                <p class="eyebrow">CAMERAS</p>
-                <h2>Cameras</h2>
-                <p class="panel-note">
-                  Pictures refresh every few seconds while this page is open. Tap a camera to
-                  watch it larger.
-                </p>
-              </div>
-            </div>
-            <p id="camera-message" class="form-message" role="status" aria-live="polite"></p>
-            <div id="camera-grid" class="camera-grid"></div>
-          </article>
-
-          <dialog id="camera-dialog" class="camera-dialog">
-            <div class="camera-dialog-head">
-              <strong id="camera-dialog-title"></strong>
-              <button id="camera-dialog-close" class="button button-secondary" type="button">Close</button>
-            </div>
-            <img id="camera-dialog-image" alt="" />
-            <p id="camera-dialog-status" class="panel-note"></p>
-          </dialog>
-
-          <article class="panel result-panel blinds-panel">
-            <div class="lights-heading">
-              <div>
-                <p class="eyebrow">BLINDS</p>
-                <h2>Blinds</h2>
-                <p class="panel-note">
-                  Position is percent open: 0 closed, 100 open. Blinds without percentage
-                  control open fully for any value above 0.
-                </p>
-              </div>
-              <button id="refresh-blinds-button" class="button button-secondary" type="button">
-                Refresh blinds
-              </button>
-            </div>
-            <p id="blind-action-message" class="form-message" role="status" aria-live="polite"></p>
-            <div id="blind-list" class="light-list"></div>
-          </article>
-
-          <article class="panel result-panel climate-panel">
-            <div class="lights-heading">
-              <div>
-                <p class="eyebrow">CLIMATE</p>
-                <h2>Thermostats</h2>
-                <p class="panel-note">
-                  Heating and cooling zones. Only the modes and fan speeds each zone supports
-                  are offered.
-                </p>
-              </div>
-              <button id="refresh-thermostats-button" class="button button-secondary" type="button">
-                Refresh thermostats
-              </button>
-            </div>
-            <p id="thermostat-action-message" class="form-message" role="status" aria-live="polite"></p>
-            <div id="thermostat-list" class="climate-list"></div>
-          </article>
-
-          <div class="result-columns">
-            <article class="panel result-panel">
-              <h2>Rooms</h2>
-              <div id="room-list" class="entity-list"></div>
-            </article>
-            <article class="panel result-panel">
-              <h2>Devices</h2>
-              <div id="device-list" class="entity-list device-list"></div>
-            </article>
-          </div>
-        </section>
-
-        <section class="architecture" aria-labelledby="architecture-title">
-          <p class="eyebrow">ARCHITECTURE</p>
-          <h2 id="architecture-title">Cloud-hosted UI. Local control path.</h2>
-          <div class="flow" role="list" aria-label="C4Bridge connection path">
-            <div class="flow-node" role="listitem">
-              <span>1</span>
-              <strong>c4bridge.io</strong>
-              <small>Static PWA on Cloudflare Pages</small>
-            </div>
-            <div class="flow-arrow" aria-hidden="true">→</div>
-            <div class="flow-node" role="listitem">
-              <span>2</span>
-              <strong>Your browser</strong>
-              <small>Local Network Access permission</small>
-            </div>
-            <div class="flow-arrow" aria-hidden="true">→</div>
-            <div class="flow-node" role="listitem">
-              <span>3</span>
-              <strong>C4Bridge.c4z</strong>
-              <small>OpenAPI with API keys, on the controller</small>
-            </div>
-            <div class="flow-arrow" aria-hidden="true">→</div>
-            <div class="flow-node" role="listitem">
-              <span>4</span>
-              <strong>Control4</strong>
-              <small>DriverWorks + existing project</small>
-            </div>
-          </div>
-        </section>
       </main>
-
-      <footer>
-        <span>C4Bridge is independent and not affiliated with Control4 or Snap One.</span>
-        <a href="https://github.com/IsraelCIL/C4Bridge" rel="noreferrer">GitHub</a>
-      </footer>
     </div>
-
     <script type="module" src="/app.js"></script>
   </body>
 </html>
