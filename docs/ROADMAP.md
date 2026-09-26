@@ -32,7 +32,7 @@
 - [x] Driver log API with levels and filters (0.2.0)
 - [x] Driver tests against a fake Director (0.2.0)
 - [x] Validate 0.2.0 request-body handling on a real Director
-- [ ] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
+- [x] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA

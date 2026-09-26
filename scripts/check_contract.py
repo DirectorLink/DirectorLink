@@ -116,6 +116,21 @@ class Client:
         return json.loads(raw) if raw else None
 
 
+def approval_scenario(client, bridge):
+    created = client.check("POST", "/v1/auth/requests", 201, body={"name": "contract approval"}, auth=False)
+    client.check("POST", "/v1/auth/requests", 409, body={"name": "second"}, auth=False)
+    client.check("GET", f"/v1/auth/requests/{created['id']}", 200, auth=False)
+    bridge.press_access_button()
+    approved = client.check("GET", f"/v1/auth/requests/{created['id']}", 200, auth=False)
+    if approved["status"] != "approved" or not approved["api_key"]:
+        fail("an approved request must hand over its API key")
+    client.check("GET", f"/v1/auth/requests/{created['id']}", 404, auth=False)
+    cancelled = client.check("POST", "/v1/auth/requests", 201, auth=False)
+    client.check("DELETE", f"/v1/auth/requests/{cancelled['id']}", 204, auth=False)
+    client.check("DELETE", f"/v1/auth/requests/{cancelled['id']}", 404, auth=False)
+    client.check("POST", "/v1/auth/requests", 400, body={"name": ""}, auth=False)
+
+
 def scenario(client, pairing_code):
     client.check("GET", "/v1/health", 200)
     client.check("GET", "/v1/openapi.json", 200)
@@ -184,6 +199,7 @@ def main():
     client = Client(server.server_address[1])
     try:
         scenario(client, bridge.pairing_code)
+        approval_scenario(client, bridge)
     finally:
         server.shutdown()
         bridge.process.terminate()

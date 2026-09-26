@@ -108,6 +108,9 @@ def main():
     app = (WEB / "app.js").read_text(encoding="utf-8")
     require(app, '"/v1/auth/pair"', "the web app must pair with POST /v1/auth/pair")
     require(app, "pairing_code:", "pairing must send the code in the JSON body")
+    require(app, '"/v1/auth/requests"', "the web app must request access approved in the Control4 app")
+    if "cancel-access-button" not in index.ids:
+        fail("index.html needs a way to cancel a waiting access request")
     require(app, "saveApiKey(created.key)", "the web app must store the API key it was issued")
     for path in ('"/v1/system"', '"/v1/rooms"', '"/v1/devices"', '"/v1/lights"', '"/v1/thermostats"'):
         require(app, path, f"the web app must load {path}")

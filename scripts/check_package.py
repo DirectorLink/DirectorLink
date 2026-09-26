@@ -23,6 +23,7 @@ REQUIRED_PROPERTIES = (
     "API Keys",
     "Pairing Code",
     "Pairing Status",
+    "Access Request",
     "Log Level",
     "Reload Counter",
     "Last Init Type",
@@ -31,7 +32,9 @@ REQUIRED_PROPERTIES = (
     "Last Destroy Time",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS")
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "SHOW_ACCESS_BUTTON")
+
+ACCESS_BUTTON_BINDING = "5001"
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
@@ -45,6 +48,10 @@ SECURITY_CONTRACT = {
         "C4:PersistGetValue(STORE_KEY, true)",
         'C4:UUID("RANDOM")',
         "constantTimeEqual(presented, key.secret)",
+    ),
+    "src/auth/approvals.lua": (
+        "constantTimeEqual(id, request.id)",
+        "MAX_REQUESTS_PER_WINDOW = 5",
     ),
     "src/auth/pairing.lua": (
         "CODE_TTL_SECONDS = 15 * 60",
@@ -85,6 +92,7 @@ def check_reproducible(infos):
 def check_contents(names):
     expected = {"driver.xml", "driver.lua", SPEC_MODULE}
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "src").rglob("*.lua"))
+    expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "www").rglob("*") if path.is_file())
     missing = expected - names
     if missing:
         fail(f"package is missing files: {sorted(missing)}")
@@ -114,6 +122,19 @@ def check_driver_xml(text, driver_version):
     for name in REQUIRED_PROPERTIES:
         if name not in properties:
             fail(f"driver.xml is missing property {name!r}")
+    button = [proxy for proxy in root.findall("./proxies/proxy") if proxy.text == "uibutton"]
+    if not button or button[0].get("proxybindingid") != ACCESS_BUTTON_BINDING:
+        fail("driver.xml must declare the uibutton proxy on binding 5001 (C4Bridge Access)")
+    if root.findtext("combo") is not None:
+        fail("C4Bridge must not be a combo driver: Director does not create the C4Bridge Access button for combo drivers")
+    connection_ids = {node.findtext("id") for node in root.findall("./connections/connection")}
+    if ACCESS_BUTTON_BINDING not in connection_ids:
+        fail("driver.xml needs the UIBUTTON connection for binding 5001")
+    names = set(ZipFile(PACKAGE).namelist())
+    for icon in root.iter("Icon"):
+        path = "www/" + icon.text.split("controller://driver/C4Bridge/", 1)[-1]
+        if path not in names:
+            fail(f"driver.xml references {icon.text}, which is not in the package")
     actions = {node.findtext("command") for node in root.findall("./config/actions/action")}
     for command in REQUIRED_ACTIONS:
         if command not in actions:
@@ -162,7 +183,7 @@ def main():
         names = set(archive.namelist())
         check_contents(names)
         check_reproducible(archive.infolist())
-        files = {name: archive.read(name).decode("utf-8") for name in names}
+        files = {name: archive.read(name).decode("utf-8") for name in names if not name.startswith("www/")}
 
     check_driver_xml(files["driver.xml"], driver_version)
     if f'Version.BRIDGE_VERSION = "{version}"' not in files["src/core/version.lua"]:

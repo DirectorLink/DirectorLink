@@ -65,6 +65,11 @@ function Mock.project()
             },
             [572] = {
                 deviceName = "C4Bridge", driverFileName = "C4Bridge.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = { [574] = { deviceName = "C4Bridge Access", driverFileName = "uibutton.c4i" } },
+            },
+            [574] = {
+                deviceName = "C4Bridge Access", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [572] = { deviceName = "C4Bridge", driverFileName = "C4Bridge.c4z" } },
             },
         },
         variables = {
@@ -95,6 +100,10 @@ function Mock.install(project)
         sent = {},
         closed = {},
         commands = {},
+        proxy = {},
+        -- Security lists of room 10 (Kitchen): a cameras shortcut and a gate button are visible,
+        -- the C4Bridge Access button (574) was added hidden next to another hidden button.
+        security = { [10] = { visible = { 4294966301, 531 }, hidden = { 541, 574, 483 } } },
         listeners = {},
         servers = {},
         timers = {},
@@ -181,6 +190,31 @@ function Mock.install(project)
 
     function C4:SendToDevice(deviceId, command, params)
         mock.commands[#mock.commands + 1] = { device = deviceId, command = command, params = params }
+        local room = mock.security[deviceId]
+        if room and command == "SET_SECURITY_DEVICE_ORDER" then
+            room.visible, room.hidden = {}, {}
+            for id, hidden in tostring(params.DEVICE_DATA_XML):gmatch("<deviceid>(%-?%d+)</deviceid><order>%d+</order><hidden>(%d)</hidden>") do
+                local unsigned = tonumber(id) < 0 and tonumber(id) + 4294967296 or tonumber(id)
+                table.insert(hidden == "1" and room.hidden or room.visible, unsigned)
+            end
+        end
+    end
+
+    function C4:SendUIRequest(deviceId, request, params)
+        local room = mock.security[deviceId]
+        if not room or request ~= "GET_SECURITY_DEVICES" or mock.uiRequestsFail then
+            error("UI request failed")
+        end
+        local list = (params and params.hidden == 1) and room.hidden or room.visible
+        local parts = {}
+        for _, id in ipairs(list) do
+            parts[#parts + 1] = string.format("<source><id>%.0f</id><type>UIButton</type></source>", id)
+        end
+        return "<sources>" .. table.concat(parts) .. "</sources>"
+    end
+
+    function C4:SendToProxy(binding, command, params)
+        mock.proxy[#mock.proxy + 1] = { binding = binding, command = command, params = params }
     end
 
     function C4:CreateServer(port, delimiter, udp)
@@ -200,7 +234,7 @@ function Mock.install(project)
     end
 
     function C4:SetTimer(delay, callback, repeating)
-        local timer = { delay = delay, callback = callback, repeating = repeating, cancelled = false }
+        local timer = { delay = delay, callback = callback, repeating = repeating, cancelled = false, fired = false }
         function timer:Cancel()
             self.cancelled = true
         end
@@ -213,9 +247,28 @@ function Mock.install(project)
     return mock
 end
 
+-- Runs timers that have not fired yet, including ones they schedule (up to `rounds` passes).
+function Mock.fireTimers(mock, rounds)
+    for _ = 1, rounds or 10 do
+        local pending = {}
+        for _, timer in ipairs(mock.timers) do
+            if not timer.fired and not timer.cancelled then
+                pending[#pending + 1] = timer
+            end
+        end
+        if #pending == 0 then
+            return
+        end
+        for _, timer in ipairs(pending) do
+            timer.fired = true
+            timer.callback()
+        end
+    end
+end
+
 -- Loads a fresh copy of the driver (all src.* modules) and runs its init callbacks.
 -- specText replaces the stub API description (the dev server passes the built one).
-function Mock.startDriver(project, specText)
+function Mock.startDriver(project, specText, initType)
     -- The JSON module is stateless; keep it shared so tests and driver agree on Json.null.
     for name in pairs(package.loaded) do
         if name:sub(1, 4) == "src." and name ~= "src.core.json" then
@@ -228,8 +281,8 @@ function Mock.startDriver(project, specText)
 
     local mock = Mock.install(project)
     require("src.main")
-    OnDriverInit("DIT_STARTUP")
-    OnDriverLateInit("DIT_STARTUP")
+    OnDriverInit(initType or "DIT_STARTUP")
+    OnDriverLateInit(initType or "DIT_STARTUP")
     OnServerStatusChanged(41999, "ONLINE")
     return mock
 end

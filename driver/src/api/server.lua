@@ -134,14 +134,22 @@ local function encode(status, payload)
     return "application/json; charset=utf-8", body
 end
 
-local function logAccess(request, status, client, started, apiKey)
+-- Paths that carry a secret (an access request id) are logged as their route template.
+local function loggedPath(request, route)
+    if route and route.path:find("{requestId}", 1, true) then
+        return route.path
+    end
+    return request.path
+end
+
+local function logAccess(request, route, status, client, started, apiKey)
     local level = "debug"
     if status >= 500 then
         level = "error"
     elseif status >= 400 then
         level = "info"
     end
-    services.log.write(level, "api", request.method .. " " .. request.path .. " -> " .. tostring(status), {
+    services.log.write(level, "api", request.method .. " " .. loggedPath(request, route) .. " -> " .. tostring(status), {
         client = client and client.ip or Json.null,
         duration_ms = Clock.millis() - started,
         key_id = apiKey and apiKey.id or Json.null,
@@ -152,7 +160,7 @@ end
 function Server.handleRequest(request, client)
     local started = Clock.millis()
     local origin = request.headers["origin"]
-    local status, payload, extraHeaders, apiKey
+    local status, payload, extraHeaders, apiKey, route
 
     if not Server.originAllowed(origin) then
         status = 403
@@ -168,6 +176,7 @@ function Server.handleRequest(request, client)
         }
     else
         local match = router:match(request.method, request.path)
+        route = match.route
         if match.error == "not_found" then
             status = 404
             payload = Problem.new(404, "NOT_FOUND", "No API route for " .. request.path)
@@ -206,7 +215,7 @@ function Server.handleRequest(request, client)
         headers[#headers + 1] = header
     end
 
-    logAccess(request, status, client, started, apiKey)
+    logAccess(request, route, status, client, started, apiKey)
     return status, headers, body
 end
 

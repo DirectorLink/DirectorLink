@@ -13,6 +13,7 @@ const directorForm = document.querySelector("#director-form");
 const directorInput = document.querySelector("#director-host");
 const pairingCodeInput = document.querySelector("#pairing-code");
 const connectButton = document.querySelector("#connect-button");
+const cancelAccessButton = document.querySelector("#cancel-access-button");
 const directorMessage = document.querySelector("#director-message");
 const savedDirector = document.querySelector("#saved-director");
 const secureContext = document.querySelector("#secure-context");
@@ -37,6 +38,7 @@ const refreshThermostatsButton = document.querySelector("#refresh-thermostats-bu
 
 let installPrompt = null;
 let activeSession = null;
+let pendingAccess = null;
 
 function setMessage(element, message, type = "") {
   element.textContent = message;
@@ -60,7 +62,7 @@ function refreshSavedSetup() {
   }
   savedDirector.textContent = host || "Not set";
   savedPairing.textContent = apiKey ? "Paired in this browser" : "Not paired";
-  connectButton.textContent = apiKey ? "Connect" : "Pair & connect";
+  connectButton.textContent = apiKey ? "Connect" : "Request access";
 }
 
 function saveSetup() {
@@ -98,6 +100,72 @@ async function pairBrowser(host, pairingCode) {
   pairingCodeInput.value = "";
   refreshSavedSetup();
   return created.key;
+}
+
+const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+
+function countdown(expiresAt) {
+  const seconds = Math.max(0, Math.round((Date.parse(expiresAt) - Date.now()) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+// Asks for a key and waits until C4Bridge Access is pressed in the Control4 app.
+async function requestAccess(host) {
+  const request = await apiCall(host, "/v1/auth/requests", {
+    method: "POST",
+    body: { name: clientName() },
+  });
+  pendingAccess = { host, id: request.id, cancelled: false };
+  cancelAccessButton.classList.remove("hidden");
+
+  try {
+    let expiresAt = request.expires_at;
+    while (!pendingAccess.cancelled) {
+      setConnectionState(
+        "Waiting for approval…",
+        `Press C4Bridge Access in your Control4 app (${countdown(expiresAt)} left).`,
+        "Waiting for approval"
+      );
+      setMessage(directorMessage, `Press C4Bridge Access in your Control4 app — ${countdown(expiresAt)} left.`);
+      await sleep(2000);
+      if (pendingAccess.cancelled) {
+        break;
+      }
+      let current;
+      try {
+        current = await apiCall(host, `/v1/auth/requests/${request.id}`);
+      } catch (error) {
+        if (error.status === 404) {
+          throw new ApiError("The request expired before it was approved. Click Request access to try again.", {
+            code: "REQUEST_EXPIRED",
+          });
+        }
+        throw error;
+      }
+      if (current.status === "approved" && current.api_key?.key) {
+        saveApiKey(current.api_key.key);
+        refreshSavedSetup();
+        return current.api_key.key;
+      }
+      expiresAt = current.expires_at;
+    }
+    throw new ApiError("Access request cancelled.", { code: "REQUEST_CANCELLED" });
+  } finally {
+    pendingAccess = null;
+    cancelAccessButton.classList.add("hidden");
+  }
+}
+
+async function cancelAccessRequest() {
+  if (!pendingAccess) {
+    return;
+  }
+  pendingAccess.cancelled = true;
+  try {
+    await apiCall(pendingAccess.host, `/v1/auth/requests/${pendingAccess.id}`, { method: "DELETE" });
+  } catch {
+    // Already expired or approved; nothing to undo.
+  }
 }
 
 function text(value, fallback = "—") {
@@ -455,7 +523,10 @@ function connectionErrorMessage(error) {
     refreshSavedSetup();
     return "The saved API key was rejected. Pair again with the current code from Composer.";
   }
-  if (error instanceof ApiError && error.code?.startsWith("PAIRING")) {
+  if (error instanceof ApiError && /^(PAIRING|REQUEST)/.test(error.code || "")) {
+    if (error.code === "REQUEST_PENDING") {
+      return "Another device is already waiting for approval. Try again in a minute.";
+    }
     return error.message;
   }
   if (error.name === "AbortError") {
@@ -480,11 +551,8 @@ async function connectAndLoad() {
     if (pairingCode) {
       setConnectionState("Pairing this browser…", "Checking the code directly with C4Bridge on your LAN.", "Pairing…");
       apiKey = await pairBrowser(host, pairingCode);
-    }
-    if (!apiKey) {
-      throw new ApiError("Enter the Pairing Code shown in the C4Bridge properties in Composer.", {
-        code: "PAIRING_REQUIRED",
-      });
+    } else if (!apiKey) {
+      apiKey = await requestAccess(host);
     }
 
     activeSession = { host, apiKey };
@@ -532,6 +600,7 @@ directorForm.addEventListener("submit", (event) => {
 });
 
 connectButton.addEventListener("click", connectAndLoad);
+cancelAccessButton.addEventListener("click", cancelAccessRequest);
 
 refreshLightsButton.addEventListener("click", async () => {
   refreshLightsButton.disabled = true;

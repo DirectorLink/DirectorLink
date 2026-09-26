@@ -9,8 +9,11 @@
   <modified>09/26/2026 00:00</modified>
   <!-- scripts/build.py stamps this from the VERSION file (major*10000 + minor*100 + patch). -->
   <version>0</version>
+  <small image_source="c4z">icons/device_sm.png</small>
+  <large image_source="c4z">icons/device_lg.png</large>
 
   <control>lua_gen</control>
+  <controlmethod>other</controlmethod>
   <driver>DriverWorks</driver>
   <minimum_os_version>3.3.0</minimum_os_version>
   <auto_update>false</auto_update>
@@ -21,6 +24,10 @@
       <action>
         <name>New Pairing Code</name>
         <command>NEW_PAIRING_CODE</command>
+      </action>
+      <action>
+        <name>Show Access Button in App</name>
+        <command>SHOW_ACCESS_BUTTON</command>
       </action>
       <action>
         <name>Revoke All API Keys</name>
@@ -89,6 +96,12 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Access Request</name>
+        <default>None</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>Log Level</name>
         <type>LIST</type>
         <items>
@@ -133,8 +146,61 @@
     </properties>
   </config>
 
-  <combo>true</combo>
+  <!-- Not a combo driver: like other Control4 button drivers, the C4Bridge protocol device runs the
+       Lua code and owns one child proxy, the "C4Bridge Access" button in the Control4 app, whose
+       press approves a waiting access request. A combo driver never gets the button created. -->
   <proxies>
-    <proxy>C4Bridge</proxy>
+    <proxy proxybindingid="5001" name="C4Bridge Access" image_source="c4z" large_image="icons/device_lg.png" small_image="icons/device_sm.png">uibutton</proxy>
   </proxies>
+
+  <capabilities>
+    <navigator_display_option proxybindingid="5001">
+      <display_icons>
+        <Icon width="70" height="70">controller://driver/C4Bridge/icons/access/idle_70.png</Icon>
+        <Icon width="90" height="90">controller://driver/C4Bridge/icons/access/idle_90.png</Icon>
+        <Icon width="300" height="300">controller://driver/C4Bridge/icons/access/idle_300.png</Icon>
+        <Icon width="512" height="512">controller://driver/C4Bridge/icons/access/idle_512.png</Icon>
+        <Icon width="1024" height="1024">controller://driver/C4Bridge/icons/access/idle_1024.png</Icon>
+        <state id="idle">
+            <Icon width="70" height="70">controller://driver/C4Bridge/icons/access/idle_70.png</Icon>
+            <Icon width="90" height="90">controller://driver/C4Bridge/icons/access/idle_90.png</Icon>
+            <Icon width="300" height="300">controller://driver/C4Bridge/icons/access/idle_300.png</Icon>
+            <Icon width="512" height="512">controller://driver/C4Bridge/icons/access/idle_512.png</Icon>
+            <Icon width="1024" height="1024">controller://driver/C4Bridge/icons/access/idle_1024.png</Icon>
+        </state>
+        <state id="waiting">
+            <Icon width="70" height="70">controller://driver/C4Bridge/icons/access/waiting_70.png</Icon>
+            <Icon width="90" height="90">controller://driver/C4Bridge/icons/access/waiting_90.png</Icon>
+            <Icon width="300" height="300">controller://driver/C4Bridge/icons/access/waiting_300.png</Icon>
+            <Icon width="512" height="512">controller://driver/C4Bridge/icons/access/waiting_512.png</Icon>
+            <Icon width="1024" height="1024">controller://driver/C4Bridge/icons/access/waiting_1024.png</Icon>
+        </state>
+        <state id="approved">
+            <Icon width="70" height="70">controller://driver/C4Bridge/icons/access/approved_70.png</Icon>
+            <Icon width="90" height="90">controller://driver/C4Bridge/icons/access/approved_90.png</Icon>
+            <Icon width="300" height="300">controller://driver/C4Bridge/icons/access/approved_300.png</Icon>
+            <Icon width="512" height="512">controller://driver/C4Bridge/icons/access/approved_512.png</Icon>
+            <Icon width="1024" height="1024">controller://driver/C4Bridge/icons/access/approved_1024.png</Icon>
+        </state>
+      </display_icons>
+    </navigator_display_option>
+  </capabilities>
+
+  <connections>
+    <connection>
+      <id>5001</id>
+      <facing>6</facing>
+      <connectionname>UIBUTTON</connectionname>
+      <type>2</type>
+      <consumer>False</consumer>
+      <audiosource>False</audiosource>
+      <videosource>False</videosource>
+      <linelevel>False</linelevel>
+      <classes>
+        <class>
+          <classname>UIBUTTON</classname>
+        </class>
+      </classes>
+    </connection>
+  </connections>
 </devicedata>

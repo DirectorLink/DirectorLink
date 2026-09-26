@@ -2,7 +2,17 @@
 
 ## Current release
 
-`v0.2.0` — the OpenAPI release. The API changed completely, so browsers paired with an alpha build must pair again.
+`v0.3.0` — approval from the Control4 app. Keys from 0.2.0 keep working.
+
+## 0. After updating: the C4Bridge Access button
+
+1. The project should now contain **C4Bridge** and **C4Bridge Access** (same room).
+2. Within about 10 seconds, without touching Composer's Navigators, the button shows in the Control4 app under **Security** in that room, as a gray key. If it does not, run the Composer action **Show Access Button in App** and check `GET /v1/logs?category=navigator`.
+3. In the web app click **Request access**: the key turns orange and Composer's **Access Request** shows the waiting browser.
+4. Press the button: it turns green, the web app connects, and the button returns to gray.
+5. Also check: **Cancel request** turns it gray again, and a request left alone expires after 2 minutes.
+
+If the button does not appear, remove and re-add C4Bridge in Composer, then request access again.
 
 ## 1. Install
 
@@ -10,7 +20,7 @@ Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
 Expected in the C4Bridge properties once the new driver is loaded:
 
-- Version: `0.2.0`
+- Version: `0.3.0`
 - Status: `Ready`
 - API Status: `Online`
 - Inventory: rooms, devices, lights and thermostats (the test system: 20 rooms, 111 lights, 22 thermostats)

@@ -53,7 +53,8 @@ local function encodeNumber(value)
         return "null"
     end
     if value == math.floor(value) and value >= -2 ^ 53 and value <= 2 ^ 53 then
-        return string.format("%d", value)
+        -- "%.0f" rather than "%d": Lua 5.1 formats %d through a C long, which is 32 bits on some builds.
+        return string.format("%.0f", value)
     end
     return string.format("%.14g", value)
 end

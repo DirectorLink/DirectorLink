@@ -73,8 +73,9 @@
               <p class="eyebrow">FIRST SETUP</p>
               <h2>Director address</h2>
               <p>
-                Enter the controller address and the 8-digit Pairing Code shown in the
-                C4Bridge properties in Composer. The browser receives its own API key.
+                Enter the controller address, then click <strong>Request access</strong> and press
+                <strong>C4Bridge Access</strong> in your Control4 app. The browser receives its own
+                API key — no Composer needed.
               </p>
             </div>
 
@@ -98,25 +99,31 @@
                 <code>41999</code>
               </p>
 
-              <label for="pairing-code">Pairing code</label>
-              <input
-                id="pairing-code"
-                name="pairing-code"
-                type="text"
-                inputmode="numeric"
-                autocomplete="one-time-code"
-                spellcheck="false"
-                maxlength="8"
-                pattern="[0-9]{8}"
-                placeholder="8-digit code from Composer"
-              />
-              <p class="field-help">
-                Enter this only when pairing a new browser. The code is never stored here and
-                rotates after a successful pairing.
-              </p>
+              <details class="pairing-option">
+                <summary>Use a pairing code instead</summary>
+                <label for="pairing-code">Pairing code</label>
+                <input
+                  id="pairing-code"
+                  name="pairing-code"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  spellcheck="false"
+                  maxlength="8"
+                  pattern="[0-9]{8}"
+                  placeholder="8-digit code from Composer"
+                />
+                <p class="field-help">
+                  The code is shown in the C4Bridge properties in Composer. It is never stored here
+                  and changes after every use.
+                </p>
+              </details>
 
               <button id="connect-button" class="button button-primary connect-button" type="button">
-                Pair &amp; connect
+                Request access
+              </button>
+              <button id="cancel-access-button" class="button button-secondary connect-button hidden" type="button">
+                Cancel request
               </button>
               <p id="director-message" class="form-message" role="status" aria-live="polite"></p>
             </form>

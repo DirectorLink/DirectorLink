@@ -8,7 +8,8 @@ and API clients can be developed without a controller:
     python scripts/dev_server.py                   # API on http://localhost:41999
     python -m http.server 8080 --directory web     # web app; use "localhost" as the controller
 
-The fake project has two rooms, three lights and one thermostat. The pairing code is printed at start.
+The fake project has two rooms, three lights and one thermostat. The pairing code is printed at start;
+type "press" and Enter to press the C4Bridge Access button (approves a waiting access request).
 """
 
 import argparse
@@ -45,6 +46,13 @@ class Bridge:
         with self.lock:
             self.handles += 1
             return self.handles
+
+    def press_access_button(self):
+        """Simulates pressing C4Bridge Access in the Control4 app."""
+        with self.lock:
+            self.process.stdin.write("press\n")
+            self.process.stdin.flush()
+            self.process.stdout.readline()
 
     def exchange(self, handle, data):
         with self.lock:
@@ -92,10 +100,16 @@ def main():
         print(f"Pairing code: {bridge.pairing_code}")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
+        print('Type "press" + Enter to press the C4Bridge Access button.')
+        threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
-            server.serve_forever()
+            for line in sys.stdin:
+                if line.strip() == "press":
+                    bridge.press_access_button()
+                    print("C4Bridge Access pressed")
         except KeyboardInterrupt:
             pass
+        server.shutdown()
 
 
 if __name__ == "__main__":
