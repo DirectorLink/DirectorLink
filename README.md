@@ -13,7 +13,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - Cloudflare Pages PWA frontend; the browser connects directly to C4Bridge over the LAN
 - LAN-only in V1; no cloud relay and no port forwarding
 - One owner, with a separate named API key per browser, app or script
-- Initial device adapters: lights, HVAC/climate, shades/covers
+- Device adapters: lights, HVAC/climate, blinds
 - Unknown devices are exposed as unsupported
 - C4Bridge owns its own scenes, schedules, and automations
 - No import of Composer programming, scenes, or schedules
@@ -29,7 +29,7 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current build: **C4Bridge v0.3.0**
+Current build: **C4Bridge v0.4.0**
 
 Each release keeps its own `C4Bridge.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 

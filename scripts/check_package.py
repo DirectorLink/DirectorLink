@@ -106,6 +106,12 @@ def check_driver_xml(text, driver_version):
         root = ET.fromstring(text)
     except ET.ParseError as exc:
         fail(f"packaged driver.xml is not valid XML: {exc}")
+    # Director's broker reads driver.xml as "<xml>" + contents + "</xml>". If that does not parse
+    # (e.g. an <?xml ...?> declaration), it rejects the driver and "Update Driver" never reloads it.
+    try:
+        ET.fromstring("<xml>" + text + "</xml>")
+    except ET.ParseError as exc:
+        fail(f"driver.xml must parse inside <xml>...</xml> like the Control4 broker reads it: {exc}")
     if root.tag != "devicedata":
         fail("driver.xml root must be <devicedata>")
     script = root.find("./config/script")

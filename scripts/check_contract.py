@@ -168,6 +168,17 @@ def scenario(client, pairing_code):
     client.check("PATCH", "/v1/thermostats/30", 409, body={"mode": "auto"})
     client.check("PATCH", "/v1/thermostats/30", 400, body={"target_temperature": 99})
 
+    client.check("GET", "/v1/blinds", 200)
+    client.check("GET", "/v1/blinds?room_id=11", 200)
+    client.check("GET", "/v1/blinds/50", 200)
+    client.check("GET", "/v1/blinds/51", 200)
+    client.check("GET", "/v1/blinds/20", 404)
+    client.check("PATCH", "/v1/blinds/50", 202, body={"position": 100})
+    client.check("PATCH", "/v1/blinds/50", 400, body={"position": 101})
+    client.check("PATCH", "/v1/blinds/99", 404, body={"position": 0})
+    client.check("POST", "/v1/blinds/50/stop", 202)
+    client.check("POST", "/v1/blinds/99/stop", 404)
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)

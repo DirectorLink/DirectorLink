@@ -6,7 +6,7 @@ info:
   summary: Local REST API for a Control4 home.
   description: |
     C4Bridge runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, access requests and
@@ -49,6 +49,8 @@ tags:
     description: Lights C4Bridge can read and control.
   - name: Thermostats
     description: Heating and cooling zones C4Bridge can read and control.
+  - name: Blinds
+    description: Blinds, shades and shutters C4Bridge can read and control.
   - name: Logs
     description: The bridge's own recent log, for debugging.
 
@@ -498,6 +500,104 @@ paths:
         "502":
           $ref: "#/components/responses/CommandFailed"
 
+  /v1/blinds:
+    get:
+      tags: [Blinds]
+      operationId: listBlinds
+      summary: List blinds
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Blinds with their current position, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BlindList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/blinds/{blindId}:
+    parameters:
+      - $ref: "#/components/parameters/BlindId"
+    get:
+      tags: [Blinds]
+      operationId: getBlind
+      summary: Get a blind
+      responses:
+        "200":
+          description: The blind and its current position.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Blind"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Blinds]
+      operationId: updateBlind
+      summary: Open, close or move a blind to a position
+      description: |
+        `{"position": 100}` opens, `{"position": 0}` closes. Blinds that only support open and
+        close (no percentage control on the KNX side) close at 0 and open fully for any other value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BlindUpdate"
+            example:
+              position: 100
+      responses:
+        "202":
+          description: Command sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Blind"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
+  /v1/blinds/{blindId}/stop:
+    parameters:
+      - $ref: "#/components/parameters/BlindId"
+    post:
+      tags: [Blinds]
+      operationId: stopBlind
+      summary: Stop a moving blind
+      description: Blinds without a stop command on the KNX side ignore it.
+      responses:
+        "202":
+          description: Command sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Blind"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -615,6 +715,13 @@ components:
         minimum: 1
     LightId:
       name: lightId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    BlindId:
+      name: blindId
       in: path
       required: true
       schema:
@@ -803,7 +910,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
-          required: [rooms, devices, supported_devices, lights, thermostats]
+          required: [rooms, devices, supported_devices, lights, thermostats, blinds]
           properties:
             rooms:
               type: integer
@@ -814,6 +921,8 @@ components:
             lights:
               type: integer
             thermostats:
+              type: integer
+            blinds:
               type: integer
         lifecycle:
           type: object
@@ -967,7 +1076,7 @@ components:
 
     DeviceType:
       type: string
-      enum: [light, thermostat, cover, other]
+      enum: [light, thermostat, blind, other]
 
     Device:
       type: object
@@ -1048,6 +1157,47 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Light"
+
+    Blind:
+      type: object
+      required: [id, name, room, position, position_reported]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        position:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: Percent open — 0 closed, 100 open. Null when the controller does not know it.
+        position_reported:
+          type: boolean
+          description: False when the blind never reports its position.
+
+    BlindUpdate:
+      type: object
+      required: [position]
+      additionalProperties: false
+      properties:
+        position:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Target percent open — 0 closed, 100 open.
+
+    BlindList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Blind"
 
     ThermostatMode:
       type: string

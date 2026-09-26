@@ -3,7 +3,7 @@
 // so the app still opens when the internet is down but the home LAN (and the controller) is up.
 // Requests to the controller are cross-origin and are never intercepted.
 
-const CACHE_NAME = "c4bridge-shell-v9";
+const CACHE_NAME = "c4bridge-shell-v10";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects

@@ -54,7 +54,7 @@
 ## Milestone 4 — more adapters
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
-- [ ] Cover / blind / motorized window (next: the test system has 15 KNX blinds)
+- [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
 - [ ] Expand unsupported-device diagnostics
 
 ## Milestone 5 — C4Bridge scenes

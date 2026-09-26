@@ -28,6 +28,11 @@ return {
     { method = "GET", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.get" },
     { method = "PATCH", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.update" },
 
+    { method = "GET", path = "/v1/blinds", handler = "blinds.list" },
+    { method = "GET", path = "/v1/blinds/{blindId}", handler = "blinds.get" },
+    { method = "PATCH", path = "/v1/blinds/{blindId}", handler = "blinds.update" },
+    { method = "POST", path = "/v1/blinds/{blindId}/stop", handler = "blinds.stop" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings" },
