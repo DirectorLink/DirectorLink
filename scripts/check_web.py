@@ -144,6 +144,8 @@ def main():
         fail("web/wrangler.jsonc must deploy this folder as the c4bridge Worker")
     if "previews" not in config:
         fail("web/wrangler.jsonc needs a previews block, or pull-request preview builds fail")
+    if config.get("observability", {}).get("enabled") is not True:
+        fail("web/wrangler.jsonc must keep Workers observability enabled, as production had it")
     if "wrangler.jsonc" not in (WEB / ".assetsignore").read_text(encoding="utf-8").split():
         fail("web/.assetsignore must keep wrangler.jsonc from being published")
 
