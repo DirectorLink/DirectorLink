@@ -6,7 +6,7 @@ info:
   summary: Local REST API for a Control4 home.
   description: |
     C4Bridge runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, access requests and
@@ -53,6 +53,8 @@ tags:
     description: Blinds, shades and shutters C4Bridge can read and control.
   - name: Cameras
     description: Camera snapshots, fetched on the controller so camera logins never leave it.
+  - name: Relays
+    description: Relays that open doors and gates (KNX Contact/Relay).
   - name: Logs
     description: The bridge's own recent log, for debugging.
 
@@ -301,6 +303,37 @@ paths:
       responses:
         "200":
           description: The room.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Rooms]
+      operationId: updateRoom
+      summary: Name a room in other languages
+      description: |
+        Sets the room's name per language (the Control4 name itself does not change). An empty
+        string removes a language; languages not in the request keep their names. At most 10
+        languages per room.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomUpdate"
+            example:
+              names:
+                en: Living room
+                he: סלון
+      responses:
+        "200":
+          description: The room with its names.
           content:
             application/json:
               schema:
@@ -681,6 +714,104 @@ paths:
         "503":
           $ref: "#/components/responses/Busy"
 
+  /v1/relays:
+    get:
+      tags: [Relays]
+      operationId: listRelays
+      summary: List relays
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Relays with their last reported state, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/relays/{relayId}:
+    parameters:
+      - $ref: "#/components/parameters/RelayId"
+    get:
+      tags: [Relays]
+      operationId: getRelay
+      summary: Get a relay
+      responses:
+        "200":
+          description: The relay and its last reported state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Relay"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Relays]
+      operationId: updateRelay
+      summary: Open or close a relay and leave it so
+      description: For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayUpdate"
+            example:
+              state: closed
+      responses:
+        "202":
+          description: Command sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Relay"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
+  /v1/relays/{relayId}/pulse:
+    parameters:
+      - $ref: "#/components/parameters/RelayId"
+    post:
+      tags: [Relays]
+      operationId: pulseRelay
+      summary: Pulse the relay (open a door or gate)
+      description: |
+        Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
+        Garage Door Controllers trigger it. Every pulse is written to the log with the API key used.
+      responses:
+        "202":
+          description: Pulse started. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Relay"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -798,6 +929,13 @@ components:
         minimum: 1
     LightId:
       name: lightId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    RelayId:
+      name: relayId
       in: path
       required: true
       schema:
@@ -1010,7 +1148,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
-          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras]
+          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras, relays]
           properties:
             rooms:
               type: integer
@@ -1025,6 +1163,8 @@ components:
             blinds:
               type: integer
             cameras:
+              type: integer
+            relays:
               type: integer
         lifecycle:
           type: object
@@ -1137,23 +1277,37 @@ components:
           items:
             $ref: "#/components/schemas/ApiKey"
 
+    RoomNames:
+      type: object
+      description: The room's name per language (BCP 47 tag such as `en`, `he`, `pt-BR`), set with `PATCH /v1/rooms/{roomId}`. Empty when none were set; show `name` then.
+      additionalProperties:
+        type: string
+      example:
+        en: Living room
+
     RoomRef:
       type: object
-      required: [id, name]
+      required: [id, name, names]
       properties:
         id:
           type: integer
         name:
           type: string
+          description: The name in the Control4 project.
+        names:
+          $ref: "#/components/schemas/RoomNames"
 
     Room:
       type: object
-      required: [id, name, floor, device_count]
+      required: [id, name, names, floor, device_count]
       properties:
         id:
           type: integer
         name:
           type: string
+          description: The name in the Control4 project.
+        names:
+          $ref: "#/components/schemas/RoomNames"
         floor:
           oneOf:
             - type: object
@@ -1167,6 +1321,18 @@ components:
         device_count:
           type: integer
 
+    RoomUpdate:
+      type: object
+      required: [names]
+      additionalProperties: false
+      properties:
+        names:
+          type: object
+          description: Language → name (1–64 characters); an empty string removes that language.
+          additionalProperties:
+            type: string
+            maxLength: 64
+
     RoomList:
       type: object
       required: [items]
@@ -1178,7 +1344,7 @@ components:
 
     DeviceType:
       type: string
-      enum: [light, thermostat, blind, camera, other]
+      enum: [light, thermostat, blind, camera, relay, other]
 
     Device:
       type: object
@@ -1307,6 +1473,46 @@ components:
         snapshot_href:
           type: string
           description: Path of the current picture, e.g. `/v1/cameras/83/snapshot`.
+
+    Relay:
+      type: object
+      required: [id, name, room, state, state_reported]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        state:
+          oneOf:
+            - type: string
+              enum: [open, closed]
+            - type: "null"
+          description: The relay contact (`closed` = energized). Null until the relay reports a change.
+        state_reported:
+          type: boolean
+          description: False when C4Bridge cannot watch this relay's state.
+
+    RelayUpdate:
+      type: object
+      required: [state]
+      additionalProperties: false
+      properties:
+        state:
+          type: string
+          enum: [open, closed]
+
+    RelayList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Relay"
 
     CameraList:
       type: object

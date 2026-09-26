@@ -187,3 +187,9 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 - Updated from 0.4.0 in Composer: reloaded in place (`DIT_UPDATING`), no reboot. 13 camera proxies (`camera.c4i`: 12 Hikvision IPC, 1 DoorBird) discovered.
 - `GET_PROPERTIES` and `GET_SNAPSHOT_QUERY_STRING` on the camera proxy (via `C4:SendUIRequest`), `C4:url()` with digest login (`C4:Hash` MD5) work on Director 3.4.3: the homeowner confirmed the web app's Cameras grid shows pictures.
 - Camera 99 (192.168.1.89) timed out (`Error 28: Timeout was reached`) — reported as `CAMERA_UNREACHABLE`; the other cameras kept working.
+
+## 2026-09-27 — v0.6.0 relays and room names
+
+- Updated from 0.5.0 in Composer: reloaded in place (`DIT_UPDATING`). 3 KNX Contact/Relay devices discovered (דלת מטבח 543, דלת ראשית 544, שער חניה 568); `C4:RegisterDeviceEvent` raised no error.
+- Relay events reach C4Bridge (`OnDeviceEvent`): the homeowner opened the kitchen door with its button in the Control4 app; Director logged events 4 (relay 1 closed) then 3 (opened) on 543, and `GET /v1/relays` then reported 543 as `"open"`; the untouched relays stayed `null`.
+- Not yet validated on the controller: `POST /v1/relays/{id}/pulse` and `PATCH /v1/relays/{id}` (would open a door); room-name `PATCH`.

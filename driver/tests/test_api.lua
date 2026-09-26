@@ -33,7 +33,7 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
     T.eq(mock.properties["API Status"], "Online")
-    T.eq(mock.properties["Inventory"], "2 rooms, 9 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras")
+    T.eq(mock.properties["Inventory"], "2 rooms, 10 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d%d%d%d%d$"), "pairing code shown")
 end
 
@@ -120,7 +120,7 @@ function tests.system_reports_controller_location_and_inventory()
     T.eq(system.location.country_code, "IL")
     T.eq(system.location.latitude, 32.08)
     T.eq(system.location.timezone, "Asia/Jerusalem")
-    T.same(system.inventory, { rooms = 2, devices = 9, supported_devices = 8, lights = 3, thermostats = 1, blinds = 2, cameras = 2 })
+    T.same(system.inventory, { rooms = 2, devices = 10, supported_devices = 9, lights = 3, thermostats = 1, blinds = 2, cameras = 2, relays = 1 })
     T.eq(system.lifecycle.reload_count, 1)
     T.eq(system.lifecycle.last_init_type, "DIT_STARTUP")
 end
@@ -131,7 +131,7 @@ function tests.rooms_list_and_get()
     T.eq(#rooms, 2)
     T.eq(rooms[1].name, "Kitchen")
     T.eq(rooms[1].floor.name, "Ground Floor")
-    T.eq(rooms[1].device_count, 4)
+    T.eq(rooms[1].device_count, 5)
     T.eq(rooms[2].name, "Living Room")
 
     T.eq(T.http(mock, "GET", "/v1/rooms/11", { key = key }).json.name, "Living Room")
@@ -142,7 +142,7 @@ end
 function tests.devices_use_logical_types_and_filters()
     local mock, key = start()
     local all = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
-    T.eq(#all, 9)
+    T.eq(#all, 10)
     local camera = byId(all, 40)
     T.eq(camera.type, "other")
     T.eq(camera.supported, false)
@@ -159,7 +159,8 @@ function tests.devices_use_logical_types_and_filters()
 
     T.eq(#T.http(mock, "GET", "/v1/devices?type=light", { key = key }).json.items, 3)
     T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 1)
-    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 4)
+    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 5)
+    T.eq(byId(all, 70).href, "/v1/relays/70")
     T.eq(byId(all, 60).href, "/v1/cameras/60")
     T.eq(#T.http(mock, "GET", "/v1/devices?type=blind", { key = key }).json.items, 2)
     T.eq(T.http(mock, "GET", "/v1/devices?type=lamp", { key = key }).status, 400)
@@ -377,6 +378,80 @@ function tests.snapshot_failures_are_problems()
     local login = T.http(rejected, "GET", "/v1/cameras/60/snapshot", { key = T.pair(rejected) })
     T.eq(login.status, 502)
     T.eq(login.json.code, "CAMERA_LOGIN_FAILED")
+end
+
+function tests.relays_report_state_from_device_events()
+    local mock, key = start()
+    T.same(mock.deviceEvents, { { 70, 3 }, { 70, 4 } }, "relay 1 opened and closed events are watched")
+    local relays = T.http(mock, "GET", "/v1/relays", { key = key }).json.items
+    T.eq(#relays, 1)
+    T.eq(relays[1].name, "Main Door")
+    T.truthy(isNull(relays[1].state), "unknown until the relay reports")
+    T.eq(relays[1].state_reported, true)
+
+    OnDeviceEvent(70, 4)
+    T.eq(T.http(mock, "GET", "/v1/relays/70", { key = key }).json.state, "closed")
+    OnDeviceEvent(70, 3)
+    T.eq(T.http(mock, "GET", "/v1/relays/70", { key = key }).json.state, "open")
+    OnDeviceEvent(70, 105)
+    T.eq(T.http(mock, "GET", "/v1/relays/70", { key = key }).json.state, "open", "contact events are ignored")
+    T.eq(T.http(mock, "GET", "/v1/relays/20", { key = key }).status, 404, "a light is not a relay")
+end
+
+function tests.relay_pulse_closes_then_opens()
+    local mock, key = start()
+    local before = #mock.commands
+    local response = T.http(mock, "POST", "/v1/relays/70/pulse", { key = key })
+    T.eq(response.status, 202)
+    T.eq(#mock.commands, before + 1)
+    T.same(mock.commands[#mock.commands], { device = 70, command = "Close Relay", params = { Relay = "1" } })
+    local pulse = mock.timers[#mock.timers]
+    T.eq(pulse.delay, 500)
+    pulse.callback()
+    T.same(mock.commands[#mock.commands], { device = 70, command = "Open Relay", params = { Relay = "1" } })
+end
+
+function tests.relay_state_can_be_set_and_is_validated()
+    local mock, key = start()
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } }).status, 202)
+    T.same(mock.commands[#mock.commands], { device = 70, command = "Close Relay", params = { Relay = "1" } })
+    T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "open" } })
+    T.eq(mock.commands[#mock.commands].command, "Open Relay")
+    local before = #mock.commands
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "unlocked" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = {} }).json.code, "INVALID_REQUEST")
+    T.eq(T.http(mock, "POST", "/v1/relays/99/pulse", { key = key }).status, 404)
+    T.eq(T.http(mock, "POST", "/v1/relays/70/pulse").status, 401)
+    T.eq(#mock.commands, before, "nothing is sent for invalid requests")
+end
+
+function tests.rooms_have_names_per_language()
+    local mock, key = start()
+    local room = T.http(mock, "GET", "/v1/rooms/10", { key = key }).json
+    T.eq(room.name, "Kitchen")
+    T.same(room.names, {})
+
+    local updated = T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { names = { en = "Kitchen", he = " מטבח " } } })
+    T.eq(updated.status, 200)
+    T.same(updated.json.names, { en = "Kitchen", he = "מטבח" }, "names are trimmed")
+    T.eq(byId(T.http(mock, "GET", "/v1/lights", { key = key }).json.items, 20).room.names.he, "מטבח", "room references carry the names")
+
+    T.same(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { names = { en = "" } } }).json.names, { he = "מטבח" }, "an empty name removes a language")
+
+    T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { names = { english = "x" } } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { names = { en = 5 } } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { names = "Kitchen" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { name = "x" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/rooms/999", { key = key, body = { names = { en = "x" } } }).status, 404)
+
+    -- Names survive a driver restart.
+    local restarted = Mock.startDriver()
+    for name, value in pairs(mock.persist) do
+        restarted.persist[name] = value
+    end
+    OnDriverLateInit("DIT_UPDATING")
+    local restartedKey = T.pair(restarted)
+    T.same(T.http(restarted, "GET", "/v1/rooms/10", { key = restartedKey }).json.names, { he = "מטבח" })
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()

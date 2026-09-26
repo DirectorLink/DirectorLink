@@ -5,6 +5,7 @@ local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
 local AdapterManager = require("src.adapters.manager")
 local Keys = require("src.auth.keys")
+local RoomNames = require("src.core.room_names")
 local Pairing = require("src.auth.pairing")
 local Approvals = require("src.auth.approvals")
 local Navigator = require("src.control4.navigator")
@@ -204,13 +205,14 @@ local function discover()
     local counts = Registry.counts()
     updateProperty("Location", locationText(Registry.metadata))
     updateProperty("Inventory", string.format(
-        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras",
+        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays",
         counts.rooms,
         counts.devices,
         counts.supported_lights,
         counts.supported_climate,
         counts.supported_blinds,
-        counts.supported_cameras
+        counts.supported_cameras,
+        counts.supported_relays
     ))
     Log.info("discovery", "project discovered", counts)
     setStatus("ok")
@@ -253,6 +255,7 @@ function OnDriverLateInit(driverInitType)
     end
 
     Keys.load()
+    RoomNames.load()
     publishKeyCount()
 
     local pairingOk, pairingError = Pairing.initialize({
@@ -323,6 +326,11 @@ end
 
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     AdapterManager.onVariableChanged(idDevice, idVariable, strValue)
+end
+
+-- Events of devices C4Bridge registered with C4:RegisterDeviceEvent (relay opened/closed).
+function OnDeviceEvent(firingDevice, eventId)
+    AdapterManager.onDeviceEvent(firingDevice, eventId)
 end
 
 function OnServerStatusChanged(port, status)

@@ -16,6 +16,11 @@ function tests.encodes_primitives()
     T.eq(Json.encode(math.huge), "null")
 end
 
+function tests.empty_tables_are_objects_unless_marked()
+    T.eq(Json.encode({}), "{}")
+    T.eq(Json.encode(Json.array()), "[]")
+end
+
 function tests.escapes_strings_and_keeps_utf8()
     T.eq(Json.encode('say "hi"\n'), '"say \\"hi\\"\\n"')
     T.eq(Json.encode("a\\b"), '"a\\\\b"')

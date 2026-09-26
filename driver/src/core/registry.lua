@@ -99,6 +99,18 @@ function Registry.cameraList()
     return sortedList(cameras)
 end
 
+function Registry.relayList()
+    local relays = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "relay" and device.supported == true then
+            relays[id] = device
+        end
+    end
+
+    return sortedList(relays)
+end
+
 function Registry.lightList()
     local lights = {}
 
@@ -119,6 +131,7 @@ function Registry.counts()
     local supportedClimate = 0
     local supportedBlinds = 0
     local supportedCameras = 0
+    local supportedRelays = 0
 
     for _, device in pairs(Registry.devices) do
         if device.recognized then
@@ -137,6 +150,8 @@ function Registry.counts()
                 supportedBlinds = supportedBlinds + 1
             elseif device.kind == "camera" then
                 supportedCameras = supportedCameras + 1
+            elseif device.kind == "relay" then
+                supportedRelays = supportedRelays + 1
             end
         end
     end
@@ -153,6 +168,7 @@ function Registry.counts()
         supported_climate = supportedClimate,
         supported_blinds = supportedBlinds,
         supported_cameras = supportedCameras,
+        supported_relays = supportedRelays,
     }
 end
 

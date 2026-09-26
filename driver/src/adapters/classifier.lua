@@ -23,6 +23,10 @@ function Classifier.classify(driverFileName)
         return { kind = "camera", recognized = true }
     end
 
+    if name == "knx_contact_relay.c4z" then
+        return { kind = "relay", recognized = true }
+    end
+
     return { kind = "unsupported", recognized = false }
 end
 

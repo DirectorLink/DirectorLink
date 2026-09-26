@@ -3,6 +3,7 @@ local LightV2 = require("src.adapters.light_v2")
 local ThermostatV2 = require("src.adapters.thermostat_v2")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
+local KnxRelay = require("src.adapters.knx_relay")
 
 local Manager = {}
 
@@ -11,11 +12,12 @@ local adapters = {
     ThermostatV2,
     Blind,
     Camera,
+    KnxRelay,
 }
 
 local attached = {}
 local registry = nil
-local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0 }
+local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
 
 local function log(message)
     Log.info("adapters", tostring(message))
@@ -24,7 +26,7 @@ end
 function Manager.initialize(deviceRegistry)
     registry = deviceRegistry
     attached = {}
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
 
     pcall(function()
         C4:UnregisterAllVariableListeners()
@@ -78,6 +80,7 @@ function Manager.counts()
         climate = initializedCounts.climate,
         blind = initializedCounts.blind,
         camera = initializedCounts.camera,
+        relay = initializedCounts.relay,
     }
 end
 
@@ -99,6 +102,24 @@ function Manager.onVariableChanged(deviceId, variableId, value)
         return false
     end
 
+    return changed == true
+end
+
+function Manager.onDeviceEvent(deviceId, eventId)
+    deviceId = tonumber(deviceId)
+    local adapter = attached[deviceId]
+    if not adapter or not adapter.onDeviceEvent or not registry then
+        return false
+    end
+    local device = registry.getDevice(deviceId)
+    if not device then
+        return false
+    end
+    local ok, changed = pcall(adapter.onDeviceEvent, device, eventId)
+    if not ok then
+        log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
+        return false
+    end
     return changed == true
 end
 
@@ -149,7 +170,7 @@ function Manager.shutdown()
 
     attached = {}
     registry = nil
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

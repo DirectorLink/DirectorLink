@@ -2,6 +2,7 @@
 -- so Control4 specifics (proxy drivers, command names, variable IDs) stay out of the API.
 
 local Json = require("src.core.json")
+local RoomNames = require("src.core.room_names")
 
 local Views = {}
 
@@ -10,6 +11,7 @@ local TYPE_BY_KIND = {
     climate = "thermostat",
     blind = "blind",
     camera = "camera",
+    relay = "relay",
 }
 
 local RESOURCE_PATH = {
@@ -17,6 +19,7 @@ local RESOURCE_PATH = {
     thermostat = "/v1/thermostats/",
     blind = "/v1/blinds/",
     camera = "/v1/cameras/",
+    relay = "/v1/relays/",
 }
 
 local SETTABLE_MODES = {
@@ -48,6 +51,7 @@ function Views.roomRef(registry, roomId, fallbackName)
     return {
         id = roomId,
         name = (room and room.name) or fallbackName or ("Room " .. tostring(roomId)),
+        names = RoomNames.get(roomId),
     }
 end
 
@@ -60,6 +64,7 @@ function Views.room(registry, room, deviceCounts)
     return {
         id = room.id,
         name = room.name,
+        names = RoomNames.get(room.id),
         floor = floor,
         device_count = deviceCounts[room.id] or 0,
     }
@@ -114,6 +119,18 @@ function Views.camera(registry, device)
         name = device.name,
         room = Views.roomRef(registry, device.room_id, device.room_name),
         snapshot_href = "/v1/cameras/" .. tostring(device.id) .. "/snapshot",
+    }
+end
+
+function Views.relay(registry, device)
+    local capabilities = device.capabilities or {}
+    local state = device.state or {}
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        state = state.relay or Json.null,
+        state_reported = capabilities.state_reported == true,
     }
 end
 

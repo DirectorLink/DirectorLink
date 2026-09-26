@@ -2,7 +2,14 @@
 
 ## Current release
 
-`v0.5.0` — cameras. Update in Composer (no reboot); keys keep working.
+`v0.6.0` — relays and room names. Update in Composer (no reboot); keys keep working.
+
+## 0c. Relays and room names
+
+1. **Inventory** ends with `3 relays` (דלת מטבח, דלת ראשית, שער חניה).
+2. `GET /v1/relays` lists them; `state` is `null` until a relay changes. Open one door from the Control4 app: its state turns `closed` and back to `open`.
+3. `POST /v1/relays/{id}/pulse` opens that door exactly like its button in the Control4 app. `GET /v1/logs?category=relay_command` shows who sent it.
+4. `PATCH /v1/rooms/{id}` with `{"names": {"en": "Living room"}}`, then `GET /v1/rooms/{id}` shows the name; it survives a driver update.
 
 ## 0b. Cameras
 
@@ -34,7 +41,7 @@ Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
 Expected in the C4Bridge properties once the new driver is loaded:
 
-- Version: `0.5.0`
+- Version: `0.6.0`
 - Status: `Ready`
 - API Status: `Online`
 - Inventory: rooms, devices, lights, thermostats, blinds and cameras (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras)

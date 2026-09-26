@@ -16,6 +16,7 @@ return {
 
     { method = "GET", path = "/v1/rooms", handler = "rooms.list" },
     { method = "GET", path = "/v1/rooms/{roomId}", handler = "rooms.get" },
+    { method = "PATCH", path = "/v1/rooms/{roomId}", handler = "rooms.update" },
 
     { method = "GET", path = "/v1/devices", handler = "devices.list" },
     { method = "GET", path = "/v1/devices/{deviceId}", handler = "devices.get" },
@@ -36,6 +37,11 @@ return {
     { method = "GET", path = "/v1/cameras", handler = "cameras.list" },
     { method = "GET", path = "/v1/cameras/{cameraId}", handler = "cameras.get" },
     { method = "GET", path = "/v1/cameras/{cameraId}/snapshot", handler = "cameras.snapshot" },
+
+    { method = "GET", path = "/v1/relays", handler = "relays.list" },
+    { method = "GET", path = "/v1/relays/{relayId}", handler = "relays.get" },
+    { method = "PATCH", path = "/v1/relays/{relayId}", handler = "relays.update" },
+    { method = "POST", path = "/v1/relays/{relayId}/pulse", handler = "relays.pulse" },
 
     { method = "GET", path = "/v1/logs", handler = "logs.list" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings" },

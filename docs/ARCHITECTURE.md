@@ -33,7 +33,7 @@ api/        openapi.yaml — the API contract (single source of truth)
 driver/     the DriverWorks driver
   src/api/        HTTP server, router, handlers, views (API ↔ internal model)
   src/auth/       API keys, pairing
-  src/adapters/   Control4 proxy adapters (Light V2, Thermostat V2, Blind, Camera)
+  src/adapters/   Control4 proxy adapters (Light V2, Thermostat V2, Blind, Camera, KNX Contact/Relay)
   src/control4/   discovery and normalization
   src/core/       json, log, registry, version
   tests/          driver tests against a fake Director

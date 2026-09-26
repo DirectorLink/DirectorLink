@@ -95,6 +95,10 @@ function Mock.project()
                 deviceName = "Gate", driverFileName = "camera.c4i", roomId = 11, roomName = "Living Room",
                 protocol = { [108] = { deviceName = "DoorBird", driverFileName = "doorbird_doorstation.c4z" } },
             },
+            -- A combo driver: the relay device is its own proxy.
+            [70] = {
+                deviceName = "Main Door", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen",
+            },
             [40] = {
                 deviceName = "Front Door", driverFileName = "camera_ip_hik_ipc_static.c4z", roomId = 10, roomName = "Kitchen",
             },
@@ -159,6 +163,7 @@ function Mock.install(project)
         security = { [10] = { visible = { 4294966301, 531 }, hidden = { 541, 574, 483 } } },
         listeners = {},
         urlRequests = {},
+        deviceEvents = {},
         servers = {},
         timers = {},
         uuidCount = 0,
@@ -238,6 +243,10 @@ function Mock.install(project)
             result[id] = { name = names[id] or tostring(id), value = value }
         end
         return result
+    end
+
+    function C4:RegisterDeviceEvent(deviceId, eventId)
+        mock.deviceEvents[#mock.deviceEvents + 1] = { deviceId, eventId }
     end
 
     function C4:RegisterVariableListener(deviceId, variableId)
