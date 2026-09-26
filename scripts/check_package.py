@@ -73,6 +73,15 @@ def expected_versions():
     return version, str(major * 10000 + minor * 100 + patch)
 
 
+def check_reproducible(infos):
+    """Metadata that must not depend on the build machine, so checksums match across OSes."""
+    for info in infos:
+        if info.date_time != (2026, 1, 1, 0, 0, 0):
+            fail(f"{info.filename} has timestamp {info.date_time}; builds must use the fixed timestamp")
+        if info.create_system != 3:
+            fail(f"{info.filename} was written with create_system {info.create_system}; builds must use 3 (Unix)")
+
+
 def check_contents(names):
     expected = {"driver.xml", "driver.lua", SPEC_MODULE}
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "src").rglob("*.lua"))
@@ -152,6 +161,7 @@ def main():
     with ZipFile(PACKAGE) as archive:
         names = set(archive.namelist())
         check_contents(names)
+        check_reproducible(archive.infolist())
         files = {name: archive.read(name).decode("utf-8") for name in names}
 
     check_driver_xml(files["driver.xml"], driver_version)

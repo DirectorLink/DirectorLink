@@ -17,6 +17,7 @@ const directorMessage = document.querySelector("#director-message");
 const savedDirector = document.querySelector("#saved-director");
 const secureContext = document.querySelector("#secure-context");
 const serviceWorkerStatus = document.querySelector("#service-worker-status");
+const offlineStatus = document.querySelector("#offline-status");
 const savedPairing = document.querySelector("#saved-pairing");
 const apiConnectionStatus = document.querySelector("#api-connection-status");
 const installButton = document.querySelector("#install-button");
@@ -556,6 +557,19 @@ refreshThermostatsButton.addEventListener("click", async () => {
   }
 });
 
+async function refreshOfflineStatus() {
+  if (!("caches" in window)) {
+    offlineStatus.textContent = "Not supported";
+    return;
+  }
+  const saved = await caches.match("/");
+  if (!navigator.onLine) {
+    offlineStatus.textContent = saved ? "In use (offline)" : "Not saved yet";
+  } else {
+    offlineStatus.textContent = saved ? "Ready — opens without internet" : "Saving…";
+  }
+}
+
 secureContext.textContent = window.isSecureContext ? "Ready (HTTPS)" : "HTTPS required";
 
 if ("serviceWorker" in navigator) {
@@ -563,12 +577,18 @@ if ("serviceWorker" in navigator) {
     .register("/sw.js", { scope: "/" })
     .then(() => {
       serviceWorkerStatus.textContent = "Registered";
+      return navigator.serviceWorker.ready;
     })
+    .then(refreshOfflineStatus)
     .catch(() => {
       serviceWorkerStatus.textContent = "Registration failed";
+      offlineStatus.textContent = "Not available";
     });
+  window.addEventListener("online", refreshOfflineStatus);
+  window.addEventListener("offline", refreshOfflineStatus);
 } else {
   serviceWorkerStatus.textContent = "Not supported";
+  offlineStatus.textContent = "Not supported";
 }
 
 window.addEventListener("beforeinstallprompt", (event) => {

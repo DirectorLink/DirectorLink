@@ -1,0 +1,14 @@
+// Cloudflare Workers static-assets configuration for app.c4bridge.io.
+// Before this file existed Cloudflare generated an equivalent one at build time; it is committed
+// so preview builds of pull-request branches (`wrangler preview`) work — they need `previews`.
+// The asset settings below are Cloudflare's defaults, written out to keep production unchanged.
+{
+  "name": "c4bridge",
+  "compatibility_date": "2026-09-25",
+  "assets": {
+    "directory": ".",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "previews": {}
+}

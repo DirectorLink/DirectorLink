@@ -128,8 +128,28 @@ def main():
     service_worker = (WEB / "sw.js").read_text(encoding="utf-8")
     require(service_worker, "requestUrl.origin !== self.location.origin",
             "the service worker must ignore cross-origin/LAN requests")
-    for asset in ("/console.html", "/console.js", "/api-client.js"):
+    require(service_worker, 'request.method !== "GET"', "the service worker must only handle GET requests")
+    require(service_worker, "response.redirected", "cached pages must be stored without redirects")
+    require(service_worker, "NETWORK_TIMEOUT_MS", "the service worker must fall back to the cache when the network is slow")
+    for asset in ("/console.html", "/console", "/index.html", "/console.js", "/api-client.js"):
         require(service_worker, f'"{asset}"', f"the service worker must cache {asset}")
+    if "offline-status" not in index.ids:
+        fail("index.html must show the offline copy status")
+    config_text = "\n".join(
+        line for line in (WEB / "wrangler.jsonc").read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith("//")
+    )
+    config = json.loads(config_text)
+    if config.get("name") != "c4bridge" or config.get("assets", {}).get("directory") != ".":
+        fail("web/wrangler.jsonc must deploy this folder as the c4bridge Worker")
+    if "previews" not in config:
+        fail("web/wrangler.jsonc needs a previews block, or pull-request preview builds fail")
+    if "wrangler.jsonc" not in (WEB / ".assetsignore").read_text(encoding="utf-8").split():
+        fail("web/.assetsignore must keep wrangler.jsonc from being published")
+
+    test_suffixes = (".test.js", ".test.mjs", ".spec.js", ".spec.mjs")
+    if any(path.name.endswith(test_suffixes) for path in WEB.rglob("*") if path.is_file()):
+        fail("tests must not live in web/ (Cloudflare publishes everything there); use tests/web/")
 
     print("OK: C4Bridge web app validated")
 

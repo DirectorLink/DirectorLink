@@ -21,6 +21,7 @@ python scripts/check_package.py                                # package content
 python scripts/check_contract.py                               # real HTTP responses vs the spec
 python scripts/check_web.py                                    # web app
 for f in web/*.js; do node --check "$f"; done                  # web JavaScript syntax
+node --test tests/web/*.test.mjs                               # offline service worker
 ```
 
 ## Package layout
@@ -37,7 +38,19 @@ src/
   core/       json, log, registry, version
 ```
 
-No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The build is reproducible: the same source produces the same package bytes. The source manifest `driver/C4Bridge.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
+No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The source manifest `driver/C4Bridge.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
+
+## Checksums and reproducible builds
+
+The build is byte-for-byte reproducible on every OS: fixed zip timestamps, a fixed "creating system" in the zip headers, and LF line endings in `openapi.json`. The same commit therefore produces the same SHA-256 on Windows, macOS and Linux, and `check_package.py` fails if a package breaks those rules.
+
+To check that a file matches a release, compare it with that release's `SHA256SUMS.txt`:
+
+```bash
+sha256sum C4Bridge.c4z openapi.json          # or: certutil -hashfile C4Bridge.c4z SHA256
+```
+
+A package built locally from the release's commit gives the same values, and so does the installed package on a controller (`/mnt/internal/c4z/C4Bridge.c4z`). CI prints the checksums of every build in the "Show package checksums" step.
 
 ## Driver tests
 
