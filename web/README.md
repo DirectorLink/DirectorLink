@@ -4,7 +4,7 @@ This directory is the Cloudflare Pages frontend for C4Bridge. It is framework-fr
 
 ## Pages
 
-- `index.html` + `app.js` — dashboard: pair a browser, then read and control lights and thermostats
+- `index.html` + `app.js` — dashboard: pair a browser, then read and control lights, thermostats and blinds
 - `console.html` + `console.js` — API console: loads the API description from the controller, lists every endpoint, sends requests, and follows the bridge log
 - `api-client.js` — shared client for the LAN API (API port, API key storage, `fetch` with `targetAddressSpace: "local"`)
 - `sw.js` — offline mode (see below); it never intercepts controller/LAN requests

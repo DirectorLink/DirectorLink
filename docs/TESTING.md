@@ -2,7 +2,14 @@
 
 ## Current release
 
-`v0.3.0` — approval from the Control4 app. Keys from 0.2.0 keep working.
+`v0.4.0` — blinds. Update from 0.3.0 in Composer; keys keep working.
+
+## 0a. Blinds
+
+1. **Inventory** in Composer ends with `15 blinds` (the test system).
+2. `GET /v1/blinds` lists them; `position` is a number for blinds with a KNX status address, otherwise `null` until the blind moves.
+3. In the web app open, stop and close one blind, and set 50% on one with percentage control. The Control4 app shows the same movement.
+4. `GET /v1/logs?category=blind_command` shows each command; `GET /v1/logs?category=blind&level=debug` (after setting the log level to Debug and reloading) lists the proxy variables.
 
 ## 0. After updating: the C4Bridge Access button
 
@@ -20,10 +27,10 @@ Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
 Expected in the C4Bridge properties once the new driver is loaded:
 
-- Version: `0.3.0`
+- Version: `0.4.0`
 - Status: `Ready`
 - API Status: `Online`
-- Inventory: rooms, devices, lights and thermostats (the test system: 20 rooms, 111 lights, 22 thermostats)
+- Inventory: rooms, devices, lights, thermostats and blinds (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds)
 - Pairing Code: 8 digits; Pairing Status: `Ready until HH:MM`
 - Log Level: `Info`
 

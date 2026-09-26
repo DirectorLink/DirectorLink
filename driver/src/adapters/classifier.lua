@@ -16,7 +16,7 @@ function Classifier.classify(driverFileName)
     end
 
     if name == "blind.c4i" or name == "blind.c4z" then
-        return { kind = "cover", recognized = true }
+        return { kind = "blind", recognized = true }
     end
 
     return { kind = "unsupported", recognized = false }

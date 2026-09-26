@@ -33,7 +33,7 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
     T.eq(mock.properties["API Status"], "Online")
-    T.eq(mock.properties["Inventory"], "2 rooms, 5 devices, 3 lights, 1 thermostats")
+    T.eq(mock.properties["Inventory"], "2 rooms, 7 devices, 3 lights, 1 thermostats, 2 blinds")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d%d%d%d%d$"), "pairing code shown")
 end
 
@@ -120,7 +120,7 @@ function tests.system_reports_controller_location_and_inventory()
     T.eq(system.location.country_code, "IL")
     T.eq(system.location.latitude, 32.08)
     T.eq(system.location.timezone, "Asia/Jerusalem")
-    T.same(system.inventory, { rooms = 2, devices = 5, supported_devices = 4, lights = 3, thermostats = 1 })
+    T.same(system.inventory, { rooms = 2, devices = 7, supported_devices = 6, lights = 3, thermostats = 1, blinds = 2 })
     T.eq(system.lifecycle.reload_count, 1)
     T.eq(system.lifecycle.last_init_type, "DIT_STARTUP")
 end
@@ -131,7 +131,7 @@ function tests.rooms_list_and_get()
     T.eq(#rooms, 2)
     T.eq(rooms[1].name, "Kitchen")
     T.eq(rooms[1].floor.name, "Ground Floor")
-    T.eq(rooms[1].device_count, 2)
+    T.eq(rooms[1].device_count, 3)
     T.eq(rooms[2].name, "Living Room")
 
     T.eq(T.http(mock, "GET", "/v1/rooms/11", { key = key }).json.name, "Living Room")
@@ -142,12 +142,14 @@ end
 function tests.devices_use_logical_types_and_filters()
     local mock, key = start()
     local all = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
-    T.eq(#all, 5)
+    T.eq(#all, 7)
     local camera = byId(all, 40)
     T.eq(camera.type, "other")
     T.eq(camera.supported, false)
     T.truthy(isNull(camera.href), "unsupported devices have no href")
     T.eq(byId(all, 30).href, "/v1/thermostats/30")
+    T.eq(byId(all, 50).type, "blind")
+    T.eq(byId(all, 50).href, "/v1/blinds/50")
     T.eq(byId(all, 20).room.name, "Kitchen")
 
     for _, device in ipairs(all) do
@@ -157,7 +159,8 @@ function tests.devices_use_logical_types_and_filters()
 
     T.eq(#T.http(mock, "GET", "/v1/devices?type=light", { key = key }).json.items, 3)
     T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 1)
-    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 2)
+    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 3)
+    T.eq(#T.http(mock, "GET", "/v1/devices?type=blind", { key = key }).json.items, 2)
     T.eq(T.http(mock, "GET", "/v1/devices?type=lamp", { key = key }).status, 400)
     T.eq(T.http(mock, "GET", "/v1/devices?supported=maybe", { key = key }).status, 400)
     T.eq(T.http(mock, "GET", "/v1/devices/40", { key = key }).json.name, "Front Door")
@@ -266,6 +269,54 @@ function tests.thermostat_patch_validates_input()
     T.eq(patch({ fan_speed = "auto" }).json.code, "NOT_SUPPORTED")
     T.eq(patch({ humidity = 40 }).json.code, "INVALID_FIELD")
     T.eq(#mock.commands, before, "nothing is sent when validation fails")
+end
+
+function tests.blinds_report_their_position()
+    local mock, key = start()
+    local blinds = T.http(mock, "GET", "/v1/blinds", { key = key }).json.items
+    T.eq(#blinds, 2)
+    T.eq(blinds[1].name, "Kitchen Shutter", "sorted by name")
+    T.truthy(isNull(blinds[1].position), "an unknown level (-255) is null")
+    T.eq(blinds[1].position_reported, true)
+    T.eq(byId(blinds, 50).position, 40)
+    T.eq(byId(blinds, 50).room.name, "Living Room")
+    T.eq(#T.http(mock, "GET", "/v1/blinds?room_id=11", { key = key }).json.items, 1)
+    T.eq(T.http(mock, "GET", "/v1/blinds/20", { key = key }).status, 404, "a light is not a blind")
+
+    OnWatchedVariableChanged(51, 1000, "75")
+    T.eq(T.http(mock, "GET", "/v1/blinds/51", { key = key }).json.position, 75)
+    OnWatchedVariableChanged(51, 1000, "-255")
+    T.truthy(isNull(T.http(mock, "GET", "/v1/blinds/51", { key = key }).json.position))
+end
+
+function tests.blind_commands_use_the_blind_proxy()
+    local mock, key = start()
+    local response = T.http(mock, "PATCH", "/v1/blinds/50", { key = key, body = { position = 100 } })
+    T.eq(response.status, 202)
+    T.eq(response.json.id, 50)
+    T.same(lastCommand(mock), { device = 50, command = "SET_LEVEL_TARGET", params = { LEVEL_TARGET = 100 } })
+
+    T.http(mock, "PATCH", "/v1/blinds/51", { key = key, body = { position = 30 } })
+    T.same(lastCommand(mock), { device = 51, command = "SET_LEVEL_TARGET", params = { LEVEL_TARGET = 30 } })
+
+    T.eq(T.http(mock, "POST", "/v1/blinds/50/stop", { key = key }).status, 202)
+    T.same(lastCommand(mock), { device = 50, command = "STOP", params = {} })
+end
+
+function tests.blind_patch_validates_input()
+    local mock, key = start()
+    local before = #mock.commands
+    local function patch(body, path)
+        return T.http(mock, "PATCH", path or "/v1/blinds/50", { key = key, body = body })
+    end
+    T.eq(patch({}).json.code, "INVALID_REQUEST")
+    T.eq(patch({ position = 101 }).json.code, "INVALID_FIELD")
+    T.eq(patch({ position = 50.5 }).json.code, "INVALID_FIELD")
+    T.eq(patch({ position = "open" }).json.code, "INVALID_FIELD")
+    T.eq(patch({ open = true }).json.code, "INVALID_FIELD")
+    T.eq(patch({ position = 0 }, "/v1/blinds/99").status, 404)
+    T.eq(T.http(mock, "POST", "/v1/blinds/99/stop", { key = key }).status, 404)
+    T.eq(#mock.commands, before, "no command is sent for invalid requests")
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()

@@ -4,7 +4,7 @@
 local Mock = {}
 
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
--- one thermostat and one unsupported camera.
+-- one thermostat, two blinds (one without a known level) and one unsupported camera.
 function Mock.project()
     return {
         osVersion = "3.4.3.727848-res",
@@ -60,6 +60,22 @@ function Mock.project()
                 deviceName = "Parents", driverFileName = "thermostatV2.c4i", roomId = 11, roomName = "Living Room",
                 protocol = { [104] = { deviceName = "AC Zone", driverFileName = "coolautomation_cmnet_zone.c4z" } },
             },
+            [105] = {
+                deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z", roomId = 11, roomName = "Living Room",
+                proxies = { [50] = { deviceName = "Window Blind", driverFileName = "blind.c4i" } },
+            },
+            [50] = {
+                deviceName = "Window Blind", driverFileName = "blind.c4i", roomId = 11, roomName = "Living Room",
+                protocol = { [105] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
+            },
+            [106] = {
+                deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = { [51] = { deviceName = "Kitchen Shutter", driverFileName = "blind.c4i" } },
+            },
+            [51] = {
+                deviceName = "Kitchen Shutter", driverFileName = "blind.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [106] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
+            },
             [40] = {
                 deviceName = "Front Door", driverFileName = "camera_ip_hik_ipc_static.c4z", roomId = 10, roomName = "Kitchen",
             },
@@ -86,6 +102,13 @@ function Mock.project()
                 [1131] = "26",
                 [1149] = "71.6",
             },
+            [50] = { [1000] = "40", [1001] = "40" },
+            [51] = { [1000] = "-255", [1001] = "-255" },
+        },
+        -- Names for C4:GetDeviceVariables (blind proxies are looked up by variable name).
+        variableNames = {
+            [50] = { [1000] = "Level", [1001] = "Target Level" },
+            [51] = { [1000] = "Level", [1001] = "Target Level" },
         },
     }
 end
@@ -175,6 +198,15 @@ function Mock.install(project)
     function C4:GetVariable(deviceId, variableId)
         local values = project.variables[deviceId]
         return values and values[variableId]
+    end
+
+    function C4:GetDeviceVariables(deviceId)
+        local result = {}
+        local names = (project.variableNames or {})[deviceId] or {}
+        for id, value in pairs(project.variables[deviceId] or {}) do
+            result[id] = { name = names[id] or tostring(id), value = value }
+        end
+        return result
     end
 
     function C4:RegisterVariableListener(deviceId, variableId)

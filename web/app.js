@@ -32,6 +32,9 @@ const deviceList = document.querySelector("#device-list");
 const lightList = document.querySelector("#light-list");
 const lightActionMessage = document.querySelector("#light-action-message");
 const refreshLightsButton = document.querySelector("#refresh-lights-button");
+const blindList = document.querySelector("#blind-list");
+const blindActionMessage = document.querySelector("#blind-action-message");
+const refreshBlindsButton = document.querySelector("#refresh-blinds-button");
 const thermostatList = document.querySelector("#thermostat-list");
 const thermostatActionMessage = document.querySelector("#thermostat-action-message");
 const refreshThermostatsButton = document.querySelector("#refresh-thermostats-button");
@@ -195,6 +198,7 @@ function renderSummary(system) {
     ["Devices", system.inventory?.devices],
     ["Lights", system.inventory?.lights],
     ["Thermostats", system.inventory?.thermostats],
+    ["Blinds", system.inventory?.blinds],
   ];
   resultSummary.replaceChildren(
     ...items.map(([label, value]) => {
@@ -396,6 +400,111 @@ function renderLights(lights) {
   );
 }
 
+function blindStateLabel(blind) {
+  if (!Number.isFinite(blind.position)) {
+    return "Position unknown";
+  }
+  if (blind.position === 0) {
+    return "Closed";
+  }
+  return blind.position === 100 ? "Open" : `${blind.position}% open`;
+}
+
+async function refreshBlinds(showMessage = false) {
+  const response = await api("/v1/blinds");
+  const blinds = response?.items || [];
+  renderBlinds(blinds);
+  if (showMessage) {
+    setMessage(blindActionMessage, `Refreshed ${blinds.length} blinds.`, "success");
+  }
+  return blinds;
+}
+
+// action is a position (0 closed … 100 open) or "stop".
+async function controlBlind(blind, action, control) {
+  if (!activeSession) {
+    setMessage(blindActionMessage, "Connect to the controller first.", "error");
+    return;
+  }
+  if (control) {
+    control.disabled = true;
+  }
+  try {
+    if (action === "stop") {
+      await api(`/v1/blinds/${blind.id}/stop`, { method: "POST" });
+      setMessage(blindActionMessage, `${blind.name}: stop sent.`, "success");
+    } else {
+      await api(`/v1/blinds/${blind.id}`, { method: "PATCH", body: { position: action } });
+      const label = action === 0 ? "closing" : action === 100 ? "opening" : `moving to ${action}%`;
+      setMessage(blindActionMessage, `${blind.name}: ${label}.`, "success");
+    }
+    await refreshBlinds(false);
+  } catch (error) {
+    setMessage(blindActionMessage, `${blind.name}: ${error.message || "command failed"}`, "error");
+  } finally {
+    if (control) {
+      control.disabled = false;
+    }
+  }
+}
+
+function renderBlinds(blinds) {
+  if (!blinds.length) {
+    emptyState(blindList, "No controllable blinds were found.");
+    return;
+  }
+  blindList.replaceChildren(
+    ...blinds.map((blind) => {
+      const item = document.createElement("div");
+      item.className = "light-row";
+
+      const identity = document.createElement("div");
+      identity.className = "light-identity";
+      const name = document.createElement("strong");
+      const meta = document.createElement("small");
+      const state = document.createElement("span");
+      name.textContent = text(blind.name, `Blind ${blind.id}`);
+      meta.textContent = [blind.room?.name, `ID ${blind.id}`].filter(Boolean).join(" · ");
+      state.className = `light-state ${blind.position > 0 ? "is-on" : ""}`;
+      state.textContent = blindStateLabel(blind);
+      identity.append(name, meta, state);
+
+      const controls = document.createElement("div");
+      controls.className = "light-controls";
+      const button = (label, action, extraClass = "") => {
+        const element = document.createElement("button");
+        element.type = "button";
+        element.className = `button light-button ${extraClass}`.trim();
+        element.textContent = label;
+        element.addEventListener("click", () => controlBlind(blind, action, element));
+        return element;
+      };
+      controls.append(button("Close", 0), button("Stop", "stop"), button("Open", 100, "light-button-on"));
+
+      const positionWrap = document.createElement("label");
+      positionWrap.className = "brightness-control";
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "100";
+      slider.step = "1";
+      slider.value = String(Number.isFinite(blind.position) ? blind.position : 0);
+      slider.setAttribute("aria-label", `${blind.name} position`);
+      const output = document.createElement("output");
+      output.textContent = `${slider.value}%`;
+      slider.addEventListener("input", () => {
+        output.textContent = `${slider.value}%`;
+      });
+      slider.addEventListener("change", () => controlBlind(blind, Number(slider.value), slider));
+      positionWrap.append(slider, output);
+      controls.append(positionWrap);
+
+      item.append(identity, controls);
+      return item;
+    })
+  );
+}
+
 function thermostatStateLabel(thermostat) {
   const parts = [];
   if (Number.isFinite(thermostat.current_temperature)) parts.push(`Now ${thermostat.current_temperature}°C`);
@@ -541,6 +650,7 @@ async function connectAndLoad() {
   setMessage(directorMessage, "");
   setMessage(lightActionMessage, "");
   setMessage(thermostatActionMessage, "");
+  setMessage(blindActionMessage, "");
   setConnectionState("Connecting…", "Chrome may ask for Local Network Access permission.", "Connecting…");
 
   try {
@@ -557,24 +667,26 @@ async function connectAndLoad() {
 
     activeSession = { host, apiKey };
     const system = await api("/v1/system");
-    const [rooms, devices, lights, thermostats] = await Promise.all([
+    const [rooms, devices, lights, thermostats, blinds] = await Promise.all([
       api("/v1/rooms"),
       api("/v1/devices"),
       api("/v1/lights"),
       api("/v1/thermostats"),
+      api("/v1/blinds"),
     ]);
 
     connectedVersion.textContent = `v${text(system.bridge?.version, "?")}`;
     renderSummary(system);
     renderLights(lights.items);
     renderThermostats(thermostats.items);
+    renderBlinds(blinds.items);
     renderRooms(rooms.items);
     renderDevices(devices.items);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.items.length} rooms, ${devices.items.length} devices, ${lights.items.length} lights and ${thermostats.items.length} thermostats.`,
+      `${rooms.items.length} rooms, ${devices.items.length} devices, ${lights.items.length} lights, ${thermostats.items.length} thermostats and ${blinds.items.length} blinds.`,
       "Connected"
     );
     setMessage(directorMessage, "Connected.", "success");
@@ -611,6 +723,18 @@ refreshLightsButton.addEventListener("click", async () => {
     setMessage(lightActionMessage, error.message || "Unable to refresh lights.", "error");
   } finally {
     refreshLightsButton.disabled = false;
+  }
+});
+
+refreshBlindsButton.addEventListener("click", async () => {
+  refreshBlindsButton.disabled = true;
+  setMessage(blindActionMessage, "Refreshing blinds…");
+  try {
+    await refreshBlinds(true);
+  } catch (error) {
+    setMessage(blindActionMessage, error.message || "Unable to refresh blinds.", "error");
+  } finally {
+    refreshBlindsButton.disabled = false;
   }
 });
 

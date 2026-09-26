@@ -40,7 +40,7 @@ function tests.the_access_button_is_not_listed_as_a_device()
     for _, device in ipairs(devices) do
         T.truthy(device.id ~= 574 and device.id ~= 572, "C4Bridge and its button are not homeowner devices")
     end
-    T.eq(#devices, 5)
+    T.eq(#devices, 7)
 end
 
 function tests.button_starts_idle()

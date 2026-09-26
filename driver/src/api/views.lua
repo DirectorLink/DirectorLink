@@ -8,12 +8,13 @@ local Views = {}
 local TYPE_BY_KIND = {
     light = "light",
     climate = "thermostat",
-    cover = "cover",
+    blind = "blind",
 }
 
 local RESOURCE_PATH = {
     light = "/v1/lights/",
     thermostat = "/v1/thermostats/",
+    blind = "/v1/blinds/",
 }
 
 local SETTABLE_MODES = {
@@ -90,6 +91,18 @@ function Views.light(registry, device)
         brightness = nullable(state.brightness),
         dimmable = capabilities.brightness == true,
         brightness_reported = capabilities.brightness_feedback == true,
+    }
+end
+
+function Views.blind(registry, device)
+    local capabilities = device.capabilities or {}
+    local state = device.state or {}
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        position = nullable(state.position),
+        position_reported = capabilities.position_reported == true,
     }
 end
 

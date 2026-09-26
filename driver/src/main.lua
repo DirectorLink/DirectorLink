@@ -204,11 +204,12 @@ local function discover()
     local counts = Registry.counts()
     updateProperty("Location", locationText(Registry.metadata))
     updateProperty("Inventory", string.format(
-        "%d rooms, %d devices, %d lights, %d thermostats",
+        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds",
         counts.rooms,
         counts.devices,
         counts.supported_lights,
-        counts.supported_climate
+        counts.supported_climate,
+        counts.supported_blinds
     ))
     Log.info("discovery", "project discovered", counts)
     setStatus("ok")
