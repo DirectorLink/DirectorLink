@@ -14,8 +14,10 @@ ROUTES = ROOT / "driver" / "src" / "api" / "routes.lua"
 
 METHODS = ("get", "post", "put", "patch", "delete")
 ROUTE_PATTERN = re.compile(
-    r'\{\s*method\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)",\s*handler\s*=\s*"([^"]+)"(\s*,\s*public\s*=\s*true)?\s*\}'
+    r'\{\s*method\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)",\s*handler\s*=\s*"([^"]+)"'
+    r'(\s*,\s*public\s*=\s*true)?(?:\s*,\s*role\s*=\s*"(\w+)")?\s*\}'
 )
+ROLES = ("viewer", "member", "doors", "admin")
 
 
 def fail(message):
@@ -35,19 +37,27 @@ def spec_operations(spec):
 def driver_routes():
     text = ROUTES.read_text(encoding="utf-8")
     routes = {}
-    for method, path, _handler, public in ROUTE_PATTERN.findall(text):
+    for method, path, _handler, public, role in ROUTE_PATTERN.findall(text):
         key = (method, path)
         if key in routes:
             fail(f"duplicate route in routes.lua: {method} {path}")
-        routes[key] = bool(public)
+        if not public and role not in ROLES:
+            fail(f"{method} {path} in routes.lua needs role = one of {', '.join(ROLES)}")
+        routes[key] = {"public": bool(public), "role": role or None}
     declared = len(re.findall(r"\bmethod\s*=", text))
     if declared != len(routes):
         fail(f"could not parse every route in routes.lua ({len(routes)} of {declared})")
     return routes
 
 
-def check_operation(key, operation, public):
+def check_operation(key, operation, public, role):
     label = f"{key[0]} {key[1]}"
+    if not public:
+        spec_role = operation.get("x-c4bridge-role")
+        if spec_role != role:
+            fail(f"{label}: x-c4bridge-role is {spec_role!r} in the spec but {role!r} in routes.lua")
+        if role != "viewer" and "403" not in operation.get("responses", {}):
+            fail(f"{label} needs the {role} role but does not document 403")
     for field in ("operationId", "summary", "tags"):
         if not operation.get(field):
             fail(f"{label} needs {field}")
@@ -78,14 +88,14 @@ def main():
     operation_ids = set()
     for key, operation in operations.items():
         spec_public = operation.get("security") == []
-        if spec_public != routes[key]:
+        if spec_public != routes[key]["public"]:
             fail(f"{key[0]} {key[1]}: public in {'spec' if spec_public else 'driver'} only")
-        check_operation(key, operation, spec_public)
+        check_operation(key, operation, spec_public, routes[key]["role"])
         if operation["operationId"] in operation_ids:
             fail(f"duplicate operationId {operation['operationId']}")
         operation_ids.add(operation["operationId"])
 
-    public = sum(1 for is_public in routes.values() if is_public)
+    public = sum(1 for route in routes.values() if route["public"])
     print(f"OK: API spec valid; {len(routes)} operations match the driver ({public} public)")
 
 

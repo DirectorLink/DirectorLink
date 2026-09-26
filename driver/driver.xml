@@ -101,6 +101,15 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Door Control</name>
+        <type>LIST</type>
+        <items>
+          <item>Disabled</item>
+          <item>Enabled</item>
+        </items>
+        <default>Disabled</default>
+      </property>
+      <property>
         <name>Log Level</name>
         <type>LIST</type>
         <items>

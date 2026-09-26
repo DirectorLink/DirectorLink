@@ -196,3 +196,11 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision:** The driver keeps its last 500 log entries in memory and serves them at `GET /v1/logs` (filters by level, category and sequence number); the level is set with `PATCH /v1/logs/settings` or the Composer **Log Level** property. Entries also go to the Director driver log.
 
 **Scope:** C4Bridge's own log only. Director's system logs are outside the driver sandbox and contain other drivers' data, so they are not exposed over the LAN. Fields such as keys, tokens and pairing codes are redacted before logging.
+
+## ADR-025 — API keys have roles; doors need a Composer switch
+
+**Context:** One kind of key could do everything, including opening doors and creating more keys. Remote access (next) and family members need less than that.
+
+**Decision (0.7.0):** Four ordered roles — `viewer`, `member`, `doors`, `admin` — each allowed everything the ones before it are. Every non-public route in `routes.lua` names the least role it needs, and the OpenAPI operation states the same as `x-c4bridge-role`; `check_api.py` fails the build when they differ or when a restricted operation does not document 403. Keys from before roles existed become `admin`; the Composer pairing code issues `admin`; access requests default to `admin` for a home's first key and `member` afterwards, and Composer shows the requested role before the homeowner presses the button. The last admin key cannot be demoted. Opening doors additionally needs the Composer property **Door Control** = Enabled (default Disabled).
+
+**Consequence:** Remote users will map onto the same roles. The web app should read `GET /v1/api-keys/current` and hide what the key may not do.

@@ -2,6 +2,7 @@
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
+local Roles = require("src.auth.roles")
 
 local Keys = {}
 
@@ -41,12 +42,13 @@ local function save()
         records[#records + 1] = {
             id = key.id,
             name = key.name,
+            role = key.role,
             secret = key.secret,
             created_at = key.created_at,
         }
     end
     return pcall(function()
-        C4:PersistSetValue(STORE_KEY, Json.encode({ version = 1, keys = records }), true)
+        C4:PersistSetValue(STORE_KEY, Json.encode({ version = 2, keys = records }), true)
     end)
 end
 
@@ -65,6 +67,8 @@ function Keys.load()
                     state.keys[#state.keys + 1] = {
                         id = key.id,
                         name = tostring(key.name or "API key"),
+                        -- Keys from before roles existed (0.6 and older) keep full access.
+                        role = Roles.valid(key.role) and key.role or "admin",
                         secret = key.secret,
                         created_at = type(key.created_at) == "string" and key.created_at or Clock.iso(),
                     }
@@ -98,7 +102,11 @@ function Keys.verify(presented)
 end
 
 -- Returns the new record (including its secret), or nil plus an error code.
-function Keys.create(name)
+function Keys.create(name, role)
+    role = role or "member"
+    if not Roles.valid(role) then
+        return nil, "INVALID_ROLE"
+    end
     if #state.keys >= Keys.MAX_KEYS then
         return nil, "KEY_LIMIT_REACHED"
     end
@@ -120,6 +128,7 @@ function Keys.create(name)
     local record = {
         id = id,
         name = name,
+        role = role,
         secret = "ak_" .. secretA .. secretB:sub(1, 16),
         created_at = Clock.iso(),
     }
@@ -138,11 +147,60 @@ function Keys.list()
         items[#items + 1] = {
             id = key.id,
             name = key.name,
+            role = key.role,
             created_at = key.created_at,
             last_used_at = state.lastUsed[key.id],
         }
     end
     return items
+end
+
+function Keys.adminCount()
+    local count = 0
+    for _, key in ipairs(state.keys) do
+        if key.role == "admin" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+function Keys.find(id)
+    for _, key in ipairs(state.keys) do
+        if key.id == id then
+            return {
+                id = key.id,
+                name = key.name,
+                role = key.role,
+                created_at = key.created_at,
+                last_used_at = state.lastUsed[key.id],
+            }
+        end
+    end
+    return nil
+end
+
+-- Changes a key's name and/or role. Returns the updated record, or nil plus an error code.
+function Keys.update(id, changes)
+    for _, key in ipairs(state.keys) do
+        if key.id == id then
+            if changes.role and not Roles.valid(changes.role) then
+                return nil, "INVALID_ROLE"
+            end
+            if changes.role and key.role == "admin" and changes.role ~= "admin" and Keys.adminCount() == 1 then
+                return nil, "LAST_ADMIN"
+            end
+            local previous = { name = key.name, role = key.role }
+            key.name = changes.name or key.name
+            key.role = changes.role or key.role
+            if not save() then
+                key.name, key.role = previous.name, previous.role
+                return nil, "PERSIST_FAILED"
+            end
+            return Keys.find(id)
+        end
+    end
+    return nil, "NOT_FOUND"
 end
 
 function Keys.revoke(id)

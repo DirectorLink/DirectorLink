@@ -193,3 +193,11 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 - Updated from 0.5.0 in Composer: reloaded in place (`DIT_UPDATING`). 3 KNX Contact/Relay devices discovered (דלת מטבח 543, דלת ראשית 544, שער חניה 568); `C4:RegisterDeviceEvent` raised no error.
 - Relay events reach C4Bridge (`OnDeviceEvent`): the homeowner opened the kitchen door with its button in the Control4 app; Director logged events 4 (relay 1 closed) then 3 (opened) on 543, and `GET /v1/relays` then reported 543 as `"open"`; the untouched relays stayed `null`.
 - Not yet validated on the controller: `POST /v1/relays/{id}/pulse` and `PATCH /v1/relays/{id}` (would open a door); room-name `PATCH`.
+
+## 2026-09-27 — v0.7.0 roles, Door Control and the new web app
+
+- Updated from 0.6.0 in Composer: reloaded in place; `/v1/openapi.json` reports 0.7.0 with `/v1/api-keys/current`.
+- The homeowner opened a door from the new web app with Door Control enabled, and saw the Hebrew room names set through `PATCH /v1/rooms/{id}`.
+- Existing keys became `admin`. Viewer, member and doors behaviour is covered by the driver tests and the live contract test (403 `FORBIDDEN`, `DOOR_CONTROL_DISABLED`, self-revoke).
+- Web app status flapping: the controller answered 45 refresh-style requests in under 0.1 s each with a camera snapshot in flight (camera 99 offline times out after 3 s without delaying others); the app now needs two failed refreshes in a row before it shows "unreachable".
+- Hikvision snapshots are full resolution (~1 MB) whatever `width` is requested — to address before remote access.

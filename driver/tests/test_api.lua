@@ -400,6 +400,7 @@ end
 
 function tests.relay_pulse_closes_then_opens()
     local mock, key = start()
+    Properties["Door Control"] = "Enabled"
     local before = #mock.commands
     local response = T.http(mock, "POST", "/v1/relays/70/pulse", { key = key })
     T.eq(response.status, 202)
@@ -413,6 +414,7 @@ end
 
 function tests.relay_state_can_be_set_and_is_validated()
     local mock, key = start()
+    Properties["Door Control"] = "Enabled"
     T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } }).status, 202)
     T.same(mock.commands[#mock.commands], { device = 70, command = "Close Relay", params = { Relay = "1" } })
     T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "open" } })
@@ -452,6 +454,112 @@ function tests.rooms_have_names_per_language()
     OnDriverLateInit("DIT_UPDATING")
     local restartedKey = T.pair(restarted)
     T.same(T.http(restarted, "GET", "/v1/rooms/10", { key = restartedKey }).json.names, { he = "מטבח" })
+end
+
+function tests.doors_stay_shut_until_door_control_is_enabled()
+    local mock, key = start()
+    local before = #mock.commands
+    local refused = T.http(mock, "POST", "/v1/relays/70/pulse", { key = key })
+    T.eq(refused.status, 403)
+    T.eq(refused.json.code, "DOOR_CONTROL_DISABLED")
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } }).json.code, "DOOR_CONTROL_DISABLED")
+    T.eq(#mock.commands, before, "nothing reaches the relay")
+    Properties["Door Control"] = "Enabled"
+    T.eq(T.http(mock, "POST", "/v1/relays/70/pulse", { key = key }).status, 202)
+end
+
+local function keyWithRole(mock, adminKey, role)
+    local created = T.http(mock, "POST", "/v1/api-keys", { key = adminKey, body = { name = role .. " key", role = role } })
+    T.eq(created.status, 201)
+    T.eq(created.json.role, role)
+    return created.json.key, created.json.id
+end
+
+function tests.roles_limit_what_a_key_can_do()
+    local mock, admin = start()
+    Properties["Door Control"] = "Enabled"
+    local viewer = keyWithRole(mock, admin, "viewer")
+    local member = keyWithRole(mock, admin, "member")
+    local doors = keyWithRole(mock, admin, "doors")
+
+    local function status(method, path, key, body)
+        return T.http(mock, method, path, { key = key, body = body }).status
+    end
+
+    -- viewer: read only
+    T.eq(status("GET", "/v1/lights", viewer), 200)
+    T.eq(status("GET", "/v1/cameras/60/snapshot", viewer), 200)
+    local forbidden = T.http(mock, "PATCH", "/v1/lights/21", { key = viewer, body = { on = true } })
+    T.eq(forbidden.status, 403)
+    T.eq(forbidden.json.code, "FORBIDDEN")
+    T.eq(forbidden.json.role, "viewer")
+    T.eq(forbidden.json.required_role, "member")
+    -- member: control, no doors, no admin
+    T.eq(status("PATCH", "/v1/lights/21", member, { on = true }), 202)
+    T.eq(status("POST", "/v1/blinds/50/stop", member), 202)
+    T.eq(status("POST", "/v1/relays/70/pulse", member), 403)
+    T.eq(status("GET", "/v1/api-keys", member), 403)
+    T.eq(status("GET", "/v1/logs", member), 403)
+    T.eq(status("PATCH", "/v1/rooms/10", member, { names = { en = "x" } }), 403)
+    -- doors: can open doors, still no admin
+    T.eq(status("POST", "/v1/relays/70/pulse", doors), 202)
+    T.eq(status("POST", "/v1/api-keys", doors, { name = "sneaky", role = "admin" }), 403)
+    -- every key can see its own role
+    local me = T.http(mock, "GET", "/v1/api-keys/current", { key = viewer }).json
+    T.eq(me.role, "viewer")
+    T.eq(me.current, true)
+    T.eq(me.key, nil, "the secret is never shown again")
+    -- any key may revoke itself, but not others
+    T.eq(status("DELETE", "/v1/api-keys/current", viewer), 204)
+    T.eq(status("GET", "/v1/lights", viewer), 401)
+    T.eq(status("GET", "/v1/lights", member), 200)
+end
+
+function tests.admins_change_roles_but_keep_one_admin()
+    local mock, admin = start()
+    local adminId = T.http(mock, "GET", "/v1/api-keys/current", { key = admin }).json.id
+    local _, memberId = keyWithRole(mock, admin, "member")
+
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "doors" } }).json.role, "doors")
+    local renamed = T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { name = "Kitchen tablet" } })
+    T.eq(renamed.json.name, "Kitchen tablet")
+    T.eq(renamed.json.role, "doors")
+
+    local last = T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } })
+    T.eq(last.status, 409)
+    T.eq(last.json.code, "LAST_ADMIN")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "owner" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = {} }).json.code, "INVALID_REQUEST")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/deadbeef", { key = admin, body = { role = "viewer" } }).status, 404)
+    T.eq(T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "x", role = "root" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "default role" } }).json.role, "member")
+
+    -- With a second admin the first may step down.
+    T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "admin" } })
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } }).json.role, "member")
+end
+
+function tests.keys_from_before_roles_keep_full_access()
+    local project = Mock.project()
+    local mock = Mock.install(project)
+    mock.persist["c4bridge_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
+    local restarted = Mock.startDriver(project)
+    for name, value in pairs(mock.persist) do
+        restarted.persist[name] = value
+    end
+    OnDriverLateInit("DIT_UPDATING")
+    local me = T.http(restarted, "GET", "/v1/api-keys/current", { key = "ak_old" })
+    T.eq(me.status, 200)
+    T.eq(me.json.role, "admin")
+end
+
+function tests.later_access_requests_default_to_member()
+    local mock, admin = start()
+    local created = T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Kid's phone" } })
+    T.eq(created.json.role, "member")
+    T.contains(mock.properties["Access Request"], "as member")
+    T.http(mock, "DELETE", "/v1/auth/requests/" .. created.json.id)
+    T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Guest", role = "viewer" } }).json.role, "viewer")
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()

@@ -40,8 +40,8 @@ local function publish()
     local request = state.request
     local text = "None"
     if request and request.status == "pending" then
-        text = "Waiting: " .. request.name .. " (" .. tostring(request.client or "?") .. ") until "
-            .. os.date("%H:%M", request.expires_at)
+        text = "Waiting: " .. request.name .. " as " .. tostring(request.role) .. " (" .. tostring(request.client or "?")
+            .. ") until " .. os.date("%H:%M", request.expires_at)
     elseif request and request.status == "approved" then
         text = "Approved: " .. request.name .. " (collecting its key)"
     end
@@ -108,7 +108,7 @@ function Approvals.initialize(options)
 end
 
 -- Returns the new request, or nil plus { code, message, retry_after }.
-function Approvals.create(name, client)
+function Approvals.create(name, client, role)
     expireIfNeeded()
     local now = Clock.now()
 
@@ -144,6 +144,7 @@ function Approvals.create(name, client)
         id = (tostring(uuid):gsub("[^%x]", "")):lower(),
         name = name,
         client = client,
+        role = role or "member",
         status = "pending",
         created_at = now,
         expires_at = now + Approvals.REQUEST_TTL_SECONDS,
@@ -152,7 +153,7 @@ function Approvals.create(name, client)
     setIcon("waiting", "Approve access for " .. name)
     scheduleExpiry(Approvals.REQUEST_TTL_SECONDS)
     publish()
-    log("info", "access requested; waiting for the C4Bridge Access button", { name = name, client = client })
+    log("info", "access requested; waiting for the C4Bridge Access button", { name = name, role = state.request.role, client = client })
     return state.request
 end
 

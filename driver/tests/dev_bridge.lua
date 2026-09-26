@@ -19,6 +19,8 @@ if specPath and specPath ~= "" then
 end
 
 local mock = Mock.startDriver(nil, specText)
+-- The fake home lets the API open its (fake) doors.
+Properties["Door Control"] = "Enabled"
 
 local function fromHex(text)
     return (text:gsub("%x%x", function(pair)

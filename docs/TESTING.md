@@ -2,7 +2,14 @@
 
 ## Current release
 
-`v0.6.0` — relays and room names. Update in Composer (no reboot); keys keep working.
+`v0.7.0` — key roles and Door Control. Update in Composer (no reboot); existing keys become admin.
+
+## 0d. Roles and Door Control
+
+1. The new **Door Control** property is `Disabled`: opening a door from the API answers `403 DOOR_CONTROL_DISABLED`. Set it to `Enabled` and it works again.
+2. `GET /v1/api-keys/current` with an existing key shows `"role": "admin"`.
+3. Request access from a second browser: Composer's **Access Request** shows `as member`; after approval that browser can switch lights but not open doors (`403 FORBIDDEN`) or list keys.
+4. `PATCH /v1/api-keys/{id}` `{"role": "doors"}` from the admin browser lets it open doors.
 
 ## 0c. Relays and room names
 
@@ -41,7 +48,7 @@ Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
 Expected in the C4Bridge properties once the new driver is loaded:
 
-- Version: `0.6.0`
+- Version: `0.7.0`
 - Status: `Ready`
 - API Status: `Online`
 - Inventory: rooms, devices, lights, thermostats, blinds and cameras (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras)

@@ -44,7 +44,7 @@ SECURITY_CONTRACT = {
         '["https://app.c4bridge.io"] = true',
     ),
     "src/auth/keys.lua": (
-        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 1, keys = records }), true)",
+        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 2, keys = records }), true)",
         "C4:PersistGetValue(STORE_KEY, true)",
         'C4:UUID("RANDOM")',
         "constantTimeEqual(presented, key.secret)",

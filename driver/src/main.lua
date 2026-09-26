@@ -99,6 +99,10 @@ local services = {
     startedAt = os.time(),
     controllerVersion = nil,
     lifecycle = lifecycle,
+    -- Opening doors and gates from the API needs the Composer property "Door Control" = Enabled.
+    doorControlEnabled = function()
+        return Properties ~= nil and Properties["Door Control"] == "Enabled"
+    end,
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
@@ -317,6 +321,9 @@ function ReceivedFromProxy(idBinding, strCommand, tParams)
 end
 
 function OnPropertyChanged(name)
+    if name == "Door Control" and Properties then
+        Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")
+    end
     if name == "Log Level" and Properties then
         if Log.setLevel(Properties[name]) then
             Log.info("logs", "log level changed from Composer", { level = Log.getLevel() })

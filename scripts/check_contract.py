@@ -207,7 +207,21 @@ def scenario(client, pairing_code):
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
-    client.check("DELETE", f"/v1/api-keys/{created['id']}", 204)
+    client.check("GET", "/v1/api-keys/current", 200)
+    client.check("PATCH", f"/v1/api-keys/{created['id']}", 200, body={"role": "viewer"})
+    client.check("PATCH", f"/v1/api-keys/{created['id']}", 400, body={"role": "owner"})
+    client.check("PATCH", "/v1/api-keys/deadbeef", 404, body={"role": "viewer"})
+    me = client.check("GET", "/v1/api-keys/current", 200)
+    client.check("PATCH", f"/v1/api-keys/{me['id']}", 409, body={"role": "member"})
+    admin_key, client.key = client.key, created["key"]
+    client.check("GET", "/v1/lights", 200)
+    client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
+    client.check("POST", "/v1/relays/70/pulse", 403)
+    client.check("GET", "/v1/api-keys", 403)
+    client.check("DELETE", "/v1/api-keys/current", 204)
+    client.check("GET", "/v1/lights", 401)
+    client.key = admin_key
+    client.check("DELETE", f"/v1/api-keys/{created['id']}", 404)
     client.check("DELETE", "/v1/api-keys/deadbeef", 404)
 
     client.check("PATCH", "/v1/logs/settings", 200, body={"level": "debug"})

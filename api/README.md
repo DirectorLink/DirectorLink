@@ -11,6 +11,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
 | Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, access requests (`/v1/auth/requests`) and pairing. |
+| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds), `doors` (also doors and gates), `admin` (also keys, room names, log). Each operation states the least role it needs as `x-c4bridge-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. The answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |

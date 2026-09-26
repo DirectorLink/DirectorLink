@@ -199,6 +199,7 @@ function Views.apiKey(record, currentId)
     return {
         id = record.id,
         name = record.name,
+        role = record.role,
         created_at = record.created_at,
         last_used_at = nullable(record.last_used_at),
         current = record.id == currentId,

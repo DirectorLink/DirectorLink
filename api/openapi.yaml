@@ -15,6 +15,13 @@ info:
     (`/v1/auth/requests`), or with the 8-digit pairing code shown in Composer. Create more keys
     under `/v1/api-keys`.
 
+    **Roles.** Every API key has a role, and each role can do everything the ones before it
+    can: `viewer` reads everything (including camera pictures), `member` also controls lights,
+    thermostats and blinds, `doors` also opens doors and gates, `admin` also manages API keys,
+    room names and the log. Each operation lists the least role it needs as `x-c4bridge-role`;
+    a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
+    property of C4Bridge in Composer set to Enabled.
+
     **Changing state.** Send the desired state with `PATCH`. The bridge answers `202 Accepted` once
     the command has been handed to the controller. The returned object holds the last state the
     controller reported, so read the resource again to confirm the change.
@@ -93,6 +100,7 @@ paths:
     get:
       tags: [System]
       operationId: getSystem
+      x-c4bridge-role: viewer
       summary: Get bridge, controller and project information
       responses:
         "200":
@@ -226,6 +234,7 @@ paths:
     get:
       tags: [Auth]
       operationId: listApiKeys
+      x-c4bridge-role: admin
       summary: List API keys
       responses:
         "200":
@@ -236,9 +245,12 @@ paths:
                 $ref: "#/components/schemas/ApiKeyList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Auth]
       operationId: createApiKey
+      x-c4bridge-role: admin
       summary: Create an API key
       requestBody:
         required: true
@@ -259,15 +271,77 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+
+  /v1/api-keys/current:
+    get:
+      tags: [Auth]
+      operationId: getCurrentApiKey
+      x-c4bridge-role: viewer
+      summary: The API key used for this request
+      description: Lets an app learn its own role to show only what it may use. The secret is not returned.
+      responses:
+        "200":
+          description: This key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Auth]
+      operationId: revokeCurrentApiKey
+      x-c4bridge-role: viewer
+      summary: Revoke the API key used for this request
+      description: Lets any client forget itself, whatever its role; later requests with the key get 401.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/api-keys/{keyId}:
     parameters:
       - $ref: "#/components/parameters/KeyId"
+    patch:
+      tags: [Auth]
+      operationId: updateApiKey
+      x-c4bridge-role: admin
+      summary: Rename an API key or change its role
+      description: The last admin key cannot lose its admin role (`409 LAST_ADMIN`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyUpdate"
+            example:
+              role: member
+      responses:
+        "200":
+          description: The changed key.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
     delete:
       tags: [Auth]
       operationId: deleteApiKey
+      x-c4bridge-role: admin
       summary: Revoke an API key
       description: Revoking the key used for this request is allowed; later requests with it get 401.
       responses:
@@ -275,6 +349,8 @@ paths:
           description: Revoked.
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -282,6 +358,7 @@ paths:
     get:
       tags: [Rooms]
       operationId: listRooms
+      x-c4bridge-role: viewer
       summary: List rooms
       responses:
         "200":
@@ -299,6 +376,7 @@ paths:
     get:
       tags: [Rooms]
       operationId: getRoom
+      x-c4bridge-role: viewer
       summary: Get a room
       responses:
         "200":
@@ -316,6 +394,7 @@ paths:
     patch:
       tags: [Rooms]
       operationId: updateRoom
+      x-c4bridge-role: admin
       summary: Name a room in other languages
       description: |
         Sets the room's name per language (the Control4 name itself does not change). An empty
@@ -342,6 +421,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
 
@@ -349,6 +430,7 @@ paths:
     get:
       tags: [Devices]
       operationId: listDevices
+      x-c4bridge-role: viewer
       summary: List devices
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -380,6 +462,7 @@ paths:
     get:
       tags: [Devices]
       operationId: getDevice
+      x-c4bridge-role: viewer
       summary: Get a device
       responses:
         "200":
@@ -399,6 +482,7 @@ paths:
     get:
       tags: [Lights]
       operationId: listLights
+      x-c4bridge-role: viewer
       summary: List lights
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -420,6 +504,7 @@ paths:
     get:
       tags: [Lights]
       operationId: getLight
+      x-c4bridge-role: viewer
       summary: Get a light
       responses:
         "200":
@@ -437,6 +522,7 @@ paths:
     patch:
       tags: [Lights]
       operationId: updateLight
+      x-c4bridge-role: member
       summary: Turn a light on or off, or set its brightness
       requestBody:
         required: true
@@ -457,6 +543,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -468,6 +556,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: listThermostats
+      x-c4bridge-role: viewer
       summary: List thermostats
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -489,6 +578,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: getThermostat
+      x-c4bridge-role: viewer
       summary: Get a thermostat
       responses:
         "200":
@@ -506,6 +596,7 @@ paths:
     patch:
       tags: [Thermostats]
       operationId: updateThermostat
+      x-c4bridge-role: member
       summary: Change mode, target temperature or fan speed
       description: Fields are applied in the order mode, fan speed, target temperature.
       requestBody:
@@ -528,6 +619,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -539,6 +632,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: listBlinds
+      x-c4bridge-role: viewer
       summary: List blinds
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -560,6 +654,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: getBlind
+      x-c4bridge-role: viewer
       summary: Get a blind
       responses:
         "200":
@@ -577,6 +672,7 @@ paths:
     patch:
       tags: [Blinds]
       operationId: updateBlind
+      x-c4bridge-role: member
       summary: Open, close or move a blind to a position
       description: |
         `{"position": 100}` opens, `{"position": 0}` closes. Blinds that only support open and
@@ -600,6 +696,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -613,6 +711,7 @@ paths:
     post:
       tags: [Blinds]
       operationId: stopBlind
+      x-c4bridge-role: member
       summary: Stop a moving blind
       description: Blinds without a stop command on the KNX side ignore it.
       responses:
@@ -626,6 +725,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -637,6 +738,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: listCameras
+      x-c4bridge-role: viewer
       summary: List cameras
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -658,6 +760,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCamera
+      x-c4bridge-role: viewer
       summary: Get a camera
       responses:
         "200":
@@ -679,6 +782,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCameraSnapshot
+      x-c4bridge-role: viewer
       summary: Get the current picture
       description: |
         The bridge fetches the picture from the camera with the address and login stored in
@@ -718,6 +822,7 @@ paths:
     get:
       tags: [Relays]
       operationId: listRelays
+      x-c4bridge-role: viewer
       summary: List relays
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -739,6 +844,7 @@ paths:
     get:
       tags: [Relays]
       operationId: getRelay
+      x-c4bridge-role: viewer
       summary: Get a relay
       responses:
         "200":
@@ -756,6 +862,7 @@ paths:
     patch:
       tags: [Relays]
       operationId: updateRelay
+      x-c4bridge-role: doors
       summary: Open or close a relay and leave it so
       description: For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
       requestBody:
@@ -777,6 +884,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -790,6 +899,7 @@ paths:
     post:
       tags: [Relays]
       operationId: pulseRelay
+      x-c4bridge-role: doors
       summary: Pulse the relay (open a door or gate)
       description: |
         Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
@@ -805,6 +915,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
         "409":
@@ -816,6 +928,7 @@ paths:
     get:
       tags: [Logs]
       operationId: listLogs
+      x-c4bridge-role: admin
       summary: Read the bridge's recent log
       description: |
         The bridge keeps its last 500 log entries in memory: API requests, commands sent to
@@ -857,11 +970,14 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/logs/settings:
     get:
       tags: [Logs]
       operationId: getLogSettings
+      x-c4bridge-role: admin
       summary: Get the log level
       responses:
         "200":
@@ -872,9 +988,12 @@ paths:
                 $ref: "#/components/schemas/LogSettings"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     patch:
       tags: [Logs]
       operationId: updateLogSettings
+      x-c4bridge-role: admin
       summary: Change the log level
       description: Use `debug` while investigating a problem, then set it back to `info`.
       requestBody:
@@ -896,6 +1015,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
 components:
   securitySchemes:
@@ -1029,6 +1150,14 @@ components:
         Retry-After:
           schema:
             type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Forbidden:
+      description: |
+        The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
+        door control is switched off in Composer (`DOOR_CONTROL_DISABLED`).
       content:
         application/problem+json:
           schema:
@@ -1205,16 +1334,23 @@ components:
           minLength: 1
           maxLength: 64
           description: Shown in Composer while waiting, and used as the key's name.
+        role:
+          $ref: "#/components/schemas/KeyRole"
+          description: |
+            The role the key will get, shown in Composer before the homeowner approves. Default:
+            `admin` for the first key of a home, `member` after that.
 
     AccessRequest:
       type: object
-      required: [id, name, status, expires_at, api_key]
+      required: [id, name, role, status, expires_at, api_key]
       properties:
         id:
           type: string
           pattern: "^[0-9a-f]{32}$"
         name:
           type: string
+        role:
+          $ref: "#/components/schemas/KeyRole"
         status:
           type: string
           enum: [pending, approved]
@@ -1228,11 +1364,33 @@ components:
             - $ref: "#/components/schemas/NewApiKey"
             - type: "null"
 
+    KeyRole:
+      type: string
+      enum: [viewer, member, doors, admin]
+      description: |
+        `viewer` reads everything; `member` also controls lights, thermostats and blinds; `doors`
+        also opens doors and gates; `admin` also manages API keys, room names and the log.
+
+    ApiKeyUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        role:
+          $ref: "#/components/schemas/KeyRole"
+
     ApiKeyCreate:
       type: object
       required: [name]
       additionalProperties: false
       properties:
+        role:
+          $ref: "#/components/schemas/KeyRole"
+          description: Default `member`.
         name:
           type: string
           minLength: 1
@@ -1240,13 +1398,15 @@ components:
 
     ApiKey:
       type: object
-      required: [id, name, created_at, last_used_at, current]
+      required: [id, name, role, created_at, last_used_at, current]
       properties:
         id:
           type: string
           pattern: "^[0-9a-f]{8}$"
         name:
           type: string
+        role:
+          $ref: "#/components/schemas/KeyRole"
         created_at:
           type: string
           format: date-time

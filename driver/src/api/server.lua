@@ -8,6 +8,7 @@ local Router = require("src.api.router")
 local Routes = require("src.api.routes")
 local Problem = require("src.api.problem")
 local Response = require("src.api.response")
+local Roles = require("src.auth.roles")
 
 local HANDLERS = {
     system = require("src.api.handlers.system"),
@@ -47,6 +48,7 @@ end
 
 for _, route in ipairs(Routes) do
     assert(resolveHandler(route.handler), "missing API handler " .. route.handler)
+    assert(route.public or Roles.valid(route.role), "route needs a role: " .. route.method .. " " .. route.path)
 end
 
 -- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not.
@@ -222,6 +224,13 @@ function Server.handleRequest(request, client, respond)
                 status = 401
                 payload = Problem.unauthorized()
                 extraHeaders = { { "WWW-Authenticate", 'Bearer realm="C4Bridge"' } }
+            elseif not match.route.public and not Roles.allows(apiKey.role, match.route.role) then
+                status = 403
+                payload = Problem.new(403, "FORBIDDEN", "This API key has the " .. tostring(apiKey.role)
+                    .. " role; " .. match.route.method .. " " .. match.route.path .. " needs " .. match.route.role, {
+                    role = apiKey.role,
+                    required_role = match.route.role,
+                })
             else
                 status, payload, extraHeaders = runHandler(match.route, request, match.params, apiKey, client)
             end
