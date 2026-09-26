@@ -200,6 +200,30 @@
           </article>
 
 
+          <article class="panel result-panel cameras-panel">
+            <div class="lights-heading">
+              <div>
+                <p class="eyebrow">CAMERAS</p>
+                <h2>Cameras</h2>
+                <p class="panel-note">
+                  Pictures refresh every few seconds while this page is open. Tap a camera to
+                  watch it larger.
+                </p>
+              </div>
+            </div>
+            <p id="camera-message" class="form-message" role="status" aria-live="polite"></p>
+            <div id="camera-grid" class="camera-grid"></div>
+          </article>
+
+          <dialog id="camera-dialog" class="camera-dialog">
+            <div class="camera-dialog-head">
+              <strong id="camera-dialog-title"></strong>
+              <button id="camera-dialog-close" class="button button-secondary" type="button">Close</button>
+            </div>
+            <img id="camera-dialog-image" alt="" />
+            <p id="camera-dialog-status" class="panel-note"></p>
+          </dialog>
+
           <article class="panel result-panel blinds-panel">
             <div class="lights-heading">
               <div>

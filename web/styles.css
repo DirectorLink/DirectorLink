@@ -659,6 +659,68 @@ footer a {
   max-width: 650px;
 }
 
+.camera-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.camera-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface-strong);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.camera-tile img,
+.camera-dialog img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #111827;
+}
+
+.camera-tile span {
+  padding: 0 10px 10px;
+}
+
+.camera-tile small {
+  display: block;
+  opacity: 0.7;
+}
+
+.camera-dialog {
+  width: min(960px, calc(100vw - 32px));
+  padding: 12px;
+  border: 0;
+  border-radius: 14px;
+}
+
+.camera-dialog::backdrop {
+  background: rgb(0 0 0 / 70%);
+}
+
+.camera-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.camera-dialog img {
+  object-fit: contain;
+}
+
 .light-list {
   max-height: 560px;
   overflow: auto;

@@ -19,6 +19,10 @@ function Classifier.classify(driverFileName)
         return { kind = "blind", recognized = true }
     end
 
+    if name == "camera.c4i" or name == "camera.c4z" then
+        return { kind = "camera", recognized = true }
+    end
+
     return { kind = "unsupported", recognized = false }
 end
 

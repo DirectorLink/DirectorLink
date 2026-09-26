@@ -76,6 +76,7 @@ function System.info(ctx)
             lights = counts.supported_lights,
             thermostats = counts.supported_climate,
             blinds = counts.supported_blinds,
+            cameras = counts.supported_cameras,
         },
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,

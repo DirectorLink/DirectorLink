@@ -55,6 +55,7 @@
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
+- [x] Cameras: snapshots through the camera proxy, near-live grid in the web app (0.5.0)
 - [ ] Expand unsupported-device diagnostics
 
 ## Milestone 5 — C4Bridge scenes

@@ -181,3 +181,9 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 
 - 15 blind proxies (`blind.c4i` over `knx_blind.c4z`) discovered; the proxy's `Level` variable was found on all of them.
 - From the web app: open (`SET_LEVEL_TARGET` 100), stop (`STOP`) and close (`SET_LEVEL_TARGET` 0) on blinds 312, 314, 316, 320 and 322 — the blinds moved as commanded.
+
+## 2026-09-26 — v0.5.0 cameras
+
+- Updated from 0.4.0 in Composer: reloaded in place (`DIT_UPDATING`), no reboot. 13 camera proxies (`camera.c4i`: 12 Hikvision IPC, 1 DoorBird) discovered.
+- `GET_PROPERTIES` and `GET_SNAPSHOT_QUERY_STRING` on the camera proxy (via `C4:SendUIRequest`), `C4:url()` with digest login (`C4:Hash` MD5) work on Director 3.4.3: the homeowner confirmed the web app's Cameras grid shows pictures.
+- Camera 99 (192.168.1.89) timed out (`Error 28: Timeout was reached`) — reported as `CAMERA_UNREACHABLE`; the other cameras kept working.

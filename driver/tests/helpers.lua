@@ -91,7 +91,7 @@ function T.http(mock, method, path, options)
         body = payload,
         closed = mock.closed[handle],
     }
-    if payload ~= "" then
+    if payload ~= "" and tostring(headers["content-type"] or ""):find("json", 1, true) then
         result.json = Json.decode(payload)
     end
     return result

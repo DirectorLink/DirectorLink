@@ -33,6 +33,10 @@ return {
     { method = "PATCH", path = "/v1/blinds/{blindId}", handler = "blinds.update" },
     { method = "POST", path = "/v1/blinds/{blindId}/stop", handler = "blinds.stop" },
 
+    { method = "GET", path = "/v1/cameras", handler = "cameras.list" },
+    { method = "GET", path = "/v1/cameras/{cameraId}", handler = "cameras.get" },
+    { method = "GET", path = "/v1/cameras/{cameraId}/snapshot", handler = "cameras.snapshot" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings" },

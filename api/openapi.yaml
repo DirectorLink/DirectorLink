@@ -6,7 +6,7 @@ info:
   summary: Local REST API for a Control4 home.
   description: |
     C4Bridge runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, access requests and
@@ -51,6 +51,8 @@ tags:
     description: Heating and cooling zones C4Bridge can read and control.
   - name: Blinds
     description: Blinds, shades and shutters C4Bridge can read and control.
+  - name: Cameras
+    description: Camera snapshots, fetched on the controller so camera logins never leave it.
   - name: Logs
     description: The bridge's own recent log, for debugging.
 
@@ -598,6 +600,87 @@ paths:
         "502":
           $ref: "#/components/responses/CommandFailed"
 
+  /v1/cameras:
+    get:
+      tags: [Cameras]
+      operationId: listCameras
+      summary: List cameras
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Cameras sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CameraList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/cameras/{cameraId}:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    get:
+      tags: [Cameras]
+      operationId: getCamera
+      summary: Get a camera
+      responses:
+        "200":
+          description: The camera.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Camera"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/cameras/{cameraId}/snapshot:
+    parameters:
+      - $ref: "#/components/parameters/CameraId"
+    get:
+      tags: [Cameras]
+      operationId: getCameraSnapshot
+      summary: Get the current picture
+      description: |
+        The bridge fetches the picture from the camera with the address and login stored in
+        Control4 and returns it as is (usually JPEG). A few snapshots are fetched at a time; when
+        too many are waiting the answer is `503` with `Retry-After`. Poll every 1–2 seconds for a
+        near-live view.
+      parameters:
+        - name: width
+          in: query
+          description: Requested width in pixels. Cameras that cannot scale return their own size.
+          schema:
+            type: integer
+            enum: [320, 640, 1280, 1920]
+            default: 640
+      responses:
+        "200":
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -720,6 +803,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    CameraId:
+      name: cameraId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     BlindId:
       name: blindId
       in: path
@@ -790,7 +880,17 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     CommandFailed:
-      description: The controller rejected the command (`CONTROLLER_COMMAND_FAILED`).
+      description: The controller or device failed the request (`CONTROLLER_COMMAND_FAILED`, `CAMERA_UNREACHABLE`, `CAMERA_LOGIN_FAILED`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Busy:
+      description: Too many requests of this kind are waiting (`CAMERA_BUSY`); retry after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
       content:
         application/problem+json:
           schema:
@@ -910,7 +1010,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
-          required: [rooms, devices, supported_devices, lights, thermostats, blinds]
+          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras]
           properties:
             rooms:
               type: integer
@@ -923,6 +1023,8 @@ components:
             thermostats:
               type: integer
             blinds:
+              type: integer
+            cameras:
               type: integer
         lifecycle:
           type: object
@@ -1076,7 +1178,7 @@ components:
 
     DeviceType:
       type: string
-      enum: [light, thermostat, blind, other]
+      enum: [light, thermostat, blind, camera, other]
 
     Device:
       type: object
@@ -1189,6 +1291,31 @@ components:
           minimum: 0
           maximum: 100
           description: Target percent open — 0 closed, 100 open.
+
+    Camera:
+      type: object
+      required: [id, name, room, snapshot_href]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        snapshot_href:
+          type: string
+          description: Path of the current picture, e.g. `/v1/cameras/83/snapshot`.
+
+    CameraList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Camera"
 
     BlindList:
       type: object

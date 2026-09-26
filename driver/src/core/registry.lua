@@ -87,6 +87,18 @@ function Registry.blindList()
     return sortedList(blinds)
 end
 
+function Registry.cameraList()
+    local cameras = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "camera" and device.supported == true then
+            cameras[id] = device
+        end
+    end
+
+    return sortedList(cameras)
+end
+
 function Registry.lightList()
     local lights = {}
 
@@ -106,6 +118,7 @@ function Registry.counts()
     local supportedLights = 0
     local supportedClimate = 0
     local supportedBlinds = 0
+    local supportedCameras = 0
 
     for _, device in pairs(Registry.devices) do
         if device.recognized then
@@ -122,6 +135,8 @@ function Registry.counts()
                 supportedClimate = supportedClimate + 1
             elseif device.kind == "blind" then
                 supportedBlinds = supportedBlinds + 1
+            elseif device.kind == "camera" then
+                supportedCameras = supportedCameras + 1
             end
         end
     end
@@ -137,6 +152,7 @@ function Registry.counts()
         supported_lights = supportedLights,
         supported_climate = supportedClimate,
         supported_blinds = supportedBlinds,
+        supported_cameras = supportedCameras,
     }
 end
 

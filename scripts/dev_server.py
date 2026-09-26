@@ -8,7 +8,7 @@ and API clients can be developed without a controller:
     python scripts/dev_server.py                   # API on http://localhost:41999
     python -m http.server 8080 --directory web     # web app; use "localhost" as the controller
 
-The fake project has two rooms, three lights, one thermostat and two blinds. The pairing code is printed at start;
+The fake project has two rooms, three lights, one thermostat, two blinds and two cameras. The pairing code is printed at start;
 type "press" and Enter to press the C4Bridge Access button (approves a waiting access request).
 """
 

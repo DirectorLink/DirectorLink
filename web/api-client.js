@@ -97,6 +97,36 @@ export async function apiRequest(host, path, { method = "GET", apiKey, body, tim
   }
 }
 
+// Fetches an image (a camera snapshot) as a Blob; throws ApiError for non-2xx responses.
+export async function apiImage(host, path, { apiKey, timeoutMs = 12000 } = {}) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(apiUrl(host, path), {
+      headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+      cache: "no-store",
+      signal: controller.signal,
+      targetAddressSpace: "local",
+    });
+    if (!response.ok) {
+      let problem = null;
+      try {
+        problem = await response.json();
+      } catch {
+        problem = null;
+      }
+      throw new ApiError(problem?.detail || `C4Bridge returned HTTP ${response.status}`, {
+        status: response.status,
+        code: problem?.code,
+        problem,
+      });
+    }
+    return await response.blob();
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 // Like apiRequest, but returns only the data and throws ApiError for non-2xx responses.
 export async function apiCall(host, path, options) {
   const result = await apiRequest(host, path, options);

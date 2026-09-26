@@ -9,7 +9,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, access requests (`/v1/auth/requests`) and pairing. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. The answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. |

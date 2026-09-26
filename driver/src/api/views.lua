@@ -9,12 +9,14 @@ local TYPE_BY_KIND = {
     light = "light",
     climate = "thermostat",
     blind = "blind",
+    camera = "camera",
 }
 
 local RESOURCE_PATH = {
     light = "/v1/lights/",
     thermostat = "/v1/thermostats/",
     blind = "/v1/blinds/",
+    camera = "/v1/cameras/",
 }
 
 local SETTABLE_MODES = {
@@ -103,6 +105,15 @@ function Views.blind(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         position = nullable(state.position),
         position_reported = capabilities.position_reported == true,
+    }
+end
+
+function Views.camera(registry, device)
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        snapshot_href = "/v1/cameras/" .. tostring(device.id) .. "/snapshot",
     }
 end
 

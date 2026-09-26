@@ -3,8 +3,11 @@
 
 local Mock = {}
 
+local md5 = require("md5")
+
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
--- one thermostat, two blinds (one without a known level) and one unsupported camera.
+-- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
+-- and one unsupported device.
 function Mock.project()
     return {
         osVersion = "3.4.3.727848-res",
@@ -76,6 +79,22 @@ function Mock.project()
                 deviceName = "Kitchen Shutter", driverFileName = "blind.c4i", roomId = 10, roomName = "Kitchen",
                 protocol = { [106] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
             },
+            [107] = {
+                deviceName = "Hikvision IPC Camera (Static)", driverFileName = "camera_ip_hik_ipc_static.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = { [60] = { deviceName = "Driveway", driverFileName = "camera.c4i" } },
+            },
+            [60] = {
+                deviceName = "Driveway", driverFileName = "camera.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [107] = { deviceName = "Hikvision IPC Camera (Static)", driverFileName = "camera_ip_hik_ipc_static.c4z" } },
+            },
+            [108] = {
+                deviceName = "DoorBird", driverFileName = "doorbird_doorstation.c4z", roomId = 11, roomName = "Living Room",
+                proxies = { [61] = { deviceName = "Gate", driverFileName = "camera.c4i" } },
+            },
+            [61] = {
+                deviceName = "Gate", driverFileName = "camera.c4i", roomId = 11, roomName = "Living Room",
+                protocol = { [108] = { deviceName = "DoorBird", driverFileName = "doorbird_doorstation.c4z" } },
+            },
             [40] = {
                 deviceName = "Front Door", driverFileName = "camera_ip_hik_ipc_static.c4z", roomId = 10, roomName = "Kitchen",
             },
@@ -105,6 +124,17 @@ function Mock.project()
             [50] = { [1000] = "40", [1001] = "40" },
             [51] = { [1000] = "-255", [1001] = "-255" },
         },
+        -- Camera proxies: what GET_PROPERTIES / GET_SNAPSHOT_QUERY_STRING return, and the fake camera.
+        cameras = {
+            [60] = {
+                address = "192.168.1.81", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
+                query = "ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&amp;size=%dx%d",
+            },
+            [61] = {
+                address = "192.168.1.117", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
+                query = "/bha-api/image.cgi",
+            },
+        },
         -- Names for C4:GetDeviceVariables (blind proxies are looked up by variable name).
         variableNames = {
             [50] = { [1000] = "Level", [1001] = "Target Level" },
@@ -128,6 +158,7 @@ function Mock.install(project)
         -- the C4Bridge Access button (574) was added hidden next to another hidden button.
         security = { [10] = { visible = { 4294966301, 531 }, hidden = { 541, 574, 483 } } },
         listeners = {},
+        urlRequests = {},
         servers = {},
         timers = {},
         uuidCount = 0,
@@ -233,6 +264,19 @@ function Mock.install(project)
     end
 
     function C4:SendUIRequest(deviceId, request, params)
+        local camera = project.cameras and project.cameras[deviceId]
+        if camera and request == "GET_PROPERTIES" then
+            return string.format(
+                "<camera_properties><address>%s</address><http_port>%d</http_port><https_port>443</https_port>"
+                    .. "<use_https>false</use_https><authentication_required>true</authentication_required>"
+                    .. "<authentication_type>%s</authentication_type><username>%s</username><password>%s</password>"
+                    .. "</camera_properties>",
+                camera.address, camera.http_port, camera.auth_type, camera.username, camera.password:gsub("&", "&amp;")
+            )
+        elseif camera and request == "GET_SNAPSHOT_QUERY_STRING" then
+            local query = camera.query:find("%%d") and string.format(camera.query, params.SIZE_X, params.SIZE_Y) or camera.query
+            return "<snapshot_query_string>" .. query .. "</snapshot_query_string>"
+        end
         local room = mock.security[deviceId]
         if not room or request ~= "GET_SECURITY_DEVICES" or mock.uiRequestsFail then
             error("UI request failed")
@@ -243,6 +287,94 @@ function Mock.install(project)
             parts[#parts + 1] = string.format("<source><id>%.0f</id><type>UIButton</type></source>", id)
         end
         return "<sources>" .. table.concat(parts) .. "</sources>"
+    end
+
+    function C4:Hash(algorithm, data, _options)
+        assert(algorithm == "MD5", "only MD5 is faked")
+        return string.upper(md5(data))
+    end
+
+    function C4:Base64Encode(data)
+        local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        return ((data:gsub(".", function(c)
+            local bits, byte = "", c:byte()
+            for i = 8, 1, -1 do
+                bits = bits .. (byte % 2 ^ i - byte % 2 ^ (i - 1) > 0 and "1" or "0")
+            end
+            return bits
+        end) .. "0000"):gsub("%d%d%d?%d?%d?%d?", function(bits)
+            if #bits < 6 then
+                return ""
+            end
+            local n = 0
+            for i = 1, 6 do
+                n = n + (bits:sub(i, i) == "1" and 2 ^ (6 - i) or 0)
+            end
+            return chars:sub(n + 1, n + 1)
+        end) .. ({ "", "==", "=" })[#data % 3 + 1])
+    end
+
+    -- A fake camera web server: digest (qop=auth) or basic login, answers with a tiny "JPEG".
+    local function cameraAnswer(url, headers)
+        mock.urlRequests[#mock.urlRequests + 1] = { url = url, headers = headers }
+        if mock.camerasOffline then
+            return nil, "Couldn't connect to server"
+        end
+        local host, path = url:match("^https?://([^/:]+)[^/]*(/.*)$")
+        for _, camera in pairs(project.cameras or {}) do
+            if camera.address == host then
+                local authorization = headers and headers.Authorization or ""
+                local ok = false
+                if camera.auth_type == "BASIC" then
+                    ok = authorization == "Basic " .. C4:Base64Encode(camera.username .. ":" .. (camera.camera_password or camera.password))
+                else
+                    local fields = {}
+                    for name, value in authorization:gmatch('([%w_-]+)="([^"]*)"') do
+                        fields[name] = value
+                    end
+                    for name, value in authorization:gmatch("([%w_-]+)=([^\",%s]+)") do
+                        fields[name] = fields[name] or value
+                    end
+                    if fields.nonce == "abc123" and fields.uri == path then
+                        local ha1 = md5(camera.username .. ":Camera:" .. (camera.camera_password or camera.password))
+                        local ha2 = md5("GET:" .. path)
+                        local expected = md5(ha1 .. ":abc123:" .. fields.nc .. ":" .. fields.cnonce .. ":auth:" .. ha2)
+                        ok = fields.response == expected and fields.opaque == "op1"
+                    end
+                end
+                if ok then
+                    return { code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "\255\216JPEG-" .. path .. "\255\217" }
+                end
+                local challenge = camera.auth_type == "BASIC" and 'Basic realm="Camera"'
+                    or 'Digest realm="Camera", qop="auth", nonce="abc123", opaque="op1", algorithm=MD5'
+                return { code = 401, headers = { ["WWW-Authenticate"] = challenge }, body = "" }
+            end
+        end
+        return nil, "Couldn't resolve host"
+    end
+
+    function C4:url()
+        local transfer = { options = {} }
+        function transfer:SetOptions(options)
+            for name, value in pairs(options) do
+                self.options[name] = value
+            end
+            return self
+        end
+        function transfer:OnDone(callback)
+            self.callback = callback
+            return self
+        end
+        function transfer:Get(url, headers)
+            local response, err = cameraAnswer(url, headers)
+            if response then
+                self.callback(self, { { url = url, code = response.code, headers = response.headers, body = response.body } }, 0, nil)
+            else
+                self.callback(self, {}, 7, err)
+            end
+            return self
+        end
+        return transfer
     end
 
     function C4:SendToProxy(binding, command, params)

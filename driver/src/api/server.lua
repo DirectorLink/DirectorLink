@@ -7,6 +7,7 @@ local Http = require("src.api.http")
 local Router = require("src.api.router")
 local Routes = require("src.api.routes")
 local Problem = require("src.api.problem")
+local Response = require("src.api.response")
 
 local HANDLERS = {
     system = require("src.api.handlers.system"),
@@ -16,6 +17,7 @@ local HANDLERS = {
     lights = require("src.api.handlers.lights"),
     thermostats = require("src.api.handlers.thermostats"),
     blinds = require("src.api.handlers.blinds"),
+    cameras = require("src.api.handlers.cameras"),
     logs = require("src.api.handlers.logs"),
 }
 
@@ -121,6 +123,9 @@ local function encode(status, payload)
     if payload == nil or status == 204 then
         return nil, ""
     end
+    if Response.isRaw(payload) then
+        return payload.content_type, payload.body
+    end
     if type(payload) == "string" then
         return "application/json; charset=utf-8", payload
     end
@@ -157,8 +162,31 @@ local function logAccess(request, route, status, client, started, apiKey)
     })
 end
 
--- Handles one parsed request; returns status, headers, body. Used directly by tests.
-function Server.handleRequest(request, client)
+local function finalize(request, route, client, started, apiKey, origin, status, payload, extraHeaders)
+    local contentType, body, encodeStatus = encode(status, payload)
+    status = encodeStatus or status
+
+    local headers = {}
+    if origin then
+        headers[#headers + 1] = { "Access-Control-Allow-Origin", origin }
+        headers[#headers + 1] = { "Vary", "Origin" }
+    end
+    headers[#headers + 1] = { "Cache-Control", "no-store" }
+    headers[#headers + 1] = { "X-Content-Type-Options", "nosniff" }
+    if contentType then
+        headers[#headers + 1] = { "Content-Type", contentType }
+    end
+    for _, header in ipairs(extraHeaders or {}) do
+        headers[#headers + 1] = header
+    end
+
+    logAccess(request, route, status, client, started, apiKey)
+    return status, headers, body
+end
+
+-- Handles one parsed request and returns status, headers, body. A handler that must wait (a camera
+-- snapshot) answers later: then nothing is returned and respond(status, headers, body) is called.
+function Server.handleRequest(request, client, respond)
     local started = Clock.millis()
     local origin = request.headers["origin"]
     local status, payload, extraHeaders, apiKey, route
@@ -199,25 +227,32 @@ function Server.handleRequest(request, client)
         end
     end
 
-    local contentType, body, encodeStatus = encode(status, payload)
-    status = encodeStatus or status
+    if Response.isLater(status) then
+        local answered = false
+        local ok, err = pcall(status.start, function(laterStatus, laterPayload, laterHeaders)
+            if answered then
+                return
+            end
+            answered = true
+            if Problem.is(laterStatus) then
+                laterStatus, laterPayload, laterHeaders = laterStatus.status, laterStatus, laterPayload
+            end
+            if respond then
+                respond(finalize(request, route, client, started, apiKey, origin, laterStatus, laterPayload, laterHeaders))
+            end
+        end)
+        if not ok then
+            services.log.error("api", "handler failed", { route = route and (route.method .. " " .. route.path), error = tostring(err) })
+            if not answered then
+                answered = true
+                local problem = Problem.internal()
+                return finalize(request, route, client, started, apiKey, origin, problem.status, problem)
+            end
+        end
+        return nil
+    end
 
-    local headers = {}
-    if origin then
-        headers[#headers + 1] = { "Access-Control-Allow-Origin", origin }
-        headers[#headers + 1] = { "Vary", "Origin" }
-    end
-    headers[#headers + 1] = { "Cache-Control", "no-store" }
-    headers[#headers + 1] = { "X-Content-Type-Options", "nosniff" }
-    if contentType then
-        headers[#headers + 1] = { "Content-Type", contentType }
-    end
-    for _, header in ipairs(extraHeaders or {}) do
-        headers[#headers + 1] = header
-    end
-
-    logAccess(request, route, status, client, started, apiKey)
-    return status, headers, body
+    return finalize(request, route, client, started, apiKey, origin, status, payload, extraHeaders)
 end
 
 local function send(handle, status, headers, body)
@@ -331,7 +366,12 @@ function Server.onData(handle, data, clientAddress, clientPort)
         return
     end
 
-    send(handle, Server.handleRequest(value, connection.client))
+    local status, headers, body = Server.handleRequest(value, connection.client, function(...)
+        send(handle, ...)
+    end)
+    if status then
+        send(handle, status, headers, body)
+    end
 end
 
 return Server

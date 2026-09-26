@@ -1,6 +1,7 @@
 import {
   ApiError,
   apiCall,
+  apiImage,
   clearApiKey,
   normalizeHost,
   saveApiKey,
@@ -32,6 +33,13 @@ const deviceList = document.querySelector("#device-list");
 const lightList = document.querySelector("#light-list");
 const lightActionMessage = document.querySelector("#light-action-message");
 const refreshLightsButton = document.querySelector("#refresh-lights-button");
+const cameraGrid = document.querySelector("#camera-grid");
+const cameraMessage = document.querySelector("#camera-message");
+const cameraDialog = document.querySelector("#camera-dialog");
+const cameraDialogTitle = document.querySelector("#camera-dialog-title");
+const cameraDialogImage = document.querySelector("#camera-dialog-image");
+const cameraDialogStatus = document.querySelector("#camera-dialog-status");
+const cameraDialogClose = document.querySelector("#camera-dialog-close");
 const blindList = document.querySelector("#blind-list");
 const blindActionMessage = document.querySelector("#blind-action-message");
 const refreshBlindsButton = document.querySelector("#refresh-blinds-button");
@@ -199,6 +207,7 @@ function renderSummary(system) {
     ["Lights", system.inventory?.lights],
     ["Thermostats", system.inventory?.thermostats],
     ["Blinds", system.inventory?.blinds],
+    ["Cameras", system.inventory?.cameras],
   ];
   resultSummary.replaceChildren(
     ...items.map(([label, value]) => {
@@ -398,6 +407,135 @@ function renderLights(lights) {
       return item;
     })
   );
+}
+
+// Camera pictures: grid tiles refresh one after another (visible tiles only, about every 3 s);
+// the opened camera refreshes about once a second. Nothing refreshes while the page is hidden.
+const GRID_REFRESH_MS = 3000;
+const LARGE_REFRESH_MS = 1000;
+let cameraTiles = [];
+let cameraTimer = null;
+let openCamera = null;
+let openCameraTimer = null;
+
+async function loadSnapshot(camera, width, image) {
+  const blob = await apiImage(activeSession.host, `${camera.snapshot_href}?width=${width}`, {
+    apiKey: activeSession.apiKey,
+  });
+  const previous = image.dataset.objectUrl;
+  const url = URL.createObjectURL(blob);
+  image.src = url;
+  image.dataset.objectUrl = url;
+  if (previous) {
+    URL.revokeObjectURL(previous);
+  }
+}
+
+async function refreshCameraGrid() {
+  cameraTimer = null;
+  if (!activeSession || document.hidden || openCamera) {
+    scheduleCameraGrid();
+    return;
+  }
+  const visible = cameraTiles.filter((tile) => tile.visible);
+  for (const tile of visible) {
+    try {
+      await loadSnapshot(tile.camera, 320, tile.image);
+      tile.status.textContent = tile.camera.room?.name || "";
+    } catch (error) {
+      tile.status.textContent = error.status === 503 ? "Busy, retrying…" : "No picture";
+    }
+    if (!activeSession || openCamera) {
+      break;
+    }
+  }
+  scheduleCameraGrid();
+}
+
+function scheduleCameraGrid() {
+  if (cameraTiles.length && !cameraTimer) {
+    cameraTimer = window.setTimeout(refreshCameraGrid, GRID_REFRESH_MS);
+  }
+}
+
+async function refreshOpenCamera() {
+  openCameraTimer = null;
+  if (!openCamera || !activeSession) {
+    return;
+  }
+  if (!document.hidden) {
+    try {
+      await loadSnapshot(openCamera, 1280, cameraDialogImage);
+      cameraDialogStatus.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    } catch (error) {
+      cameraDialogStatus.textContent = error.message || "The camera did not return a picture.";
+    }
+  }
+  if (openCamera) {
+    openCameraTimer = window.setTimeout(refreshOpenCamera, LARGE_REFRESH_MS);
+  }
+}
+
+function showCamera(camera) {
+  openCamera = camera;
+  cameraDialogTitle.textContent = camera.name;
+  cameraDialogStatus.textContent = "Loading…";
+  cameraDialog.showModal();
+  refreshOpenCamera();
+}
+
+function closeCamera() {
+  openCamera = null;
+  window.clearTimeout(openCameraTimer);
+  openCameraTimer = null;
+  if (cameraDialog.open) {
+    cameraDialog.close();
+  }
+}
+
+const cameraObserver =
+  "IntersectionObserver" in window
+    ? new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const tile = cameraTiles.find((item) => item.element === entry.target);
+          if (tile) {
+            tile.visible = entry.isIntersecting;
+          }
+        }
+      })
+    : null;
+
+function renderCameras(cameras) {
+  cameraObserver?.disconnect();
+  window.clearTimeout(cameraTimer);
+  cameraTimer = null;
+  cameraTiles = [];
+  if (!cameras.length) {
+    emptyState(cameraGrid, "No cameras were found.");
+    return;
+  }
+  cameraGrid.replaceChildren(
+    ...cameras.map((camera) => {
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = "camera-tile";
+      const image = document.createElement("img");
+      image.alt = `${camera.name} camera`;
+      const label = document.createElement("span");
+      const name = document.createElement("strong");
+      const status = document.createElement("small");
+      name.textContent = text(camera.name, `Camera ${camera.id}`);
+      status.textContent = "Loading…";
+      label.append(name, status);
+      element.append(image, label);
+      element.addEventListener("click", () => showCamera(camera));
+      const tile = { camera, element, image, status, visible: !cameraObserver };
+      cameraTiles.push(tile);
+      cameraObserver?.observe(element);
+      return element;
+    })
+  );
+  window.setTimeout(refreshCameraGrid, 300);
 }
 
 function blindStateLabel(blind) {
@@ -667,12 +805,13 @@ async function connectAndLoad() {
 
     activeSession = { host, apiKey };
     const system = await api("/v1/system");
-    const [rooms, devices, lights, thermostats, blinds] = await Promise.all([
+    const [rooms, devices, lights, thermostats, blinds, cameras] = await Promise.all([
       api("/v1/rooms"),
       api("/v1/devices"),
       api("/v1/lights"),
       api("/v1/thermostats"),
       api("/v1/blinds"),
+      api("/v1/cameras"),
     ]);
 
     connectedVersion.textContent = `v${text(system.bridge?.version, "?")}`;
@@ -680,13 +819,14 @@ async function connectAndLoad() {
     renderLights(lights.items);
     renderThermostats(thermostats.items);
     renderBlinds(blinds.items);
+    renderCameras(cameras.items);
     renderRooms(rooms.items);
     renderDevices(devices.items);
     projectResult.classList.remove("hidden");
 
     setConnectionState(
       "Connected to C4Bridge",
-      `${rooms.items.length} rooms, ${devices.items.length} devices, ${lights.items.length} lights, ${thermostats.items.length} thermostats and ${blinds.items.length} blinds.`,
+      `${rooms.items.length} rooms, ${devices.items.length} devices, ${lights.items.length} lights, ${thermostats.items.length} thermostats, ${blinds.items.length} blinds and ${cameras.items.length} cameras.`,
       "Connected"
     );
     setMessage(directorMessage, "Connected.", "success");
@@ -725,6 +865,9 @@ refreshLightsButton.addEventListener("click", async () => {
     refreshLightsButton.disabled = false;
   }
 });
+
+cameraDialogClose.addEventListener("click", closeCamera);
+cameraDialog.addEventListener("close", closeCamera);
 
 refreshBlindsButton.addEventListener("click", async () => {
   refreshBlindsButton.disabled = true;

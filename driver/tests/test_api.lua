@@ -33,7 +33,7 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
     T.eq(mock.properties["API Status"], "Online")
-    T.eq(mock.properties["Inventory"], "2 rooms, 7 devices, 3 lights, 1 thermostats, 2 blinds")
+    T.eq(mock.properties["Inventory"], "2 rooms, 9 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d%d%d%d%d$"), "pairing code shown")
 end
 
@@ -120,7 +120,7 @@ function tests.system_reports_controller_location_and_inventory()
     T.eq(system.location.country_code, "IL")
     T.eq(system.location.latitude, 32.08)
     T.eq(system.location.timezone, "Asia/Jerusalem")
-    T.same(system.inventory, { rooms = 2, devices = 7, supported_devices = 6, lights = 3, thermostats = 1, blinds = 2 })
+    T.same(system.inventory, { rooms = 2, devices = 9, supported_devices = 8, lights = 3, thermostats = 1, blinds = 2, cameras = 2 })
     T.eq(system.lifecycle.reload_count, 1)
     T.eq(system.lifecycle.last_init_type, "DIT_STARTUP")
 end
@@ -131,7 +131,7 @@ function tests.rooms_list_and_get()
     T.eq(#rooms, 2)
     T.eq(rooms[1].name, "Kitchen")
     T.eq(rooms[1].floor.name, "Ground Floor")
-    T.eq(rooms[1].device_count, 3)
+    T.eq(rooms[1].device_count, 4)
     T.eq(rooms[2].name, "Living Room")
 
     T.eq(T.http(mock, "GET", "/v1/rooms/11", { key = key }).json.name, "Living Room")
@@ -142,7 +142,7 @@ end
 function tests.devices_use_logical_types_and_filters()
     local mock, key = start()
     local all = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
-    T.eq(#all, 7)
+    T.eq(#all, 9)
     local camera = byId(all, 40)
     T.eq(camera.type, "other")
     T.eq(camera.supported, false)
@@ -159,7 +159,8 @@ function tests.devices_use_logical_types_and_filters()
 
     T.eq(#T.http(mock, "GET", "/v1/devices?type=light", { key = key }).json.items, 3)
     T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 1)
-    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 3)
+    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 4)
+    T.eq(byId(all, 60).href, "/v1/cameras/60")
     T.eq(#T.http(mock, "GET", "/v1/devices?type=blind", { key = key }).json.items, 2)
     T.eq(T.http(mock, "GET", "/v1/devices?type=lamp", { key = key }).status, 400)
     T.eq(T.http(mock, "GET", "/v1/devices?supported=maybe", { key = key }).status, 400)
@@ -317,6 +318,65 @@ function tests.blind_patch_validates_input()
     T.eq(patch({ position = 0 }, "/v1/blinds/99").status, 404)
     T.eq(T.http(mock, "POST", "/v1/blinds/99/stop", { key = key }).status, 404)
     T.eq(#mock.commands, before, "no command is sent for invalid requests")
+end
+
+function tests.cameras_are_listed_without_secrets()
+    local mock, key = start()
+    local cameras = T.http(mock, "GET", "/v1/cameras", { key = key }).json.items
+    T.eq(#cameras, 2)
+    T.eq(cameras[1].name, "Driveway")
+    T.eq(cameras[1].room.name, "Kitchen")
+    T.eq(cameras[1].snapshot_href, "/v1/cameras/60/snapshot")
+    T.eq(#T.http(mock, "GET", "/v1/cameras?room_id=11", { key = key }).json.items, 1)
+    T.eq(T.http(mock, "GET", "/v1/cameras/61", { key = key }).json.name, "Gate")
+    T.eq(T.http(mock, "GET", "/v1/cameras/20", { key = key }).status, 404, "a light is not a camera")
+
+    local raw = T.http(mock, "GET", "/v1/cameras", { key = key }).body
+    T.truthy(not raw:find("s3cret", 1, true) and not raw:find("192.168.1.81", 1, true), "no camera login or address in the API")
+end
+
+function tests.snapshot_with_digest_login()
+    local mock, key = start()
+    local response = T.http(mock, "GET", "/v1/cameras/60/snapshot?width=1280", { key = key })
+    T.eq(response.status, 200)
+    T.eq(response.headers["content-type"], "image/jpeg")
+    T.eq(response.headers["cache-control"], "no-store")
+    T.truthy(response.body:find("^\255\216"), "JPEG bytes passed through")
+    T.eq(#mock.urlRequests, 2, "challenge, then the digest answer")
+    T.eq(mock.urlRequests[1].url, "http://192.168.1.81/ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&size=1280x720")
+    T.truthy(mock.urlRequests[2].headers.Authorization:find('^Digest username="admin"'))
+
+    for _, entry in ipairs(mock.debugLog) do
+        T.truthy(not entry:find("s3cret", 1, true), "the camera password is never logged")
+    end
+end
+
+function tests.snapshot_with_basic_login_and_port()
+    local mock, key = start()
+    local response = T.http(mock, "GET", "/v1/cameras/61/snapshot", { key = key })
+    T.eq(response.status, 200)
+    T.eq(#mock.urlRequests, 1)
+    T.eq(mock.urlRequests[1].url, "http://192.168.1.117:8080/bha-api/image.cgi")
+    T.eq(mock.urlRequests[1].headers.Authorization, "Basic dXNlcjpkb29y")
+end
+
+function tests.snapshot_failures_are_problems()
+    local mock, key = start()
+    T.eq(T.http(mock, "GET", "/v1/cameras/60/snapshot?width=500", { key = key }).json.code, "INVALID_PARAMETER")
+    T.eq(T.http(mock, "GET", "/v1/cameras/99/snapshot", { key = key }).status, 404)
+    T.eq(T.http(mock, "GET", "/v1/cameras/60/snapshot").status, 401)
+
+    mock.camerasOffline = true
+    local offline = T.http(mock, "GET", "/v1/cameras/60/snapshot", { key = key })
+    T.eq(offline.status, 502)
+    T.eq(offline.json.code, "CAMERA_UNREACHABLE")
+
+    local project = Mock.project()
+    project.cameras[60].camera_password = "changed on the camera"
+    local rejected = Mock.startDriver(project)
+    local login = T.http(rejected, "GET", "/v1/cameras/60/snapshot", { key = T.pair(rejected) })
+    T.eq(login.status, 502)
+    T.eq(login.json.code, "CAMERA_LOGIN_FAILED")
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()

@@ -2,7 +2,14 @@
 
 ## Current release
 
-`v0.4.0` — blinds. Update from 0.3.0 in Composer; keys keep working.
+`v0.5.0` — cameras. Update in Composer (no reboot); keys keep working.
+
+## 0b. Cameras
+
+1. **Inventory** in Composer ends with `13 cameras` (the test system: 12 Hikvision, 1 DoorBird).
+2. `GET /v1/cameras` lists them without addresses or passwords.
+3. The web app's Cameras grid shows a picture for each camera within a few seconds; tapping one shows it larger, refreshing about once a second.
+4. A camera that is offline or rejects its login shows "No picture"; `GET /v1/logs?category=camera` says why (never with the password).
 
 ## 0a. Blinds
 
@@ -27,10 +34,10 @@ Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
 
 Expected in the C4Bridge properties once the new driver is loaded:
 
-- Version: `0.4.0`
+- Version: `0.5.0`
 - Status: `Ready`
 - API Status: `Online`
-- Inventory: rooms, devices, lights, thermostats and blinds (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds)
+- Inventory: rooms, devices, lights, thermostats, blinds and cameras (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras)
 - Pairing Code: 8 digits; Pairing Status: `Ready until HH:MM`
 - Log Level: `Info`
 

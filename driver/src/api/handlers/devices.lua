@@ -9,6 +9,7 @@ local TYPES = {
     light = true,
     thermostat = true,
     blind = true,
+    camera = true,
     other = true,
 }
 
@@ -19,7 +20,7 @@ function Devices.list(ctx)
         return roomProblem
     end
     if query.type ~= nil and not TYPES[query.type] then
-        return Problem.invalidParameter("type", "type must be one of light, thermostat, blind, other")
+        return Problem.invalidParameter("type", "type must be one of light, thermostat, blind, camera, other")
     end
     local supported, supportedProblem = Validate.optionalBoolean(query.supported, "supported")
     if supportedProblem then

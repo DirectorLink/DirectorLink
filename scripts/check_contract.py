@@ -99,6 +99,12 @@ class Client:
             media_type = next(iter(content))
             if content_type.split(";")[0].strip() != media_type:
                 fail(f"{label}: Content-Type {content_type!r}, spec says {media_type}")
+            if not media_type.endswith("json"):
+                if not raw:
+                    fail(f"{label}: expected a {media_type} body")
+                self.covered.add((method, template))
+                self.checked += 1
+                return raw
             data = json.loads(raw)
             schema = content[media_type].get("schema", {})
             validator = Draft202012Validator({"$ref": "urn:spec#" + schema["$ref"][1:]} if "$ref" in schema else schema,
@@ -178,6 +184,14 @@ def scenario(client, pairing_code):
     client.check("PATCH", "/v1/blinds/99", 404, body={"position": 0})
     client.check("POST", "/v1/blinds/50/stop", 202)
     client.check("POST", "/v1/blinds/99/stop", 404)
+
+    client.check("GET", "/v1/cameras", 200)
+    client.check("GET", "/v1/cameras/60", 200)
+    client.check("GET", "/v1/cameras/20", 404)
+    client.check("GET", "/v1/cameras/60/snapshot", 200)
+    client.check("GET", "/v1/cameras/61/snapshot?width=320", 200)
+    client.check("GET", "/v1/cameras/60/snapshot?width=500", 400)
+    client.check("GET", "/v1/cameras/99/snapshot", 404)
 
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
