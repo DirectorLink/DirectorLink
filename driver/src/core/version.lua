@@ -1,7 +1,8 @@
 local Version = {}
 
-Version.BRIDGE_VERSION = "0.1.0-alpha.9"
-Version.PROTOCOL_VERSION = 1
+-- scripts/build.py replaces "dev" with the repository VERSION file when packaging.
+Version.BRIDGE_VERSION = "dev"
+Version.API_VERSION = "1"
 Version.MIN_OS = { major = 3, minor = 3, patch = 0 }
 
 local function numbers(value)

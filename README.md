@@ -9,13 +9,12 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - Control4 Director OS **3.3.0+**
 - `C4Bridge.c4z` is assumed to already be installed in the Control4 project
 - Installation method is outside the scope of this project
-- Cloudflare Pages PWA frontend
-- Browser connects directly to C4Bridge over the local LAN
+- A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
+- Cloudflare Pages PWA frontend; the browser connects directly to C4Bridge over the LAN
 - LAN-only in V1; no cloud relay and no port forwarding
-- One owner account
-- Pairing + authenticated local API
+- One owner, with a separate named API key per browser, app or script
 - Initial device adapters: lights, HVAC/climate, shades/covers
-- Unknown devices are exposed as `unsupported`
+- Unknown devices are exposed as unsupported
 - C4Bridge owns its own scenes, schedules, and automations
 - No import of Composer programming, scenes, or schedules
 - Fixed-time, weekday, sunrise/sunset, and offset scheduling
@@ -30,9 +29,9 @@ C4Bridge itself does not depend on Composer Pro during normal operation. Compose
 
 Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
 
-Current alpha build after this change lands: **C4Bridge v0.1.0-alpha.9**
+Current build: **C4Bridge v0.2.0**
 
-Each release keeps its own `C4Bridge.c4z`, release notes, and SHA-256 checksum so users can upgrade or downgrade to a specific version.
+Each release keeps its own `C4Bridge.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
 ### 2. Install Composer Pro
 
@@ -56,28 +55,45 @@ C4Bridge does not depend on this specific Composer version after the driver has 
 8. Double-click or drag **C4Bridge** into the selected room.
 9. Select the C4Bridge device and check its Properties.
 
-For the current discovery build, a successful install should show:
+A successful install shows:
 
-- **Bridge Version:** current C4Bridge build
-- **Status:** `Ready (discovery complete)`
-- **Director Version:** your Director OS version
-- **System Type:** controller type reported by Director
-- **Project Location:** project city/country when configured
-- **Discovery Summary:** number of rooms, normalized devices, protocol drivers, recognized proxy types, and unsupported devices
+- **Version:** the installed C4Bridge release
+- **Status:** `Ready`
+- **Controller OS:** your Director OS version
+- **Inventory:** the number of rooms, devices, lights and thermostats found
+- **API Status:** `Online`
+- **Pairing Code:** 8 digits used to pair the first browser
 
-If the status shows an error, capture the C4Bridge Lua log and open a GitHub issue.
+If the status shows an error, open `GET /v1/logs` (see below) or capture the C4Bridge Lua log and open a GitHub issue.
+
+### 4. Pair a browser
+
+Open **https://app.c4bridge.io**, enter the controller IP and the Pairing Code, and click **Pair & connect**. The browser receives its own API key; the code changes after every use.
 
 ### Updating C4Bridge
 
 Automatic self-update is intentionally **not** part of V1.
 
-For now, update the installed driver manually through Composer Pro using the `C4Bridge.c4z` asset from the desired GitHub Release.
+Update the installed driver manually through Composer Pro using the `C4Bridge.c4z` asset from the desired GitHub Release.
 
 **Important:** before updating, make sure the local file is named exactly `C4Bridge.c4z`. Do not select `C4Bridge (1).c4z`, `C4Bridge (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
 
-To downgrade, download `C4Bridge.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; once C4Bridge begins storing persistent scenes/schedules/accounts, release notes will state whether a downgrade is safe.
+To downgrade, download `C4Bridge.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; release notes state whether a downgrade is safe once persistent scenes/schedules exist.
 
 Do not remove and re-add the project instance unless a release specifically requires it.
+
+## API
+
+The LAN API is a standard REST API described by **[`api/openapi.yaml`](api/openapi.yaml)** (OpenAPI 3.1) — see **[`api/README.md`](api/README.md)** for conventions and examples.
+
+```bash
+curl http://<controller-ip>:41999/v1/lights -H "Authorization: Bearer <api key>"
+curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
+  -H "Authorization: Bearer <api key>" -H "Content-Type: application/json" \
+  -d '{"brightness": 40}'
+```
+
+Resources: system, rooms, devices, lights, thermostats, logs, API keys. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the web app's **API console** lists and tries every endpoint.
 
 ## Design principle
 
@@ -88,9 +104,9 @@ Cloudflare Pages PWA
         |
         | Local Network Access permission
         v
-Browser
+Browser / any API client
         |
-        | LAN only
+        | LAN only, API key
         v
 C4Bridge.c4z
         |
@@ -101,39 +117,31 @@ Control4 Director
 Existing Control4 devices
 ```
 
+## Repository
+
+```text
+api/       OpenAPI contract
+driver/    DriverWorks driver (Lua 5.1) and its tests
+web/       PWA: dashboard and API console (deployed by Cloudflare Pages from this folder)
+scripts/   build and validation
+docs/      specification, decisions, research, releases
+```
+
+See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, and **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** for how the pieces fit.
+
 ## Live web app
 
 **https://app.c4bridge.io**
 
-The alpha.9 build keeps one-owner pairing and adds the first Thermostat V2 climate adapter with live state, HVAC mode, fan mode, and Celsius single-setpoint control.
-
-## Web app
-
-The C4Bridge PWA source lives in [`web/`](web/). It is a framework-free static application intended for Cloudflare Pages.
-
-
-The current alpha web build includes the installable/offline application shell, Director onboarding, Local Network Access permission, one-time owner pairing, authenticated LAN control, and live room/device/light discovery from Director.
-
-## First milestone
-
-1. Detect Director version and reject versions below 3.3.0.
-2. Read system/project metadata.
-3. Discover rooms and devices.
-4. Preserve Control4 proxy/protocol relationships.
-5. Normalize discovered entities into an internal registry.
-6. Classify known proxies and mark everything else as unsupported.
-7. Add light state/control only after discovery is reliable.
-
 ## Status
 
-Early development. The protocol and driver internals are not yet stable.
+Early development (`0.x`). The API is described and versioned, but may still change between minor releases.
 
 ## Disclaimer
 
 C4Bridge is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
 
 Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
-
 
 ## License
 

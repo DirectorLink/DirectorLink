@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="description" content="C4Bridge API console — try the local API and follow the bridge log." />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>C4Bridge API console</title>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="C4Bridge home">
+          <span class="brand-mark" aria-hidden="true">C4</span>
+          <span>C4Bridge</span>
+        </a>
+        <div class="topbar-actions">
+          <span class="build-badge">API console</span>
+          <a class="button button-secondary nav-button" href="/">Dashboard</a>
+        </div>
+      </header>
+
+      <main class="console">
+        <section class="panel" aria-labelledby="connection-title">
+          <p class="eyebrow">CONNECTION</p>
+          <h2 id="connection-title">Controller and API key</h2>
+          <form id="connection-form" class="director-form">
+            <label for="console-host">Controller IP or local hostname</label>
+            <input
+              id="console-host"
+              type="text"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="192.168.1.50"
+            />
+            <label for="console-key">API key</label>
+            <input
+              id="console-key"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Pair on the dashboard, or paste a key"
+            />
+            <p class="field-help">
+              Prefilled with the key this browser got when pairing. Requests go straight to the
+              controller on your LAN.
+            </p>
+            <button id="load-spec-button" class="button button-primary connect-button" type="submit">
+              Load API
+            </button>
+            <p id="connection-message" class="form-message" role="status" aria-live="polite"></p>
+          </form>
+        </section>
+
+        <section class="panel" aria-labelledby="request-title">
+          <p class="eyebrow">REQUEST</p>
+          <h2 id="request-title">Try an endpoint</h2>
+          <div class="director-form console-form">
+            <label for="operation-select">Endpoint</label>
+            <select id="operation-select" class="console-select" disabled>
+              <option>Load the API first</option>
+            </select>
+            <p id="operation-description" class="panel-note"></p>
+            <div id="parameter-fields" class="console-params"></div>
+            <label id="body-label" for="request-body" class="hidden">Request body (JSON)</label>
+            <textarea id="request-body" class="console-body hidden" rows="7" spellcheck="false"></textarea>
+            <button id="send-button" class="button button-primary connect-button" type="button" disabled>
+              Send request
+            </button>
+          </div>
+          <p id="response-status" class="response-status">No request sent yet.</p>
+          <pre id="response-body" class="console-output"></pre>
+        </section>
+
+        <section class="panel console-logs" aria-labelledby="log-title">
+          <div class="lights-heading">
+            <div>
+              <p class="eyebrow">LOG</p>
+              <h2 id="log-title">Bridge log</h2>
+              <p class="panel-note">
+                The last 500 entries kept on the controller. Follow checks for new entries every
+                2 seconds. Set the level to debug with PATCH /v1/logs/settings for more detail.
+              </p>
+            </div>
+            <div class="log-controls">
+              <select id="log-level" class="console-select" aria-label="Minimum level">
+                <option value="">All levels</option>
+                <option value="info">Info and above</option>
+                <option value="warn">Warnings and errors</option>
+                <option value="error">Errors only</option>
+              </select>
+              <input id="log-category" class="console-input" type="text" placeholder="Category" aria-label="Category" />
+              <button id="log-follow" class="button button-secondary" type="button" disabled>Follow</button>
+              <button id="log-clear" class="button button-secondary" type="button">Clear view</button>
+            </div>
+          </div>
+          <p id="log-message" class="form-message" role="status" aria-live="polite"></p>
+          <div id="log-list" class="log-list"></div>
+        </section>
+      </main>
+
+      <footer>
+        <span>C4Bridge is independent and not affiliated with Control4 or Snap One.</span>
+        <a href="https://github.com/IsraelCIL/C4Bridge" rel="noreferrer">GitHub</a>
+      </footer>
+    </div>
+
+    <script type="module" src="/console.js"></script>
+  </body>
+</html>

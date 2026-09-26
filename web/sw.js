@@ -1,9 +1,12 @@
-const CACHE_NAME = "c4bridge-shell-v6";
+const CACHE_NAME = "c4bridge-shell-v7";
 const SHELL = [
   "/",
   "/index.html",
+  "/console.html",
   "/styles.css",
   "/app.js",
+  "/console.js",
+  "/api-client.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
@@ -29,14 +32,16 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
 
-  // Never intercept Director/LAN requests. The service worker only owns c4bridge.io assets.
+  // Never intercept controller/LAN requests. The service worker only owns c4bridge.io assets.
   if (requestUrl.origin !== self.location.origin) {
     return;
   }
 
   if (event.request.mode === "navigate") {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match("/index.html"))
+      fetch(event.request).catch(() =>
+        caches.match(requestUrl.pathname).then((cached) => cached || caches.match("/index.html"))
+      )
     );
     return;
   }

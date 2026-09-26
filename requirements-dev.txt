@@ -1,0 +1,4 @@
+# Build and validation tools (CI and local development).
+PyYAML>=6.0,<7
+openapi-spec-validator>=0.7,<1
+jsonschema>=4.18,<5

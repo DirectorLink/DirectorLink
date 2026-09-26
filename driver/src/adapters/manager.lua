@@ -1,3 +1,4 @@
+local Log = require("src.core.log")
 local LightV2 = require("src.adapters.light_v2")
 local ThermostatV2 = require("src.adapters.thermostat_v2")
 
@@ -10,18 +11,14 @@ local adapters = {
 
 local attached = {}
 local registry = nil
-local logger = nil
 local initializedCounts = { total = 0, light = 0, climate = 0 }
 
 local function log(message)
-    if logger then
-        logger("[Adapters] " .. tostring(message))
-    end
+    Log.info("adapters", tostring(message))
 end
 
-function Manager.initialize(deviceRegistry, logFunction)
+function Manager.initialize(deviceRegistry)
     registry = deviceRegistry
-    logger = logFunction
     attached = {}
     initializedCounts = { total = 0, light = 0, climate = 0 }
 

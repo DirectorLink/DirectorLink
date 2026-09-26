@@ -1,0 +1,1061 @@
+openapi: 3.1.0
+info:
+  title: C4Bridge API
+  # Stamped from the repository VERSION file at build time.
+  version: 0.0.0
+  summary: Local REST API for a Control4 home.
+  description: |
+    C4Bridge runs as a driver inside the Control4 controller (Director) and serves this API on
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats. Control4
+    command names, proxy IDs and variable numbers never appear in the API.
+
+    **Authentication.** Every operation except health, this API description and pairing needs an
+    API key: `Authorization: Bearer <api key>`. Get the first key by pairing with the 8-digit code
+    shown in the C4Bridge properties in Composer, then create more keys under `/v1/api-keys`.
+
+    **Changing state.** Send the desired state with `PATCH`. The bridge answers `202 Accepted` once
+    the command has been handed to the controller. The returned object holds the last state the
+    controller reported, so read the resource again to confirm the change.
+
+    **Errors.** All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable,
+    machine-readable `code`.
+
+    **Conventions.** JSON properties are snake_case, times are ISO 8601 in UTC, temperatures are
+    degrees Celsius, and IDs are the numeric IDs of the Control4 project (treat them as opaque).
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  - url: http://{host}:41999
+    description: C4Bridge on the Control4 controller (LAN only).
+    variables:
+      host:
+        default: 192.168.1.10
+        description: IP address or local hostname of the Control4 controller.
+security:
+  - apiKey: []
+tags:
+  - name: System
+    description: Bridge status and controller information.
+  - name: Auth
+    description: Pairing and API keys.
+  - name: Rooms
+    description: Rooms of the Control4 project.
+  - name: Devices
+    description: Every device in the project, including ones C4Bridge cannot control yet.
+  - name: Lights
+    description: Lights C4Bridge can read and control.
+  - name: Thermostats
+    description: Heating and cooling zones C4Bridge can read and control.
+  - name: Logs
+    description: The bridge's own recent log, for debugging.
+
+paths:
+  /v1/health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: Check that the bridge is running
+      security: []
+      responses:
+        "200":
+          description: The bridge is reachable. `status` tells whether project discovery finished.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /v1/openapi.json:
+    get:
+      tags: [System]
+      operationId: getApiDescription
+      summary: Get this API description
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI 3.1 document for the running bridge version.
+          content:
+            application/json:
+              schema:
+                type: object
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/system:
+    get:
+      tags: [System]
+      operationId: getSystem
+      summary: Get bridge, controller and project information
+      responses:
+        "200":
+          description: Bridge, controller, location and inventory.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/System"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/auth/pair:
+    post:
+      tags: [Auth]
+      operationId: pair
+      summary: Exchange a pairing code for an API key
+      description: |
+        The pairing code is shown in the C4Bridge properties in Composer. It is valid for
+        15 minutes and changes after every successful pairing. Five wrong codes within a minute
+        lock pairing for 60 seconds.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairRequest"
+            example:
+              pairing_code: "12345678"
+              name: Chrome on my laptop
+      responses:
+        "201":
+          description: Paired. The response holds the new API key — it is shown only once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewApiKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: The pairing code is wrong or expired (`PAIRING_CODE_INVALID`, `PAIRING_CODE_EXPIRED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/api-keys:
+    get:
+      tags: [Auth]
+      operationId: listApiKeys
+      summary: List API keys
+      responses:
+        "200":
+          description: All API keys. Secrets are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiKeyList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Auth]
+      operationId: createApiKey
+      summary: Create an API key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiKeyCreate"
+            example:
+              name: Home Assistant
+      responses:
+        "201":
+          description: Created. The response holds the new API key — it is shown only once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewApiKey"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/api-keys/{keyId}:
+    parameters:
+      - $ref: "#/components/parameters/KeyId"
+    delete:
+      tags: [Auth]
+      operationId: deleteApiKey
+      summary: Revoke an API key
+      description: Revoking the key used for this request is allowed; later requests with it get 401.
+      responses:
+        "204":
+          description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/rooms:
+    get:
+      tags: [Rooms]
+      operationId: listRooms
+      summary: List rooms
+      responses:
+        "200":
+          description: All rooms, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/rooms/{roomId}:
+    parameters:
+      - $ref: "#/components/parameters/RoomId"
+    get:
+      tags: [Rooms]
+      operationId: getRoom
+      summary: Get a room
+      responses:
+        "200":
+          description: The room.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/devices:
+    get:
+      tags: [Devices]
+      operationId: listDevices
+      summary: List devices
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+        - name: type
+          in: query
+          description: Only devices of this type.
+          schema:
+            $ref: "#/components/schemas/DeviceType"
+        - name: supported
+          in: query
+          description: Only devices this API can (true) or cannot (false) control.
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Matching devices, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/devices/{deviceId}:
+    parameters:
+      - $ref: "#/components/parameters/DeviceId"
+    get:
+      tags: [Devices]
+      operationId: getDevice
+      summary: Get a device
+      responses:
+        "200":
+          description: The device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/lights:
+    get:
+      tags: [Lights]
+      operationId: listLights
+      summary: List lights
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Lights with their current state, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LightList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/lights/{lightId}:
+    parameters:
+      - $ref: "#/components/parameters/LightId"
+    get:
+      tags: [Lights]
+      operationId: getLight
+      summary: Get a light
+      responses:
+        "200":
+          description: The light and its current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Light"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Lights]
+      operationId: updateLight
+      summary: Turn a light on or off, or set its brightness
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LightUpdate"
+            example:
+              brightness: 60
+      responses:
+        "202":
+          description: Command sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Light"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
+  /v1/thermostats:
+    get:
+      tags: [Thermostats]
+      operationId: listThermostats
+      summary: List thermostats
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Thermostats with their current state, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ThermostatList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/thermostats/{thermostatId}:
+    parameters:
+      - $ref: "#/components/parameters/ThermostatId"
+    get:
+      tags: [Thermostats]
+      operationId: getThermostat
+      summary: Get a thermostat
+      responses:
+        "200":
+          description: The thermostat and its current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thermostat"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Thermostats]
+      operationId: updateThermostat
+      summary: Change mode, target temperature or fan speed
+      description: Fields are applied in the order mode, fan speed, target temperature.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ThermostatUpdate"
+            example:
+              mode: cool
+              target_temperature: 22
+      responses:
+        "202":
+          description: Commands sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Thermostat"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
+  /v1/logs:
+    get:
+      tags: [Logs]
+      operationId: listLogs
+      summary: Read the bridge's recent log
+      description: |
+        The bridge keeps its last 500 log entries in memory: API requests, commands sent to
+        devices, state changes and errors. Poll with `after` set to the last `seq` you received
+        to get only new entries.
+      parameters:
+        - name: level
+          in: query
+          description: Minimum level to return.
+          schema:
+            $ref: "#/components/schemas/LogLevel"
+        - name: category
+          in: query
+          description: Only entries of this category, e.g. `api`, `light`, `thermostat`, `auth`.
+          schema:
+            type: string
+        - name: after
+          in: query
+          description: Only entries with a sequence number greater than this.
+          schema:
+            type: integer
+            minimum: 0
+        - name: limit
+          in: query
+          description: Maximum number of entries (the newest ones are kept).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        "200":
+          description: Matching entries, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/logs/settings:
+    get:
+      tags: [Logs]
+      operationId: getLogSettings
+      summary: Get the log level
+      responses:
+        "200":
+          description: The level entries are currently recorded at.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    patch:
+      tags: [Logs]
+      operationId: updateLogSettings
+      summary: Change the log level
+      description: Use `debug` while investigating a problem, then set it back to `info`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LogSettings"
+            example:
+              level: debug
+      responses:
+        "200":
+          description: The new settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: "Send `Authorization: Bearer <api key>`. Get a key with `POST /v1/auth/pair`."
+
+  parameters:
+    RoomIdQuery:
+      name: room_id
+      in: query
+      description: Only items in this room.
+      schema:
+        type: integer
+        minimum: 1
+    RoomId:
+      name: roomId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    DeviceId:
+      name: deviceId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    LightId:
+      name: lightId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    ThermostatId:
+      name: thermostatId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}$"
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait before trying again.
+      schema:
+        type: integer
+
+  responses:
+    BadRequest:
+      description: The request is invalid (`INVALID_REQUEST`, `INVALID_FIELD`, `INVALID_PARAMETER`, `INVALID_JSON`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthorized:
+      description: The API key is missing, wrong or revoked (`UNAUTHORIZED`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: The resource does not exist (`NOT_FOUND`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RateLimited:
+      description: Too many failed attempts (`PAIRING_RATE_LIMITED`).
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    CommandFailed:
+      description: The controller rejected the command (`CONTROLLER_COMMAND_FAILED`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unavailable:
+      description: The bridge cannot serve this right now (`UNAVAILABLE`).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          example: about:blank
+        title:
+          type: string
+          example: Bad Request
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          example: brightness must be a whole number from 0 to 100
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: INVALID_FIELD
+        errors:
+          type: array
+          description: Field-level details for validation errors.
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+
+    Health:
+      type: object
+      required: [status, version, api_version, detail]
+      properties:
+        status:
+          $ref: "#/components/schemas/BridgeStatus"
+        version:
+          type: string
+          example: 0.2.0
+        api_version:
+          type: string
+          example: "1"
+        detail:
+          type: [string, "null"]
+          description: Why the bridge is not `ok`.
+
+    BridgeStatus:
+      type: string
+      description: "`starting` while the project is being discovered, `ok` when ready, `error` when discovery failed."
+      enum: [starting, ok, error]
+
+    System:
+      type: object
+      required: [bridge, controller, location, inventory, lifecycle]
+      properties:
+        bridge:
+          type: object
+          required: [version, api_version, status, detail, started_at]
+          properties:
+            version:
+              type: string
+              example: 0.2.0
+            api_version:
+              type: string
+              example: "1"
+            status:
+              $ref: "#/components/schemas/BridgeStatus"
+            detail:
+              type: [string, "null"]
+            started_at:
+              type: string
+              format: date-time
+        controller:
+          type: object
+          required: [platform, os_version, model]
+          properties:
+            platform:
+              type: string
+              const: control4
+            os_version:
+              type: [string, "null"]
+              example: 3.4.3.727848-res
+            model:
+              type: [string, "null"]
+              example: XDT_CORE1
+        location:
+          type: object
+          required: [city, country_code, country, latitude, longitude, timezone]
+          properties:
+            city:
+              type: [string, "null"]
+            country_code:
+              type: [string, "null"]
+              example: IL
+            country:
+              type: [string, "null"]
+            latitude:
+              type: [number, "null"]
+            longitude:
+              type: [number, "null"]
+            timezone:
+              type: [string, "null"]
+        inventory:
+          type: object
+          required: [rooms, devices, supported_devices, lights, thermostats]
+          properties:
+            rooms:
+              type: integer
+            devices:
+              type: integer
+            supported_devices:
+              type: integer
+            lights:
+              type: integer
+            thermostats:
+              type: integer
+        lifecycle:
+          type: object
+          description: Driver load history, useful when testing driver updates.
+          required: [reload_count, last_init_type, last_init_time, last_destroy_type, last_destroy_time]
+          properties:
+            reload_count:
+              type: integer
+            last_init_type:
+              type: [string, "null"]
+            last_init_time:
+              type: [string, "null"]
+            last_destroy_type:
+              type: [string, "null"]
+            last_destroy_time:
+              type: [string, "null"]
+
+    PairRequest:
+      type: object
+      required: [pairing_code]
+      additionalProperties: false
+      properties:
+        pairing_code:
+          type: string
+          pattern: "^[0-9]{8}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: A name for the new key, e.g. the browser or app using it.
+
+    ApiKeyCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+
+    ApiKey:
+      type: object
+      required: [id, name, created_at, last_used_at, current]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+          description: Last use since the driver started.
+        current:
+          type: boolean
+          description: True for the key that made this request.
+
+    NewApiKey:
+      allOf:
+        - $ref: "#/components/schemas/ApiKey"
+        - type: object
+          required: [key]
+          properties:
+            key:
+              type: string
+              description: The secret. It is shown only once — store it now.
+
+    ApiKeyList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiKey"
+
+    RoomRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    Room:
+      type: object
+      required: [id, name, floor, device_count]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        floor:
+          oneOf:
+            - type: object
+              required: [id, name]
+              properties:
+                id:
+                  type: integer
+                name:
+                  type: string
+            - type: "null"
+        device_count:
+          type: integer
+
+    RoomList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Room"
+
+    DeviceType:
+      type: string
+      enum: [light, thermostat, cover, other]
+
+    Device:
+      type: object
+      required: [id, name, type, room, supported, href]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          $ref: "#/components/schemas/DeviceType"
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        supported:
+          type: boolean
+          description: True when this API can control the device.
+        href:
+          type: [string, "null"]
+          description: Path of the typed resource for supported devices, e.g. `/v1/lights/259`.
+
+    DeviceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Device"
+
+    Light:
+      type: object
+      required: [id, name, room, "on", brightness, dimmable, brightness_reported]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        "on":
+          type: boolean
+        brightness:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: Brightness percent. Null for on/off lights or when unknown.
+        dimmable:
+          type: boolean
+        brightness_reported:
+          type: boolean
+          description: False when the light does not report its level back (some KNX dimmers).
+
+    LightUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: |
+        `{"on": true}` turns the light on at its default level, `{"on": false}` turns it off and
+        `{"brightness": 40}` sets the level (dimmable lights only). `"on": false` cannot be
+        combined with `brightness`.
+      properties:
+        "on":
+          type: boolean
+        brightness:
+          type: integer
+          minimum: 0
+          maximum: 100
+
+    LightList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Light"
+
+    ThermostatMode:
+      type: string
+      enum: ["off", heat, cool, auto]
+
+    FanSpeed:
+      type: string
+      enum: [low, medium, high, auto]
+
+    Thermostat:
+      type: object
+      required:
+        - id
+        - name
+        - room
+        - online
+        - current_temperature
+        - target_temperature
+        - target_temperature_min
+        - target_temperature_max
+        - mode
+        - modes
+        - activity
+        - fan_speed
+        - fan_speeds
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        online:
+          type: boolean
+        current_temperature:
+          type: [number, "null"]
+        target_temperature:
+          type: [number, "null"]
+        target_temperature_min:
+          type: number
+        target_temperature_max:
+          type: number
+        mode:
+          type: [string, "null"]
+          description: Current mode as reported, e.g. `off`, `heat`, `cool`, `auto`.
+        modes:
+          type: array
+          description: Modes that can be set with PATCH.
+          items:
+            $ref: "#/components/schemas/ThermostatMode"
+        activity:
+          type: [string, "null"]
+          description: What the zone is doing now, e.g. `idle`, `heating`, `cooling`, `fan`.
+        fan_speed:
+          type: [string, "null"]
+        fan_speeds:
+          type: array
+          description: Fan speeds that can be set with PATCH. Empty when the zone has no fan control.
+          items:
+            $ref: "#/components/schemas/FanSpeed"
+
+    ThermostatUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        mode:
+          $ref: "#/components/schemas/ThermostatMode"
+        target_temperature:
+          type: number
+          description: Degrees Celsius, between `target_temperature_min` and `target_temperature_max`.
+        fan_speed:
+          $ref: "#/components/schemas/FanSpeed"
+
+    ThermostatList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Thermostat"
+
+    LogLevel:
+      type: string
+      enum: [debug, info, warn, error]
+
+    LogEntry:
+      type: object
+      required: [seq, time, level, category, message, data]
+      properties:
+        seq:
+          type: integer
+        time:
+          type: string
+          format: date-time
+        level:
+          $ref: "#/components/schemas/LogLevel"
+        category:
+          type: string
+          example: api
+        message:
+          type: string
+        data:
+          type: [object, "null"]
+
+    LogList:
+      type: object
+      required: [items, last_seq, level]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogEntry"
+        last_seq:
+          type: integer
+          description: Highest sequence number recorded so far. Pass it as `after` to poll for new entries.
+        level:
+          $ref: "#/components/schemas/LogLevel"
+
+    LogSettings:
+      type: object
+      required: [level]
+      additionalProperties: false
+      properties:
+        level:
+          $ref: "#/components/schemas/LogLevel"

@@ -1,4 +1,4 @@
-local Diagnostics = require("src.core.diagnostics")
+local Log = require("src.core.log")
 
 local LightV2 = {}
 
@@ -133,7 +133,7 @@ function LightV2.onVariableChanged(device, variableId, value)
 
     if variableId == VARIABLE_STATE then
         device.state.power = boolValue(value)
-        Diagnostics.info("light_state", "state variable changed", {
+        Log.debug("light_state", "state variable changed", {
             device_id = device.id,
             variable_id = VARIABLE_STATE,
             value = value,
@@ -147,7 +147,7 @@ function LightV2.onVariableChanged(device, variableId, value)
         if brightness ~= nil then
             device.state.brightness = brightness
             device.state.power = brightness > 0
-            Diagnostics.info("light_state", "brightness variable changed", {
+            Log.debug("light_state", "brightness variable changed", {
                 device_id = device.id,
                 variable_id = VARIABLE_BRIGHTNESS,
                 value = value,
@@ -161,7 +161,7 @@ function LightV2.onVariableChanged(device, variableId, value)
 end
 
 local function sendBrightnessPercent(deviceId, target)
-    Diagnostics.info("light_command", "sending brightness target", {
+    Log.info("light_command", "sending brightness target", {
         device_id = deviceId,
         command = "SET_BRIGHTNESS_TARGET",
         params = { PERCENT = target },
@@ -184,7 +184,7 @@ local function sendRampToLevel(deviceId, target)
     -- Control4 explicitly documents this as the DriverWorks-to-light form.
     -- Use it for KNX dimmers where the broker/app PERCENT path serializes
     -- differently from C4:SendToDevice and real testing showed no physical change.
-    Diagnostics.info("light_command", "sending KNX dimmer ramp", {
+    Log.info("light_command", "sending KNX dimmer ramp", {
         device_id = deviceId,
         command = "RAMP_TO_LEVEL",
         params = { LEVEL = target, TIME = 0 },
@@ -205,7 +205,7 @@ local function sendRampToLevel(deviceId, target)
 end
 
 local function sendBrightnessPreset(deviceId, presetId)
-    Diagnostics.info("light_command", "sending light preset", {
+    Log.info("light_command", "sending light preset", {
         device_id = deviceId,
         command = "SET_BRIGHTNESS_TARGET",
         params = { LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId },
@@ -282,7 +282,7 @@ function LightV2.execute(device, action, params)
     end
 
     if not sent then
-        Diagnostics.error("light_command", "Control4 command failed", {
+        Log.error("light_command", "Control4 command failed", {
             device_id = device.id,
             action = action,
             error = sendError,
@@ -293,7 +293,7 @@ function LightV2.execute(device, action, params)
         }
     end
 
-    Diagnostics.info("light_command", "Control4 command dispatched", result)
+    Log.info("light_command", "Control4 command dispatched", result)
     return true, result
 end
 

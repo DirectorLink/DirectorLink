@@ -1,18 +1,62 @@
 #!/usr/bin/env python3
-"""Static checks for the C4Bridge source/package."""
+"""Checks the built dist/C4Bridge.c4z against the source tree and the release contract."""
 
-from pathlib import Path
+import json
 import re
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "driver"
 PACKAGE = ROOT / "dist" / "C4Bridge.c4z"
-VERSION_FILE = ROOT / "VERSION"
-VERSION_SOURCE = DRIVER / "src" / "core" / "version.lua"
-DRIVER_VERSION_FILE = ROOT / "DRIVER_VERSION"
+SPEC_MODULE = "src/api/openapi_spec.lua"
+
+REQUIRED_PROPERTIES = (
+    "Status",
+    "Version",
+    "Controller OS",
+    "Inventory",
+    "API Status",
+    "API Port",
+    "API Keys",
+    "Pairing Code",
+    "Pairing Status",
+    "Log Level",
+    "Reload Counter",
+    "Last Init Type",
+    "Last Init Time",
+    "Last Destroy Type",
+    "Last Destroy Time",
+)
+
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS")
+
+# Source fragments that encode security decisions; removing one should be deliberate.
+SECURITY_CONTRACT = {
+    "src/api/server.lua": (
+        "if not match.route.public then",
+        'string.lower(scheme) ~= "bearer"',
+        '["https://app.c4bridge.io"] = true',
+    ),
+    "src/auth/keys.lua": (
+        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 1, keys = records }), true)",
+        "C4:PersistGetValue(STORE_KEY, true)",
+        'C4:UUID("RANDOM")',
+        "constantTimeEqual(presented, key.secret)",
+    ),
+    "src/auth/pairing.lua": (
+        "CODE_TTL_SECONDS = 15 * 60",
+        "MAX_FAILED_ATTEMPTS = 5",
+        "LOCK_SECONDS = 60",
+        "constantTimeEqual(code, state.code)",
+    ),
+    "src/core/log.lua": (
+        "pairing_code = true",
+        "authorization = true",
+    ),
+}
 
 
 def fail(message):
@@ -20,208 +64,103 @@ def fail(message):
     raise SystemExit(1)
 
 
-def source_files():
-    files = {
-        "driver.xml": DRIVER / "driver.xml",
-        "driver.lua": DRIVER / "driver.lua",
-    }
-    for path in sorted((DRIVER / "src").rglob("*.lua")):
-        files[path.relative_to(DRIVER).as_posix()] = path
-    return files
+def expected_versions():
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)$", version)
+    if not match:
+        fail(f"VERSION must be MAJOR.MINOR.PATCH, got {version!r}")
+    major, minor, patch = (int(part) for part in match.groups())
+    return version, str(major * 10000 + minor * 100 + patch)
 
 
-def check_xml():
-    path = DRIVER / "driver.xml"
+def check_contents(names):
+    expected = {"driver.xml", "driver.lua", SPEC_MODULE}
+    expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "src").rglob("*.lua"))
+    missing = expected - names
+    if missing:
+        fail(f"package is missing files: {sorted(missing)}")
+    extra = names - expected
+    if extra:
+        fail(f"package contains unexpected files: {sorted(extra)}")
+
+
+def check_driver_xml(text, driver_version):
     try:
-        root = ET.parse(path).getroot()
-    except Exception as exc:
-        fail(f"driver.xml is not valid XML: {exc}")
-
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        fail(f"packaged driver.xml is not valid XML: {exc}")
     if root.tag != "devicedata":
         fail("driver.xml root must be <devicedata>")
-
     script = root.find("./config/script")
     if script is None or script.attrib.get("file") != "driver.lua":
         fail("driver.xml must load driver.lua")
+    if root.findtext("minimum_os_version") != "3.3.0":
+        fail("minimum_os_version must be 3.3.0")
+    if root.findtext("auto_update") != "false":
+        fail("auto_update must stay false")
+    if root.findtext("version") != driver_version:
+        fail(f"packaged driver.xml version is {root.findtext('version')!r}, expected {driver_version}")
 
-    minimum = root.findtext("minimum_os_version")
-    if minimum != "3.3.0":
-        fail(f"minimum_os_version must be 3.3.0, got {minimum!r}")
-
-    auto_update = root.findtext("auto_update")
-    if auto_update != "false":
-        fail("V1 must keep auto_update=false")
-
-
-def check_version():
-    if not VERSION_FILE.is_file():
-        fail("VERSION file is missing")
-
-    version = VERSION_FILE.read_text(encoding="utf-8").strip()
-    if not version:
-        fail("VERSION is empty")
-
-    source = VERSION_SOURCE.read_text(encoding="utf-8")
-    expected = f'Version.BRIDGE_VERSION = "{version}"'
-    if expected not in source:
-        fail(f"driver source version does not match VERSION ({version})")
-
-
-def check_driver_version():
-    if not DRIVER_VERSION_FILE.is_file():
-        fail("DRIVER_VERSION file is missing")
-
-    expected = DRIVER_VERSION_FILE.read_text(encoding="utf-8").strip()
-    if not expected.isdigit():
-        fail(f"DRIVER_VERSION must be an integer, got {expected!r}")
-
-    root = ET.parse(DRIVER / "driver.xml").getroot()
-    actual = (root.findtext("version") or "").strip()
-    if actual != expected:
-        fail(f"driver.xml version {actual!r} does not match DRIVER_VERSION {expected!r}")
+    properties = {node.findtext("name") for node in root.findall("./config/properties/property")}
+    for name in REQUIRED_PROPERTIES:
+        if name not in properties:
+            fail(f"driver.xml is missing property {name!r}")
+    actions = {node.findtext("command") for node in root.findall("./config/actions/action")}
+    for command in REQUIRED_ACTIONS:
+        if command not in actions:
+            fail(f"driver.xml is missing Composer action {command!r}")
 
 
 def check_requires(files):
-    module_paths = set(files)
     pattern = re.compile(r"""require\s*\(\s*["']([^"']+)["']\s*\)""")
-
-    for archive_path, source_path in files.items():
-        if not archive_path.endswith(".lua"):
+    for name, text in files.items():
+        if not name.endswith(".lua"):
             continue
-        content = source_path.read_text(encoding="utf-8")
-        for module in pattern.findall(content):
+        for module in pattern.findall(text):
             target = module.replace(".", "/") + ".lua"
-            if target not in module_paths:
-                fail(f"{archive_path} requires missing module {target}")
+            if target not in files:
+                fail(f"{name} requires {module}, which is not in the package")
 
 
-def check_light_adapter():
-    path = DRIVER / "src" / "adapters" / "light_v2.lua"
-    if not path.is_file():
-        fail("Light V2 adapter is missing")
-
-    source = path.read_text(encoding="utf-8")
-    required = [
-        "VARIABLE_STATE = 1000",
-        "VARIABLE_BRIGHTNESS = 1001",
-        'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
-        "LIGHT_BRIGHTNESS_TARGET_PRESET_ID = presetId",
-        'C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET"',
-        "PERCENT = target",
-        'C4:SendToDevice(deviceId, "RAMP_TO_LEVEL"',
-        "LEVEL = target",
-        "TIME = 0",
-        "knx_dimmer.c4i",
-        "brightness_feedback",
-        "C4:RegisterVariableListener",
-    ]
-
-    for token in required:
-        if token not in source:
-            fail(f"Light V2 adapter missing required contract: {token}")
-
-    climate_path = DRIVER / "src" / "adapters" / "thermostat_v2.lua"
-    if not climate_path.is_file():
-        fail("Thermostat V2 adapter is missing")
-
-    climate = climate_path.read_text(encoding="utf-8")
-    for token in (
-        "VARIABLE_HVAC_MODE = 1104",
-        "VARIABLE_FAN_MODE = 1105",
-        "VARIABLE_HVAC_STATE = 1107",
-        "VARIABLE_IS_CONNECTED = 1112",
-        "VARIABLE_HVAC_MODES_LIST = 1120",
-        "VARIABLE_TEMPERATURE_C = 1131",
-        "VARIABLE_SINGLE_SETPOINT_F = 1149",
-        'C4:SendToDevice(deviceId, command, params)',
-        '"SET_MODE_HVAC"',
-        '"SET_MODE_FAN"',
-        '"SET_SETPOINT_SINGLE"',
-        "CELSIUS = target",
-    ):
-        if token not in climate:
-            fail(f"Thermostat V2 adapter missing required contract: {token}")
-
-    pairing_path = DRIVER / "src" / "auth" / "pairing.lua"
-    if not pairing_path.is_file():
-        fail("owner pairing module is missing")
-
-    pairing = pairing_path.read_text(encoding="utf-8")
-    for token in (
-        'C4:PersistGetValue(key, encrypted == true)',
-        'C4:PersistSetValue(key, tostring(value or ""), encrypted == true)',
-        'MAX_FAILED_ATTEMPTS = 5',
-        'LOCK_SECONDS = 60',
-        'CODE_TTL_SECONDS = 15 * 60',
-        'C4:UUID("RANDOM")',
-    ):
-        if token not in pairing:
-            fail(f"pairing module missing security contract: {token}")
-
-    server = (DRIVER / "src" / "server" / "http.lua").read_text(encoding="utf-8")
-    if "/v1/lights" not in server:
-        fail("LAN API is missing /v1/lights")
-    if "/v1/climate" not in server:
-        fail("LAN API is missing /v1/climate")
-    if "/v1/devices/(%d+)/actions/" not in server:
-        fail("LAN API is missing normalized device action routing")
-    if "/v1/diagnostics" not in server:
-        fail("LAN API is missing authenticated diagnostics endpoint")
-    if 'request.path ~= "/v1/pair"' not in server:
-        fail("LAN API is missing owner pairing route")
-    if 'x-c4bridge-pairing-code' not in server:
-        fail("pairing route must use the dedicated pairing-code header")
-    if "PAIRING_RATE_LIMITED" not in server:
-        fail("pairing route must handle rate limiting")
-
-    root = ET.parse(DRIVER / "driver.xml").getroot()
-    property_names = {
-        node.findtext("name")
-        for node in root.findall("./config/properties/property")
-    }
-    for name in (
-        "Reload Counter",
-        "Last Init Type",
-        "Last Init Time",
-        "Last Destroy Type",
-        "Last Destroy Time",
-        "Pairing Code",
-        "Pairing Status",
-        "Supported Climate",
-    ):
-        if name not in property_names:
-            fail(f"driver.xml missing lifecycle diagnostic property: {name}")
+def check_embedded_spec(text, version):
+    match = re.search(r"return \[(=*)\[(.*)\]\1\]\s*$", text, re.S)
+    if not match:
+        fail(f"{SPEC_MODULE} does not return a long string")
+    try:
+        spec = json.loads(match.group(2))
+    except json.JSONDecodeError as exc:
+        fail(f"embedded API description is not valid JSON: {exc}")
+    if not str(spec.get("openapi", "")).startswith("3.1"):
+        fail("embedded API description must be OpenAPI 3.1")
+    if spec.get("info", {}).get("version") != version:
+        fail("embedded API description version does not match VERSION")
 
 
-def check_package(files):
-    if not PACKAGE.is_file():
-        fail("dist/C4Bridge.c4z is missing; run python scripts/build.py")
-
-    with ZipFile(PACKAGE, "r") as archive:
-        names = set(archive.namelist())
-        expected = set(files)
-
-        missing = expected - names
-        if missing:
-            fail(f"package is missing files: {sorted(missing)}")
-
-        if "driver.xml" not in names or "driver.lua" not in names:
-            fail("package root must contain driver.xml and driver.lua")
-
-        bad = [name for name in names if name.startswith("driver/")]
-        if bad:
-            fail("driver files must be at C4Z root, not under driver/")
+def check_security_contract(files):
+    for name, fragments in SECURITY_CONTRACT.items():
+        text = files.get(name, "")
+        for fragment in fragments:
+            if fragment not in text:
+                fail(f"{name} is missing security contract: {fragment}")
 
 
 def main():
-    files = source_files()
-    check_xml()
-    check_version()
-    check_driver_version()
+    if not PACKAGE.is_file():
+        fail("dist/C4Bridge.c4z is missing; run python scripts/build.py")
+    version, driver_version = expected_versions()
+
+    with ZipFile(PACKAGE) as archive:
+        names = set(archive.namelist())
+        check_contents(names)
+        files = {name: archive.read(name).decode("utf-8") for name in names}
+
+    check_driver_xml(files["driver.xml"], driver_version)
+    if f'Version.BRIDGE_VERSION = "{version}"' not in files["src/core/version.lua"]:
+        fail("packaged src/core/version.lua was not stamped with VERSION")
     check_requires(files)
-    check_light_adapter()
-    check_package(files)
-    print(f"OK: validated {len(files)} packaged files")
+    check_embedded_spec(files[SPEC_MODULE], version)
+    check_security_contract(files)
+    print(f"OK: validated {len(files)} packaged files for version {version}")
 
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@
         </a>
         <div class="topbar-actions">
           <span class="build-badge">Preview</span>
+          <a class="button button-secondary nav-button" href="/console.html">API console</a>
           <button id="install-button" class="button button-secondary hidden" type="button">
             Install app
           </button>
@@ -72,8 +73,8 @@
               <p class="eyebrow">FIRST SETUP</p>
               <h2>Director address</h2>
               <p>
-                Enter the Director address and the short Pairing Code shown in the
-                C4Bridge Properties pane in Composer. The long owner credential stays hidden.
+                Enter the controller address and the 8-digit Pairing Code shown in the
+                C4Bridge properties in Composer. The browser receives its own API key.
               </p>
             </div>
 
@@ -168,11 +169,11 @@
           <article class="panel result-panel lights-panel">
             <div class="lights-heading">
               <div>
-                <p class="eyebrow">STEP 3</p>
+                <p class="eyebrow">LIGHTS</p>
                 <h2>Lights</h2>
                 <p class="panel-note">
-                  Live Light V2 state from Director. Commands are sent through normalized
-                  C4Bridge actions only.
+                  Live state from the controller. Changes are confirmed by reading the light
+                  back after each command.
                 </p>
               </div>
               <button id="refresh-lights-button" class="button button-secondary" type="button">
@@ -188,18 +189,18 @@
             <div class="lights-heading">
               <div>
                 <p class="eyebrow">CLIMATE</p>
-                <h2>HVAC</h2>
+                <h2>Thermostats</h2>
                 <p class="panel-note">
-                  Live Thermostat V2 state from Director. Mode, fan, and single-setpoint
-                  commands use the same command shapes captured from the Control4 app.
+                  Heating and cooling zones. Only the modes and fan speeds each zone supports
+                  are offered.
                 </p>
               </div>
-              <button id="refresh-climate-button" class="button button-secondary" type="button">
-                Refresh climate
+              <button id="refresh-thermostats-button" class="button button-secondary" type="button">
+                Refresh thermostats
               </button>
             </div>
-            <p id="climate-action-message" class="form-message" role="status" aria-live="polite"></p>
-            <div id="climate-list" class="climate-list"></div>
+            <p id="thermostat-action-message" class="form-message" role="status" aria-live="polite"></p>
+            <div id="thermostat-list" class="climate-list"></div>
           </article>
 
           <div class="result-columns">
@@ -233,7 +234,7 @@
             <div class="flow-node" role="listitem">
               <span>3</span>
               <strong>C4Bridge.c4z</strong>
-              <small>Authenticated normalized API on Director</small>
+              <small>OpenAPI with API keys, on the controller</small>
             </div>
             <div class="flow-arrow" aria-hidden="true">→</div>
             <div class="flow-node" role="listitem">
