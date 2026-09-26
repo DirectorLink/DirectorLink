@@ -169,3 +169,15 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 ### Driver updates (issue #8)
 
 - Composer's connection sync copies a new `.c4z` into the Director's driver store (`/opt/control4/var/drivers/c4z`), but no reload command reaches the Director and the running instance keeps its old code until a reboot. Adding a device (`AddDevice`) or booting loads the new code immediately (`Attempting to load file` → `loadC4Z: Extracting` → `Lua driver loaded successfully`). A right-click **Update Driver** has not been captured yet.
+
+## 2026-09-26 — v0.4.0 blinds and driver updates
+
+### Driver updates (issue #8) — fixed
+
+- Cause: the broker (Director's driver upload service) reads `driver.xml` as `<xml>` + contents + `</xml>` with expat. The `<?xml ...?>` declaration C4Bridge had since its first commit is not allowed mid-document, so every upload logged `Unable to parse driver C4Bridge.c4z` in `/var/log/debug/broker.log` (the only one of 375 drivers) and the Director never reloaded it.
+- Without the declaration, updating in Composer reloaded the running driver in place: `[DriverUpdateAgent] Driver updated: C4Bridge.c4z`, C4Bridge logged `driver destroyed` / `driver init` with `DIT_UPDATING` and version 0.4.0 within a second — no reboot, no remove and re-add. `check_package.py` now parses `driver.xml` the same way.
+
+### Blinds
+
+- 15 blind proxies (`blind.c4i` over `knx_blind.c4z`) discovered; the proxy's `Level` variable was found on all of them.
+- From the web app: open (`SET_LEVEL_TARGET` 100), stop (`STOP`) and close (`SET_LEVEL_TARGET` 0) on blinds 312, 314, 316, 320 and 322 — the blinds moved as commanded.

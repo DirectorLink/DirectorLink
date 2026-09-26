@@ -19,7 +19,7 @@
 4. Press the button: it turns green, the web app connects, and the button returns to gray.
 5. Also check: **Cancel request** turns it gray again, and a request left alone expires after 2 minutes.
 
-If the button does not appear, remove and re-add C4Bridge in Composer, then request access again.
+If the button does not appear, remove and re-add C4Bridge in Composer, then request access again. Driver updates load without a reboot since 0.4.0; if one does not, check `/var/log/debug/broker.log` for "Unable to parse driver".
 
 ## 1. Install
 
