@@ -160,8 +160,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["c4bridge-shell-v6", "c4bridge-shell-v7"] });
-  assert.deepEqual(await storage.keys(), ["c4bridge-shell-v8"]);
+  const { storage } = await startWorker({ oldCaches: ["c4bridge-shell-v7", "c4bridge-shell-v8"] });
+  assert.deepEqual(await storage.keys(), ["c4bridge-shell-v9"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {

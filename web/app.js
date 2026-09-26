@@ -521,7 +521,7 @@ function connectionErrorMessage(error) {
   if (error.status === 401) {
     clearApiKey();
     refreshSavedSetup();
-    return "The saved API key was rejected. Pair again with the current code from Composer.";
+    return "The saved API key is no longer valid (it was revoked, or C4Bridge was re-added). Press Request access to get a new one.";
   }
   if (error instanceof ApiError && /^(PAIRING|REQUEST)/.test(error.code || "")) {
     if (error.code === "REQUEST_PENDING") {
@@ -682,3 +682,8 @@ window.addEventListener("appinstalled", () => {
 });
 
 refreshSavedSetup();
+
+// The host and API key are kept in this browser, so a reload reconnects without pairing again.
+if (savedHost() && savedApiKey()) {
+  connectAndLoad();
+}
