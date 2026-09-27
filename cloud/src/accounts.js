@@ -204,6 +204,10 @@ async function me(request, env, headers) {
     }
     await env.DB.batch([
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
+      env.DB.prepare("DELETE FROM invitations WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
+      env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
+      env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
+      env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
     ]);
     console.log(JSON.stringify({ event: "account_deleted", user: user.id }));
