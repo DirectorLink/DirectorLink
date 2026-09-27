@@ -1,12 +1,12 @@
-# Building and testing C4Bridge
+# Building and testing DirectorLink
 
-A C4Z is a ZIP-based Control4 driver package. C4Bridge packages `driver.xml`, `driver.lua` and the Lua modules under `driver/src/` at the archive root, plus the API description generated from `api/openapi.yaml`.
+A C4Z is a ZIP-based Control4 driver package. DirectorLink packages `driver.xml`, `driver.lua` and the Lua modules under `driver/src/` at the archive root, plus the API description generated from `api/openapi.yaml`.
 
 ## Tools
 
 - Python 3 with `pip install -r requirements-dev.txt` (PyYAML, openapi-spec-validator)
 - Lua 5.1 (`lua5.1`, `luac5.1`) for syntax checks and the driver tests
-- Node.js for the web JavaScript syntax check
+- Node.js for the app JavaScript syntax check
 
 ## Everything CI runs
 
@@ -16,12 +16,13 @@ From the repository root:
 find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
 lua5.1 driver/tests/run.lua                                    # driver tests (fake Director)
 python scripts/check_api.py                                    # spec is valid and matches the driver routes
-python scripts/build.py                                        # dist/C4Bridge.c4z + dist/openapi.json
+python scripts/build.py                                        # dist/DirectorLink.c4z + dist/openapi.json
 python scripts/check_package.py                                # package contents and contracts
 python scripts/check_contract.py                               # real HTTP responses vs the spec
-python scripts/check_web.py                                    # web app
-for f in web/*.js; do node --check "$f"; done                  # web JavaScript syntax
-node --test tests/web/*.test.mjs                               # offline service worker
+python scripts/check_app.py                                    # the app
+python scripts/check_sites.py                                  # console and landing page
+find app console -name '*.js' -print0 | xargs -0 -n1 node --check   # JavaScript syntax
+node --test tests/app/*.test.mjs                               # offline service worker
 ```
 
 ## Package layout
@@ -38,7 +39,7 @@ src/
   core/       json, log, registry, version
 ```
 
-No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The source manifest `driver/C4Bridge.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
+No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The source manifest `driver/DirectorLink.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
 
 ## Checksums and reproducible builds
 
@@ -47,10 +48,10 @@ The build is byte-for-byte reproducible on every OS: fixed zip timestamps, a fix
 To check that a file matches a release, compare it with that release's `SHA256SUMS.txt`:
 
 ```bash
-sha256sum C4Bridge.c4z openapi.json          # or: certutil -hashfile C4Bridge.c4z SHA256
+sha256sum DirectorLink.c4z openapi.json          # or: certutil -hashfile DirectorLink.c4z SHA256
 ```
 
-A package built locally from the release's commit gives the same values, and so does the installed package on a controller (`/mnt/internal/c4z/C4Bridge.c4z`). CI prints the checksums of every build in the "Show package checksums" step.
+A package built locally from the release's commit gives the same values, and so does the installed package on a controller (`/mnt/internal/c4z/DirectorLink.c4z`). CI prints the checksums of every build in the "Show package checksums" step.
 
 ## Driver tests
 
@@ -60,12 +61,12 @@ A package built locally from the release's commit gives the same values, and so 
 
 ## Local dev server
 
-To work on the web app or an API client without a controller:
+To work on the app or an API client without a controller:
 
 ```bash
 python scripts/build.py                        # optional: serve the real API description
 python scripts/dev_server.py                   # driver + fake Director on http://localhost:41999
-python -m http.server 8080 --directory web     # web app on http://localhost:8080
+python -m http.server 8080 --directory app     # app on http://localhost:8080
 ```
 
 Use `localhost` as the controller address and the pairing code the dev server prints. The fake project has two rooms, three lights and one thermostat; commands are recorded but not executed.
@@ -86,12 +87,26 @@ Built `.c4z` files are not committed. Every official build is produced by GitHub
 2. Changing `VERSION` on `main` triggers the release workflow, which runs the tests and checks, builds, and publishes the `v<version>` release with:
 
 ```text
-C4Bridge.c4z
+DirectorLink.c4z
 openapi.json
 SHA256SUMS.txt
 ```
 
 Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release.
+
+## Deploying the sites
+
+`.github/workflows/deploy.yml` publishes `app/`, `console/` and `site/` to Cloudflare Workers (static assets) with `wrangler deploy` whenever one of them changes on `main`; pull requests from this repository get preview versions. Each folder's `wrangler.jsonc` names its Worker and custom domain:
+
+| Folder | Worker | Domain |
+| --- | --- | --- |
+| `app/` | `directorlink-app` | `app.directorlink.io` |
+| `console/` | `directorlink-console` | `console.directorlink.io` |
+| `site/` | `directorlink-site` | `directorlink.io`, `www.directorlink.io` |
+
+The workflow needs two repository secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the jobs succeed and deploy nothing.
+
+The driver only answers browsers from `https://app.directorlink.io`, `https://console.directorlink.io` and `http://localhost` / `127.0.0.1` (for local testing), so a preview URL can show a site but cannot talk to a controller.
 
 ## Minimum Director version
 

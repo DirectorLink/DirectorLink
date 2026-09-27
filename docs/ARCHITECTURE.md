@@ -1,30 +1,31 @@
-# C4Bridge Architecture
+# DirectorLink Architecture
 
 ## Product boundary
 
-C4Bridge is a homeowner-facing local management layer for Control4 Director OS 3.3.0+.
+DirectorLink is a homeowner-facing local management layer for Control4 Director OS 3.3.0+.
 
-C4Bridge assumes `C4Bridge.c4z` is already installed. Installation method is out of scope.
+DirectorLink assumes `DirectorLink.c4z` is already installed. Installation method is out of scope.
 
 ## Runtime
 
 ```text
-Cloudflare Pages PWA (web/)
+Cloudflare Workers static sites: app/ (app.directorlink.io),
+console/ (console.directorlink.io), site/ (directorlink.io)
         |
-        | HTTPS: static app only
+        | HTTPS: static files only
         v
 Browser / any API client (curl, Home Assistant, scripts)
         |
         | LAN HTTP + API key, described by api/openapi.yaml
         v
-C4Bridge.c4z inside Director
+DirectorLink.c4z inside Director
         |
         | DriverWorks
         v
 Existing Control4 project devices
 ```
 
-Cloudflare does not relay Control4 commands. Clients talk directly to C4Bridge on the LAN.
+Cloudflare does not relay Control4 commands. Clients talk directly to DirectorLink on the LAN.
 
 ## Repository
 
@@ -37,7 +38,9 @@ driver/     the DriverWorks driver
   src/control4/   discovery and normalization
   src/core/       json, log, registry, version
   tests/          driver tests against a fake Director
-web/        static PWA: dashboard and API console (deployed by Cloudflare from this folder)
+app/        the app (PWA), deployed to app.directorlink.io
+console/    API console, debugging and logs, deployed to console.directorlink.io
+site/       landing page, deployed to directorlink.io
 scripts/    build and validation
 docs/       specification, decisions, research, releases
 ```
@@ -57,7 +60,7 @@ Control4 specifics — proxy drivers, command names, variable IDs — live only 
 1. Minimum supported Director version: 3.3.0.
 2. Director is the only Control4 runtime dependency.
 3. Do not import Composer programming, schedules, or scenes.
-4. C4Bridge owns its own scenes, schedules, and automations.
+4. DirectorLink owns its own scenes, schedules, and automations.
 5. Unknown device types are visible but marked unsupported.
 6. The public API uses logical names, never raw Control4 command names.
 7. OS/version differences stay behind the Control4 compatibility layer.

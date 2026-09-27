@@ -1,4 +1,4 @@
--- JSON encoder/decoder for C4Bridge (Lua 5.1).
+-- JSON encoder/decoder for DirectorLink (Lua 5.1).
 -- Owning this instead of using C4:JsonEncode keeps output deterministic (sorted keys,
 -- explicit empty arrays, explicit null) and lets the API layer run in plain Lua for tests.
 

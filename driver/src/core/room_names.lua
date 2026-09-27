@@ -1,4 +1,4 @@
--- Room names in other languages, kept by C4Bridge (Control4 has one name per room).
+-- Room names in other languages, kept by DirectorLink (Control4 has one name per room).
 -- Stored in the driver's persistent data as { [roomId] = { [language] = name } }.
 
 local Json = require("src.core.json")
@@ -6,7 +6,7 @@ local Log = require("src.core.log")
 
 local RoomNames = {}
 
-local STORE_KEY = "C4BRIDGE_ROOM_NAMES"
+local STORE_KEY = "DIRECTORLINK_ROOM_NAMES"
 -- Language tags: "en", "he", "pt-BR".
 local LANGUAGE_PATTERN = "^%l%l%l?$"
 local REGION_PATTERN = "^%l%l%l?%-%u%u$"

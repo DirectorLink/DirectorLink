@@ -1,22 +1,24 @@
-# C4Bridge
+# DirectorLink
 
-C4Bridge is an open-source, local-first management layer for Control4 homeowners.
+**Direct to Director. End-to-end integration. Open source.**
+
+DirectorLink is an open-source, local-first management layer for Control4 homeowners.
 
 The goal is to provide simple device control, scenes, schedules, and everyday automation without requiring homeowners to use Composer Pro for routine changes.
 
 ## V1 scope
 
 - Control4 Director OS **3.3.0+**
-- `C4Bridge.c4z` is assumed to already be installed in the Control4 project
+- `DirectorLink.c4z` is assumed to already be installed in the Control4 project
 - Installation method is outside the scope of this project
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
-- Cloudflare Pages PWA frontend; the browser connects directly to C4Bridge over the LAN
+- An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN
 - LAN-only in V1; no cloud relay and no port forwarding
 - One owner, with a separate named API key per browser, app or script
 - Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
-- C4Bridge owns its own scenes, schedules, and automations
+- DirectorLink owns its own scenes, schedules, and automations
 - No import of Composer programming, scenes, or schedules
 - Fixed-time, weekday, sunrise/sunset, and offset scheduling
 - Director location/timezone used for solar scheduling
@@ -24,15 +26,15 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 
 ## Installation
 
-C4Bridge itself does not depend on Composer Pro during normal operation. Composer is only one way to install the `C4Bridge.c4z` driver into a Control4 project.
+DirectorLink itself does not depend on Composer Pro during normal operation. Composer is only one way to install the `DirectorLink.c4z` driver into a Control4 project.
 
-### 1. Download C4Bridge
+### 1. Download DirectorLink
 
-Download C4Bridge from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
+Download DirectorLink from **[GitHub Releases](https://github.com/IsraelCIL/DirectorLink/releases)**.
 
-Current build: **C4Bridge v0.7.0**
+Current build: **DirectorLink v0.7.0**
 
-Each release keeps its own `C4Bridge.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
+Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
 ### 2. Install Composer Pro
 
@@ -42,45 +44,47 @@ If you need Composer Pro for the initial driver installation, this project curre
 
 https://update2.control4.com/release/2026.3.18.506-res+Composer/win/ComposerPro-2026.3.18.506-res.exe
 
-C4Bridge does not depend on this specific Composer version after the driver has been installed.
+DirectorLink does not depend on this specific Composer version after the driver has been installed.
 
 ### 3. Add the driver to Composer
 
 1. Open Composer Pro and connect to your Director.
 2. In the top menu, choose **Driver → Add or Update Driver**.
-3. Select `C4Bridge.c4z`.
+3. Select `DirectorLink.c4z`.
 4. Go to **System Design**.
-5. Select any room in the project tree. C4Bridge only needs one instance in the project; the room is not functionally important.
+5. Select any room in the project tree. DirectorLink only needs one instance in the project; the room is not functionally important.
 6. Open the **Search** tab in the Items pane.
-7. Make sure **Local** drivers are included and search for **C4Bridge**.
-8. Double-click or drag **C4Bridge** into the selected room.
-9. Select the C4Bridge device and check its Properties.
+7. Make sure **Local** drivers are included and search for **DirectorLink**.
+8. Double-click or drag **DirectorLink** into the selected room.
+9. Select the DirectorLink device and check its Properties.
 
 A successful install shows:
 
-- **Version:** the installed C4Bridge release
 - **Status:** `Ready`
-- **Controller OS:** your Director OS version
-- **Inventory:** the number of rooms, devices, lights and thermostats found
-- **API Status:** `Online`
-- **Access Request:** what is waiting for approval with the C4Bridge Access button
-- **Pairing Code:** 8 digits, a fallback way to pair a browser
+- **Version:** the installed DirectorLink release
+- **API Status:** `Online - port 41999`
+- **Pairing Code:** 8 digits shown as `1234 5678`, with **Pairing Status** `Ready until HH:MM - works once`
+- **API Keys:** how many keys exist
+- **Door Control:** `Disabled` until you allow opening doors and gates from the app
+- **Log Level** and **Inventory** (rooms and devices found)
 
-If the status shows an error, open `GET /v1/logs` (see below) or capture the C4Bridge Lua log and open a GitHub issue.
+If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.
 
-### 4. Pair a browser
+### 4. Pair the owner's device
 
-Open **https://app.c4bridge.io**, enter the controller IP and click **Request access**, then press **C4Bridge Access** in your Control4 app within 2 minutes. The browser receives its own API key. (The 8-digit Pairing Code in the C4Bridge properties is a fallback.)
+Open **https://app.directorlink.io**, enter the controller IP and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
 
-### Updating C4Bridge
+A code is valid for 15 minutes and works once. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin creates their keys (API console → Keys), and with remote access they will join by invitation.
+
+### Updating DirectorLink
 
 Automatic self-update is intentionally **not** part of V1.
 
-Update the installed driver manually through Composer Pro using the `C4Bridge.c4z` asset from the desired GitHub Release.
+Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release.
 
-**Important:** before updating, make sure the local file is named exactly `C4Bridge.c4z`. Do not select `C4Bridge (1).c4z`, `C4Bridge (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
+**Important:** before updating, make sure the local file is named exactly `DirectorLink.c4z`. Do not select `DirectorLink (1).c4z`, `DirectorLink (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
 
-To downgrade, download `C4Bridge.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; release notes state whether a downgrade is safe once persistent scenes/schedules exist.
+To downgrade, download `DirectorLink.c4z` from an older release and install that version through Composer Pro. Downgrade compatibility is release-specific; release notes state whether a downgrade is safe once persistent scenes/schedules exist.
 
 Do not remove and re-add the project instance unless a release specifically requires it.
 
@@ -95,14 +99,14 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
   -d '{"brightness": 40}'
 ```
 
-Resources: system, rooms, devices, lights, thermostats, logs, API keys. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the web app's **API console** lists and tries every endpoint.
+Resources: system, rooms, devices, lights, thermostats, logs, API keys. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
 ## Design principle
 
-C4Bridge depends on **Director**, not Composer.
+DirectorLink depends on **Director**, not Composer.
 
 ```text
-Cloudflare Pages PWA
+DirectorLink app (PWA, hosted on Cloudflare)
         |
         | Local Network Access permission
         v
@@ -110,7 +114,7 @@ Browser / any API client
         |
         | LAN only, API key
         v
-C4Bridge.c4z
+DirectorLink.c4z
         |
         v
 Control4 Director
@@ -124,16 +128,20 @@ Existing Control4 devices
 ```text
 api/       OpenAPI contract
 driver/    DriverWorks driver (Lua 5.1) and its tests
-web/       PWA: dashboard and API console (deployed by Cloudflare Pages from this folder)
+app/       the app (PWA)                       → https://app.directorlink.io
+console/   API console, debugging and logs      → https://console.directorlink.io
+site/      landing page                         → https://directorlink.io
 scripts/   build and validation
 docs/      specification, decisions, research, releases
 ```
 
 See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, and **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** for how the pieces fit.
 
-## Live web app
+## Live
 
-**https://app.c4bridge.io**
+- **App:** https://app.directorlink.io
+- **API console, debugging and logs:** https://console.directorlink.io
+- **Website:** https://directorlink.io
 
 ## Status
 
@@ -141,10 +149,10 @@ Early development (`0.x`). The API is described and versioned, but may still cha
 
 ## Disclaimer
 
-C4Bridge is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
+DirectorLink is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
 
 Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
 
 ## License
 
-C4Bridge is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+DirectorLink is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

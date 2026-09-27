@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the built dist/C4Bridge.c4z against the source tree and the release contract."""
+"""Checks the built dist/DirectorLink.c4z against the source tree and the release contract."""
 
 import json
 import re
@@ -10,38 +10,30 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "driver"
-PACKAGE = ROOT / "dist" / "C4Bridge.c4z"
+PACKAGE = ROOT / "dist" / "DirectorLink.c4z"
 SPEC_MODULE = "src/api/openapi_spec.lua"
 
+# The Composer properties, in order: what an installer needs, nothing more (0.8.0).
 REQUIRED_PROPERTIES = (
     "Status",
     "Version",
-    "Controller OS",
-    "Inventory",
     "API Status",
-    "API Port",
-    "API Keys",
     "Pairing Code",
     "Pairing Status",
-    "Access Request",
+    "API Keys",
+    "Door Control",
     "Log Level",
-    "Reload Counter",
-    "Last Init Type",
-    "Last Init Time",
-    "Last Destroy Type",
-    "Last Destroy Time",
+    "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "SHOW_ACCESS_BUTTON")
-
-ACCESS_BUTTON_BINDING = "5001"
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
     "src/api/server.lua": (
         "if not match.route.public then",
         'string.lower(scheme) ~= "bearer"',
-        '["https://app.c4bridge.io"] = true',
+        '["https://app.directorlink.io"] = true',
     ),
     "src/auth/keys.lua": (
         "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 2, keys = records }), true)",
@@ -49,15 +41,12 @@ SECURITY_CONTRACT = {
         'C4:UUID("RANDOM")',
         "constantTimeEqual(presented, key.secret)",
     ),
-    "src/auth/approvals.lua": (
-        "constantTimeEqual(id, request.id)",
-        "MAX_REQUESTS_PER_WINDOW = 5",
-    ),
     "src/auth/pairing.lua": (
-        "CODE_TTL_SECONDS = 15 * 60",
+        "Pairing.CODE_TTL_SECONDS = 15 * 60",
         "MAX_FAILED_ATTEMPTS = 5",
         "LOCK_SECONDS = 60",
-        "constantTimeEqual(code, state.code)",
+        "constantTimeEqual(input, state.code)",
+        'close("Used at "',
     ),
     "src/core/log.lua": (
         "pairing_code = true",
@@ -124,21 +113,20 @@ def check_driver_xml(text, driver_version):
     if root.findtext("version") != driver_version:
         fail(f"packaged driver.xml version is {root.findtext('version')!r}, expected {driver_version}")
 
-    properties = {node.findtext("name") for node in root.findall("./config/properties/property")}
-    for name in REQUIRED_PROPERTIES:
-        if name not in properties:
-            fail(f"driver.xml is missing property {name!r}")
-    button = [proxy for proxy in root.findall("./proxies/proxy") if proxy.text == "uibutton"]
-    if not button or button[0].get("proxybindingid") != ACCESS_BUTTON_BINDING:
-        fail("driver.xml must declare the uibutton proxy on binding 5001 (C4Bridge Access)")
-    if root.findtext("combo") is not None:
-        fail("C4Bridge must not be a combo driver: Director does not create the C4Bridge Access button for combo drivers")
-    connection_ids = {node.findtext("id") for node in root.findall("./connections/connection")}
-    if ACCESS_BUTTON_BINDING not in connection_ids:
-        fail("driver.xml needs the UIBUTTON connection for binding 5001")
+    properties = [node.findtext("name") for node in root.findall("./config/properties/property")]
+    if tuple(properties) != REQUIRED_PROPERTIES:
+        fail(f"driver.xml properties must be exactly {', '.join(REQUIRED_PROPERTIES)} (got {', '.join(properties)})")
+    # A self-contained device: combo driver whose only proxy is itself; no child proxies, no button.
+    if root.findtext("combo") != "true":
+        fail("driver.xml must declare <combo>true</combo>")
+    proxies = [proxy.text for proxy in root.findall("./proxies/proxy")]
+    if proxies != ["DirectorLink"]:
+        fail(f"driver.xml must declare exactly one proxy, DirectorLink (got {proxies})")
+    if root.find("connections") is not None:
+        fail("driver.xml must not declare connections: DirectorLink has no child proxies")
     names = set(ZipFile(PACKAGE).namelist())
     for icon in root.iter("Icon"):
-        path = "www/" + icon.text.split("controller://driver/C4Bridge/", 1)[-1]
+        path = "www/" + icon.text.split("controller://driver/DirectorLink/", 1)[-1]
         if path not in names:
             fail(f"driver.xml references {icon.text}, which is not in the package")
     actions = {node.findtext("command") for node in root.findall("./config/actions/action")}
@@ -182,7 +170,7 @@ def check_security_contract(files):
 
 def main():
     if not PACKAGE.is_file():
-        fail("dist/C4Bridge.c4z is missing; run python scripts/build.py")
+        fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
     version, driver_version = expected_versions()
 
     with ZipFile(PACKAGE) as archive:

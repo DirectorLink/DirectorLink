@@ -7,16 +7,14 @@ local AdapterManager = require("src.adapters.manager")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local Pairing = require("src.auth.pairing")
-local Approvals = require("src.auth.approvals")
-local Navigator = require("src.control4.navigator")
 local Api = require("src.api.server")
 
 local LIFECYCLE_KEYS = {
-    reload_count = "c4bridge_reload_count",
-    last_init_type = "c4bridge_last_init_type",
-    last_init_time = "c4bridge_last_init_time",
-    last_destroy_type = "c4bridge_last_destroy_type",
-    last_destroy_time = "c4bridge_last_destroy_time",
+    reload_count = "directorlink_reload_count",
+    last_init_type = "directorlink_last_init_type",
+    last_init_time = "directorlink_last_init_time",
+    last_destroy_type = "directorlink_last_destroy_type",
+    last_destroy_time = "directorlink_last_destroy_time",
 }
 
 -- Composer's "Log Level" list uses these labels.
@@ -64,15 +62,6 @@ local function lifecycle()
     return snapshot
 end
 
-local function updateLifecycleProperties()
-    local snapshot = lifecycle()
-    updateProperty("Reload Counter", snapshot.reload_count or "0")
-    updateProperty("Last Init Type", snapshot.last_init_type)
-    updateProperty("Last Init Time", snapshot.last_init_time)
-    updateProperty("Last Destroy Type", snapshot.last_destroy_type)
-    updateProperty("Last Destroy Time", snapshot.last_destroy_time)
-end
-
 local function setStatus(status, detail)
     STATE.status = status
     STATE.detail = detail
@@ -94,7 +83,6 @@ local services = {
     adapters = AdapterManager,
     keys = Keys,
     pairing = Pairing,
-    approvals = Approvals,
     log = Log,
     startedAt = os.time(),
     controllerVersion = nil,
@@ -111,7 +99,7 @@ local services = {
         updateProperty("Log Level", COMPOSER_LEVEL[level] or "Info")
     end,
     onServerStatus = function(online, status)
-        updateProperty("API Status", online and "Online" or ("Offline (" .. status .. ")"))
+        updateProperty("API Status", online and ("Online - port " .. Api.PORT) or ("Offline (" .. status .. ")"))
     end,
 }
 
@@ -123,63 +111,6 @@ local function readControllerVersion()
         return info.version
     end
     return nil
-end
-
-local function locationText(metadata)
-    local properties = metadata.properties or {}
-    local parts = {}
-    for _, name in ipairs({ "CityName", "CountryCode" }) do
-        if properties[name] and tostring(properties[name]) ~= "" then
-            parts[#parts + 1] = tostring(properties[name])
-        end
-    end
-    return table.concat(parts, ", ")
-end
-
-local SHOW_BUTTON_ATTEMPTS = 6
-local SHOW_BUTTON_DELAY_MS = 5000
-
-local showAccessButton
-
-local function retryShowAccessButton(attempt)
-    pcall(function()
-        C4:SetTimer(SHOW_BUTTON_DELAY_MS, function()
-            showAccessButton(attempt)
-        end, false)
-    end)
-end
-
--- Makes the C4Bridge Access button visible in the Security section of its room in the Control4
--- app, as Composer's Navigators view would. Runs after the driver is first added, and on demand.
-showAccessButton = function(attempt)
-    attempt = attempt or 1
-    local ok, devices = pcall(function()
-        return C4:GetDevices({})
-    end)
-    local bridgeId = tonumber((pcall(function() return C4:GetDeviceID() end)) and C4:GetDeviceID())
-    local buttonId, roomId = Navigator.findAccessButton(bridgeId, ok and devices or nil)
-
-    local result, reason
-    if buttonId and roomId then
-        result, reason = Navigator.showInSecurity(roomId, buttonId)
-    else
-        reason = "not_listed"
-    end
-
-    if result then
-        Log.info("navigator", result == "made_visible"
-            and "C4Bridge Access is now visible in the Control4 app (Security)"
-            or "C4Bridge Access is already visible in the Control4 app", { room_id = roomId, button_id = buttonId })
-    elseif reason == "not_listed" and attempt < SHOW_BUTTON_ATTEMPTS then
-        retryShowAccessButton(attempt + 1)
-    else
-        Log.warn("navigator", "could not show C4Bridge Access in the Control4 app; make it visible in Composer (Navigators, Security)", {
-            reason = reason,
-            room_id = roomId,
-            button_id = buttonId,
-        })
-    end
-    return result, reason
 end
 
 local function fail(message)
@@ -207,7 +138,6 @@ local function discover()
     AdapterManager.initialize(Registry)
 
     local counts = Registry.counts()
-    updateProperty("Location", locationText(Registry.metadata))
     updateProperty("Inventory", string.format(
         "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays",
         counts.rooms,
@@ -248,12 +178,9 @@ end
 
 function OnDriverLateInit(driverInitType)
     updateProperty("Version", Version.BRIDGE_VERSION)
-    updateProperty("Controller OS", STATE.controllerVersion or "Unknown")
-    updateProperty("API Port", Api.PORT)
-    updateLifecycleProperties()
 
     if not STATE.supported then
-        setStatus("error", "Unsupported controller OS (C4Bridge requires 3.3.0 or newer)")
+        setStatus("error", "Unsupported controller OS (DirectorLink requires 3.3.0 or newer)")
         updateProperty("API Status", "Disabled")
         return
     end
@@ -262,8 +189,11 @@ function OnDriverLateInit(driverInitType)
     RoomNames.load()
     publishKeyCount()
 
+    -- A driver without keys (just added, or all keys revoked) offers a pairing code right away;
+    -- otherwise codes are created on demand with the New Pairing Code action.
     local pairingOk, pairingError = Pairing.initialize({
         log = Log,
+        openNow = Keys.count() == 0,
         onChange = function(code, status)
             updateProperty("Pairing Code", code)
             updateProperty("Pairing Status", status)
@@ -273,13 +203,6 @@ function OnDriverLateInit(driverInitType)
         Log.error("auth", "pairing is unavailable", { error = tostring(pairingError) })
     end
 
-    Approvals.initialize({
-        log = Log,
-        onChange = function(text)
-            updateProperty("Access Request", text)
-        end,
-    })
-
     -- Start the API before discovery so health and logs stay reachable if discovery fails.
     Api.init(services)
     local started = Api.start()
@@ -287,11 +210,6 @@ function OnDriverLateInit(driverInitType)
 
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
     discover()
-
-    -- New buttons are hidden in the Control4 app; show ours once, when the driver is added.
-    if tostring(driverInitType) == "DIT_ADDING" then
-        retryShowAccessButton(1)
-    end
 end
 
 function ExecuteCommand(command, params)
@@ -299,24 +217,11 @@ function ExecuteCommand(command, params)
         return
     end
     if params.ACTION == "NEW_PAIRING_CODE" then
-        Pairing.rotate()
-    elseif params.ACTION == "SHOW_ACCESS_BUTTON" then
-        showAccessButton(SHOW_BUTTON_ATTEMPTS)
+        Pairing.open()
     elseif params.ACTION == "REVOKE_API_KEYS" then
         local count = Keys.revokeAll()
         publishKeyCount()
         Log.warn("auth", "all API keys revoked from Composer", { count = count })
-    end
-end
-
--- The "C4Bridge Access" button in the Control4 app approves a waiting access request.
-function ReceivedFromProxy(idBinding, strCommand, tParams)
-    if tonumber(idBinding) == Approvals.BUTTON_BINDING then
-        if strCommand == "SELECT" then
-            Approvals.onButtonPressed()
-        else
-            Log.debug("auth", "access button command ignored", { command = tostring(strCommand) })
-        end
     end
 end
 
@@ -335,7 +240,7 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     AdapterManager.onVariableChanged(idDevice, idVariable, strValue)
 end
 
--- Events of devices C4Bridge registered with C4:RegisterDeviceEvent (relay opened/closed).
+-- Events of devices DirectorLink registered with C4:RegisterDeviceEvent (relay opened/closed).
 function OnDeviceEvent(firingDevice, eventId)
     AdapterManager.onDeviceEvent(firingDevice, eventId)
 end

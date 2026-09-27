@@ -53,9 +53,9 @@ def driver_routes():
 def check_operation(key, operation, public, role):
     label = f"{key[0]} {key[1]}"
     if not public:
-        spec_role = operation.get("x-c4bridge-role")
+        spec_role = operation.get("x-directorlink-role")
         if spec_role != role:
-            fail(f"{label}: x-c4bridge-role is {spec_role!r} in the spec but {role!r} in routes.lua")
+            fail(f"{label}: x-directorlink-role is {spec_role!r} in the spec but {role!r} in routes.lua")
         if role != "viewer" and "403" not in operation.get("responses", {}):
             fail(f"{label} needs the {role} role but does not document 403")
     for field in ("operationId", "summary", "tags"):

@@ -1,4 +1,4 @@
-name: Validate C4Bridge
+name: Validate DirectorLink
 
 on:
   push:
@@ -14,6 +14,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,16 +49,19 @@ jobs:
         run: python scripts/check_package.py
 
       - name: Show package checksums
-        run: (cd dist && sha256sum C4Bridge.c4z openapi.json)
+        run: (cd dist && sha256sum DirectorLink.c4z openapi.json)
 
       - name: Check live responses against the API spec
         run: python scripts/check_contract.py
 
-      - name: Validate web app
-        run: python scripts/check_web.py
+      - name: Validate app
+        run: python scripts/check_app.py
 
-      - name: Check web JavaScript syntax
-        run: for file in web/*.js; do node --check "$file"; done
+      - name: Validate console and website
+        run: python scripts/check_sites.py
 
-      - name: Run web tests (offline service worker)
-        run: node --test tests/web/*.test.mjs
+      - name: Check JavaScript syntax (app and console)
+        run: find app console -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Run app tests (offline service worker)
+        run: node --test tests/app/*.test.mjs

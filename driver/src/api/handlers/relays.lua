@@ -22,7 +22,7 @@ end
 local function run(ctx, device, action)
     if not ctx.services.doorControlEnabled() then
         return Problem.new(403, "DOOR_CONTROL_DISABLED",
-            "Door control is off; turn on the Door Control property of C4Bridge in Composer")
+            "Door control is off; turn on the Door Control property of DirectorLink in Composer")
     end
     local ok, failure = ctx.services.adapters.execute(device.id, action)
     if not ok then

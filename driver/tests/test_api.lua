@@ -32,9 +32,14 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.truthy(mock.servers[41999], "API server created on port 41999")
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
-    T.eq(mock.properties["API Status"], "Online")
+    T.eq(mock.properties["API Status"], "Online - port 41999")
     T.eq(mock.properties["Inventory"], "2 rooms, 10 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays")
-    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d%d%d%d%d$"), "pairing code shown")
+    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a new driver offers a code, shown as 1234 5678")
+    T.contains(mock.properties["Pairing Status"], "Ready until")
+    for _, removed in ipairs({ "Controller OS", "Location", "API Port", "Access Request", "Reload Counter",
+        "Last Init Type", "Last Init Time", "Last Destroy Type", "Last Destroy Time" }) do
+        T.eq(mock.properties[removed], nil, removed .. " is no longer a Composer property")
+    end
 end
 
 function tests.health_and_api_description_are_public()
@@ -65,27 +70,59 @@ function tests.protected_routes_need_a_valid_key()
     T.eq(T.http(mock, "GET", "/v1/system", { headers = { Authorization = "Basic abc" } }).status, 401)
 end
 
-function tests.pairing_issues_a_key_and_rotates_the_code()
+function tests.pairing_code_works_once_and_gives_admin()
     local mock = Mock.startDriver()
-    local code = mock.properties["Pairing Code"]
+    local shown = mock.properties["Pairing Code"]
 
-    local wrong = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "00000000" } })
+    local wrong = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "0000 0000" } })
     T.eq(wrong.status, 403)
     T.eq(wrong.json.code, "PAIRING_CODE_INVALID")
     T.eq(wrong.json.attempts_remaining, 4)
 
-    local paired = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = code, name = "Chrome" } })
-    T.eq(paired.status, 201)
+    local paired = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = shown, name = "Chrome" } })
+    T.eq(paired.status, 201, "the code is accepted as Composer shows it, with the space")
     T.eq(paired.json.name, "Chrome")
+    T.eq(paired.json.role, "admin")
     T.truthy(paired.json.key:match("^ak_%x+$"), "key format")
     T.truthy(paired.json.id:match("^%x%x%x%x%x%x%x%x$"), "key id format")
     T.eq(mock.properties["API Keys"], "1")
 
-    T.truthy(mock.properties["Pairing Code"] ~= code, "code rotated after use")
-    local reused = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = code } })
+    T.eq(mock.properties["Pairing Code"], "-", "no code after use")
+    T.contains(mock.properties["Pairing Status"], "Used at")
+    local reused = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = shown } })
     T.eq(reused.status, 403, "a used code cannot pair again")
+    T.eq(reused.json.code, "PAIRING_NOT_ACTIVE")
 
     T.eq(T.http(mock, "GET", "/v1/system", { key = paired.json.key }).status, 200)
+end
+
+function tests.pairing_codes_are_created_on_demand_and_expire()
+    local mock = Mock.startDriver()
+    T.pair(mock, "Owner")
+    -- A driver that already has keys starts without a code.
+    local restarted = Mock.startDriver()
+    for name, value in pairs(mock.persist) do
+        restarted.persist[name] = value
+    end
+    OnDriverLateInit("DIT_UPDATING")
+    T.eq(restarted.properties["Pairing Code"], "-")
+    T.contains(restarted.properties["Pairing Status"], "New Pairing Code")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = "12345678" } }).json.code, "PAIRING_NOT_ACTIVE")
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local code = restarted.properties["Pairing Code"]
+    T.truthy(code:match("^%d%d%d%d %d%d%d%d$"), "New Pairing Code shows a code")
+    local expiry = restarted.timers[#restarted.timers]
+    T.eq(expiry.delay, 15 * 60 * 1000, "valid for 15 minutes")
+    expiry.callback()
+    T.eq(restarted.properties["Pairing Code"], "-")
+    T.contains(restarted.properties["Pairing Status"], "Expired")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = code } }).json.code, "PAIRING_NOT_ACTIVE")
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local dashed = restarted.properties["Pairing Code"]:gsub(" ", "-")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = dashed, name = "Tablet" } }).status, 201,
+        "a dash works too")
 end
 
 function tests.pairing_is_rate_limited()
@@ -97,6 +134,7 @@ function tests.pairing_is_rate_limited()
     T.eq(response.status, 429)
     T.eq(response.json.code, "PAIRING_RATE_LIMITED")
     T.eq(response.headers["retry-after"], "60")
+    T.eq(response.json.retry_after, 60, "the wait is in the body too")
     local locked = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = mock.properties["Pairing Code"] } })
     T.eq(locked.status, 429, "even the right code waits for the lock")
 end
@@ -104,6 +142,8 @@ end
 function tests.pairing_validates_its_body()
     local mock = Mock.startDriver()
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "123" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "1234 567a" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = 12345678 } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { code = "12345678" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = "[1]" }).json.code, "INVALID_REQUEST")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = "{nope" }).json.code, "INVALID_JSON")
@@ -542,7 +582,7 @@ end
 function tests.keys_from_before_roles_keep_full_access()
     local project = Mock.project()
     local mock = Mock.install(project)
-    mock.persist["c4bridge_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
+    mock.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
     local restarted = Mock.startDriver(project)
     for name, value in pairs(mock.persist) do
         restarted.persist[name] = value
@@ -553,13 +593,10 @@ function tests.keys_from_before_roles_keep_full_access()
     T.eq(me.json.role, "admin")
 end
 
-function tests.later_access_requests_default_to_member()
-    local mock, admin = start()
-    local created = T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Kid's phone" } })
-    T.eq(created.json.role, "member")
-    T.contains(mock.properties["Access Request"], "as member")
-    T.http(mock, "DELETE", "/v1/auth/requests/" .. created.json.id)
-    T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Guest", role = "viewer" } }).json.role, "viewer")
+function tests.access_requests_are_gone()
+    local mock = start()
+    T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Phone" } }).status, 404)
+    T.eq(mock.properties["Access Request"], nil)
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()
@@ -584,7 +621,7 @@ end
 
 function tests.keys_survive_a_driver_restart()
     local mock, key = start()
-    local persisted = mock.persist["c4bridge_api_keys"]
+    local persisted = mock.persist["directorlink_api_keys"]
     T.truthy(persisted and persisted:find(key, 1, true), "key stored in encrypted persistence")
 
     local project = Mock.project()
@@ -647,16 +684,21 @@ function tests.secrets_never_reach_the_log()
     T.notContains(everything, code, "pairing code in driver log")
 end
 
-function tests.cors_allows_the_web_app_and_rejects_other_origins()
+function tests.cors_allows_the_app_and_console_and_rejects_other_origins()
     local mock, key = start()
-    local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.c4bridge.io" } })
+    local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.directorlink.io" } })
     T.eq(preflight.status, 204)
-    T.eq(preflight.headers["access-control-allow-origin"], "https://app.c4bridge.io")
+    T.eq(preflight.headers["access-control-allow-origin"], "https://app.directorlink.io")
     T.contains(preflight.headers["access-control-allow-methods"], "PATCH")
     T.eq(preflight.headers["access-control-allow-private-network"], "true")
 
-    local fromApp = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.c4bridge.io" } })
-    T.eq(fromApp.headers["access-control-allow-origin"], "https://app.c4bridge.io")
+    local fromApp = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.directorlink.io" } })
+    T.eq(fromApp.headers["access-control-allow-origin"], "https://app.directorlink.io")
+    T.eq(fromApp.headers["access-control-expose-headers"], "Retry-After")
+    local fromConsole = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://console.directorlink.io" } })
+    T.eq(fromConsole.headers["access-control-allow-origin"], "https://console.directorlink.io")
+    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.c4bridge.io" } }).status, 403,
+        "the old app is retired")
     T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://localhost:8080" } }).status, 200)
 
     local evil = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://evil.example" } })

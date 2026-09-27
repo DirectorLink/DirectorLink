@@ -16,7 +16,7 @@ https://control4.github.io/docs-driverworks-api/#getprojecthierarchy
 
 ## Initialization
 
-Project-wide discovery APIs should not be used during `OnDriverInit`. C4Bridge performs project discovery during `OnDriverLateInit`.
+Project-wide discovery APIs should not be used during `OnDriverInit`. DirectorLink performs project discovery during `OnDriverLateInit`.
 
 Reference:
 https://control4.github.io/docs-driverworks-api/#safe-usage-of-ondriverinit-and-ondriverlateinit
@@ -30,16 +30,16 @@ https://control4.github.io/docs-driverworks-api/
 
 ## External Director REST API
 
-Other community projects use Director's local `/api/v1` HTTP interface. C4Bridge does **not** use it as the core architecture.
+Other community projects use Director's local `/api/v1` HTTP interface. DirectorLink does **not** use it as the core architecture.
 
 Reason:
-C4Bridge already executes inside Director and can use DriverWorks directly. This avoids making the core dependent on external Director REST authentication/JWT behavior.
+DirectorLink already executes inside Director and can use DriverWorks directly. This avoids making the core dependent on external Director REST authentication/JWT behavior.
 
 Projects reviewed for research only:
 - https://github.com/New-Forest-Technology-Services/Control4-MCP
 - https://github.com/lawtancool/pyControl4
 
-No C4Bridge runtime dependency should be added on either project.
+No DirectorLink runtime dependency should be added on either project.
 
 ## Packaging
 
@@ -59,7 +59,7 @@ https://docs.control4.com/help/c4/software/cpro/dealer-composer-help/content/com
 
 ## Cloudflare Pages
 
-Cloudflare Pages supports GitHub-connected projects and preview deployments. For a framework-free static site, C4Bridge uses:
+Cloudflare Pages supports GitHub-connected projects and preview deployments. For a framework-free static site, DirectorLink uses:
 
 - root directory: `web`
 - build command: `exit 0`
@@ -72,7 +72,7 @@ References:
 
 ## Browser Local Network Access
 
-C4Bridge's public HTTPS PWA must connect to a private/local Director address. Chromium's Local Network Access model gates these requests behind browser permission. Private IP literals and `.local` hostnames are recognized as local-network targets; fetch also supports the `targetAddressSpace` hint in Chromium.
+DirectorLink's public HTTPS PWA must connect to a private/local Director address. Chromium's Local Network Access model gates these requests behind browser permission. Private IP literals and `.local` hostnames are recognized as local-network targets; fetch also supports the `targetAddressSpace` hint in Chromium.
 
 WebSocket local-network restrictions are also covered by the Local Network Access model in current Chromium releases.
 
@@ -83,9 +83,9 @@ References:
 
 ## Browser-to-Director HTTP transport
 
-DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10 and can accept multiple TCP clients. C4Bridge alpha.2 uses it as a small HTTP/1.1 server with header delimiter `\r\n\r\n`.
+DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10 and can accept multiple TCP clients. DirectorLink alpha.2 uses it as a small HTTP/1.1 server with header delimiter `\r\n\r\n`.
 
-C4Bridge minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
+DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
 
 Reference:
 - https://control4.github.io/docs-driverworks-api/
@@ -107,7 +107,7 @@ Control4's Light V2 proxy defines:
 - `SET_BRIGHTNESS_TARGET` as the current brightness control command
 - `LIGHT_BRIGHTNESS_TARGET_PRESET_ID` can be used for static On/Off preset targets and is validated on the real test system
 - Control4's official sample Light V2 protocol driver handles `SET_BRIGHTNESS_TARGET` by reading `tParams.LIGHT_BRIGHTNESS_TARGET` and `tParams.RATE`
-- `RATE = 0` is used by C4Bridge for an immediate explicit brightness change
+- `RATE = 0` is used by DirectorLink for an immediate explicit brightness change
 - `C4:SendToDevice(proxyId, command, params)` for sending a command to another project device
 - `C4:RegisterVariableListener(deviceId, variableId)` plus `OnWatchedVariableChanged` for live state updates
 
@@ -132,34 +132,34 @@ SET_BRIGHTNESS_TARGET
 PERCENT = <0..100>
 ```
 
-C4Bridge alpha.5 was sending a different parameter shape and the light did not change. Alpha.6 therefore uses the exact `PERCENT` parameter observed in the working Director path.
+DirectorLink alpha.5 was sending a different parameter shape and the light did not change. Alpha.6 therefore uses the exact `PERCENT` parameter observed in the working Director path.
 
 ### Driver update/reload
 
 The Director filesystem contained both:
 
 ```text
-C4Bridge.c4z
-C4Bridge (1).c4z
+DirectorLink.c4z
+DirectorLink (1).c4z
 ```
 
-and after reboot the project instance loaded `C4Bridge (1).c4z`.
+and after reboot the project instance loaded `DirectorLink (1).c4z`.
 
-This indicates repeated browser downloads with Windows filename suffixes can create a second Control4 driver filename instead of replacing the canonical package. The update test procedure now requires selecting a file named exactly `C4Bridge.c4z`.
+This indicates repeated browser downloads with Windows filename suffixes can create a second Control4 driver filename instead of replacing the canonical package. The update test procedure now requires selecting a file named exactly `DirectorLink.c4z`.
 
 Alpha.6 also adds lifecycle diagnostics so the next update test can distinguish `DIT_UPDATING` from `DIT_STARTUP`.
 
 
 ## Alpha.6 KNX dimmer snapshot
 
-The alpha.6 snapshot proved C4Bridge itself reached the tested KNX dimmer path correctly. For example, C4Bridge sent `SET_BRIGHTNESS_TARGET` with `PERCENT=48` to proxy 459 and Director immediately sent a payload to the KNX Tunneling Gateway.
+The alpha.6 snapshot proved DirectorLink itself reached the tested KNX dimmer path correctly. For example, DirectorLink sent `SET_BRIGHTNESS_TARGET` with `PERCENT=48` to proxy 459 and Director immediately sent a payload to the KNX Tunneling Gateway.
 
 The same snapshot showed an observable serialization difference:
 
-- C4Bridge via `C4:SendToDevice`: `PERCENT` serialized as XML `type="INT"`
+- DirectorLink via `C4:SendToDevice`: `PERCENT` serialized as XML `type="INT"`
 - Control4 app via Director broker REST: `PERCENT` serialized as XML `type="number"`
 
-The physical KNX dimmer responds to the Control4 app path but not the C4Bridge DriverWorks path.
+The physical KNX dimmer responds to the Control4 app path but not the DirectorLink DriverWorks path.
 
 Control4's DriverWorks API documentation explicitly demonstrates driver-to-light dimming using:
 

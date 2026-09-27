@@ -2,7 +2,7 @@
 -- Protocol (hex keeps it binary-safe through text-mode pipes on Windows):
 --   in:  "<handle> <hex bytes>\n"   (empty hex = the client disconnected)
 --   out: "<closed 0|1> <hex response bytes>\n"
---   in:  "press\n" presses the C4Bridge Access button; out: "0 \n"
+--   in:  "code\n" runs the Composer action New Pairing Code; out: "CODE <code>\n"
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -39,9 +39,9 @@ io.flush()
 
 local offsets = {}
 for line in io.lines() do
-    if line:match("^press") then
-        ReceivedFromProxy(5001, "SELECT", {})
-        io.write("0 \n")
+    if line:match("^code") then
+        ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+        io.write("CODE " .. tostring(mock.properties["Pairing Code"]) .. "\n")
         io.flush()
     end
     local handle, hex = line:match("^(%d+) ?(%x*)$")

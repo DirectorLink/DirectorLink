@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Serves the real C4Bridge driver on localhost against a fake Director.
+"""Serves the real DirectorLink driver on localhost against a fake Director.
 
-The driver runs in Lua 5.1 with driver/tests/c4mock.lua standing in for Director, so the web app
+The driver runs in Lua 5.1 with driver/tests/c4mock.lua standing in for Director, so the app
 and API clients can be developed without a controller:
 
     python scripts/build.py                        # optional: serve the real API description
     python scripts/dev_server.py                   # API on http://localhost:41999
-    python -m http.server 8080 --directory web     # web app; use "localhost" as the controller
+    python -m http.server 8080 --directory app     # app; use "localhost" as the controller
 
-The fake project has two rooms, three lights, one thermostat, two blinds and two cameras. The pairing code is printed at start;
-type "press" and Enter to press the C4Bridge Access button (approves a waiting access request).
+The fake project has two rooms, three lights, one thermostat, two blinds, two cameras and a door relay.
+The pairing code is printed at start (valid 15 minutes, works once); type "code" and Enter for a new
+one, as the Composer action New Pairing Code would.
 """
 
 import argparse
@@ -47,12 +48,13 @@ class Bridge:
             self.handles += 1
             return self.handles
 
-    def press_access_button(self):
-        """Simulates pressing C4Bridge Access in the Control4 app."""
+    def new_pairing_code(self):
+        """Runs the Composer action New Pairing Code; returns the code as Composer shows it."""
         with self.lock:
-            self.process.stdin.write("press\n")
+            self.process.stdin.write("code\n")
             self.process.stdin.flush()
-            self.process.stdout.readline()
+            self.pairing_code = self.process.stdout.readline().strip().partition(" ")[2]
+            return self.pairing_code
 
     def exchange(self, handle, data):
         with self.lock:
@@ -96,17 +98,16 @@ def main():
     spec = ROOT / "dist" / "openapi.json"
     bridge = Bridge(args.lua, spec if spec.is_file() else None)
     with Server(("127.0.0.1", args.port), make_handler(bridge)) as server:
-        print(f"C4Bridge dev server on http://localhost:{args.port} (fake Director)")
+        print(f"DirectorLink dev server on http://localhost:{args.port} (fake Director)")
         print(f"Pairing code: {bridge.pairing_code}")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "press" + Enter to press the C4Bridge Access button.')
+        print('Type "code" + Enter for a new pairing code.')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
-                if line.strip() == "press":
-                    bridge.press_access_button()
-                    print("C4Bridge Access pressed")
+                if line.strip() == "code":
+                    print(f"Pairing code: {bridge.new_pairing_code()}")
         except KeyboardInterrupt:
             pass
         server.shutdown()
