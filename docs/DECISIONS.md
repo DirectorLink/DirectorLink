@@ -173,11 +173,13 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **First key (0.2.0):** exchange the 8-digit Composer pairing code at `POST /v1/auth/pair` (15-minute code, rotated after use, 5 failures per minute lock pairing for 60 seconds).
 
-**Since 0.3.0:** the first key comes from approval in the Control4 app: the driver adds a **DirectorLink Access** experience button (a `uibutton` proxy on binding 5001); a client calls `POST /v1/auth/requests`, the homeowner presses the button within 2 minutes, and the client collects its key once with the secret request id. One request waits at a time, 5 per 10 minutes. The Composer pairing code stays as a fallback.
+**0.3.0–0.7.0 (replaced by ADR-027):** the first key came from approval in the Control4 app: the driver adds a **DirectorLink Access** experience button (a `uibutton` proxy on binding 5001); a client calls `POST /v1/auth/requests`, the homeowner presses the button within 2 minutes, and the client collects its key once with the secret request id. One request waits at a time, 5 per 10 minutes. The Composer pairing code stays as a fallback.
 
 **Why keys and not an open LAN API:** the API can operate door, gate and garage relays through KNX; without a key anything on the home network could.
 
 ## ADR-024 — DirectorLink is a protocol driver with a button proxy, not a combo driver
+
+**Superseded by ADR-027 (0.8.0):** with the button gone, DirectorLink is a combo driver again.
 
 **Decision (0.3.0):** `driver.xml` declares no `<combo>`; the DirectorLink protocol device runs the Lua code and owns one `uibutton` proxy on binding 5001 (**DirectorLink Access**).
 
@@ -212,3 +214,11 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision (0.8.0):** The project, driver and API are named **DirectorLink** (slogan: *Direct to Director. End-to-end integration. Open source.*), on `directorlink.io`. The driver package is `DirectorLink.c4z` and its button **DirectorLink Access**. The repository holds three static sites, each its own Cloudflare Worker with a custom domain: `app/` (formerly `web/`) on `app.directorlink.io`, `console/` (API console, debugging, logs, key management) on `console.directorlink.io`, and `site/` (landing page) on `directorlink.io`. GitHub Actions deploys them (`deploy.yml`) instead of dashboard-configured builds, so the deployment is part of the repository. Past release notes and the validation log keep the old name as written.
 
 **Consequence:** Control4 sees DirectorLink as a different driver: moving from C4Bridge means removing it and adding DirectorLink, so API keys, room names and the Door Control setting start fresh. The driver's CORS allowlist is the two new sites plus localhost; the old `app.c4bridge.io` no longer reaches a DirectorLink controller.
+
+## ADR-027 — Owners pair once with an on-demand code; everyone else is invited
+
+**Context:** 0.3.0–0.7.0 approved each new browser with a button in the Control4 app. That needed a child proxy (so DirectorLink could not be a single device), a workaround to make the button visible, and an approval for every phone. With accounts and remote access coming, only the owner should ever need to prove control of the project.
+
+**Decision (0.8.0):** The button and access requests are removed; DirectorLink is again a single self-contained device (combo driver with its own proxy). The first key comes from a pairing code created on demand with the Composer action **New Pairing Code** (automatically while the driver has no keys): shown as `1234 5678`, valid 15 minutes, works once, rate-limited (5 wrong codes → 60 s lock), and always `admin` — Composer access already means full control. Further keys are created by an admin. With remote access (planned): the owner signs in with Google or Apple and claims the home on the LAN with a pairing code; family members join by an invitation tied to the invited email (single use, 7 days; the owner approves when the accepting account's email differs); roles are the same as for API keys. Home-network use without an account stays possible.
+
+**Consequence:** Installers read the code for homeowners without Composer. Replaces the approval flow of ADR-021 and the protocol-driver-with-button layout of ADR-024. The Composer properties are reduced to what an installer needs; the load history moves to `GET /v1/system` and the console.

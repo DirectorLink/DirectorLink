@@ -143,13 +143,6 @@ local function encode(status, payload)
     return "application/json; charset=utf-8", body
 end
 
--- Paths that carry a secret (an access request id) are logged as their route template.
-local function loggedPath(request, route)
-    if route and route.path:find("{requestId}", 1, true) then
-        return route.path
-    end
-    return request.path
-end
 
 local function logAccess(request, route, status, client, started, apiKey)
     local level = "debug"
@@ -158,7 +151,7 @@ local function logAccess(request, route, status, client, started, apiKey)
     elseif status >= 400 then
         level = "info"
     end
-    services.log.write(level, "api", request.method .. " " .. loggedPath(request, route) .. " -> " .. tostring(status), {
+    services.log.write(level, "api", request.method .. " " .. request.path .. " -> " .. tostring(status), {
         client = client and client.ip or Json.null,
         duration_ms = Clock.millis() - started,
         key_id = apiKey and apiKey.id or Json.null,

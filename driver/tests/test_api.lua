@@ -32,9 +32,14 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.truthy(mock.servers[41999], "API server created on port 41999")
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
-    T.eq(mock.properties["API Status"], "Online")
+    T.eq(mock.properties["API Status"], "Online - port 41999")
     T.eq(mock.properties["Inventory"], "2 rooms, 10 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays")
-    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d%d%d%d%d$"), "pairing code shown")
+    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a new driver offers a code, shown as 1234 5678")
+    T.contains(mock.properties["Pairing Status"], "Ready until")
+    for _, removed in ipairs({ "Controller OS", "Location", "API Port", "Access Request", "Reload Counter",
+        "Last Init Type", "Last Init Time", "Last Destroy Type", "Last Destroy Time" }) do
+        T.eq(mock.properties[removed], nil, removed .. " is no longer a Composer property")
+    end
 end
 
 function tests.health_and_api_description_are_public()
@@ -65,27 +70,59 @@ function tests.protected_routes_need_a_valid_key()
     T.eq(T.http(mock, "GET", "/v1/system", { headers = { Authorization = "Basic abc" } }).status, 401)
 end
 
-function tests.pairing_issues_a_key_and_rotates_the_code()
+function tests.pairing_code_works_once_and_gives_admin()
     local mock = Mock.startDriver()
-    local code = mock.properties["Pairing Code"]
+    local shown = mock.properties["Pairing Code"]
 
-    local wrong = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "00000000" } })
+    local wrong = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "0000 0000" } })
     T.eq(wrong.status, 403)
     T.eq(wrong.json.code, "PAIRING_CODE_INVALID")
     T.eq(wrong.json.attempts_remaining, 4)
 
-    local paired = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = code, name = "Chrome" } })
-    T.eq(paired.status, 201)
+    local paired = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = shown, name = "Chrome" } })
+    T.eq(paired.status, 201, "the code is accepted as Composer shows it, with the space")
     T.eq(paired.json.name, "Chrome")
+    T.eq(paired.json.role, "admin")
     T.truthy(paired.json.key:match("^ak_%x+$"), "key format")
     T.truthy(paired.json.id:match("^%x%x%x%x%x%x%x%x$"), "key id format")
     T.eq(mock.properties["API Keys"], "1")
 
-    T.truthy(mock.properties["Pairing Code"] ~= code, "code rotated after use")
-    local reused = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = code } })
+    T.eq(mock.properties["Pairing Code"], "-", "no code after use")
+    T.contains(mock.properties["Pairing Status"], "Used at")
+    local reused = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = shown } })
     T.eq(reused.status, 403, "a used code cannot pair again")
+    T.eq(reused.json.code, "PAIRING_NOT_ACTIVE")
 
     T.eq(T.http(mock, "GET", "/v1/system", { key = paired.json.key }).status, 200)
+end
+
+function tests.pairing_codes_are_created_on_demand_and_expire()
+    local mock = Mock.startDriver()
+    T.pair(mock, "Owner")
+    -- A driver that already has keys starts without a code.
+    local restarted = Mock.startDriver()
+    for name, value in pairs(mock.persist) do
+        restarted.persist[name] = value
+    end
+    OnDriverLateInit("DIT_UPDATING")
+    T.eq(restarted.properties["Pairing Code"], "-")
+    T.contains(restarted.properties["Pairing Status"], "New Pairing Code")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = "12345678" } }).json.code, "PAIRING_NOT_ACTIVE")
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local code = restarted.properties["Pairing Code"]
+    T.truthy(code:match("^%d%d%d%d %d%d%d%d$"), "New Pairing Code shows a code")
+    local expiry = restarted.timers[#restarted.timers]
+    T.eq(expiry.delay, 15 * 60 * 1000, "valid for 15 minutes")
+    expiry.callback()
+    T.eq(restarted.properties["Pairing Code"], "-")
+    T.contains(restarted.properties["Pairing Status"], "Expired")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = code } }).json.code, "PAIRING_NOT_ACTIVE")
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local dashed = restarted.properties["Pairing Code"]:gsub(" ", "-")
+    T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = dashed, name = "Tablet" } }).status, 201,
+        "a dash works too")
 end
 
 function tests.pairing_is_rate_limited()
@@ -104,6 +141,8 @@ end
 function tests.pairing_validates_its_body()
     local mock = Mock.startDriver()
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "123" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "1234 567a" } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = 12345678 } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { code = "12345678" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = "[1]" }).json.code, "INVALID_REQUEST")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = "{nope" }).json.code, "INVALID_JSON")
@@ -553,13 +592,10 @@ function tests.keys_from_before_roles_keep_full_access()
     T.eq(me.json.role, "admin")
 end
 
-function tests.later_access_requests_default_to_member()
-    local mock, admin = start()
-    local created = T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Kid's phone" } })
-    T.eq(created.json.role, "member")
-    T.contains(mock.properties["Access Request"], "as member")
-    T.http(mock, "DELETE", "/v1/auth/requests/" .. created.json.id)
-    T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Guest", role = "viewer" } }).json.role, "viewer")
+function tests.access_requests_are_gone()
+    local mock = start()
+    T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Phone" } }).status, 404)
+    T.eq(mock.properties["Access Request"], nil)
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()

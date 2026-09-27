@@ -35,6 +35,8 @@
 - [x] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
 - [x] Key roles (viewer, member, doors, admin) and the Composer Door Control switch (0.7.0)
 - [x] Renamed to DirectorLink; app, console and website on directorlink.io (0.8.0)
+- [x] Pair once with an on-demand code (New Pairing Code, 15 minutes, one use); the Access button and access requests are gone (0.8.0)
+- [ ] Remote access: Google/Apple accounts, claim a home on the LAN with a pairing code, invitations by email, cloud relay
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA

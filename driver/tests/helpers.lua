@@ -98,7 +98,12 @@ function T.http(mock, method, path, options)
 end
 
 -- Pairs with the code currently shown in the Composer property and returns the API key.
+-- Pairs like a homeowner: creates a code with the Composer action when none is active, then
+-- sends it as Composer shows it ("1234 5678").
 function T.pair(mock, name)
+    if not tostring(mock.properties["Pairing Code"] or ""):match("^%d%d%d%d %d%d%d%d$") then
+        ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    end
     local response = T.http(mock, "POST", "/v1/auth/pair", {
         body = { pairing_code = mock.properties["Pairing Code"], name = name or "Test client" },
     })

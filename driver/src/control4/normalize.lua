@@ -137,7 +137,7 @@ function Normalize.devices(rawDevices, bridgeDeviceId)
 
     for rawId, raw in pairs(rawDevices or {}) do
         local id = toId(rawId)
-        -- DirectorLink's own proxies (the DirectorLink Access button) are not homeowner devices.
+        -- DirectorLink's own proxies are not homeowner devices.
         local ownProxy = bridgeDeviceId ~= nil and type(raw) == "table" and type(raw.protocol) == "table"
             and (raw.protocol[bridgeDeviceId] ~= nil or raw.protocol[tostring(bridgeDeviceId)] ~= nil)
         if id and id ~= bridgeDeviceId and not ownProxy and type(raw) == "table" then

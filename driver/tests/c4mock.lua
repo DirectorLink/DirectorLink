@@ -104,11 +104,6 @@ function Mock.project()
             },
             [572] = {
                 deviceName = "DirectorLink", driverFileName = "DirectorLink.c4z", roomId = 10, roomName = "Kitchen",
-                proxies = { [574] = { deviceName = "DirectorLink Access", driverFileName = "uibutton.c4i" } },
-            },
-            [574] = {
-                deviceName = "DirectorLink Access", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
-                protocol = { [572] = { deviceName = "DirectorLink", driverFileName = "DirectorLink.c4z" } },
             },
         },
         variables = {
@@ -158,9 +153,6 @@ function Mock.install(project)
         closed = {},
         commands = {},
         proxy = {},
-        -- Security lists of room 10 (Kitchen): a cameras shortcut and a gate button are visible,
-        -- the DirectorLink Access button (574) was added hidden next to another hidden button.
-        security = { [10] = { visible = { 4294966301, 531 }, hidden = { 541, 574, 483 } } },
         listeners = {},
         urlRequests = {},
         deviceEvents = {},
@@ -262,14 +254,6 @@ function Mock.install(project)
 
     function C4:SendToDevice(deviceId, command, params)
         mock.commands[#mock.commands + 1] = { device = deviceId, command = command, params = params }
-        local room = mock.security[deviceId]
-        if room and command == "SET_SECURITY_DEVICE_ORDER" then
-            room.visible, room.hidden = {}, {}
-            for id, hidden in tostring(params.DEVICE_DATA_XML):gmatch("<deviceid>(%-?%d+)</deviceid><order>%d+</order><hidden>(%d)</hidden>") do
-                local unsigned = tonumber(id) < 0 and tonumber(id) + 4294967296 or tonumber(id)
-                table.insert(hidden == "1" and room.hidden or room.visible, unsigned)
-            end
-        end
     end
 
     function C4:SendUIRequest(deviceId, request, params)
@@ -286,16 +270,7 @@ function Mock.install(project)
             local query = camera.query:find("%%d") and string.format(camera.query, params.SIZE_X, params.SIZE_Y) or camera.query
             return "<snapshot_query_string>" .. query .. "</snapshot_query_string>"
         end
-        local room = mock.security[deviceId]
-        if not room or request ~= "GET_SECURITY_DEVICES" or mock.uiRequestsFail then
-            error("UI request failed")
-        end
-        local list = (params and params.hidden == 1) and room.hidden or room.visible
-        local parts = {}
-        for _, id in ipairs(list) do
-            parts[#parts + 1] = string.format("<source><id>%.0f</id><type>UIButton</type></source>", id)
-        end
-        return "<sources>" .. table.concat(parts) .. "</sources>"
+        error("UI request failed")
     end
 
     function C4:Hash(algorithm, data, _options)

@@ -60,19 +60,21 @@ DirectorLink does not depend on this specific Composer version after the driver 
 
 A successful install shows:
 
-- **Version:** the installed DirectorLink release
 - **Status:** `Ready`
-- **Controller OS:** your Director OS version
-- **Inventory:** the number of rooms, devices, lights and thermostats found
-- **API Status:** `Online`
-- **Access Request:** what is waiting for approval with the DirectorLink Access button
-- **Pairing Code:** 8 digits, a fallback way to pair a browser
+- **Version:** the installed DirectorLink release
+- **API Status:** `Online - port 41999`
+- **Pairing Code:** 8 digits shown as `1234 5678`, with **Pairing Status** `Ready until HH:MM - works once`
+- **API Keys:** how many keys exist
+- **Door Control:** `Disabled` until you allow opening doors and gates from the app
+- **Log Level** and **Inventory** (rooms and devices found)
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.
 
-### 4. Pair a browser
+### 4. Pair the owner's device
 
-Open **https://app.directorlink.io**, enter the controller IP and click **Request access**, then press **DirectorLink Access** in your Control4 app within 2 minutes. The browser receives its own API key. (The 8-digit Pairing Code in the DirectorLink properties is a fallback.)
+Open **https://app.directorlink.io**, enter the controller IP and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
+
+A code is valid for 15 minutes and works once. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin creates their keys (API console → Keys), and with remote access they will join by invitation.
 
 ### Updating DirectorLink
 

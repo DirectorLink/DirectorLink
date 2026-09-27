@@ -35,9 +35,9 @@ function Auth.pair(ctx)
         return problem
     end
 
-    local code = body.pairing_code
-    if type(code) ~= "string" or not code:match("^%d%d%d%d%d%d%d%d$") then
-        return Problem.invalidField("pairing_code", "pairing_code must be the 8-digit code shown in Composer")
+    local code = ctx.services.pairing.normalize(body.pairing_code)
+    if not code then
+        return Problem.invalidField("pairing_code", "pairing_code must be the 8-digit code shown in Composer, e.g. 1234 5678")
     end
     local name, nameProblem = Validate.name(body.name, "name", "Paired client")
     if nameProblem then
@@ -73,95 +73,6 @@ function Auth.pair(ctx)
     ctx.services.log.info("auth", "paired a new client", { key_id = record.id, name = record.name, role = record.role, client = ctx.client.ip })
     ctx.services.onKeysChanged()
     return 201, Views.newApiKey(record)
-end
-
-local function requestView(request, apiKey)
-    return {
-        id = request.id,
-        name = request.name,
-        role = request.role,
-        status = request.status,
-        expires_at = Clock.iso(request.expires_at),
-        api_key = apiKey or Json.null,
-    }
-end
-
-function Auth.create_request(ctx)
-    local body = ctx.body
-    if body == nil then
-        body = {}
-    end
-    local problem = Validate.body(body, { name = true, role = true })
-    if problem then
-        return problem
-    end
-    local name, nameProblem = Validate.name(body.name, "name", "Approved client")
-    if nameProblem then
-        return nameProblem
-    end
-
-    local keys = ctx.services.keys
-    if keys.count() >= keys.MAX_KEYS then
-        return keyLimitProblem(keys)
-    end
-
-    -- The first key of a home is its owner's; later devices get member unless they ask otherwise.
-    -- The homeowner sees the requested role in Composer before pressing the button.
-    local role = body.role
-    if role == nil then
-        role = keys.adminCount() == 0 and "admin" or "member"
-    elseif not Roles.valid(role) then
-        return roleProblem()
-    end
-
-    local request, failure = ctx.services.approvals.create(name, ctx.client.ip, role)
-    if not request then
-        local status = 503
-        if failure.code == "REQUEST_PENDING" then
-            status = 409
-        elseif failure.code == "RATE_LIMITED" then
-            status = 429
-        end
-        local headers
-        if failure.retry_after then
-            headers = { { "Retry-After", tostring(failure.retry_after) } }
-        end
-        return Problem.new(status, failure.code, failure.message), headers
-    end
-    return 201, requestView(request), { { "Location", "/v1/auth/requests/" .. request.id } }
-end
-
-function Auth.get_request(ctx)
-    local approvals = ctx.services.approvals
-    local request = approvals.get(ctx.params.requestId)
-    if not request then
-        return Problem.new(404, "NOT_FOUND", "This access request does not exist, expired or was already used")
-    end
-    if request.status ~= "approved" then
-        return 200, requestView(request)
-    end
-
-    local record, createProblem = createKey(ctx, request.name, request.role)
-    if not record then
-        return createProblem
-    end
-    local view = requestView(request, Views.newApiKey(record))
-    approvals.complete(request.id)
-    ctx.services.log.info("auth", "API key issued after approval in the Control4 app", {
-        key_id = record.id,
-        name = record.name,
-        role = record.role,
-        client = ctx.client.ip,
-    })
-    ctx.services.onKeysChanged()
-    return 200, view
-end
-
-function Auth.delete_request(ctx)
-    if not ctx.services.approvals.cancel(ctx.params.requestId) then
-        return Problem.new(404, "NOT_FOUND", "This access request does not exist, expired or was already used")
-    end
-    return 204, nil
 end
 
 function Auth.list_keys(ctx)
