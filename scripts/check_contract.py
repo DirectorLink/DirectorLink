@@ -196,6 +196,14 @@ def scenario(client, bridge):
     client.check("POST", "/v1/doorbells/93/open", 202)
     client.check("POST", "/v1/doorbells/99/open", 404)
 
+    # Remote access is off on the dev bridge: status, and the refusals that follow from it.
+    client.check("GET", "/v1/remote", 200)
+    client.check("POST", "/v1/remote/claim", 409)
+    client.check("GET", "/v1/invitations", 200)
+    client.check("POST", "/v1/invitations", 409, body={"role": "member"})
+    client.check("POST", "/v1/invitations", 400, body={"role": "owner"})
+    client.check("DELETE", "/v1/invitations/0123abcd", 404)
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)

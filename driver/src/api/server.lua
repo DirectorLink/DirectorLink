@@ -22,6 +22,8 @@ local HANDLERS = {
     relays = require("src.api.handlers.relays"),
     doorbells = require("src.api.handlers.doorbells"),
     logs = require("src.api.handlers.logs"),
+    remote = require("src.api.handlers.remote"),
+    invitations = require("src.api.handlers.invitations"),
 }
 
 local Server = {}
@@ -214,7 +216,8 @@ function Server.handleRequest(request, client, respond)
             extraHeaders = { { "Allow", table.concat(match.allowed, ", ") } }
         else
             if not match.route.public then
-                -- Relayed requests carry their principal (src/cloud/relay.lua, always viewer);
+                -- Relayed requests carry their principal: the device's key for sealed requests
+                -- (src/cloud/remote.lua), a viewer for the version 0 test (src/cloud/relay.lua).
                 -- LAN requests come from the HTTP parser, which never sets one.
                 apiKey = request.principal or authenticate(request)
             end

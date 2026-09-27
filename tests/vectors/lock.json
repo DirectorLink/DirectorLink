@@ -1,0 +1,52 @@
+{
+  "about": "Test vectors for the end-to-end lock (docs/ACCOUNTS.md), computed with Node's crypto. The driver (Lua), the app (WebCrypto) and the cloud tests must all reproduce them.",
+  "device": {
+    "api_key": "ak_0123456789abcdef0123456789abcdef0123456789abcdef",
+    "lock_key_hex": "97293ed4b9cfe6157e256417c3ee23af62127b00759ac19a7f89030aa5c9946e",
+    "enc_key_hex": "79f82d8cac3e42e6ce8dcb910c2f729fdd3a00a92aa2b5e153a2d7a5bd906f2a",
+    "mac_key_hex": "7067ec3207a86d2776a2b22ef4552248285779872974dc6bd399501e9042e02a"
+  },
+  "invitation": {
+    "secret": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "lock_key_hex": "1ff92755659e1f72e0cd897564ba796c04a5bbcdb3398675a03e4495b88f39bc"
+  },
+  "request": {
+    "plaintext": "{\"id\":\"a1b2c3d4e5f60718\",\"ts\":1790540000,\"method\":\"GET\",\"path\":\"/v1/system\",\"body\":null}",
+    "dir": "req",
+    "iv_hex": "000102030405060708090a0b0c0d0e0f",
+    "envelope": {
+      "v": 1,
+      "home": "00112233445566778899aabbccddeeff",
+      "key": "4fde46cc",
+      "iv": "AAECAwQFBgcICQoLDA0ODw==",
+      "ct": "SByEGzNrpOCRxcwpm3wqpt4iOuOHlGW7IzLz+cTl2VJ2SH3g7i/EIm8qRz7zdYX3LGHuv1B/33yuS5+WnfVO5NDmxvvgRiL15xOGgZn79PB34KAPGyuYKkc2rYZN+WQc",
+      "mac": "VWnkIqYWu+ZbmQdzmJrTnYzdOlf88pgFB5wdOj4+4XM="
+    }
+  },
+  "answer": {
+    "plaintext": "{\"id\":\"a1b2c3d4e5f60718\",\"ts\":1790540001,\"status\":200,\"content_type\":\"application/json; charset=utf-8\",\"body\":\"{\\\"status\\\":\\\"ok\\\"}\"}",
+    "dir": "res",
+    "iv_hex": "f0e1d2c3b4a5968778695a4b3c2d1e0f",
+    "envelope": {
+      "v": 1,
+      "home": "00112233445566778899aabbccddeeff",
+      "key": "4fde46cc",
+      "iv": "8OHSw7Sllod4aVpLPC0eDw==",
+      "ct": "/wzEIrZTWrvB/9UDTNMxOieWhRaDIiIVB1pJfFaC4R0sZ1r3fti/Z804kEdylnntcjtnii6c3C/Y5Mu3AOXOEo6Gi7WtSB8GVMwz4rO/1f2fJptY0CUN341Vb8cJ/qvn1P0WOr+BEQtNYWMYXq+Oy6pK5ILUZk+bDBetci/NMMBN/ovesYcCiVerQIi1SKn5",
+      "mac": "J3MkJ1/7wfaHTuEOfIN5oEKc/vDP3JdFonNA8AtD2l8="
+    }
+  },
+  "join": {
+    "plaintext": "{\"id\":\"0f1e2d3c4b5a6978\",\"ts\":1790540000,\"method\":\"POST\",\"path\":\"/v1/auth/join\",\"body\":{\"name\":\"Safari on iPhone\"}}",
+    "dir": "req",
+    "iv_hex": "00000000000000000000000000000001",
+    "envelope": {
+      "v": 1,
+      "home": "00112233445566778899aabbccddeeff",
+      "key": "5e6f7a8b",
+      "iv": "AAAAAAAAAAAAAAAAAAAAAQ==",
+      "ct": "N1IOZcX1G9GuqlKRn042H+QPkb6tK/V5iUutdelxT/5Yckc5uyUi7VmQCQ8tuM3R5xLfynNjBUoxNin5xozD+qBNr9i3he78bUnBm/YPE5hCosJPH05wF1hwnH2yLcQgc4w+IUnMdYO7+GTM33KVHbWwb42Ja48ZeIQfDvihZI4=",
+      "mac": "/rO5EI/4KBqNQJxBXnjICVlYdgAQ+yF+J9ymw9A/1TQ="
+    }
+  }
+}

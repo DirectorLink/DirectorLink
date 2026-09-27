@@ -202,6 +202,10 @@ local function onMessage(text, kind)
         log("debug", "ignored a relay message that is not JSON")
         return
     end
+    -- Sealed requests, invitations and claims (remote.lua).
+    if state.remote and state.remote(message, send) then
+        return
+    end
     if message.type == "request" then
         local ok, err = pcall(handleRequest, message)
         if not ok then
@@ -284,11 +288,18 @@ connect = function()
     state.socket:connect()
 end
 
--- options: { services, handleRequest = Server.handleRequest, onStatus = function(text) }
+-- options: { services, handleRequest = Server.handleRequest, onStatus = function(text),
+--            remote = Remote.handle }
 function Relay.init(options)
     state.services = options.services
     state.handleRequest = options.handleRequest
     state.onStatus = options.onStatus
+    state.remote = options.remote
+end
+
+-- True while the relay connection is up.
+function Relay.connected()
+    return state.enabled and state.connectedAt ~= nil
 end
 
 function Relay.start()

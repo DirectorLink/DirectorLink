@@ -9,6 +9,8 @@ local suites = {
     "test_router",
     "test_api",
     "test_relay",
+    "test_lock",
+    "test_remote",
 }
 
 local passed, failed = 0, 0
