@@ -634,36 +634,11 @@ textarea::placeholder {
   border-top: 1px solid var(--line);
 }
 
-.waiting {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: var(--radius-sm);
-  background: var(--coolBg);
-  color: var(--coolText);
-}
-
-.waiting .help {
-  color: inherit;
-}
-
-.waiting-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.waiting-title {
-  font-weight: 600;
-}
-
-.pulse-dot {
-  width: 12px;
-  height: 12px;
-  flex: none;
-  border-radius: 50%;
-  background: currentColor;
-  animation: blink 1.2s ease-in-out infinite;
+/* The pairing code, shown as "1234 5678". */
+input[type="text"].code-input {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  letter-spacing: 0.1em;
 }
 
 .locked {

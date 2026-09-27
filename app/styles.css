@@ -1676,16 +1676,6 @@ img {
   height: 28px;
 }
 
-.connect-icon.pulse {
-  animation: pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  50% {
-    box-shadow: 0 0 0 10px color-mix(in srgb, var(--primary) 10%, transparent);
-  }
-}
-
 .connect-title {
   font-size: 22px;
 }
@@ -1707,44 +1697,19 @@ img {
   margin-block-start: 4px;
 }
 
-.steps {
-  margin: 0;
-  padding-inline-start: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.connect-form .field-help + .field-label {
+  margin-block-start: 8px;
 }
 
-.countdown {
-  font-family: var(--font-head);
-  font-size: 20px;
-  font-weight: 600;
+/* The pairing code, shown as "1234 5678". */
+input[type="text"].code-input {
+  font-size: 22px;
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
 }
 
-.pairing {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  border-top: 1px solid var(--line);
-  padding-block-start: 12px;
-}
-
-.pairing[open] {
-  gap: 8px;
-}
-
-.pairing summary {
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  cursor: pointer;
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.pairing[open] > :not(summary) {
-  margin-block-end: 8px;
+.connect-form .button {
+  margin-block-start: 4px;
 }
 
 /* ---- Forms --------------------------------------------------------------------------------- */

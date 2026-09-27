@@ -1,5 +1,6 @@
 // Tests app/sw.js offline behaviour with a fake network that serves the app like Cloudflare
-// (/index.html -> /) and a fake Cache Storage.
+// (/index.html -> /, and app/_redirects: /console.html and /console -> console.directorlink.io)
+// and a fake Cache Storage.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -26,6 +27,8 @@ const FILES = {
 // The app's ES modules (app/js/**) are precached too.
 for (const [, path] of SOURCE.matchAll(/"(\/js\/[^"]+\.js)"/g)) FILES[path] = `module ${path}`;
 const REDIRECTS = { "/index.html": "/" };
+// app/_redirects: the API console moved to its own site.
+const EXTERNAL = { "/console.html": "https://console.directorlink.io", "/console": "https://console.directorlink.io" };
 
 // Node's Response cannot be constructed as "basic" or "redirected"; set them the way a browser
 // would, and keep them on clones (browsers preserve them through clone()).
@@ -49,6 +52,13 @@ function makeNetwork() {
     if (!network.online) throw new TypeError("Failed to fetch");
     let path = url.pathname;
     let redirected = false;
+    if (EXTERNAL[path]) {
+      if (navigate) {
+        return { type: "opaqueredirect", ok: false, status: 0, redirected: false, clone() { return this; } };
+      }
+      // A plain fetch follows the redirect to the other site (a CORS response, never "basic").
+      return withProps(new Response("console site", { status: 200 }), { type: "cors", url: EXTERNAL[path], redirected: true });
+    }
     if (REDIRECTS[path]) {
       if (navigate) {
         return { type: "opaqueredirect", ok: false, status: 0, redirected: false, clone() { return this; } };
@@ -167,8 +177,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v12", "directorlink-shell-v13"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v14"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v13", "directorlink-shell-v14"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v15"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -198,6 +208,19 @@ test("online redirects are left for the browser to follow", async () => {
   const { request } = await startWorker();
   const response = await request("/index.html");
   assert.equal(response.type, "opaqueredirect");
+});
+
+test("the old console address follows the redirect to console.directorlink.io and is never cached", async () => {
+  const { network, storage, request } = await startWorker();
+  for (const path of ["/console.html", "/console"]) {
+    assert.equal((await request(path)).type, "opaqueredirect", `${path} is left to the browser's redirect`);
+  }
+  const cache = await storage.open((await storage.keys())[0]);
+  for (const path of ["/console.html", "/console"]) {
+    assert.equal(await cache.match(path), undefined, `${path} is not cached`);
+  }
+  network.online = false;
+  assert.equal(await textOf(await request("/console.html")), "<html>dashboard</html>", "offline, the old address opens the app");
 });
 
 test("offline assets come from the cache; unknown ones fail cleanly", async () => {

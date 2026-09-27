@@ -1,53 +1,32 @@
-// Connection screen: controller address, and the three ways to get an API key.
+// Connection screen: controller address, and the two ways to get an API key: the pairing code
+// from Composer (always admin) or a pasted key.
 
+import { formatPairingCode } from "../api-client.js";
 import { byId, h, setMessage } from "./dom.js";
-import {
-  can,
-  cancelAccess,
-  connect,
-  connectWithKey,
-  forgetKey,
-  notify,
-  pairWithCode,
-  requestAdminAccess,
-  state,
-  useHost,
-} from "./session.js";
+import { can, connect, connectWithKey, forgetKey, notify, pairWithCode, state, useHost } from "./session.js";
 
 const hostForm = byId("host-form");
 const hostInput = byId("host-input");
 const message = byId("connect-message");
 const currentPanel = byId("current-panel");
 const currentFacts = byId("current-facts");
-const requestButton = byId("request-button");
-const accessNote = byId("access-note");
-const waitingPanel = byId("waiting-panel");
-const waitingCountdown = byId("waiting-countdown");
 const pairForm = byId("pair-form");
 const pairCode = byId("pair-code");
+const pairNote = byId("pair-note");
 const keyForm = byId("key-form");
 const keyInput = byId("key-input");
-
-let countdownTimer = null;
-
-function remaining(expiresAt) {
-  const seconds = Math.max(0, Math.round((Date.parse(expiresAt) - Date.now()) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
-
-function renderCountdown() {
-  const expiresAt = state.access?.expiresAt;
-  waitingCountdown.textContent = expiresAt
-    ? `${remaining(expiresAt)} left. Press DirectorLink Access in the Control4 app.`
-    : "Sending the request…";
-}
 
 async function afterConnect(ok) {
   if (ok) {
     keyInput.value = "";
     pairCode.value = "";
     // Back to the tab the console was on.
-    const last = window.localStorage.getItem("directorlink.console.tab");
+    let last = null;
+    try {
+      last = window.localStorage.getItem("directorlink.console.tab");
+    } catch {
+      last = null;
+    }
     window.location.hash = `#/${last && last !== "connect" ? last : "api"}`;
   }
 }
@@ -64,24 +43,14 @@ export function renderConnection() {
     setMessage(message, "");
   }
 
-  const waiting = state.status === "waiting";
-  waitingPanel.hidden = !waiting;
-  requestButton.hidden = waiting;
-  const busy = waiting || state.status === "connecting";
-  for (const button of document.querySelectorAll("#view-connect button")) {
-    if (button.id !== "cancel-button") button.disabled = busy;
-  }
-  window.clearInterval(countdownTimer);
-  if (waiting) {
-    renderCountdown();
-    countdownTimer = window.setInterval(renderCountdown, 1000);
-  }
+  const busy = state.status === "connecting";
+  for (const button of document.querySelectorAll("#view-connect button")) button.disabled = busy;
 
   if (state.apiKey && state.role && !can("admin")) {
-    accessNote.hidden = false;
-    accessNote.textContent = `This console's key is ${state.role}. An approved admin key replaces it here; the ${state.role} key keeps working until you revoke it.`;
+    pairNote.hidden = false;
+    pairNote.textContent = `This console's key is ${state.role}. Pairing replaces it here with an admin key; the ${state.role} key keeps working until you revoke it.`;
   } else {
-    accessNote.hidden = true;
+    pairNote.hidden = true;
   }
 
   currentPanel.hidden = !state.apiKey;
@@ -108,7 +77,7 @@ hostForm.addEventListener("submit", async (event) => {
     const host = useHost(hostInput.value);
     state.notice =
       host !== previous && previous
-        ? { kind: "info", text: `Saved ${host}. A key belongs to one controller, so get a key for this one.` }
+        ? { kind: "info", text: `Saved ${host}. A key belongs to one controller: pair with a code from this controller's Composer project.` }
         : { kind: "success", text: `Saved ${host}.` };
     if (state.apiKey) {
       await afterConnect(await connect());
@@ -119,19 +88,22 @@ hostForm.addEventListener("submit", async (event) => {
   notify();
 });
 
-requestButton.addEventListener("click", async () => {
-  delete hostInput.dataset.dirty;
-  await afterConnect(await requestAdminAccess(hostInput.value));
+// Shows the code as "1234 5678" while it is typed or pasted, keeping the caret after the same digit.
+pairCode.addEventListener("input", () => {
+  const caretDigits = pairCode.value.slice(0, pairCode.selectionStart ?? pairCode.value.length).replace(/\D/g, "").length;
+  const formatted = formatPairingCode(pairCode.value);
+  if (formatted !== pairCode.value) {
+    pairCode.value = formatted;
+    const caret = Math.min(formatted.length, caretDigits > 4 ? caretDigits + 1 : caretDigits);
+    pairCode.setSelectionRange(caret, caret);
+  }
 });
-
-byId("cancel-button").addEventListener("click", () => cancelAccess());
 
 pairForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   delete hostInput.dataset.dirty;
-  const code = pairCode.value;
-  pairCode.value = "";
-  await afterConnect(await pairWithCode(hostInput.value, code));
+  // A wrong code stays in the field so a typo can be fixed.
+  await afterConnect(await pairWithCode(hostInput.value, pairCode.value));
 });
 
 keyForm.addEventListener("submit", async (event) => {

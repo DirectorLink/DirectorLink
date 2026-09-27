@@ -1,8 +1,7 @@
 // DirectorLink Console: hash router, header, and start-up. Tabs live in js/.
 //
 // API calls (see api/openapi.yaml): "/v1/openapi.json", "/v1/system", "/v1/health",
-// "/v1/api-keys/current", "/v1/api-keys", "/v1/auth/requests", "/v1/auth/pair", "/v1/logs?",
-// "/v1/logs/settings".
+// "/v1/api-keys/current", "/v1/api-keys", "/v1/auth/pair", "/v1/logs?", "/v1/logs/settings".
 
 import { renderConnection } from "./js/connection.js";
 import { byId } from "./js/dom.js";
@@ -45,7 +44,6 @@ function effectiveRoute() {
 
 const STATUS = {
   setup: ["Not connected", "idle"],
-  waiting: ["Waiting for approval", "busy"],
   connecting: ["Connecting…", "busy"],
   connected: ["Connected", "ok"],
   unreachable: ["Can't reach the controller", "error"],

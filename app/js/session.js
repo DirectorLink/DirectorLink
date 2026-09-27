@@ -6,6 +6,7 @@ import {
   apiCall,
   clearApiKey,
   normalizeHost,
+  normalizePairingCode,
   saveApiKey,
   saveHost,
   savedApiKey,
@@ -27,9 +28,30 @@ export function api(path, options = {}) {
   return apiCall(state.host, path, { apiKey: state.apiKey, ...options });
 }
 
-function clientName() {
-  const platform = navigator.userAgentData?.platform || navigator.platform || "browser";
-  return `DirectorLink app (${platform})`.slice(0, 64);
+// The new key's name, e.g. "Chrome on Windows" or "Safari on iPhone" (the API console lists it).
+export function clientName() {
+  const agent = navigator.userAgent || "";
+  const brands = (navigator.userAgentData?.brands || []).map((item) => item.brand);
+  const browser =
+    brands.find((brand) => /Edge|Opera|Samsung/i.test(brand))?.replace(/^Microsoft /, "") ||
+    (/Edg\//.test(agent) ? "Edge" : null) ||
+    (/OPR\//.test(agent) ? "Opera" : null) ||
+    (/SamsungBrowser\//.test(agent) ? "Samsung Internet" : null) ||
+    (/Firefox\/|FxiOS\//.test(agent) ? "Firefox" : null) ||
+    (/Chrome\/|CriOS\//.test(agent) ? "Chrome" : null) ||
+    (/Safari\//.test(agent) ? "Safari" : null) ||
+    "Browser";
+  const platform = navigator.userAgentData?.platform || "";
+  const system =
+    (/iPhone/.test(agent) && "iPhone") ||
+    ((/iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1)) && "iPad") ||
+    ((/Android/.test(agent) || platform === "Android") && "Android") ||
+    ((/Windows/.test(agent) || platform === "Windows") && "Windows") ||
+    ((/CrOS/.test(agent) || platform === "Chrome OS") && "ChromeOS") ||
+    ((/Mac OS X|Macintosh/.test(agent) || platform === "macOS") && "Mac") ||
+    ((/Linux/.test(agent) || platform === "Linux") && "Linux") ||
+    "";
+  return (system ? `${browser} on ${system}` : `${browser} (DirectorLink app)`).slice(0, 64);
 }
 
 export function restoreSaved() {
@@ -61,15 +83,41 @@ export function forgetKey() {
   state.loaded = false;
 }
 
+// Pairing failures (POST /v1/auth/pair) as RFC 9457 problem codes.
+function pairingError(error) {
+  switch (error?.code) {
+    case "INVALID_FIELD":
+    case "INVALID_REQUEST":
+      return t("connect.errors.invalidCode");
+    case "PAIRING_CODE_INVALID": {
+      const left = Number(error.problem?.attempts_remaining);
+      return Number.isFinite(left) && left > 0 ? t("connect.errors.wrongCode", { count: left }) : t("connect.errors.wrongCodeNoCount");
+    }
+    case "PAIRING_NOT_ACTIVE":
+      return t("connect.errors.notActive");
+    case "PAIRING_CODE_EXPIRED":
+      return t("connect.errors.expired");
+    case "PAIRING_RATE_LIMITED": {
+      // Exact only when the driver says how long (problem body, or an exposed Retry-After).
+      const seconds = Number(error.problem?.retry_after) || error.retryAfter;
+      return seconds ? t("connect.errors.rateLimited", { seconds, count: seconds }) : t("connect.errors.rateLimitedMinute");
+    }
+    case "KEY_LIMIT_REACHED":
+      return t("connect.errors.keyLimit");
+    case "PAIRING_UNAVAILABLE":
+      return t("connect.errors.unavailable");
+    default:
+      return null;
+  }
+}
+
 function describeError(error) {
   if (error?.status === 401) {
     return t("errors.keyRevoked");
   }
-  if (error?.code === "REQUEST_PENDING") {
-    return t("errors.requestPending");
-  }
-  if (error?.code === "PAIRING_RATE_LIMITED") {
-    return t("errors.pairingRateLimited");
+  const pairing = pairingError(error);
+  if (pairing) {
+    return pairing;
   }
   // 403 FORBIDDEN: this key's role is too low; DOOR_CONTROL_DISABLED: the Composer switch is off.
   if (error?.code === "DOOR_CONTROL_DISABLED") {
@@ -78,10 +126,7 @@ function describeError(error) {
   if (error?.code === "FORBIDDEN") {
     return t("errors.forbidden", { role: roleLabel(error.problem?.role || state.role) });
   }
-  if (error?.code === "INVALID_PAIRING_CODE" || error?.code === "PAIRING_FAILED" || error?.status === 403) {
-    return error.message || t("errors.pairingRejected");
-  }
-  if (error instanceof ApiError && error.code && /^(PAIRING|REQUEST|INVALID)/.test(error.code)) {
+  if (error?.code === "INVALID_HOST") {
     return error.message;
   }
   if (error?.name === "AbortError") {
@@ -198,73 +243,12 @@ export async function connect() {
   }
 }
 
-// Asks for a key and waits until DirectorLink Access is pressed in the Control4 app (2 minutes).
-export async function requestAccess(hostValue) {
-  state.notice = null;
-  try {
-    const host = useHost(hostValue);
-    state.status = "waiting";
-    notify();
-    const request = await apiCall(host, "/v1/auth/requests", {
-      method: "POST",
-      body: { name: clientName() },
-    });
-    state.access = { id: request.id, host, expiresAt: request.expires_at, cancelled: false };
-    notify();
-    while (state.access && !state.access.cancelled) {
-      await sleep(2000);
-      if (!state.access || state.access.cancelled) break;
-      let current;
-      try {
-        current = await apiCall(host, `/v1/auth/requests/${request.id}`);
-      } catch (error) {
-        if (error.status === 404) {
-          throw new ApiError(t("errors.requestExpired"), { code: "REQUEST_EXPIRED" });
-        }
-        throw error;
-      }
-      if (current.status === "approved" && current.api_key?.key) {
-        saveApiKey(current.api_key.key);
-        state.apiKey = current.api_key.key;
-        state.access = null;
-        return connect();
-      }
-      state.access = { ...state.access, expiresAt: current.expires_at };
-    }
-    state.notice = { kind: "info", text: t("connect.cancelled") };
-    return false;
-  } catch (error) {
-    state.notice = { kind: "error", text: describeError(error) };
-    return false;
-  } finally {
-    state.access = null;
-    if (state.status === "waiting") {
-      state.status = "setup";
-    }
-    notify();
-  }
-}
-
-export async function cancelAccess() {
-  const access = state.access;
-  if (!access) {
-    return;
-  }
-  access.cancelled = true;
-  state.access = null;
-  notify();
-  try {
-    await apiCall(access.host, `/v1/auth/requests/${access.id}`, { method: "DELETE" });
-  } catch {
-    // Already expired or approved; nothing to undo.
-  }
-}
-
-// Fallback: the 8-digit pairing code shown in Composer.
+// The only way to get a first key: the pairing code created in Composer (DirectorLink →
+// Actions → New Pairing Code). It lasts 15 minutes, works once and gives an admin key.
 export async function pairWithCode(hostValue, pairingCode) {
-  const code = String(pairingCode || "").trim();
-  if (!/^\d{8}$/.test(code)) {
-    state.notice = { kind: "error", text: t("connect.codeInvalid") };
+  const code = normalizePairingCode(pairingCode);
+  if (!code) {
+    state.notice = { kind: "error", text: t("connect.errors.invalidCode") };
     notify();
     return false;
   }
@@ -290,8 +274,6 @@ export async function pairWithCode(hostValue, pairingCode) {
     return false;
   }
 }
-
-const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
 // Device state, every 10 s while the page is visible. Devices with a command in flight keep
 // their optimistic state until the command is confirmed.

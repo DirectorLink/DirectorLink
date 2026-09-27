@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
     <meta
       name="description"
-      content="DirectorLink: an open-source Control4 driver and app. A standard local REST API described by OpenAPI, per-device access roles, and approval from the Control4 app."
+      content="DirectorLink: an open-source Control4 driver and app. A standard local REST API described by OpenAPI, per-device access roles, and pairing with a one-time code from Composer."
     />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
@@ -37,8 +37,8 @@
         <p class="intro">
           DirectorLink is an open-source driver for Control4 and an app for phones and computers. The
           driver gives your home a standard local REST API, described by OpenAPI, with its own access
-          role for every device and app — approved from the Control4 app, with no Composer needed after
-          installation.
+          role for every device and app. Each phone or computer pairs once with a one-time code from
+          Composer — your installer can read it out for you.
         </p>
         <div class="actions">
           <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
@@ -57,13 +57,13 @@
           </li>
           <li class="step">
             <span class="step-number" aria-hidden="true">2</span>
-            <h3>Request access</h3>
-            <p>Open the app, enter the controller's address and press Request access.</p>
+            <h3>Open the app</h3>
+            <p>On your phone or computer, open the app and enter the controller's address.</p>
           </li>
           <li class="step">
             <span class="step-number" aria-hidden="true">3</span>
-            <h3>Approve it at home</h3>
-            <p>Press <strong>DirectorLink Access</strong> in the Control4 app. The device gets its own key and role.</p>
+            <h3>Enter the pairing code</h3>
+            <p>Type the 8-digit code from Composer (DirectorLink → Actions → New Pairing Code) — the installer can read it for you. A code lasts 15 minutes and works once.</p>
           </li>
         </ol>
       </section>

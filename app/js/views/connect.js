@@ -1,16 +1,12 @@
-// First-time setup on Home: controller address, then "Request access" (approved with the
-// DirectorLink Access button in the Control4 app) or the 8-digit pairing code from Composer.
+// First-time setup on Home: the controller address and the pairing code from Composer
+// (DirectorLink → Actions → New Pairing Code). A code lasts 15 minutes and works once.
 
+import { formatPairingCode } from "../../api-client.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { cancelAccess, pairWithCode, requestAccess } from "../session.js";
+import { pairWithCode } from "../session.js";
 import { state, ui } from "../state.js";
-
-function countdown(expiresAt) {
-  const seconds = Math.max(0, Math.round((Date.parse(expiresAt) - Date.now()) / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-}
 
 function draftInput(key, fallback, props) {
   const input = h("input", { ...props, value: ui.drafts[key] ?? fallback, dataset: { key } });
@@ -29,31 +25,24 @@ function notice() {
   );
 }
 
-function waitingCard() {
-  const expiresAt = state.access?.expiresAt;
-  return h(
-    "section",
-    { class: "card connect-card waiting", "aria-labelledby": "waiting-title" },
-    h("span", { class: "connect-icon pulse" }, icon("key")),
-    h("h2", { id: "waiting-title", class: "connect-title" }, t("connect.waitingTitle")),
-    h("ol", { class: "steps" }, h("li", {}, t("connect.step1")), h("li", {}, t("connect.step2"))),
-    h(
-      "p",
-      { class: "countdown", role: "timer", "aria-live": "off" },
-      expiresAt ? t("connect.timeLeft", { time: countdown(expiresAt) }) : t("connect.sending")
-    ),
-    h(
-      "button",
-      { id: "cancel-access-button", type: "button", class: "button button-secondary button-wide", dataset: { key: "cancel-access" }, onclick: cancelAccess },
-      t("connect.cancel")
-    )
-  );
+// Shows the code as "1234 5678" while it is typed or pasted (with or without the space or a
+// dash), keeping the caret after the same digit.
+export function formatCodeField(input) {
+  const caretDigits = input.value.slice(0, input.selectionStart ?? input.value.length).replace(/\D/g, "").length;
+  const formatted = formatPairingCode(input.value);
+  if (formatted !== input.value) {
+    input.value = formatted;
+    const caret = Math.min(formatted.length, caretDigits > 4 ? caretDigits + 1 : caretDigits);
+    try {
+      input.setSelectionRange(caret, caret);
+    } catch {
+      // Not focused.
+    }
+  }
+  return formatted;
 }
 
 export function connectScreen() {
-  if (state.status === "waiting") {
-    return h("div", { class: "connect" }, notice(), waitingCard());
-  }
   const host = draftInput("host", state.host, {
     id: "controller-host",
     type: "text",
@@ -61,20 +50,26 @@ export function connectScreen() {
     autocomplete: "off",
     autocapitalize: "off",
     spellcheck: "false",
+    dir: "ltr",
     placeholder: "192.168.1.50",
     "aria-describedby": "controller-host-help",
     required: true,
   });
   const code = draftInput("pairingCode", "", {
     id: "pairing-code",
+    class: "code-input",
     type: "text",
     inputmode: "numeric",
     autocomplete: "one-time-code",
+    autocapitalize: "off",
     spellcheck: "false",
-    maxlength: "8",
-    pattern: "[0-9]{8}",
-    placeholder: "12345678",
+    dir: "ltr",
+    placeholder: "1234 5678",
     "aria-describedby": "pairing-code-help",
+    required: true,
+  });
+  code.addEventListener("input", () => {
+    ui.drafts.pairingCode = formatCodeField(code);
   });
   const busy = state.status === "connecting";
 
@@ -83,51 +78,26 @@ export function connectScreen() {
     {
       class: "connect-form",
       novalidate: true,
-      onsubmit: (event) => {
+      onsubmit: async (event) => {
         event.preventDefault();
-        requestAccess(host.value);
+        await pairWithCode(host.value, code.value);
+        // A code works once: once it bought a key, it is of no use in the field.
+        if (state.apiKey) ui.drafts.pairingCode = "";
       },
     },
     h("label", { class: "field-label", for: "controller-host" }, t("connect.hostLabel")),
     host,
     h("p", { id: "controller-host-help", class: "field-help" }, t("connect.hostHelp")),
-    ui.drafts.pairingOpen ? null : notice(),
-    h(
-      "button",
-      { type: "submit", class: "button button-primary button-wide", disabled: busy, dataset: { key: "request-access" } },
-      busy ? t("status.connecting") : t("connect.requestAccess")
-    ),
-    h("p", { class: "field-help" }, t("connect.requestHelp"))
-  );
-
-  const pairing = h(
-    "details",
-    { class: "pairing", open: Boolean(ui.drafts.pairingOpen) },
-    h("summary", { dataset: { key: "pairing-summary" } }, t("connect.useCode")),
     h("label", { class: "field-label", for: "pairing-code" }, t("connect.codeLabel")),
     code,
     h("p", { id: "pairing-code-help", class: "field-help" }, t("connect.codeHelp")),
-    // With the code form open, messages show next to it.
-    ui.drafts.pairingOpen ? notice() : null,
+    notice(),
     h(
       "button",
-      {
-        type: "button",
-        class: "button button-secondary button-wide",
-        disabled: busy,
-        dataset: { key: "pair" },
-        onclick: () => {
-          const value = code.value;
-          ui.drafts.pairingCode = "";
-          pairWithCode(host.value, value);
-        },
-      },
-      t("connect.pair")
+      { type: "submit", class: "button button-primary button-wide", disabled: busy, dataset: { key: "pair" } },
+      busy ? t("status.connecting") : t("connect.pair")
     )
   );
-  pairing.addEventListener("toggle", () => {
-    ui.drafts.pairingOpen = pairing.open;
-  });
 
   return h(
     "div",
@@ -135,11 +105,10 @@ export function connectScreen() {
     h(
       "section",
       { class: "card connect-card", "aria-labelledby": "connect-title" },
-      h("span", { class: "connect-icon" }, icon("home")),
+      h("span", { class: "connect-icon" }, icon("key")),
       h("h2", { id: "connect-title", class: "connect-title" }, t("connect.title")),
       h("p", { class: "connect-text" }, t("connect.intro")),
-      form,
-      pairing
+      form
     ),
     h("p", { class: "connect-footnote" }, t("connect.lanNote"))
   );

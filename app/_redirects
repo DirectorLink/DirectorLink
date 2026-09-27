@@ -1,0 +1,3 @@
+# The API console moved to its own site (console/). Cloudflare reads this file; it is not published.
+/console.html https://console.directorlink.io 301
+/console https://console.directorlink.io 301

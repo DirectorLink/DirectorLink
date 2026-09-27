@@ -1,6 +1,6 @@
-# DirectorLink Web PWA
+# DirectorLink app (PWA)
 
-This directory is the Cloudflare Pages frontend for DirectorLink. It is framework-free HTML, CSS and JavaScript and needs no build step.
+The DirectorLink app on **https://app.directorlink.io**. It is framework-free HTML, CSS and JavaScript and needs no build step. The API console is its own site (`../console/`, https://console.directorlink.io).
 
 ## Structure
 
@@ -8,26 +8,30 @@ This directory is the Cloudflare Pages frontend for DirectorLink. It is framewor
 - `theme-boot.js` — blocking script in `<head>`: applies the saved palette, theme and text direction before the first paint (the CSP forbids inline scripts)
 - `app.js` — entry module: hash router, renderer, dialogs, start-up
 - `js/` — ES modules, no build step:
-  - `state.js` (shared state + redraw scheduling), `session.js` (access request, pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden)
+  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden)
   - `model.js` (room names per language, grouping, "on" counts), `favorites.js` (per controller, in `localStorage`), `components.js` (device rows and tiles), `dom.js`, `icons.js` (inline stroke SVG), `theme.js`, `i18n.js`, `pwa.js` (service worker, install prompt)
   - `views/` — `home.js`, `room.js`, `cameras.js`, `climate.js`, `settings.js`, `connect.js` (first-time setup), `common.js` (header, connection chip, shared states)
 - `i18n/en.js`, `i18n/he.js` — interface text
-- `styles.css` — the app's styles; `console.css` — the API console's
-- `console.html` + `console.js` — API console: loads the API description from the controller, lists every endpoint, sends requests, and follows the bridge log (linked from Settings)
-- `api-client.js` — shared client for the LAN API (API port, API key storage, `fetch` with Local Network Access annotations)
+- `styles.css` — the app's styles
+- `api-client.js` — shared client for the LAN API (API port, API key storage, pairing code format, `fetch` with Local Network Access annotations); `console/api-client.js` is an exact copy (`scripts/check_sites.py` compares them)
+- `_redirects` — sends the old `/console.html` and `/console` to https://console.directorlink.io (301); Cloudflare reads it, it is not published
 - `sw.js` — offline mode (see below); it never intercepts controller/LAN requests
 
 ## Screens
 
 Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`.
 
-- **Home** — connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address → **Request access** (press **DirectorLink Access** in the Control4 app within 2 minutes) or **Use a pairing code instead**.
+- **Home** — connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address and **pairing code** (see below).
 - **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doors & gates (drivers with `/v1/relays`), Cameras and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
 - **Cameras** — one large picture and a grid; thumbnails refresh about every 3 s, the full view about every second.
 - **Climate** — all thermostats grouped by room.
-- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, request new access, forget key), app (offline copy, install, API console), about.
+- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost), about.
 
-API key roles (drivers from v0.7.0): on connect the app reads `GET /v1/api-keys/current` (404 on older drivers → treated as admin) and shows only what the key may do — `viewer` sees state without controls, `member` controls lights, climate and blinds, `doors` also opens doors and gates (after a confirming second tap), `admin` also renames rooms. A 403 `FORBIDDEN` reverts the change, shows "Your access level (…) can't do this" and adopts the role it reports; `DOOR_CONTROL_DISABLED` explains how to turn Door Control on in Composer. Forget key and Request new access revoke the key with `DELETE /v1/api-keys/current` (older drivers: the key list).
+## Pairing
+
+The pairing code is the only way to get a device's first key. In Composer: DirectorLink → Actions → **New Pairing Code** (one is also made when the driver is added or has no keys); Composer shows it as `1234 5678`. A code lasts 15 minutes and works once. The field brings up the number pad (`inputmode="numeric"`, `autocomplete="one-time-code"`) and formats the code as it is typed or pasted, with or without the space or a dash. `POST /v1/auth/pair` with `{"pairing_code", "name"}` returns an admin key; the name is the browser and system, e.g. "Chrome on Windows". Every problem it can answer has its own message in each language: `INVALID_FIELD` (not 8 digits), `PAIRING_CODE_INVALID` (with the tries left), `PAIRING_NOT_ACTIVE` (no code — run New Pairing Code), `PAIRING_RATE_LIMITED` (5 wrong codes lock pairing for 60 s), `KEY_LIMIT_REACHED`, `PAIRING_UNAVAILABLE`. More keys, with other roles, are created by an admin in the API console (Keys).
+
+API key roles (drivers from v0.7.0): on connect the app reads `GET /v1/api-keys/current` (404 on older drivers → treated as admin) and shows only what the key may do — `viewer` sees state without controls, `member` controls lights, climate and blinds, `doors` also opens doors and gates (after a confirming second tap), `admin` also renames rooms. A 403 `FORBIDDEN` reverts the change, shows "Your access level (…) can't do this" and adopts the role it reports; `DOOR_CONTROL_DISABLED` explains how to turn Door Control on in Composer. Forget key and Pair again revoke the key with `DELETE /v1/api-keys/current` (older drivers: the key list); a 401 on any request forgets the key and asks for a new pairing code.
 
 Controls change the screen at once, send the command, then re-read the device until the controller confirms it; a failed command reverts and shows a short error on the device. Device state refreshes every 10 s while the page is visible.
 
@@ -53,7 +57,7 @@ Optionally list the file in `ASSETS` in `sw.js` so it is saved for offline use a
 The service worker saves the app on the device, so it still opens when the internet is down and keeps controlling the house over the LAN:
 
 - every same-origin `GET` goes to the network first and falls back to the saved copy when the network fails or takes longer than 3 seconds; each successful load refreshes the saved copy, so it never goes stale
-- pages are saved under every path that serves them — Cloudflare redirects `/index.html` → `/` and `/console.html` → `/console` — and stored without the redirect, because browsers refuse redirected responses for page loads
+- pages are saved under every path that serves them — Cloudflare redirects `/index.html` → `/` — and stored without the redirect, because browsers refuse redirected responses for page loads; redirects to other sites (the old console addresses) are left to the browser and never saved
 - controller requests are cross-origin and are never intercepted or cached
 - Settings → App → **Offline copy** shows whether the app is saved
 
@@ -61,16 +65,9 @@ The service worker saves the app on the device, so it still opens when the inter
 
 ## Cloudflare
 
-The site is a Cloudflare Workers static-assets project (`directorlink`) built from this folder by Workers Builds:
+The app is the Cloudflare Workers static-assets project `directorlink-app` on the `app.directorlink.io` custom domain ([`wrangler.jsonc`](wrangler.jsonc): assets from `.`, Cloudflare's default HTML and 404 handling). `.github/workflows/deploy.yml` runs `wrangler deploy` from this folder on pushes to `main`; pull requests get preview versions (the `previews` block).
 
-| Setting | Value |
-| --- | --- |
-| Root directory | `web` |
-| Configuration | [`wrangler.jsonc`](wrangler.jsonc) — assets from `.`, Cloudflare's default HTML and 404 handling |
-| Production (`main`) | `npx wrangler deploy` |
-| Pull-request branches | `npx wrangler preview` (needs the `previews` block) |
-
-`_headers` sets the security headers; `.assetsignore` keeps `wrangler.jsonc` from being published. No environment variables are required. Every merge to `main` deploys, so web changes must go out together with the driver version they need.
+`_headers` sets the security headers, `_redirects` the old console addresses; `.assetsignore` keeps `wrangler.jsonc`, `.assetsignore` and this README from being published. No environment variables are required. Every merge to `main` deploys, so web changes must go out together with the driver version they need.
 
 ## Local development
 
@@ -80,7 +77,7 @@ The driver accepts `http://localhost` origins, so the app can be tested against 
 python -m http.server 8080 --directory app
 ```
 
-Then open `http://localhost:8080`. Without a controller, run `python scripts/dev_server.py` as well and use `localhost` as the controller address (see `docs/BUILD.md`).
+Then open `http://localhost:8080`. Without a controller, run `python scripts/dev_server.py` as well, use `localhost` as the controller address and the pairing code it prints (see `docs/BUILD.md`).
 
 ## Local Network Access
 

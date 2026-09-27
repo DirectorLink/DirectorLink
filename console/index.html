@@ -89,40 +89,29 @@
           <section class="card" aria-labelledby="access-title">
             <h2 id="access-title">Get an API key</h2>
 
-            <div class="option">
-              <h3>Request admin access</h3>
-              <p class="help">
-                Press <strong>DirectorLink Access</strong> in the Control4 app within 2 minutes.
-                Composer shows “Waiting: DirectorLink Console as admin” until then.
-              </p>
-              <p id="access-note" class="help" hidden></p>
-              <button id="request-button" class="button button-primary" type="button">Request admin access</button>
-              <div id="waiting-panel" class="waiting" role="status" hidden>
-                <span class="pulse-dot" aria-hidden="true"></span>
-                <div class="waiting-text">
-                  <p class="waiting-title">Waiting for DirectorLink Access…</p>
-                  <p id="waiting-countdown" class="help">Sending the request…</p>
-                </div>
-                <button id="cancel-button" class="button button-secondary" type="button">Cancel</button>
-              </div>
-            </div>
-
             <form id="pair-form" class="option stack" novalidate>
               <h3>Pairing code</h3>
-              <label class="field-label" for="pair-code">8-digit code from the DirectorLink properties in Composer</label>
+              <label class="field-label" for="pair-code">Pairing code from Composer</label>
               <div class="input-row">
                 <input
                   id="pair-code"
+                  class="code-input"
                   type="text"
                   inputmode="numeric"
                   autocomplete="one-time-code"
+                  autocapitalize="off"
                   spellcheck="false"
-                  maxlength="8"
-                  placeholder="12345678"
+                  dir="ltr"
+                  placeholder="1234 5678"
+                  aria-describedby="pair-help"
                 />
-                <button class="button button-secondary" type="submit">Pair</button>
+                <button class="button button-primary" type="submit">Pair</button>
               </div>
-              <p class="help">A paired key is always admin. The code changes after every use.</p>
+              <p id="pair-help" class="help">
+                In Composer, select DirectorLink, then Actions → <strong>New Pairing Code</strong> — or ask your
+                installer. A code lasts 15 minutes, works once and always gives an admin key.
+              </p>
+              <p id="pair-note" class="help" hidden></p>
             </form>
 
             <form id="key-form" class="option stack" novalidate>
@@ -164,8 +153,8 @@
         </div>
         <div id="logs-locked" class="card locked" hidden>
           <h2>Needs an admin key</h2>
-          <p>Reading the log needs an admin key; this console's key is <strong class="locked-role"></strong>.</p>
-          <a class="button button-primary" href="#/connect">Request admin access</a>
+          <p>Reading the log needs an admin key; this console's key is <strong class="locked-role"></strong>. Pairing with a code from Composer gives an admin key.</p>
+          <a class="button button-primary" href="#/connect">Pair with a code</a>
         </div>
         <div id="logs-panel" class="logs-panel">
           <div class="card log-toolbar">
@@ -247,8 +236,8 @@
         </div>
         <div id="keys-locked" class="card locked" hidden>
           <h2>Needs an admin key</h2>
-          <p>Managing API keys needs an admin key; this console's key is <strong class="locked-role"></strong>.</p>
-          <a class="button button-primary" href="#/connect">Request admin access</a>
+          <p>Managing API keys needs an admin key; this console's key is <strong class="locked-role"></strong>. Pairing with a code from Composer gives an admin key.</p>
+          <a class="button button-primary" href="#/connect">Pair with a code</a>
         </div>
         <div id="keys-panel" class="stack-lg">
           <p id="keys-message" class="message" role="status" hidden></p>

@@ -26,8 +26,19 @@ REQUIRED = [
     "_headers",
 ]
 
-# Endpoints and names from the pre-OpenAPI alpha API that must not come back.
-RETIRED = ['"/v1/pair"', "/v1/climate", "/actions/", "/v1/system/info", "/v1/diagnostics"]
+# Endpoints and names from earlier APIs that must not come back. Access requests and the
+# DirectorLink Access button were replaced by pairing codes in 0.8.0.
+RETIRED = ['"/v1/pair"', "/v1/climate", "/actions/", "/v1/system/info", "/v1/diagnostics", "/v1/auth/requests"]
+
+# Problems POST /v1/auth/pair can answer; the app explains each one (connect.errors.* in i18n).
+PAIRING_PROBLEMS = {
+    "INVALID_FIELD": "invalidCode",
+    "PAIRING_CODE_INVALID": "wrongCode",
+    "PAIRING_NOT_ACTIVE": "notActive",
+    "PAIRING_RATE_LIMITED": "rateLimited",
+    "KEY_LIMIT_REACHED": "keyLimit",
+    "PAIRING_UNAVAILABLE": "unavailable",
+}
 
 
 def fail(message):
@@ -100,16 +111,33 @@ def main():
     require(client, '? "loopback" : "local"', "controller requests must use the local address space (loopback only for localhost)")
     require(client, "Authorization = `Bearer ${apiKey}`", "requests must send the API key as a Bearer token")
     require(client, '"Content-Type"] = "application/json"', "request bodies must be sent as JSON")
+    require(client, "export function normalizePairingCode", "api-client.js must accept pairing codes as 1234 5678")
+    require(client, "export function formatPairingCode", "api-client.js must format pairing codes while typing")
 
     # The app is split into ES modules (app.js + js/**); check them together.
     modules = sorted([APP / "app.js", *(APP / "js").rglob("*.js")])
     app = "\n".join(path.read_text(encoding="utf-8") for path in modules)
+    # Onboarding (0.8.0): the pairing code from Composer is the only way to get the first key.
     require(app, '"/v1/auth/pair"', "the app must pair with POST /v1/auth/pair")
-    require(app, "pairing_code:", "pairing must send the code in the JSON body")
-    require(app, '"/v1/auth/requests"', "the app must request access approved in the Control4 app")
-    require(app, 'id: "cancel-access-button"', "the app needs a way to cancel a waiting access request")
-    require(app, 'method: "DELETE"', "cancelling an access request must DELETE it")
+    require(app, "pairing_code: code", "pairing must send the (normalized) code in the JSON body")
+    require(app, "normalizePairingCode(", "the app must accept the code with or without its space")
     require(app, "saveApiKey(created.key)", "the app must store the API key it was issued")
+    connect_view = (APP / "js" / "views" / "connect.js").read_text(encoding="utf-8")
+    for fragment, message in (
+        ('inputmode: "numeric"', "the pairing code field must bring up the number pad"),
+        ('autocomplete: "one-time-code"', "the pairing code field must be marked as a one-time code"),
+        ("formatPairingCode(", "the pairing code must be shown as 1234 5678 while typing"),
+        ('placeholder: "1234 5678"', "the pairing code field must show the Composer format"),
+    ):
+        require(connect_view, fragment, message)
+    session = (APP / "js" / "session.js").read_text(encoding="utf-8")
+    for code in PAIRING_PROBLEMS:
+        require(session, f'"{code}"', f"the app must explain the pairing problem {code}")
+    require(session, '"/v1/api-keys/current", { method: "DELETE"', "Forget key must revoke the key (DELETE /v1/api-keys/current)")
+    require(app, 't("settings.controller.pairAgain")', "Settings must offer Pair again")
+    for gone in ("requestAccess", "cancelAccess", "cancel-access-button"):
+        if gone in app:
+            fail(f"the app still has {gone}; access requests were removed in 0.8.0 (pair with a code)")
     for path in ('"/v1/system"', '"/v1/rooms"', '"/v1/devices"', '"/v1/lights"', '"/v1/thermostats"'):
         require(app, path, f"the app must load {path}")
     require(app, 'method: "PATCH"', "device changes must use PATCH")
@@ -130,12 +158,26 @@ def main():
     for gone in ("console.html", "console.js", "console.css"):
         if (APP / gone).exists():
             fail(f"app/{gone} belongs to the console site now (console/)")
+    # Old bookmarks of the console inside the app go to the console site (Cloudflare _redirects).
+    redirects = (APP / "_redirects").read_text(encoding="utf-8") if (APP / "_redirects").is_file() else ""
+    rules = [line.split() for line in redirects.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    for old in ("/console.html", "/console"):
+        if [old, "https://console.directorlink.io", "301"] not in rules:
+            fail(f"app/_redirects must send {old} to https://console.directorlink.io (301)")
 
-    # Every language listed in js/i18n.js has a dictionary file.
+    # Every language listed in js/i18n.js has a dictionary file, and each one explains every
+    # pairing problem in its own words.
     i18n = (APP / "js" / "i18n.js").read_text(encoding="utf-8")
     for code in re.findall(r'\{ code: "([a-zA-Z-]+)"', i18n):
-        if not (APP / "i18n" / f"{code}.js").is_file():
+        dictionary_path = APP / "i18n" / f"{code}.js"
+        if not dictionary_path.is_file():
             fail(f"language {code} is listed in js/i18n.js but app/i18n/{code}.js is missing")
+        dictionary = dictionary_path.read_text(encoding="utf-8")
+        for key in ("codeLabel", "codeHelp", "pairNew", "pairAgain", "pairAgainConfirm", "rateLimitedMinute", *PAIRING_PROBLEMS.values()):
+            require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing {key}")
+    for path in APP.rglob("*"):
+        if path.is_file() and path.suffix in (".html", ".js", ".md") and "DirectorLink Access" in path.read_text(encoding="utf-8"):
+            fail(f"app/{path.relative_to(APP).as_posix()} still mentions the DirectorLink Access button (removed in 0.8.0)")
 
     for path in [APP / "api-client.js", *modules]:
         text = path.read_text(encoding="utf-8")
@@ -151,6 +193,9 @@ def main():
     require(service_worker, "NETWORK_TIMEOUT_MS", "the service worker must fall back to the cache when the network is slow")
     for asset in ("/index.html", "/api-client.js", "/theme-boot.js"):
         require(service_worker, f'"{asset}"', f"the service worker must cache {asset}")
+    for special in ("/_redirects", "/_headers"):
+        if f'"{special}"' in service_worker:
+            fail(f"the service worker must not cache {special}: Cloudflare reads it, it is not served")
     if '"/console' in service_worker:
         fail("the service worker must not cache the old API console pages (it is console.directorlink.io now)")
     # The offline shell needs every module the app imports.

@@ -55,6 +55,18 @@ WORKERS = {
 
 TEST_SUFFIXES = (".test.js", ".test.mjs", ".spec.js", ".spec.mjs")
 
+# 0.8.0 onboarding: the pairing code from Composer is the only way to a first key. Access
+# requests and the DirectorLink Access button are gone and must not come back.
+RETIRED = ("/v1/auth/requests", "DirectorLink Access", "Request admin access")
+PAIRING_PROBLEMS = (
+    "INVALID_FIELD",
+    "PAIRING_CODE_INVALID",
+    "PAIRING_NOT_ACTIVE",
+    "PAIRING_RATE_LIMITED",
+    "KEY_LIMIT_REACHED",
+    "PAIRING_UNAVAILABLE",
+)
+
 
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
@@ -204,6 +216,9 @@ def check_common(folder):
             text = path.read_text(encoding="utf-8")
             for match in re.finditer(r"c4bridge", text, re.IGNORECASE):
                 fail(f"{rel(path)} still says {match.group(0)!r}; the project is DirectorLink")
+            for retired in RETIRED:
+                if retired in text:
+                    fail(f"{rel(path)} still mentions {retired!r}; since 0.8.0 devices pair with a code from Composer")
 
     page = parse(folder / "index.html")
     if page.lang != "en":
@@ -278,12 +293,12 @@ def check_console():
     for fragment, message in (
         ('"/v1/openapi.json"', "the API tab must load the API description from the controller"),
         ('"x-directorlink-role"', "the API tab must show each operation's role"),
-        ('"/v1/auth/requests"', "the console must request admin access"),
-        ('role: "admin"', "the access request must ask for the admin role"),
-        ('name: CLIENT_NAME', "requests must name the key DirectorLink Console"),
+        ('name: CLIENT_NAME', "pairing must name the key DirectorLink Console"),
+        ("normalizePairingCode(", "the console must accept the code with or without its space"),
+        ("formatPairingCode(", "the console must show the code as 1234 5678 while typing"),
         ('export const CLIENT_NAME = "DirectorLink Console"', "the console's key name is DirectorLink Console"),
         ('"/v1/auth/pair"', "the console must pair with a code from Composer"),
-        ('pairing_code:', "pairing must send the code in the JSON body"),
+        ('pairing_code: pairingCode', "pairing must send the (normalized) code in the JSON body"),
         ('"/v1/api-keys/current"', "the console must read (and revoke) its own key"),
         ('"/v1/api-keys"', "the Keys tab must list and create keys"),
         ("/v1/logs?", "the Logs tab must follow the log"),
@@ -297,6 +312,13 @@ def check_console():
         ('"directorlink.console.tab"', "the console must remember the last tab"),
     ):
         require(code, fragment, message)
+    for problem in PAIRING_PROBLEMS:
+        require(code, f'"{problem}"', f"the console must explain the pairing problem {problem}")
+    html = (CONSOLE / "index.html").read_text(encoding="utf-8")
+    field = re.search(r'<input[^>]*id="pair-code"[^>]*>', html)
+    for attribute in ('inputmode="numeric"', 'autocomplete="one-time-code"', 'placeholder="1234 5678"', 'dir="ltr"'):
+        if not field or attribute not in field.group(0):
+            fail(f"console/index.html: the pairing code field needs {attribute}")
     if "localStorage.setItem(\"directorlink.apiKey\"" in code or "sessionStorage" in code:
         fail("the console must store the key only through api-client.js")
 
@@ -331,7 +353,8 @@ def check_site():
         if link not in page.links:
             fail(f"site/index.html must link to {link}")
     require(text, "Apache-2.0", "site/index.html footer must name the license (Apache-2.0)")
-    require(text, "DirectorLink Access", "How it works must mention the DirectorLink Access button")
+    require(text, "pairing code", "How it works must explain pairing with a code")
+    require(text, "New Pairing Code", "How it works must say where the code is made (Composer: New Pairing Code)")
     for stylesheet in page.stylesheets:
         if not stylesheet.startswith("/"):
             fail(f"site/index.html loads a stylesheet from elsewhere ({stylesheet}); the site makes no external requests")

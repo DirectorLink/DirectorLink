@@ -31,7 +31,7 @@ export function homeView({ openCamera, openFavoritesPicker }) {
       ? [iconButton("download", t("settings.app.install"), { class: "install-button", dataset: { key: "install-home" }, onclick: installApp })]
       : [],
   });
-  if (state.status === "setup" || state.status === "waiting" || (!state.apiKey && state.status === "connecting")) {
+  if (state.status === "setup" || (!state.apiKey && state.status === "connecting")) {
     return [header, offlineBanner(), connectScreen()];
   }
   if (isLoading()) {

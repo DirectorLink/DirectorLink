@@ -7,6 +7,7 @@ import {
   apiRequest,
   clearApiKey,
   normalizeHost,
+  normalizePairingCode,
   saveApiKey,
   saveHost,
   savedApiKey,
@@ -19,14 +20,13 @@ export const ROLES = ["viewer", "member", "doors", "admin"];
 export const state = {
   host: savedHost(),
   apiKey: savedApiKey(),
-  // setup | waiting | connecting | connected | unreachable
+  // setup | connecting | connected | unreachable
   status: "setup",
   role: null,
   key: null, // GET /v1/api-keys/current (no secret)
   system: null,
   spec: null,
   notice: null, // { kind, text } shown on the connection screen
-  access: null, // a waiting access request: { id, host, expiresAt }
 };
 
 const listeners = new Set();
@@ -78,7 +78,9 @@ export function handleUnauthorized(message) {
   forgetLocally();
   state.notice = {
     kind: "error",
-    text: message || "The controller no longer accepts this API key (it was revoked, or DirectorLink was reinstalled). Connect again.",
+    text:
+      message ||
+      "The controller no longer accepts this API key (it was revoked, or DirectorLink was reinstalled). Pair again with a new code from Composer, or paste another key.",
   };
   notify();
   if (!window.location.hash.startsWith("#/connect")) {
@@ -122,7 +124,7 @@ export async function call(path, options) {
   const result = await send(path, options);
   if (!result.ok) {
     const problem = result.data && typeof result.data === "object" ? result.data : null;
-    throw new ApiError(problemText(result), { status: result.status, code: problem?.code, problem });
+    throw new ApiError(problemText(result), { status: result.status, code: problem?.code, problem, retryAfter: result.retryAfter });
   }
   return result.data;
 }
@@ -217,104 +219,59 @@ export async function loadSpec() {
   return result.data;
 }
 
-const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-
-// Request admin access: approved with the DirectorLink Access button in the Control4 app.
-// Each request has a run number, so a cancelled one that is still waiting for its next poll
-// never touches a newer request.
-let accessRun = 0;
-let statusBeforeAccess = "setup";
-
-function endAccess(run, notice) {
-  if (run !== accessRun) return;
-  accessRun += 1;
-  state.access = null;
-  if (state.status === "waiting") {
-    state.status = state.apiKey ? statusBeforeAccess : "setup";
-  }
-  if (notice) state.notice = notice;
-  notify();
-}
-
-export async function requestAdminAccess(hostValue) {
-  state.notice = null;
-  const run = ++accessRun;
-  const current = () => run === accessRun;
-  try {
-    const host = useHost(hostValue);
-    statusBeforeAccess = state.apiKey ? state.status : "setup";
-    state.status = "waiting";
-    state.access = { id: null, host, expiresAt: null };
-    notify();
-    const request = await call("/v1/auth/requests", {
-      method: "POST",
-      auth: false,
-      body: { name: CLIENT_NAME, role: "admin" },
-    });
-    if (!current()) {
-      // Cancelled while the request was being sent.
-      await apiRequest(host, `/v1/auth/requests/${request.id}`, { method: "DELETE" }).catch(() => {});
-      return false;
+// What each problem from POST /v1/auth/pair means for the person pairing.
+export function pairingProblemText(error) {
+  const problem = error?.problem || {};
+  switch (error?.code) {
+    case "INVALID_FIELD":
+    case "INVALID_REQUEST":
+      return "Enter the 8-digit pairing code, for example 1234 5678.";
+    case "PAIRING_CODE_INVALID": {
+      const left = Number(problem.attempts_remaining);
+      return Number.isFinite(left) && left > 0
+        ? `That code isn't right. ${left} more ${left === 1 ? "try" : "tries"} before pairing locks for a minute.`
+        : "That code isn't right. Check it in Composer and try again.";
     }
-    state.access = { ...state.access, id: request.id, expiresAt: request.expires_at };
-    notify();
-    for (;;) {
-      await sleep(2000);
-      if (!current()) return false;
-      const result = await send(`/v1/auth/requests/${request.id}`, { auth: false });
-      if (!current()) return false;
-      if (result.status === 404) {
-        throw new ApiError("The request ran out (or was cancelled) before DirectorLink Access was pressed. Request admin access again.", {
-          code: "REQUEST_EXPIRED",
-        });
-      }
-      if (!result.ok) {
-        throw new ApiError(problemText(result), { status: result.status });
-      }
-      if (result.data?.status === "approved" && result.data.api_key?.key) {
-        useKey(result.data.api_key.key);
-        endAccess(run);
-        state.status = "connecting";
-        return connect();
-      }
-      // Expiry is the bridge's call (its clock may differ from this computer's): it answers 404.
-      state.access = { ...state.access, expiresAt: result.data?.expires_at };
-      notify();
+    case "PAIRING_NOT_ACTIVE":
+      return "No pairing code is active. In Composer, run New Pairing Code on DirectorLink — or ask your installer. Codes last 15 minutes and work once.";
+    case "PAIRING_CODE_EXPIRED":
+      return "That code has expired. In Composer, run New Pairing Code on DirectorLink and try the new one.";
+    case "PAIRING_RATE_LIMITED": {
+      // Exact only when the driver says how long (problem body, or an exposed Retry-After).
+      const seconds = Number(problem.retry_after) || error.retryAfter;
+      return seconds
+        ? `Too many wrong codes. Wait ${seconds} ${seconds === 1 ? "second" : "seconds"} and try again.`
+        : "Too many wrong codes. Pairing is locked for a minute — wait, then try again.";
     }
-  } catch (error) {
-    const text =
-      error?.code === "REQUEST_PENDING"
-        ? "Another device is already waiting for approval. Wait for it to finish (up to 2 minutes) and try again."
-        : error.message;
-    endAccess(run, { kind: "error", text });
-    return false;
+    case "KEY_LIMIT_REACHED":
+      return "DirectorLink already has as many API keys as it can hold. Revoke one you no longer use (Keys tab, with another admin key), then pair again.";
+    case "PAIRING_UNAVAILABLE":
+      return "Pairing isn't available right now — DirectorLink may still be starting. Try again in a minute.";
+    default:
+      return error?.message || "Pairing failed.";
   }
 }
 
-export async function cancelAccess() {
-  const access = state.access;
-  if (!access) return;
-  endAccess(accessRun, { kind: "info", text: "Access request cancelled." });
-  if (access.id) {
-    try {
-      await apiRequest(access.host, `/v1/auth/requests/${access.id}`, { method: "DELETE" });
-    } catch {
-      // Already expired or approved: nothing to undo.
-    }
-  }
-}
-
-// The 8-digit pairing code from the DirectorLink properties in Composer (always an admin key).
+// The pairing code created in Composer (DirectorLink → Actions → New Pairing Code): 15 minutes,
+// works once, always gives an admin key.
 export async function pairWithCode(hostValue, code) {
-  const pairingCode = String(code || "").trim();
   state.notice = null;
-  if (!/^\d{8}$/.test(pairingCode)) {
-    state.notice = { kind: "error", text: "Enter the 8-digit pairing code shown in Composer." };
-    notify();
-    return false;
-  }
+  // The address first (the field above), so it is kept even when the code is mistyped.
   try {
     useHost(hostValue);
+  } catch (error) {
+    state.notice = { kind: "error", text: error.message };
+    notify();
+    return false;
+  }
+  const pairingCode = normalizePairingCode(code);
+  if (!pairingCode) {
+    state.notice = { kind: "error", text: "Enter the 8-digit pairing code, for example 1234 5678." };
+    notify();
+    return false;
+  }
+  const previousStatus = state.apiKey ? state.status : "setup";
+  try {
     state.status = "connecting";
     notify();
     const created = await call("/v1/auth/pair", {
@@ -328,11 +285,8 @@ export async function pairWithCode(hostValue, code) {
     useKey(created.key);
     return connect();
   } catch (error) {
-    state.status = state.apiKey ? "connected" : "setup";
-    state.notice = {
-      kind: "error",
-      text: error?.code === "PAIRING_RATE_LIMITED" ? "Too many wrong codes. Wait a minute and try again." : error.message,
-    };
+    state.status = state.apiKey ? previousStatus : "setup";
+    state.notice = { kind: "error", text: error?.status || error?.code ? pairingProblemText(error) : error.message };
     notify();
     return false;
   }

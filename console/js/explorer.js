@@ -393,7 +393,7 @@ function renderDetail() {
           "p",
           { class: "message message-warn" },
           `Needs the ${operation.role} role; this console's key is ${state.role}. The controller will answer 403. `,
-          h("a", { href: "#/connect" }, "Request admin access")
+          h("a", { href: "#/connect" }, "Pair with a code for an admin key")
         ),
     operation.description ? h("p", { class: "op-description" }, richText(operation.description)) : null,
     operation.parameters.length ? h("div", { class: "params" }, operation.parameters.map((parameter) => parameterField(operation, parameter, draft))) : null,

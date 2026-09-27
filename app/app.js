@@ -1,8 +1,8 @@
 // DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
-// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/auth/requests",
-// "/v1/auth/pair" — device changes use method: "PATCH" and are confirmed by re-reading.
+// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/auth/pair" —
+// device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { h, iconButton } from "./js/dom.js";
@@ -133,7 +133,6 @@ function signature() {
     themePreference(),
     state.status,
     state.notice,
-    state.access?.expiresAt,
     state.loaded,
     state.system,
     state.rooms,
@@ -267,14 +266,6 @@ function applyLanguage() {
 }
 
 // ---- start ---------------------------------------------------------------------------------
-
-// Countdown while waiting for DirectorLink Access to be pressed.
-window.setInterval(() => {
-  if (state.status === "waiting" && state.access) {
-    ui.tick += 1;
-    render();
-  }
-}, 1000);
 
 subscribe(() => render());
 watchSystemTheme(() => render(true));

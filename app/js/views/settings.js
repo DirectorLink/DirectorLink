@@ -5,7 +5,7 @@ import { LANGUAGES, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { installApp } from "../pwa.js";
-import { connect, errorText, requestAccess, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
+import { connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { offlineBanner, pageHeader } from "./common.js";
@@ -229,8 +229,9 @@ function controllerSection(navigate) {
       delete ui.drafts.settingsHost;
       ui.controllerMessage = null;
       if (host !== previous || !state.apiKey) {
+        // A new controller needs its own key: pair with a code from its Composer project.
+        state.notice = { kind: "info", text: t("connect.pairNew") };
         navigate("#/");
-        await requestAccess(host);
       } else {
         await connect();
       }
@@ -296,17 +297,16 @@ function controllerSection(navigate) {
             {
               type: "button",
               class: "button button-secondary",
-              dataset: { key: "settings-new-access" },
+              dataset: { key: "settings-pair-again" },
               onclick: async () => {
-                if (!window.confirm(t("settings.controller.newAccessConfirm"))) return;
-                const host = state.host;
+                if (!window.confirm(t("settings.controller.pairAgainConfirm"))) return;
                 await revokeAndForget();
+                state.notice = { kind: "info", text: t("connect.pairNew") };
                 navigate("#/");
-                requestAccess(host);
               },
             },
             icon("key"),
-            t("settings.controller.newAccess")
+            t("settings.controller.pairAgain")
           )
         : null,
       state.apiKey

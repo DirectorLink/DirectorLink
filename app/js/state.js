@@ -4,10 +4,9 @@
 export const state = {
   host: "",
   apiKey: "",
-  // setup (no key) · connecting · waiting (access request) · connected · unreachable
+  // setup (no key: pair with a code) · connecting · connected · unreachable
   status: "setup",
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
-  access: null, // waiting access request: { id, host, expiresAt }
   loaded: false,
   system: null,
   rooms: [],
@@ -42,7 +41,7 @@ export const ui = {
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture
   dragging: false, // a slider thumb is held: redraws wait
-  tick: 0, // bumped by timers that need a redraw (countdowns)
+  tick: 0, // bumped by timers that need a redraw
 };
 
 const listeners = new Set();

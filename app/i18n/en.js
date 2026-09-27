@@ -25,7 +25,6 @@ export default {
   status: {
     setup: "Not connected",
     connecting: "Connecting…",
-    waiting: "Waiting for approval",
     connected: "Connected",
     unreachable: "Can’t reach home",
     chipLabel: "Controller: {status}. Open settings",
@@ -37,24 +36,34 @@ export default {
   },
   connect: {
     title: "Connect to your home",
-    intro: "Enter your Control4 controller’s address. You only do this once on each device.",
+    intro: "Enter your Control4 controller’s address and a pairing code. You only do this once on each device.",
     hostLabel: "Controller address",
     hostHelp: "The IP address or local name, e.g. 192.168.1.50 or director.local.",
     invalidHost: "Enter an IP address or local hostname, without a port.",
-    requestAccess: "Request access",
-    requestHelp: "Then press “DirectorLink Access” in the Control4 app within 2 minutes.",
-    waitingTitle: "Approve this device",
-    step1: "Open the Control4 app on your phone or touch screen.",
-    step2: "Press the “DirectorLink Access” button.",
-    timeLeft: "{time} left",
-    sending: "Sending the request…",
-    cancel: "Cancel request",
-    cancelled: "Access request cancelled.",
-    useCode: "Use a pairing code instead",
     codeLabel: "Pairing code",
-    codeHelp: "The 8-digit code in the DirectorLink properties in Composer. It changes after every use.",
-    codeInvalid: "Enter the 8-digit pairing code shown in Composer.",
-    pair: "Pair with code",
+    codeHelp:
+      "In Composer, select DirectorLink, then Actions → New Pairing Code — or ask your installer for one. A code lasts 15 minutes and works once.",
+    pair: "Connect",
+    pairNew: "Enter a new pairing code from Composer to connect this device.",
+    errors: {
+      invalidCode: "Enter the 8-digit pairing code, for example 1234 5678.",
+      wrongCode: {
+        one: "That code isn’t right. 1 more try before pairing locks for a minute.",
+        other: "That code isn’t right. {count} more tries before pairing locks for a minute.",
+      },
+      wrongCodeNoCount: "That code isn’t right. Check it in Composer and try again.",
+      notActive:
+        "No pairing code is active. In Composer, run New Pairing Code on DirectorLink — or ask your installer. Codes last 15 minutes and work once.",
+      expired: "That code has expired. In Composer, run New Pairing Code on DirectorLink and try the new one.",
+      rateLimited: {
+        one: "Too many wrong codes. Wait {seconds} second and try again.",
+        other: "Too many wrong codes. Wait {seconds} seconds and try again.",
+      },
+      rateLimitedMinute: "Too many wrong codes. Pairing is locked for a minute — wait, then try again.",
+      keyLimit:
+        "DirectorLink already has as many access keys as it can hold. Remove a device you no longer use (API console → Keys), then pair again.",
+      unavailable: "Pairing isn’t available right now — DirectorLink may still be starting. Try again in a minute.",
+    },
     lanNote:
       "The app talks to your controller directly over your home network. If the browser asks to access devices on your local network, allow it.",
     notConnectedTitle: "Not connected yet",
@@ -62,11 +71,8 @@ export default {
     goConnect: "Connect",
   },
   errors: {
-    keyRevoked: "This device’s access key no longer works (it was removed, or DirectorLink was reinstalled). Request access again.",
-    requestPending: "Another device is already waiting for approval. Try again in a minute.",
-    requestExpired: "The request ran out before it was approved. Request access again.",
-    pairingRateLimited: "Too many wrong codes. Wait a minute and try again.",
-    pairingRejected: "That pairing code was not accepted.",
+    keyRevoked:
+      "This device’s access key no longer works (it was removed, or DirectorLink was reinstalled). Pair again with a new code from Composer.",
     noKey: "DirectorLink paired, but no access key came back.",
     timeout: "The controller did not answer in time. Check the address and that you are on the home network.",
     unreachable:
@@ -240,10 +246,10 @@ export default {
       os: "Control4 OS",
       inventory: "Project",
       inventoryValue: "{rooms} rooms · {devices} devices ({supported} supported)",
-      newAccess: "Request new access",
-      newAccessConfirm: "Replace this device’s access key with a new one? You will need to press DirectorLink Access again.",
+      pairAgain: "Pair again",
+      pairAgainConfirm: "Remove this device’s access key and pair it again? You will need a new pairing code from Composer.",
       forget: "Forget access key",
-      forgetConfirm: "Remove this device’s access? You will need to request access again to use the app.",
+      forgetConfirm: "Remove this device’s access? You will need a new pairing code from Composer to use the app again.",
       forgotten: "The access key was removed from this device.",
     },
     app: {

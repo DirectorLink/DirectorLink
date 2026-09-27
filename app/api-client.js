@@ -6,12 +6,13 @@ const HOST_STORAGE_KEY = "directorlink.directorHost";
 const API_KEY_STORAGE_KEY = "directorlink.apiKey";
 
 export class ApiError extends Error {
-  constructor(message, { status, code, problem } = {}) {
+  constructor(message, { status, code, problem, retryAfter } = {}) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.problem = problem;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -25,6 +26,25 @@ export function normalizeHost(value) {
     return null;
   }
   return host;
+}
+
+// Pairing codes are shown in Composer as "1234 5678". Accepts them with or without the space
+// (or a dash) and returns the 8 digits, or null.
+export function normalizePairingCode(value) {
+  const digits = String(value || "").replace(/[\s-]/g, "");
+  return /^\d{8}$/.test(digits) ? digits : null;
+}
+
+// "12345678" -> "1234 5678" while typing: keeps only digits (at most 8), space after the fourth.
+export function formatPairingCode(value) {
+  const digits = String(value || "").replace(/\D/g, "").slice(0, 8);
+  return digits.length > 4 ? `${digits.slice(0, 4)} ${digits.slice(4)}` : digits;
+}
+
+// Seconds from a Retry-After header (readable when the driver exposes it), else null.
+function retryAfterSeconds(response) {
+  const seconds = Number(response.headers.get("Retry-After"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
 }
 
 export function savedHost() {
@@ -57,7 +77,8 @@ export function apiUrl(host, path) {
   return `http://${host}:${API_PORT}${path}`;
 }
 
-// Sends a request and returns { status, ok, data, text, durationMs } without throwing on HTTP errors.
+// Sends a request and returns { status, ok, data, text, durationMs, retryAfter } without throwing
+// on HTTP errors.
 export async function apiRequest(host, path, { method = "GET", apiKey, body, timeoutMs = 8000 } = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -97,6 +118,7 @@ export async function apiRequest(host, path, { method = "GET", apiKey, body, tim
       data,
       text,
       durationMs: Math.round(performance.now() - started),
+      retryAfter: retryAfterSeconds(response),
     };
   } finally {
     window.clearTimeout(timer);
@@ -125,6 +147,7 @@ export async function apiImage(host, path, { apiKey, timeoutMs = 12000 } = {}) {
         status: response.status,
         code: problem?.code,
         problem,
+        retryAfter: retryAfterSeconds(response),
       });
     }
     return await response.blob();
@@ -142,6 +165,7 @@ export async function apiCall(host, path, options) {
       status: result.status,
       code: problem?.code,
       problem,
+      retryAfter: result.retryAfter,
     });
   }
   return result.data;

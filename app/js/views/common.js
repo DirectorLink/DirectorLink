@@ -68,7 +68,7 @@ export function staleBanner() {
 
 // For screens other than Home when there is nothing to show yet.
 export function notReadyState() {
-  if (state.status === "setup" || state.status === "waiting") {
+  if (state.status === "setup" || (!state.apiKey && state.status === "connecting")) {
     return emptyState(
       "controller",
       t("connect.notConnectedTitle"),
