@@ -4,6 +4,7 @@
 local Mock = {}
 
 local md5 = require("md5")
+local sha1 = require("sha1")
 
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
@@ -147,6 +148,10 @@ function Mock.install(project)
     project = project or Mock.project()
     local mock = {
         persist = {},
+        persistEncrypted = {},
+        -- Outgoing network connections (the relay): binding -> { host, port, kind, options,
+        -- connects, disconnects, sent }.
+        network = {},
         properties = {},
         debugLog = {},
         sent = {},
@@ -174,8 +179,9 @@ function Mock.install(project)
         return mock.persist[key]
     end
 
-    function C4:PersistSetValue(key, value, _encrypted)
+    function C4:PersistSetValue(key, value, encrypted)
         mock.persist[key] = value
+        mock.persistEncrypted[key] = encrypted == true
     end
 
     function C4:UpdateProperty(name, value)
@@ -273,9 +279,46 @@ function Mock.install(project)
         error("UI request failed")
     end
 
-    function C4:Hash(algorithm, data, _options)
-        assert(algorithm == "MD5", "only MD5 is faked")
+    function C4:Hash(algorithm, data, options)
+        if algorithm == "SHA1" then
+            local digest = sha1(data)
+            if options and options.return_encoding == "BASE64" then
+                return C4:Base64Encode(digest)
+            end
+            return (digest:gsub(".", function(c)
+                return string.format("%02X", c:byte())
+            end))
+        end
+        assert(algorithm == "MD5", "only MD5 and SHA1 are faked")
         return string.upper(md5(data))
+    end
+
+    function C4:CreateNetworkConnection(binding, host)
+        assert(mock.network[binding] == nil, "network binding " .. tostring(binding) .. " created twice")
+        mock.network[binding] = { host = host, connects = 0, disconnects = 0, sent = "" }
+    end
+
+    function C4:NetPortOptions(binding, port, kind, options)
+        local connection = assert(mock.network[binding], "NetPortOptions before CreateNetworkConnection")
+        connection.port, connection.kind, connection.options = port, kind, options
+    end
+
+    function C4:NetConnect(binding, port)
+        local connection = assert(mock.network[binding], "NetConnect before CreateNetworkConnection")
+        assert(connection.port == port, "NetConnect on a port without options")
+        connection.connects = connection.connects + 1
+    end
+
+    function C4:NetDisconnect(binding, _port)
+        local connection = mock.network[binding]
+        if connection then
+            connection.disconnects = connection.disconnects + 1
+        end
+    end
+
+    function C4:SendToNetwork(binding, _port, data)
+        local connection = assert(mock.network[binding], "SendToNetwork before CreateNetworkConnection")
+        connection.sent = connection.sent .. data
     end
 
     function C4:Base64Encode(data)

@@ -76,6 +76,21 @@
         <default>Disabled</default>
       </property>
       <property>
+        <name>Remote Access</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+      </property>
+      <property>
+        <name>Remote Status</name>
+        <default>Off</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>Log Level</name>
         <type>LIST</type>
         <items>

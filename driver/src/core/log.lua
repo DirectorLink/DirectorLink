@@ -19,6 +19,7 @@ local LEVELS = {
 local REDACTED = {
     api_key = true,
     authorization = true,
+    home_secret = true,
     key = true,
     pairing_code = true,
     password = true,

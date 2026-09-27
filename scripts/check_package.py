@@ -22,6 +22,8 @@ REQUIRED_PROPERTIES = (
     "Pairing Status",
     "API Keys",
     "Door Control",
+    "Remote Access",
+    "Remote Status",
     "Log Level",
     "Inventory",
 )
@@ -47,6 +49,11 @@ SECURITY_CONTRACT = {
         "LOCK_SECONDS = 60",
         "constantTimeEqual(input, state.code)",
         'close("Used at "',
+    ),
+    "src/cloud/relay.lua": (
+        'Relay.ROLE = "viewer"',
+        'if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then',
+        "C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), true)",
     ),
     "src/core/log.lua": (
         "pairing_code = true",
