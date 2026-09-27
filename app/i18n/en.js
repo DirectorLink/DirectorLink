@@ -44,6 +44,11 @@ export default {
     codeHelp:
       "In Composer, select DirectorLink, then Actions → New Pairing Code — or ask your installer for one. A code lasts 15 minutes and works once.",
     pair: "Connect",
+    or: "or",
+    signIn: "Sign in with Google",
+    signInHelp: "Your account will reach your home from anywhere, on iPhone and iPad too. Coming soon; for now, pair on the home network.",
+    signedInAs: "Signed in as {email}",
+    signedInHelp: "Reaching your home through your account is coming soon. For now, connect on the home network with a pairing code.",
     pairNew: "Enter a new pairing code from Composer to connect this device.",
     errors: {
       invalidCode: "Enter the 8-digit pairing code, for example 1234 5678.",
