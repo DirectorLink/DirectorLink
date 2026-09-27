@@ -8,8 +8,9 @@ the app come later (ADR-027).
 
 ## Identity of a home
 
-When **Remote Access** is switched on the first time, the driver creates and keeps (encrypted, in
-its persistent data):
+When **Remote Access** is switched on the first time, the driver creates and keeps, in its
+persistent data (plain, not encrypted: Director drops encrypted values when the driver is updated,
+ADR-028):
 
 - `home_id` — 32 hex characters, random. Not secret; shown shortened in Composer.
 - `home_secret` — 64 hex characters, random. Never logged, never shown.
@@ -49,7 +50,7 @@ All frames are **text**. Apart from the keep-alive words below, each is one JSON
 | --- | --- | --- |
 | driver → relay | `ping` (plain text) | Keep-alive, every 25 s. |
 | relay → driver | `pong` (plain text) | Answer to `ping`. The relay answers without waking its code (hibernation auto-response). |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.9.0"}` | First message after connecting. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.9.1"}` | First message after connecting. |
 | relay → driver | `{"type":"request","id":"<id>","method":"GET","path":"/v1/lights?room_id=10","body":null}` | Run an API request. `path` includes the query string; `body` is a JSON string or `null`. |
 | driver → relay | `{"type":"response","id":"<id>","status":200,"content_type":"application/json; charset=utf-8","body":"<text>"}` | The API's answer, byte for byte. Binary answers (camera pictures) use `"body_base64"` instead of `"body"`. |
 
@@ -68,7 +69,7 @@ The relay answers `504` to its caller when a response takes longer than 15 s.
 For proving the relay before accounts exist. They require `Authorization: Bearer <TEST_TOKEN>`
 (a Worker secret) and are removed once accounts replace them.
 
-- `GET /test/homes/{home_id}/status` → `{"connected": true, "since": "<ISO time>", "version": "0.9.0", "last_seen": "<ISO time>"}`
+- `GET /test/homes/{home_id}/status` → `{"connected": true, "since": "<ISO time>", "version": "0.9.1", "last_seen": "<ISO time>"}`
 - `GET /test/homes/{home_id}/v1/...` → forwarded to the driver as a `request`; the answer carries
   the driver's status, content type and body.
 - `GET /health` → `{"status":"ok"}` (no token).

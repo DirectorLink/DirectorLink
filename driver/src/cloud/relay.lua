@@ -20,7 +20,10 @@ Relay.REFUSED_RETRY_SECONDS = 300
 -- Version 0: whatever the relay asks, relayed requests may only read.
 Relay.ROLE = "viewer"
 
-local IDENTITY_KEY = "DIRECTORLINK_REMOTE_IDENTITY"
+-- Plain persistence: Director drops encrypted values when the driver is updated, and the home must
+-- keep its id. 0.9.0 kept the identity encrypted under the old name; it is moved if still readable.
+local IDENTITY_KEY = "directorlink_remote_identity"
+local OLD_IDENTITY_KEY = "DIRECTORLINK_REMOTE_IDENTITY"
 
 local state = {
     enabled = false,
@@ -58,25 +61,40 @@ local function randomHex(length)
     return hex:sub(1, length)
 end
 
--- The home's identity: a public id and a secret, kept encrypted in the driver's data.
+local function readIdentity(name, encrypted)
+    local ok, raw = pcall(function()
+        return C4:PersistGetValue(name, encrypted)
+    end)
+    local stored = ok and type(raw) == "string" and raw ~= "" and Json.decode(raw) or nil
+    if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
+        return { home_id = stored.home_id, home_secret = stored.home_secret }
+    end
+    return nil
+end
+
+-- The home's identity: a public id and a secret, kept in the driver's data.
 function Relay.identity()
     if state.identity then
         return state.identity
     end
-    local ok, raw = pcall(function()
-        return C4:PersistGetValue(IDENTITY_KEY, true)
-    end)
-    local stored = ok and type(raw) == "string" and Json.decode(raw) or nil
-    if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
-        state.identity = stored
-        return stored
+    local identity = readIdentity(IDENTITY_KEY, false)
+    if identity then
+        state.identity = identity
+        return identity
     end
-    local identity = { home_id = randomHex(32), home_secret = randomHex(64) }
-    pcall(function()
-        C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), true)
+    identity = readIdentity(OLD_IDENTITY_KEY, true)
+    local created = identity == nil
+    identity = identity or { home_id = randomHex(32), home_secret = randomHex(64) }
+    local saved = pcall(function()
+        C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), false)
     end)
+    if saved then
+        pcall(function()
+            C4:PersistSetValue(OLD_IDENTITY_KEY, "", true)
+        end)
+    end
     state.identity = identity
-    log("info", "remote identity created", { home_id = identity.home_id })
+    log("info", created and "remote identity created" or "remote identity moved to plain storage", { home_id = identity.home_id })
     return identity
 end
 

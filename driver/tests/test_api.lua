@@ -2,6 +2,8 @@
 
 local Mock = require("c4mock")
 local T = require("helpers")
+local Json = require("src.core.json")
+local sha256 = require("sha256")
 
 local tests = {}
 
@@ -100,11 +102,7 @@ function tests.pairing_codes_are_created_on_demand_and_expire()
     local mock = Mock.startDriver()
     T.pair(mock, "Owner")
     -- A driver that already has keys starts without a code.
-    local restarted = Mock.startDriver()
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
+    local restarted = Mock.updateDriver(mock)
     T.eq(restarted.properties["Pairing Code"], "-")
     T.contains(restarted.properties["Pairing Status"], "New Pairing Code")
     T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = "12345678" } }).json.code, "PAIRING_NOT_ACTIVE")
@@ -493,14 +491,9 @@ function tests.rooms_have_names_per_language()
     T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { name = "x" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "PATCH", "/v1/rooms/999", { key = key, body = { names = { en = "x" } } }).status, 404)
 
-    -- Names survive a driver restart.
-    local restarted = Mock.startDriver()
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
-    local restartedKey = T.pair(restarted)
-    T.same(T.http(restarted, "GET", "/v1/rooms/10", { key = restartedKey }).json.names, { he = "מטבח" })
+    -- Names survive a driver update.
+    local updated = Mock.updateDriver(mock)
+    T.same(T.http(updated, "GET", "/v1/rooms/10", { key = key }).json.names, { he = "מטבח" })
 end
 
 function tests.doors_stay_shut_until_door_control_is_enabled()
@@ -586,18 +579,31 @@ function tests.admins_change_roles_but_keep_one_admin()
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } }).json.role, "member")
 end
 
-function tests.keys_from_before_roles_keep_full_access()
-    local project = Mock.project()
-    local mock = Mock.install(project)
-    mock.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
-    local restarted = Mock.startDriver(project)
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
-    local me = T.http(restarted, "GET", "/v1/api-keys/current", { key = "ak_old" })
+function tests.keys_in_the_old_encrypted_store_are_moved_to_hashes()
+    -- Up to 0.9.0 the keys themselves were stored encrypted. If Director can still read them they
+    -- are moved, and keys from before roles existed keep full access.
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
+        fresh.persistEncrypted["directorlink_api_keys"] = true
+    end)
+    local me = T.http(mock, "GET", "/v1/api-keys/current", { key = "ak_old" })
     T.eq(me.status, 200)
     T.eq(me.json.role, "admin")
+    T.eq(me.json.name, "Old laptop")
+    T.eq(mock.properties["Pairing Code"], "-", "no pairing code opens when the keys were kept")
+    T.eq(mock.persist["directorlink_api_keys"], "", "the old store no longer holds the keys")
+    T.notContains(mock.persist["directorlink_api_key_hashes"], "ak_old")
+
+    local updated = Mock.updateDriver(mock)
+    T.eq(T.http(updated, "GET", "/v1/api-keys/current", { key = "ak_old" }).status, 200, "and they survive the next update")
+end
+
+function tests.keys_lost_with_the_old_encrypted_store_open_pairing()
+    -- Updating straight from 0.9.0: Director has dropped the encrypted store, so pairing opens.
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING")
+    T.eq(mock.properties["API Keys"], "0")
+    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a pairing code is shown")
+    T.eq(mock.persist["directorlink_api_keys"], "", "whatever is left of the old store is emptied")
 end
 
 function tests.access_requests_are_gone()
@@ -694,18 +700,41 @@ function tests.api_keys_can_be_listed_created_and_revoked()
     T.eq(mock.properties["API Keys"], "1")
 end
 
-function tests.keys_survive_a_driver_restart()
-    local mock, key = start()
-    local persisted = mock.persist["directorlink_api_keys"]
-    T.truthy(persisted and persisted:find(key, 1, true), "key stored in encrypted persistence")
+local function hex(bytes)
+    return (bytes:gsub(".", function(c)
+        return string.format("%02x", c:byte())
+    end))
+end
 
-    local project = Mock.project()
-    local restarted = Mock.startDriver(project)
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
+function tests.keys_survive_a_driver_update_and_only_hashes_are_stored()
+    local mock, key = start()
+    local stored = mock.persist["directorlink_api_key_hashes"]
+    T.eq(mock.persistEncrypted["directorlink_api_key_hashes"], false, "plain storage survives updates")
+    T.notContains(stored, key:sub(4), "the key itself is never stored")
+    local record = Json.decode(stored).keys[1]
+    T.eq(record.alg, "sha256")
+    T.eq(record.hash, hex(sha256(key)))
+    T.eq(record.secret, nil)
+
+    local updated = Mock.updateDriver(mock)
+    T.eq(T.http(updated, "GET", "/v1/system", { key = key }).status, 200, "the key still works after an update")
+    T.eq(updated.properties["API Keys"], "1")
+    T.eq(updated.properties["Pairing Code"], "-", "no pairing code opens")
+    T.eq(T.http(updated, "GET", "/v1/system", { key = key .. "0" }).status, 401)
+    T.eq(T.http(updated, "GET", "/v1/system", { key = string.rep("a", 4096) }).status, 401)
+end
+
+function tests.keys_are_hashed_with_sha1_when_sha256_is_missing()
+    local mock = Mock.startDriver()
+    local hash = C4.Hash
+    function C4:Hash(algorithm, data, options)
+        assert(algorithm ~= "SHA256", "unsupported digest")
+        return hash(self, algorithm, data, options)
     end
-    OnDriverLateInit("DIT_UPDATING")
-    T.eq(T.http(restarted, "GET", "/v1/system", { key = key }).status, 200)
+    local key = T.pair(mock)
+    T.eq(Json.decode(mock.persist["directorlink_api_key_hashes"]).keys[1].alg, "sha1")
+    T.eq(T.http(mock, "GET", "/v1/system", { key = key }).status, 200)
+    T.eq(T.http(Mock.updateDriver(mock), "GET", "/v1/system", { key = key }).status, 200)
 end
 
 function tests.composer_action_revokes_all_keys()

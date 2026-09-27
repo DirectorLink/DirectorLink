@@ -2,7 +2,13 @@
 
 ## Current release
 
-`v0.9.0` — DoorBird and the remote-access test. Update DirectorLink in Composer (no reboot).
+`v0.9.1` — DoorBird, pairing that survives updates, and the remote-access test. Update DirectorLink in Composer (no reboot), then pair once more.
+
+## 0h. Staying paired through updates
+
+1. After updating to 0.9.1, run **New Pairing Code** and pair the app once more (0.9.0 and older kept keys where Director drops them on every update).
+2. Update DirectorLink again with the same file: the app stays connected without pairing, **API Keys** keeps its count and **Pairing Code** stays `-`.
+3. With **Remote Access** on, **Remote Status** shows the same home id before and after that update.
 
 ## 0g. DoorBird
 
@@ -62,11 +68,11 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.9.0`
+- Version: `0.9.1`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`
-- Inventory: rooms, devices, lights, thermostats, blinds, cameras and relays (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras, 3 relays)
+- Inventory: rooms, devices, lights, thermostats, blinds, cameras, relays and doorbells (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras, 3 relays)
 
 ## 2. Request bodies
 

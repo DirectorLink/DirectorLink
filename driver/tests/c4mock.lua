@@ -5,6 +5,7 @@ local Mock = {}
 
 local md5 = require("md5")
 local sha1 = require("sha1")
+local sha256 = require("sha256")
 
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
@@ -310,8 +311,9 @@ function Mock.install(project)
     end
 
     function C4:Hash(algorithm, data, options)
-        if algorithm == "SHA1" then
-            local digest = sha1(data)
+        local hashes = { SHA1 = sha1, SHA256 = sha256 }
+        if hashes[algorithm] then
+            local digest = hashes[algorithm](data)
             if options and options.return_encoding == "BASE64" then
                 return C4:Base64Encode(digest)
             end
@@ -319,7 +321,7 @@ function Mock.install(project)
                 return string.format("%02X", c:byte())
             end))
         end
-        assert(algorithm == "MD5", "only MD5 and SHA1 are faked")
+        assert(algorithm == "MD5", "only MD5, SHA1 and SHA256 are faked")
         return string.upper(md5(data))
     end
 
@@ -489,7 +491,9 @@ end
 
 -- Loads a fresh copy of the driver (all src.* modules) and runs its init callbacks.
 -- specText replaces the stub API description (the dev server passes the built one).
-function Mock.startDriver(project, specText, initType)
+-- Loads the driver as Director does. `prepare(mock)`, if given, runs first (e.g. to seed persisted
+-- values).
+function Mock.startDriver(project, specText, initType, prepare)
     -- The JSON module is stateless; keep it shared so tests and driver agree on Json.null.
     for name in pairs(package.loaded) do
         if name:sub(1, 4) == "src." and name ~= "src.core.json" then
@@ -501,11 +505,29 @@ function Mock.startDriver(project, specText, initType)
     end
 
     local mock = Mock.install(project)
+    if prepare then
+        prepare(mock)
+    end
     require("src.main")
     OnDriverInit(initType or "DIT_STARTUP")
     OnDriverLateInit(initType or "DIT_STARTUP")
     OnServerStatusChanged(41999, "ONLINE")
     return mock
+end
+
+-- A driver update in Composer: the driver reloads in place. Plain persisted values carry over;
+-- encrypted ones do not (Director logs "has no driverKey" and returns nothing for them).
+function Mock.updateDriver(previous, project)
+    return Mock.startDriver(project, nil, "DIT_UPDATING", function(mock)
+        -- Random values must not repeat, or a lost identity would be regenerated unnoticed.
+        mock.uuidCount = previous.uuidCount
+        for name, value in pairs(previous.persist) do
+            if not previous.persistEncrypted[name] then
+                mock.persist[name] = value
+                mock.persistEncrypted[name] = false
+            end
+        end
+    end)
 end
 
 return Mock

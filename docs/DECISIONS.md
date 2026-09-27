@@ -169,7 +169,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 ## ADR-021 — API keys
 
-**Decision:** Every route except health, the API description and pairing requires `Authorization: Bearer <api key>`. Keys are named, stored encrypted on Director (at most 20), listed without secrets, and revocable through the API or all at once with the Composer action **Revoke All API Keys**.
+**Decision:** Every route except health, the API description and pairing requires `Authorization: Bearer <api key>`. Keys are named, stored on Director (at most 20; encrypted until 0.9.0, only hashes since 0.9.1 — ADR-028), listed without secrets, and revocable through the API or all at once with the Composer action **Revoke All API Keys**.
 
 **First key (0.2.0):** exchange the 8-digit Composer pairing code at `POST /v1/auth/pair` (15-minute code, rotated after use, 5 failures per minute lock pairing for 60 seconds).
 
@@ -222,3 +222,11 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision (0.8.0):** The button and access requests are removed; DirectorLink is again a single self-contained device (combo driver with its own proxy). The first key comes from a pairing code created on demand with the Composer action **New Pairing Code** (automatically while the driver has no keys): shown as `1234 5678`, valid 15 minutes, works once, rate-limited (5 wrong codes → 60 s lock), and always `admin` — Composer access already means full control. Further keys are created by an admin. With remote access (planned): the owner signs in with Google or Apple and claims the home on the LAN with a pairing code; family members join by an invitation tied to the invited email (single use, 7 days; the owner approves when the accepting account's email differs); roles are the same as for API keys. Home-network use without an account stays possible.
 
 **Consequence:** Installers read the code for homeowners without Composer. Replaces the approval flow of ADR-021 and the protocol-driver-with-button layout of ADR-024. The Composer properties are reduced to what an installer needs; the load history moves to `GET /v1/system` and the console.
+
+## ADR-028 — Store key hashes, not keys, in plain persistence
+
+**Context:** Up to 0.9.0 the API keys, and the remote-access home secret, were kept with DriverWorks' encrypted persistence. On a real controller (OS 3.4.3) Director drops encrypted values whenever the driver is updated in Composer — it logs that DirectorLink "has no driverKey" — so every update logged out every client, and remote access got a new home identity.
+
+**Decision (0.9.1):** Keys are kept in plain persistence as SHA-256 hashes (SHA-1 on a controller without SHA-256; each key records its algorithm). A presented key is hashed and compared in constant time; the key itself exists only in the response that creates it. Keys still readable in the old encrypted store are moved once, and the old store is emptied either way. The remote-access identity moves to plain persistence as well: its secret has to be sent to the relay, so it cannot be kept as a hash.
+
+**Consequence:** Keys and the home identity survive driver updates. Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. Updating from 0.9.0 or older needs one more pairing.

@@ -128,7 +128,7 @@ function tests.switching_on_opens_a_tls_connection_to_the_relay()
     T.eq(connection.kind, "SSL")
     T.eq(connection.connects, 1)
     T.eq(mock.properties["Remote Status"], "Connecting...")
-    T.eq(mock.persistEncrypted["DIRECTORLINK_REMOTE_IDENTITY"], true, "the identity is stored encrypted")
+    T.eq(mock.persistEncrypted["directorlink_remote_identity"], false, "plain storage survives updates")
 end
 
 function tests.handshake_sends_the_home_identity_and_hello_follows()
@@ -285,24 +285,35 @@ function tests.switching_off_closes_and_stays_off()
     T.eq(mock.properties["Remote Status"], "Off", "no reconnect after switching off")
 end
 
-function tests.the_identity_survives_restarts_and_the_secret_is_never_logged()
+function tests.the_identity_survives_updates_and_the_secret_is_never_logged()
     local mock, _, request = connected()
     local home = request:match("X%-DirectorLink%-Home: (%x+)")
     local secret = request:match("Authorization: Bearer (%x+)")
 
-    local restarted = Mock.startDriver()
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
-    local _, _, again = connected({ mock = restarted })
-    T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), home, "same home id after a restart")
+    local updated = Mock.updateDriver(mock)
+    local _, _, again = connected({ mock = updated })
+    T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), home, "same home id after an update")
+    T.eq(again:match("Authorization: Bearer (%x+)"), secret, "and the same secret")
 
-    for _, logMock in ipairs({ mock, restarted }) do
+    for _, logMock in ipairs({ mock, updated }) do
         for _, line in ipairs(logMock.debugLog) do
             T.truthy(not line:find(secret, 1, true), "the home secret never reaches the log")
         end
     end
+end
+
+function tests.an_identity_kept_encrypted_by_0_9_0_is_moved_to_plain_storage()
+    local old = { home_id = string.rep("ab", 16), home_secret = string.rep("cd", 32) }
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["DIRECTORLINK_REMOTE_IDENTITY"] = Json.encode(old)
+        fresh.persistEncrypted["DIRECTORLINK_REMOTE_IDENTITY"] = true
+    end)
+    local _, _, request = connected({ mock = mock })
+    T.eq(request:match("X%-DirectorLink%-Home: (%x+)"), old.home_id, "the home keeps its id")
+    T.eq(mock.persist["DIRECTORLINK_REMOTE_IDENTITY"], "", "the encrypted copy is emptied")
+    T.eq(mock.persistEncrypted["directorlink_remote_identity"], false)
+    local _, _, again = connected({ mock = Mock.updateDriver(mock) })
+    T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), old.home_id, "and keeps it through the next update")
 end
 
 return tests
