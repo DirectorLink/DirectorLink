@@ -12,6 +12,7 @@ import {
   savedApiKey,
   savedHost,
 } from "../api-client.js";
+import { notificationsOn, notifyRings, trackRings } from "./doorbells.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
 
@@ -149,13 +150,15 @@ export function handleUnauthorized() {
   notify();
 }
 
-// Resources newer drivers add (doors and gates): an older driver answers 404, so show none.
-async function optionalList(path) {
+// Resources newer drivers add (doors and gates, doorbells): an older driver answers 404, so
+// show none.
+// Other failures give `fallback` (for doorbells: the last list, so a hiccup keeps the banner).
+async function optionalList(path, fallback = []) {
   try {
     return (await api(path))?.items || [];
   } catch (error) {
     if (error?.status === 401) throw error;
-    return [];
+    return error?.status === 404 || error?.status === 405 ? [] : fallback;
   }
 }
 
@@ -186,7 +189,7 @@ export function noteForbidden(error) {
 }
 
 async function loadAll() {
-  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, role] = await Promise.all([
+  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, doorbells, role] = await Promise.all([
     api("/v1/system"),
     api("/v1/rooms"),
     api("/v1/lights"),
@@ -195,6 +198,7 @@ async function loadAll() {
     api("/v1/cameras"),
     api("/v1/devices").catch(() => ({ items: [] })),
     optionalList("/v1/relays"),
+    optionalList("/v1/doorbells"),
     loadRole(),
   ]);
   state.system = system;
@@ -205,9 +209,29 @@ async function loadAll() {
   state.cameras = cameras?.items || [];
   state.devices = devices?.items || [];
   state.relays = relays;
+  useDoorbells(doorbells);
   state.role = role;
   state.lastUpdated = new Date();
   state.loaded = true;
+}
+
+// Every doorbell list goes through here: new rings are noticed (banner, notification).
+function useDoorbells(doorbells) {
+  state.doorbells = doorbells;
+  notifyRings(trackRings(doorbells));
+}
+
+// Doorbells only: what a page in the background still polls when doorbell notifications are on.
+export async function refreshDoorbells() {
+  if (!state.apiKey || !state.host) return false;
+  try {
+    useDoorbells(await optionalList("/v1/doorbells", state.doorbells));
+    notify();
+    return true;
+  } catch (error) {
+    if (error?.status === 401) handleUnauthorized();
+    return false;
+  }
 }
 
 // Connects with the saved key. Used on start (automatic reconnect) and by Retry.
@@ -281,7 +305,11 @@ export async function refreshDevices() {
   if (!state.apiKey || !state.host) return false;
   try {
     const kinds = ["light", "thermostat", "blind"];
-    const results = await Promise.all(kinds.map((kind) => api(KINDS[kind].path)));
+    const [doorbells, ...results] = await Promise.all([
+      optionalList("/v1/doorbells", state.doorbells),
+      ...kinds.map((kind) => api(KINDS[kind].path)),
+    ]);
+    useDoorbells(doorbells);
     kinds.forEach((kind, index) => {
       const listName = KINDS[kind].list;
       const fresh = results[index]?.items || [];
@@ -343,6 +371,10 @@ function schedulePoll(delay = POLL_MS) {
 async function poll() {
   pollTimer = null;
   if (!state.apiKey) return;
+  // In the background only doorbells are polled, and only for their notifications.
+  if (document.hidden && state.loaded && notificationsOn()) {
+    await refreshDoorbells();
+  }
   if (!document.hidden) {
     if (!state.loaded) {
       await connect();

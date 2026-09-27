@@ -138,6 +138,30 @@ def main():
     for gone in ("requestAccess", "cancelAccess", "cancel-access-button"):
         if gone in app:
             fail(f"the app still has {gone}; access requests were removed in 0.8.0 (pair with a code)")
+
+    # Doorbells (0.9.0): polled with the other devices (404 on older drivers = none), a banner
+    # on Home while a ring is recent, Open gate for doors keys only, notifications only after
+    # the Settings button asked for them.
+    for fragment, message in (
+        ('optionalList("/v1/doorbells"', "doorbells must be polled, and an older driver's 404 must mean no doorbells"),
+        ("`/v1/doorbells/${doorbell.id}/open`", "Open gate must POST /v1/doorbells/{id}/open"),
+        ('if (!can("doors") || !doorbell.can_open) return null;', "Open gate must be offered only to doors keys, on doorbells that can open"),
+        ("ringingDoorbells()", "Home must show the doorbell banner while a ring is recent"),
+        ("dismissRing(", "the doorbell banner needs Dismiss"),
+        ("live: true", "the doorbell banner's picture must refresh live"),
+        ("trackRings(", "rings must be noticed as they come (a new last_ring_at)"),
+    ):
+        require(app, fragment, message)
+    rings = (APP / "js" / "rings.js").read_text(encoding="utf-8")
+    require(rings, "RING_WINDOW_MS = 2 * 60 * 1000", "a ring must count as recent for 2 minutes")
+    require((APP / "js" / "i18n.js").read_text(encoding="utf-8"), "Intl.RelativeTimeFormat", "relative times must use Intl.RelativeTimeFormat")
+    for path in modules:
+        text = path.read_text(encoding="utf-8")
+        relative = path.relative_to(APP).as_posix()
+        if "requestPermission" in text and relative != "js/doorbells.js":
+            fail(f"app/{relative} asks for notification permission; only Settings → Doorbell notifications may")
+        if "enableNotifications(" in text and relative not in ("js/doorbells.js", "js/views/settings.js"):
+            fail(f"app/{relative} turns on notifications; only the Settings button may")
     for path in ('"/v1/system"', '"/v1/rooms"', '"/v1/devices"', '"/v1/lights"', '"/v1/thermostats"'):
         require(app, path, f"the app must load {path}")
     require(app, 'method: "PATCH"', "device changes must use PATCH")
@@ -175,6 +199,8 @@ def main():
         dictionary = dictionary_path.read_text(encoding="utf-8")
         for key in ("codeLabel", "codeHelp", "pairNew", "pairAgain", "pairAgainConfirm", "rateLimitedMinute", *PAIRING_PROBLEMS.values()):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing {key}")
+        for key in ("atTheDoor", "lastRing", "noRings", "dismiss", "notificationTitle", "communication_failed", "justNow", "inventoryDoorbells"):
+            require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the doorbell text {key}")
     for path in APP.rglob("*"):
         if path.is_file() and path.suffix in (".html", ".js", ".md") and "DirectorLink Access" in path.read_text(encoding="utf-8"):
             fail(f"app/{path.relative_to(APP).as_posix()} still mentions the DirectorLink Access button (removed in 0.8.0)")
@@ -193,6 +219,7 @@ def main():
     require(service_worker, "NETWORK_TIMEOUT_MS", "the service worker must fall back to the cache when the network is slow")
     for asset in ("/index.html", "/api-client.js", "/theme-boot.js"):
         require(service_worker, f'"{asset}"', f"the service worker must cache {asset}")
+    require(service_worker, 'addEventListener("notificationclick"', "a doorbell notification click must open the app")
     for special in ("/_redirects", "/_headers"):
         if f'"{special}"' in service_worker:
             fail(f"the service worker must not cache {special}: Cloudflare reads it, it is not served")

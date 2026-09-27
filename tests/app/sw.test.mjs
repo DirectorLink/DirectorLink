@@ -108,7 +108,7 @@ class FakeCacheStorage {
   }
 }
 
-async function startWorker({ oldCaches = [] } = {}) {
+async function startWorker({ oldCaches = [], windows = [], opened = [] } = {}) {
   const listeners = {};
   const network = makeNetwork();
   const storage = new FakeCacheStorage();
@@ -117,7 +117,13 @@ async function startWorker({ oldCaches = [] } = {}) {
     location: { origin: ORIGIN },
     addEventListener: (type, listener) => (listeners[type] = listener),
     skipWaiting: async () => {},
-    clients: { claim: async () => {} },
+    clients: {
+      claim: async () => {},
+      matchAll: async () => windows,
+      openWindow: async (url) => {
+        opened.push(url);
+      },
+    },
   };
   const fastTimers = (callback, milliseconds) => setTimeout(callback, Math.min(milliseconds, 20));
   vm.runInNewContext(SOURCE, {
@@ -151,7 +157,14 @@ async function startWorker({ oldCaches = [] } = {}) {
     await Promise.all(background);
     return response;
   };
-  return { network, storage, request };
+  const notificationClick = async (data) => {
+    let pending;
+    let closed = false;
+    listeners.notificationclick({ notification: { data, close: () => (closed = true) }, waitUntil: (promise) => (pending = promise) });
+    await pending;
+    return closed;
+  };
+  return { network, storage, request, notificationClick };
 }
 
 async function textOf(response) {
@@ -167,7 +180,7 @@ test("install saves every page under each path, without redirects", async () => 
     assert.equal(saved.redirected, false, `${path} is stored without the redirect flag`);
     assert.match(await saved.text(), new RegExp(body));
   }
-  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/i18n/he.js", "/icons/icon-512.png"]) {
+  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/js/doorbells.js", "/js/rings.js", "/i18n/he.js", "/icons/icon-512.png"]) {
     assert.ok(await cache.match(asset), `${asset} is cached`);
   }
   // The API console moved to its own site (console.directorlink.io).
@@ -177,8 +190,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v13", "directorlink-shell-v14"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v15"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v14", "directorlink-shell-v15"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v16"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -234,4 +247,22 @@ test("controller requests and non-GET requests are never intercepted", async () 
   const { request } = await startWorker();
   assert.equal(await request("/v1/lights", { mode: "cors", origin: "http://192.168.1.201:41999" }), null);
   assert.equal(await request("/v1/lights", { mode: "cors", method: "PATCH" }), null);
+});
+
+test("a doorbell notification click brings the open app to Home, or opens it", async () => {
+  const focused = [];
+  const messages = [];
+  const opened = [];
+  const windows = [
+    { url: "https://elsewhere.example/", focus: async () => focused.push("elsewhere"), postMessage: () => {} },
+    { url: `${ORIGIN}/#/settings`, focus: async () => focused.push("app"), postMessage: (message) => messages.push(message) },
+  ];
+  const { notificationClick } = await startWorker({ windows, opened });
+  assert.equal(await notificationClick({ url: "/#/" }), true, "the notification is closed");
+  assert.deepEqual(focused, ["app"]);
+  // The message comes from the worker's realm: copy it before comparing.
+  assert.deepEqual(messages.map((message) => ({ ...message })), [{ type: "directorlink-open", url: `${ORIGIN}/#/` }]);
+  windows.length = 0;
+  await notificationClick({ url: "/#/" });
+  assert.deepEqual(opened, [`${ORIGIN}/#/`], "with no window left, the app is opened");
 });

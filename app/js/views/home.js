@@ -1,10 +1,11 @@
 // Home: summary chips, the favorites strip and the room cards.
 
-import { cameraPicture, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
+import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
 import { setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
+import { ringIsActive, ringingDoorbells } from "../doorbells.js";
 import { favoriteDevices, moveFavorite, toggleFavorite } from "../favorites.js";
-import { formatTemperature, t } from "../i18n.js";
+import { formatRelative, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import {
   blindIsOpen,
@@ -48,6 +49,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
   }
   return [
     header,
+    // Someone rang within the last 2 minutes: first thing on the screen.
+    ringingDoorbells().map((doorbell) => doorbellBanner(doorbell, { openCamera })),
     offlineBanner(),
     staleBanner(),
     summaryChips(),
@@ -97,7 +100,8 @@ function summaryChips() {
 function favoritesSection({ openCamera, openFavoritesPicker }) {
   const items = favoriteDevices();
   const editing = ui.editFavorites;
-  const hasDevices = state.lights.length + state.thermostats.length + state.blinds.length + state.cameras.length + state.relays.length > 0;
+  const hasDevices =
+    state.lights.length + state.thermostats.length + state.blinds.length + state.cameras.length + state.relays.length + state.doorbells.length > 0;
   if (!hasDevices) return null;
 
   const toggleEdit = h(
@@ -191,6 +195,18 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
   } else if (kind === "relay") {
     content = [h("span", { class: "fav-icon" }, icon("door")), name(device.name, "span", "fav-name"), room];
     stateClass = "fav-relay";
+  } else if (kind === "doorbell") {
+    stateClass = ringIsActive(device) ? "is-ringing" : "";
+    content = [
+      h("span", { class: "fav-icon" }, icon("bell")),
+      name(device.name, "span", "fav-name"),
+      room,
+      h(
+        "span",
+        { class: "fav-state" },
+        device.last_ring_at ? t("doorbells.lastRing", { time: formatRelative(device.last_ring_at) }) : t("doorbells.noRings")
+      ),
+    ];
   }
 
   if (editing) {
@@ -292,6 +308,7 @@ function roomStatus(group) {
   }
   if (group.cameras.length) parts.push(t("rooms.cameras", { count: group.cameras.length }));
   if (group.relays.length) parts.push(t("rooms.relays", { count: group.relays.length }));
+  if (group.doorbells.length) parts.push(t("rooms.doorbells", { count: group.doorbells.length }));
   return parts.join(" · ");
 }
 
@@ -305,6 +322,7 @@ function roomCard({ room, group }) {
     group.blinds.length ? h("span", { class: `badge ${blindsOpen ? "badge-open" : ""}` }, icon("blinds")) : null,
     group.cameras.length ? h("span", { class: "badge" }, icon("camera")) : null,
     group.relays.length ? h("span", { class: "badge" }, icon("door")) : null,
+    group.doorbells.length ? h("span", { class: `badge ${group.doorbells.some((doorbell) => ringIsActive(doorbell)) ? "badge-ring" : ""}` }, icon("bell")) : null,
   ];
   return h(
     "a",
@@ -350,9 +368,17 @@ export function favoritesPicker() {
     ["climate", "thermostat", "climate"],
     ["blinds", "blind", "blinds"],
     ["relays", "relay", "door"],
+    ["doorbells", "doorbell", "bell"],
     ["cameras", "camera", "camera"],
   ];
-  const lists = { light: state.lights, thermostat: state.thermostats, blind: state.blinds, relay: state.relays, camera: state.cameras };
+  const lists = {
+    light: state.lights,
+    thermostat: state.thermostats,
+    blind: state.blinds,
+    relay: state.relays,
+    doorbell: state.doorbells,
+    camera: state.cameras,
+  };
   return groups
     .filter(([, kind]) => lists[kind].length)
     .map(([section, kind, iconName]) =>

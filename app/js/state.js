@@ -16,6 +16,7 @@ export const state = {
   blinds: [],
   cameras: [],
   relays: [], // doors and gates; [] on drivers without /v1/relays
+  doorbells: [], // DoorBird doorstations; [] on drivers without /v1/doorbells
   // This key's role (GET /v1/api-keys/current): viewer < member < doors < admin.
   // Drivers without roles answer 404 there; their keys can do everything, so "admin".
   role: null,
@@ -39,6 +40,7 @@ export const ui = {
   roomMessages: {}, // settings: per-room save result
   drafts: {}, // form fields being typed: key -> text
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
+  doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture
   dragging: false, // a slider thumb is held: redraws wait
   tick: 0, // bumped by timers that need a redraw
@@ -71,6 +73,7 @@ export const KINDS = {
   blind: { list: "blinds", path: "/v1/blinds" },
   camera: { list: "cameras", path: "/v1/cameras" },
   relay: { list: "relays", path: "/v1/relays" },
+  doorbell: { list: "doorbells", path: "/v1/doorbells" },
 };
 
 // Roles, lowest first. can("member") is true for member, doors and admin keys.
