@@ -9,9 +9,10 @@ DirectorLink assumes `DirectorLink.c4z` is already installed. Installation metho
 ## Runtime
 
 ```text
-Cloudflare Pages PWA (app/)
+Cloudflare Workers static sites: app/ (app.directorlink.io),
+console/ (console.directorlink.io), site/ (directorlink.io)
         |
-        | HTTPS: static app only
+        | HTTPS: static files only
         v
 Browser / any API client (curl, Home Assistant, scripts)
         |
@@ -37,7 +38,9 @@ driver/     the DriverWorks driver
   src/control4/   discovery and normalization
   src/core/       json, log, registry, version
   tests/          driver tests against a fake Director
-app/        static PWA: dashboard and API console (deployed by Cloudflare from this folder)
+app/        the app (PWA), deployed to app.directorlink.io
+console/    API console, debugging and logs, deployed to console.directorlink.io
+site/       landing page, deployed to directorlink.io
 scripts/    build and validation
 docs/       specification, decisions, research, releases
 ```

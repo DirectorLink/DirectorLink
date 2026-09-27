@@ -1,5 +1,7 @@
 # Real-System Validation
 
+Entries before 0.8.0 use the project's former name, C4Bridge.
+
 ## 2026-09-25 — v0.1.0-alpha.2
 
 The first end-to-end browser-to-Director test succeeded on a real Control4 installation.

@@ -44,7 +44,7 @@ If the button does not appear, remove and re-add DirectorLink in Composer, then 
 
 ## 1. Install
 
-Update the driver in Composer with a local file named exactly `DirectorLink.c4z`.
+Update the driver in Composer with a local file named exactly `DirectorLink.c4z`. Coming from C4Bridge (0.7 and older), remove C4Bridge from the project first and add DirectorLink as a new driver — see the 0.8.0 release notes.
 
 Expected in the DirectorLink properties once the new driver is loaded:
 

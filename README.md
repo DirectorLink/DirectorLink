@@ -12,7 +12,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - `DirectorLink.c4z` is assumed to already be installed in the Control4 project
 - Installation method is outside the scope of this project
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
-- Cloudflare Pages PWA frontend; the browser connects directly to DirectorLink over the LAN
+- An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN
 - LAN-only in V1; no cloud relay and no port forwarding
 - One owner, with a separate named API key per browser, app or script
 - Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates)
@@ -104,7 +104,7 @@ Resources: system, rooms, devices, lights, thermostats, logs, API keys. The runn
 DirectorLink depends on **Director**, not Composer.
 
 ```text
-Cloudflare Pages PWA
+DirectorLink app (PWA, hosted on Cloudflare)
         |
         | Local Network Access permission
         v
@@ -126,16 +126,20 @@ Existing Control4 devices
 ```text
 api/       OpenAPI contract
 driver/    DriverWorks driver (Lua 5.1) and its tests
-app/       PWA: dashboard and API console (deployed by Cloudflare Pages from this folder)
+app/       the app (PWA)                       → https://app.directorlink.io
+console/   API console, debugging and logs      → https://console.directorlink.io
+site/      landing page                         → https://directorlink.io
 scripts/   build and validation
 docs/      specification, decisions, research, releases
 ```
 
 See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, and **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** for how the pieces fit.
 
-## Live app
+## Live
 
-**https://app.directorlink.io**
+- **App:** https://app.directorlink.io
+- **API console, debugging and logs:** https://console.directorlink.io
+- **Website:** https://directorlink.io
 
 ## Status
 

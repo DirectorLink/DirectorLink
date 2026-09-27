@@ -204,3 +204,11 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision (0.7.0):** Four ordered roles — `viewer`, `member`, `doors`, `admin` — each allowed everything the ones before it are. Every non-public route in `routes.lua` names the least role it needs, and the OpenAPI operation states the same as `x-directorlink-role`; `check_api.py` fails the build when they differ or when a restricted operation does not document 403. Keys from before roles existed become `admin`; the Composer pairing code issues `admin`; access requests default to `admin` for a home's first key and `member` afterwards, and Composer shows the requested role before the homeowner presses the button. The last admin key cannot be demoted. Opening doors additionally needs the Composer property **Door Control** = Enabled (default Disabled).
 
 **Consequence:** Remote users will map onto the same roles. The app should read `GET /v1/api-keys/current` and hide what the key may not do.
+
+## ADR-026 — The project is DirectorLink, on directorlink.io
+
+**Context:** "C4Bridge" leaned on the Control4 name and the project needed an international brand before it has outside users and accounts. The API console had grown into a developer tool of its own inside the app.
+
+**Decision (0.8.0):** The project, driver and API are named **DirectorLink** (slogan: *Direct to Director. End-to-end integration. Open source.*), on `directorlink.io`. The driver package is `DirectorLink.c4z` and its button **DirectorLink Access**. The repository holds three static sites, each its own Cloudflare Worker with a custom domain: `app/` (formerly `web/`) on `app.directorlink.io`, `console/` (API console, debugging, logs, key management) on `console.directorlink.io`, and `site/` (landing page) on `directorlink.io`. GitHub Actions deploys them (`deploy.yml`) instead of dashboard-configured builds, so the deployment is part of the repository. Past release notes and the validation log keep the old name as written.
+
+**Consequence:** Control4 sees DirectorLink as a different driver: moving from C4Bridge means removing it and adding DirectorLink, so API keys, room names and the Door Control setting start fresh. The driver's CORS allowlist is the two new sites plus localhost; the old `app.c4bridge.io` no longer reaches a DirectorLink controller.

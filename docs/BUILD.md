@@ -19,8 +19,9 @@ python scripts/check_api.py                                    # spec is valid a
 python scripts/build.py                                        # dist/DirectorLink.c4z + dist/openapi.json
 python scripts/check_package.py                                # package contents and contracts
 python scripts/check_contract.py                               # real HTTP responses vs the spec
-python scripts/check_app.py                                    # app
-for f in app/*.js; do node --check "$f"; done                  # app JavaScript syntax
+python scripts/check_app.py                                    # the app
+python scripts/check_sites.py                                  # console and landing page
+find app console -name '*.js' -print0 | xargs -0 -n1 node --check   # JavaScript syntax
 node --test tests/app/*.test.mjs                               # offline service worker
 ```
 
@@ -92,6 +93,20 @@ SHA256SUMS.txt
 ```
 
 Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release.
+
+## Deploying the sites
+
+`.github/workflows/deploy.yml` publishes `app/`, `console/` and `site/` to Cloudflare Workers (static assets) with `wrangler deploy` whenever one of them changes on `main`; pull requests from this repository get preview versions. Each folder's `wrangler.jsonc` names its Worker and custom domain:
+
+| Folder | Worker | Domain |
+| --- | --- | --- |
+| `app/` | `directorlink-app` | `app.directorlink.io` |
+| `console/` | `directorlink-console` | `console.directorlink.io` |
+| `site/` | `directorlink-site` | `directorlink.io`, `www.directorlink.io` |
+
+The workflow needs two repository secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the jobs succeed and deploy nothing.
+
+The driver only answers browsers from `https://app.directorlink.io`, `https://console.directorlink.io` and `http://localhost` / `127.0.0.1` (for local testing), so a preview URL can show a site but cannot talk to a controller.
 
 ## Minimum Director version
 

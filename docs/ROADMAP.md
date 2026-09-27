@@ -34,6 +34,7 @@
 - [x] Validate 0.2.0 request-body handling on a real Director
 - [x] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
 - [x] Key roles (viewer, member, doors, admin) and the Composer Door Control switch (0.7.0)
+- [x] Renamed to DirectorLink; app, console and website on directorlink.io (0.8.0)
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA
@@ -44,7 +45,7 @@
 - [x] 192px/512px install icons
 - [x] Pages security headers
 - [x] Cloudflare deployment documentation
-- [ ] Connect GitHub repository to Cloudflare Pages
+- [ ] Deploy app, console and website from GitHub Actions (`deploy.yml`) — waiting for Cloudflare credentials
 - [ ] Attach `directorlink.io`
 - [ ] Local Network Access request flow
 - [x] Pairing
