@@ -3,15 +3,12 @@
 //   node --test tests/cloud/accounts.test.mjs
 
 import assert from "node:assert/strict";
-import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { createServer } from "node:http";
 import { after, before, test } from "node:test";
 
-import { STARTUP_MS, freePort, startWorker } from "./worker.mjs";
+import { CLIENT_ID, PERSON, cookiesOf, googleVars, startFakeGoogle } from "./fake-google.mjs";
+import { STARTUP_MS, startWorker } from "./worker.mjs";
 
 const APP = "http://localhost:8080";
-const CLIENT_ID = "test-client";
-const CLIENT_SECRET = "test-secret";
 const PUBLIC_URL = "https://api.directorlink.test";
 const TEST = { timeout: 30_000 };
 
@@ -22,16 +19,7 @@ before(async () => {
   google = await startFakeGoogle();
   worker = await startWorker({
     migrate: true,
-    devVars: {
-      GOOGLE_CLIENT_ID: CLIENT_ID,
-      GOOGLE_CLIENT_SECRET: CLIENT_SECRET,
-      GOOGLE_AUTH_URL: `${google.url}/auth`,
-      GOOGLE_TOKEN_URL: `${google.url}/token`,
-      GOOGLE_JWKS_URL: `${google.url}/certs`,
-      GOOGLE_ISSUER: google.url,
-      APP_ORIGINS: APP,
-      PUBLIC_URL: PUBLIC_URL,
-    },
+    devVars: googleVars(google, APP, PUBLIC_URL),
   });
 }, { timeout: STARTUP_MS + 10_000 });
 
@@ -40,101 +28,7 @@ after(async () => {
   await google?.close();
 });
 
-// --- A fake Google ---------------------------------------------------------------------------------
-
-function base64url(buffer) {
-  return Buffer.from(buffer).toString("base64url");
-}
-
-function keyPair(kid) {
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
-  return { kid, privateKey, jwk: { ...publicKey.export({ format: "jwk" }), kid, alg: "RS256", use: "sig" } };
-}
-
-async function startFakeGoogle() {
-  const key = keyPair("google-test-key");
-  const stranger = keyPair("google-test-key"); // same kid, other key: a forged signature
-  const codes = new Map();
-  const port = await freePort();
-  const url = `http://127.0.0.1:${port}`;
-
-  function idToken(claims, signer = key) {
-    const header = base64url(JSON.stringify({ alg: "RS256", kid: signer.kid, typ: "JWT" }));
-    const payload = base64url(JSON.stringify(claims));
-    const signature = sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), signer.privateKey);
-    return `${header}.${payload}.${base64url(signature)}`;
-  }
-
-  const server = createServer(async (request, response) => {
-    const answer = (status, body) => {
-      response.writeHead(status, { "content-type": "application/json" });
-      response.end(JSON.stringify(body));
-    };
-    if (request.url === "/certs") {
-      return answer(200, { keys: [key.jwk] });
-    }
-    if (request.url === "/token" && request.method === "POST") {
-      let text = "";
-      for await (const chunk of request) text += chunk;
-      const form = new URLSearchParams(text);
-      const grant = codes.get(form.get("code"));
-      codes.delete(form.get("code"));
-      const challenge = base64url(createHash("sha256").update(form.get("code_verifier") ?? "").digest());
-      if (
-        !grant ||
-        form.get("grant_type") !== "authorization_code" ||
-        form.get("client_id") !== CLIENT_ID ||
-        form.get("client_secret") !== CLIENT_SECRET ||
-        form.get("redirect_uri") !== grant.redirectUri ||
-        challenge !== grant.challenge
-      ) {
-        return answer(400, { error: "invalid_grant" });
-      }
-      const now = Math.floor(Date.now() / 1000);
-      const claims = {
-        iss: url,
-        aud: CLIENT_ID,
-        sub: grant.person.sub,
-        email: grant.person.email,
-        email_verified: true,
-        name: grant.person.name,
-        iat: now,
-        exp: now + 3600,
-        nonce: grant.nonce,
-        ...grant.claims,
-      };
-      return answer(200, { id_token: idToken(claims, grant.forged ? stranger : key), token_type: "Bearer", expires_in: 3599 });
-    }
-    return answer(404, { error: "not_found" });
-  });
-  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-
-  return {
-    url,
-    // The person approves the request at Google: returns the code Google would redirect with.
-    approve(authorizationUrl, { person = PERSON, claims = {}, forged = false } = {}) {
-      const params = new URL(authorizationUrl).searchParams;
-      const code = base64url(randomBytes(16));
-      codes.set(code, { nonce: params.get("nonce"), challenge: params.get("code_challenge"), redirectUri: params.get("redirect_uri"), person, claims, forged });
-      return code;
-    },
-    close: () => new Promise((resolve) => server.close(resolve)),
-  };
-}
-
-const PERSON = { sub: "google-user-1", email: "Dana.Levi@Example.com", name: "Dana Levi" };
-
 // --- Helpers ---------------------------------------------------------------------------------------
-
-function cookiesOf(response) {
-  const cookies = {};
-  for (const line of response.headers.getSetCookie()) {
-    const [pair, ...attributes] = line.split(";").map((part) => part.trim());
-    const index = pair.indexOf("=");
-    cookies[pair.slice(0, index)] = { value: pair.slice(index + 1), attributes: attributes.map((a) => a.toLowerCase()) };
-  }
-  return cookies;
-}
 
 function get(path, { cookie, origin, method = "GET" } = {}) {
   const headers = {};

@@ -1,5 +1,6 @@
 // One Durable Object per home (named by home_id): holds the driver's WebSocket and relays requests
-// over it (docs/RELAY.md, version 0).
+// over it (docs/RELAY.md): version 0 test requests, and the sealed messages of accounts
+// (docs/ACCOUNTS.md), which it passes on without being able to read them.
 //
 // The socket uses the WebSocket Hibernation API: while nothing is being relayed, the object can be
 // evicted from memory and the connection stays open without duration charges. The keep-alive
@@ -40,6 +41,8 @@ export class HomeRelay extends DurableObject {
         return json(await this.status());
       case "/forward":
         return this.forward(request.headers.get("X-DirectorLink-Path") ?? "", homeId);
+      case "/message":
+        return this.message(await request.json(), homeId);
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -111,8 +114,11 @@ export class HomeRelay extends DurableObject {
         log("driver_hello", { home: attachment.home, version: attachment.version });
         return;
       case "response":
+      case "e2e":
+      case "join_result":
+      case "claim_result":
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
-          log("response_ignored", { home: attachment.home, id: data.id ?? null, why: "no request is waiting for this id" });
+          log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
         }
         return;
       default:
@@ -229,6 +235,43 @@ export class HomeRelay extends DurableObject {
     const response = relayedResponse(outcome.message);
     log("request_relayed", { home: homeId, id, path, status: response.status, ms });
     return response;
+  }
+
+  // Sends one account message (e2e, join or claim) and waits for the driver's reply with the same
+  // id. The reply goes back as it came: sealed contents stay sealed.
+  async message(message, homeId) {
+    if (!message || !["e2e", "join", "claim"].includes(message.type)) {
+      return problem(400, "INVALID_MESSAGE", "Only e2e, join and claim messages are relayed");
+    }
+    const ws = this.driverSocket();
+    if (!ws) {
+      return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
+    }
+    const { conn } = ws.deserializeAttachment() ?? {};
+    const id = crypto.randomUUID();
+    const timeoutMs = requestTimeoutMs(this.env);
+    const started = Date.now();
+    const outcome = await new Promise((resolve) => {
+      const timer = setTimeout(() => this.settle(id, { timeout: true }), timeoutMs);
+      this.pending.set(id, { resolve, timer, conn });
+      try {
+        ws.send(JSON.stringify({ ...message, id }));
+      } catch (error) {
+        this.settle(id, { failed: `The home's connection could not be written (${error?.message ?? error})` });
+      }
+    });
+    const ms = Date.now() - started;
+    if (outcome.timeout) {
+      log("message_timeout", { home: homeId, type: message.type, ms });
+      return problem(504, "HOME_TIMEOUT", `The home did not answer within ${timeoutMs / 1000} s`);
+    }
+    if (outcome.failed) {
+      log("message_failed", { home: homeId, type: message.type, ms, why: outcome.failed });
+      return problem(502, "HOME_DISCONNECTED", outcome.failed);
+    }
+    const { id: _id, ...reply } = outcome.message;
+    log("message_relayed", { home: homeId, type: message.type, ok: reply.ok ?? Boolean(reply.envelope), code: reply.code ?? null, ms });
+    return json(reply);
   }
 
   settle(id, outcome) {
