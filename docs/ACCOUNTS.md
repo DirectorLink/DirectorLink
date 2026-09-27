@@ -1,7 +1,9 @@
 # Accounts and end-to-end encrypted remote access
 
-**Status: proposal, awaiting approval.** Nothing here is built yet. It extends the remote-access
-test (`docs/RELAY.md`, version 0) and ADR-027.
+**Status: approved on 2026-09-27 (ADR-029), with Google as the only sign-in until the whole flow
+works end to end; Apple follows.** Sign-in with Google is built (`cloud/src/accounts.js`, the app's
+Settings → Account); the rest is not yet. It extends the remote-access test (`docs/RELAY.md`,
+version 0) and ADR-027.
 
 ## Goals
 
@@ -183,10 +185,19 @@ from a computer or an Android phone; the owner's iPhone then joins as *my other 
    QR), Members, iPhone and iPad.
 4. **Docs and release:** a privacy page on directorlink.io, and `RELAY.md` version 1.
 
-Needed before phase 2:
-- A Google OAuth client (type: web, for app.directorlink.io).
-- For Apple: the Services ID, Team ID, Key ID and `.p8` key, plus domain verification of
-  directorlink.io.
+Sign-in details (phase 2, built):
+- Google's authorization-code flow with PKCE, run by `api.directorlink.io`; the app only navigates
+  to `/auth/google/start` and comes back with `?signin=…`. No Google script runs in the app's pages.
+- The browser holds the sign-in's state in a 10-minute `__Host-dl_signin` cookie, so a sign-in
+  started elsewhere cannot be completed in this browser; the nonce and the PKCE verifier stay on
+  the server. The ID token's signature, issuer, audience, expiry, nonce and verified email are
+  checked.
+- The session is a random token in the `__Host-dl_session` cookie (`Secure`, `HttpOnly`,
+  `SameSite=Strict`, 30 days); D1 keeps only its SHA-256. Sign-out and account deletion are
+  accepted only from the app's own origins.
+
+Needed later, for Apple: the Services ID, Team ID, Key ID and `.p8` key, plus domain verification
+of directorlink.io.
 
 ## To decide
 
@@ -197,7 +208,7 @@ Needed before phase 2:
 4. Everyone else joins by an invitation link or QR code that the admin shares. The secret sits
    after `#`, and the invitation is bound to an email, works once and lasts 7 days (10 minutes for
    *my other device*). The owner approves email mismatches.
-5. Google and Apple sign-in at launch, with the session in a secure cookie.
+5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works.
 6. The cloud stores only accounts, homes, members and pending invitations.
 7. Home-network use without an account stays.
 8. The test endpoints and the viewer-only rule go when this ships.

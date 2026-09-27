@@ -8,7 +8,10 @@ The cloud side of remote access, on **https://api.directorlink.io**: a Cloudflar
 
 - `src/index.js` — the Worker: routes, header checks, the test token; hands each home's requests to its Durable Object
 - `src/home-relay.js` — `HomeRelay`, the Durable Object (`idFromName(home_id)`): trust on first use, the driver's WebSocket (Hibernation API), relayed requests, the status
-- `src/http.js` — JSON and Problem Details responses, constant-time secret comparison
+- `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
+- `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account
+- `src/google.js` — Google's authorization-code flow with PKCE, and the ID token checks
+- `migrations/` — the D1 schema (`users`, `sessions`, `sign_ins`)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -88,3 +91,24 @@ curl https://api.directorlink.io/health
 - One shared `TEST_TOKEN` for every home; the test endpoints go away when accounts arrive.
 - A WebSocket message may be at most 32 MiB: a binary answer larger than about 24 MiB (as `body_base64`) makes the runtime close the driver's connection (1009), and the caller gets 502.
 - No rate limiting yet.
+
+## Accounts
+
+| Request | Answer |
+| --- | --- |
+| `GET /auth/google/start?return_to=<app URL>` | 302 to Google; sets the 10-minute `__Host-dl_signin` cookie. `return_to` must be on one of `APP_ORIGINS`, else the app's Settings |
+| `GET /auth/google/callback` | Google comes back here; 302 to `return_to` with `?signin=ok`, `cancelled`, `expired`, `failed` or `unverified`, and on success the `__Host-dl_session` cookie |
+| `GET /v1/me` | `{"id", "email", "name", "created_at"}`, or 401 `NOT_SIGNED_IN` |
+| `DELETE /v1/me` | 204; the account and all its sessions are deleted |
+| `POST /auth/logout` | 204; this session ends |
+
+`/v1/me` and `/auth/logout` answer CORS with credentials only for `APP_ORIGINS`, and `DELETE`/`POST` from any other origin (or none) are refused with 403 `ORIGIN_NOT_ALLOWED`.
+
+Settings (`wrangler.jsonc` → `vars`): `GOOGLE_CLIENT_ID` (public), `APP_ORIGINS`, `PUBLIC_URL` (the address Google redirects back to, registered with the client). Secret: `GOOGLE_CLIENT_SECRET` (`npx wrangler@4 secret put GOOGLE_CLIENT_SECRET`). Database: D1 `directorlink`, binding `DB`; schema changes go in `migrations/`:
+
+```
+npx wrangler@4 d1 migrations apply directorlink --remote
+```
+
+For `wrangler dev`, `.dev.vars` may set the Google endpoints (`GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `GOOGLE_JWKS_URL`, `GOOGLE_ISSUER`) to a fake Google, as `tests/cloud/accounts.test.mjs` does, and `APP_ORIGINS=http://localhost:8080` for a local app (whose account API is `http://localhost:8787`).
+

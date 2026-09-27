@@ -40,6 +40,7 @@ REQUIRED = {
     ],
     SITE: [
         "index.html",
+        "privacy.html",
         "site.css",
         "icons/icon.svg",
         "_headers",
@@ -220,42 +221,47 @@ def check_common(folder):
                 if retired in text:
                     fail(f"{rel(path)} still mentions {retired!r}; since 0.8.0 devices pair with a code from Composer")
 
-    page = parse(folder / "index.html")
-    if page.lang != "en":
-        fail(f"{name}/index.html must declare lang=\"en\"")
-    if page.inline_scripts or page.inline_handlers:
-        fail(f"{name}/index.html has inline script ({page.inline_handlers or 'a <script> body'}); the CSP only allows files")
-    if page.style_attributes or page.style_elements:
-        fail(f"{name}/index.html has inline styles; the CSP only allows stylesheets")
-    for src in page.scripts:
-        if not src.startswith("/"):
-            fail(f"{name}/index.html loads a script from elsewhere: {src}")
-    if page.icon != "/icons/icon.svg":
-        fail(f"{name}/index.html must use /icons/icon.svg as its icon")
-    for landmark in ("header", "main", "footer"):
-        if landmark not in page.landmarks:
-            fail(f"{name}/index.html needs a <{landmark}> landmark")
-    if "main" not in page.ids:
-        fail(f"{name}/index.html needs #main (the skip link target)")
-    if "#main" not in page.links:
-        fail(f"{name}/index.html needs a skip link to #main")
-    html = (folder / "index.html").read_text(encoding="utf-8")
-    require(html, NOT_AFFILIATED, f"{name}/index.html footer must say DirectorLink is {NOT_AFFILIATED}")
-    if GITHUB not in page.links:
-        fail(f"{name}/index.html must link to {GITHUB}")
-    require(html, "DirectorLink", f"{name}/index.html must name DirectorLink")
+    pages = sorted(path.name for path in folder.glob("*.html"))
+    index = None
+    for page_name in pages:
+        page = parse(folder / page_name)
+        if page_name == "index.html":
+            index = page
+        if page.lang != "en":
+            fail(f"{name}/{page_name} must declare lang=\"en\"")
+        if page.inline_scripts or page.inline_handlers:
+            fail(f"{name}/{page_name} has inline script ({page.inline_handlers or 'a <script> body'}); the CSP only allows files")
+        if page.style_attributes or page.style_elements:
+            fail(f"{name}/{page_name} has inline styles; the CSP only allows stylesheets")
+        for src in page.scripts:
+            if not src.startswith("/"):
+                fail(f"{name}/{page_name} loads a script from elsewhere: {src}")
+        if page.icon != "/icons/icon.svg":
+            fail(f"{name}/{page_name} must use /icons/icon.svg as its icon")
+        for landmark in ("header", "main", "footer"):
+            if landmark not in page.landmarks:
+                fail(f"{name}/{page_name} needs a <{landmark}> landmark")
+        if "main" not in page.ids:
+            fail(f"{name}/{page_name} needs #main (the skip link target)")
+        if "#main" not in page.links:
+            fail(f"{name}/{page_name} needs a skip link to #main")
+        html = (folder / page_name).read_text(encoding="utf-8")
+        require(html, NOT_AFFILIATED, f"{name}/{page_name} footer must say DirectorLink is {NOT_AFFILIATED}")
+        if GITHUB not in page.links:
+            fail(f"{name}/{page_name} must link to {GITHUB}")
+        require(html, "DirectorLink", f"{name}/{page_name} must name DirectorLink")
 
-    # Every local reference resolves to a published file.
-    published = {"/" + path.relative_to(folder).as_posix() for path in published_files(folder)}
-    for reference in [*page.scripts, *page.stylesheets, page.icon]:
-        if reference and reference.startswith("/") and reference not in published:
-            fail(f"{name}/index.html references {reference}, which is not published")
+        # Every local reference resolves to a published file.
+        published = {"/" + path.relative_to(folder).as_posix() for path in published_files(folder)}
+        for reference in [*page.scripts, *page.stylesheets, page.icon]:
+            if reference and reference.startswith("/") and reference not in published:
+                fail(f"{name}/{page_name} references {reference}, which is not published")
     css_files = [path for path in folder.rglob("*.css")]
     for path in css_files:
         css = path.read_text(encoding="utf-8")
         require(css, "prefers-color-scheme: dark", f"{rel(path)} must have a dark variant (prefers-color-scheme)")
         require(css, ":focus-visible", f"{rel(path)} must style keyboard focus")
-    return page
+    return index
 
 
 def check_console():

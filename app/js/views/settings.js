@@ -1,5 +1,6 @@
-// Settings: appearance, language, room names, controller, app and about.
+// Settings: appearance, language, room names, controller, account, app and about.
 
+import { deleteAccount, loadAccount, signIn, signOut } from "../account.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, name } from "../dom.js";
 import { LANGUAGES, formatTime, languagePreference, t } from "../i18n.js";
@@ -22,6 +23,7 @@ export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
       languageSection(onLanguage),
       roomsSection(),
       controllerSection(navigate),
+      accountSection(),
       appSection(),
       aboutSection()
     ),
@@ -334,6 +336,69 @@ function controllerSection(navigate) {
           )
         : null
     )
+  );
+}
+
+// ---- account -------------------------------------------------------------------------------
+
+// Signing in is optional: it is for using the home away from the home network, and for inviting
+// family (docs/ACCOUNTS.md). Google shows its own page; this card only shows the result.
+function accountSection() {
+  const account = state.account;
+  const notice = account.notice
+    ? h("p", { class: `notice ${account.notice === "deleted" ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    : null;
+  let body;
+  if (account.status === "signed-in") {
+    body = [
+      h(
+        "dl",
+        { class: "facts" },
+        h("div", { class: "fact" }, h("dt", {}, t("settings.account.signedInAs")), h("dd", { id: "account-email" }, account.user.email)),
+        account.user.name ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.name")), h("dd", {}, account.user.name)) : null
+      ),
+      h(
+        "div",
+        { class: "button-row" },
+        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: signOut }, t("settings.account.signOut")),
+        h(
+          "button",
+          {
+            type: "button",
+            class: "button button-danger",
+            dataset: { key: "account-delete" },
+            disabled: account.busy,
+            onclick: () => {
+              if (window.confirm(t("settings.account.deleteConfirm"))) deleteAccount();
+            },
+          },
+          t("settings.account.delete")
+        )
+      ),
+    ];
+  } else if (account.status === "unknown" || account.status === "loading") {
+    body = [h("p", { class: "field-help", role: "status" }, t("common.loading"))];
+  } else {
+    body = [
+      h("p", { class: "field-help" }, t("settings.account.intro")),
+      account.status === "unavailable" ? h("p", { class: "notice notice-error", role: "status" }, t("settings.account.unavailable")) : null,
+      h(
+        "div",
+        { class: "button-row" },
+        h("button", { type: "button", class: "button button-primary", dataset: { key: "account-sign-in" }, onclick: signIn }, icon("user"), t("settings.account.signIn")),
+        account.status === "unavailable"
+          ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
+          : null
+      ),
+    ];
+  }
+  return card(
+    "account",
+    "user",
+    t("settings.account.title"),
+    notice,
+    ...body,
+    h("p", { class: "field-help" }, h("a", { href: "https://directorlink.io/privacy", target: "_blank", rel: "noopener" }, t("settings.account.privacy")))
   );
 }
 

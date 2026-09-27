@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="What DirectorLink stores, and what never leaves your home." />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>Privacy — DirectorLink</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="document">
+      <h1>Privacy</h1>
+      <p class="updated">Last updated 27 September 2026</p>
+      <p class="lead">
+        DirectorLink keeps your home's data between your own devices and your controller. This page
+        lists exactly what reaches DirectorLink's servers.
+      </p>
+
+      <h2>On your home network</h2>
+      <p>
+        The app talks to the DirectorLink driver on your controller directly, over your home network.
+        Device names, states, commands and camera pictures do not pass through our servers. The app
+        keeps its settings, its access key and the controller's address in your browser only.
+      </p>
+
+      <h2>Signing in with Google</h2>
+      <p>
+        Signing in is optional. It is for using your home away from the home network and for inviting
+        family. When you sign in, Google tells us your Google account ID, your email address and your
+        name. We ask for nothing else, never see your Google password, and use these only to know
+        which homes your account belongs to and to match invitations. We do not sell or share them,
+        and there are no ads, tracking or analytics.
+      </p>
+      <p>A device that has never signed in does not contact our account service at all.</p>
+
+      <h2>What our servers store</h2>
+      <ul>
+        <li>Your account: your Google account ID, email address and name, and when you signed in.</li>
+        <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out.</li>
+        <li>With remote access and invitations (coming): which homes your account belongs to, and invitations waiting to be accepted (the invited email and the expiry date).</li>
+      </ul>
+      <p>
+        Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
+        and status) to keep the service running.
+      </p>
+
+      <h2>Remote access</h2>
+      <p>
+        Remote access is off unless you switch it on in Composer. Today it is a test: the controller
+        keeps one outgoing connection to api.directorlink.io, encrypted with TLS, and only the
+        DirectorLink team's test tool can send it read-only requests, which are passed through and not
+        stored. When remote access opens to accounts, every request and answer will also be locked
+        end to end, with keys that only your devices and your controller hold, so our servers can pass
+        them along but cannot read them.
+      </p>
+
+      <h2>Cookies</h2>
+      <p>
+        api.directorlink.io sets one cookie that keeps you signed in, and one for ten minutes while
+        you sign in. Neither can be read by the app's pages. The app and this website set no cookies.
+      </p>
+
+      <h2>Deleting your data</h2>
+      <p>
+        Signing out ends the session on that device. <strong>Settings → Account → Delete account</strong>
+        in the app deletes your account and signs out all your devices.
+      </p>
+
+      <h2>Contact</h2>
+      <p>
+        DirectorLink is open source. Questions go to
+        <a href="https://github.com/IsraelCIL/DirectorLink/issues" rel="noreferrer">github.com/IsraelCIL/DirectorLink/issues</a>.
+      </p>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">github.com/IsraelCIL/DirectorLink</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

@@ -9,9 +9,11 @@
 //                                      (X-DirectorLink-Home, Authorization: Bearer <home_secret>)
 //   GET /test/homes/{home_id}/status   the home's connection     } Authorization: Bearer <TEST_TOKEN>
 //   GET /test/homes/{home_id}/v1/...   relayed to the driver     } (version 0 only)
+//   /auth/google/start, /auth/google/callback, /auth/logout, /v1/me   accounts (accounts.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
+import { handleAccounts } from "./accounts.js";
 import { HomeRelay } from "./home-relay.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
 
@@ -34,6 +36,10 @@ export default {
       const test = TEST_ROUTE.exec(url.pathname);
       if (test) {
         return await testEndpoint(request, env, test[1], test[2], url.search);
+      }
+      const account = await handleAccounts(request, env);
+      if (account) {
+        return account;
       }
       return problem(404, "NOT_FOUND", `${url.pathname} is not a DirectorLink relay endpoint`);
     } catch (error) {

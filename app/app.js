@@ -4,6 +4,7 @@
 // "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
+import { startAccount } from "./js/account.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
 import { h, iconButton } from "./js/dom.js";
@@ -148,6 +149,7 @@ function signature() {
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
     state.role,
+    state.account,
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),
@@ -291,6 +293,7 @@ async function start() {
   restoreSaved();
   applyLanguage();
   startPwa();
+  startAccount();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
   if (state.host && state.apiKey) {
     connect();
