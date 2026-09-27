@@ -77,9 +77,26 @@ export function apiUrl(host, path) {
   return `http://${host}:${API_PORT}${path}`;
 }
 
+// A read that fails without an answer (connection lost, reset, timed out) is sent once more: now
+// and then one of the ten requests of a load does not get through, and a single lost read must not
+// make the whole app look unreachable. Writes (pairing, Open gate, …) are never repeated.
+const READ_RETRY_DELAY_MS = 400;
+
 // Sends a request and returns { status, ok, data, text, durationMs, retryAfter } without throwing
 // on HTTP errors.
-export async function apiRequest(host, path, { method = "GET", apiKey, body, timeoutMs = 8000 } = {}) {
+export async function apiRequest(host, path, options = {}) {
+  if ((options.method || "GET") !== "GET") {
+    return sendRequest(host, path, options);
+  }
+  try {
+    return await sendRequest(host, path, options);
+  } catch {
+    await new Promise((resolve) => window.setTimeout(resolve, READ_RETRY_DELAY_MS));
+    return sendRequest(host, path, options);
+  }
+}
+
+async function sendRequest(host, path, { method = "GET", apiKey, body, timeoutMs = 8000 } = {}) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const headers = {};
