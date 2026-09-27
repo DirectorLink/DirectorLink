@@ -385,7 +385,7 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-primary", dataset: { key: "account-sign-in" }, onclick: signIn }, icon("user"), t("settings.account.signIn")),
+        h("button", { type: "button", class: "button button-primary", dataset: { key: "account-sign-in" }, onclick: () => signIn() }, icon("user"), t("settings.account.signIn")),
         account.status === "unavailable"
           ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
           : null
