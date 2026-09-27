@@ -139,7 +139,7 @@ def main():
         if gone in app:
             fail(f"the app still has {gone}; access requests were removed in 0.8.0 (pair with a code)")
 
-    # Doorbells (0.9.1): polled with the other devices (404 on older drivers = none), a banner
+    # Doorbells (0.9.2): polled with the other devices (404 on older drivers = none), a banner
     # on Home while a ring is recent, Open gate for doors keys only, notifications only after
     # the Settings button asked for them.
     for fragment, message in (

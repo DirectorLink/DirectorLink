@@ -1,18 +1,18 @@
--- API keys: named bearer secrets. Only a hash of each key is stored, in plain driver persistence:
--- Director drops encrypted values when the driver is updated (it logs "has no driverKey"), and a
--- hash of a random key is useless to anyone who reads the controller's storage or a backup.
+-- API keys: named bearer secrets. Only a hash of each key is stored, so the controller's storage,
+-- or a backup of it, holds nothing that opens the API.
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
 local Roles = require("src.auth.roles")
+local Store = require("src.core.store")
 
 local Keys = {}
 
 Keys.MAX_KEYS = 20
 
 local STORE_KEY = "directorlink_api_key_hashes"
--- Up to 0.9.0 the keys themselves were kept encrypted under this name. They are moved to hashes
--- if that store can still be read, and it is emptied either way.
+-- 0.8.0 and 0.9.0 kept the keys themselves, encrypted, under this name. They are moved to hashes
+-- when Director can still read that store, which is then emptied.
 local OLD_STORE_KEY = "directorlink_api_keys"
 -- Keys are "ak_" plus 48 hex digits; anything much longer is not worth hashing.
 local MAX_PRESENTED_LENGTH = 128
@@ -90,22 +90,7 @@ local function save()
             created_at = key.created_at,
         }
     end
-    return pcall(function()
-        C4:PersistSetValue(STORE_KEY, Json.encode({ version = 3, keys = records }), false)
-    end)
-end
-
-local function readStore(name, encrypted)
-    local ok, raw = pcall(function()
-        return C4:PersistGetValue(name, encrypted)
-    end)
-    if ok and type(raw) == "string" and raw ~= "" then
-        local data = Json.decode(raw)
-        if type(data) == "table" and type(data.keys) == "table" then
-            return data.keys
-        end
-    end
-    return nil
+    return Store.write(STORE_KEY, { version = 3, keys = records }, false)
 end
 
 local function addLoaded(key, hash, alg)
@@ -121,8 +106,10 @@ local function addLoaded(key, hash, alg)
 end
 
 -- Moves keys from the encrypted store of 0.9.0 and older, when Director can still read it.
+-- Returns how that store came back.
 local function migrate()
-    for _, key in ipairs(readStore(OLD_STORE_KEY, true) or {}) do
+    local old, form = Store.read(OLD_STORE_KEY, true)
+    for _, key in ipairs(Store.items(old and old.keys)) do
         if type(key) == "table" and type(key.id) == "string" and type(key.secret) == "string" then
             local hash, alg = hashKey(key.secret)
             if hash then
@@ -130,28 +117,32 @@ local function migrate()
             end
         end
     end
-    if save() then
-        pcall(function()
-            C4:PersistSetValue(OLD_STORE_KEY, "", true)
-        end)
+    if save() and old then
+        Store.write(OLD_STORE_KEY, { version = 2, keys = Json.array() }, true)
     end
+    return form
 end
 
+-- Returns the number of keys, how the store came back ("json", "table", "missing",
+-- "unreadable") and, when it was missing, how the old encrypted store came back.
 function Keys.load()
     state.keys = {}
     state.lastUsed = {}
 
-    local stored = readStore(STORE_KEY, false)
-    if not stored then
-        migrate()
-        return #state.keys
+    local stored, form = Store.read(STORE_KEY, false)
+    if form == "missing" then
+        return #state.keys, form, migrate()
     end
-    for _, key in ipairs(stored) do
+    for _, key in ipairs(Store.items(stored and stored.keys)) do
         if type(key) == "table" and type(key.id) == "string" and type(key.hash) == "string" and algorithmNamed(key.alg) then
             addLoaded(key, key.hash, key.alg)
         end
     end
-    return #state.keys
+    -- Written by 0.9.1 as plain JSON, which Director hands back decoded: store it as it is now.
+    if form == "table" then
+        save()
+    end
+    return #state.keys, form
 end
 
 function Keys.count()

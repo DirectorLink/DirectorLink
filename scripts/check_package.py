@@ -39,7 +39,7 @@ SECURITY_CONTRACT = {
     ),
     "src/auth/keys.lua": (
         # Only hashes are stored, never the keys themselves.
-        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 3, keys = records }), false)",
+        "return Store.write(STORE_KEY, { version = 3, keys = records }, false)",
         "        records[#records + 1] = {\n"
         "            id = key.id,\n"
         "            name = key.name,\n"
@@ -51,7 +51,7 @@ SECURITY_CONTRACT = {
         'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
         'C4:UUID("RANDOM")',
         "constantTimeEqual(hashes[key.alg], key.hash)",
-        'C4:PersistSetValue(OLD_STORE_KEY, "", true)',
+        "Store.write(OLD_STORE_KEY, { version = 2, keys = Json.array() }, true)",
     ),
     "src/auth/pairing.lua": (
         "Pairing.CODE_TTL_SECONDS = 15 * 60",
@@ -63,7 +63,13 @@ SECURITY_CONTRACT = {
     "src/cloud/relay.lua": (
         'Relay.ROLE = "viewer"',
         'if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then',
-        "C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), false)",
+        "Store.write(IDENTITY_KEY, identity, false)",
+    ),
+    # Director hands stored JSON back decoded (ADR-028); keys must stay readable.
+    "src/core/store.lua": (
+        'local PREFIX = "json:"',
+        "C4:PersistSetValue(name, PREFIX .. Json.encode(value), encrypted == true)",
+        'if type(raw) == "table" then',
     ),
     "src/core/log.lua": (
         "pairing_code = true",

@@ -187,7 +187,8 @@ function OnDriverLateInit(driverInitType)
         return
     end
 
-    Keys.load()
+    local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
+    Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
     RoomNames.load()
     publishKeyCount()
 

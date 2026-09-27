@@ -4,6 +4,7 @@
 
 local Json = require("src.core.json")
 local Http = require("src.api.http")
+local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
 
@@ -20,9 +21,8 @@ Relay.REFUSED_RETRY_SECONDS = 300
 -- Version 0: whatever the relay asks, relayed requests may only read.
 Relay.ROLE = "viewer"
 
--- Plain persistence: Director drops encrypted values when the driver is updated, and the home must
--- keep its id. 0.9.0 kept the identity encrypted under the old name; it is moved if still readable.
 local IDENTITY_KEY = "directorlink_remote_identity"
+-- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
 local OLD_IDENTITY_KEY = "DIRECTORLINK_REMOTE_IDENTITY"
 
 local state = {
@@ -62,14 +62,11 @@ local function randomHex(length)
 end
 
 local function readIdentity(name, encrypted)
-    local ok, raw = pcall(function()
-        return C4:PersistGetValue(name, encrypted)
-    end)
-    local stored = ok and type(raw) == "string" and raw ~= "" and Json.decode(raw) or nil
+    local stored, form = Store.read(name, encrypted)
     if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
-        return { home_id = stored.home_id, home_secret = stored.home_secret }
+        return { home_id = stored.home_id, home_secret = stored.home_secret }, form
     end
-    return nil
+    return nil, form
 end
 
 -- The home's identity: a public id and a secret, kept in the driver's data.
@@ -77,24 +74,21 @@ function Relay.identity()
     if state.identity then
         return state.identity
     end
-    local identity = readIdentity(IDENTITY_KEY, false)
-    if identity then
-        state.identity = identity
-        return identity
+    local identity, form = readIdentity(IDENTITY_KEY, false)
+    local moved = false
+    if not identity then
+        identity = readIdentity(OLD_IDENTITY_KEY, true)
+        moved = identity ~= nil
+        form = moved and "moved" or "created"
+        identity = identity or { home_id = randomHex(32), home_secret = randomHex(64) }
     end
-    identity = readIdentity(OLD_IDENTITY_KEY, true)
-    local created = identity == nil
-    identity = identity or { home_id = randomHex(32), home_secret = randomHex(64) }
-    local saved = pcall(function()
-        C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), false)
-    end)
-    if saved then
-        pcall(function()
-            C4:PersistSetValue(OLD_IDENTITY_KEY, "", true)
-        end)
+    -- Anything not stored the current way is written again, so the next load reads it as it is.
+    if form ~= "json" and Store.write(IDENTITY_KEY, identity, false) and moved then
+        Store.write(OLD_IDENTITY_KEY, {}, true)
     end
     state.identity = identity
-    log("info", created and "remote identity created" or "remote identity moved to plain storage", { home_id = identity.home_id })
+    log("info", form == "created" and "remote identity created" or "remote identity loaded",
+        { home_id = identity.home_id, stored_as = form })
     return identity
 end
 

@@ -3,6 +3,7 @@
 
 local Mock = {}
 
+local Json = require("src.core.json")
 local md5 = require("md5")
 local sha1 = require("sha1")
 local sha256 = require("sha256")
@@ -207,7 +208,15 @@ function Mock.install(project)
     end
 
     function C4:PersistGetValue(key, _encrypted)
-        return mock.persist[key]
+        local value = mock.persist[key]
+        -- Like Director (OS 3.4.3): a stored string that is a JSON object or array comes back decoded.
+        if type(value) == "string" and value:match("^%s*[%[{]") then
+            local decoded = Json.decode(value)
+            if type(decoded) == "table" then
+                return decoded
+            end
+        end
+        return value
     end
 
     function C4:PersistSetValue(key, value, encrypted)
@@ -515,17 +524,15 @@ function Mock.startDriver(project, specText, initType, prepare)
     return mock
 end
 
--- A driver update in Composer: the driver reloads in place. Plain persisted values carry over;
--- encrypted ones do not (Director logs "has no driverKey" and returns nothing for them).
+-- A driver update in Composer: the driver reloads in place and keeps its persistent data (Director
+-- keeps it in state.db, encrypted values included).
 function Mock.updateDriver(previous, project)
     return Mock.startDriver(project, nil, "DIT_UPDATING", function(mock)
         -- Random values must not repeat, or a lost identity would be regenerated unnoticed.
         mock.uuidCount = previous.uuidCount
         for name, value in pairs(previous.persist) do
-            if not previous.persistEncrypted[name] then
-                mock.persist[name] = value
-                mock.persistEncrypted[name] = false
-            end
+            mock.persist[name] = value
+            mock.persistEncrypted[name] = previous.persistEncrypted[name]
         end
     end)
 end
