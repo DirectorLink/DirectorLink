@@ -21,7 +21,7 @@
   ],
   // Accounts (accounts.js). The database id is not a secret; migrations: migrations/.
   "d1_databases": [
-    { "binding": "DB", "database_name": "directorlink", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+    { "binding": "DB", "database_name": "directorlink", "database_id": "413f0c4a-c1c8-458e-9364-286bf24f179f", "migrations_dir": "migrations" }
   ],
   // GOOGLE_CLIENT_SECRET is a secret (npx wrangler@4 secret put GOOGLE_CLIENT_SECRET).
   "vars": {
