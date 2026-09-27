@@ -3,7 +3,10 @@
 
 local Mock = {}
 
+local Json = require("src.core.json")
 local md5 = require("md5")
+local sha1 = require("sha1")
+local sha256 = require("sha256")
 
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
@@ -95,6 +98,32 @@ function Mock.project()
                 deviceName = "Gate", driverFileName = "camera.c4i", roomId = 11, roomName = "Living Room",
                 protocol = { [108] = { deviceName = "DoorBird", driverFileName = "doorbird_doorstation.c4z" } },
             },
+            -- A DoorBird: one driver, four proxies (button, intercom, camera, doorstation), as in a real project.
+            [110] = {
+                deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = {
+                    [90] = { deviceName = "Gate Intercom", driverFileName = "uibutton.c4i" },
+                    [91] = { deviceName = "DoorBird", driverFileName = "intercomproxy.c4i" },
+                    [92] = { deviceName = "Gate Camera", driverFileName = "camera.c4i" },
+                    [93] = { deviceName = "Front Gate", driverFileName = "doorstation.c4i" },
+                },
+            },
+            [90] = {
+                deviceName = "Gate Intercom", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [91] = {
+                deviceName = "DoorBird", driverFileName = "intercomproxy.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [92] = {
+                deviceName = "Gate Camera", driverFileName = "camera.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [93] = {
+                deviceName = "Front Gate", driverFileName = "doorstation.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
             -- A combo driver: the relay device is its own proxy.
             [70] = {
                 deviceName = "Main Door", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen",
@@ -133,6 +162,10 @@ function Mock.project()
                 address = "192.168.1.117", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
                 query = "/bha-api/image.cgi",
             },
+            [92] = {
+                address = "192.168.1.118", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
+                query = "/bha-api/image.cgi",
+            },
         },
         -- Names for C4:GetDeviceVariables (blind proxies are looked up by variable name).
         variableNames = {
@@ -147,6 +180,10 @@ function Mock.install(project)
     project = project or Mock.project()
     local mock = {
         persist = {},
+        persistEncrypted = {},
+        -- Outgoing network connections (the relay): binding -> { host, port, kind, options,
+        -- connects, disconnects, sent }.
+        network = {},
         properties = {},
         debugLog = {},
         sent = {},
@@ -171,11 +208,20 @@ function Mock.install(project)
     end
 
     function C4:PersistGetValue(key, _encrypted)
-        return mock.persist[key]
+        local value = mock.persist[key]
+        -- Like Director (OS 3.4.3): a stored string that is a JSON object or array comes back decoded.
+        if type(value) == "string" and value:match("^%s*[%[{]") then
+            local decoded = Json.decode(value)
+            if type(decoded) == "table" then
+                return decoded
+            end
+        end
+        return value
     end
 
-    function C4:PersistSetValue(key, value, _encrypted)
+    function C4:PersistSetValue(key, value, encrypted)
         mock.persist[key] = value
+        mock.persistEncrypted[key] = encrypted == true
     end
 
     function C4:UpdateProperty(name, value)
@@ -273,9 +319,47 @@ function Mock.install(project)
         error("UI request failed")
     end
 
-    function C4:Hash(algorithm, data, _options)
-        assert(algorithm == "MD5", "only MD5 is faked")
+    function C4:Hash(algorithm, data, options)
+        local hashes = { SHA1 = sha1, SHA256 = sha256 }
+        if hashes[algorithm] then
+            local digest = hashes[algorithm](data)
+            if options and options.return_encoding == "BASE64" then
+                return C4:Base64Encode(digest)
+            end
+            return (digest:gsub(".", function(c)
+                return string.format("%02X", c:byte())
+            end))
+        end
+        assert(algorithm == "MD5", "only MD5, SHA1 and SHA256 are faked")
         return string.upper(md5(data))
+    end
+
+    function C4:CreateNetworkConnection(binding, host)
+        assert(mock.network[binding] == nil, "network binding " .. tostring(binding) .. " created twice")
+        mock.network[binding] = { host = host, connects = 0, disconnects = 0, sent = "" }
+    end
+
+    function C4:NetPortOptions(binding, port, kind, options)
+        local connection = assert(mock.network[binding], "NetPortOptions before CreateNetworkConnection")
+        connection.port, connection.kind, connection.options = port, kind, options
+    end
+
+    function C4:NetConnect(binding, port)
+        local connection = assert(mock.network[binding], "NetConnect before CreateNetworkConnection")
+        assert(connection.port == port, "NetConnect on a port without options")
+        connection.connects = connection.connects + 1
+    end
+
+    function C4:NetDisconnect(binding, _port)
+        local connection = mock.network[binding]
+        if connection then
+            connection.disconnects = connection.disconnects + 1
+        end
+    end
+
+    function C4:SendToNetwork(binding, _port, data)
+        local connection = assert(mock.network[binding], "SendToNetwork before CreateNetworkConnection")
+        connection.sent = connection.sent .. data
     end
 
     function C4:Base64Encode(data)
@@ -416,7 +500,9 @@ end
 
 -- Loads a fresh copy of the driver (all src.* modules) and runs its init callbacks.
 -- specText replaces the stub API description (the dev server passes the built one).
-function Mock.startDriver(project, specText, initType)
+-- Loads the driver as Director does. `prepare(mock)`, if given, runs first (e.g. to seed persisted
+-- values).
+function Mock.startDriver(project, specText, initType, prepare)
     -- The JSON module is stateless; keep it shared so tests and driver agree on Json.null.
     for name in pairs(package.loaded) do
         if name:sub(1, 4) == "src." and name ~= "src.core.json" then
@@ -428,11 +514,27 @@ function Mock.startDriver(project, specText, initType)
     end
 
     local mock = Mock.install(project)
+    if prepare then
+        prepare(mock)
+    end
     require("src.main")
     OnDriverInit(initType or "DIT_STARTUP")
     OnDriverLateInit(initType or "DIT_STARTUP")
     OnServerStatusChanged(41999, "ONLINE")
     return mock
+end
+
+-- A driver update in Composer: the driver reloads in place and keeps its persistent data (Director
+-- keeps it in state.db, encrypted values included).
+function Mock.updateDriver(previous, project)
+    return Mock.startDriver(project, nil, "DIT_UPDATING", function(mock)
+        -- Random values must not repeat, or a lost identity would be regenerated unnoticed.
+        mock.uuidCount = previous.uuidCount
+        for name, value in pairs(previous.persist) do
+            mock.persist[name] = value
+            mock.persistEncrypted[name] = previous.persistEncrypted[name]
+        end
+    end)
 end
 
 return Mock

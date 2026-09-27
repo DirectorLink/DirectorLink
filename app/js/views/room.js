@@ -3,6 +3,7 @@
 import {
   blindRow,
   cameraTile,
+  doorbellCard,
   emptyState,
   lightRow,
   relayRow,
@@ -68,17 +69,23 @@ export function roomView(roomId, { openCamera }) {
   if (group.blinds.length) {
     sections.push(section("blinds", "blinds", t("sections.blinds"), group.blinds.map((blind) => blindRow(blind))));
   }
+  // Doorbells (DoorBird), on drivers that have /v1/doorbells; their camera shows here, not twice.
+  if (group.doorbells.length) {
+    sections.push(section("doorbells", "bell", t("sections.doorbells"), group.doorbells.map((doorbell) => doorbellCard(doorbell, { openCamera }))));
+  }
   // Doors and gates (relays), on drivers that have /v1/relays.
   if (group.relays.length) {
     sections.push(section("relays", "door", t("sections.relays"), group.relays.map((relay) => relayRow(relay))));
   }
-  if (group.cameras.length) {
+  const doorbellCameras = new Set(group.doorbells.map((doorbell) => doorbell.camera?.id).filter(Boolean));
+  const cameras = group.cameras.filter((camera) => !doorbellCameras.has(camera.id));
+  if (cameras.length) {
     sections.push(
       section(
         "cameras",
         "camera",
         t("sections.cameras"),
-        h("div", { class: "camera-grid" }, group.cameras.map((camera) => cameraTile(camera, { width: 320, onOpen: openCamera, showRoom: false })))
+        h("div", { class: "camera-grid" }, cameras.map((camera) => cameraTile(camera, { width: 320, onOpen: openCamera, showRoom: false })))
       )
     );
   }

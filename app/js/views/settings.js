@@ -1,5 +1,6 @@
 // Settings: appearance, language, room names, controller, app and about.
 
+import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, name } from "../dom.js";
 import { LANGUAGES, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -252,11 +253,17 @@ function controllerSection(navigate) {
     system?.inventory
       ? [
           t("settings.controller.inventory"),
-          t("settings.controller.inventoryValue", {
-            rooms: system.inventory.rooms ?? 0,
-            devices: system.inventory.devices ?? 0,
-            supported: system.inventory.supported_devices ?? 0,
-          }),
+          [
+            t("settings.controller.inventoryValue", {
+              rooms: system.inventory.rooms ?? 0,
+              devices: system.inventory.devices ?? 0,
+              supported: system.inventory.supported_devices ?? 0,
+            }),
+            // Drivers with doorbells (0.9.2) count them too.
+            system.inventory.doorbells ? t("settings.controller.inventoryDoorbells", { count: system.inventory.doorbells }) : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
         ]
       : null,
   ].filter(Boolean);
@@ -332,6 +339,37 @@ function controllerSection(navigate) {
 
 // ---- app and about -------------------------------------------------------------------------
 
+// Doorbell notifications: asked for only from this button, shown only while the app is open.
+function doorbellNotifications() {
+  if (!state.doorbells.length) return null;
+  const support = notificationSupport();
+  const on = notificationsOn();
+  const status =
+    support === "unsupported"
+      ? t("settings.app.notifications.unsupported")
+      : support === "denied"
+        ? t("settings.app.notifications.blocked")
+        : on
+          ? t("settings.app.notifications.on")
+          : t("settings.app.notifications.off");
+  const button =
+    support === "unsupported" || support === "denied"
+      ? null
+      : on
+        ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "notifications-off" }, onclick: disableNotifications }, t("settings.app.notifications.turnOff"))
+        : h(
+            "button",
+            { type: "button", class: "button button-secondary", dataset: { key: "notifications-on" }, onclick: () => enableNotifications() },
+            icon("bell"),
+            t("settings.app.notifications.turnOn")
+          );
+  return [
+    h("dl", { class: "facts" }, h("div", { class: "fact" }, h("dt", {}, t("settings.app.notifications.label")), h("dd", { id: "doorbell-notifications" }, status))),
+    h("p", { class: "field-help" }, t("settings.app.notifications.help")),
+    button ? h("div", { class: "button-row" }, button) : null,
+  ];
+}
+
 function appSection() {
   return card(
     "app",
@@ -351,7 +389,8 @@ function appSection() {
         ? h("button", { id: "install-button", type: "button", class: "button button-primary", dataset: { key: "install" }, onclick: installApp }, icon("download"), t("settings.app.install"))
         : null,
       h("a", { class: "button button-secondary", href: consoleUrl(), target: "_blank", rel: "noopener" }, icon("terminal"), t("settings.app.console"), icon("external"))
-    )
+    ),
+    doorbellNotifications()
   );
 }
 

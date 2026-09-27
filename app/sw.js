@@ -2,8 +2,9 @@
 // Same-origin GET requests are network-first with a short timeout and fall back to the cache,
 // so the app still opens when the internet is down but the home LAN (and the controller) is up.
 // Requests to the controller are cross-origin and are never intercepted.
+// It also opens the app when a doorbell notification is clicked.
 
-const CACHE_NAME = "directorlink-shell-v15";
+const CACHE_NAME = "directorlink-shell-v16";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -19,11 +20,13 @@ const ASSETS = [
   "/js/components.js",
   "/js/controls.js",
   "/js/dom.js",
+  "/js/doorbells.js",
   "/js/favorites.js",
   "/js/i18n.js",
   "/js/icons.js",
   "/js/model.js",
   "/js/pwa.js",
+  "/js/rings.js",
   "/js/session.js",
   "/js/state.js",
   "/js/theme.js",
@@ -140,6 +143,23 @@ self.addEventListener("activate", (event) => {
       .keys()
       .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
+  );
+});
+
+// A doorbell notification (shown while the app is open): bring the app to the front on Home,
+// or open it when no window is left.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data?.url || "/#/", self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      const client = windows.find((item) => new URL(item.url).origin === self.location.origin);
+      if (client) {
+        client.postMessage({ type: "directorlink-open", url });
+        return client.focus();
+      }
+      return self.clients.openWindow(url);
+    })
   );
 });
 

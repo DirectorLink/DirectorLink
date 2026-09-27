@@ -1,8 +1,8 @@
 -- Room names in other languages, kept by DirectorLink (Control4 has one name per room).
 -- Stored in the driver's persistent data as { [roomId] = { [language] = name } }.
 
-local Json = require("src.core.json")
 local Log = require("src.core.log")
+local Store = require("src.core.store")
 
 local RoomNames = {}
 
@@ -25,9 +25,7 @@ local function save()
             stored[tostring(roomId)] = byLanguage
         end
     end
-    local ok, err = pcall(function()
-        C4:PersistSetValue(STORE_KEY, Json.encode({ version = 1, rooms = stored }), false)
-    end)
+    local ok, err = Store.write(STORE_KEY, { version = 1, rooms = stored }, false)
     if not ok then
         Log.error("rooms", "could not save room names", { error = tostring(err) })
     end
@@ -35,15 +33,12 @@ end
 
 function RoomNames.load()
     names = {}
-    local ok, raw = pcall(function()
-        return C4:PersistGetValue(STORE_KEY, false)
-    end)
-    if not ok or type(raw) ~= "string" or raw == "" then
+    local data, form = Store.read(STORE_KEY, false)
+    if form == "missing" then
         return
     end
-    local data = Json.decode(raw)
     if type(data) ~= "table" or type(data.rooms) ~= "table" then
-        Log.warn("rooms", "stored room names are unreadable; starting empty")
+        Log.warn("rooms", "stored room names are unreadable; starting empty", { stored_as = form })
         return
     end
     for roomId, byLanguage in pairs(data.rooms) do
@@ -56,6 +51,10 @@ function RoomNames.load()
                 end
             end
         end
+    end
+    -- Written by 0.9.1 and older as plain JSON, which Director hands back decoded.
+    if form == "table" then
+        save()
     end
 end
 

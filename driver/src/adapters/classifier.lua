@@ -27,6 +27,10 @@ function Classifier.classify(driverFileName)
         return { kind = "relay", recognized = true }
     end
 
+    if name == "doorstation.c4i" or name == "doorstation.c4z" then
+        return { kind = "doorbell", recognized = true }
+    end
+
     return { kind = "unsupported", recognized = false }
 end
 

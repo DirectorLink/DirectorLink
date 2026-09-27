@@ -16,6 +16,13 @@ async function refreshOfflineStatus() {
 
 export function startPwa() {
   if ("serviceWorker" in navigator) {
+    // A doorbell notification was clicked: show Home, where the banner is.
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      if (event.data?.type === "directorlink-open") {
+        const hash = new URL(event.data.url, window.location.href).hash || "#/";
+        if (window.location.hash !== hash) window.location.hash = hash;
+      }
+    });
     navigator.serviceWorker
       .register("/sw.js", { scope: "/" })
       .then(() => navigator.serviceWorker.ready)

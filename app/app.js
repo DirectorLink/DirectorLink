@@ -5,7 +5,9 @@
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
+import { ringNotice } from "./js/components.js";
 import { h, iconButton } from "./js/dom.js";
+import { notificationSupport, notificationsOn, ringingDoorbells } from "./js/doorbells.js";
 import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
@@ -141,6 +143,10 @@ function signature() {
     state.blinds,
     state.cameras,
     state.relays,
+    state.doorbells,
+    // Rings stop being recent, and "3 minutes ago" moves on, without new data.
+    ringingDoorbells().map((doorbell) => doorbell.id),
+    state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
     state.role,
     state.devices,
     state.sentBrightness,
@@ -151,11 +157,13 @@ function signature() {
     ui.filter,
     ui.editFavorites,
     ui.relayStage,
+    ui.doorbellStage,
     ui.tick,
     ui.roomMessages,
     ui.controllerMessage,
     ui.featuredCamera,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
+    route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
 }
 
@@ -230,7 +238,13 @@ function render(force = false) {
   lastSignature = current;
 
   const saved = captureUi();
-  view.replaceChildren(...[screen()].flat(Infinity).filter(Boolean));
+  const content = [screen()].flat(Infinity).filter(Boolean);
+  // Away from Home, a ring still shows: one line under the header that leads to the banner.
+  if (route.name !== "home" && state.apiKey) {
+    const notice = ringNotice(ringingDoorbells());
+    if (notice) content.splice(1, 0, notice);
+  }
+  view.replaceChildren(...content);
   restoreUi(saved);
   attachCameraImages(view);
   updateTabbar();

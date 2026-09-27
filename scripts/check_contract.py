@@ -190,6 +190,12 @@ def scenario(client, bridge):
     client.check("POST", "/v1/relays/70/pulse", 202)
     client.check("POST", "/v1/relays/99/pulse", 404)
 
+    client.check("GET", "/v1/doorbells", 200)
+    client.check("GET", "/v1/doorbells/93", 200)
+    client.check("GET", "/v1/doorbells/92", 404)
+    client.check("POST", "/v1/doorbells/93/open", 202)
+    client.check("POST", "/v1/doorbells/99/open", 404)
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)

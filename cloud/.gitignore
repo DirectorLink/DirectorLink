@@ -1,0 +1,5 @@
+# Local secrets for `wrangler dev` (TEST_TOKEN), Wrangler's local state and build output.
+.dev.vars
+.dev.vars.*
+.wrangler/
+node_modules/

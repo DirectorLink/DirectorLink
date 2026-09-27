@@ -45,6 +45,7 @@ export function devicesInRoom(roomId) {
     blinds: pick(state.blinds),
     cameras: pick(state.cameras),
     relays: pick(state.relays),
+    doorbells: pick(state.doorbells),
     // Devices this app cannot control.
     others: state.devices.filter((device) => !device.supported && deviceRoomId(device) === id),
   };
@@ -52,7 +53,12 @@ export function devicesInRoom(roomId) {
 
 function controllableCount(group) {
   return (
-    group.lights.length + group.thermostats.length + group.blinds.length + group.cameras.length + group.relays.length
+    group.lights.length +
+    group.thermostats.length +
+    group.blinds.length +
+    group.cameras.length +
+    group.relays.length +
+    group.doorbells.length
   );
 }
 
@@ -69,6 +75,7 @@ export function visibleRooms() {
     blinds: state.blinds.filter(orphan),
     cameras: state.cameras.filter(orphan),
     relays: state.relays.filter(orphan),
+    doorbells: state.doorbells.filter(orphan),
     others: [],
   };
   if (controllableCount(orphans) > 0) {
