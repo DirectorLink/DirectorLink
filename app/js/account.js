@@ -79,8 +79,9 @@ export function startAccount() {
   }
 }
 
-export function signIn() {
-  const back = `${window.location.origin}/#/settings`;
+// `hash`: the screen to come back to (Settings, or Home when signing in from the connect screen).
+export function signIn(hash = "#/settings") {
+  const back = `${window.location.origin}/${hash}`;
   window.location.assign(`${ACCOUNTS_API}/auth/google/start?return_to=${encodeURIComponent(back)}`);
 }
 

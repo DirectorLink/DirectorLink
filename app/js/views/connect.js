@@ -1,7 +1,9 @@
 // First-time setup on Home: the controller address and the pairing code from Composer
-// (DirectorLink → Actions → New Pairing Code). A code lasts 15 minutes and works once.
+// (DirectorLink → Actions → New Pairing Code). A code lasts 15 minutes and works once. Below it,
+// signing in with Google (account.js), which will reach the home from anywhere (docs/ACCOUNTS.md).
 
 import { formatPairingCode } from "../../api-client.js";
+import { signIn } from "../account.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -40,6 +42,36 @@ export function formatCodeField(input) {
     }
   }
   return formatted;
+}
+
+// The account option under the pairing form: signed in, or a button to sign in with Google.
+function accountOption() {
+  const account = state.account;
+  if (account.status === "unknown" || account.status === "loading") {
+    return null;
+  }
+  if (account.status === "signed-in") {
+    return h(
+      "div",
+      { class: "connect-account" },
+      h("p", { class: "connect-signed-in", id: "connect-account-email" }, icon("user"), t("connect.signedInAs", { email: account.user.email })),
+      h("p", { class: "field-help" }, t("connect.signedInHelp"))
+    );
+  }
+  const outcome = account.notice && account.notice !== "deleted" && account.notice !== "deleteFailed" ? account.notice : null;
+  return h(
+    "div",
+    { class: "connect-account" },
+    h("p", { class: "connect-or" }, h("span", {}, t("connect.or"))),
+    outcome ? h("p", { class: "notice notice-error", role: "status" }, t(`settings.account.notice.${outcome}`)) : null,
+    h(
+      "button",
+      { type: "button", class: "button button-secondary button-wide", dataset: { key: "connect-sign-in" }, onclick: () => signIn("#/") },
+      icon("user"),
+      t("connect.signIn")
+    ),
+    h("p", { class: "field-help" }, t("connect.signInHelp"))
+  );
 }
 
 export function connectScreen() {
@@ -108,7 +140,8 @@ export function connectScreen() {
       h("span", { class: "connect-icon" }, icon("key")),
       h("h2", { id: "connect-title", class: "connect-title" }, t("connect.title")),
       h("p", { class: "connect-text" }, t("connect.intro")),
-      form
+      form,
+      accountOption()
     ),
     h("p", { class: "connect-footnote" }, t("connect.lanNote"))
   );
