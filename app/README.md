@@ -93,4 +93,6 @@ Then open `http://localhost:8080`. Without a controller, run `python scripts/dev
 
 The production site is served over HTTPS and talks to the controller over plain HTTP on the LAN. Chromium browsers gate these requests behind Local Network Access permission; requests to private IP literals or `.local` hostnames, annotated with `targetAddressSpace: "local"`, are allowed after the user grants it. A controller on this computer (`localhost`, the dev server) is annotated `"loopback"` instead, because Chromium blocks a request whose annotation does not match the address.
 
+**iPhone and iPad cannot use the LAN connection.** Every browser on iOS and iPadOS uses WebKit, which blocks these HTTP requests from an HTTPS page as mixed content and has no Local Network Access permission to allow them; the request never leaves the device (the controller logs nothing) and the app shows "Could not reach DirectorLink". Pairing therefore has to happen on a computer or an Android phone. iPhones and iPads will connect through remote access (`docs/ACCOUNTS.md`).
+
 The CSP in `_headers` allows Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) and `blob:` images (camera pictures are fetched with the API key and shown as blobs).
