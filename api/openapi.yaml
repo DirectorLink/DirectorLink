@@ -68,6 +68,11 @@ tags:
     description: Video doorbells (DoorBird) — rings, motion, access, and opening the gate or door wired to them.
   - name: Logs
     description: The bridge's own recent log, for debugging.
+  - name: Remote
+    description: |
+      Remote access with accounts (docs/ACCOUNTS.md): claiming this home for an account, and
+      invitations. Requests that arrive through remote access are sealed end to end and run as the
+      device's own key and role.
 
 paths:
   /v1/health:
@@ -277,6 +282,120 @@ paths:
       responses:
         "204":
           description: Revoked.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/remote:
+    get:
+      tags: [Remote]
+      operationId: getRemoteAccess
+      x-directorlink-role: viewer
+      summary: Remote access status
+      description: Whether Remote Access is switched on in Composer, connected, and able to seal requests, and this home's id while it is on.
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoteAccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/remote/claim:
+    post:
+      tags: [Remote]
+      operationId: createClaimToken
+      x-directorlink-role: admin
+      summary: A claim token for linking this home to an account
+      description: |
+        The app gives the token to the DirectorLink cloud, which checks it with this controller
+        over remote access. It works once, for 5 minutes. Only from the home network: holding an
+        admin key here is what proves the home is yours.
+      responses:
+        "201":
+          description: A new token (it replaces any earlier one).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClaimToken"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/invitations:
+    get:
+      tags: [Remote]
+      operationId: listInvitations
+      x-directorlink-role: admin
+      summary: Pending invitations
+      description: Invitations that have not been accepted and have not expired, without their secrets.
+      responses:
+        "200":
+          description: The pending invitations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitationList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Remote]
+      operationId: createInvitation
+      x-directorlink-role: admin
+      summary: Invite someone, or another device of your own
+      description: |
+        The answer holds the invitation's secret, once. The app puts it after `#` in the link it
+        shares, so it never reaches a server; the controller keeps only a key derived from it.
+        Whoever accepts gets their own API key with this role. Needs Remote Access switched on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvitationCreate"
+      responses:
+        "201":
+          description: The invitation, with its secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewInvitation"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/invitations/{invitationId}:
+    parameters:
+      - $ref: "#/components/parameters/InvitationId"
+    delete:
+      tags: [Remote]
+      operationId: revokeInvitation
+      x-directorlink-role: admin
+      summary: Revoke a pending invitation
+      responses:
+        "204":
+          description: Revoked; the link no longer works.
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1102,6 +1221,13 @@ components:
       schema:
         type: string
         pattern: "^[0-9a-f]{8}$"
+    InvitationId:
+      name: invitationId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}$"
 
   headers:
     RetryAfter:
@@ -1129,7 +1255,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`).
       content:
         application/problem+json:
           schema:
@@ -1162,13 +1288,14 @@ components:
     Forbidden:
       description: |
         The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
-        door control is switched off in Composer (`DOOR_CONTROL_DISABLED`).
+        door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or a claim token was
+        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     Unavailable:
-      description: The bridge cannot serve this right now (`UNAVAILABLE`).
+      description: The bridge cannot serve this right now (`UNAVAILABLE`), or cannot seal remote requests (`LOCK_UNAVAILABLE`).
       content:
         application/problem+json:
           schema:
@@ -1816,6 +1943,90 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Thermostat"
+
+    RemoteAccess:
+      type: object
+      required: [enabled, connected, lock, home_id]
+      properties:
+        enabled:
+          type: boolean
+          description: Remote Access is switched on in Composer.
+        connected:
+          type: boolean
+          description: The controller's connection to api.directorlink.io is up.
+        lock:
+          type: boolean
+          description: This controller passed the lock's self-test and can seal remote requests.
+        home_id:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{32}$"
+          description: This home's id at api.directorlink.io; null while Remote Access is off.
+
+    ClaimToken:
+      type: object
+      required: [home_id, claim_token, expires_at]
+      properties:
+        home_id:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        claim_token:
+          type: string
+          pattern: "^[0-9a-f]{48}$"
+        expires_at:
+          type: string
+          format: date-time
+
+    InvitationCreate:
+      type: object
+      additionalProperties: false
+      required: [role]
+      properties:
+        role:
+          $ref: "#/components/schemas/KeyRole"
+        expires_in:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          description: Seconds until the invitation expires (default 7 days).
+
+    Invitation:
+      type: object
+      required: [id, role, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        role:
+          $ref: "#/components/schemas/KeyRole"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+
+    NewInvitation:
+      allOf:
+        - $ref: "#/components/schemas/Invitation"
+        - type: object
+          required: [secret, home_id]
+          properties:
+            secret:
+              type: string
+              pattern: "^[0-9a-f]{64}$"
+              description: Shown only here. Share it only inside the invitation link, after `#`.
+            home_id:
+              type: string
+              pattern: "^[0-9a-f]{32}$"
+
+    InvitationList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Invitation"
 
     LogLevel:
       type: string

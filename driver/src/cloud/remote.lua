@@ -1,0 +1,286 @@
+-- Remote access with accounts (docs/ACCOUNTS.md): what the relay passes on for signed-in devices,
+-- always sealed with the lock (lock.lua). The relay only routes: it sees which key or invitation an
+-- envelope is for, never what is inside. Three messages arrive:
+--   e2e    a device's sealed API request; run as that device's key and role, the answer sealed back
+--   join   a sealed request from someone opening an invitation link; answered with their new key
+--   claim  the cloud checks a claim token, which proves that whoever claims this home holds an
+--          admin key here on the home network
+-- Problems the relay has to know about (unknown key, broken seal, replay) are sent in the clear as
+-- a `code`; they reveal nothing about the home.
+
+local Json = require("src.core.json")
+local Http = require("src.api.http")
+local Clock = require("src.core.clock")
+local Lock = require("src.cloud.lock")
+
+local Remote = {}
+
+Remote.CLAIM_SECONDS = 300
+Remote.MAX_REQUEST_BYTES = 64 * 1024
+
+local METHODS = { GET = true, POST = true, PATCH = true, DELETE = true }
+local JOIN_PATH = "/v1/auth/join"
+
+local state = {
+    available = false,
+    seen = {},
+    claim = nil,
+    services = nil,
+    handleRequest = nil,
+    homeId = nil,
+}
+
+local function log(level, message, data)
+    if state.services and state.services.log then
+        state.services.log.write(level, "remote", message, data)
+    end
+end
+
+local function randomHex(length)
+    local hex = ""
+    while #hex < length do
+        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
+    end
+    return hex:sub(1, length)
+end
+
+local function sameText(left, right)
+    if type(left) ~= "string" or type(right) ~= "string" or #left ~= #right then
+        return false
+    end
+    local same = true
+    for index = 1, #left do
+        if left:byte(index) ~= right:byte(index) then
+            same = false
+        end
+    end
+    return same
+end
+
+-- options: { services, handleRequest = Server.handleRequest, homeId = function() return id end }
+function Remote.init(options)
+    state.services = options.services
+    state.handleRequest = options.handleRequest
+    state.homeId = options.homeId
+    state.seen = {}
+    state.claim = nil
+    local ok, step = Lock.selfTest()
+    state.available = ok
+    if ok then
+        log("info", "lock self-test passed")
+    else
+        log("error", "lock self-test failed; remote requests are refused", { step = step })
+    end
+    return ok, step
+end
+
+function Remote.available()
+    return state.available
+end
+
+-- A claim token for the home's owner to hand to the cloud: works once, for 5 minutes.
+function Remote.createClaim()
+    state.claim = { token = randomHex(48), expires = Clock.now() + Remote.CLAIM_SECONDS }
+    return { claim_token = state.claim.token, expires_at = Clock.iso(state.claim.expires) }
+end
+
+local function useClaim(token)
+    local claim = state.claim
+    if not claim or Clock.now() > claim.expires or not sameText(token, claim.token) then
+        return false
+    end
+    state.claim = nil
+    return true
+end
+
+-- A request id is accepted once, and only within the lock's window of this controller's clock.
+local function fresh(keyId, requestId, ts)
+    local now = Clock.now()
+    if type(ts) ~= "number" or math.abs(now - ts) > Lock.WINDOW_SECONDS then
+        return false, "STALE"
+    end
+    if type(requestId) ~= "string" or not requestId:match("^[%w_-]+$") or #requestId > 64 then
+        return false, "BAD_REQUEST"
+    end
+    local seen = state.seen[keyId] or {}
+    for id, at in pairs(seen) do
+        if now - at > Lock.REMEMBER_SECONDS then
+            seen[id] = nil
+        end
+    end
+    if seen[requestId] then
+        return false, "REPLAYED"
+    end
+    seen[requestId] = now
+    state.seen[keyId] = seen
+    return true
+end
+
+local function isText(contentType)
+    local value = string.lower(tostring(contentType or ""))
+    return value == "" or value:find("json", 1, true) ~= nil or value:find("^text/") ~= nil
+end
+
+local function headerValue(headers, name)
+    for _, header in ipairs(headers or {}) do
+        if string.lower(header[1]) == name then
+            return header[2]
+        end
+    end
+    return nil
+end
+
+local function problemJson(status, code, detail)
+    return Json.encode({ type = "about:blank", status = status, code = code, detail = detail })
+end
+
+-- Opens `envelope` with `lockKey` and checks it is a fresh request. Returns the request, or nil
+-- and a code.
+local function openRequest(lockKey, envelope, keyId)
+    if type(envelope) ~= "table" or envelope.key ~= keyId or envelope.home ~= state.homeId() then
+        return nil, "BAD_ENVELOPE"
+    end
+    if type(envelope.ct) == "string" and #envelope.ct > Remote.MAX_REQUEST_BYTES * 2 then
+        return nil, "TOO_LARGE"
+    end
+    local plaintext, code = Lock.open(lockKey, envelope, "req")
+    if not plaintext then
+        return nil, code
+    end
+    local request = Json.decode(plaintext)
+    if type(request) ~= "table" then
+        return nil, "BAD_REQUEST"
+    end
+    local ok, freshCode = fresh(keyId, request.id, request.ts)
+    if not ok then
+        return nil, freshCode
+    end
+    return request
+end
+
+-- Seals an answer to `request` for `keyId`.
+local function sealAnswer(lockKey, keyId, request, status, contentType, body)
+    local answer = { id = request.id, ts = Clock.now(), status = status, content_type = contentType or "" }
+    if isText(contentType) then
+        answer.body = body or ""
+    else
+        answer.body_base64 = C4:Base64Encode(body or ""):gsub("%s+", "")
+    end
+    return Lock.seal(lockKey, state.homeId(), keyId, "res", Json.encode(answer))
+end
+
+-- Runs an API request as `principal` through the same code as LAN requests; done(status, headers,
+-- body) is called once, now or later (camera pictures).
+local function run(request, principal, done)
+    local method = string.upper(tostring(request.method or "GET"))
+    local path, query = tostring(request.path or ""):match("^([^?]*)%??(.*)$")
+    if not METHODS[method] or not path or path:sub(1, 4) ~= "/v1/" then
+        done(400, { { "Content-Type", "application/problem+json" } }, problemJson(400, "BAD_REQUEST", "Remote requests are GET, POST, PATCH or DELETE on /v1/..."))
+        return
+    end
+    local hasBody = request.body ~= nil and request.body ~= Json.null
+    local apiRequest = {
+        method = method,
+        path = path,
+        query = Http.parseQuery(query or ""),
+        headers = hasBody and { ["content-type"] = "application/json" } or {},
+        body = hasBody and Json.encode(request.body) or "",
+        principal = principal,
+    }
+    local status, headers, body = state.handleRequest(apiRequest, { ip = "relay", port = "0" }, done)
+    if status then
+        done(status, headers, body)
+    end
+end
+
+local function handleE2e(message, send)
+    local keyId = type(message.envelope) == "table" and message.envelope.key or nil
+    local key = type(keyId) == "string" and state.services.keys.remote(keyId) or nil
+    if not key then
+        send({ type = "e2e", id = message.id, code = "UNKNOWN_KEY" })
+        return
+    end
+    local request, code = openRequest(key.lock, message.envelope, keyId)
+    if not request then
+        log("warn", "refused a remote request", { key_id = keyId, code = code })
+        send({ type = "e2e", id = message.id, code = code })
+        return
+    end
+    state.services.keys.touch(keyId)
+    local answered = false
+    run(request, { id = key.id, name = key.name, role = key.role, remote = true }, function(status, headers, body)
+        if answered then
+            return
+        end
+        answered = true
+        local envelope = sealAnswer(key.lock, keyId, request, status, headerValue(headers, "content-type"), body)
+        send({ type = "e2e", id = message.id, envelope = envelope })
+    end)
+end
+
+local function handleJoin(message, send)
+    local invitationId = message.invitation
+    local invitation = type(invitationId) == "string" and state.services.invitations.find(invitationId) or nil
+    if not invitation then
+        send({ type = "join_result", id = message.id, ok = false, code = "INVITATION_NOT_FOUND" })
+        return
+    end
+    local request, code = openRequest(invitation.lock, message.envelope, invitationId)
+    if not request then
+        log("warn", "refused an invitation", { invitation = invitationId, code = code })
+        send({ type = "join_result", id = message.id, ok = false, code = code })
+        return
+    end
+    if string.upper(tostring(request.method)) ~= "POST" or request.path ~= JOIN_PATH then
+        send({ type = "join_result", id = message.id, ok = false, code = "BAD_REQUEST" })
+        return
+    end
+    local name = type(request.body) == "table" and type(request.body.name) == "string" and request.body.name or "Invited device"
+    name = name:gsub("[%c]", ""):sub(1, 64)
+    if name == "" then
+        name = "Invited device"
+    end
+    local record, failure = state.services.keys.create(name, invitation.role)
+    if not record then
+        send({ type = "join_result", id = message.id, ok = false, code = failure or "KEY_NOT_CREATED" })
+        return
+    end
+    state.services.invitations.consume(invitationId)
+    log("info", "an invitation was accepted", { invitation = invitationId, key_id = record.id, role = record.role })
+    local body = Json.encode({ key = record.secret, id = record.id, name = record.name, role = record.role, created_at = record.created_at })
+    local envelope = sealAnswer(invitation.lock, invitationId, request, 201, "application/json; charset=utf-8", body)
+    send({ type = "join_result", id = message.id, ok = true, key_id = record.id, envelope = envelope })
+end
+
+local function handleClaim(message, send)
+    local ok = useClaim(message.token)
+    log(ok and "info" or "warn", ok and "the home was claimed for an account" or "refused a claim")
+    send({ type = "claim_result", id = message.id, ok = ok, code = ok and nil or "INVALID_CLAIM" })
+end
+
+-- True when `message` was one of the account messages (handled, or refused with a code).
+function Remote.handle(message, send)
+    local kind = message.type
+    if kind ~= "e2e" and kind ~= "join" and kind ~= "claim" then
+        return false
+    end
+    if type(message.id) ~= "string" or message.id == "" then
+        return true
+    end
+    if kind == "claim" then
+        handleClaim(message, send)
+        return true
+    end
+    if not state.available then
+        send({ type = kind == "join" and "join_result" or "e2e", id = message.id, ok = false, code = "LOCK_UNAVAILABLE" })
+        return true
+    end
+    local ok, err = pcall(kind == "e2e" and handleE2e or handleJoin, message, send)
+    if not ok then
+        log("error", "remote request failed", { type = kind, error = tostring(err) })
+        send({ type = kind == "join" and "join_result" or "e2e", id = message.id, ok = false, code = "INTERNAL" })
+    end
+    return true
+end
+
+return Remote

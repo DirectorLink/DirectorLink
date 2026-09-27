@@ -46,6 +46,7 @@ SECURITY_CONTRACT = {
         "            role = key.role,\n"
         "            alg = key.alg,\n"
         "            hash = key.hash,\n"
+        "            lock = key.lock,\n"
         "            created_at = key.created_at,\n"
         "        }\n",
         'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
@@ -64,6 +65,26 @@ SECURITY_CONTRACT = {
         'Relay.ROLE = "viewer"',
         'if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then',
         "Store.write(IDENTITY_KEY, identity, false)",
+    ),
+    # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
+    # requests are fresh and used once, claims come only from the home network, and invitation
+    # secrets are never stored.
+    "src/cloud/lock.lua": (
+        "Lock.WINDOW_SECONDS = 120",
+        "if not sameText(expected, Base64.toHex(mac)) then\n        return nil, \"BAD_MAC\"\n    end\n    local plaintext = C4:Decrypt(",
+        'local DEVICE_LABEL = "DirectorLink e2e v1"',
+    ),
+    "src/cloud/remote.lua": (
+        "if seen[requestId] then",
+        "math.abs(now - ts) > Lock.WINDOW_SECONDS",
+        "state.services.invitations.consume(invitationId)",
+        "state.services.keys.remote(keyId)",
+    ),
+    "src/api/handlers/remote.lua": (
+        "if ctx.apiKey.remote then",
+    ),
+    "src/auth/invitations.lua": (
+        "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires }",
     ),
     # Director hands stored JSON back decoded (ADR-028); keys must stay readable.
     "src/core/store.lua": (

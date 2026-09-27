@@ -15,6 +15,12 @@ return {
     { method = "PATCH", path = "/v1/api-keys/{keyId}", handler = "auth.update_key", role = "admin" },
     { method = "DELETE", path = "/v1/api-keys/{keyId}", handler = "auth.delete_key", role = "admin" },
 
+    { method = "GET", path = "/v1/remote", handler = "remote.status", role = "viewer" },
+    { method = "POST", path = "/v1/remote/claim", handler = "remote.claim", role = "admin" },
+    { method = "GET", path = "/v1/invitations", handler = "invitations.list", role = "admin" },
+    { method = "POST", path = "/v1/invitations", handler = "invitations.create", role = "admin" },
+    { method = "DELETE", path = "/v1/invitations/{invitationId}", handler = "invitations.delete", role = "admin" },
+
     { method = "GET", path = "/v1/rooms", handler = "rooms.list", role = "viewer" },
     { method = "GET", path = "/v1/rooms/{roomId}", handler = "rooms.get", role = "viewer" },
     { method = "PATCH", path = "/v1/rooms/{roomId}", handler = "rooms.update", role = "admin" },
