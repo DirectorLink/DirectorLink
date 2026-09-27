@@ -1,0 +1,25 @@
+// Cloudflare Worker + Durable Object: the DirectorLink relay on https://api.directorlink.io.
+// Protocol: docs/RELAY.md. One Durable Object per home (HomeRelay, SQLite-backed, named by
+// home_id) holds the driver's WebSocket. Deployed by hand for now (see README.md):
+//   npx wrangler@4 deploy
+//   npx wrangler@4 secret put TEST_TOKEN      (the version 0 test endpoints)
+// `wrangler dev` reads TEST_TOKEN, and optionally REQUEST_TIMEOUT_MS, from cloud/.dev.vars.
+{
+  "name": "directorlink-api",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-25",
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "HOME_RELAY", "class_name": "HomeRelay" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["HomeRelay"] }
+  ],
+  "routes": [
+    { "pattern": "api.directorlink.io", "custom_domain": true }
+  ]
+}
