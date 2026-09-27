@@ -217,49 +217,73 @@ export function allOff(group) {
   return Promise.all(commands);
 }
 
-// Doors and gates: the Open button asks for a second tap within a few seconds, then pulses the
-// relay (POST /v1/relays/{id}/pulse) and shows "Opening…" / "Sent".
-const relayTimers = new Map();
+// Doors and gates, and the gate at a doorbell: the Open button asks for a second tap within a
+// few seconds, then sends the command and shows "Opening…" / "Sent". Relays pulse
+// (POST /v1/relays/{id}/pulse); doorbells press their button (POST /v1/doorbells/{id}/open).
+const stageTimers = new Map();
 
-function setRelayStage(id, stage, clearAfter) {
-  window.clearTimeout(relayTimers.get(id));
+function setStage(map, id, stage, clearAfter) {
+  const timerKey = `${map}:${id}`;
+  window.clearTimeout(stageTimers.get(timerKey));
   if (stage) {
-    ui.relayStage = { ...ui.relayStage, [id]: stage };
+    ui[map] = { ...ui[map], [id]: stage };
   } else {
-    const { [id]: _removed, ...rest } = ui.relayStage;
-    ui.relayStage = rest;
+    const { [id]: _removed, ...rest } = ui[map];
+    ui[map] = rest;
   }
   if (clearAfter) {
-    relayTimers.set(id, window.setTimeout(() => setRelayStage(id, null), clearAfter));
+    stageTimers.set(timerKey, window.setTimeout(() => setStage(map, id, null), clearAfter));
   }
   notify();
 }
 
-export function cancelRelay(relay) {
-  setRelayStage(relay.id, null);
-}
-
-export async function pressRelay(relay) {
-  const stage = ui.relayStage[relay.id];
+async function pressOpen({ map, kind, id, path, onDone }) {
+  const stage = ui[map][id];
   if (stage === "sending" || !can("doors")) {
     return;
   }
   if (stage !== "confirm") {
-    clearError(deviceKey("relay", relay.id));
-    setRelayStage(relay.id, "confirm", 5000);
+    clearError(deviceKey(kind, id));
+    setStage(map, id, "confirm", 5000);
     return;
   }
-  setRelayStage(relay.id, "sending");
+  setStage(map, id, "sending");
   try {
-    await api(`/v1/relays/${relay.id}/pulse`, { method: "POST" });
-    setRelayStage(relay.id, "sent", 3000);
+    const result = await api(path, { method: "POST" });
+    if (onDone) onDone(result);
+    setStage(map, id, "sent", 3000);
   } catch (error) {
     if (error?.status === 401) {
       handleUnauthorized();
       return;
     }
-    setRelayStage(relay.id, null);
+    setStage(map, id, null);
     noteForbidden(error);
-    setError(deviceKey("relay", relay.id), errorText(error));
+    setError(deviceKey(kind, id), errorText(error));
   }
+}
+
+export function cancelRelay(relay) {
+  setStage("relayStage", relay.id, null);
+}
+
+export function pressRelay(relay) {
+  return pressOpen({ map: "relayStage", kind: "relay", id: relay.id, path: `/v1/relays/${relay.id}/pulse` });
+}
+
+export function cancelDoorbell(doorbell) {
+  setStage("doorbellStage", doorbell.id, null);
+}
+
+// The 202 answer is the doorbell as last reported.
+export function pressDoorbell(doorbell) {
+  return pressOpen({
+    map: "doorbellStage",
+    kind: "doorbell",
+    id: doorbell.id,
+    path: `/v1/doorbells/${doorbell.id}/open`,
+    onDone: (updated) => {
+      if (updated && typeof updated === "object" && updated.id === doorbell.id) replaceDevice("doorbell", updated);
+    },
+  });
 }

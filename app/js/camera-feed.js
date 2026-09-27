@@ -1,8 +1,9 @@
 // Camera pictures, fetched as blobs with the API key (an <img src> cannot send it).
-// Thumbnails on screen refresh one after another about every 3 s; the full view about every
-// second. Only tiles that are visible refresh, and nothing refreshes while the page is hidden.
+// Thumbnails on screen refresh one after another about every 3 s; live pictures (data-live: the
+// doorbell banner) and the full view about every second. Only tiles that are visible refresh,
+// and nothing refreshes while the page is hidden.
 //
-// Markup: <div class="cam" data-state="loading|ok|busy|none"><img data-camera-id data-width></div>
+// Markup: <div class="cam" data-state="loading|ok|busy|none"><img data-camera-id data-width [data-live]></div>
 
 import { apiImage } from "../api-client.js";
 import { formatTime, t } from "./i18n.js";
@@ -11,11 +12,23 @@ import { findDevice, state } from "./state.js";
 
 const GRID_REFRESH_MS = 3000;
 const FULL_REFRESH_MS = 1000;
+const LIVE_REFRESH_MS = 1000;
 const pictures = new Map(); // "cameraId:width" -> { url, at }
 const visible = new WeakSet();
 const observed = new Set();
+// One loop each; a redraw while a loop waits for a picture must not start a second one.
 let gridTimer = null;
+let gridRunning = false;
+let liveRunning = false;
 let full = null; // { camera, image, status, timer }
+
+// A camera by id: from /v1/cameras, or a doorbell's own camera.
+function cameraById(id) {
+  const camera = findDevice("camera", id);
+  if (camera) return camera;
+  const doorbell = state.doorbells.find((item) => item.camera?.id === Number(id));
+  return doorbell ? { id: doorbell.camera.id, name: doorbell.name, snapshot_href: doorbell.camera.snapshot_href } : null;
+}
 
 const observer =
   "IntersectionObserver" in window
@@ -76,7 +89,16 @@ export function attachCameraImages(root) {
     }
   }
   forgetRemoved();
-  if (!gridTimer) gridTimer = window.setTimeout(refreshGrid, picturesPending(root) ? 400 : GRID_REFRESH_MS);
+  scheduleGrid(picturesPending(root) ? 400 : GRID_REFRESH_MS);
+  if (!liveRunning && root.querySelector("img[data-camera-id][data-live]")) {
+    liveRunning = true;
+    window.setTimeout(refreshLive, 250);
+  }
+}
+
+function scheduleGrid(delay) {
+  if (gridRunning || gridTimer) return;
+  gridTimer = window.setTimeout(refreshGrid, delay);
 }
 
 // Images replaced by a redraw are no longer watched.
@@ -97,41 +119,62 @@ function isVisible(image) {
   return image.isConnected && (!observer || visible.has(image));
 }
 
-async function refreshGrid() {
-  gridTimer = null;
-  const images = [...document.querySelectorAll("img[data-camera-id]")].filter((image) => !image.closest("dialog"));
-  if (!images.length) return;
-  if (!document.hidden && !full && state.apiKey && state.status === "connected") {
-    // One request per camera and size, however many tiles show it.
-    const jobs = new Map();
-    for (const image of images.filter(isVisible)) {
-      const key = `${image.dataset.cameraId}:${image.dataset.width}`;
-      if (!jobs.has(key)) jobs.set(key, []);
-      jobs.get(key).push(image);
-    }
-    for (const [key, targets] of jobs) {
-      const [id, width] = key.split(":").map(Number);
-      const camera = findDevice("camera", id);
-      if (!camera || full || document.hidden) break;
-      try {
-        const url = await fetchPicture(camera, width);
-        for (const image of targets) {
-          image.src = url;
-        }
-      } catch (error) {
-        if (error?.status === 401) {
-          handleUnauthorized();
-          return;
-        }
-        for (const image of targets) {
-          // 503: the camera proxy is busy; keep the last picture and try again next round.
-          if (error?.status !== 503) setTileState(image, "none");
-          else if (!image.getAttribute("src")) setTileState(image, "busy");
-        }
+// One request per camera and size, however many tiles show it.
+async function refreshImages(images, stillWanted) {
+  const jobs = new Map();
+  for (const image of images.filter(isVisible)) {
+    const key = `${image.dataset.cameraId}:${image.dataset.width}`;
+    if (!jobs.has(key)) jobs.set(key, []);
+    jobs.get(key).push(image);
+  }
+  for (const [key, targets] of jobs) {
+    const [id, width] = key.split(":").map(Number);
+    if (!stillWanted()) break;
+    const camera = cameraById(id);
+    if (!camera) continue;
+    try {
+      const url = await fetchPicture(camera, width);
+      for (const image of targets) {
+        image.src = url;
+      }
+    } catch (error) {
+      if (error?.status === 401) {
+        handleUnauthorized();
+        return false;
+      }
+      for (const image of targets) {
+        // 503: the camera proxy is busy; keep the last picture and try again next round.
+        if (error?.status !== 503) setTileState(image, "none");
+        else if (!image.getAttribute("src")) setTileState(image, "busy");
       }
     }
   }
-  gridTimer = window.setTimeout(refreshGrid, GRID_REFRESH_MS);
+  return true;
+}
+
+const canRefresh = () => !document.hidden && !full && state.apiKey && state.status === "connected";
+
+// Live pictures (the doorbell banner), about every second while one is on screen.
+async function refreshLive() {
+  const images = [...document.querySelectorAll("img[data-camera-id][data-live]")].filter((image) => !image.closest("dialog"));
+  if (!images.length || (canRefresh() && !(await refreshImages(images, canRefresh)))) {
+    liveRunning = false;
+    return;
+  }
+  window.setTimeout(refreshLive, LIVE_REFRESH_MS);
+}
+
+async function refreshGrid() {
+  gridTimer = null;
+  const images = [...document.querySelectorAll("img[data-camera-id]:not([data-live])")].filter((image) => !image.closest("dialog"));
+  if (!images.length) return;
+  gridRunning = true;
+  try {
+    if (canRefresh() && !(await refreshImages(images, canRefresh))) return;
+  } finally {
+    gridRunning = false;
+  }
+  scheduleGrid(GRID_REFRESH_MS);
 }
 
 // Full view in a <dialog>; the picture size follows the screen.
@@ -184,7 +227,7 @@ export function closeFullView() {
   const dialog = full.dialog;
   full = null;
   if (dialog.open) dialog.close();
-  if (!gridTimer) gridTimer = window.setTimeout(refreshGrid, 300);
+  scheduleGrid(300);
 }
 
 export function fullViewCamera() {

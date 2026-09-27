@@ -4,6 +4,7 @@
 // line to LANGUAGES below. Keys missing from a translation fall back to English.
 
 import en from "../i18n/en.js";
+import { relativeParts } from "./rings.js";
 
 export const LANGUAGES = [
   { code: "en", label: "English", dir: "ltr" },
@@ -114,6 +115,17 @@ export function formatTemperature(value) {
   }
   // Isolated left-to-right, so "26°" keeps its degree sign on the right inside Hebrew text.
   return `\u2066${formatNumber(value, { maximumFractionDigits: 1 })}°\u2069`;
+}
+
+// "3 minutes ago", "לפני 3 דקות", "now", "yesterday" for a controller time (ISO string), or "".
+export function formatRelative(value, now = Date.now()) {
+  const at = typeof value === "string" ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(at)) return "";
+  const { value: amount, unit } = relativeParts(at, now);
+  if (amount === 0) return t("time.justNow");
+  const text = new Intl.RelativeTimeFormat(current, { numeric: "auto", style: "long" }).format(amount, unit);
+  // CLDR's Hebrew adds the count to its singular and dual words ("לפני דקה (1)"); drop it.
+  return text.replace(` (${Math.abs(amount)})`, "");
 }
 
 export function formatTime(date) {

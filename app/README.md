@@ -8,7 +8,7 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 - `theme-boot.js` — blocking script in `<head>`: applies the saved palette, theme and text direction before the first paint (the CSP forbids inline scripts)
 - `app.js` — entry module: hash router, renderer, dialogs, start-up
 - `js/` — ES modules, no build step:
-  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden)
+  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden; live pictures about every second), `doorbells.js` (noticing rings, Dismiss, notifications), `rings.js` (when a ring is recent, relative times; no browser dependencies, unit-tested)
   - `model.js` (room names per language, grouping, "on" counts), `favorites.js` (per controller, in `localStorage`), `components.js` (device rows and tiles), `dom.js`, `icons.js` (inline stroke SVG), `theme.js`, `i18n.js`, `pwa.js` (service worker, install prompt)
   - `views/` — `home.js`, `room.js`, `cameras.js`, `climate.js`, `settings.js`, `connect.js` (first-time setup), `common.js` (header, connection chip, shared states)
 - `i18n/en.js`, `i18n/he.js` — interface text
@@ -21,17 +21,27 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 
 Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`.
 
-- **Home** — connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address and **pairing code** (see below).
-- **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doors & gates (drivers with `/v1/relays`), Cameras and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
+- **Home** — a doorbell banner while someone rings (see Doorbells), connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address and **pairing code** (see below).
+- **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doorbells (drivers with `/v1/doorbells`), Doors & gates (drivers with `/v1/relays`), Cameras (without the doorbell's own camera, shown with the doorbell) and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
 - **Cameras** — one large picture and a grid; thumbnails refresh about every 3 s, the full view about every second.
 - **Climate** — all thermostats grouped by room.
-- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost), about.
+- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost; doorbell notifications), about. The controller's project counts include doorbells.
 
 ## Pairing
 
 The pairing code is the only way to get a device's first key. In Composer: DirectorLink → Actions → **New Pairing Code** (one is also made when the driver is added or has no keys); Composer shows it as `1234 5678`. A code lasts 15 minutes and works once. The field brings up the number pad (`inputmode="numeric"`, `autocomplete="one-time-code"`) and formats the code as it is typed or pasted, with or without the space or a dash. `POST /v1/auth/pair` with `{"pairing_code", "name"}` returns an admin key; the name is the browser and system, e.g. "Chrome on Windows". Every problem it can answer has its own message in each language: `INVALID_FIELD` (not 8 digits), `PAIRING_CODE_INVALID` (with the tries left), `PAIRING_NOT_ACTIVE` (no code — run New Pairing Code), `PAIRING_RATE_LIMITED` (5 wrong codes lock pairing for 60 s), `KEY_LIMIT_REACHED`, `PAIRING_UNAVAILABLE`. More keys, with other roles, are created by an admin in the API console (Keys).
 
 API key roles (drivers from v0.7.0): on connect the app reads `GET /v1/api-keys/current` (404 on older drivers → treated as admin) and shows only what the key may do — `viewer` sees state without controls, `member` controls lights, climate and blinds, `doors` also opens doors and gates (after a confirming second tap), `admin` also renames rooms. A 403 `FORBIDDEN` reverts the change, shows "Your access level (…) can't do this" and adopts the role it reports; `DOOR_CONTROL_DISABLED` explains how to turn Door Control on in Composer. Forget key and Pair again revoke the key with `DELETE /v1/api-keys/current` (older drivers: the key list); a 401 on any request forgets the key and asks for a new pairing code.
+
+## Doorbells
+
+DoorBird doorstations come from `GET /v1/doorbells`, polled with the other devices every 10 s (an older driver answers 404: no doorbells; other failures keep the last list).
+
+- **Ringing** — a ring is recent for 2 minutes: when its `last_ring_at` is within 2 minutes of this browser's clock (a controller clock up to 2 minutes ahead is believed), or when this page saw `last_ring_at` change within the last 2 minutes, whatever the clocks say. While it is recent, Home starts with a banner — "Someone is at the door — <name>", the doorbell's camera refreshed about every second, **Open gate** and **Dismiss** — and the other screens show one line that leads to it. Dismiss remembers that `last_ring_at` (per controller, in `localStorage`); the next ring shows the banner again.
+- **Open gate** — doors and admin keys, on doorbells with `can_open`: a second tap within 5 s sends `POST /v1/doorbells/{id}/open` (Opening… → Sent). `403 DOOR_CONTROL_DISABLED` explains the Composer switch.
+- **Room** — the picture (tap for the full view), "Last ring: 3 minutes ago · Motion: …", "Not responding" after a communication failure, the last five events with relative times (`Intl.RelativeTimeFormat`), and Open gate.
+- **Favorites** — a starred doorbell shows its last ring and opens its room; it is highlighted while ringing.
+- **Notifications** — Settings → App → **Turn on doorbell notifications** is the only place that asks for the permission. A ring then notifies (through the service worker when there is one) while the app is open but not in front; in the background only `/v1/doorbells` is polled. There is no push yet, so a closed app cannot notify. Clicking the notification brings the app to Home.
 
 Controls change the screen at once, send the command, then re-read the device until the controller confirms it; a failed command reverts and shows a short error on the device. Device state refreshes every 10 s while the page is visible.
 

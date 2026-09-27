@@ -2,17 +2,20 @@
 
 import { attachCameraImages } from "./camera-feed.js";
 import {
+  cancelDoorbell,
   cancelRelay,
   nudgeTarget,
+  pressDoorbell,
   pressRelay,
   setBlind,
   setLight,
   setThermostat,
   stopBlind,
 } from "./controls.js";
+import { dismissRing, doorbellCamera, ringTime } from "./doorbells.js";
 import { h, iconButton, name } from "./dom.js";
 import { isFavorite, toggleFavorite } from "./favorites.js";
-import { formatTemperature, t } from "./i18n.js";
+import { formatRelative, formatTemperature, t } from "./i18n.js";
 import { icon } from "./icons.js";
 import { blindStateLabel, climateIsOn, fanLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
 import { can, deviceKey, notify, state, ui } from "./state.js";
@@ -419,13 +422,14 @@ export function relayRow(relay, { showRoom = false } = {}) {
 // ---- cameras -------------------------------------------------------------------------------
 
 // A camera picture. width: the snapshot size to request (320 thumbnails, 640 large).
-export function cameraPicture(camera, width) {
+// live: refreshed about every second while on screen (the doorbell banner).
+export function cameraPicture(camera, width, { live = false } = {}) {
   return h(
     "div",
     { class: "cam", dataset: { state: "loading" } },
     h("img", {
       alt: t("cameras.pictureOf", { name: camera.name }),
-      dataset: { cameraId: String(camera.id), width: String(width) },
+      dataset: { cameraId: String(camera.id), width: String(width), ...(live ? { live: "1" } : {}) },
       decoding: "async",
     }),
     h("span", { class: "cam-placeholder cam-loading", "aria-hidden": "true" }),
@@ -456,6 +460,173 @@ export function cameraTile(camera, { width = 320, onOpen, showRoom = true, large
       )
     ),
     favoriteStar("camera", camera)
+  );
+}
+
+// ---- doorbells -----------------------------------------------------------------------------
+
+function doorbellButtonLabel(doorbell) {
+  const stage = ui.doorbellStage[doorbell.id];
+  if (stage === "confirm") return t("doorbells.confirm");
+  if (stage === "sending") return t("relays.opening");
+  if (stage === "sent") return t("relays.sent");
+  return t("doorbells.open");
+}
+
+// Opening the gate at a doorbell needs the doors role and a doorbell that can do it.
+export function doorbellButton(doorbell, { compact = false, large = false } = {}) {
+  if (!can("doors") || !doorbell.can_open) return null;
+  const stage = ui.doorbellStage[doorbell.id] || "";
+  return h(
+    "button",
+    {
+      type: "button",
+      class: `relay-button ${compact ? "relay-button-compact" : ""} ${large ? "relay-button-large" : ""} ${stage ? `is-${stage}` : ""}`,
+      "aria-label": `${doorbellButtonLabel(doorbell)} — ${doorbell.name}`,
+      dataset: { key: `doorbell:${doorbell.id}:open${large ? ":banner" : ""}` },
+      disabled: stage === "sending",
+      onclick: (event) => {
+        event.stopPropagation();
+        pressDoorbell(doorbell);
+      },
+    },
+    icon(stage === "sent" ? "check" : "door"),
+    h("span", {}, doorbellButtonLabel(doorbell))
+  );
+}
+
+function doorbellActions(doorbell, { large = false, extra = null } = {}) {
+  const confirming = ui.doorbellStage[doorbell.id] === "confirm";
+  const button = doorbellButton(doorbell, { large });
+  if (!button && !extra) return null;
+  return h(
+    "div",
+    { class: "relay-actions" },
+    button,
+    confirming
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "button button-quiet",
+            dataset: { key: `doorbell:${doorbell.id}:cancel${large ? ":banner" : ""}` },
+            onclick: () => cancelDoorbell(doorbell),
+          },
+          t("common.cancel")
+        )
+      : null,
+    extra
+  );
+}
+
+// "Last ring: 3 minutes ago · Motion: 1 hour ago", with "Not responding" first when the
+// doorbell reported a communication failure.
+export function doorbellStatus(doorbell) {
+  const parts = [];
+  if (doorbell.connected === false) parts.push(t("doorbells.offline"));
+  parts.push(doorbell.last_ring_at ? t("doorbells.lastRing", { time: formatRelative(doorbell.last_ring_at) }) : t("doorbells.noRings"));
+  if (doorbell.last_motion_at) parts.push(t("doorbells.lastMotion", { time: formatRelative(doorbell.last_motion_at) }));
+  return parts.join(" · ");
+}
+
+// The last few events, newest first: "Doorbell · 3 minutes ago".
+export function doorbellEvents(doorbell, limit = 5) {
+  const events = (Array.isArray(doorbell.events) ? doorbell.events : []).slice(0, limit);
+  if (!events.length) return null;
+  return h(
+    "ul",
+    { class: "doorbell-events", "aria-label": t("doorbells.eventsLabel", { name: doorbell.name }) },
+    events.map((event) =>
+      h(
+        "li",
+        { class: `doorbell-event event-${event.type}` },
+        h("span", { class: "doorbell-event-type" }, labelOr(`doorbells.events.${event.type}`, event.type)),
+        h("span", { class: "doorbell-event-time" }, formatRelative(event.at))
+      )
+    )
+  );
+}
+
+function doorbellPicture(doorbell, { width, live = false, openCamera }) {
+  const camera = doorbellCamera(doorbell);
+  if (!camera) return null;
+  const picture = cameraPicture(camera, width, { live });
+  if (!openCamera) return picture;
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "camera-open doorbell-picture",
+      "aria-label": t("cameras.open", { name: camera.name }),
+      dataset: { key: `doorbell:${doorbell.id}:picture${live ? ":live" : ""}` },
+      onclick: () => openCamera(camera),
+    },
+    picture
+  );
+}
+
+// Room screen: the doorbell, its picture, what happened last, and Open gate.
+export function doorbellCard(doorbell, { openCamera } = {}) {
+  return h(
+    "div",
+    { class: `device doorbell ${doorbell.connected === false ? "is-offline" : ""}` },
+    h(
+      "div",
+      { class: "device-main" },
+      h("span", { class: "device-icon" }, icon("bell")),
+      h("div", { class: "device-text" }, name(doorbell.name, "span", "device-name"), h("span", { class: "device-meta" }, doorbellStatus(doorbell))),
+      favoriteStar("doorbell", doorbell)
+    ),
+    doorbellPicture(doorbell, { width: 640, openCamera }),
+    doorbellActions(doorbell),
+    doorbellEvents(doorbell),
+    inlineError(deviceKey("doorbell", doorbell.id))
+  );
+}
+
+// Home: "Someone is at the door" while a ring is recent — live picture, Open gate, Dismiss.
+export function doorbellBanner(doorbell, { openCamera } = {}) {
+  const titleId = `ring-${doorbell.id}-title`;
+  const dismiss = h(
+    "button",
+    { type: "button", class: "button button-secondary", dataset: { key: `doorbell:${doorbell.id}:dismiss` }, onclick: () => dismissRing(doorbell) },
+    t("doorbells.dismiss")
+  );
+  return h(
+    "section",
+    { class: "ring-banner", role: "alert", "aria-labelledby": titleId },
+    h(
+      "div",
+      { class: "ring-head" },
+      h("span", { class: "ring-icon", "aria-hidden": "true" }, icon("bell")),
+      h(
+        "div",
+        { class: "ring-text" },
+        h("h2", { id: titleId, class: "ring-title" }, t("doorbells.atTheDoor"), " — ", name(doorbell.name, "span", "ring-name")),
+        h(
+          "p",
+          { class: "ring-meta" },
+          doorbell.room ? [name(roomName(doorbell.room)), " · "] : null,
+          t("doorbells.rang", { time: formatRelative(ringTime(doorbell)) })
+        )
+      )
+    ),
+    doorbellPicture(doorbell, { width: 640, live: true, openCamera }),
+    doorbellActions(doorbell, { large: true, extra: dismiss }),
+    doorbell.can_open && !can("doors") ? h("p", { class: "ring-note" }, t("doorbells.noAccess")) : null,
+    inlineError(deviceKey("doorbell", doorbell.id))
+  );
+}
+
+// Other screens: one line that leads to the banner on Home.
+export function ringNotice(doorbells) {
+  if (!doorbells.length) return null;
+  return h(
+    "a",
+    { class: "banner banner-ring", href: "#/", role: "alert", dataset: { key: "ring-notice" } },
+    icon("bell"),
+    h("span", {}, t("doorbells.atTheDoor"), " — ", doorbells.map((doorbell) => doorbell.name).join(", ")),
+    h("span", { class: "banner-action" }, t("doorbells.show"))
   );
 }
 
