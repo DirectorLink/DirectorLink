@@ -12,7 +12,8 @@ export function connectionChip() {
   const status = state.status;
   const kind =
     status === "connected" ? "ok" : status === "unreachable" ? "error" : status === "connecting" ? "busy" : "idle";
-  const label = t(`status.${status}`);
+  // Through the account (away from home, or on iPhone) the chip says so.
+  const label = status === "connected" && state.transport === "remote" ? t("status.connectedRemote") : t(`status.${status}`);
   return h(
     "a",
     {

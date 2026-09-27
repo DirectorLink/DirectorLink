@@ -1,0 +1,183 @@
+// Remote access through the account (docs/ACCOUNTS.md): API requests sealed with this device's
+// lock key go to api.directorlink.io, which passes them to the home without being able to read
+// them; the answer comes back sealed. Used when the home network cannot be reached, and always on
+// iPhone and iPad (which cannot use the home-network connection).
+
+import { ApiError } from "../api-client.js";
+import { ACCOUNTS_API } from "./account.js";
+import { deriveLock, fromBase64, invitationLock, open, seal } from "./lock.js";
+
+const REMOTE_KEY = "directorlink.remote"; // { home, keyId }: this device's home and key id
+const TIMEOUT_MS = 20000;
+
+// A failure of the account service or the relay (not signed in, home offline, …). It never means
+// the device's key is invalid, so it must not be treated like the home's 401.
+export class RemoteError extends Error {
+  constructor(code, message, status) {
+    super(message);
+    this.name = "RemoteError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function savedRemote() {
+  try {
+    const value = JSON.parse(localStorage.getItem(REMOTE_KEY) || "null");
+    return value && /^[0-9a-f]{32}$/.test(value.home) && /^[0-9a-f]{8}$/.test(value.keyId) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveRemote(value) {
+  try {
+    localStorage.setItem(REMOTE_KEY, JSON.stringify({ home: value.home, keyId: value.keyId }));
+  } catch {
+    // Blocked storage: remote access lasts for this visit.
+  }
+}
+
+export function forgetRemote() {
+  try {
+    localStorage.removeItem(REMOTE_KEY);
+  } catch {
+    // Nothing saved.
+  }
+}
+
+let cached = { secret: null, lock: null };
+async function deviceLock(apiKey) {
+  if (cached.secret !== apiKey) {
+    cached = { secret: apiKey, lock: await deriveLock(apiKey) };
+  }
+  return cached.lock;
+}
+
+function requestId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function post(path, body) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${ACCOUNTS_API}${path}`, {
+      method: "POST",
+      credentials: "include",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    throw new RemoteError(error?.name === "AbortError" ? "TIMEOUT" : "UNREACHABLE", "DirectorLink's servers could not be reached");
+  } finally {
+    window.clearTimeout(timer);
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new RemoteError(data?.code || `HTTP_${response.status}`, data?.detail || `api.directorlink.io answered ${response.status}`, response.status);
+  }
+  return data;
+}
+
+// The home's answer, opened: { status, contentType, text, bytes }.
+async function openAnswer(lock, envelope, id) {
+  const plaintext = await open(lock, envelope, "res");
+  const answer = plaintext ? JSON.parse(plaintext) : null;
+  if (!answer || answer.id !== id) {
+    throw new RemoteError("BAD_ANSWER", "The answer from the home could not be verified");
+  }
+  return {
+    status: answer.status,
+    contentType: answer.content_type || "",
+    text: typeof answer.body === "string" ? answer.body : "",
+    bytes: typeof answer.body_base64 === "string" ? fromBase64(answer.body_base64) : null,
+  };
+}
+
+// Sends one API request through the account; returns the home's answer.
+export async function remoteRequest(apiKey, path, { method = "GET", body } = {}) {
+  const remote = savedRemote();
+  if (!remote || !apiKey) {
+    throw new RemoteError("NOT_SET_UP", "Remote access is not set up on this device");
+  }
+  const lock = await deviceLock(apiKey);
+  const id = requestId();
+  const plaintext = JSON.stringify({ id, ts: Math.floor(Date.now() / 1000), method, path, body: body ?? null });
+  const envelope = await seal(lock, { home: remote.home, key: remote.keyId }, "req", plaintext);
+  const reply = await post(`/v1/homes/${remote.home}/e2e`, { envelope });
+  return openAnswer(lock, reply.envelope, id);
+}
+
+// Like apiCall (api-client.js): the data, or ApiError for the home's non-2xx answers.
+export async function remoteCall(apiKey, path, options = {}) {
+  const answer = await remoteRequest(apiKey, path, options);
+  let data = null;
+  if (answer.text) {
+    try {
+      data = JSON.parse(answer.text);
+    } catch {
+      data = answer.text;
+    }
+  }
+  if (answer.status < 200 || answer.status > 299) {
+    const problem = data && typeof data === "object" ? data : null;
+    throw new ApiError(problem?.detail || problem?.title || `DirectorLink returned HTTP ${answer.status}`, {
+      status: answer.status,
+      code: problem?.code,
+      problem,
+    });
+  }
+  return data;
+}
+
+// A camera picture through the account, as a Blob.
+export async function remoteImage(apiKey, path) {
+  const answer = await remoteRequest(apiKey, path);
+  if (answer.status < 200 || answer.status > 299 || !answer.bytes) {
+    let problem = null;
+    try {
+      problem = JSON.parse(answer.text);
+    } catch {
+      problem = null;
+    }
+    throw new ApiError(problem?.detail || `DirectorLink returned HTTP ${answer.status}`, { status: answer.status, code: problem?.code, problem });
+  }
+  return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
+}
+
+// Claims the home for the signed-in account with a token from the controller (POST /v1/remote/claim).
+export function claimHome(homeId, claimToken) {
+  return post("/v1/homes/claim", { home_id: homeId, claim_token: claimToken });
+}
+
+export function registerInvitation(homeId, invitation, email) {
+  return post(`/v1/homes/${homeId}/invitations`, { invitation_id: invitation.id, email, expires_at: invitation.expires_at });
+}
+
+// Accepts an invitation (link: #/join/<home>.<invitation>.<secret>); returns the new key.
+export async function acceptInvitation({ home, invitation, secret }, name) {
+  const lock = await invitationLock(secret);
+  const id = requestId();
+  const plaintext = JSON.stringify({ id, ts: Math.floor(Date.now() / 1000), method: "POST", path: "/v1/auth/join", body: { name } });
+  const envelope = await seal(lock, { home, key: invitation }, "req", plaintext);
+  const reply = await post("/v1/join", { home_id: home, invitation_id: invitation, envelope });
+  const answer = await openAnswer(lock, reply.envelope, id);
+  if (answer.status !== 201) {
+    throw new RemoteError("JOIN_REFUSED", `The home refused the invitation (${answer.status})`);
+  }
+  return JSON.parse(answer.text);
+}
+
+// The invitation link a person or device opens. Everything after "#" stays in the browser.
+export function invitationLink(homeId, invitation) {
+  return `${window.location.origin}/#/join/${homeId}.${invitation.id}.${invitation.secret}`;
+}
+
+export function parseInvitation(text) {
+  const match = /^([0-9a-f]{32})\.([0-9a-f]{8})\.([0-9a-f]{64})$/.exec(text || "");
+  return match ? { home: match[1], invitation: match[2], secret: match[3] } : null;
+}

@@ -6,6 +6,10 @@ export const state = {
   apiKey: "",
   // setup (no key: pair with a code) · connecting · connected · unreachable
   status: "setup",
+  // How requests travel: "lan" (the home network) or "remote" (sealed, through the account).
+  transport: "lan",
+  // GET /v1/remote from the controller, for Settings → Account (null until asked).
+  remoteInfo: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,

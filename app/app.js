@@ -12,7 +12,8 @@ import { notificationSupport, notificationsOn, ringingDoorbells } from "./js/doo
 import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
-import { connect, restoreSaved } from "./js/session.js";
+import { joinView, storeInvitation } from "./js/views/join.js";
+import { connect, reachable, restoreSaved } from "./js/session.js";
 import { state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
@@ -34,6 +35,14 @@ const TABS = [
 
 function parseRoute() {
   const parts = (window.location.hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
+  // An invitation link: keep its secret for this tab and take it out of the address at once.
+  if (parts[0] === "join") {
+    if (parts[1]) {
+      storeInvitation(parts[1]);
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#/join`);
+    }
+    return { name: "join", tab: "settings" };
+  }
   if (parts[0] === "room" && /^\d+$/.test(parts[1] || "")) {
     return { name: "room", id: Number(parts[1]), tab: "home" };
   }
@@ -178,6 +187,8 @@ function screen() {
       return camerasView(actions);
     case "climate":
       return climateView(actions);
+    case "join":
+      return joinView(actions);
     case "settings":
       return settingsView({
         navigate,
@@ -295,7 +306,7 @@ async function start() {
   startPwa();
   startAccount();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
-  if (state.host && state.apiKey) {
+  if (reachable()) {
     connect();
   }
 }
