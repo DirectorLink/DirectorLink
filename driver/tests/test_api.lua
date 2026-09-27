@@ -7,6 +7,12 @@ local sha256 = require("sha256")
 
 local tests = {}
 
+local function hex(bytes)
+    return (bytes:gsub(".", function(c)
+        return string.format("%02x", c:byte())
+    end))
+end
+
 local function isNull(value)
     return type(value) == "table" and tostring(value) == "null"
 end
@@ -591,19 +597,32 @@ function tests.keys_in_the_old_encrypted_store_are_moved_to_hashes()
     T.eq(me.json.role, "admin")
     T.eq(me.json.name, "Old laptop")
     T.eq(mock.properties["Pairing Code"], "-", "no pairing code opens when the keys were kept")
-    T.eq(mock.persist["directorlink_api_keys"], "", "the old store no longer holds the keys")
+    T.notContains(mock.persist["directorlink_api_keys"], "ak_old", "the old store no longer holds the keys")
     T.notContains(mock.persist["directorlink_api_key_hashes"], "ak_old")
 
     local updated = Mock.updateDriver(mock)
     T.eq(T.http(updated, "GET", "/v1/api-keys/current", { key = "ak_old" }).status, 200, "and they survive the next update")
 end
 
-function tests.keys_lost_with_the_old_encrypted_store_open_pairing()
-    -- Updating straight from 0.9.0: Director has dropped the encrypted store, so pairing opens.
-    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING")
+function tests.keys_stored_by_0_9_1_as_plain_json_are_still_read()
+    -- 0.9.1 stored plain JSON, which Director hands back decoded.
+    local hash = hex(sha256("ak_phone"))
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["directorlink_api_key_hashes"] = '{"keys":[{"alg":"sha256","created_at":"2026-09-27T15:00:42Z","hash":"'
+            .. hash .. '","id":"4fde46cc","name":"Chrome on Windows","role":"admin"}],"version":3}'
+    end)
+    T.eq(T.http(mock, "GET", "/v1/api-keys/current", { key = "ak_phone" }).json.id, "4fde46cc")
+    T.eq(mock.properties["Pairing Code"], "-")
+    T.eq(mock.persist["directorlink_api_key_hashes"]:sub(1, 5), "json:", "and it is stored the current way")
+    T.contains(table.concat(mock.debugLog, "\n"), '"stored_as":"table"', "the log says how the keys came back")
+end
+
+function tests.a_new_driver_has_no_keys_and_opens_pairing()
+    local mock = Mock.startDriver()
     T.eq(mock.properties["API Keys"], "0")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a pairing code is shown")
-    T.eq(mock.persist["directorlink_api_keys"], "", "whatever is left of the old store is emptied")
+    T.eq(mock.persist["directorlink_api_keys"], nil, "no old store is created")
+    T.contains(table.concat(mock.debugLog, "\n"), '"old_store":"missing"')
 end
 
 function tests.access_requests_are_gone()
@@ -700,18 +719,18 @@ function tests.api_keys_can_be_listed_created_and_revoked()
     T.eq(mock.properties["API Keys"], "1")
 end
 
-local function hex(bytes)
-    return (bytes:gsub(".", function(c)
-        return string.format("%02x", c:byte())
-    end))
+-- A value as the driver stored it: "json:" plus JSON.
+local function stored(mock, name)
+    local value = mock.persist[name]
+    T.eq(value:sub(1, 5), "json:", name .. " is stored with its prefix")
+    return Json.decode(value:sub(6))
 end
 
 function tests.keys_survive_a_driver_update_and_only_hashes_are_stored()
     local mock, key = start()
-    local stored = mock.persist["directorlink_api_key_hashes"]
-    T.eq(mock.persistEncrypted["directorlink_api_key_hashes"], false, "plain storage survives updates")
-    T.notContains(stored, key:sub(4), "the key itself is never stored")
-    local record = Json.decode(stored).keys[1]
+    T.eq(mock.persistEncrypted["directorlink_api_key_hashes"], false)
+    T.notContains(mock.persist["directorlink_api_key_hashes"], key:sub(4), "the key itself is never stored")
+    local record = stored(mock, "directorlink_api_key_hashes").keys[1]
     T.eq(record.alg, "sha256")
     T.eq(record.hash, hex(sha256(key)))
     T.eq(record.secret, nil)
@@ -732,7 +751,7 @@ function tests.keys_are_hashed_with_sha1_when_sha256_is_missing()
         return hash(self, algorithm, data, options)
     end
     local key = T.pair(mock)
-    T.eq(Json.decode(mock.persist["directorlink_api_key_hashes"]).keys[1].alg, "sha1")
+    T.eq(stored(mock, "directorlink_api_key_hashes").keys[1].alg, "sha1")
     T.eq(T.http(mock, "GET", "/v1/system", { key = key }).status, 200)
     T.eq(T.http(Mock.updateDriver(mock), "GET", "/v1/system", { key = key }).status, 200)
 end

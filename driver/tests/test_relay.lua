@@ -310,10 +310,23 @@ function tests.an_identity_kept_encrypted_by_0_9_0_is_moved_to_plain_storage()
     end)
     local _, _, request = connected({ mock = mock })
     T.eq(request:match("X%-DirectorLink%-Home: (%x+)"), old.home_id, "the home keeps its id")
-    T.eq(mock.persist["DIRECTORLINK_REMOTE_IDENTITY"], "", "the encrypted copy is emptied")
+    T.notContains(mock.persist["DIRECTORLINK_REMOTE_IDENTITY"], old.home_secret, "the encrypted copy is emptied")
     T.eq(mock.persistEncrypted["directorlink_remote_identity"], false)
     local _, _, again = connected({ mock = Mock.updateDriver(mock) })
     T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), old.home_id, "and keeps it through the next update")
+end
+
+function tests.an_identity_stored_by_0_9_1_as_plain_json_is_kept()
+    -- 0.9.1 stored plain JSON, which Director hands back decoded.
+    local old = { home_id = string.rep("ef", 16), home_secret = string.rep("01", 32) }
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["directorlink_remote_identity"] = Json.encode(old)
+    end)
+    local _, _, request = connected({ mock = mock })
+    T.eq(request:match("X%-DirectorLink%-Home: (%x+)"), old.home_id, "the home keeps its id")
+    T.eq(mock.persist["directorlink_remote_identity"]:sub(1, 5), "json:", "and it is stored the current way")
+    local _, _, again = connected({ mock = Mock.updateDriver(mock) })
+    T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), old.home_id)
 end
 
 return tests
