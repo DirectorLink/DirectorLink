@@ -295,6 +295,45 @@ main {
   box-shadow: none;
 }
 
+/* Text pages (privacy). */
+.document {
+  max-width: 72ch;
+  padding-block: 40px 56px;
+}
+
+.document h1 {
+  font-size: clamp(32px, 5vw, 44px);
+}
+
+.document h2 {
+  margin-block: 32px 8px;
+  font-size: 22px;
+}
+
+.document p + p {
+  margin-block-start: 12px;
+}
+
+.document ul {
+  margin: 0;
+  padding-inline-start: 22px;
+}
+
+.document li + li {
+  margin-block-start: 6px;
+}
+
+.document .updated {
+  margin-block: 8px 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.document .lead {
+  color: var(--muted);
+  font-size: 19px;
+}
+
 .footer {
   display: flex;
   flex-direction: column;

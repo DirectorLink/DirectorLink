@@ -1,29 +1,19 @@
-// The relay (cloud/) end to end: `wrangler dev --local` runs it, scripts/relay_smoke.mjs plays the
-// driver and calls the test endpoints.
+// The relay (cloud/) end to end: `wrangler dev --local` runs it (worker.mjs), scripts/relay_smoke.mjs
+// plays the driver and calls the test endpoints.
 //   node --test tests/cloud/relay.test.mjs
-// The first run needs network access (npx downloads wrangler@4). wrangler runs in a temporary
-// copy of cloud/ that has its own .dev.vars (TEST_TOKEN, and REQUEST_TIMEOUT_MS so the 504 case is
-// quick) and its own local state, so a developer's cloud/.dev.vars and .wrangler/ are never used
-// or changed.
+// Its .dev.vars set TEST_TOKEN, and REQUEST_TIMEOUT_MS so the 504 case is quick.
 
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import net from "node:net";
-import os from "node:os";
-import path from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
 
 import { HandshakeError, callTestEndpoint, connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
+import { STARTUP_MS, startWorker } from "./worker.mjs";
 
-const CLOUD = fileURLToPath(new URL("../../cloud/", import.meta.url));
 const TOKEN = `test-${randomHex(16)}`;
 const TIMEOUT_MS = 1500; // REQUEST_TIMEOUT_MS for this run (the default is 15000)
-const STARTUP_MS = 240_000;
 const TEST = { timeout: 30_000 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -31,7 +21,7 @@ let relay;
 const drivers = [];
 
 before(async () => {
-  relay = await startRelay();
+  relay = await startWorker({ devVars: { TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS } });
 }, { timeout: STARTUP_MS + 10_000 });
 
 after(async () => {
@@ -41,106 +31,6 @@ after(async () => {
 afterEach(async () => {
   await Promise.all(drivers.splice(0).map((connection) => connection.close()));
 });
-
-// --- wrangler dev ----------------------------------------------------------------------------------
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
-async function startRelay() {
-  const dir = mkdtempSync(path.join(os.tmpdir(), "directorlink-relay-"));
-  cpSync(CLOUD, dir, { recursive: true, filter: (source) => !/[\\/](\.wrangler|node_modules|\.dev\.vars[^\\/]*)$/.test(source) });
-  writeFileSync(path.join(dir, ".dev.vars"), `TEST_TOKEN=${TOKEN}\nREQUEST_TIMEOUT_MS=${TIMEOUT_MS}\n`);
-  const port = await freePort();
-  const inspectorPort = await freePort();
-  const command = `npx --yes wrangler@4 dev --local --ip 127.0.0.1 --port ${port} --inspector-port ${inspectorPort} --no-show-interactive-dev-session`;
-  const child = spawn(command, {
-    cwd: dir,
-    shell: true,
-    detached: process.platform !== "win32", // its own process group, so the whole tree can be stopped
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", FORCE_COLOR: "0" },
-  });
-  const lines = [];
-  const collect = (chunk) => {
-    lines.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean));
-    lines.splice(0, Math.max(0, lines.length - 200));
-  };
-  child.stdout.on("data", collect);
-  child.stderr.on("data", collect);
-  const output = () => lines.join("\n");
-
-  const base = `http://127.0.0.1:${port}`;
-  const stop = async () => {
-    await stopTree(child);
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
-    } catch {
-      // Windows can hold workerd's files a little longer; the temporary folder is harmless.
-    }
-  };
-  try {
-    await waitForHealth(base, child, output);
-  } catch (error) {
-    await stop();
-    throw error;
-  }
-  return { http: base, ws: `ws://127.0.0.1:${port}`, output, stop };
-}
-
-async function waitForHealth(base, child, output) {
-  const deadline = Date.now() + STARTUP_MS;
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      throw new Error(`wrangler dev exited with code ${child.exitCode}:\n${output()}`);
-    }
-    try {
-      const response = await fetch(`${base}/health`, { signal: AbortSignal.timeout(2000) });
-      if (response.ok && (await response.json()).status === "ok") {
-        return;
-      }
-    } catch {
-      // Not listening yet.
-    }
-    await sleep(500);
-  }
-  throw new Error(`wrangler dev did not answer ${base}/health within ${STARTUP_MS / 1000} s:\n${output()}`);
-}
-
-async function stopTree(child) {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return;
-  }
-  const exited = once(child, "exit");
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-  } else {
-    try {
-      process.kill(-child.pid, "SIGTERM");
-    } catch {
-      // Already gone.
-    }
-    const kill = setTimeout(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
-    }, 5000);
-    await Promise.race([exited, sleep(10_000)]);
-    clearTimeout(kill);
-  }
-  await Promise.race([exited, sleep(10_000)]);
-}
 
 // --- Helpers ---------------------------------------------------------------------------------------
 

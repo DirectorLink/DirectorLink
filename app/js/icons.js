@@ -29,6 +29,7 @@ const PATHS = {
   cloudOff: '<path d="m3 3 18 18"/><path d="M8.5 6.3A6 6 0 0 1 17.7 10H18a4 4 0 0 1 2.4 7.2M17 18H7a5 5 0 0 1-1.4-9.8"/>',
   wifiOff: '<path d="m3 3 18 18"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 12.9a10 10 0 0 1 4.2-2.5M14.8 10.4A10 10 0 0 1 19 12.9"/><path d="M2 9a15 15 0 0 1 4.3-2.8M11 5.1A15 15 0 0 1 22 9"/><path d="M12 20h.01"/>',
   noPicture: '<path d="m3 3 18 18"/><path d="M9.5 5H15l1.5 2H19a2 2 0 0 1 2 2v8.5M17 20H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2"/><path d="M9.9 10.9a3 3 0 0 0 4.2 4.2"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 9-9"/><path d="m16 7 3 3"/><path d="m18 5 2 2"/>',
   external: '<path d="M14 4h6v6"/><path d="M20 4 10 14"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/>',
   terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3"/><path d="M13 15h4"/>',
