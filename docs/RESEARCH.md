@@ -87,6 +87,8 @@ DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10
 
 DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
 
+**Finding (0.9.0, OS 3.4.3):** values persisted with `encrypted = true` do not survive a driver update in Composer: Director logs that the driver "has no driverKey" and returns nothing for them, while plain values survive. DirectorLink therefore keeps only hashes of its keys, in plain persistence (ADR-028).
+
 Reference:
 - https://control4.github.io/docs-driverworks-api/
 

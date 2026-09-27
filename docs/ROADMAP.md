@@ -36,8 +36,9 @@
 - [x] Key roles (viewer, member, doors, admin) and the Composer Door Control switch (0.7.0)
 - [x] Renamed to DirectorLink; app, console and website on directorlink.io (0.8.0)
 - [x] Pair once with an on-demand code (New Pairing Code, 15 minutes, one use); the Access button and access requests are gone (0.8.0)
-- [x] DoorBird doorbells: rings, motion, access, open the gate (0.9.0)
-- [ ] Remote access: relay connection proof (0.9.0, test), then Google/Apple accounts, claim a home on the LAN with a pairing code, invitations by email
+- [x] DoorBird doorbells: rings, motion, access, open the gate (0.9.1)
+- [x] Pairing survives driver updates: keys kept as hashes in plain persistence (0.9.1)
+- [ ] Remote access: relay connection proof (0.9.1, test), then Google/Apple accounts, claim a home on the LAN with a pairing code, invitations by email
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA

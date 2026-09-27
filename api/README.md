@@ -42,7 +42,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
      -d '{"brightness": 40}'
    ```
 
-Keys are stored encrypted on the controller. The Composer action **Revoke All API Keys** removes every key if one is lost.
+The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. The Composer action **Revoke All API Keys** removes every key if one is lost.
 
 ## Debugging
 

@@ -65,7 +65,7 @@ Cloudflare is **not** a relay. Control commands and project data are not intende
 - One owner; every client (browser, phone, Home Assistant, script) gets its own named API key
 - Authenticated API even on LAN: `Authorization: Bearer <api key>` on every route except health, the API description and pairing
 - No default/shared password; credentials do not depend on Control4 cloud credentials
-- Keys are random, stored encrypted on Director, listed without secrets and revocable (through the API, or all at once with a Composer action)
+- Keys are random; Director keeps only a SHA-256 hash of each (in plain persistence, so keys survive driver updates); listed without secrets and revocable (through the API, or all at once with a Composer action)
 - First key (0.2.0): exchange the 8-digit Composer pairing code — valid 15 minutes, rotated after use, rate-limited
 - Since 0.8.0: the owner pairs once with a pairing code created in Composer (**New Pairing Code**, valid 15 minutes, works once); further keys are created by an admin, and family members will join remote access by invitation (0.3.0–0.7.0 approved clients with a **C4Bridge Access** button instead) (the pairing code remains a fallback)
 

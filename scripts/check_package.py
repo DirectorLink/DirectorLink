@@ -38,10 +38,20 @@ SECURITY_CONTRACT = {
         '["https://app.directorlink.io"] = true',
     ),
     "src/auth/keys.lua": (
-        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 2, keys = records }), true)",
-        "C4:PersistGetValue(STORE_KEY, true)",
+        # Only hashes are stored, never the keys themselves.
+        "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 3, keys = records }), false)",
+        "        records[#records + 1] = {\n"
+        "            id = key.id,\n"
+        "            name = key.name,\n"
+        "            role = key.role,\n"
+        "            alg = key.alg,\n"
+        "            hash = key.hash,\n"
+        "            created_at = key.created_at,\n"
+        "        }\n",
+        'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
         'C4:UUID("RANDOM")',
-        "constantTimeEqual(presented, key.secret)",
+        "constantTimeEqual(hashes[key.alg], key.hash)",
+        'C4:PersistSetValue(OLD_STORE_KEY, "", true)',
     ),
     "src/auth/pairing.lua": (
         "Pairing.CODE_TTL_SECONDS = 15 * 60",
@@ -53,7 +63,7 @@ SECURITY_CONTRACT = {
     "src/cloud/relay.lua": (
         'Relay.ROLE = "viewer"',
         'if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then',
-        "C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), true)",
+        "C4:PersistSetValue(IDENTITY_KEY, Json.encode(identity), false)",
     ),
     "src/core/log.lua": (
         "pairing_code = true",
