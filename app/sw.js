@@ -3,22 +3,17 @@
 // so the app still opens when the internet is down but the home LAN (and the controller) is up.
 // Requests to the controller are cross-origin and are never intercepted.
 
-const CACHE_NAME = "directorlink-shell-v13";
+const CACHE_NAME = "directorlink-shell-v14";
 const NETWORK_TIMEOUT_MS = 3000;
 
-// Each page is stored under every path that serves it: Cloudflare redirects
-// /index.html -> / and /console.html -> /console, while a plain static server does not.
-const PAGES = [
-  { source: "/", paths: ["/", "/index.html"] },
-  { source: "/console.html", paths: ["/console.html", "/console"] },
-];
+// Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
+// while a plain static server does not. (The API console is its own site, console.directorlink.io.)
+const PAGES = [{ source: "/", paths: ["/", "/index.html"] }];
 
 const ASSETS = [
   "/styles.css",
-  "/console.css",
   "/theme-boot.js",
   "/app.js",
-  "/console.js",
   "/api-client.js",
   "/js/camera-feed.js",
   "/js/components.js",

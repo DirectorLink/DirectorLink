@@ -15,6 +15,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -52,8 +57,11 @@ jobs:
       - name: Validate app
         run: python scripts/check_app.py
 
-      - name: Check app JavaScript syntax
-        run: for file in app/*.js; do node --check "$file"; done
+      - name: Validate console and website
+        run: python scripts/check_sites.py
+
+      - name: Check JavaScript syntax (app and console)
+        run: find app console -name '*.js' -print0 | xargs -0 -n1 node --check
 
       - name: Run app tests (offline service worker)
         run: node --test tests/app/*.test.mjs

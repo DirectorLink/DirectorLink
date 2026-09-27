@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink: an open-source Control4 driver and app. A standard local REST API described by OpenAPI, per-device access roles, and approval from the Control4 app."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink — Direct to Director</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="hero" aria-labelledby="hero-title">
+        <h1 id="hero-title">Direct to Director. <span>End-to-end integration.</span> <span>Open source.</span></h1>
+        <p class="intro">
+          DirectorLink is an open-source driver for Control4 and an app for phones and computers. The
+          driver gives your home a standard local REST API, described by OpenAPI, with its own access
+          role for every device and app — approved from the Control4 app, with no Composer needed after
+          installation.
+        </p>
+        <div class="actions">
+          <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
+          <a class="button button-secondary" href="https://console.directorlink.io">API console</a>
+          <a class="button button-secondary" href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">Source on GitHub</a>
+        </div>
+      </section>
+
+      <section class="how" aria-labelledby="how-title">
+        <h2 id="how-title">How it works</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Install the driver</h3>
+            <p>Add the DirectorLink driver to the Control4 project. It serves the API on your home network, on port 41999.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Request access</h3>
+            <p>Open the app, enter the controller's address and press Request access.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Approve it at home</h3>
+            <p>Press <strong>DirectorLink Access</strong> in the Control4 app. The device gets its own key and role.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="features" aria-labelledby="features-title">
+        <h2 id="features-title" class="visually-hidden">What you get</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Local and direct</h3>
+            <p>The browser talks to the controller over your LAN. No cloud relay, no port forwarding.</p>
+          </li>
+          <li>
+            <h3>A real API</h3>
+            <p>Rooms, lights, climate, blinds, cameras and doors as plain REST resources, described by OpenAPI 3.1.</p>
+          </li>
+          <li>
+            <h3>Roles per device</h3>
+            <p>viewer, member, doors or admin — each app and script gets only what it needs, and can be revoked.</p>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">github.com/IsraelCIL/DirectorLink</a>
+      </p>
+    </footer>
+  </body>
+</html>

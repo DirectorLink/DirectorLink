@@ -1,0 +1,19 @@
+// Cloudflare Workers static assets: the DirectorLink Console on https://console.directorlink.io.
+// Deployed by .github/workflows/deploy.yml (wrangler deploy); `previews` lets pull requests get a
+// preview URL. The asset settings are Cloudflare's defaults, written out on purpose.
+{
+  "name": "directorlink-console",
+  "compatibility_date": "2026-09-25",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": ".",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    { "pattern": "console.directorlink.io", "custom_domain": true }
+  ],
+  "previews": {}
+}

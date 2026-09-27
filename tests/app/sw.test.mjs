@@ -1,5 +1,5 @@
 // Tests app/sw.js offline behaviour with a fake network that serves the app like Cloudflare
-// (/index.html -> /, /console.html -> /console) and a fake Cache Storage.
+// (/index.html -> /) and a fake Cache Storage.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -12,12 +12,9 @@ const ORIGIN = "https://app.directorlink.io";
 
 const FILES = {
   "/": "<html>dashboard</html>",
-  "/console": "<html>console</html>",
   "/styles.css": "body{}",
   "/app.js": "app",
-  "/console.js": "console",
   "/api-client.js": "client",
-  "/console.css": "body{}",
   "/theme-boot.js": "boot",
   "/i18n/en.js": "en",
   "/i18n/he.js": "he",
@@ -28,7 +25,7 @@ const FILES = {
 };
 // The app's ES modules (app/js/**) are precached too.
 for (const [, path] of SOURCE.matchAll(/"(\/js\/[^"]+\.js)"/g)) FILES[path] = `module ${path}`;
-const REDIRECTS = { "/index.html": "/", "/console.html": "/console" };
+const REDIRECTS = { "/index.html": "/" };
 
 // Node's Response cannot be constructed as "basic" or "redirected"; set them the way a browser
 // would, and keep them on clones (browsers preserve them through clone()).
@@ -154,7 +151,7 @@ async function textOf(response) {
 test("install saves every page under each path, without redirects", async () => {
   const { storage } = await startWorker();
   const cache = await storage.open((await storage.keys())[0]);
-  for (const [path, body] of [["/", "dashboard"], ["/index.html", "dashboard"], ["/console", "console"], ["/console.html", "console"]]) {
+  for (const [path, body] of [["/", "dashboard"], ["/index.html", "dashboard"]]) {
     const saved = await cache.match(path);
     assert.ok(saved, `${path} is cached`);
     assert.equal(saved.redirected, false, `${path} is stored without the redirect flag`);
@@ -163,11 +160,15 @@ test("install saves every page under each path, without redirects", async () => 
   for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/i18n/he.js", "/icons/icon-512.png"]) {
     assert.ok(await cache.match(asset), `${asset} is cached`);
   }
+  // The API console moved to its own site (console.directorlink.io).
+  for (const gone of ["/console", "/console.html", "/console.js", "/console.css"]) {
+    assert.equal(await cache.match(gone), undefined, `${gone} is no longer cached`);
+  }
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v11", "directorlink-shell-v12"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v13"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v12", "directorlink-shell-v13"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v14"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -181,8 +182,7 @@ test("online page loads come from the network and refresh the saved copy", async
 test("offline page loads are served from the saved copy", async () => {
   const { network, request } = await startWorker();
   network.online = false;
-  assert.equal(await textOf(await request("/console")), "<html>console</html>");
-  assert.equal(await textOf(await request("/console.html")), "<html>console</html>");
+  assert.equal(await textOf(await request("/index.html")), "<html>dashboard</html>");
   assert.equal(await textOf(await request("/?from=home-screen")), "<html>dashboard</html>");
   assert.equal(await textOf(await request("/unknown-page")), "<html>dashboard</html>", "unknown pages fall back to the dashboard");
 });
@@ -196,7 +196,7 @@ test("a slow network falls back to the saved copy", async () => {
 
 test("online redirects are left for the browser to follow", async () => {
   const { request } = await startWorker();
-  const response = await request("/console.html");
+  const response = await request("/index.html");
   assert.equal(response.type, "opaqueredirect");
 });
 

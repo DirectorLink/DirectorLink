@@ -350,9 +350,15 @@ function appSection() {
       state.canInstall
         ? h("button", { id: "install-button", type: "button", class: "button button-primary", dataset: { key: "install" }, onclick: installApp }, icon("download"), t("settings.app.install"))
         : null,
-      h("a", { class: "button button-secondary", href: "/console.html" }, icon("terminal"), t("settings.app.console"))
+      h("a", { class: "button button-secondary", href: consoleUrl(), target: "_blank", rel: "noopener" }, icon("terminal"), t("settings.app.console"), icon("external"))
     )
   );
+}
+
+// The API console is its own site; a local copy of the app opens a local console
+// (python -m http.server 8081 --bind 127.0.0.1 --directory console).
+function consoleUrl() {
+  return /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname) ? "http://127.0.0.1:8081" : "https://console.directorlink.io";
 }
 
 function aboutSection() {
@@ -366,7 +372,7 @@ function aboutSection() {
     h(
       "div",
       { class: "button-row" },
-      h("a", { class: "button button-quiet", href: "https://github.com/IsraelCIL/C4Bridge", rel: "noreferrer", target: "_blank" }, t("settings.about.source"), icon("external"))
+      h("a", { class: "button button-quiet", href: "https://github.com/IsraelCIL/DirectorLink", rel: "noreferrer", target: "_blank" }, t("settings.about.source"), icon("external"))
     )
   );
 }
