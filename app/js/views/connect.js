@@ -45,7 +45,8 @@ export function formatCodeField(input) {
 }
 
 // The account option under the pairing form: signed in, or a button to sign in with Google.
-function accountOption() {
+// On iPhone and iPad there is no form above it, so no "or".
+function accountOption({ divider = true } = {}) {
   const account = state.account;
   if (account.status === "unknown" || account.status === "loading") {
     return null;
@@ -62,7 +63,7 @@ function accountOption() {
   return h(
     "div",
     { class: "connect-account" },
-    h("p", { class: "connect-or" }, h("span", {}, t("connect.or"))),
+    divider ? h("p", { class: "connect-or" }, h("span", {}, t("connect.or"))) : null,
     outcome ? h("p", { class: "notice notice-error", role: "status" }, t(`settings.account.notice.${outcome}`)) : null,
     h(
       "button",
@@ -74,7 +75,32 @@ function accountOption() {
   );
 }
 
+// Every browser on iPhone and iPad uses WebKit, which blocks this HTTPS page from calling the
+// controller's plain-HTTP address and has no permission to allow it (README): pairing there can
+// only fail. iPadOS presents itself as a Mac, but with a touch screen.
+export const IS_IOS =
+  /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+
+function iosCard() {
+  return h(
+    "div",
+    { class: "connect" },
+    h(
+      "section",
+      { class: "card connect-card", "aria-labelledby": "connect-title" },
+      h("span", { class: "connect-icon" }, icon("key")),
+      h("h2", { id: "connect-title", class: "connect-title" }, t("connect.title")),
+      h("p", { class: "notice notice-info", id: "connect-ios" }, t("connect.iosText")),
+      h("p", { class: "connect-text" }, t("connect.iosHow")),
+      accountOption({ divider: false })
+    )
+  );
+}
+
 export function connectScreen() {
+  if (IS_IOS) {
+    return iosCard();
+  }
   const host = draftInput("host", state.host, {
     id: "controller-host",
     type: "text",

@@ -49,6 +49,8 @@ export default {
     signInHelp: "Your account will reach your home from anywhere, on iPhone and iPad too. Coming soon; for now, pair on the home network.",
     signedInAs: "Signed in as {email}",
     signedInHelp: "Reaching your home through your account is coming soon. For now, connect on the home network with a pairing code.",
+    iosText: "iPhone and iPad can’t connect to the controller on the home network: iOS blocks it for web apps, in every browser.",
+    iosHow: "Pair once on a computer or an Android phone. This device will reach your home through your account, which is coming soon.",
     pairNew: "Enter a new pairing code from Composer to connect this device.",
     errors: {
       invalidCode: "Enter the 8-digit pairing code, for example 1234 5678.",
