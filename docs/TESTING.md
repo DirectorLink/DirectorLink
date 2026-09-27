@@ -2,7 +2,22 @@
 
 ## Current release
 
-`v0.8.0` — DirectorLink. Coming from C4Bridge: remove it in Composer and add `DirectorLink.c4z` as a new driver.
+`v0.9.0` — DoorBird and the remote-access test. Update DirectorLink in Composer (no reboot).
+
+## 0g. DoorBird
+
+1. **Inventory** ends with `1 doorbells`; `GET /v1/doorbells` lists the DoorBird with its camera (`/v1/cameras/{id}/snapshot` shows the gate).
+2. Ring the DoorBird: within 10 s `last_ring_at` is set, `events[0].type` is `doorbell`, and the app shows the banner with the camera.
+3. Walk past it: `last_motion_at` updates (`motion` events).
+4. With Door Control enabled and a `doors` or `admin` key, **Open gate** in the app (or `POST /v1/doorbells/{id}/open`) opens the entrance gate like the DoorBird button in the Control4 app; `last_opened_at` follows.
+5. With a `member` key, opening answers `403 FORBIDDEN`; with Door Control off, `403 DOOR_CONTROL_DISABLED`.
+
+## 0f. Remote access (test)
+
+1. **Remote Access** is `Off` and **Remote Status** `Off` after the update.
+2. Set **Remote Access** to `On`: **Remote Status** shows `Connecting...`, then `Connected since HH:MM - home xxxxxxxx`.
+3. From outside the home network, the relay's test endpoint returns the lights; `GET /v1/logs?category=relay` shows the connection, and each relayed request is logged with client `relay`.
+4. Switch it `Off`: the status returns to `Off` and nothing reconnects.
 
 ## 0e. DirectorLink and pairing
 
@@ -47,7 +62,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.8.0`
+- Version: `0.9.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`
