@@ -134,6 +134,7 @@ function tests.pairing_is_rate_limited()
     T.eq(response.status, 429)
     T.eq(response.json.code, "PAIRING_RATE_LIMITED")
     T.eq(response.headers["retry-after"], "60")
+    T.eq(response.json.retry_after, 60, "the wait is in the body too")
     local locked = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = mock.properties["Pairing Code"] } })
     T.eq(locked.status, 429, "even the right code waits for the lock")
 end
@@ -683,7 +684,7 @@ function tests.secrets_never_reach_the_log()
     T.notContains(everything, code, "pairing code in driver log")
 end
 
-function tests.cors_allows_the_web_app_and_rejects_other_origins()
+function tests.cors_allows_the_app_and_console_and_rejects_other_origins()
     local mock, key = start()
     local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.directorlink.io" } })
     T.eq(preflight.status, 204)
@@ -693,6 +694,11 @@ function tests.cors_allows_the_web_app_and_rejects_other_origins()
 
     local fromApp = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.directorlink.io" } })
     T.eq(fromApp.headers["access-control-allow-origin"], "https://app.directorlink.io")
+    T.eq(fromApp.headers["access-control-expose-headers"], "Retry-After")
+    local fromConsole = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://console.directorlink.io" } })
+    T.eq(fromConsole.headers["access-control-allow-origin"], "https://console.directorlink.io")
+    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.c4bridge.io" } }).status, 403,
+        "the old app is retired")
     T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://localhost:8080" } }).status, 200)
 
     local evil = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://evil.example" } })

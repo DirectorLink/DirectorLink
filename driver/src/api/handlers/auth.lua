@@ -62,6 +62,7 @@ function Auth.pair(ctx)
         ctx.services.log.info("auth", "pairing rejected", { reason = failure.code, client = ctx.client.ip })
         return Problem.new(status, failure.code, failure.message, {
             attempts_remaining = failure.attempts_remaining,
+            retry_after = failure.retry_after,
         }), headers
     end
 

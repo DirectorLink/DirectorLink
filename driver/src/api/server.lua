@@ -165,6 +165,8 @@ local function finalize(request, route, client, started, apiKey, origin, status,
     local headers = {}
     if origin then
         headers[#headers + 1] = { "Access-Control-Allow-Origin", origin }
+        -- Lets the app and console read how long to wait after a 429 or 503.
+        headers[#headers + 1] = { "Access-Control-Expose-Headers", "Retry-After" }
         headers[#headers + 1] = { "Vary", "Origin" }
     end
     headers[#headers + 1] = { "Cache-Control", "no-store" }

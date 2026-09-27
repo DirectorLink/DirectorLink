@@ -1112,6 +1112,12 @@ components:
           type: string
           description: Stable machine-readable error code.
           example: INVALID_FIELD
+        attempts_remaining:
+          type: integer
+          description: Wrong pairing codes still allowed before pairing locks (`PAIRING_CODE_INVALID`).
+        retry_after:
+          type: integer
+          description: Seconds to wait before trying again, as in the `Retry-After` header (`PAIRING_RATE_LIMITED`).
         errors:
           type: array
           description: Field-level details for validation errors.
