@@ -8,7 +8,7 @@ local Keys = {}
 
 Keys.MAX_KEYS = 20
 
-local STORE_KEY = "c4bridge_api_keys"
+local STORE_KEY = "directorlink_api_keys"
 
 local state = {
     keys = {},

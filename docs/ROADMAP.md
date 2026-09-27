@@ -34,6 +34,9 @@
 - [x] Validate 0.2.0 request-body handling on a real Director
 - [x] Approve new clients from the Control4 app instead of the Composer pairing code (0.3.0)
 - [x] Key roles (viewer, member, doors, admin) and the Composer Door Control switch (0.7.0)
+- [x] Renamed to DirectorLink; app, console and website on directorlink.io (0.8.0)
+- [x] Pair once with an on-demand code (New Pairing Code, 15 minutes, one use); the Access button and access requests are gone (0.8.0)
+- [ ] Remote access: Google/Apple accounts, claim a home on the LAN with a pairing code, invitations by email, cloud relay
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA
@@ -44,8 +47,8 @@
 - [x] 192px/512px install icons
 - [x] Pages security headers
 - [x] Cloudflare deployment documentation
-- [ ] Connect GitHub repository to Cloudflare Pages
-- [ ] Attach `c4bridge.io`
+- [ ] Deploy app, console and website from GitHub Actions (`deploy.yml`) — waiting for Cloudflare credentials
+- [ ] Attach `directorlink.io`
 - [ ] Local Network Access request flow
 - [x] Pairing
 - [x] API console: every endpoint from the live API description, live log (0.2.0)
@@ -56,12 +59,12 @@
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
-- [x] Cameras: snapshots through the camera proxy, near-live grid in the web app (0.5.0)
+- [x] Cameras: snapshots through the camera proxy, near-live grid in the app (0.5.0)
 - [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 
-## Milestone 5 — C4Bridge scenes
+## Milestone 5 — DirectorLink scenes
 
 - [ ] Scene model
 - [ ] Scene persistence
@@ -75,7 +78,7 @@
 - [ ] Days of week
 - [ ] Sunrise/sunset
 - [ ] Solar offsets
-- [ ] Run C4Bridge scenes/actions
+- [ ] Run DirectorLink scenes/actions
 - [ ] Recalculate after reboot/timezone/location changes
 - [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
 

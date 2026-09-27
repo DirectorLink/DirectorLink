@@ -1,4 +1,4 @@
--- C4Bridge LAN API server: DriverWorks TCP server + HTTP parsing + CORS + API-key auth +
+-- DirectorLink LAN API server: DriverWorks TCP server + HTTP parsing + CORS + API-key auth +
 -- routing + RFC 9457 errors + access logging.
 
 local Json = require("src.core.json")
@@ -28,8 +28,8 @@ local Server = {}
 Server.PORT = 41999
 
 local ALLOWED_ORIGINS = {
-    ["https://app.c4bridge.io"] = true,
-    ["https://c4bridge.io"] = true,
+    ["https://app.directorlink.io"] = true,
+    ["https://console.directorlink.io"] = true,
 }
 
 -- Connections that never finish a request are dropped after this many seconds.
@@ -52,7 +52,7 @@ for _, route in ipairs(Routes) do
 end
 
 -- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not.
--- localhost origins are allowed so the web app can be tested from a local server.
+-- localhost origins are allowed so the app can be tested from a local server.
 function Server.originAllowed(origin)
     if origin == nil or origin == "" then
         return true
@@ -143,13 +143,6 @@ local function encode(status, payload)
     return "application/json; charset=utf-8", body
 end
 
--- Paths that carry a secret (an access request id) are logged as their route template.
-local function loggedPath(request, route)
-    if route and route.path:find("{requestId}", 1, true) then
-        return route.path
-    end
-    return request.path
-end
 
 local function logAccess(request, route, status, client, started, apiKey)
     local level = "debug"
@@ -158,7 +151,7 @@ local function logAccess(request, route, status, client, started, apiKey)
     elseif status >= 400 then
         level = "info"
     end
-    services.log.write(level, "api", request.method .. " " .. loggedPath(request, route) .. " -> " .. tostring(status), {
+    services.log.write(level, "api", request.method .. " " .. request.path .. " -> " .. tostring(status), {
         client = client and client.ip or Json.null,
         duration_ms = Clock.millis() - started,
         key_id = apiKey and apiKey.id or Json.null,
@@ -172,6 +165,8 @@ local function finalize(request, route, client, started, apiKey, origin, status,
     local headers = {}
     if origin then
         headers[#headers + 1] = { "Access-Control-Allow-Origin", origin }
+        -- Lets the app and console read how long to wait after a 429 or 503.
+        headers[#headers + 1] = { "Access-Control-Expose-Headers", "Retry-After" }
         headers[#headers + 1] = { "Vary", "Origin" }
     end
     headers[#headers + 1] = { "Cache-Control", "no-store" }
@@ -223,7 +218,7 @@ function Server.handleRequest(request, client, respond)
             if not match.route.public and not apiKey then
                 status = 401
                 payload = Problem.unauthorized()
-                extraHeaders = { { "WWW-Authenticate", 'Bearer realm="C4Bridge"' } }
+                extraHeaders = { { "WWW-Authenticate", 'Bearer realm="DirectorLink"' } }
             elseif not match.route.public and not Roles.allows(apiKey.role, match.route.role) then
                 status = 403
                 payload = Problem.new(403, "FORBIDDEN", "This API key has the " .. tostring(apiKey.role)

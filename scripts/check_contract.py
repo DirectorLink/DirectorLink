@@ -122,29 +122,15 @@ class Client:
         return json.loads(raw) if raw else None
 
 
-def approval_scenario(client, bridge):
-    created = client.check("POST", "/v1/auth/requests", 201, body={"name": "contract approval"}, auth=False)
-    client.check("POST", "/v1/auth/requests", 409, body={"name": "second"}, auth=False)
-    client.check("GET", f"/v1/auth/requests/{created['id']}", 200, auth=False)
-    bridge.press_access_button()
-    approved = client.check("GET", f"/v1/auth/requests/{created['id']}", 200, auth=False)
-    if approved["status"] != "approved" or not approved["api_key"]:
-        fail("an approved request must hand over its API key")
-    client.check("GET", f"/v1/auth/requests/{created['id']}", 404, auth=False)
-    cancelled = client.check("POST", "/v1/auth/requests", 201, auth=False)
-    client.check("DELETE", f"/v1/auth/requests/{cancelled['id']}", 204, auth=False)
-    client.check("DELETE", f"/v1/auth/requests/{cancelled['id']}", 404, auth=False)
-    client.check("POST", "/v1/auth/requests", 400, body={"name": ""}, auth=False)
-
-
-def scenario(client, pairing_code):
+def scenario(client, bridge):
     client.check("GET", "/v1/health", 200)
     client.check("GET", "/v1/openapi.json", 200)
     client.check("GET", "/v1/system", 401)
     client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": "00000000"})
     client.check("POST", "/v1/auth/pair", 400, body={"pairing_code": "12"})
-    paired = client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": pairing_code, "name": "contract test"})
+    paired = client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "contract test"})
     client.key = paired["key"]
+    client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": bridge.pairing_code})  # used: works once
 
     client.check("GET", "/v1/system", 200)
     client.check("GET", "/v1/rooms", 200)
@@ -232,6 +218,7 @@ def scenario(client, pairing_code):
     client.check("GET", "/v1/logs", 401, auth=False)
 
     # Last, because it locks pairing for a minute.
+    bridge.new_pairing_code()
     for _ in range(4):
         client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": "00000000"})
     client.check("POST", "/v1/auth/pair", 429, body={"pairing_code": "00000000"})
@@ -248,8 +235,7 @@ def main():
 
     client = Client(server.server_address[1])
     try:
-        scenario(client, bridge.pairing_code)
-        approval_scenario(client, bridge)
+        scenario(client, bridge)
     finally:
         server.shutdown()
         bridge.process.terminate()

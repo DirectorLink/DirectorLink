@@ -1,0 +1,74 @@
+name: Deploy DirectorLink sites
+
+# Publishes the three static sites to Cloudflare Workers (static assets):
+#   app/     -> https://app.directorlink.io      (Worker directorlink-app)
+#   console/ -> https://console.directorlink.io  (Worker directorlink-console)
+#   site/    -> https://directorlink.io, www     (Worker directorlink-site)
+# Pushes to main deploy; pull requests from this repository get preview versions.
+# Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; without them the
+# jobs report that and succeed, so CI stays green before Cloudflare is set up.
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "app/**"
+      - "console/**"
+      - "site/**"
+      - ".github/workflows/deploy.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - "console/**"
+      - "site/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    # Forks never get the secrets; skip their pull requests instead of failing.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        folder: [app, console, site]
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check Cloudflare credentials
+        id: credentials
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set; nothing deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif [ ! -f "${{ matrix.folder }}/wrangler.jsonc" ]; then
+            echo "${{ matrix.folder }}/wrangler.jsonc does not exist yet; nothing deployed."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy
+        if: steps.credentials.outputs.ready == 'true' && github.event_name != 'pull_request'
+        working-directory: ${{ matrix.folder }}
+        run: npx --yes wrangler@4 deploy
+
+      - name: Upload a preview version
+        if: steps.credentials.outputs.ready == 'true' && github.event_name == 'pull_request'
+        working-directory: ${{ matrix.folder }}
+        run: npx --yes wrangler@4 versions upload --preview-alias "pr-${{ github.event.number }}"

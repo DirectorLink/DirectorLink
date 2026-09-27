@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="DirectorLink Console: try the local API, follow the bridge log, check the system and manage API keys." />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/console.css" />
+    <title>DirectorLink Console</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="topbar">
+      <a class="brand" href="#/api">
+        <img src="/icons/icon.svg" alt="" width="32" height="32" />
+        <span class="brand-name">DirectorLink <span class="brand-sub">Console</span></span>
+      </a>
+      <div class="topbar-status">
+        <a id="status-chip" class="status-chip status-idle" href="#/connect" aria-describedby="header-host">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="status-text">Not connected</span>
+        </a>
+        <span id="header-host" class="header-host">No controller</span>
+      </div>
+    </header>
+
+    <nav id="tabs" class="tabs" aria-label="Console sections">
+      <a class="tab" href="#/api" data-tab="api">API</a>
+      <a class="tab" href="#/logs" data-tab="logs">Logs</a>
+      <a class="tab" href="#/system" data-tab="system">System</a>
+      <a class="tab" href="#/keys" data-tab="keys">Keys</a>
+      <a class="tab tab-end" href="#/connect" data-tab="connect">Connection</a>
+    </nav>
+
+    <main id="main" class="main" tabindex="-1">
+      <!-- Connection: controller address and API key ---------------------------------------- -->
+      <section id="view-connect" class="view" aria-labelledby="connect-title" hidden>
+        <div class="view-head">
+          <h1 id="connect-title">Connection</h1>
+          <p class="lead">
+            The console talks to DirectorLink on your controller directly, over your home network
+            (port 41999). The address and API key are kept in this browser only.
+          </p>
+        </div>
+        <p id="connect-message" class="message" role="status" hidden></p>
+
+        <div class="grid-2">
+          <section class="card" aria-labelledby="host-title">
+            <h2 id="host-title">Controller</h2>
+            <form id="host-form" class="stack" novalidate>
+              <label class="field-label" for="host-input">Controller address</label>
+              <div class="input-row">
+                <input
+                  id="host-input"
+                  type="text"
+                  inputmode="url"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  placeholder="192.168.1.50"
+                  aria-describedby="host-help"
+                />
+                <button class="button button-secondary" type="submit">Save</button>
+              </div>
+              <p id="host-help" class="help">The IP address or local name, without a port — for example 192.168.1.50 or director.local.</p>
+            </form>
+
+            <div id="current-panel" class="current" hidden>
+              <h3>This console's key</h3>
+              <dl id="current-facts" class="facts"></dl>
+              <div class="button-row">
+                <button id="reconnect-button" class="button button-secondary" type="button">Reconnect</button>
+                <button id="forget-button" class="button button-danger" type="button">Forget key</button>
+              </div>
+              <p class="help">Forget key revokes the key on the controller, then removes it from this browser.</p>
+            </div>
+          </section>
+
+          <section class="card" aria-labelledby="access-title">
+            <h2 id="access-title">Get an API key</h2>
+
+            <form id="pair-form" class="option stack" novalidate>
+              <h3>Pairing code</h3>
+              <label class="field-label" for="pair-code">Pairing code from Composer</label>
+              <div class="input-row">
+                <input
+                  id="pair-code"
+                  class="code-input"
+                  type="text"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  dir="ltr"
+                  placeholder="1234 5678"
+                  aria-describedby="pair-help"
+                />
+                <button class="button button-primary" type="submit">Pair</button>
+              </div>
+              <p id="pair-help" class="help">
+                In Composer, select DirectorLink, then Actions → <strong>New Pairing Code</strong> — or ask your
+                installer. A code lasts 15 minutes, works once and always gives an admin key.
+              </p>
+              <p id="pair-note" class="help" hidden></p>
+            </form>
+
+            <form id="key-form" class="option stack" novalidate>
+              <h3>Paste a key</h3>
+              <label class="field-label" for="key-input">API key</label>
+              <div class="input-row">
+                <input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="API key" />
+                <button class="button button-secondary" type="submit">Use key</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <!-- API explorer ------------------------------------------------------------------------ -->
+      <section id="view-api" class="view" aria-labelledby="api-title" hidden>
+        <div class="view-head">
+          <h1 id="api-title">API</h1>
+          <p id="api-summary" class="lead">Every operation of the running bridge, from its API description.</p>
+        </div>
+        <p id="api-message" class="message" role="status" hidden></p>
+        <div class="explorer">
+          <aside class="card op-sidebar" aria-label="Operations">
+            <label class="visually-hidden" for="op-filter">Filter operations</label>
+            <input id="op-filter" type="search" placeholder="Filter: path, method, tag…" autocomplete="off" spellcheck="false" />
+            <div id="op-list" class="op-list"></div>
+          </aside>
+          <section id="op-detail" class="card op-detail" aria-live="polite">
+            <p class="help">Choose an operation.</p>
+          </section>
+        </div>
+      </section>
+
+      <!-- Logs -------------------------------------------------------------------------------- -->
+      <section id="view-logs" class="view" aria-labelledby="logs-title" hidden>
+        <div class="view-head">
+          <h1 id="logs-title">Logs</h1>
+          <p class="lead">The bridge keeps its last 500 entries in memory. Following checks for new ones every 2 seconds.</p>
+        </div>
+        <div id="logs-locked" class="card locked" hidden>
+          <h2>Needs an admin key</h2>
+          <p>Reading the log needs an admin key; this console's key is <strong class="locked-role"></strong>. Pairing with a code from Composer gives an admin key.</p>
+          <a class="button button-primary" href="#/connect">Pair with a code</a>
+        </div>
+        <div id="logs-panel" class="logs-panel">
+          <div class="card log-toolbar">
+            <div class="toolbar-row">
+              <button id="log-pause" class="button button-secondary" type="button" aria-pressed="false">Pause</button>
+              <label class="compact-field">
+                <span>Level</span>
+                <select id="log-level">
+                  <option value="">All</option>
+                  <option value="info">Info and above</option>
+                  <option value="warn">Warnings and errors</option>
+                  <option value="error">Errors</option>
+                </select>
+              </label>
+              <label class="compact-field">
+                <span>Category</span>
+                <input id="log-category" type="text" placeholder="e.g. api" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="compact-field grow">
+                <span>Search</span>
+                <input id="log-search" type="search" placeholder="Text in the loaded entries" autocomplete="off" spellcheck="false" />
+              </label>
+              <button id="log-clear" class="button button-secondary" type="button">Clear view</button>
+              <button id="log-download" class="button button-secondary" type="button">Download</button>
+            </div>
+            <div id="log-category-chips" class="chips" aria-label="Categories seen"></div>
+            <div class="toolbar-row record-row">
+              <label class="compact-field">
+                <span>Recording level</span>
+                <select id="log-record-level">
+                  <option value="debug">debug</option>
+                  <option value="info">info</option>
+                  <option value="warn">warn</option>
+                  <option value="error">error</option>
+                </select>
+              </label>
+              <p class="help">What the bridge records. <strong>debug</strong> is verbose — use it while investigating, then set it back to info.</p>
+            </div>
+          </div>
+          <p id="log-status" class="log-status" role="status"></p>
+          <div id="log-list" class="card log-list" role="log" aria-label="Bridge log"></div>
+        </div>
+      </section>
+
+      <!-- System ------------------------------------------------------------------------------ -->
+      <section id="view-system" class="view" aria-labelledby="system-title" hidden>
+        <div class="view-head view-head-actions">
+          <div>
+            <h1 id="system-title">System</h1>
+            <p class="lead">Bridge, controller and this console's key.</p>
+          </div>
+          <div class="button-row">
+            <button id="system-refresh" class="button button-secondary" type="button">Refresh</button>
+            <button id="diag-copy" class="button button-primary" type="button">Copy diagnostics</button>
+          </div>
+        </div>
+        <p id="system-message" class="message" role="status" hidden></p>
+        <div id="system-content" class="system-grid"></div>
+        <section class="card" aria-labelledby="health-title">
+          <h2 id="health-title">Connection test</h2>
+          <p class="help">Sends GET /v1/health five times and measures the round trip.</p>
+          <div class="button-row">
+            <button id="health-run" class="button button-secondary" type="button">Run test</button>
+          </div>
+          <div id="health-result" class="health-result" aria-live="polite"></div>
+        </section>
+      </section>
+
+      <!-- Keys -------------------------------------------------------------------------------- -->
+      <section id="view-keys" class="view" aria-labelledby="keys-title" hidden>
+        <div class="view-head view-head-actions">
+          <div>
+            <h1 id="keys-title">API keys</h1>
+            <p class="lead">Every app, browser and script has its own key and role: viewer &lt; member &lt; doors &lt; admin.</p>
+          </div>
+          <div class="button-row">
+            <button id="keys-refresh" class="button button-secondary" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="keys-locked" class="card locked" hidden>
+          <h2>Needs an admin key</h2>
+          <p>Managing API keys needs an admin key; this console's key is <strong class="locked-role"></strong>. Pairing with a code from Composer gives an admin key.</p>
+          <a class="button button-primary" href="#/connect">Pair with a code</a>
+        </div>
+        <div id="keys-panel" class="stack-lg">
+          <p id="keys-message" class="message" role="status" hidden></p>
+          <div id="key-secret" class="card secret" role="alert" hidden>
+            <h2>New key: <span id="key-secret-name"></span></h2>
+            <p class="warn-text">This secret is shown only once. Copy it now and store it safely — it cannot be shown again.</p>
+            <div class="secret-row">
+              <code id="key-secret-value" class="secret-value"></code>
+              <button id="key-secret-copy" class="button button-primary" type="button">Copy</button>
+            </div>
+            <button id="key-secret-dismiss" class="button button-secondary" type="button">I stored it — hide</button>
+          </div>
+          <div class="card table-card">
+            <div class="table-scroll">
+              <table class="keys-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Name</th>
+                    <th scope="col">ID</th>
+                    <th scope="col">Role</th>
+                    <th scope="col">Created</th>
+                    <th scope="col">Last used</th>
+                    <th scope="col"><span class="visually-hidden">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody id="keys-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+          <form id="key-create-form" class="card stack" novalidate>
+            <h2>Create a key</h2>
+            <div class="create-row">
+              <label class="compact-field grow">
+                <span>Name</span>
+                <input id="key-create-name" type="text" maxlength="64" placeholder="e.g. Home Assistant" autocomplete="off" />
+              </label>
+              <label class="compact-field">
+                <span>Role</span>
+                <select id="key-create-role">
+                  <option value="viewer">viewer</option>
+                  <option value="member" selected>member</option>
+                  <option value="doors">doors</option>
+                  <option value="admin">admin</option>
+                </select>
+              </label>
+              <button class="button button-primary" type="submit">Create key</button>
+            </div>
+            <p class="help">viewer reads everything; member also controls lights, climate and blinds; doors also opens doors and gates; admin also manages keys, room names and the log.</p>
+          </form>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink — Direct to Director. End-to-end integration. Open source.</p>
+      <p>
+        Independent project, not affiliated with Control4 or Snap One.
+        <a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">Source on GitHub</a> ·
+        <a href="https://app.directorlink.io" rel="noreferrer">App</a> ·
+        <a href="https://directorlink.io" rel="noreferrer">directorlink.io</a>
+      </p>
+    </footer>
+
+    <script type="module" src="/console.js"></script>
+  </body>
+</html>

@@ -8,8 +8,6 @@ local suites = {
     "test_http",
     "test_router",
     "test_api",
-    "test_approvals",
-    "test_navigator",
 }
 
 local passed, failed = 0, 0

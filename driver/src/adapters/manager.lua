@@ -144,7 +144,7 @@ function Manager.execute(deviceId, action, params)
     if not adapter then
         return false, {
             code = "DEVICE_NOT_SUPPORTED",
-            message = "Device " .. tostring(deviceId) .. " has no controllable C4Bridge adapter",
+            message = "Device " .. tostring(deviceId) .. " has no controllable DirectorLink adapter",
         }
     end
 

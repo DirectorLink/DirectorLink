@@ -1,8 +1,8 @@
-# C4Bridge API
+# DirectorLink API
 
-[`openapi.yaml`](openapi.yaml) is the contract for the LAN API that the C4Bridge driver serves on the Control4 controller. It is the single source of truth: the driver routes are checked against it in CI (`scripts/check_api.py`), the build embeds it in the driver, and every release publishes it as `openapi.json`.
+[`openapi.yaml`](openapi.yaml) is the contract for the LAN API that the DirectorLink driver serves on the Control4 controller. It is the single source of truth: the driver routes are checked against it in CI (`scripts/check_api.py`), the build embeds it in the driver, and every release publishes it as `openapi.json`.
 
-A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The web app's [API console](../web/console.html) reads it to list and try every endpoint.
+A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The app's [API console](../app/console.html) reads it to list and try every endpoint.
 
 ## Conventions
 
@@ -10,8 +10,8 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
 | Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays. No Control4 command names, proxy IDs or variable numbers. |
-| Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, access requests (`/v1/auth/requests`) and pairing. |
-| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds), `doors` (also doors and gates), `admin` (also keys, room names, log). Each operation states the least role it needs as `x-c4bridge-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json` and pairing (`POST /v1/auth/pair`). |
+| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds), `doors` (also doors and gates), `admin` (also keys, room names, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. The answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -21,25 +21,17 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 
 ## Getting a key
 
-**With the Control4 app (recommended).** Ask for access, press **C4Bridge Access** in the Control4 app within 2 minutes, then collect the key once:
+The first key comes from a **pairing code**: in Composer, run **New Pairing Code** on DirectorLink (a new DirectorLink shows one right away). The code is shown as `1234 5678`, is valid for 15 minutes and works once; the key it gives is `admin`.
 
-```bash
-curl -X POST http://192.168.1.201:41999/v1/auth/requests -H "Content-Type: application/json" -d '{"name": "My laptop"}'
-# -> {"id": "<request id>", "status": "pending", ...}   now press C4Bridge Access
-curl http://192.168.1.201:41999/v1/auth/requests/<request id>
-# -> {"status": "approved", "api_key": {"key": "ak_...", ...}}
-```
-
-**With the pairing code (fallback).**
-
-1. Read the 8-digit **Pairing Code** in the C4Bridge properties in Composer.
-2. Exchange it for a key (the code then changes):
+1. Exchange the code for a key:
 
    ```bash
    curl -X POST http://192.168.1.201:41999/v1/auth/pair \
      -H "Content-Type: application/json" \
-     -d '{"pairing_code": "12345678", "name": "My laptop"}'
+     -d '{"pairing_code": "1234 5678", "name": "My laptop"}'
    ```
+
+2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`; five wrong codes lock pairing for a minute.
 
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 

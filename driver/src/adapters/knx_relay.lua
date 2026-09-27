@@ -4,7 +4,7 @@ local Log = require("src.core.log")
 -- Commands are the driver's own device commands "Open Relay" / "Close Relay" {Relay = n}; a pulse
 -- is close, then open after PULSE_MS (the driver's default "Close-Open" trigger, as the Relay
 -- Door Controllers use it). State comes from the driver's events: relay n opened = 1 + 2n,
--- closed = 2 + 2n. C4Bridge controls relay 1 (every relay device in the test project has one).
+-- closed = 2 + 2n. DirectorLink controls relay 1 (every relay device in the test project has one).
 local KnxRelay = {}
 
 KnxRelay.RELAY = 1

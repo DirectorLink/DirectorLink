@@ -49,7 +49,7 @@ function Problem.unauthorized()
 end
 
 function Problem.internal(detail)
-    return Problem.new(500, "INTERNAL_ERROR", detail or "The request failed inside C4Bridge; see GET /v1/logs")
+    return Problem.new(500, "INTERNAL_ERROR", detail or "The request failed inside DirectorLink; see GET /v1/logs")
 end
 
 -- Adapter errors use internal codes; translate them to API problems.
