@@ -15,7 +15,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN
 - LAN-only in V1; no cloud relay and no port forwarding
 - One owner, with a separate named API key per browser, app or script
-- Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates)
+- Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
