@@ -1,5 +1,7 @@
 # DirectorLink relay protocol (v0, proof of concept)
 
+Version 1, with accounts and end-to-end encryption, is designed in `docs/ACCOUNTS.md` (proposal).
+
 The relay lets the app reach a home from anywhere without opening anything on the home network:
 the **driver** keeps one outgoing WebSocket (TLS, port 443) to `api.directorlink.io`, and requests
 for that home travel over it. This document is the contract between `driver/src/cloud/` and
