@@ -12,6 +12,7 @@ local TYPE_BY_KIND = {
     blind = "blind",
     camera = "camera",
     relay = "relay",
+    doorbell = "doorbell",
 }
 
 local RESOURCE_PATH = {
@@ -20,6 +21,7 @@ local RESOURCE_PATH = {
     blind = "/v1/blinds/",
     camera = "/v1/cameras/",
     relay = "/v1/relays/",
+    doorbell = "/v1/doorbells/",
 }
 
 local SETTABLE_MODES = {
@@ -131,6 +133,35 @@ function Views.relay(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         state = state.relay or Json.null,
         state_reported = capabilities.state_reported == true,
+    }
+end
+
+function Views.doorbell(registry, device)
+    local capabilities = device.capabilities or {}
+    local state = device.state or {}
+    local last = state.last or {}
+    local camera = Json.null
+    local cameraId = device.linked and device.linked.camera
+    local cameraDevice = cameraId and registry.getDevice(cameraId)
+    if cameraDevice and cameraDevice.supported then
+        camera = { id = cameraDevice.id, snapshot_href = "/v1/cameras/" .. tostring(cameraDevice.id) .. "/snapshot" }
+    end
+    local events = Json.array()
+    for index, event in ipairs(state.events or {}) do
+        events[index] = { type = event.type, at = event.at }
+    end
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        camera = camera,
+        can_open = capabilities.open == true,
+        connected = state.connected == nil and Json.null or state.connected,
+        last_ring_at = last.doorbell or Json.null,
+        last_motion_at = last.motion or Json.null,
+        last_opened_at = last.opened or Json.null,
+        last_access_at = last.access or Json.null,
+        events = events,
     }
 end
 

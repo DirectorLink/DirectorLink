@@ -4,6 +4,7 @@ local ThermostatV2 = require("src.adapters.thermostat_v2")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
+local DoorBird = require("src.adapters.doorbird")
 
 local Manager = {}
 
@@ -13,11 +14,14 @@ local adapters = {
     Blind,
     Camera,
     KnxRelay,
+    DoorBird,
 }
 
 local attached = {}
+-- Device whose events belong to another device (a DoorBird driver's events -> its doorbell).
+local eventTargets = {}
 local registry = nil
-local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
+local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
 
 local function log(message)
     Log.info("adapters", tostring(message))
@@ -26,7 +30,8 @@ end
 function Manager.initialize(deviceRegistry)
     registry = deviceRegistry
     attached = {}
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
+    eventTargets = {}
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
 
     pcall(function()
         C4:UnregisterAllVariableListeners()
@@ -45,7 +50,7 @@ function Manager.initialize(deviceRegistry)
             if adapter.matches(device) then
                 attached[tonumber(id)] = adapter
 
-                local ok, success, err = pcall(adapter.initialize, device)
+                local ok, success, err = pcall(adapter.initialize, device, registry)
                 if not ok then
                     attached[tonumber(id)] = nil
                     device.supported = false
@@ -57,6 +62,9 @@ function Manager.initialize(deviceRegistry)
                     device.adapter_error = tostring(err or "adapter initialization failed")
                     log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
                 else
+                    if device.event_source_id then
+                        eventTargets[tonumber(device.event_source_id)] = tonumber(id)
+                    end
                     initialized = initialized + 1
                     initializedCounts.total = initializedCounts.total + 1
                     local kind = tostring(device.kind or "")
@@ -81,6 +89,7 @@ function Manager.counts()
         blind = initializedCounts.blind,
         camera = initializedCounts.camera,
         relay = initializedCounts.relay,
+        doorbell = initializedCounts.doorbell,
     }
 end
 
@@ -107,6 +116,7 @@ end
 
 function Manager.onDeviceEvent(deviceId, eventId)
     deviceId = tonumber(deviceId)
+    deviceId = eventTargets[deviceId] or deviceId
     local adapter = attached[deviceId]
     if not adapter or not adapter.onDeviceEvent or not registry then
         return false
@@ -169,8 +179,9 @@ function Manager.shutdown()
     end)
 
     attached = {}
+    eventTargets = {}
     registry = nil
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

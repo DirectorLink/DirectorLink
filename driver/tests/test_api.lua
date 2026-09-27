@@ -33,7 +33,7 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
     T.eq(mock.properties["API Status"], "Online - port 41999")
-    T.eq(mock.properties["Inventory"], "2 rooms, 10 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays")
+    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 3 lights, 1 thermostats, 2 blinds, 3 cameras, 1 relays, 1 doorbells")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a new driver offers a code, shown as 1234 5678")
     T.contains(mock.properties["Pairing Status"], "Ready until")
     for _, removed in ipairs({ "Controller OS", "Location", "API Port", "Access Request", "Reload Counter",
@@ -160,7 +160,7 @@ function tests.system_reports_controller_location_and_inventory()
     T.eq(system.location.country_code, "IL")
     T.eq(system.location.latitude, 32.08)
     T.eq(system.location.timezone, "Asia/Jerusalem")
-    T.same(system.inventory, { rooms = 2, devices = 10, supported_devices = 9, lights = 3, thermostats = 1, blinds = 2, cameras = 2, relays = 1 })
+    T.same(system.inventory, { rooms = 2, devices = 14, supported_devices = 11, lights = 3, thermostats = 1, blinds = 2, cameras = 3, relays = 1, doorbells = 1 })
     T.eq(system.lifecycle.reload_count, 1)
     T.eq(system.lifecycle.last_init_type, "DIT_STARTUP")
 end
@@ -171,7 +171,7 @@ function tests.rooms_list_and_get()
     T.eq(#rooms, 2)
     T.eq(rooms[1].name, "Kitchen")
     T.eq(rooms[1].floor.name, "Ground Floor")
-    T.eq(rooms[1].device_count, 5)
+    T.eq(rooms[1].device_count, 9)
     T.eq(rooms[2].name, "Living Room")
 
     T.eq(T.http(mock, "GET", "/v1/rooms/11", { key = key }).json.name, "Living Room")
@@ -182,7 +182,7 @@ end
 function tests.devices_use_logical_types_and_filters()
     local mock, key = start()
     local all = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
-    T.eq(#all, 10)
+    T.eq(#all, 14)
     local camera = byId(all, 40)
     T.eq(camera.type, "other")
     T.eq(camera.supported, false)
@@ -198,8 +198,9 @@ function tests.devices_use_logical_types_and_filters()
     end
 
     T.eq(#T.http(mock, "GET", "/v1/devices?type=light", { key = key }).json.items, 3)
-    T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 1)
-    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 5)
+    T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 3, "the camera, the DoorBird button and intercom")
+    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 9)
+    T.eq(byId(all, 93).href, "/v1/doorbells/93")
     T.eq(byId(all, 70).href, "/v1/relays/70")
     T.eq(byId(all, 60).href, "/v1/cameras/60")
     T.eq(#T.http(mock, "GET", "/v1/devices?type=blind", { key = key }).json.items, 2)
@@ -364,7 +365,7 @@ end
 function tests.cameras_are_listed_without_secrets()
     local mock, key = start()
     local cameras = T.http(mock, "GET", "/v1/cameras", { key = key }).json.items
-    T.eq(#cameras, 2)
+    T.eq(#cameras, 3)
     T.eq(cameras[1].name, "Driveway")
     T.eq(cameras[1].room.name, "Kitchen")
     T.eq(cameras[1].snapshot_href, "/v1/cameras/60/snapshot")
@@ -422,7 +423,13 @@ end
 
 function tests.relays_report_state_from_device_events()
     local mock, key = start()
-    T.same(mock.deviceEvents, { { 70, 3 }, { 70, 4 } }, "relay 1 opened and closed events are watched")
+    local relayEvents = {}
+    for _, watched in ipairs(mock.deviceEvents) do
+        if watched[1] == 70 then
+            relayEvents[#relayEvents + 1] = watched
+        end
+    end
+    T.same(relayEvents, { { 70, 3 }, { 70, 4 } }, "relay 1 opened and closed events are watched")
     local relays = T.http(mock, "GET", "/v1/relays", { key = key }).json.items
     T.eq(#relays, 1)
     T.eq(relays[1].name, "Main Door")
@@ -597,6 +604,74 @@ function tests.access_requests_are_gone()
     local mock = start()
     T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Phone" } }).status, 404)
     T.eq(mock.properties["Access Request"], nil)
+end
+
+function tests.doorbells_are_listed_with_their_camera()
+    local mock, key = start()
+    local doorbells = T.http(mock, "GET", "/v1/doorbells", { key = key }).json.items
+    T.eq(#doorbells, 1)
+    local bell = doorbells[1]
+    T.eq(bell.id, 93)
+    T.eq(bell.name, "Front Gate")
+    T.eq(bell.room.name, "Kitchen")
+    T.same(bell.camera, { id = 92, snapshot_href = "/v1/cameras/92/snapshot" })
+    T.eq(bell.can_open, true)
+    T.truthy(isNull(bell.connected) and isNull(bell.last_ring_at), "nothing known before the first event")
+    T.eq(#bell.events, 0)
+    T.eq(T.http(mock, "GET", "/v1/cameras/92/snapshot", { key = key }).status, 200, "its camera works like any camera")
+    T.eq(T.http(mock, "GET", "/v1/doorbells/92", { key = key }).status, 404, "a camera is not a doorbell")
+    local watched = {}
+    for _, event in ipairs(mock.deviceEvents) do
+        if event[1] == 110 then
+            watched[#watched + 1] = event[2]
+        end
+    end
+    table.sort(watched)
+    T.same(watched, { 100, 102, 103, 104, 106 }, "DoorBird's events are watched on its driver")
+end
+
+function tests.doorbird_events_update_the_doorbell()
+    local mock, key = start()
+    OnDeviceEvent(110, 103)
+    OnDeviceEvent(110, 102)
+    local bell = T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json
+    T.truthy(bell.last_ring_at:match("^%d%d%d%d%-%d%d%-%d%dT"), "ring time")
+    T.truthy(bell.last_motion_at, "motion time")
+    T.eq(bell.connected, true)
+    T.eq(bell.events[1].type, "doorbell", "newest first")
+    T.eq(bell.events[2].type, "motion")
+
+    OnDeviceEvent(110, 104)
+    OnDeviceEvent(110, 106)
+    OnDeviceEvent(110, 999)
+    bell = T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json
+    T.truthy(bell.last_opened_at and bell.last_access_at, "gate opened and keypad access")
+    T.eq(#bell.events, 4, "unknown events are ignored")
+
+    OnDeviceEvent(110, 100)
+    T.eq(T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json.connected, false)
+    for _ = 1, 30 do
+        OnDeviceEvent(110, 103)
+    end
+    T.eq(#T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json.events, 20, "the last 20 events are kept")
+end
+
+function tests.opening_presses_the_doorbird_button()
+    local mock, admin = start()
+    local refused = T.http(mock, "POST", "/v1/doorbells/93/open", { key = admin })
+    T.eq(refused.status, 403)
+    T.eq(refused.json.code, "DOOR_CONTROL_DISABLED")
+    Properties["Door Control"] = "Enabled"
+
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Phone", role = "member" } }).json.key
+    T.eq(T.http(mock, "POST", "/v1/doorbells/93/open", { key = member }).json.required_role, "doors")
+
+    local before = #mock.commands
+    local opened = T.http(mock, "POST", "/v1/doorbells/93/open", { key = admin })
+    T.eq(opened.status, 202)
+    T.eq(#mock.commands, before + 1)
+    T.same(mock.commands[#mock.commands], { device = 90, command = "SELECT", params = {} }, "the DoorBird button, as the Control4 app presses it")
+    T.eq(T.http(mock, "POST", "/v1/doorbells/99/open", { key = admin }).status, 404)
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()
