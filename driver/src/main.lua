@@ -8,6 +8,7 @@ local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
+local Relay = require("src.cloud.relay")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -139,14 +140,15 @@ local function discover()
 
     local counts = Registry.counts()
     updateProperty("Inventory", string.format(
-        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays",
+        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays, %d doorbells",
         counts.rooms,
         counts.devices,
         counts.supported_lights,
         counts.supported_climate,
         counts.supported_blinds,
         counts.supported_cameras,
-        counts.supported_relays
+        counts.supported_relays,
+        counts.supported_doorbells
     ))
     Log.info("discovery", "project discovered", counts)
     setStatus("ok")
@@ -185,7 +187,8 @@ function OnDriverLateInit(driverInitType)
         return
     end
 
-    Keys.load()
+    local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
+    Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
     RoomNames.load()
     publishKeyCount()
 
@@ -210,6 +213,19 @@ function OnDriverLateInit(driverInitType)
 
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
     discover()
+
+    Relay.init({
+        services = services,
+        handleRequest = Api.handleRequest,
+        onStatus = function(text)
+            updateProperty("Remote Status", text)
+        end,
+    })
+    if Properties and Properties["Remote Access"] == "On" then
+        Relay.start()
+    else
+        updateProperty("Remote Status", "Off")
+    end
 end
 
 function ExecuteCommand(command, params)
@@ -226,6 +242,13 @@ function ExecuteCommand(command, params)
 end
 
 function OnPropertyChanged(name)
+    if name == "Remote Access" and Properties then
+        if Properties[name] == "On" then
+            Relay.start()
+        else
+            Relay.stop()
+        end
+    end
     if name == "Door Control" and Properties then
         Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")
     end
@@ -245,6 +268,15 @@ function OnDeviceEvent(firingDevice, eventId)
     AdapterManager.onDeviceEvent(firingDevice, eventId)
 end
 
+-- The relay's outgoing connection (network binding 6001).
+function OnConnectionStatusChanged(idBinding, nPort, strStatus)
+    Relay.onConnectionStatus(idBinding, nPort, strStatus)
+end
+
+function ReceivedFromNetwork(idBinding, nPort, strData)
+    Relay.onData(idBinding, nPort, strData)
+end
+
 function OnServerStatusChanged(port, status)
     Api.onStatusChanged(port, status)
 end
@@ -261,6 +293,7 @@ function OnDriverDestroyed(driverInitType)
     persistSet(LIFECYCLE_KEYS.last_destroy_type, tostring(driverInitType or "nil"))
     persistSet(LIFECYCLE_KEYS.last_destroy_time, os.date("%Y-%m-%d %H:%M:%S"))
     Log.info("lifecycle", "driver destroyed", { init_type = tostring(driverInitType) })
+    Relay.stop()
     Api.stop()
     AdapterManager.shutdown()
 end

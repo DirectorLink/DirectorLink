@@ -111,6 +111,18 @@ function Registry.relayList()
     return sortedList(relays)
 end
 
+function Registry.doorbellList()
+    local doorbells = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "doorbell" and device.supported == true then
+            doorbells[id] = device
+        end
+    end
+
+    return sortedList(doorbells)
+end
+
 function Registry.lightList()
     local lights = {}
 
@@ -132,6 +144,7 @@ function Registry.counts()
     local supportedBlinds = 0
     local supportedCameras = 0
     local supportedRelays = 0
+    local supportedDoorbells = 0
 
     for _, device in pairs(Registry.devices) do
         if device.recognized then
@@ -152,6 +165,8 @@ function Registry.counts()
                 supportedCameras = supportedCameras + 1
             elseif device.kind == "relay" then
                 supportedRelays = supportedRelays + 1
+            elseif device.kind == "doorbell" then
+                supportedDoorbells = supportedDoorbells + 1
             end
         end
     end
@@ -169,6 +184,7 @@ function Registry.counts()
         supported_blinds = supportedBlinds,
         supported_cameras = supportedCameras,
         supported_relays = supportedRelays,
+        supported_doorbells = supportedDoorbells,
     }
 end
 

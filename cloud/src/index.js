@@ -1,0 +1,95 @@
+// DirectorLink relay on https://api.directorlink.io (docs/RELAY.md, version 0).
+//
+// The driver keeps one outgoing WebSocket here, and requests for its home travel over it. Every
+// home is one Durable Object (HomeRelay, home-relay.js, named by home_id); this Worker checks each
+// request and hands it to that object.
+//
+//   GET /health                        {"status":"ok"}
+//   GET /relay/connect                 the driver's WebSocket
+//                                      (X-DirectorLink-Home, Authorization: Bearer <home_secret>)
+//   GET /test/homes/{home_id}/status   the home's connection     } Authorization: Bearer <TEST_TOKEN>
+//   GET /test/homes/{home_id}/v1/...   relayed to the driver     } (version 0 only)
+//
+// Errors are Problem Details (application/problem+json) with a stable `code`.
+
+import { HomeRelay } from "./home-relay.js";
+import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
+
+export { HomeRelay };
+
+const HOME_ID = /^[0-9a-f]{32}$/;
+const HOME_SECRET = /^[0-9a-f]{64}$/i;
+const TEST_ROUTE = /^\/test\/homes\/([^/]*)(\/status|\/v1(?:\/.*)?)$/;
+
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    try {
+      if (url.pathname === "/health") {
+        return request.method === "GET" ? json({ status: "ok" }) : methodNotAllowed();
+      }
+      if (url.pathname === "/relay/connect") {
+        return await connect(request, env);
+      }
+      const test = TEST_ROUTE.exec(url.pathname);
+      if (test) {
+        return await testEndpoint(request, env, test[1], test[2], url.search);
+      }
+      return problem(404, "NOT_FOUND", `${url.pathname} is not a DirectorLink relay endpoint`);
+    } catch (error) {
+      console.error(JSON.stringify({ event: "worker_error", path: url.pathname, error: String(error?.stack ?? error) }));
+      return problem(500, "INTERNAL_ERROR", "The relay failed; try again");
+    }
+  },
+};
+
+function homeRelay(env, homeId) {
+  return env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
+}
+
+// The driver's WebSocket. The home's Durable Object checks the secret (trust on first use) and
+// accepts the socket.
+async function connect(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed();
+  }
+  if ((request.headers.get("Upgrade") ?? "").toLowerCase() !== "websocket") {
+    return problem(400, "WEBSOCKET_REQUIRED", "Connect with a WebSocket upgrade (Upgrade: websocket)");
+  }
+  const homeId = request.headers.get("X-DirectorLink-Home") ?? "";
+  if (!HOME_ID.test(homeId)) {
+    return problem(400, "INVALID_HOME_ID", "X-DirectorLink-Home must be the home_id: 32 lowercase hex characters");
+  }
+  const secret = bearerToken(request);
+  if (!secret || !HOME_SECRET.test(secret)) {
+    return problem(400, "INVALID_HOME_SECRET", "Authorization must be Bearer <home_secret>: 64 hex characters");
+  }
+  return homeRelay(env, homeId).fetch(request);
+}
+
+// Version 0 test endpoints: one shared token (the TEST_TOKEN secret) until accounts exist.
+async function testEndpoint(request, env, homeId, rest, search) {
+  if (!env.TEST_TOKEN) {
+    return problem(503, "TEST_TOKEN_NOT_SET", "The test endpoints are off: the TEST_TOKEN secret is not set");
+  }
+  const token = bearerToken(request);
+  if (!token || !(await sameSecret(token, env.TEST_TOKEN))) {
+    return problem(401, "UNAUTHORIZED", "Send Authorization: Bearer <TEST_TOKEN>", {
+      "WWW-Authenticate": 'Bearer realm="DirectorLink relay"',
+    });
+  }
+  if (request.method !== "GET") {
+    return methodNotAllowed();
+  }
+  if (!HOME_ID.test(homeId)) {
+    return problem(400, "INVALID_HOME_ID", "home_id must be 32 lowercase hex characters");
+  }
+  const relay = homeRelay(env, homeId);
+  if (rest === "/status") {
+    return relay.fetch("https://home-relay/status", { headers: { "X-DirectorLink-Home": homeId } });
+  }
+  // The driver gets the API path with its query string, exactly as it arrived here.
+  return relay.fetch("https://home-relay/forward", {
+    headers: { "X-DirectorLink-Home": homeId, "X-DirectorLink-Path": rest + search },
+  });
+}

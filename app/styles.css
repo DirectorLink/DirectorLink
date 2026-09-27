@@ -1541,6 +1541,190 @@ img {
   }
 }
 
+/* ---- Doorbells ----------------------------------------------------------------------------- */
+
+/* Home: "Someone is at the door", in the palette's "on" colour. */
+.ring-banner {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--onBg);
+  color: var(--onText);
+  box-shadow: var(--shadow);
+}
+
+.ring-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ring-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--onText) 14%, transparent);
+  animation: ring 1.6s ease-in-out infinite;
+}
+
+@keyframes ring {
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--onText) 12%, transparent);
+  }
+}
+
+.ring-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ring-title {
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+
+.ring-meta,
+.ring-note {
+  font-size: 14px;
+}
+
+.ring-banner .doorbell-picture .cam {
+  border-radius: var(--radius);
+  aspect-ratio: 4 / 3;
+}
+
+.ring-banner .relay-actions {
+  flex-wrap: wrap;
+  margin-block-start: 0;
+}
+
+.ring-banner .relay-button:not(.is-confirm):not(.is-sent) {
+  background: var(--card);
+  border-color: transparent;
+}
+
+.relay-button-large {
+  min-height: 52px;
+  font-size: 16px;
+}
+
+@media (min-width: 760px) {
+  .ring-banner {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-areas: "picture head" "picture actions" "picture note";
+    align-items: start;
+    align-content: start;
+    column-gap: 20px;
+  }
+  .ring-banner > .doorbell-picture {
+    grid-area: picture;
+  }
+  .ring-banner > .ring-head {
+    grid-area: head;
+  }
+  .ring-banner > .relay-actions {
+    grid-area: actions;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ring-banner > .ring-note,
+  .ring-banner > .inline-error {
+    grid-area: note;
+  }
+}
+
+/* Other screens: one line that leads to the banner. */
+.banner-ring {
+  background: var(--onBg);
+  color: var(--onText);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.banner-ring .banner-action {
+  flex: none;
+  text-decoration: underline;
+}
+
+/* Room screen. */
+.device.doorbell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.device.doorbell.is-offline .device-meta {
+  color: var(--errText);
+}
+
+.doorbell-picture {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.device.doorbell .relay-actions {
+  margin-block-start: 0;
+}
+
+.doorbell-events {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.doorbell-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.doorbell-event-type {
+  font-weight: 500;
+}
+
+.doorbell-event-time {
+  color: var(--muted);
+  text-align: end;
+}
+
+.event-doorbell .doorbell-event-type {
+  color: var(--onText);
+}
+
+.event-communication_failed .doorbell-event-type {
+  color: var(--errText);
+}
+
+.badge-ring {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.fav-tile.is-ringing {
+  background: var(--onBg);
+  border-color: transparent;
+  color: var(--onText);
+}
+
+.fav-tile.is-ringing .fav-icon,
+.fav-tile.is-ringing .fav-room,
+.fav-tile.is-ringing .fav-state {
+  color: var(--onText);
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {

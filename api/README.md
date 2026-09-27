@@ -9,7 +9,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json` and pairing (`POST /v1/auth/pair`). |
 | Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds), `doors` (also doors and gates), `admin` (also keys, room names, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
@@ -42,7 +42,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
      -d '{"brightness": 40}'
    ```
 
-Keys are stored encrypted on the controller. The Composer action **Revoke All API Keys** removes every key if one is lost.
+The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. The Composer action **Revoke All API Keys** removes every key if one is lost.
 
 ## Debugging
 

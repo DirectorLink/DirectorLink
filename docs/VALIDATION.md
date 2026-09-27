@@ -203,3 +203,17 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 - Existing keys became `admin`. Viewer, member and doors behaviour is covered by the driver tests and the live contract test (403 `FORBIDDEN`, `DOOR_CONTROL_DISABLED`, self-revoke).
 - Web app status flapping: the controller answered 45 refresh-style requests in under 0.1 s each with a camera snapshot in flight (camera 99 offline times out after 3 s without delaying others); the app now needs two failed refreshes in a row before it shows "unreachable".
 - Hikvision snapshots are full resolution (~1 MB) whatever `width` is requested — to address before remote access.
+
+## 2026-09-27 — v0.9.0 (test build) remote access through the relay
+
+- Updated from 0.8.0 in Composer: reloaded in place (`DIT_UPDATING`); discovery found the DoorBird doorstation (165 supported devices, 1 doorbell).
+- Relay deployed to `api.directorlink.io` (Worker `directorlink-api`, one Durable Object per home). A byte-level fake driver on a PC connected over the internet first: TLS, upgrade, `hello` and a relayed `GET` all worked.
+- **The driver's WebSocket client works on Director 3.4.3:** with Remote Access switched on, `C4:CreateNetworkConnection` + `C4:NetPortOptions(…, "SSL", …)` + `C4:NetConnect` reached Cloudflare (SNI works), the upgrade succeeded and the driver was connected about 1 s after the switch (17:35:29 → 17:35:30). Keep-alive pings kept the relay's `last_seen` current.
+- Through the relay's test endpoint, from outside the home: `/v1/system` 200 in 0.35 s, `/v1/lights` 200 (111 lights, 18.6 KB) in 0.58 s, `/v1/doorbells` 200, camera pictures as base64 (DoorBird 26 KB in 0.7 s; Hikvision 962 KB in 2.9 s, 355 ms of it on the controller). `/v1/logs` answered 403 (relayed requests are viewer only).
+- The driver logged each relayed request with client `relay`; no warnings or errors; Director at 6 % CPU and 310 MB resident, as before.
+
+## 2026-09-27 — v0.9.1 (test build): saved data came back decoded
+
+- Updated 0.9.0 → 0.9.1, paired, then updated again with the same file: the key and the remote identity were gone again (at the reload the driver logged `pairing code created` and `remote identity created` with a new home id).
+- Director's `state.db` (`item_state`, device 578) held everything DirectorLink had written: the key store (overwritten at that reload with an empty list), the identity, and the counters — `directorlink_reload_count` 4 and `directorlink_pairing_count` 7, incremented by the same pairing that saved the key.
+- So the values were saved, and only the JSON ones failed to load: `C4:PersistGetValue` returns a stored JSON string decoded, as a Lua table, and the driver accepted only strings. Fixed in 0.9.2 (ADR-028).

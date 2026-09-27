@@ -2,8 +2,16 @@
 
 local Mock = require("c4mock")
 local T = require("helpers")
+local Json = require("src.core.json")
+local sha256 = require("sha256")
 
 local tests = {}
+
+local function hex(bytes)
+    return (bytes:gsub(".", function(c)
+        return string.format("%02x", c:byte())
+    end))
+end
 
 local function isNull(value)
     return type(value) == "table" and tostring(value) == "null"
@@ -33,7 +41,7 @@ function tests.driver_starts_the_api_and_reports_ready()
     T.eq(mock.servers[41999].delimiter, "", "raw mode: no delimiter")
     T.eq(mock.properties["Status"], "Ready")
     T.eq(mock.properties["API Status"], "Online - port 41999")
-    T.eq(mock.properties["Inventory"], "2 rooms, 10 devices, 3 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays")
+    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 3 lights, 1 thermostats, 2 blinds, 3 cameras, 1 relays, 1 doorbells")
     T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a new driver offers a code, shown as 1234 5678")
     T.contains(mock.properties["Pairing Status"], "Ready until")
     for _, removed in ipairs({ "Controller OS", "Location", "API Port", "Access Request", "Reload Counter",
@@ -100,11 +108,7 @@ function tests.pairing_codes_are_created_on_demand_and_expire()
     local mock = Mock.startDriver()
     T.pair(mock, "Owner")
     -- A driver that already has keys starts without a code.
-    local restarted = Mock.startDriver()
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
+    local restarted = Mock.updateDriver(mock)
     T.eq(restarted.properties["Pairing Code"], "-")
     T.contains(restarted.properties["Pairing Status"], "New Pairing Code")
     T.eq(T.http(restarted, "POST", "/v1/auth/pair", { body = { pairing_code = "12345678" } }).json.code, "PAIRING_NOT_ACTIVE")
@@ -160,7 +164,7 @@ function tests.system_reports_controller_location_and_inventory()
     T.eq(system.location.country_code, "IL")
     T.eq(system.location.latitude, 32.08)
     T.eq(system.location.timezone, "Asia/Jerusalem")
-    T.same(system.inventory, { rooms = 2, devices = 10, supported_devices = 9, lights = 3, thermostats = 1, blinds = 2, cameras = 2, relays = 1 })
+    T.same(system.inventory, { rooms = 2, devices = 14, supported_devices = 11, lights = 3, thermostats = 1, blinds = 2, cameras = 3, relays = 1, doorbells = 1 })
     T.eq(system.lifecycle.reload_count, 1)
     T.eq(system.lifecycle.last_init_type, "DIT_STARTUP")
 end
@@ -171,7 +175,7 @@ function tests.rooms_list_and_get()
     T.eq(#rooms, 2)
     T.eq(rooms[1].name, "Kitchen")
     T.eq(rooms[1].floor.name, "Ground Floor")
-    T.eq(rooms[1].device_count, 5)
+    T.eq(rooms[1].device_count, 9)
     T.eq(rooms[2].name, "Living Room")
 
     T.eq(T.http(mock, "GET", "/v1/rooms/11", { key = key }).json.name, "Living Room")
@@ -182,7 +186,7 @@ end
 function tests.devices_use_logical_types_and_filters()
     local mock, key = start()
     local all = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
-    T.eq(#all, 10)
+    T.eq(#all, 14)
     local camera = byId(all, 40)
     T.eq(camera.type, "other")
     T.eq(camera.supported, false)
@@ -198,8 +202,9 @@ function tests.devices_use_logical_types_and_filters()
     end
 
     T.eq(#T.http(mock, "GET", "/v1/devices?type=light", { key = key }).json.items, 3)
-    T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 1)
-    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 5)
+    T.eq(#T.http(mock, "GET", "/v1/devices?supported=false", { key = key }).json.items, 3, "the camera, the DoorBird button and intercom")
+    T.eq(#T.http(mock, "GET", "/v1/devices?room_id=10", { key = key }).json.items, 9)
+    T.eq(byId(all, 93).href, "/v1/doorbells/93")
     T.eq(byId(all, 70).href, "/v1/relays/70")
     T.eq(byId(all, 60).href, "/v1/cameras/60")
     T.eq(#T.http(mock, "GET", "/v1/devices?type=blind", { key = key }).json.items, 2)
@@ -364,7 +369,7 @@ end
 function tests.cameras_are_listed_without_secrets()
     local mock, key = start()
     local cameras = T.http(mock, "GET", "/v1/cameras", { key = key }).json.items
-    T.eq(#cameras, 2)
+    T.eq(#cameras, 3)
     T.eq(cameras[1].name, "Driveway")
     T.eq(cameras[1].room.name, "Kitchen")
     T.eq(cameras[1].snapshot_href, "/v1/cameras/60/snapshot")
@@ -422,7 +427,13 @@ end
 
 function tests.relays_report_state_from_device_events()
     local mock, key = start()
-    T.same(mock.deviceEvents, { { 70, 3 }, { 70, 4 } }, "relay 1 opened and closed events are watched")
+    local relayEvents = {}
+    for _, watched in ipairs(mock.deviceEvents) do
+        if watched[1] == 70 then
+            relayEvents[#relayEvents + 1] = watched
+        end
+    end
+    T.same(relayEvents, { { 70, 3 }, { 70, 4 } }, "relay 1 opened and closed events are watched")
     local relays = T.http(mock, "GET", "/v1/relays", { key = key }).json.items
     T.eq(#relays, 1)
     T.eq(relays[1].name, "Main Door")
@@ -486,14 +497,9 @@ function tests.rooms_have_names_per_language()
     T.eq(T.http(mock, "PATCH", "/v1/rooms/10", { key = key, body = { name = "x" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "PATCH", "/v1/rooms/999", { key = key, body = { names = { en = "x" } } }).status, 404)
 
-    -- Names survive a driver restart.
-    local restarted = Mock.startDriver()
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
-    local restartedKey = T.pair(restarted)
-    T.same(T.http(restarted, "GET", "/v1/rooms/10", { key = restartedKey }).json.names, { he = "מטבח" })
+    -- Names survive a driver update.
+    local updated = Mock.updateDriver(mock)
+    T.same(T.http(updated, "GET", "/v1/rooms/10", { key = key }).json.names, { he = "מטבח" })
 end
 
 function tests.doors_stay_shut_until_door_control_is_enabled()
@@ -579,24 +585,118 @@ function tests.admins_change_roles_but_keep_one_admin()
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } }).json.role, "member")
 end
 
-function tests.keys_from_before_roles_keep_full_access()
-    local project = Mock.project()
-    local mock = Mock.install(project)
-    mock.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
-    local restarted = Mock.startDriver(project)
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
-    end
-    OnDriverLateInit("DIT_UPDATING")
-    local me = T.http(restarted, "GET", "/v1/api-keys/current", { key = "ak_old" })
+function tests.keys_in_the_old_encrypted_store_are_moved_to_hashes()
+    -- Up to 0.9.0 the keys themselves were stored encrypted. If Director can still read them they
+    -- are moved, and keys from before roles existed keep full access.
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
+        fresh.persistEncrypted["directorlink_api_keys"] = true
+    end)
+    local me = T.http(mock, "GET", "/v1/api-keys/current", { key = "ak_old" })
     T.eq(me.status, 200)
     T.eq(me.json.role, "admin")
+    T.eq(me.json.name, "Old laptop")
+    T.eq(mock.properties["Pairing Code"], "-", "no pairing code opens when the keys were kept")
+    T.notContains(mock.persist["directorlink_api_keys"], "ak_old", "the old store no longer holds the keys")
+    T.notContains(mock.persist["directorlink_api_key_hashes"], "ak_old")
+
+    local updated = Mock.updateDriver(mock)
+    T.eq(T.http(updated, "GET", "/v1/api-keys/current", { key = "ak_old" }).status, 200, "and they survive the next update")
+end
+
+function tests.keys_stored_by_0_9_1_as_plain_json_are_still_read()
+    -- 0.9.1 stored plain JSON, which Director hands back decoded.
+    local hash = hex(sha256("ak_phone"))
+    local mock = Mock.startDriver(nil, nil, "DIT_UPDATING", function(fresh)
+        fresh.persist["directorlink_api_key_hashes"] = '{"keys":[{"alg":"sha256","created_at":"2026-09-27T15:00:42Z","hash":"'
+            .. hash .. '","id":"4fde46cc","name":"Chrome on Windows","role":"admin"}],"version":3}'
+    end)
+    T.eq(T.http(mock, "GET", "/v1/api-keys/current", { key = "ak_phone" }).json.id, "4fde46cc")
+    T.eq(mock.properties["Pairing Code"], "-")
+    T.eq(mock.persist["directorlink_api_key_hashes"]:sub(1, 5), "json:", "and it is stored the current way")
+    T.contains(table.concat(mock.debugLog, "\n"), '"stored_as":"table"', "the log says how the keys came back")
+end
+
+function tests.a_new_driver_has_no_keys_and_opens_pairing()
+    local mock = Mock.startDriver()
+    T.eq(mock.properties["API Keys"], "0")
+    T.truthy(mock.properties["Pairing Code"]:match("^%d%d%d%d %d%d%d%d$"), "a pairing code is shown")
+    T.eq(mock.persist["directorlink_api_keys"], nil, "no old store is created")
+    T.contains(table.concat(mock.debugLog, "\n"), '"old_store":"missing"')
 end
 
 function tests.access_requests_are_gone()
     local mock = start()
     T.eq(T.http(mock, "POST", "/v1/auth/requests", { body = { name = "Phone" } }).status, 404)
     T.eq(mock.properties["Access Request"], nil)
+end
+
+function tests.doorbells_are_listed_with_their_camera()
+    local mock, key = start()
+    local doorbells = T.http(mock, "GET", "/v1/doorbells", { key = key }).json.items
+    T.eq(#doorbells, 1)
+    local bell = doorbells[1]
+    T.eq(bell.id, 93)
+    T.eq(bell.name, "Front Gate")
+    T.eq(bell.room.name, "Kitchen")
+    T.same(bell.camera, { id = 92, snapshot_href = "/v1/cameras/92/snapshot" })
+    T.eq(bell.can_open, true)
+    T.truthy(isNull(bell.connected) and isNull(bell.last_ring_at), "nothing known before the first event")
+    T.eq(#bell.events, 0)
+    T.eq(T.http(mock, "GET", "/v1/cameras/92/snapshot", { key = key }).status, 200, "its camera works like any camera")
+    T.eq(T.http(mock, "GET", "/v1/doorbells/92", { key = key }).status, 404, "a camera is not a doorbell")
+    local watched = {}
+    for _, event in ipairs(mock.deviceEvents) do
+        if event[1] == 110 then
+            watched[#watched + 1] = event[2]
+        end
+    end
+    table.sort(watched)
+    T.same(watched, { 100, 102, 103, 104, 106 }, "DoorBird's events are watched on its driver")
+end
+
+function tests.doorbird_events_update_the_doorbell()
+    local mock, key = start()
+    OnDeviceEvent(110, 103)
+    OnDeviceEvent(110, 102)
+    local bell = T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json
+    T.truthy(bell.last_ring_at:match("^%d%d%d%d%-%d%d%-%d%dT"), "ring time")
+    T.truthy(bell.last_motion_at, "motion time")
+    T.eq(bell.connected, true)
+    T.eq(bell.events[1].type, "doorbell", "newest first")
+    T.eq(bell.events[2].type, "motion")
+
+    OnDeviceEvent(110, 104)
+    OnDeviceEvent(110, 106)
+    OnDeviceEvent(110, 999)
+    bell = T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json
+    T.truthy(bell.last_opened_at and bell.last_access_at, "gate opened and keypad access")
+    T.eq(#bell.events, 4, "unknown events are ignored")
+
+    OnDeviceEvent(110, 100)
+    T.eq(T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json.connected, false)
+    for _ = 1, 30 do
+        OnDeviceEvent(110, 103)
+    end
+    T.eq(#T.http(mock, "GET", "/v1/doorbells/93", { key = key }).json.events, 20, "the last 20 events are kept")
+end
+
+function tests.opening_presses_the_doorbird_button()
+    local mock, admin = start()
+    local refused = T.http(mock, "POST", "/v1/doorbells/93/open", { key = admin })
+    T.eq(refused.status, 403)
+    T.eq(refused.json.code, "DOOR_CONTROL_DISABLED")
+    Properties["Door Control"] = "Enabled"
+
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Phone", role = "member" } }).json.key
+    T.eq(T.http(mock, "POST", "/v1/doorbells/93/open", { key = member }).json.required_role, "doors")
+
+    local before = #mock.commands
+    local opened = T.http(mock, "POST", "/v1/doorbells/93/open", { key = admin })
+    T.eq(opened.status, 202)
+    T.eq(#mock.commands, before + 1)
+    T.same(mock.commands[#mock.commands], { device = 90, command = "SELECT", params = {} }, "the DoorBird button, as the Control4 app presses it")
+    T.eq(T.http(mock, "POST", "/v1/doorbells/99/open", { key = admin }).status, 404)
 end
 
 function tests.api_keys_can_be_listed_created_and_revoked()
@@ -619,18 +719,41 @@ function tests.api_keys_can_be_listed_created_and_revoked()
     T.eq(mock.properties["API Keys"], "1")
 end
 
-function tests.keys_survive_a_driver_restart()
-    local mock, key = start()
-    local persisted = mock.persist["directorlink_api_keys"]
-    T.truthy(persisted and persisted:find(key, 1, true), "key stored in encrypted persistence")
+-- A value as the driver stored it: "json:" plus JSON.
+local function stored(mock, name)
+    local value = mock.persist[name]
+    T.eq(value:sub(1, 5), "json:", name .. " is stored with its prefix")
+    return Json.decode(value:sub(6))
+end
 
-    local project = Mock.project()
-    local restarted = Mock.startDriver(project)
-    for name, value in pairs(mock.persist) do
-        restarted.persist[name] = value
+function tests.keys_survive_a_driver_update_and_only_hashes_are_stored()
+    local mock, key = start()
+    T.eq(mock.persistEncrypted["directorlink_api_key_hashes"], false)
+    T.notContains(mock.persist["directorlink_api_key_hashes"], key:sub(4), "the key itself is never stored")
+    local record = stored(mock, "directorlink_api_key_hashes").keys[1]
+    T.eq(record.alg, "sha256")
+    T.eq(record.hash, hex(sha256(key)))
+    T.eq(record.secret, nil)
+
+    local updated = Mock.updateDriver(mock)
+    T.eq(T.http(updated, "GET", "/v1/system", { key = key }).status, 200, "the key still works after an update")
+    T.eq(updated.properties["API Keys"], "1")
+    T.eq(updated.properties["Pairing Code"], "-", "no pairing code opens")
+    T.eq(T.http(updated, "GET", "/v1/system", { key = key .. "0" }).status, 401)
+    T.eq(T.http(updated, "GET", "/v1/system", { key = string.rep("a", 4096) }).status, 401)
+end
+
+function tests.keys_are_hashed_with_sha1_when_sha256_is_missing()
+    local mock = Mock.startDriver()
+    local hash = C4.Hash
+    function C4:Hash(algorithm, data, options)
+        assert(algorithm ~= "SHA256", "unsupported digest")
+        return hash(self, algorithm, data, options)
     end
-    OnDriverLateInit("DIT_UPDATING")
-    T.eq(T.http(restarted, "GET", "/v1/system", { key = key }).status, 200)
+    local key = T.pair(mock)
+    T.eq(stored(mock, "directorlink_api_key_hashes").keys[1].alg, "sha1")
+    T.eq(T.http(mock, "GET", "/v1/system", { key = key }).status, 200)
+    T.eq(T.http(Mock.updateDriver(mock), "GET", "/v1/system", { key = key }).status, 200)
 end
 
 function tests.composer_action_revokes_all_keys()

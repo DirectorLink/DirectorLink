@@ -87,6 +87,8 @@ DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10
 
 DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
 
+**Finding (0.9.1, OS 3.4.3):** `C4:PersistGetValue` returns a stored string that is JSON decoded, as a Lua table; strings that are not JSON come back as written. Other drivers' typed values are stored the same way (`{":boolean:":true}` in `state.db`). The values themselves survive driver updates in `state.db` (`item_state`, one row per name and device). DirectorLink therefore stores `json:` plus JSON and accepts decoded tables (`src/core/store.lua`, ADR-028).
+
 Reference:
 - https://control4.github.io/docs-driverworks-api/
 
