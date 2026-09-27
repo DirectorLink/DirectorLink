@@ -30,6 +30,9 @@ export const state = {
   online: navigator.onLine,
   canInstall: false,
   offlineCopy: "checking",
+  // The DirectorLink account (account.js): status unknown · loading · signed-in · signed-out ·
+  // unavailable; notice is a sign-in outcome to show once (cancelled, expired, failed, …).
+  account: { status: "unknown", user: null, notice: null, busy: false },
 };
 
 // UI-only state (not from the controller).

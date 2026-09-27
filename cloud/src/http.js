@@ -4,6 +4,7 @@
 const TITLES = {
   400: "Bad Request",
   401: "Unauthorized",
+  403: "Forbidden",
   404: "Not Found",
   405: "Method Not Allowed",
   500: "Internal Server Error",
@@ -29,8 +30,46 @@ export function problem(status, code, detail, headers = {}) {
   });
 }
 
-export function methodNotAllowed() {
-  return problem(405, "METHOD_NOT_ALLOWED", "Only GET is allowed here", { Allow: "GET" });
+export function methodNotAllowed(allow = "GET") {
+  return problem(405, "METHOD_NOT_ALLOWED", `Only ${allow} is allowed here`, { Allow: allow });
+}
+
+export function base64url(bytes) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function fromBase64url(text) {
+  const base64 = text.replace(/-/g, "+").replace(/_/g, "/");
+  const binary = atob(base64 + "=".repeat((4 - (base64.length % 4)) % 4));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+// `bytes` random bytes as base64url (cookies, OAuth state and nonce) or as hex (ids).
+export function randomToken(bytes = 32) {
+  return base64url(crypto.getRandomValues(new Uint8Array(bytes)));
+}
+
+export function randomHex(bytes = 16) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function readCookie(request, name) {
+  for (const part of (request.headers.get("Cookie") ?? "").split(";")) {
+    const index = part.indexOf("=");
+    if (index > 0 && part.slice(0, index).trim() === name) {
+      return part.slice(index + 1).trim();
+    }
+  }
+  return null;
+}
+
+// A `__Host-` cookie: HTTPS only, this host only, invisible to scripts. Max-Age 0 removes it.
+export function setCookie(name, value, { maxAge, sameSite = "Strict" }) {
+  return `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAge}`;
 }
 
 // The token of `Authorization: Bearer <token>`, or null.

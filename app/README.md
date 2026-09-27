@@ -8,7 +8,7 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 - `theme-boot.js` — blocking script in `<head>`: applies the saved palette, theme and text direction before the first paint (the CSP forbids inline scripts)
 - `app.js` — entry module: hash router, renderer, dialogs, start-up
 - `js/` — ES modules, no build step:
-  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden; live pictures about every second), `doorbells.js` (noticing rings, Dismiss, notifications), `rings.js` (when a ring is recent, relative times; no browser dependencies, unit-tested)
+  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden; live pictures about every second), `doorbells.js` (noticing rings, Dismiss, notifications), `account.js` (sign in with Google through api.directorlink.io, sign out, delete the account; a device that never signed in never asks), `rings.js` (when a ring is recent, relative times; no browser dependencies, unit-tested)
   - `model.js` (room names per language, grouping, "on" counts), `favorites.js` (per controller, in `localStorage`), `components.js` (device rows and tiles), `dom.js`, `icons.js` (inline stroke SVG), `theme.js`, `i18n.js`, `pwa.js` (service worker, install prompt)
   - `views/` — `home.js`, `room.js`, `cameras.js`, `climate.js`, `settings.js`, `connect.js` (first-time setup), `common.js` (header, connection chip, shared states)
 - `i18n/en.js`, `i18n/he.js` — interface text
@@ -25,7 +25,7 @@ Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/
 - **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doorbells (drivers with `/v1/doorbells`), Doors & gates (drivers with `/v1/relays`), Cameras (without the doorbell's own camera, shown with the doorbell) and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
 - **Cameras** — one large picture and a grid; thumbnails refresh about every 3 s, the full view about every second.
 - **Climate** — all thermostats grouped by room.
-- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost; doorbell notifications), about. The controller's project counts include doorbells.
+- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), account (sign in with Google, sign out, delete account; `docs/ACCOUNTS.md`), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost; doorbell notifications), about. The controller's project counts include doorbells.
 
 ## Pairing
 
