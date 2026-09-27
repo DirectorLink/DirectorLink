@@ -4,6 +4,7 @@
 
 import { formatPairingCode } from "../../api-client.js";
 import { signIn } from "../account.js";
+import { IS_IOS } from "../platform.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -75,11 +76,7 @@ function accountOption({ divider = true } = {}) {
   );
 }
 
-// Every browser on iPhone and iPad uses WebKit, which blocks this HTTPS page from calling the
-// controller's plain-HTTP address and has no permission to allow it (README): pairing there can
-// only fail. iPadOS presents itself as a Mac, but with a touch screen.
-export const IS_IOS =
-  /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+// On iPhone and iPad pairing over the home network can only fail (platform.js).
 
 function iosCard() {
   return h(
