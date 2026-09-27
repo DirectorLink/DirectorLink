@@ -44,6 +44,11 @@ export default {
     codeHelp:
       "ב-Composer בוחרים ב-DirectorLink ומפעילים את New Pairing Code (בלשונית Actions) — או מבקשים קוד מהמתקין. הקוד תקף 15 דקות ועובד פעם אחת.",
     pair: "התחברות",
+    or: "או",
+    signIn: "התחברות עם Google",
+    signInHelp: "החשבון יאפשר גישה לבית מכל מקום, גם מ-iPhone ו-iPad. בקרוב; בינתיים יש לצמד ברשת הביתית.",
+    signedInAs: "מחובר בתור {email}",
+    signedInHelp: "הגישה לבית דרך החשבון תגיע בקרוב. בינתיים יש להתחבר ברשת הביתית עם קוד צימוד.",
     pairNew: "הזינו קוד צימוד חדש מ-Composer כדי לחבר את המכשיר.",
     errors: {
       invalidCode: "הזינו את קוד הצימוד בן 8 הספרות, למשל \u20661234 5678\u2069.",
