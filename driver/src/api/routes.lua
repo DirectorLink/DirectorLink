@@ -44,6 +44,10 @@ return {
     { method = "PATCH", path = "/v1/relays/{relayId}", handler = "relays.update", role = "doors" },
     { method = "POST", path = "/v1/relays/{relayId}/pulse", handler = "relays.pulse", role = "doors" },
 
+    { method = "GET", path = "/v1/doorbells", handler = "doorbells.list", role = "viewer" },
+    { method = "GET", path = "/v1/doorbells/{doorbellId}", handler = "doorbells.get", role = "viewer" },
+    { method = "POST", path = "/v1/doorbells/{doorbellId}/open", handler = "doorbells.open", role = "doors" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings", role = "admin" },

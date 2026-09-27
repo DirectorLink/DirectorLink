@@ -78,6 +78,7 @@ function System.info(ctx)
             blinds = counts.supported_blinds,
             cameras = counts.supported_cameras,
             relays = counts.supported_relays,
+            doorbells = counts.supported_doorbells,
         },
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,

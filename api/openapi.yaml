@@ -8,7 +8,7 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description and pairing needs an
@@ -64,6 +64,8 @@ tags:
     description: Camera snapshots, fetched on the controller so camera logins never leave it.
   - name: Relays
     description: Relays that open doors and gates (KNX Contact/Relay).
+  - name: Doorbells
+    description: Video doorbells (DoorBird) — rings, motion, access, and opening the gate or door wired to them.
   - name: Logs
     description: The bridge's own recent log, for debugging.
 
@@ -852,6 +854,81 @@ paths:
         "502":
           $ref: "#/components/responses/CommandFailed"
 
+  /v1/doorbells:
+    get:
+      tags: [Doorbells]
+      operationId: listDoorbells
+      x-directorlink-role: viewer
+      summary: List doorbells
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Doorbells with their camera and what happened last, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DoorbellList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/doorbells/{doorbellId}:
+    parameters:
+      - $ref: "#/components/parameters/DoorbellId"
+    get:
+      tags: [Doorbells]
+      operationId: getDoorbell
+      x-directorlink-role: viewer
+      summary: Get a doorbell
+      description: Poll it (e.g. every 10 s) to notice rings; `events` lists the last 20 since the driver started.
+      responses:
+        "200":
+          description: The doorbell.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Doorbell"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/doorbells/{doorbellId}/open:
+    parameters:
+      - $ref: "#/components/parameters/DoorbellId"
+    post:
+      tags: [Doorbells]
+      operationId: openDoorbell
+      x-directorlink-role: doors
+      summary: Open the gate or door wired to the doorbell
+      description: |
+        Presses the DoorBird's button exactly as the Control4 app does; the button runs the action
+        the installer chose (by default *Trigger Relay 1*). Needs **Door Control** = Enabled in
+        Composer. Every request is written to the log with the API key used.
+      responses:
+        "202":
+          description: Button pressed. The body is the doorbell as last reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Doorbell"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -978,6 +1055,13 @@ components:
         minimum: 1
     LightId:
       name: lightId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    DoorbellId:
+      name: doorbellId
       in: path
       required: true
       schema:
@@ -1204,7 +1288,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
-          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras, relays]
+          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras, relays, doorbells]
           properties:
             rooms:
               type: integer
@@ -1221,6 +1305,8 @@ components:
             cameras:
               type: integer
             relays:
+              type: integer
+            doorbells:
               type: integer
         lifecycle:
           type: object
@@ -1393,7 +1479,7 @@ components:
 
     DeviceType:
       type: string
-      enum: [light, thermostat, blind, camera, relay, other]
+      enum: [light, thermostat, blind, camera, relay, doorbell, other]
 
     Device:
       type: object
@@ -1562,6 +1648,72 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Relay"
+
+    Doorbell:
+      type: object
+      required: [id, name, room, camera, can_open, connected, last_ring_at, last_motion_at, last_opened_at, last_access_at, events]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        camera:
+          description: The doorbell's camera; get pictures from `snapshot_href`.
+          oneOf:
+            - type: object
+              required: [id, snapshot_href]
+              properties:
+                id:
+                  type: integer
+                snapshot_href:
+                  type: string
+            - type: "null"
+        can_open:
+          type: boolean
+          description: True when `POST …/open` can press the doorbell's button.
+        connected:
+          type: [boolean, "null"]
+          description: False after the doorbell driver reported a communication failure; null until the first event.
+        last_ring_at:
+          type: [string, "null"]
+          format: date-time
+        last_motion_at:
+          type: [string, "null"]
+          format: date-time
+        last_opened_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the doorbell's relay last opened the gate or door (from anywhere).
+        last_access_at:
+          type: [string, "null"]
+          format: date-time
+          description: When access was last granted at the doorbell (keypad).
+        events:
+          type: array
+          description: The last 20 events, newest first, since the driver started.
+          items:
+            type: object
+            required: [type, at]
+            properties:
+              type:
+                type: string
+                enum: [doorbell, motion, opened, access, communication_failed]
+              at:
+                type: string
+                format: date-time
+
+    DoorbellList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Doorbell"
 
     CameraList:
       type: object

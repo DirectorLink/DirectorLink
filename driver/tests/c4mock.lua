@@ -96,6 +96,32 @@ function Mock.project()
                 deviceName = "Gate", driverFileName = "camera.c4i", roomId = 11, roomName = "Living Room",
                 protocol = { [108] = { deviceName = "DoorBird", driverFileName = "doorbird_doorstation.c4z" } },
             },
+            -- A DoorBird: one driver, four proxies (button, intercom, camera, doorstation), as in a real project.
+            [110] = {
+                deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = {
+                    [90] = { deviceName = "Gate Intercom", driverFileName = "uibutton.c4i" },
+                    [91] = { deviceName = "DoorBird", driverFileName = "intercomproxy.c4i" },
+                    [92] = { deviceName = "Gate Camera", driverFileName = "camera.c4i" },
+                    [93] = { deviceName = "Front Gate", driverFileName = "doorstation.c4i" },
+                },
+            },
+            [90] = {
+                deviceName = "Gate Intercom", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [91] = {
+                deviceName = "DoorBird", driverFileName = "intercomproxy.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [92] = {
+                deviceName = "Gate Camera", driverFileName = "camera.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
+            [93] = {
+                deviceName = "Front Gate", driverFileName = "doorstation.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [110] = { deviceName = "DoorBird Doorstation", driverFileName = "doorbird_doorstation.c4z" } },
+            },
             -- A combo driver: the relay device is its own proxy.
             [70] = {
                 deviceName = "Main Door", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen",
@@ -132,6 +158,10 @@ function Mock.project()
             },
             [61] = {
                 address = "192.168.1.117", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
+                query = "/bha-api/image.cgi",
+            },
+            [92] = {
+                address = "192.168.1.118", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
                 query = "/bha-api/image.cgi",
             },
         },
