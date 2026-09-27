@@ -30,7 +30,7 @@ DirectorLink itself does not depend on Composer Pro during normal operation. Com
 
 ### 1. Download DirectorLink
 
-Download DirectorLink from **[GitHub Releases](https://github.com/IsraelCIL/C4Bridge/releases)**.
+Download DirectorLink from **[GitHub Releases](https://github.com/IsraelCIL/DirectorLink/releases)**.
 
 Current build: **DirectorLink v0.7.0**
 
