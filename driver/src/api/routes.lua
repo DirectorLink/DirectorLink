@@ -1,5 +1,5 @@
 -- The API route table. It must match api/openapi.yaml exactly: scripts/check_api.py fails the
--- build when a method, path, public flag or role (x-c4bridge-role) differs between the two.
+-- build when a method, path, public flag or role (x-directorlink-role) differs between the two.
 -- `role` is the least API key role that may call the route (src/auth/roles.lua).
 
 return {

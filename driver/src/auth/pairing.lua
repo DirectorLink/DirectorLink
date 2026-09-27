@@ -3,7 +3,7 @@
 
 local Pairing = {}
 
-local PAIRING_COUNT_KEY = "c4bridge_pairing_count"
+local PAIRING_COUNT_KEY = "directorlink_pairing_count"
 
 local CODE_TTL_SECONDS = 15 * 60
 local FAILED_WINDOW_SECONDS = 60

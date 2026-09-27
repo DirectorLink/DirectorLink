@@ -1,6 +1,6 @@
 // Interface text. Every string on screen goes through t(key, params).
 //
-// Adding a language: create web/i18n/<code>.js (copy en.js, translate the values) and add one
+// Adding a language: create app/i18n/<code>.js (copy en.js, translate the values) and add one
 // line to LANGUAGES below. Keys missing from a translation fall back to English.
 
 import en from "../i18n/en.js";
@@ -10,7 +10,7 @@ export const LANGUAGES = [
   { code: "he", label: "עברית", dir: "rtl" },
 ];
 
-const LANGUAGE_KEY = "c4bridge.lang";
+const LANGUAGE_KEY = "directorlink.lang";
 const loaded = { en };
 let current = "en";
 let pluralRules = new Intl.PluralRules("en");

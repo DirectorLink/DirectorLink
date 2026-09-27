@@ -1,6 +1,6 @@
-# C4Bridge Web PWA
+# DirectorLink Web PWA
 
-This directory is the Cloudflare Pages frontend for C4Bridge. It is framework-free HTML, CSS and JavaScript and needs no build step.
+This directory is the Cloudflare Pages frontend for DirectorLink. It is framework-free HTML, CSS and JavaScript and needs no build step.
 
 ## Structure
 
@@ -21,7 +21,7 @@ This directory is the Cloudflare Pages frontend for C4Bridge. It is framework-fr
 
 Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`.
 
-- **Home** — connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address → **Request access** (press **C4Bridge Access** in the Control4 app within 2 minutes) or **Use a pairing code instead**.
+- **Home** — connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address → **Request access** (press **DirectorLink Access** in the Control4 app within 2 minutes) or **Use a pairing code instead**.
 - **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doors & gates (drivers with `/v1/relays`), Cameras and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
 - **Cameras** — one large picture and a grid; thumbnails refresh about every 3 s, the full view about every second.
 - **Climate** — all thermostats grouped by room.
@@ -33,13 +33,13 @@ Controls change the screen at once, send the command, then re-read the device un
 
 ## Palettes and themes
 
-Five palettes — graphite (default), ocean, forest, plum, midnight — each with a light and a dark variant, as CSS custom properties on `:root[data-palette=…][data-theme=…]` in `styles.css` (tokens `--bg`, `--card`, `--nav`, `--ink`, `--muted`, `--line`, `--onBg`/`--onText`, `--coolBg`/`--coolText`, `--primary`/`--primaryText`, `--okBg`/`--okText`/`--okDot`). The theme is Light, Dark or Auto (follows `prefers-color-scheme`); `data-theme` always holds the resolved value. The choice is stored in `localStorage` (`c4bridge.palette`, `c4bridge.theme`) and `meta[name=theme-color]` follows the page background. Adding a palette: a light and a dark token block and a swatch rule in `styles.css`, its name in `PALETTES` (`js/theme.js`) and `theme-boot.js`, and a label under `palettes` in each language file.
+Five palettes — graphite (default), ocean, forest, plum, midnight — each with a light and a dark variant, as CSS custom properties on `:root[data-palette=…][data-theme=…]` in `styles.css` (tokens `--bg`, `--card`, `--nav`, `--ink`, `--muted`, `--line`, `--onBg`/`--onText`, `--coolBg`/`--coolText`, `--primary`/`--primaryText`, `--okBg`/`--okText`/`--okDot`). The theme is Light, Dark or Auto (follows `prefers-color-scheme`); `data-theme` always holds the resolved value. The choice is stored in `localStorage` (`directorlink.palette`, `directorlink.theme`) and `meta[name=theme-color]` follows the page background. Adding a palette: a light and a dark token block and a swatch rule in `styles.css`, its name in `PALETTES` (`js/theme.js`) and `theme-boot.js`, and a label under `palettes` in each language file.
 
 Fonts are Sora (headings) and IBM Plex Sans / IBM Plex Sans Hebrew (text) from Google Fonts, with system fallbacks — the offline copy renders without them.
 
 ## Languages
 
-Every string on screen goes through `t(key, params)` from `js/i18n.js`, with plural forms chosen by `Intl.PluralRules` (`{ one: …, two: …, other: … }`). Language is Auto (browser languages), English or עברית, stored as `c4bridge.lang`. Hebrew sets `<html lang="he" dir="rtl">`; the layout uses logical CSS properties, so it mirrors, and directional icons flip. Names from Control4 are rendered with `dir="auto"`. Rooms show `room.names[lang]` when set in Settings → Rooms, else the Control4 name.
+Every string on screen goes through `t(key, params)` from `js/i18n.js`, with plural forms chosen by `Intl.PluralRules` (`{ one: …, two: …, other: … }`). Language is Auto (browser languages), English or עברית, stored as `directorlink.lang`. Hebrew sets `<html lang="he" dir="rtl">`; the layout uses logical CSS properties, so it mirrors, and directional icons flip. Names from Control4 are rendered with `dir="auto"`. Rooms show `room.names[lang]` when set in Settings → Rooms, else the Control4 name.
 
 To add a language:
 
@@ -57,11 +57,11 @@ The service worker saves the app on the device, so it still opens when the inter
 - controller requests are cross-origin and are never intercepted or cached
 - Settings → App → **Offline copy** shows whether the app is saved
 
-`tests/web/sw.test.mjs` checks this against a fake network that serves the app the way Cloudflare does. Tests live outside `web/` because Cloudflare publishes everything in this folder.
+`tests/app/sw.test.mjs` checks this against a fake network that serves the app the way Cloudflare does. Tests live outside `app/` because Cloudflare publishes everything in this folder.
 
 ## Cloudflare
 
-The site is a Cloudflare Workers static-assets project (`c4bridge`) built from this folder by Workers Builds:
+The site is a Cloudflare Workers static-assets project (`directorlink`) built from this folder by Workers Builds:
 
 | Setting | Value |
 | --- | --- |
@@ -77,7 +77,7 @@ The site is a Cloudflare Workers static-assets project (`c4bridge`) built from t
 The driver accepts `http://localhost` origins, so the app can be tested against a real controller before it is deployed:
 
 ```bash
-python -m http.server 8080 --directory web
+python -m http.server 8080 --directory app
 ```
 
 Then open `http://localhost:8080`. Without a controller, run `python scripts/dev_server.py` as well and use `localhost` as the controller address (see `docs/BUILD.md`).

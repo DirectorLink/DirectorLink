@@ -12,11 +12,11 @@ local Navigator = require("src.control4.navigator")
 local Api = require("src.api.server")
 
 local LIFECYCLE_KEYS = {
-    reload_count = "c4bridge_reload_count",
-    last_init_type = "c4bridge_last_init_type",
-    last_init_time = "c4bridge_last_init_time",
-    last_destroy_type = "c4bridge_last_destroy_type",
-    last_destroy_time = "c4bridge_last_destroy_time",
+    reload_count = "directorlink_reload_count",
+    last_init_type = "directorlink_last_init_type",
+    last_init_time = "directorlink_last_init_time",
+    last_destroy_type = "directorlink_last_destroy_type",
+    last_destroy_time = "directorlink_last_destroy_time",
 }
 
 -- Composer's "Log Level" list uses these labels.
@@ -149,7 +149,7 @@ local function retryShowAccessButton(attempt)
     end)
 end
 
--- Makes the C4Bridge Access button visible in the Security section of its room in the Control4
+-- Makes the DirectorLink Access button visible in the Security section of its room in the Control4
 -- app, as Composer's Navigators view would. Runs after the driver is first added, and on demand.
 showAccessButton = function(attempt)
     attempt = attempt or 1
@@ -168,12 +168,12 @@ showAccessButton = function(attempt)
 
     if result then
         Log.info("navigator", result == "made_visible"
-            and "C4Bridge Access is now visible in the Control4 app (Security)"
-            or "C4Bridge Access is already visible in the Control4 app", { room_id = roomId, button_id = buttonId })
+            and "DirectorLink Access is now visible in the Control4 app (Security)"
+            or "DirectorLink Access is already visible in the Control4 app", { room_id = roomId, button_id = buttonId })
     elseif reason == "not_listed" and attempt < SHOW_BUTTON_ATTEMPTS then
         retryShowAccessButton(attempt + 1)
     else
-        Log.warn("navigator", "could not show C4Bridge Access in the Control4 app; make it visible in Composer (Navigators, Security)", {
+        Log.warn("navigator", "could not show DirectorLink Access in the Control4 app; make it visible in Composer (Navigators, Security)", {
             reason = reason,
             room_id = roomId,
             button_id = buttonId,
@@ -253,7 +253,7 @@ function OnDriverLateInit(driverInitType)
     updateLifecycleProperties()
 
     if not STATE.supported then
-        setStatus("error", "Unsupported controller OS (C4Bridge requires 3.3.0 or newer)")
+        setStatus("error", "Unsupported controller OS (DirectorLink requires 3.3.0 or newer)")
         updateProperty("API Status", "Disabled")
         return
     end
@@ -309,7 +309,7 @@ function ExecuteCommand(command, params)
     end
 end
 
--- The "C4Bridge Access" button in the Control4 app approves a waiting access request.
+-- The "DirectorLink Access" button in the Control4 app approves a waiting access request.
 function ReceivedFromProxy(idBinding, strCommand, tParams)
     if tonumber(idBinding) == Approvals.BUTTON_BINDING then
         if strCommand == "SELECT" then
@@ -335,7 +335,7 @@ function OnWatchedVariableChanged(idDevice, idVariable, strValue)
     AdapterManager.onVariableChanged(idDevice, idVariable, strValue)
 end
 
--- Events of devices C4Bridge registered with C4:RegisterDeviceEvent (relay opened/closed).
+-- Events of devices DirectorLink registered with C4:RegisterDeviceEvent (relay opened/closed).
 function OnDeviceEvent(firingDevice, eventId)
     AdapterManager.onDeviceEvent(firingDevice, eventId)
 end

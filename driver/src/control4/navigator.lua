@@ -1,8 +1,8 @@
--- Makes C4Bridge's own "C4Bridge Access" button visible in the Control4 app.
+-- Makes DirectorLink's own "DirectorLink Access" button visible in the Control4 app.
 --
 -- New buttons are added hidden. Composer shows them by sending the room SET_SECURITY_DEVICE_ORDER
 -- with the room's whole Security list: the visible entries (hidden 0) followed by the hidden ones
--- (hidden 1). This module does the same for C4Bridge's button only — it reads the room's visible
+-- (hidden 1). This module does the same for DirectorLink's button only — it reads the room's visible
 -- and hidden lists, moves the button to the end of the visible part and keeps every other entry
 -- exactly where it was.
 
@@ -109,7 +109,7 @@ function Navigator.showInSecurity(roomId, buttonId)
     return nil, "the room did not apply the change"
 end
 
--- Finds C4Bridge's own button proxy and its room from the project device list.
+-- Finds DirectorLink's own button proxy and its room from the project device list.
 function Navigator.findAccessButton(bridgeId, devices)
     for rawId, device in pairs(devices or {}) do
         local id = tonumber(rawId)

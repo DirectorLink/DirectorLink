@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the built dist/C4Bridge.c4z against the source tree and the release contract."""
+"""Checks the built dist/DirectorLink.c4z against the source tree and the release contract."""
 
 import json
 import re
@@ -10,7 +10,7 @@ from zipfile import ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "driver"
-PACKAGE = ROOT / "dist" / "C4Bridge.c4z"
+PACKAGE = ROOT / "dist" / "DirectorLink.c4z"
 SPEC_MODULE = "src/api/openapi_spec.lua"
 
 REQUIRED_PROPERTIES = (
@@ -41,7 +41,7 @@ SECURITY_CONTRACT = {
     "src/api/server.lua": (
         "if not match.route.public then",
         'string.lower(scheme) ~= "bearer"',
-        '["https://app.c4bridge.io"] = true',
+        '["https://app.directorlink.io"] = true',
     ),
     "src/auth/keys.lua": (
         "C4:PersistSetValue(STORE_KEY, Json.encode({ version = 2, keys = records }), true)",
@@ -130,15 +130,15 @@ def check_driver_xml(text, driver_version):
             fail(f"driver.xml is missing property {name!r}")
     button = [proxy for proxy in root.findall("./proxies/proxy") if proxy.text == "uibutton"]
     if not button or button[0].get("proxybindingid") != ACCESS_BUTTON_BINDING:
-        fail("driver.xml must declare the uibutton proxy on binding 5001 (C4Bridge Access)")
+        fail("driver.xml must declare the uibutton proxy on binding 5001 (DirectorLink Access)")
     if root.findtext("combo") is not None:
-        fail("C4Bridge must not be a combo driver: Director does not create the C4Bridge Access button for combo drivers")
+        fail("DirectorLink must not be a combo driver: Director does not create the DirectorLink Access button for combo drivers")
     connection_ids = {node.findtext("id") for node in root.findall("./connections/connection")}
     if ACCESS_BUTTON_BINDING not in connection_ids:
         fail("driver.xml needs the UIBUTTON connection for binding 5001")
     names = set(ZipFile(PACKAGE).namelist())
     for icon in root.iter("Icon"):
-        path = "www/" + icon.text.split("controller://driver/C4Bridge/", 1)[-1]
+        path = "www/" + icon.text.split("controller://driver/DirectorLink/", 1)[-1]
         if path not in names:
             fail(f"driver.xml references {icon.text}, which is not in the package")
     actions = {node.findtext("command") for node in root.findall("./config/actions/action")}
@@ -182,7 +182,7 @@ def check_security_contract(files):
 
 def main():
     if not PACKAGE.is_file():
-        fail("dist/C4Bridge.c4z is missing; run python scripts/build.py")
+        fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
     version, driver_version = expected_versions()
 
     with ZipFile(PACKAGE) as archive:

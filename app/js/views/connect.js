@@ -1,5 +1,5 @@
 // First-time setup on Home: controller address, then "Request access" (approved with the
-// C4Bridge Access button in the Control4 app) or the 8-digit pairing code from Composer.
+// DirectorLink Access button in the Control4 app) or the 8-digit pairing code from Composer.
 
 import { h } from "../dom.js";
 import { t } from "../i18n.js";

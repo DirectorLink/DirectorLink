@@ -1,4 +1,4 @@
-<Driver type="c4z" name="C4Bridge" squishLua="false">
+<Driver type="c4z" name="DirectorLink" squishLua="false">
   <Items>
     <Item type="file" name="driver.xml" />
     <Item type="file" name="driver.lua" />

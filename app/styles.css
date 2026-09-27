@@ -1,4 +1,4 @@
-/* C4Bridge web app. Colours are tokens per palette and theme (see "Palettes" below); layout
+/* DirectorLink app. Colours are tokens per palette and theme (see "Palettes" below); layout
    uses logical properties so the Hebrew (right-to-left) layout mirrors automatically. */
 
 /* ---- Palettes ------------------------------------------------------------------------------ */
@@ -629,6 +629,11 @@ img {
 .field-help {
   color: var(--muted);
   font-size: 14px;
+}
+
+.about-slogan {
+  font-family: var(--font-head);
+  font-weight: 600;
 }
 
 /* ---- Sections ------------------------------------------------------------------------------ */

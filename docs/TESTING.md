@@ -1,4 +1,4 @@
-# C4Bridge Test Plan
+# DirectorLink Test Plan
 
 ## Current release
 
@@ -22,31 +22,31 @@
 
 1. **Inventory** in Composer ends with `13 cameras` (the test system: 12 Hikvision, 1 DoorBird).
 2. `GET /v1/cameras` lists them without addresses or passwords.
-3. The web app's Cameras grid shows a picture for each camera within a few seconds; tapping one shows it larger, refreshing about once a second.
+3. The app's Cameras grid shows a picture for each camera within a few seconds; tapping one shows it larger, refreshing about once a second.
 4. A camera that is offline or rejects its login shows "No picture"; `GET /v1/logs?category=camera` says why (never with the password).
 
 ## 0a. Blinds
 
 1. **Inventory** in Composer ends with `15 blinds` (the test system).
 2. `GET /v1/blinds` lists them; `position` is a number for blinds with a KNX status address, otherwise `null` until the blind moves.
-3. In the web app open, stop and close one blind, and set 50% on one with percentage control. The Control4 app shows the same movement.
+3. In the app open, stop and close one blind, and set 50% on one with percentage control. The Control4 app shows the same movement.
 4. `GET /v1/logs?category=blind_command` shows each command; `GET /v1/logs?category=blind&level=debug` (after setting the log level to Debug and reloading) lists the proxy variables.
 
-## 0. After updating: the C4Bridge Access button
+## 0. After updating: the DirectorLink Access button
 
-1. The project should now contain **C4Bridge** and **C4Bridge Access** (same room).
+1. The project should now contain **DirectorLink** and **DirectorLink Access** (same room).
 2. Within about 10 seconds, without touching Composer's Navigators, the button shows in the Control4 app under **Security** in that room, as a gray key. If it does not, run the Composer action **Show Access Button in App** and check `GET /v1/logs?category=navigator`.
-3. In the web app click **Request access**: the key turns orange and Composer's **Access Request** shows the waiting browser.
-4. Press the button: it turns green, the web app connects, and the button returns to gray.
+3. In the app click **Request access**: the key turns orange and Composer's **Access Request** shows the waiting browser.
+4. Press the button: it turns green, the app connects, and the button returns to gray.
 5. Also check: **Cancel request** turns it gray again, and a request left alone expires after 2 minutes.
 
-If the button does not appear, remove and re-add C4Bridge in Composer, then request access again. Driver updates load without a reboot since 0.4.0; if one does not, check `/var/log/debug/broker.log` for "Unable to parse driver".
+If the button does not appear, remove and re-add DirectorLink in Composer, then request access again. Driver updates load without a reboot since 0.4.0; if one does not, check `/var/log/debug/broker.log` for "Unable to parse driver".
 
 ## 1. Install
 
-Update the driver in Composer with a local file named exactly `C4Bridge.c4z`.
+Update the driver in Composer with a local file named exactly `DirectorLink.c4z`.
 
-Expected in the C4Bridge properties once the new driver is loaded:
+Expected in the DirectorLink properties once the new driver is loaded:
 
 - Version: `0.7.0`
 - Status: `Ready`
@@ -64,7 +64,7 @@ The driver runs the DriverWorks TCP server without a delimiter and reads bodies 
 
 ## 3. Pair and connect
 
-1. Open `https://app.c4bridge.io` (or a local copy, see step 7), enter the controller IP and the Pairing Code, and click **Pair & connect**.
+1. Open `https://app.directorlink.io` (or a local copy, see step 7), enter the controller IP and the Pairing Code, and click **Pair & connect**.
 2. Expect rooms, devices, lights and thermostats to load. The Pairing Code in Composer changes after pairing and **API Keys** shows `1`.
 
 ## 4. Lights and thermostats
@@ -93,16 +93,16 @@ Open **API console** from the dashboard, click **Load API** and check:
 - `PATCH /v1/logs/settings` with `{"level": "debug"}` changes the Composer **Log Level** to Debug; set it back to `info` afterwards
 - Composer action **Revoke All API Keys** makes every browser need a new pairing
 
-## 7. Testing the web app before it is deployed
+## 7. Testing the app before it is deployed
 
-The driver accepts `http://localhost` origins, so the web app can be tested from this PC:
+The driver accepts `http://localhost` origins, so the app can be tested from this PC:
 
 ```bash
-python -m http.server 8080 --directory web
+python -m http.server 8080 --directory app
 ```
 
 Then open `http://localhost:8080`.
 
 ## If something fails
 
-Collect `GET /v1/logs?level=debug` (after setting the level to debug), the Composer properties, and the C4Bridge lines from the Director driver log.
+Collect `GET /v1/logs?level=debug` (after setting the level to debug), the Composer properties, and the DirectorLink lines from the Director driver log.

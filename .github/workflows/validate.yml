@@ -1,4 +1,4 @@
-name: Validate C4Bridge
+name: Validate DirectorLink
 
 on:
   push:
@@ -44,16 +44,16 @@ jobs:
         run: python scripts/check_package.py
 
       - name: Show package checksums
-        run: (cd dist && sha256sum C4Bridge.c4z openapi.json)
+        run: (cd dist && sha256sum DirectorLink.c4z openapi.json)
 
       - name: Check live responses against the API spec
         run: python scripts/check_contract.py
 
-      - name: Validate web app
-        run: python scripts/check_web.py
+      - name: Validate app
+        run: python scripts/check_app.py
 
-      - name: Check web JavaScript syntax
-        run: for file in web/*.js; do node --check "$file"; done
+      - name: Check app JavaScript syntax
+        run: for file in app/*.js; do node --check "$file"; done
 
-      - name: Run web tests (offline service worker)
-        run: node --test tests/web/*.test.mjs
+      - name: Run app tests (offline service worker)
+        run: node --test tests/app/*.test.mjs

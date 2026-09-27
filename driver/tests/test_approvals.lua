@@ -1,4 +1,4 @@
--- Access requests approved with the C4Bridge Access button (uibutton proxy, binding 5001).
+-- Access requests approved with the DirectorLink Access button (uibutton proxy, binding 5001).
 
 local Mock = require("c4mock")
 local T = require("helpers")
@@ -38,7 +38,7 @@ function tests.the_access_button_is_not_listed_as_a_device()
     local key = T.pair(mock)
     local devices = T.http(mock, "GET", "/v1/devices", { key = key }).json.items
     for _, device in ipairs(devices) do
-        T.truthy(device.id ~= 574 and device.id ~= 572, "C4Bridge and its button are not homeowner devices")
+        T.truthy(device.id ~= 574 and device.id ~= 572, "DirectorLink and its button are not homeowner devices")
     end
     T.eq(#devices, 10)
 end

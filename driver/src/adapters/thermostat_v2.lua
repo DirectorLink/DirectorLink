@@ -322,7 +322,7 @@ function Climate.execute(device, action, params)
         if not target or target < 16 or target > maxTarget then
             return false, {
                 code = "INVALID_TEMPERATURE",
-                message = "Temperature is outside this thermostat's C4Bridge range",
+                message = "Temperature is outside this thermostat's DirectorLink range",
             }
         end
 

@@ -360,6 +360,7 @@ function aboutSection() {
     "about",
     "info",
     t("settings.about.title"),
+    h("p", { class: "about-slogan" }, t("settings.about.slogan")),
     h("p", {}, t("settings.about.text")),
     h("p", { class: "field-help" }, t("settings.about.independent")),
     h(

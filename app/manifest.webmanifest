@@ -1,6 +1,6 @@
 {
-  "name": "C4Bridge",
-  "short_name": "C4Bridge",
+  "name": "DirectorLink",
+  "short_name": "DirectorLink",
   "id": "/",
   "description": "Control your Control4 home over your own network.",
   "start_url": "/",

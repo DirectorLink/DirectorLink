@@ -1,9 +1,9 @@
-// Shared client for the C4Bridge LAN API (see api/openapi.yaml).
+// Shared client for the DirectorLink LAN API (see api/openapi.yaml).
 
 export const API_PORT = 41999;
 
-const HOST_STORAGE_KEY = "c4bridge.directorHost";
-const API_KEY_STORAGE_KEY = "c4bridge.apiKey";
+const HOST_STORAGE_KEY = "directorlink.directorHost";
+const API_KEY_STORAGE_KEY = "directorlink.apiKey";
 
 export class ApiError extends Error {
   constructor(message, { status, code, problem } = {}) {
@@ -121,7 +121,7 @@ export async function apiImage(host, path, { apiKey, timeoutMs = 12000 } = {}) {
       } catch {
         problem = null;
       }
-      throw new ApiError(problem?.detail || `C4Bridge returned HTTP ${response.status}`, {
+      throw new ApiError(problem?.detail || `DirectorLink returned HTTP ${response.status}`, {
         status: response.status,
         code: problem?.code,
         problem,
@@ -138,7 +138,7 @@ export async function apiCall(host, path, options) {
   const result = await apiRequest(host, path, options);
   if (!result.ok) {
     const problem = result.data && typeof result.data === "object" ? result.data : null;
-    throw new ApiError(problem?.detail || problem?.title || `C4Bridge returned HTTP ${result.status}`, {
+    throw new ApiError(problem?.detail || problem?.title || `DirectorLink returned HTTP ${result.status}`, {
       status: result.status,
       code: problem?.code,
       problem,

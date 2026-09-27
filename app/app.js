@@ -1,4 +1,4 @@
-// C4Bridge web app: hash router, renderer and start-up. Screens live in js/views/.
+// DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
 // "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/auth/requests",
@@ -52,7 +52,7 @@ export function navigate(hash) {
 
 window.addEventListener("hashchange", () => {
   // Entries reached inside the app: the Back button can use history.back().
-  window.history.replaceState({ c4bridgeInApp: true }, "");
+  window.history.replaceState({ directorlinkInApp: true }, "");
   route = parseRoute();
   closeFullView();
   render(true);
@@ -238,7 +238,7 @@ function render(force = false) {
   if (pickerDialog.open) {
     pickerBody.replaceChildren(...favoritesPicker());
   }
-  document.title = route.name === "home" ? "C4Bridge" : `${view.querySelector(".page-title")?.textContent || ""} · C4Bridge`;
+  document.title = route.name === "home" ? "DirectorLink" : `${view.querySelector(".page-title")?.textContent || ""} · DirectorLink`;
 }
 
 function updateTabbar() {
@@ -268,7 +268,7 @@ function applyLanguage() {
 
 // ---- start ---------------------------------------------------------------------------------
 
-// Countdown while waiting for C4Bridge Access to be pressed.
+// Countdown while waiting for DirectorLink Access to be pressed.
 window.setInterval(() => {
   if (state.status === "waiting" && state.access) {
     ui.tick += 1;

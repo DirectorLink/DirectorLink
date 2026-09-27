@@ -1,4 +1,4 @@
--- The C4Bridge Access button is made visible in the Control4 app (room Security list),
+-- The DirectorLink Access button is made visible in the Control4 app (room Security list),
 -- the same change Composer makes in Navigators.
 
 local Mock = require("c4mock")
@@ -41,7 +41,7 @@ function tests.adding_the_driver_makes_the_button_visible()
     T.eq(joined(room.visible), "4294966301,531,574", "button appended to the visible entries")
     T.eq(joined(room.hidden), "541,483", "every other entry keeps its place and flag")
     T.eq(#setOrderCommands(mock), 1)
-    T.contains(table.concat(mock.debugLog, "\n"), "C4Bridge Access is now visible")
+    T.contains(table.concat(mock.debugLog, "\n"), "DirectorLink Access is now visible")
 end
 
 function tests.a_normal_startup_never_touches_the_app_configuration()
@@ -75,7 +75,7 @@ function tests.failures_change_nothing_and_are_logged()
     mock.uiRequestsFail = true
     Mock.fireTimers(mock)
     T.eq(#setOrderCommands(mock), 0)
-    T.contains(table.concat(mock.debugLog, "\n"), "could not show C4Bridge Access")
+    T.contains(table.concat(mock.debugLog, "\n"), "could not show DirectorLink Access")
 end
 
 function tests.composer_action_shows_the_button_on_demand()

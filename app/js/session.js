@@ -29,7 +29,7 @@ export function api(path, options = {}) {
 
 function clientName() {
   const platform = navigator.userAgentData?.platform || navigator.platform || "browser";
-  return `C4Bridge web app (${platform})`.slice(0, 64);
+  return `DirectorLink app (${platform})`.slice(0, 64);
 }
 
 export function restoreSaved() {
@@ -97,7 +97,7 @@ export function errorText(error) {
   return describeError(error);
 }
 
-// Any request answered 401: the key was revoked or C4Bridge was re-added. Start over.
+// Any request answered 401: the key was revoked or DirectorLink was re-added. Start over.
 export function handleUnauthorized() {
   forgetKey();
   state.notice = { kind: "error", text: t("errors.keyRevoked") };
@@ -188,7 +188,7 @@ export async function connect() {
       handleUnauthorized();
       return false;
     }
-    console.error("C4Bridge connection failed", error);
+    console.error("DirectorLink connection failed", error);
     state.status = "unreachable";
     state.notice = { kind: "error", text: describeError(error) };
     scheduleRetry();
@@ -198,7 +198,7 @@ export async function connect() {
   }
 }
 
-// Asks for a key and waits until C4Bridge Access is pressed in the Control4 app (2 minutes).
+// Asks for a key and waits until DirectorLink Access is pressed in the Control4 app (2 minutes).
 export async function requestAccess(hostValue) {
   state.notice = null;
   try {
@@ -321,7 +321,7 @@ export async function refreshDevices() {
     }
     failedRefreshes += 1;
     state.lastError = { at: new Date(), text: describeError(error) };
-    console.warn(`C4Bridge refresh failed (${failedRefreshes} in a row)`, error);
+    console.warn(`DirectorLink refresh failed (${failedRefreshes} in a row)`, error);
     if (failedRefreshes < FAILURES_BEFORE_UNREACHABLE) {
       return false;
     }

@@ -1,26 +1,28 @@
 openapi: 3.1.0
 info:
-  title: C4Bridge API
+  title: DirectorLink API
   # Stamped from the repository VERSION file at build time.
   version: 0.0.0
   summary: Local REST API for a Control4 home.
   description: |
-    C4Bridge runs as a driver inside the Control4 controller (Director) and serves this API on
+    **Direct to Director. End-to-end integration. Open source.**
+
+    DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
     the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, access requests and
     pairing needs an API key: `Authorization: Bearer <api key>`. Get the first key with an access
-    request that the homeowner approves with the **C4Bridge Access** button in the Control4 app
+    request that the homeowner approves with the **DirectorLink Access** button in the Control4 app
     (`/v1/auth/requests`), or with the 8-digit pairing code shown in Composer. Create more keys
     under `/v1/api-keys`.
 
     **Roles.** Every API key has a role, and each role can do everything the ones before it
     can: `viewer` reads everything (including camera pictures), `member` also controls lights,
     thermostats and blinds, `doors` also opens doors and gates, `admin` also manages API keys,
-    room names and the log. Each operation lists the least role it needs as `x-c4bridge-role`;
+    room names and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
-    property of C4Bridge in Composer set to Enabled.
+    property of DirectorLink in Composer set to Enabled.
 
     **Changing state.** Send the desired state with `PATCH`. The bridge answers `202 Accepted` once
     the command has been handed to the controller. The returned object holds the last state the
@@ -36,7 +38,7 @@ info:
     identifier: Apache-2.0
 servers:
   - url: http://{host}:41999
-    description: C4Bridge on the Control4 controller (LAN only).
+    description: DirectorLink on the Control4 controller (LAN only).
     variables:
       host:
         default: 192.168.1.10
@@ -51,13 +53,13 @@ tags:
   - name: Rooms
     description: Rooms of the Control4 project.
   - name: Devices
-    description: Every device in the project, including ones C4Bridge cannot control yet.
+    description: Every device in the project, including ones DirectorLink cannot control yet.
   - name: Lights
-    description: Lights C4Bridge can read and control.
+    description: Lights DirectorLink can read and control.
   - name: Thermostats
-    description: Heating and cooling zones C4Bridge can read and control.
+    description: Heating and cooling zones DirectorLink can read and control.
   - name: Blinds
-    description: Blinds, shades and shutters C4Bridge can read and control.
+    description: Blinds, shades and shutters DirectorLink can read and control.
   - name: Cameras
     description: Camera snapshots, fetched on the controller so camera logins never leave it.
   - name: Relays
@@ -100,7 +102,7 @@ paths:
     get:
       tags: [System]
       operationId: getSystem
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get bridge, controller and project information
       responses:
         "200":
@@ -118,7 +120,7 @@ paths:
       operationId: pair
       summary: Exchange a pairing code for an API key
       description: |
-        The pairing code is shown in the C4Bridge properties in Composer. It is valid for
+        The pairing code is shown in the DirectorLink properties in Composer. It is valid for
         15 minutes and changes after every successful pairing. Five wrong codes within a minute
         lock pairing for 60 seconds.
       security: []
@@ -159,7 +161,7 @@ paths:
       operationId: createAccessRequest
       summary: Ask for an API key, approved in the Control4 app
       description: |
-        The **C4Bridge Access** button in the Control4 app turns orange. When the homeowner presses
+        The **DirectorLink Access** button in the Control4 app turns orange. When the homeowner presses
         it within 2 minutes, the request is approved and the requester collects its key once with
         `GET /v1/auth/requests/{requestId}`. Only one request can wait at a time, and at most five
         can be made in ten minutes. Keep the returned `id` secret: it is how the key is collected.
@@ -234,7 +236,7 @@ paths:
     get:
       tags: [Auth]
       operationId: listApiKeys
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: List API keys
       responses:
         "200":
@@ -250,7 +252,7 @@ paths:
     post:
       tags: [Auth]
       operationId: createApiKey
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Create an API key
       requestBody:
         required: true
@@ -280,7 +282,7 @@ paths:
     get:
       tags: [Auth]
       operationId: getCurrentApiKey
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: The API key used for this request
       description: Lets an app learn its own role to show only what it may use. The secret is not returned.
       responses:
@@ -295,7 +297,7 @@ paths:
     delete:
       tags: [Auth]
       operationId: revokeCurrentApiKey
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Revoke the API key used for this request
       description: Lets any client forget itself, whatever its role; later requests with the key get 401.
       responses:
@@ -310,7 +312,7 @@ paths:
     patch:
       tags: [Auth]
       operationId: updateApiKey
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Rename an API key or change its role
       description: The last admin key cannot lose its admin role (`409 LAST_ADMIN`).
       requestBody:
@@ -341,7 +343,7 @@ paths:
     delete:
       tags: [Auth]
       operationId: deleteApiKey
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Revoke an API key
       description: Revoking the key used for this request is allowed; later requests with it get 401.
       responses:
@@ -358,7 +360,7 @@ paths:
     get:
       tags: [Rooms]
       operationId: listRooms
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List rooms
       responses:
         "200":
@@ -376,7 +378,7 @@ paths:
     get:
       tags: [Rooms]
       operationId: getRoom
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a room
       responses:
         "200":
@@ -394,7 +396,7 @@ paths:
     patch:
       tags: [Rooms]
       operationId: updateRoom
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Name a room in other languages
       description: |
         Sets the room's name per language (the Control4 name itself does not change). An empty
@@ -430,7 +432,7 @@ paths:
     get:
       tags: [Devices]
       operationId: listDevices
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List devices
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -462,7 +464,7 @@ paths:
     get:
       tags: [Devices]
       operationId: getDevice
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a device
       responses:
         "200":
@@ -482,7 +484,7 @@ paths:
     get:
       tags: [Lights]
       operationId: listLights
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List lights
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -504,7 +506,7 @@ paths:
     get:
       tags: [Lights]
       operationId: getLight
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a light
       responses:
         "200":
@@ -522,7 +524,7 @@ paths:
     patch:
       tags: [Lights]
       operationId: updateLight
-      x-c4bridge-role: member
+      x-directorlink-role: member
       summary: Turn a light on or off, or set its brightness
       requestBody:
         required: true
@@ -556,7 +558,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: listThermostats
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List thermostats
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -578,7 +580,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: getThermostat
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a thermostat
       responses:
         "200":
@@ -596,7 +598,7 @@ paths:
     patch:
       tags: [Thermostats]
       operationId: updateThermostat
-      x-c4bridge-role: member
+      x-directorlink-role: member
       summary: Change mode, target temperature or fan speed
       description: Fields are applied in the order mode, fan speed, target temperature.
       requestBody:
@@ -632,7 +634,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: listBlinds
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List blinds
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -654,7 +656,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: getBlind
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a blind
       responses:
         "200":
@@ -672,7 +674,7 @@ paths:
     patch:
       tags: [Blinds]
       operationId: updateBlind
-      x-c4bridge-role: member
+      x-directorlink-role: member
       summary: Open, close or move a blind to a position
       description: |
         `{"position": 100}` opens, `{"position": 0}` closes. Blinds that only support open and
@@ -711,7 +713,7 @@ paths:
     post:
       tags: [Blinds]
       operationId: stopBlind
-      x-c4bridge-role: member
+      x-directorlink-role: member
       summary: Stop a moving blind
       description: Blinds without a stop command on the KNX side ignore it.
       responses:
@@ -738,7 +740,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: listCameras
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List cameras
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -760,7 +762,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCamera
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a camera
       responses:
         "200":
@@ -782,7 +784,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCameraSnapshot
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get the current picture
       description: |
         The bridge fetches the picture from the camera with the address and login stored in
@@ -822,7 +824,7 @@ paths:
     get:
       tags: [Relays]
       operationId: listRelays
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: List relays
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -844,7 +846,7 @@ paths:
     get:
       tags: [Relays]
       operationId: getRelay
-      x-c4bridge-role: viewer
+      x-directorlink-role: viewer
       summary: Get a relay
       responses:
         "200":
@@ -862,7 +864,7 @@ paths:
     patch:
       tags: [Relays]
       operationId: updateRelay
-      x-c4bridge-role: doors
+      x-directorlink-role: doors
       summary: Open or close a relay and leave it so
       description: For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
       requestBody:
@@ -899,7 +901,7 @@ paths:
     post:
       tags: [Relays]
       operationId: pulseRelay
-      x-c4bridge-role: doors
+      x-directorlink-role: doors
       summary: Pulse the relay (open a door or gate)
       description: |
         Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
@@ -928,7 +930,7 @@ paths:
     get:
       tags: [Logs]
       operationId: listLogs
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Read the bridge's recent log
       description: |
         The bridge keeps its last 500 log entries in memory: API requests, commands sent to
@@ -977,7 +979,7 @@ paths:
     get:
       tags: [Logs]
       operationId: getLogSettings
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Get the log level
       responses:
         "200":
@@ -993,7 +995,7 @@ paths:
     patch:
       tags: [Logs]
       operationId: updateLogSettings
-      x-c4bridge-role: admin
+      x-directorlink-role: admin
       summary: Change the log level
       description: Use `debug` while investigating a problem, then set it back to `info`.
       requestBody:
@@ -1654,7 +1656,7 @@ components:
           description: The relay contact (`closed` = energized). Null until the relay reports a change.
         state_reported:
           type: boolean
-          description: False when C4Bridge cannot watch this relay's state.
+          description: False when DirectorLink cannot watch this relay's state.
 
     RelayUpdate:
       type: object

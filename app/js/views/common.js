@@ -43,7 +43,7 @@ export function pageHeader({ title, back, actions = [], titleDir } = {}) {
 
 // Back returns to the previous screen when there is one in this app, else to the link target.
 function goBack(event) {
-  if (window.history.state?.c4bridgeInApp) {
+  if (window.history.state?.directorlinkInApp) {
     event.preventDefault();
     window.history.back();
   }

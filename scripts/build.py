@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Build the C4Bridge Control4 driver package.
+"""Build the DirectorLink Control4 driver package.
 
 VERSION is the only version source. The build stamps it into the packaged driver
 (driver.xml <version> and src/core/version.lua) and embeds the OpenAPI document from
 api/openapi.yaml so the driver can serve it at /v1/openapi.json.
 
 Outputs:
-  dist/C4Bridge.c4z   the driver package
+  dist/DirectorLink.c4z   the driver package
   dist/openapi.json   the API description for this version
 """
 
@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DRIVER = ROOT / "driver"
 SPEC = ROOT / "api" / "openapi.yaml"
 DIST = ROOT / "dist"
-PACKAGE = DIST / "C4Bridge.c4z"
+PACKAGE = DIST / "DirectorLink.c4z"
 SPEC_JSON = DIST / "openapi.json"
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
@@ -95,7 +95,7 @@ def package_entries(version, driver_version, spec):
         entries[name] = path.read_text(encoding="utf-8")
     if SPEC_MODULE in entries:
         fail(f"{SPEC_MODULE} is generated; remove it from the source tree")
-    # Driver assets (Control4 app button icons), served as controller://driver/C4Bridge/<path>.
+    # Driver assets (Control4 app button icons), served as controller://driver/DirectorLink/<path>.
     for path in sorted((DRIVER / "www").rglob("*")):
         if path.is_file():
             entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()

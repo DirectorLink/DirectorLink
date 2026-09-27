@@ -1,4 +1,4 @@
--- C4Bridge log: a leveled, in-memory ring buffer that the API serves at /v1/logs.
+-- DirectorLink log: a leveled, in-memory ring buffer that the API serves at /v1/logs.
 -- Every recorded entry is also written to the Director driver log via C4:DebugLog.
 
 local Json = require("src.core.json")
@@ -109,7 +109,7 @@ function Log.write(level, category, message, data)
             suffix = " " .. (ok and encoded or tostring(entry.data))
         end
         C4:DebugLog(
-            "[C4Bridge][" .. string.upper(level) .. "][" .. entry.category .. "] " ..
+            "[DirectorLink][" .. string.upper(level) .. "][" .. entry.category .. "] " ..
             entry.message .. suffix
         )
     end)

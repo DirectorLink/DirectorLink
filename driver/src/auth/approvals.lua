@@ -1,4 +1,4 @@
--- Access requests approved with the "C4Bridge Access" button in the Control4 app.
+-- Access requests approved with the "DirectorLink Access" button in the Control4 app.
 -- One request can wait at a time; pressing the button approves it, and the requester then
 -- collects its API key once with the request id (which only the requester knows).
 
@@ -58,7 +58,7 @@ local function clear()
         end
     end)
     state.timer = nil
-    setIcon("idle", "C4Bridge Access")
+    setIcon("idle", "DirectorLink Access")
     publish()
 end
 
@@ -103,7 +103,7 @@ function Approvals.initialize(options)
     state.onChange = options.onChange
     state.request = nil
     state.recent = {}
-    setIcon("idle", "C4Bridge Access")
+    setIcon("idle", "DirectorLink Access")
     publish()
 end
 
@@ -153,7 +153,7 @@ function Approvals.create(name, client, role)
     setIcon("waiting", "Approve access for " .. name)
     scheduleExpiry(Approvals.REQUEST_TTL_SECONDS)
     publish()
-    log("info", "access requested; waiting for the C4Bridge Access button", { name = name, role = state.request.role, client = client })
+    log("info", "access requested; waiting for the DirectorLink Access button", { name = name, role = state.request.role, client = client })
     return state.request
 end
 
@@ -186,7 +186,7 @@ function Approvals.onButtonPressed()
     expireIfNeeded()
     local request = state.request
     if not request or request.status ~= "pending" then
-        log("info", "C4Bridge Access pressed with no request waiting")
+        log("info", "DirectorLink Access pressed with no request waiting")
         return false
     end
     request.status = "approved"

@@ -542,7 +542,7 @@ end
 function tests.keys_from_before_roles_keep_full_access()
     local project = Mock.project()
     local mock = Mock.install(project)
-    mock.persist["c4bridge_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
+    mock.persist["directorlink_api_keys"] = '{"version":1,"keys":[{"id":"0a1b2c3d","name":"Old laptop","secret":"ak_old","created_at":"2026-09-26T10:00:00Z"}]}'
     local restarted = Mock.startDriver(project)
     for name, value in pairs(mock.persist) do
         restarted.persist[name] = value
@@ -584,7 +584,7 @@ end
 
 function tests.keys_survive_a_driver_restart()
     local mock, key = start()
-    local persisted = mock.persist["c4bridge_api_keys"]
+    local persisted = mock.persist["directorlink_api_keys"]
     T.truthy(persisted and persisted:find(key, 1, true), "key stored in encrypted persistence")
 
     local project = Mock.project()
@@ -649,14 +649,14 @@ end
 
 function tests.cors_allows_the_web_app_and_rejects_other_origins()
     local mock, key = start()
-    local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.c4bridge.io" } })
+    local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.directorlink.io" } })
     T.eq(preflight.status, 204)
-    T.eq(preflight.headers["access-control-allow-origin"], "https://app.c4bridge.io")
+    T.eq(preflight.headers["access-control-allow-origin"], "https://app.directorlink.io")
     T.contains(preflight.headers["access-control-allow-methods"], "PATCH")
     T.eq(preflight.headers["access-control-allow-private-network"], "true")
 
-    local fromApp = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.c4bridge.io" } })
-    T.eq(fromApp.headers["access-control-allow-origin"], "https://app.c4bridge.io")
+    local fromApp = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.directorlink.io" } })
+    T.eq(fromApp.headers["access-control-allow-origin"], "https://app.directorlink.io")
     T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://localhost:8080" } }).status, 200)
 
     local evil = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://evil.example" } })

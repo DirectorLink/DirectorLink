@@ -1,4 +1,4 @@
--- A fake Director for running the C4Bridge driver in plain Lua 5.1.
+-- A fake Director for running the DirectorLink driver in plain Lua 5.1.
 -- Records everything the driver sends so tests can assert on it.
 
 local Mock = {}
@@ -103,12 +103,12 @@ function Mock.project()
                 deviceName = "Front Door", driverFileName = "camera_ip_hik_ipc_static.c4z", roomId = 10, roomName = "Kitchen",
             },
             [572] = {
-                deviceName = "C4Bridge", driverFileName = "C4Bridge.c4z", roomId = 10, roomName = "Kitchen",
-                proxies = { [574] = { deviceName = "C4Bridge Access", driverFileName = "uibutton.c4i" } },
+                deviceName = "DirectorLink", driverFileName = "DirectorLink.c4z", roomId = 10, roomName = "Kitchen",
+                proxies = { [574] = { deviceName = "DirectorLink Access", driverFileName = "uibutton.c4i" } },
             },
             [574] = {
-                deviceName = "C4Bridge Access", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
-                protocol = { [572] = { deviceName = "C4Bridge", driverFileName = "C4Bridge.c4z" } },
+                deviceName = "DirectorLink Access", driverFileName = "uibutton.c4i", roomId = 10, roomName = "Kitchen",
+                protocol = { [572] = { deviceName = "DirectorLink", driverFileName = "DirectorLink.c4z" } },
             },
         },
         variables = {
@@ -159,7 +159,7 @@ function Mock.install(project)
         commands = {},
         proxy = {},
         -- Security lists of room 10 (Kitchen): a cameras shortcut and a gate button are visible,
-        -- the C4Bridge Access button (574) was added hidden next to another hidden button.
+        -- the DirectorLink Access button (574) was added hidden next to another hidden button.
         security = { [10] = { visible = { 4294966301, 531 }, hidden = { 541, 574, 483 } } },
         listeners = {},
         urlRequests = {},

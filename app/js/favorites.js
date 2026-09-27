@@ -3,7 +3,7 @@
 
 import { findDevice, state } from "./state.js";
 
-const PREFIX = "c4bridge.favorites.";
+const PREFIX = "directorlink.favorites.";
 
 function storageKey() {
   return PREFIX + (state.host || "default");

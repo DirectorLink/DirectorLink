@@ -1,14 +1,14 @@
-// Tests web/sw.js offline behaviour with a fake network that serves the app like Cloudflare
+// Tests app/sw.js offline behaviour with a fake network that serves the app like Cloudflare
 // (/index.html -> /, /console.html -> /console) and a fake Cache Storage.
-//   node --test tests/web/
+//   node --test tests/app/
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 
-const SOURCE = readFileSync(new URL("../../web/sw.js", import.meta.url), "utf8");
-const ORIGIN = "https://app.c4bridge.io";
+const SOURCE = readFileSync(new URL("../../app/sw.js", import.meta.url), "utf8");
+const ORIGIN = "https://app.directorlink.io";
 
 const FILES = {
   "/": "<html>dashboard</html>",
@@ -26,7 +26,7 @@ const FILES = {
   "/icons/icon-192.png": "png",
   "/icons/icon-512.png": "png",
 };
-// The app's ES modules (web/js/**) are precached too.
+// The app's ES modules (app/js/**) are precached too.
 for (const [, path] of SOURCE.matchAll(/"(\/js\/[^"]+\.js)"/g)) FILES[path] = `module ${path}`;
 const REDIRECTS = { "/index.html": "/", "/console.html": "/console" };
 
@@ -166,8 +166,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["c4bridge-shell-v11", "c4bridge-shell-v12"] });
-  assert.deepEqual(await storage.keys(), ["c4bridge-shell-v13"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v11", "directorlink-shell-v12"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v13"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {

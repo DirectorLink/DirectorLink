@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the PNG icons for the C4Bridge Access button (driver/www/icons).
+"""Generates the PNG icons for the DirectorLink Access button (driver/www/icons).
 
 A key glyph drawn with signed distance functions, so every size is anti-aliased without an
 image library. Run it after changing the design; the PNGs are committed.
@@ -80,7 +80,7 @@ def main():
         mask = alpha_mask(size)
         for state, color in STATES.items():
             (OUT / "access" / f"{state}_{size}.png").write_bytes(png(size, mask, color))
-    # Composer project-tree icons: the key on the C4Bridge dark blue.
+    # Composer project-tree icons: the key on the DirectorLink dark blue.
     for name, size in (("device_sm.png", 16), ("device_lg.png", 32)):
         (OUT / name).write_bytes(png(size, alpha_mask(size), (255, 255, 255), background=(15, 23, 42)))
     print(f"Wrote {len(APP_SIZES) * len(STATES) + 2} icons to {OUT}")

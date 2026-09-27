@@ -5,8 +5,8 @@
 export const PALETTES = ["graphite", "ocean", "forest", "plum", "midnight"];
 export const THEMES = ["auto", "light", "dark"];
 
-const PALETTE_KEY = "c4bridge.palette";
-const THEME_KEY = "c4bridge.theme";
+const PALETTE_KEY = "directorlink.palette";
+const THEME_KEY = "directorlink.theme";
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 function read(key) {

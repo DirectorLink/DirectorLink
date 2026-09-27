@@ -1,4 +1,4 @@
--- C4Bridge LAN API server: DriverWorks TCP server + HTTP parsing + CORS + API-key auth +
+-- DirectorLink LAN API server: DriverWorks TCP server + HTTP parsing + CORS + API-key auth +
 -- routing + RFC 9457 errors + access logging.
 
 local Json = require("src.core.json")
@@ -28,8 +28,8 @@ local Server = {}
 Server.PORT = 41999
 
 local ALLOWED_ORIGINS = {
-    ["https://app.c4bridge.io"] = true,
-    ["https://c4bridge.io"] = true,
+    ["https://app.directorlink.io"] = true,
+    ["https://console.directorlink.io"] = true,
 }
 
 -- Connections that never finish a request are dropped after this many seconds.
@@ -52,7 +52,7 @@ for _, route in ipairs(Routes) do
 end
 
 -- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not.
--- localhost origins are allowed so the web app can be tested from a local server.
+-- localhost origins are allowed so the app can be tested from a local server.
 function Server.originAllowed(origin)
     if origin == nil or origin == "" then
         return true
@@ -223,7 +223,7 @@ function Server.handleRequest(request, client, respond)
             if not match.route.public and not apiKey then
                 status = 401
                 payload = Problem.unauthorized()
-                extraHeaders = { { "WWW-Authenticate", 'Bearer realm="C4Bridge"' } }
+                extraHeaders = { { "WWW-Authenticate", 'Bearer realm="DirectorLink"' } }
             elseif not match.route.public and not Roles.allows(apiKey.role, match.route.role) then
                 status = 403
                 payload = Problem.new(403, "FORBIDDEN", "This API key has the " .. tostring(apiKey.role)

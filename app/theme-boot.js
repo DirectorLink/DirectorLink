@@ -19,16 +19,16 @@
       return null;
     }
   }
-  var palette = read("c4bridge.palette");
+  var palette = read("directorlink.palette");
   if (palettes.indexOf(palette) < 0) palette = "graphite";
-  var theme = read("c4bridge.theme");
+  var theme = read("directorlink.theme");
   if (theme !== "light" && theme !== "dark") {
     theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
   root.setAttribute("data-palette", palette);
   root.setAttribute("data-theme", theme);
 
-  var lang = read("c4bridge.lang");
+  var lang = read("directorlink.lang");
   if (!lang || lang === "auto") {
     var tags = navigator.languages || [navigator.language || "en"];
     lang = "en";

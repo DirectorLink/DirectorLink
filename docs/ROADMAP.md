@@ -45,7 +45,7 @@
 - [x] Pages security headers
 - [x] Cloudflare deployment documentation
 - [ ] Connect GitHub repository to Cloudflare Pages
-- [ ] Attach `c4bridge.io`
+- [ ] Attach `directorlink.io`
 - [ ] Local Network Access request flow
 - [x] Pairing
 - [x] API console: every endpoint from the live API description, live log (0.2.0)
@@ -56,12 +56,12 @@
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
-- [x] Cameras: snapshots through the camera proxy, near-live grid in the web app (0.5.0)
+- [x] Cameras: snapshots through the camera proxy, near-live grid in the app (0.5.0)
 - [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 
-## Milestone 5 — C4Bridge scenes
+## Milestone 5 — DirectorLink scenes
 
 - [ ] Scene model
 - [ ] Scene persistence
@@ -75,7 +75,7 @@
 - [ ] Days of week
 - [ ] Sunrise/sunset
 - [ ] Solar offsets
-- [ ] Run C4Bridge scenes/actions
+- [ ] Run DirectorLink scenes/actions
 - [ ] Recalculate after reboot/timezone/location changes
 - [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
 
