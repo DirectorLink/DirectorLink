@@ -2,6 +2,20 @@
 
 ## Current release
 
+`v0.14.0` — schedules: scenes run by themselves at a time, at sunrise or sunset, or when it gets hot, windy or rainy (weather from Open-Meteo). Update DirectorLink in Composer (no reboot).
+
+## 0m. Schedules and the weather
+
+1. Scenes → **Schedules**: the weather card shows the temperature, wind and today's forecast, sunrise and sunset. (If it asks for the location, set latitude and longitude in Composer's project properties.)
+2. **New schedule** → a scene → At a time, two minutes from now → today's day → Save: the row says *Next: today …*; at that minute the scene runs, and the row says *Ran today …*. `GET /v1/logs?category=schedules` shows it.
+3. Switch a schedule off from the list: it no longer runs.
+4. Sun: sunset, 30 min before, every day: *Next* shows today's or tomorrow's time.
+5. Weather → Heat, a threshold 1° below the temperature now → Save: within 15 minutes it runs once, and not again until it has cooled 2° below.
+6. Only if → *It isn’t raining* on a time schedule, with *Skip* for no weather data; unplug the controller's internet: at its time it does not run and says *no weather data*.
+7. A scene with a gate, run by a schedule: the gate is skipped (never opened by a schedule).
+8. Deleting a scene that a schedule runs is refused, with a message.
+9. Update the driver again in Composer: the schedules are still there and nothing runs twice.
+
 `v0.13.0` — scenes: one tap sets lights, AC, blinds and gates; made in the app by admins, run by everyone with member access. Update DirectorLink in Composer (no reboot).
 
 ## 0l. Scenes
@@ -113,7 +127,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.13.0`
+- Version: `0.14.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`

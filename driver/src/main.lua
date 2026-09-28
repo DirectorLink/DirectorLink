@@ -8,6 +8,10 @@ local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
 local Scenes = require("src.core.scenes")
+local Schedules = require("src.core.schedules")
+local Scheduler = require("src.core.scheduler")
+local Weather = require("src.core.weather")
+local SceneHandlers = require("src.api.handlers.scenes")
 local Profiles = require("src.auth.profiles")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
@@ -244,6 +248,8 @@ function OnDriverLateInit(driverInitType)
     RoomLayout.load()
     local sceneCount, scenesStoredAs = Scenes.load()
     Log.info("scenes", "scenes loaded", { count = sceneCount, stored_as = scenesStoredAs })
+    local scheduleCount, schedulesStoredAs = Schedules.load()
+    Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
@@ -273,6 +279,19 @@ function OnDriverLateInit(driverInitType)
 
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
     discover()
+
+    -- Schedules run on the controller (src/core/scheduler.lua); the weather is for the project's
+    -- location (Composer project properties).
+    Weather.reset()
+    Weather.configure(function()
+        local properties = (Registry.metadata or {}).properties or {}
+        return tonumber(properties.Latitude), tonumber(properties.Longitude)
+    end)
+    Scheduler.start({
+        runScene = function(sceneId, caller)
+            return SceneHandlers.runSaved(services, sceneId, caller)
+        end,
+    })
 
     Remote.init({
         services = services,
@@ -360,6 +379,7 @@ function OnServerDataIn(handle, data, clientAddress, clientPort)
 end
 
 function OnDriverDestroyed(driverInitType)
+    Scheduler.stop()
     persistSet(LIFECYCLE_KEYS.last_destroy_type, tostring(driverInitType or "nil"))
     persistSet(LIFECYCLE_KEYS.last_destroy_time, os.date("%Y-%m-%d %H:%M:%S"))
     Log.info("lifecycle", "driver destroyed", { init_type = tostring(driverInitType) })

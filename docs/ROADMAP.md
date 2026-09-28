@@ -43,7 +43,7 @@
 - [x] People and devices: keys, invitations and the home's accounts in the app; cloud membership follows the device keys (0.11.0)
 - [x] Profiles: each person's language, theme, favorites and hidden rooms on the controller, shared by their devices; the home's room order (0.12.0; `docs/PREFERENCES.md`)
 - [x] DirectorLink scenes: made in the app, run with one tap, shown on Home (0.13.0; `docs/SCENES.md`)
-- [ ] Schedules by time and weather (Open-Meteo: heat, rain, wind; 0.14.0) — editor mock: https://claude.ai/artifact/2tArtCVj4UFSstfKrDmTh7
+- [x] Schedules by time, sunrise/sunset and weather (Open-Meteo: heat, rain, wind), run by the controller (0.14.0; `docs/SCHEDULES.md`)
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
 - [ ] Rediscover the project without restarting the driver
 
@@ -81,13 +81,14 @@
 
 ## Milestone 6 — scheduling
 
-- [ ] Persistent schedule store
-- [ ] Fixed time
-- [ ] Days of week
-- [ ] Sunrise/sunset
-- [ ] Solar offsets
-- [ ] Run DirectorLink scenes/actions
-- [ ] Recalculate after reboot/timezone/location changes
+- [x] Persistent schedule store (0.14.0)
+- [x] Fixed time (0.14.0)
+- [x] Days of week (0.14.0)
+- [x] Sunrise/sunset (0.14.0, worked out on the controller)
+- [x] Solar offsets (0.14.0)
+- [x] Run DirectorLink scenes (0.14.0)
+- [x] Weather triggers and conditions from Open-Meteo: heat, wind, rain (0.14.0)
+- [x] Recalculate after reboot/timezone/location changes (0.14.0: worked out each minute)
 - [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
 
 ## Deferred

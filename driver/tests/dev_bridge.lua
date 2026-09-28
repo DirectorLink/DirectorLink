@@ -21,6 +21,16 @@ end
 local mock = Mock.startDriver(nil, specText)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
+-- And a fake Open-Meteo answers for its weather.
+local Json = require("src.core.json")
+mock.weather = {
+    current = { temperature_2m = 27, precipitation = 0, weather_code = 1, wind_speed_10m = 12, wind_gusts_10m = 20 },
+    daily = {
+        temperature_2m_max = Json.array({ 31 }),
+        temperature_2m_min = Json.array({ 22 }),
+        precipitation_probability_max = Json.array({ 10 }),
+    },
+}
 
 local function fromHex(text)
     return (text:gsub("%x%x", function(pair)

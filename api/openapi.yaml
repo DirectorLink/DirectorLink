@@ -54,6 +54,8 @@ tags:
     description: Each person's preferences (language, theme, palette, favorites), shared by their devices. Every API key belongs to one profile.
   - name: Rooms
     description: Rooms of the Control4 project.
+  - name: Schedules
+    description: "Scenes run by the controller at a time, at sunrise or sunset, or when the weather turns (Open-Meteo: heat, wind, rain)."
   - name: Scenes
     description: "The home's scenes: one tap sets several lights, thermostats, blinds and gates. Admins make them, members run them."
   - name: Devices
@@ -758,6 +760,7 @@ paths:
       operationId: deleteScene
       x-directorlink-role: admin
       summary: Delete a scene
+      description: A scene that schedules run is not deleted (409 `SCENE_IN_USE`); change or delete them first.
       responses:
         "204":
           description: Deleted.
@@ -769,6 +772,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
 
@@ -800,6 +805,157 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/schedules:
+    get:
+      tags: [Schedules]
+      operationId: listSchedules
+      x-directorlink-role: viewer
+      summary: List schedules
+      responses:
+        "200":
+          description: The home's schedules, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Schedules]
+      operationId: createSchedule
+      x-directorlink-role: admin
+      summary: Create a schedule
+      description: |
+        Runs a scene at a time of day, at sunrise or sunset (with an offset), or when the weather
+        turns — hotter than a threshold, wind stronger than one, or rain starting — on the chosen
+        days (0 Sunday to 6 Saturday), in the controller's local time. At most 50. A scheduled
+        scene runs like one from a member's key: doors and gates in it are skipped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleCreate"
+            example:
+              scene_id: 0a1b2c3d
+              trigger: { type: time, at: "06:45" }
+              days: [0, 1, 2, 3, 4]
+              only_if: { not_raining: true }
+              if_no_weather: run
+      responses:
+        "201":
+          description: The new schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/schedules/{scheduleId}:
+    parameters:
+      - $ref: "#/components/parameters/ScheduleId"
+    get:
+      tags: [Schedules]
+      operationId: getSchedule
+      x-directorlink-role: viewer
+      summary: Get a schedule
+      responses:
+        "200":
+          description: The schedule.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Schedules]
+      operationId: updateSchedule
+      x-directorlink-role: admin
+      summary: Change a schedule
+      description: |
+        The fields sent replace the schedule's (a whole `trigger` or `only_if`); `{"enabled": false}`
+        switches it off. With `version`, the change applies only if nobody changed the schedule
+        since (409 `VERSION_CONFLICT`). A changed weather schedule may run again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleUpdate"
+      responses:
+        "200":
+          description: The schedule after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [Schedules]
+      operationId: deleteSchedule
+      x-directorlink-role: admin
+      summary: Delete a schedule
+      responses:
+        "204":
+          description: Deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/weather:
+    get:
+      tags: [Schedules]
+      operationId: getWeather
+      x-directorlink-role: viewer
+      summary: The weather at home
+      description: |
+        Open-Meteo's current conditions and today's forecast for the project's location (Composer
+        project properties), as the controller last read them, and today's sunrise and sunset,
+        worked out on the controller. The controller reads the weather every 15 minutes while a
+        schedule needs it, and for an hour after this is asked. Weather data by Open-Meteo.com
+        (CC BY 4.0).
+      responses:
+        "200":
+          description: The latest reading; `status` says why there is none.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Weather"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /v1/devices:
     get:
@@ -1484,6 +1640,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    ScheduleId:
+      name: scheduleId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}$"
     SceneId:
       name: sceneId
       in: path
@@ -1595,7 +1758,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `VERSION_CONFLICT`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
       content:
         application/problem+json:
           schema:
@@ -2143,6 +2306,242 @@ components:
                 type: string
               detail:
                 type: string
+
+    ScheduleTrigger:
+      description: |
+        `time`: `at` ("HH:MM"). `sun`: `event` (sunrise, sunset) and `offset` in minutes (-180 to
+        180; negative is before). `weather`: `kind` heat (`above` °C, 15 to 45), wind (`above`
+        km/h, 10 to 150) or rain (starts raining), optional hours `from`–`to` ("HH:MM", may cross
+        midnight), and `once_a_day` (default true). A weather schedule runs again only after it has
+        cooled 2° below the threshold, the wind has dropped 10 km/h below it, or an hour without
+        rain.
+      type: object
+      required: [type]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [time, sun, weather]
+        at:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        event:
+          type: string
+          enum: [sunrise, sunset]
+        offset:
+          type: integer
+          minimum: -180
+          maximum: 180
+        kind:
+          type: string
+          enum: [heat, wind, rain]
+        above:
+          type: number
+        from:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        to:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+        once_a_day:
+          type: boolean
+
+    ScheduleConditions:
+      description: |
+        For time and sun schedules: run only if it is not raining, hotter than a temperature, the
+        wind is below a speed, or rain is forecast for today (a 50% chance or more). Checked when
+        the schedule runs, with the latest weather.
+      type: object
+      additionalProperties: false
+      properties:
+        not_raining:
+          type: boolean
+        hotter_than:
+          type: number
+          minimum: 15
+          maximum: 45
+        wind_below:
+          type: number
+          minimum: 10
+          maximum: 150
+        rain_expected:
+          type: boolean
+
+    ScheduleDays:
+      type: array
+      minItems: 1
+      maxItems: 7
+      description: Weekdays, 0 (Sunday) to 6 (Saturday).
+      items:
+        type: integer
+        minimum: 0
+        maximum: 6
+
+    Schedule:
+      type: object
+      required: [id, enabled, scene_id, trigger, days, only_if, if_no_weather, next_run, last_run, version, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        enabled:
+          type: boolean
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        trigger:
+          $ref: "#/components/schemas/ScheduleTrigger"
+        days:
+          $ref: "#/components/schemas/ScheduleDays"
+        only_if:
+          $ref: "#/components/schemas/ScheduleConditions"
+        if_no_weather:
+          type: string
+          enum: [run, skip]
+          description: When `only_if` needs the weather and there is none.
+        next_run:
+          type: [string, "null"]
+          format: date-time
+          description: For time and sun schedules that are on.
+        last_run:
+          type: [object, "null"]
+          properties:
+            at:
+              type: string
+              format: date-time
+            ran:
+              type: [integer, "null"]
+            skipped:
+              type: [integer, "null"]
+            failed:
+              type: [integer, "null"]
+            note:
+              type: [string, "null"]
+              description: "`no_weather`: ran without weather data; for weather schedules, the kind that made it run."
+            skipped_by:
+              type: [string, "null"]
+              enum: [only_if, no_weather, null]
+              description: It was due but did not run.
+            error:
+              type: [string, "null"]
+        version:
+          type: integer
+          minimum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ScheduleList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Schedule"
+
+    ScheduleCreate:
+      type: object
+      required: [scene_id, trigger, days]
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        trigger:
+          $ref: "#/components/schemas/ScheduleTrigger"
+        days:
+          $ref: "#/components/schemas/ScheduleDays"
+        only_if:
+          $ref: "#/components/schemas/ScheduleConditions"
+        if_no_weather:
+          type: string
+          enum: [run, skip]
+
+    ScheduleUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        trigger:
+          $ref: "#/components/schemas/ScheduleTrigger"
+        days:
+          $ref: "#/components/schemas/ScheduleDays"
+        only_if:
+          $ref: "#/components/schemas/ScheduleConditions"
+        if_no_weather:
+          type: string
+          enum: [run, skip]
+        version:
+          type: integer
+          minimum: 1
+
+    Weather:
+      type: object
+      required: [status, location, fetched_at, current, today, attribution]
+      properties:
+        status:
+          type: string
+          enum: [ok, waiting, unreachable, no_location]
+          description: "`no_location`: set the latitude and longitude in Composer's project properties."
+        detail:
+          type: [string, "null"]
+        location:
+          type: [object, "null"]
+          properties:
+            latitude:
+              type: number
+            longitude:
+              type: number
+        fetched_at:
+          type: [string, "null"]
+          format: date-time
+        current:
+          type: [object, "null"]
+          properties:
+            temperature:
+              type: number
+              description: °C
+            wind_speed:
+              type: [number, "null"]
+              description: km/h
+            wind_gusts:
+              type: [number, "null"]
+            precipitation:
+              type: number
+              description: mm
+            raining:
+              type: boolean
+            weather_code:
+              type: [integer, "null"]
+              description: WMO weather code.
+        today:
+          type: object
+          properties:
+            max_temperature:
+              type: [number, "null"]
+            min_temperature:
+              type: [number, "null"]
+            rain_chance:
+              type: [number, "null"]
+              description: Percent.
+            sunrise:
+              type: [string, "null"]
+              description: Local time, "HH:MM".
+            sunset:
+              type: [string, "null"]
+        attribution:
+          type: string
 
     RoomOrder:
       type: object

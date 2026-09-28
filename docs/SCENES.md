@@ -1,7 +1,7 @@
 # Scenes
 
-**Status: built in DirectorLink 0.13.0.** Schedules (0.14.0) will run these scenes by time and
-by weather.
+**Status: built in DirectorLink 0.13.0.** Schedules (0.14.0, `docs/SCHEDULES.md`) run them by
+time, sun and weather.
 
 A scene is one tap that sets several things: "all lights off, the bedroom AC to 24°, the
 living-room blinds closed". Scenes belong to the home and are kept on the controller

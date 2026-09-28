@@ -31,6 +31,7 @@ import {
 import { api, errorText, noteForbidden, refreshDevices, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
+import { scenesNav } from "./schedules.js";
 
 const MAX_SCENES = 50;
 const MESSAGE_MS = 6000;
@@ -54,8 +55,10 @@ function flash(text) {
 
 // Leaves an editor screen for `hash`: back through the history when the app came from there, so
 // Back afterwards does not reopen what was just left.
-function leave(hash) {
-  if (window.history.state?.directorlinkInApp) window.history.back();
+// `from`: the screen the editor was opened from; back through the history only when that is where
+// `hash` leads, else the editor is replaced by `hash`.
+function leave(hash, from) {
+  if (window.history.state?.directorlinkInApp && from === hash.replace(/^#\//, "").split("/")[0]) window.history.back();
   else window.location.replace(hash);
 }
 
@@ -93,6 +96,7 @@ export function scenesView({ navigate }) {
     header,
     offlineBanner(),
     staleBanner(),
+    scenesNav("scenes"),
     notice(ui.scenesMessage),
     h("p", { class: "muted-note scene-intro" }, admin ? t("scenes.helpAdmin") : t("scenes.help")),
     can("member") ? null : h("p", { class: "notice notice-info" }, t("scenes.viewOnly", { role: roleLabel(state.role) })),
@@ -211,7 +215,7 @@ export function resetSceneEditor() {
 // `dirty`: something changed (Back asks first); `stepsChanged`: the steps are sent with Save.
 function draftFor(key) {
   if (ui.sceneEditor?.key === key) return ui.sceneEditor;
-  const base = { key, adding: null, busy: false, message: null, dirty: false };
+  const base = { key, adding: null, busy: false, message: null, dirty: false, from: ui.cameFrom };
   if (key === "new") {
     const idea = ui.sceneIdea;
     ui.sceneIdea = null;
@@ -533,7 +537,7 @@ async function saveDraft(draft) {
     draft.dirty = false;
     flash(sending?.changed ? t("scenes.savedPruned", { name: sceneName }) : t("scenes.saved", { name: sceneName }));
     await loadScenes();
-    leave("#/scenes");
+    leave("#/scenes", draft.from);
     return;
   } catch (error) {
     noteForbidden(error);
@@ -555,7 +559,7 @@ async function deleteDraft(draft) {
     if (error?.status !== 404) {
       noteForbidden(error);
       draft.busy = false;
-      draft.message = { kind: "error", text: errorText(error) };
+      draft.message = { kind: "error", text: error?.code === "SCENE_IN_USE" ? t("scenes.editor.inUse") : errorText(error) };
       notify();
       return;
     }
@@ -564,7 +568,7 @@ async function deleteDraft(draft) {
   draft.dirty = false;
   flash(t("scenes.deleted", { name: draft.name }));
   await loadScenes();
-  leave("#/scenes");
+  leave("#/scenes", draft.from);
 }
 
 // ---- adding an action ----------------------------------------------------------------------
@@ -858,7 +862,7 @@ function addActionView(draft) {
   const steps = adding.type ? buildSteps(adding, devices) : [];
   const fits = draft.steps.length + steps.length <= MAX_STEPS;
   const shown = steps.length > 1 ? { ...steps[0], device_ids: steps.flatMap((step) => step.device_ids) } : steps[0];
-  const back = () => leave(`#/scene/${draft.key}`);
+  const back = () => leave(`#/scene/${draft.key}`, "scene");
   const pickRoom = (id) => () => {
     adding.room = id;
     adding.choose = false;
