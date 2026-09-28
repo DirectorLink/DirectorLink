@@ -79,10 +79,15 @@ export function startAccount() {
   }
 }
 
+// The sign-in providers the app offers; each must be set up on api.directorlink.io
+// (cloud/README.md). Apple is added once its keys are there.
+export const SIGN_IN_PROVIDERS = ["google"];
+
 // `hash`: the screen to come back to (Settings, or Home when signing in from the connect screen).
-export function signIn(hash = "#/settings") {
+// `link`: add this provider to the signed-in account instead (Settings → Account).
+export function signIn(hash = "#/settings", provider = "google", { link = false } = {}) {
   const back = `${window.location.origin}/${hash}`;
-  window.location.assign(`${ACCOUNTS_API}/auth/google/start?return_to=${encodeURIComponent(back)}`);
+  window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}${link ? "&link=1" : ""}`);
 }
 
 export async function signOut() {
@@ -94,6 +99,23 @@ export async function signOut() {
   }
   remember(false);
   set({ status: "signed-out" });
+}
+
+// Stops signing in with `provider` (the account keeps at least one).
+export async function removeProvider(provider) {
+  set({ ...state.account, busy: true });
+  try {
+    const response = await call(`/v1/me/identities/${provider}`, "DELETE");
+    if (response.status === 204) {
+      await loadAccount();
+      set({ ...state.account, busy: false, notice: "removed" });
+      return true;
+    }
+  } catch {
+    // Reported below.
+  }
+  set({ ...state.account, busy: false, notice: "removeFailed" });
+  return false;
 }
 
 export async function deleteAccount() {

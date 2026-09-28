@@ -1,6 +1,6 @@
 // Settings: appearance, language, room names, controller, account, app and about.
 
-import { deleteAccount, loadAccount, signIn, signOut } from "../account.js";
+import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
@@ -13,7 +13,7 @@ import { installApp } from "../pwa.js";
 import { api, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
-import { offlineBanner, pageHeader } from "./common.js";
+import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 
 export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
   return [
@@ -551,7 +551,7 @@ function homeSection() {
 function accountSection() {
   const account = state.account;
   const notice = account.notice
-    ? h("p", { class: `notice ${account.notice === "deleted" ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    ? h("p", { class: `notice ${["deleted", "linked", "removed"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
   let body;
   if (account.status === "signed-in") {
@@ -560,12 +560,44 @@ function accountSection() {
         "dl",
         { class: "facts" },
         h("div", { class: "fact" }, h("dt", {}, t("settings.account.signedInAs")), h("dd", { id: "account-email" }, account.user.email)),
-        account.user.name ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.name")), h("dd", {}, account.user.name)) : null
+        account.user.name ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.name")), h("dd", {}, account.user.name)) : null,
+        Array.isArray(account.user.providers) && account.user.providers.length
+          ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.providers")), h("dd", { id: "account-providers" }, account.user.providers.map((provider) => t(`settings.account.provider.${provider}`)).join(" · ")))
+          : null
       ),
       h(
         "div",
         { class: "button-row" },
         h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: signOut }, t("settings.account.signOut")),
+        // Signing in with another provider gives another account; adding it here, while signed in,
+        // makes both sign in to this one.
+        ...SIGN_IN_PROVIDERS.filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider)).map((provider) =>
+          h(
+            "button",
+            { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+            icon(provider === "apple" ? "apple" : "user"),
+            t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
+          )
+        ),
+        // With two, either may go (the last one stays).
+        ...(Array.isArray(account.user.providers) && account.user.providers.length > 1
+          ? account.user.providers.map((provider) =>
+              h(
+                "button",
+                {
+                  type: "button",
+                  class: "button button-quiet",
+                  dataset: { key: `account-remove-${provider}` },
+                  disabled: account.busy,
+                  onclick: () => {
+                    const label = t(`settings.account.provider.${provider}`);
+                    if (window.confirm(t("settings.account.removeProviderConfirm", { provider: label }))) removeProvider(provider);
+                  },
+                },
+                t("settings.account.removeProvider", { provider: t(`settings.account.provider.${provider}`) })
+              )
+            )
+          : []),
         h(
           "button",
           {
@@ -591,7 +623,7 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-primary", dataset: { key: "account-sign-in" }, onclick: () => signIn() }, icon("user"), t("settings.account.signIn")),
+        signInButtons({ hash: "#/settings", key: "account-sign-in" }),
         account.status === "unavailable"
           ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
           : null

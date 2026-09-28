@@ -1,7 +1,8 @@
 # Accounts and end-to-end encrypted remote access
 
-**Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google as the only
-sign-in. Apple follows.** The driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
+**Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google. Sign in with
+Apple is built in the cloud and the app (`cloud/src/apple.js`), and is switched on in the app once
+its keys are set up (cloud/README.md).** The driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
 `docs/RELAY.md`, version 1. Known issues are listed at the end.
@@ -136,11 +137,50 @@ removes it (`DELETE /v1/homes/{home_id}/members/{user_id}`); see Known issues.
 
 Unchanged: pair with a code and use the LAN API. No cloud is involved.
 
+## Google and Apple
+
+Both are OpenID Connect sign-ins run by `api.directorlink.io` (`google.js`, `apple.js`, the shared
+ID token checks in `jwt.js`); no provider script runs in the app's pages.
+
+- **Accounts are found by identity, never by email.** Each provider identity (provider and its
+  `sub`) is kept in `identities`, and a sign-in with an identity nobody has makes a new account,
+  even when an account with that email exists. Google vouches for an address other than Gmail or
+  Workspace only as of when the Google account was made, and addresses pass to other people
+  (reused mailboxes, re-registered domains); joining by email would hand them the account.
+- **Adding the other provider:** while signed in, Settings → Account → *Also sign in with Apple*
+  (or Google) runs that provider's sign-in with `link=1`. The app's page navigates to
+  `api.directorlink.io` on the same site, so the session comes along and the sign-in remembers
+  which account asked; from another site it does not, and nothing is linked. An identity that
+  already belongs to another account is refused (`taken`), and an account has one identity per
+  provider. The adding needs the session it was asked from to be still signed in when the provider
+  answers, so signing out meanwhile (a shared computer) cancels it. The account's email stays that
+  of the identity it was created with; an invitation may be accepted with it or with the email of
+  any of the account's sign-ins. Settings can remove either sign-in again, never the last one.
+- **Separate accounts still work together:** an invitation checks the signed-in account's email,
+  so a person who signs in with Apple with the same address as their Google account can accept
+  one, as a second account.
+- **Hide My Email:** Apple may give a relay address instead of the person's own, and keeps giving
+  it for DirectorLink. Invitations for the real address are refused there (`EMAIL_MISMATCH`); the
+  join page says to sign in with Google, to stop using Sign in with Apple for DirectorLink in the
+  Apple ID settings and sign in again choosing Share My Email (Apple asks only on the first
+  sign-in), or to ask for an invitation to the hidden address. Adding Apple to a Google account
+  avoids it.
+- **A returning Apple ID without an email** (Apple may leave it out, e.g. after Hide My Email
+  forwarding is turned off) is still found by its `sub`; a new account needs a verified email.
+- **Apple's form:** Apple posts its answer (`response_mode=form_post`, the only way it sends the name
+  and email scopes) from appleid.apple.com, so the 10-minute sign-in cookie for Apple is
+  `SameSite=None`; the state, the nonce and the cookie are checked as for Google, and a state only
+  works at the callback of the provider it was made for. The name comes only in that first form and
+  is not signed: it is only a display name.
+- **Apple's client secret** is a JWT (ES256) the Worker signs for each sign-in with the Sign in with
+  Apple key, valid for 5 minutes.
+
 ## Cloud storage
 
 Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 
-- `users`: id, sign-in provider, provider subject, email, name, created (`migrations/0001`).
+- `users`: id, the provider and subject it began with, email, name, created (`migrations/0001`).
+- `identities`: provider, subject, account, email (`migrations/0003`).
 - `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
 - `homes`: home id, owner, claimed (`migrations/0002`).
 - `members`: home, user, added.
@@ -210,7 +250,7 @@ of directorlink.io.
   stays listed as a member until the owner removes it. A member without a key can reach nothing.
 - An invitation must be accepted with the email it was made for; owner approval of another address
   comes later.
-- Sign in with Apple comes later.
+- Sign in with Apple is off in the app until its keys are set up.
 
 ## Decisions
 

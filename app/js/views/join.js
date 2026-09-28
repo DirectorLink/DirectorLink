@@ -3,14 +3,13 @@
 // sign-in but is never sent to a server or left in the history.
 
 import { clearHost, saveApiKey } from "../../api-client.js";
-import { signIn } from "../account.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { RemoteError, acceptInvitation, parseInvitation, saveRemote } from "../remote.js";
 import { clientName, connect, errorText } from "../session.js";
 import { notify, state, ui } from "../state.js";
-import { pageHeader } from "./common.js";
+import { pageHeader, signInButtons } from "./common.js";
 
 const JOIN_KEY = "directorlink.join";
 
@@ -42,7 +41,10 @@ function joinError(error) {
   if (error instanceof RemoteError) {
     switch (error.code) {
       case "EMAIL_MISMATCH":
-        return t("join.errors.emailMismatch");
+        // Apple's Hide My Email gives an address nobody invited.
+        return /@privaterelay\.appleid\.com$/.test(state.account.user?.email || "")
+          ? `${t("join.errors.emailMismatch")} ${t("join.errors.hiddenEmail")}`
+          : t("join.errors.emailMismatch");
       case "INVITATION_NOT_FOUND":
       case "INVITATION_EXPIRED":
       case "JOIN_REFUSED":
@@ -112,7 +114,7 @@ export function joinView({ navigate }) {
     content.push(
       h("p", { class: "connect-text" }, t("join.intro")),
       h("p", { class: "field-help" }, t("join.signInFirst")),
-      h("button", { type: "button", class: "button button-primary button-wide", dataset: { key: "join-sign-in" }, onclick: () => signIn("#/join") }, icon("user"), t("connect.signIn"))
+      signInButtons({ hash: "#/join", key: "join-sign-in", size: "button-wide" })
     );
   } else {
     content.push(

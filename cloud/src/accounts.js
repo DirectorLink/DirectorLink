@@ -1,29 +1,44 @@
-// Accounts (docs/ACCOUNTS.md): sign in with Google, the session, and deleting the account.
+// Accounts (docs/ACCOUNTS.md): sign in with Google or Apple, the session, and deleting the account.
 //
-//   GET    /auth/google/start?return_to=<app URL>   → Google, then back to the app
-//   GET    /auth/google/callback                     (Google redirects here)
-//   POST   /auth/logout                              ends this session
-//   GET    /v1/me                                    the signed-in account, or 401
-//   DELETE /v1/me                                    deletes the account and all its sessions
+//   GET    /auth/{google|apple}/start?return_to=<app URL>[&link=1]   → the provider, then back
+//   GET    /auth/google/callback                             (Google redirects here)
+//   POST   /auth/apple/callback                              (Apple posts its form here)
+//   POST   /auth/logout                                      ends this session
+//   GET    /v1/me                                            the signed-in account, or 401
+//   DELETE /v1/me                                            deletes the account and all its sessions
+//   DELETE /v1/me/identities/{google|apple}                  it no longer signs in with that provider
+//
+// An account is found by the provider's own id for the person (identities), never by email: an
+// address can pass to someone else. A signed-in account may add the other provider (`link=1`, from
+// the app's Settings); both then sign in to it.
 //
 // The session is a random token in the `__Host-dl_session` cookie of api.directorlink.io; D1 keeps
 // only its SHA-256. The app calls /v1/me and /auth/logout with `credentials: "include"`; only the
 // app's own origins (APP_ORIGINS) get CORS answers, and changes are refused from any other origin.
 
-import { SignInError, authorizationUrl, challengeFor, configured, exchangeCode, verifyIdToken } from "./google.js";
-import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, setCookie, sha256Hex } from "./http.js";
+import { apple } from "./apple.js";
+import { google } from "./google.js";
+import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, readText, setCookie, sha256Hex } from "./http.js";
 import { forgetInvitations } from "./invitations.js";
+import { SignInError } from "./jwt.js";
 
+const PROVIDERS = { google, apple };
 const SESSION_COOKIE = "__Host-dl_session";
-const SIGN_IN_COOKIE = "__Host-dl_signin";
 const SESSION_SECONDS = 30 * 24 * 3600;
 const SIGN_IN_SECONDS = 10 * 60;
-const CALLBACK_PATH = "/auth/google/callback";
+// The browser keeps the sign-in's state in a cookie until the provider sends it back. Google comes
+// back with a redirect (a navigation: Lax is enough); Apple posts a form from its own site, which
+// only a SameSite=None cookie survives.
+const SIGN_IN_COOKIES = {
+  google: { name: "__Host-dl_signin", sameSite: "Lax" },
+  apple: { name: "__Host-dl_signin_apple", sameSite: "None" },
+};
+const MAX_FORM_BYTES = 16 * 1024;
 
-// Google sends the browser back to exactly the address registered for the client, so it is
+// The provider sends the browser back to exactly the address registered for the client, so it is
 // configured rather than taken from the request.
-function callbackUrl(env) {
-  return new URL(CALLBACK_PATH, env.PUBLIC_URL || "https://api.directorlink.io").toString();
+function callbackUrl(env, provider) {
+  return new URL(`/auth/${provider}/callback`, env.PUBLIC_URL || "https://api.directorlink.io").toString();
 }
 
 export function appOrigins(env) {
@@ -51,11 +66,12 @@ function safeReturn(env, value) {
   return `${origins[0]}/#/settings`;
 }
 
-// The app learns the outcome from ?signin=… (it removes it from the address bar).
-function backToApp(returnTo, outcome, headers = []) {
+// The app learns the outcome from ?signin=… (it removes it from the address bar). After Apple's
+// form (a POST), 303 makes the browser load the app with GET.
+function backToApp(returnTo, outcome, headers = [], status = 302) {
   const url = new URL(returnTo);
   url.searchParams.set("signin", outcome);
-  const response = new Response(null, { status: 302, headers: { Location: url.toString(), "Cache-Control": "no-store" } });
+  const response = new Response(null, { status, headers: { Location: url.toString(), "Cache-Control": "no-store" } });
   for (const [name, value] of headers) {
     response.headers.append(name, value);
   }
@@ -77,94 +93,212 @@ function withHeaders(response, headers) {
   return response;
 }
 
-async function startSignIn(request, env) {
-  if (!configured(env)) {
-    return problem(503, "SIGN_IN_NOT_CONFIGURED", "Google sign-in is not set up on this server yet");
+async function startSignIn(request, env, provider) {
+  if (!provider.configured(env)) {
+    return problem(503, "SIGN_IN_NOT_CONFIGURED", `${provider.label} sign-in is not set up on this server yet`);
   }
   const url = new URL(request.url);
   const returnTo = safeReturn(env, url.searchParams.get("return_to"));
+  // Adding this provider to the signed-in account: the app's own page navigates here (same site,
+  // so the session cookie comes along); from another site it does not, and nothing is linked.
+  let linkTo = null;
+  if (url.searchParams.get("link") === "1") {
+    linkTo = await currentUser(request, env);
+    if (!linkTo) {
+      return backToApp(returnTo, "expired");
+    }
+  }
   const state = randomToken();
   const nonce = randomToken();
-  const verifier = randomToken(48);
+  const verifier = provider.usesVerifier ? randomToken(48) : "";
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sign_ins WHERE expires_at < ?").bind(iso(now)),
-    env.DB.prepare("INSERT INTO sign_ins (state_sha256, nonce, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?)")
-      .bind(await sha256Hex(state), nonce, verifier, returnTo, iso(now + SIGN_IN_SECONDS * 1000)),
+    env.DB.prepare(
+      "INSERT INTO sign_ins (state_sha256, nonce, verifier, return_to, expires_at, provider, link_user_id, link_session_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    ).bind(await sha256Hex(state), nonce, verifier, returnTo, iso(now + SIGN_IN_SECONDS * 1000), provider.name, linkTo?.id ?? null, linkTo ? await sha256Hex(linkTo.token) : null),
   ]);
-  const location = authorizationUrl(env, {
-    redirectUri: callbackUrl(env),
-    state,
-    nonce,
-    challenge: await challengeFor(verifier),
-  });
-  // Lax: the cookie has to come back on Google's redirect, which is a navigation from another site.
+  const location = await provider.authorizationUrl(env, { redirectUri: callbackUrl(env, provider.name), state, nonce, verifier });
+  const cookie = SIGN_IN_COOKIES[provider.name];
   return new Response(null, {
     status: 302,
     headers: {
       Location: location,
       "Cache-Control": "no-store",
-      "Set-Cookie": setCookie(SIGN_IN_COOKIE, state, { maxAge: SIGN_IN_SECONDS, sameSite: "Lax" }),
+      "Set-Cookie": setCookie(cookie.name, state, { maxAge: SIGN_IN_SECONDS, sameSite: cookie.sameSite }),
     },
   });
 }
 
-async function finishSignIn(request, env) {
-  const url = new URL(request.url);
-  const state = url.searchParams.get("state") ?? "";
-  const clearSignIn = ["Set-Cookie", setCookie(SIGN_IN_COOKIE, "", { maxAge: 0, sameSite: "Lax" })];
+// The callback's parameters: Google's in the query, Apple's in a posted form.
+async function callbackParams(request) {
+  if (request.method !== "POST") {
+    return new URL(request.url).searchParams;
+  }
+  return new URLSearchParams((await readText(request, MAX_FORM_BYTES)) ?? "");
+}
 
-  // The state must be the one this browser started, and each works once.
-  const cookieState = readCookie(request, SIGN_IN_COOKIE);
+// The account of a person the provider vouched for: the one this identity belongs to, else a new
+// one. Never an account found by email: Google, for one, vouches for an address only when the
+// account was made, and addresses get reused.
+async function accountFor(env, provider, person) {
+  const now = iso(Date.now());
+  const find = () => env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+  let identity = await find();
+  if (!identity) {
+    // An account made before identities existed (by the previous Worker while an update rolled
+    // out) gets its identity now.
+    const legacy = await env.DB.prepare("SELECT id FROM users WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+    if (legacy) {
+      await env.DB.prepare("INSERT OR IGNORE INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(provider, person.subject, legacy.id, person.email ?? "", now, now)
+        .run();
+      identity = { user_id: legacy.id };
+    }
+  }
+  if (identity) {
+    // The account's email follows the identity it was created with; a linked provider's does not.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE identities SET email = COALESCE(?, email), last_sign_in_at = ? WHERE provider = ? AND subject = ?").bind(person.email, now, provider, person.subject),
+      env.DB.prepare(
+        "UPDATE users SET email = CASE WHEN provider = ? AND subject = ? THEN COALESCE(?, email) ELSE email END, name = COALESCE(?, name), last_sign_in_at = ? WHERE id = ?"
+      ).bind(provider, person.subject, person.email, person.name, now, identity.user_id),
+    ]);
+    return { userId: identity.user_id, created: false };
+  }
+  if (!person.email) {
+    throw new SignInError("EMAIL_NOT_VERIFIED", "A new account needs a verified email address");
+  }
+  const userId = randomHex(16);
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users (id, provider, subject, email, name, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(userId, provider, person.subject, person.email, person.name, now, now),
+      env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(provider, person.subject, userId, person.email, now, now),
+    ]);
+  } catch (error) {
+    // The same person signing in twice at once: the other request made the account.
+    const made = await find();
+    if (made) {
+      return { userId: made.user_id, created: false };
+    }
+    throw error;
+  }
+  return { userId, created: true };
+}
+
+// Adds an identity to the signed-in account that asked for it (link=1). Returns the outcome for
+// the app: linked, taken (another account signs in with it) or duplicate (this account already
+// has one from this provider).
+async function linkIdentity(env, provider, person, userId) {
+  const now = iso(Date.now());
+  const owner = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+  if (owner) {
+    return owner.user_id === userId ? "linked" : "taken";
+  }
+  const account = await env.DB.prepare(
+    "SELECT users.id AS id, (SELECT COUNT(*) FROM identities WHERE user_id = users.id AND provider = ?) AS same FROM users WHERE users.id = ?"
+  )
+    .bind(provider, userId)
+    .first();
+  if (!account) {
+    return "expired";
+  }
+  if (account.same > 0) {
+    return "duplicate";
+  }
+  try {
+    await env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(provider, person.subject, userId, person.email ?? "", now, now)
+      .run();
+  } catch {
+    // Something changed meanwhile: say what.
+    const now_owner = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+    if (now_owner) {
+      return now_owner.user_id === userId ? "linked" : "taken";
+    }
+    if (await env.DB.prepare("SELECT 1 AS found FROM identities WHERE user_id = ? AND provider = ?").bind(userId, provider).first()) {
+      return "duplicate";
+    }
+    return (await env.DB.prepare("SELECT 1 AS found FROM users WHERE id = ?").bind(userId).first()) ? "failed" : "expired";
+  }
+  return "linked";
+}
+
+async function finishSignIn(request, env, provider) {
+  const params = await callbackParams(request);
+  const state = params.get("state") ?? "";
+  const cookie = SIGN_IN_COOKIES[provider.name];
+  const clearSignIn = ["Set-Cookie", setCookie(cookie.name, "", { maxAge: 0, sameSite: cookie.sameSite })];
+  const status = request.method === "POST" ? 303 : 302;
+
+  // The state must be the one this browser started, with this provider, and each works once.
+  const cookieState = readCookie(request, cookie.name);
   const row = state
-    ? await env.DB.prepare("DELETE FROM sign_ins WHERE state_sha256 = ? RETURNING nonce, verifier, return_to, expires_at")
+    ? await env.DB.prepare("DELETE FROM sign_ins WHERE state_sha256 = ? RETURNING nonce, verifier, return_to, expires_at, provider, link_user_id, link_session_sha256")
         .bind(await sha256Hex(state))
         .first()
     : null;
   const returnTo = safeReturn(env, row?.return_to);
-  if (!row || !cookieState || cookieState !== state || row.expires_at < iso(Date.now())) {
-    return backToApp(returnTo, "expired", [clearSignIn]);
+  if (!row || row.provider !== provider.name || !cookieState || cookieState !== state || row.expires_at < iso(Date.now())) {
+    return backToApp(returnTo, "expired", [clearSignIn], status);
   }
-  const error = url.searchParams.get("error");
+  const error = params.get("error");
   if (error) {
-    return backToApp(returnTo, error === "access_denied" ? "cancelled" : "failed", [clearSignIn]);
+    const cancelled = error === "access_denied" || error === "user_cancelled_authorize";
+    return backToApp(returnTo, cancelled ? "cancelled" : "failed", [clearSignIn], status);
   }
-  const code = url.searchParams.get("code");
+  const code = params.get("code");
   if (!code) {
-    return backToApp(returnTo, "failed", [clearSignIn]);
+    return backToApp(returnTo, "failed", [clearSignIn], status);
+  }
+  // Adding a provider needs the session it was asked from, still signed in (the callback itself
+  // comes from the provider's site, without the session cookie).
+  if (row.link_user_id) {
+    const session = row.link_session_sha256
+      ? await env.DB.prepare("SELECT user_id FROM sessions WHERE token_sha256 = ? AND expires_at > ?").bind(row.link_session_sha256, iso(Date.now())).first()
+      : null;
+    if (!session || session.user_id !== row.link_user_id) {
+      return backToApp(returnTo, "expired", [clearSignIn], status);
+    }
   }
 
-  let person;
+  let userId;
+  let created;
   try {
-    const idToken = await exchangeCode(env, {
+    const person = await provider.finish(env, {
       code,
-      redirectUri: callbackUrl(env),
+      redirectUri: callbackUrl(env, provider.name),
       verifier: row.verifier,
+      nonce: row.nonce,
+      user: params.get("user"),
     });
-    person = await verifyIdToken(env, idToken, { nonce: row.nonce });
+    if (row.link_user_id) {
+      // Adding this provider to the account that asked; its session stays as it is.
+      const outcome = await linkIdentity(env, provider.name, person, row.link_user_id);
+      console.log(JSON.stringify({ event: "identity_linked", provider: provider.name, user: row.link_user_id, outcome }));
+      return backToApp(returnTo, outcome, [clearSignIn], status);
+    }
+    ({ userId, created } = await accountFor(env, provider.name, person));
   } catch (failure) {
     if (failure instanceof SignInError) {
-      console.log(JSON.stringify({ event: "sign_in_refused", code: failure.code, detail: failure.message }));
-      return backToApp(returnTo, failure.code === "EMAIL_NOT_VERIFIED" ? "unverified" : "failed", [clearSignIn]);
+      console.log(JSON.stringify({ event: "sign_in_refused", provider: provider.name, code: failure.code, detail: failure.message }));
+      return backToApp(returnTo, failure.code === "EMAIL_NOT_VERIFIED" ? "unverified" : "failed", [clearSignIn], status);
     }
-    throw failure;
+    console.log(JSON.stringify({ event: "sign_in_failed", provider: provider.name, error: String(failure?.message ?? failure) }));
+    return backToApp(returnTo, "failed", [clearSignIn], status);
   }
 
   const now = Date.now();
-  const existing = await env.DB.prepare("SELECT id FROM users WHERE provider = 'google' AND subject = ?").bind(person.subject).first();
-  const userId = existing?.id ?? randomHex(16);
   const token = randomToken();
   await env.DB.batch([
-    existing
-      ? env.DB.prepare("UPDATE users SET email = ?, name = ?, last_sign_in_at = ? WHERE id = ?").bind(person.email, person.name, iso(now), userId)
-      : env.DB.prepare("INSERT INTO users (id, provider, subject, email, name, created_at, last_sign_in_at) VALUES (?, 'google', ?, ?, ?, ?, ?)")
-          .bind(userId, person.subject, person.email, person.name, iso(now), iso(now)),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND expires_at < ?").bind(userId, iso(now)),
     env.DB.prepare("INSERT INTO sessions (token_sha256, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(await sha256Hex(token), userId, iso(now), iso(now + SESSION_SECONDS * 1000)),
   ]);
-  console.log(JSON.stringify({ event: "signed_in", user: userId, new_account: !existing }));
-  return backToApp(returnTo, "ok", [clearSignIn, ["Set-Cookie", setCookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS })]]);
+  console.log(JSON.stringify({ event: "signed_in", provider: provider.name, user: userId, new_account: created }));
+  return backToApp(returnTo, "ok", [clearSignIn, ["Set-Cookie", setCookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS })]], status);
 }
 
 // The account of this request's session, or null.
@@ -196,7 +330,8 @@ async function me(request, env, headers) {
     if (!user) {
       return withHeaders(notSignedIn(), headers);
     }
-    return json({ id: user.id, email: user.email, name: user.name, created_at: user.created_at }, 200, headers);
+    const { results } = await env.DB.prepare("SELECT provider FROM identities WHERE user_id = ? ORDER BY created_at").bind(user.id).all();
+    return json({ id: user.id, email: user.email, name: user.name, created_at: user.created_at, providers: results.map((row) => row.provider) }, 200, headers);
   }
   if (request.method === "DELETE") {
     const user = await currentUser(request, env);
@@ -209,13 +344,52 @@ async function me(request, env, headers) {
       env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
       env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
-      ...forgetInvitations(env, "accepted_by = ? OR created_by = ? OR email = ?", user.id, user.id, user.email),
+      // Invitations for this email stay while another account can still accept them.
+      ...forgetInvitations(
+        env,
+        "accepted_by = ? OR created_by = ? OR (email = ? AND NOT EXISTS (SELECT 1 FROM users WHERE email = ? AND id <> ?) AND NOT EXISTS (SELECT 1 FROM identities WHERE email = ? AND user_id <> ?))",
+        user.id,
+        user.id,
+        user.email,
+        user.email,
+        user.id,
+        user.email,
+        user.id
+      ),
+      env.DB.prepare("DELETE FROM identities WHERE user_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
     ]);
     console.log(JSON.stringify({ event: "account_deleted", user: user.id }));
     return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });
   }
   return withHeaders(methodNotAllowed("GET, DELETE"), headers);
+}
+
+// Stops signing in with a provider; the last one stays (deleting the account is the way out).
+async function removeIdentity(request, env, headers, provider) {
+  if (request.method !== "DELETE") {
+    return withHeaders(methodNotAllowed("DELETE"), headers);
+  }
+  const user = await currentUser(request, env);
+  if (!user) {
+    return withHeaders(notSignedIn(), headers);
+  }
+  const { results } = await env.DB.prepare("SELECT provider, subject FROM identities WHERE user_id = ? ORDER BY created_at").bind(user.id).all();
+  const removed = results.find((row) => row.provider === provider);
+  if (!removed) {
+    return withHeaders(problem(404, "NOT_FOUND", `This account does not sign in with ${provider}`), headers);
+  }
+  const kept = results.find((row) => row.provider !== provider);
+  if (!kept) {
+    return withHeaders(problem(409, "LAST_SIGN_IN", "An account keeps at least one way to sign in; delete the account instead"), headers);
+  }
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider = ?").bind(user.id, provider),
+    // The account's email then follows the provider it keeps.
+    env.DB.prepare("UPDATE users SET provider = ?, subject = ? WHERE id = ? AND provider = ? AND subject = ?").bind(kept.provider, kept.subject, user.id, removed.provider, removed.subject),
+  ]);
+  console.log(JSON.stringify({ event: "identity_removed", provider, user: user.id }));
+  return new Response(null, { status: 204, headers: { ...headers, "Cache-Control": "no-store" } });
 }
 
 async function logout(request, env, headers) {
@@ -232,13 +406,18 @@ async function logout(request, env, headers) {
 // Routes this module answers; null for any other path.
 export async function handleAccounts(request, env) {
   const path = new URL(request.url).pathname;
-  if (path === "/auth/google/start") {
-    return request.method === "GET" ? startSignIn(request, env) : methodNotAllowed();
+  const auth = /^\/auth\/(google|apple)\/(start|callback)$/.exec(path);
+  if (auth) {
+    const provider = PROVIDERS[auth[1]];
+    if (auth[2] === "start") {
+      return request.method === "GET" ? startSignIn(request, env, provider) : methodNotAllowed();
+    }
+    // Google redirects (GET); Apple posts a form.
+    const method = provider.name === "apple" ? "POST" : "GET";
+    return request.method === method ? finishSignIn(request, env, provider) : methodNotAllowed(method);
   }
-  if (path === CALLBACK_PATH) {
-    return request.method === "GET" ? finishSignIn(request, env) : methodNotAllowed();
-  }
-  if (path !== "/v1/me" && path !== "/auth/logout") {
+  const identity = /^\/v1\/me\/identities\/(google|apple)$/.exec(path);
+  if (path !== "/v1/me" && path !== "/auth/logout" && !identity) {
     return null;
   }
 
@@ -251,7 +430,7 @@ export async function handleAccounts(request, env) {
       status: 204,
       headers: {
         ...headers,
-        "Access-Control-Allow-Methods": path === "/v1/me" ? "GET, DELETE" : "POST",
+        "Access-Control-Allow-Methods": path === "/v1/me" ? "GET, DELETE" : identity ? "DELETE" : "POST",
         "Access-Control-Allow-Headers": "Content-Type",
         "Access-Control-Max-Age": "600",
       },
@@ -261,6 +440,9 @@ export async function handleAccounts(request, env) {
   // someone out or delete their account.
   if (request.method !== "GET" && !headers) {
     return problem(403, "ORIGIN_NOT_ALLOWED", "Only the DirectorLink app may call this");
+  }
+  if (identity) {
+    return removeIdentity(request, env, headers, identity[1]);
   }
   return path === "/v1/me" ? me(request, env, headers) : logout(request, env, headers);
 }
