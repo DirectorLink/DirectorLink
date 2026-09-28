@@ -168,8 +168,10 @@ function Climate.initialize(device)
         fan_modes = fanModes,
         single_setpoint = true,
         temperature_unit = "C",
+        -- The range Control4 itself allows these zones (an AC that is off is often left at 32 °C).
+        -- Narrower here, DirectorLink would report a target it then refuses to set.
         target_temperature_min_c = 16,
-        target_temperature_max_c = hasCool and 25 or 32,
+        target_temperature_max_c = 32,
     }
     device.actions = {
         "set_hvac_mode",
