@@ -78,6 +78,11 @@ SECURITY_CONTRACT = {
     "src/cloud/remote.lua": (
         "if seen[requestId] then",
         "math.abs(now - ts) > Lock.WINDOW_SECONDS or ts < state.startedAt",
+        # Replays across a restart: ids of requests dated ahead of the clock are saved and loaded.
+        "remember(keyId, requestId, ts, now)",
+        "state.seen[item.k][item.i] = state.startedAt",
+        # A claim token dies with its admin key.
+        'return owner ~= nil and owner.role == "admin"',
         "state.services.invitations.consume(invitationId)",
         "state.services.keys.remote(keyId)",
     ),

@@ -61,7 +61,7 @@ export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
   // Through the account the reason is known (signed out, home offline, …); signed out, the banner
   // offers to sign in again.
-  const remote = state.transport === "remote" && state.notice?.remote;
+  const remote = Boolean(state.notice?.remote);
   const signedOut = remote && state.account.status === "signed-out";
   return h(
     "div",

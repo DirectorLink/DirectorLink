@@ -163,6 +163,11 @@ function Auth.update_key(ctx)
         end
         return Problem.internal("The API key could not be changed (" .. tostring(failure) .. ")")
     end
+    -- Only admins make invitations: a key that is no longer admin keeps none (its claim token
+    -- stops working too, src/cloud/remote.lua).
+    if record.role ~= "admin" and ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
+    end
     ctx.services.log.info("auth", "API key changed", { key_id = id, name = record.name, role = record.role, by = ctx.apiKey.id })
     ctx.services.onKeysChanged()
     return 200, Views.apiKey(record, ctx.apiKey.id)

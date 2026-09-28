@@ -79,6 +79,7 @@ export default {
     goConnect: "Connect",
   },
   errors: {
+    invitationLimit: "Too many invitations are waiting. Revoke some in the API console, or wait until they expire.",
     keyRevoked:
       "This device’s access key no longer works (it was removed, or DirectorLink was reinstalled). Pair again with a new code from Composer.",
     noKey: "DirectorLink paired, but no access key came back.",
@@ -98,6 +99,7 @@ export default {
       clock: "This device’s clock is too far off. Set the right time and try again.",
       unreachable: "DirectorLink’s servers can’t be reached right now. Check the internet connection.",
       invalidClaim: "Your controller did not confirm linking this home (the request expired). Try again.",
+      failed: "The request through your account did not work ({code}). Try again.",
     },
   },
   home: {
@@ -274,6 +276,7 @@ export default {
       used: "This invitation was used, revoked or has expired. Ask for a new one.",
       homeOffline: "The home is not connected right now. Try again later.",
       signIn: "Your sign-in expired. Sign in again.",
+      notRecorded: "Your home accepted this device, but your account could not be added to it. Ask for a new invitation.",
     },
   },
   settings: {

@@ -12,6 +12,7 @@ local Json = require("src.core.json")
 local Http = require("src.api.http")
 local Clock = require("src.core.clock")
 local Lock = require("src.cloud.lock")
+local Store = require("src.core.store")
 
 local Remote = {}
 
@@ -20,11 +21,16 @@ Remote.MAX_REQUEST_BYTES = 64 * 1024
 
 local METHODS = { GET = true, POST = true, PATCH = true, DELETE = true }
 local JOIN_PATH = "/v1/auth/join"
+-- Requests dated ahead of this controller's clock could still be inside the window after a restart;
+-- their ids are kept in persistence until the window has passed.
+local SEEN_KEY = "directorlink_remote_seen"
+local MAX_SAVED = 500
 
 local state = {
     available = false,
     startedAt = 0,
     seen = {},
+    saved = {},
     claim = nil,
     services = nil,
     handleRequest = nil,
@@ -65,9 +71,20 @@ function Remote.init(options)
     state.homeId = options.homeId
     state.seen = {}
     state.claim = nil
-    -- Request ids are remembered in memory only: anything sealed before this start is refused, so a
-    -- request captured before a restart cannot be replayed after it.
+    -- Request ids are remembered in memory: anything sealed before this start is refused, so a
+    -- request captured before a restart cannot be replayed after it. Requests dated after this start
+    -- that were accepted before it (a device clock ahead of the controller's) were saved.
     state.startedAt = Clock.now()
+    state.saved = {}
+    local stored = Store.read(SEEN_KEY, false)
+    for _, item in ipairs(Store.items(type(stored) == "table" and stored.items or nil)) do
+        if type(item) == "table" and type(item.k) == "string" and type(item.i) == "string" and type(item.t) == "number"
+            and item.t >= state.startedAt - Lock.WINDOW_SECONDS then
+            state.saved[#state.saved + 1] = { k = item.k, i = item.i, t = item.t }
+            state.seen[item.k] = state.seen[item.k] or {}
+            state.seen[item.k][item.i] = state.startedAt
+        end
+    end
     local ok, step = Lock.selfTest()
     state.available = ok
     if ok then
@@ -82,9 +99,10 @@ function Remote.available()
     return state.available
 end
 
--- A claim token for the home's owner to hand to the cloud: works once, for 5 minutes.
-function Remote.createClaim()
-    state.claim = { token = randomHex(48), expires = Clock.now() + Remote.CLAIM_SECONDS }
+-- A claim token for the home's owner to hand to the cloud: works once, for 5 minutes, and only
+-- while `keyId`, the admin key that asked for it, is still an admin key.
+function Remote.createClaim(keyId)
+    state.claim = { token = randomHex(48), expires = Clock.now() + Remote.CLAIM_SECONDS, by = keyId }
     return { claim_token = state.claim.token, expires_at = Clock.iso(state.claim.expires) }
 end
 
@@ -98,12 +116,35 @@ local function useClaim(token)
         return false
     end
     state.claim = nil
-    return true
+    local owner = type(claim.by) == "string" and state.services.keys.find(claim.by) or nil
+    return owner ~= nil and owner.role == "admin"
+end
+
+-- Saves an accepted request dated ahead of this controller's clock (see SEEN_KEY).
+local function remember(keyId, requestId, ts, now)
+    local kept = {}
+    for _, item in ipairs(state.saved) do
+        if item.t >= now - Lock.WINDOW_SECONDS then
+            kept[#kept + 1] = item
+        end
+    end
+    kept[#kept + 1] = { k = keyId, i = requestId, t = ts }
+    while #kept > MAX_SAVED do
+        table.remove(kept, 1)
+    end
+    state.saved = kept
+    if not Store.write(SEEN_KEY, { version = 1, items = kept }, false) then
+        log("warn", "could not save a request id")
+    end
 end
 
 -- A request id is accepted once, and only within the lock's window of this controller's clock.
 local function fresh(keyId, requestId, ts)
     local now = Clock.now()
+    -- The controller's clock was set back after the start: whatever is sealed from now on is newer.
+    if now < state.startedAt then
+        state.startedAt = now
+    end
     if type(ts) ~= "number" or math.abs(now - ts) > Lock.WINDOW_SECONDS or ts < state.startedAt then
         return false, "STALE"
     end
@@ -121,6 +162,9 @@ local function fresh(keyId, requestId, ts)
     end
     seen[requestId] = now
     state.seen[keyId] = seen
+    if ts > now then
+        remember(keyId, requestId, ts, now)
+    end
     return true
 end
 

@@ -65,8 +65,9 @@ Every remote request and every answer travels as one envelope:
   "status", "content_type", "body" | "body_base64"}`. These are the same requests and answers as
   the LAN API.
 - The controller accepts a request only within 2 minutes of its own clock, and only once per `id`
-  (it remembers ids for 5 minutes), so a captured envelope cannot be replayed. Ids are remembered
-  in memory only, so a request sealed before the driver started is refused as well.
+  (it remembers ids for 5 minutes), so a captured envelope cannot be replayed. A request sealed
+  before the driver started is refused; the ids of requests dated ahead of the controller's clock
+  are also saved in persistence until the window has passed, so a restart does not open a replay.
 - At every start the driver checks `C4:HMAC` and `C4:Encrypt` against a known vector
   (`tests/vectors/lock.json`, which the app and cloud tests check too). If that fails, remote
   requests, claims and invitations are refused (`LOCK_UNAVAILABLE`) rather than weakened.
@@ -83,7 +84,8 @@ Every remote request and every answer travels as one envelope:
    device gets an admin key `S`.
 2. Sign in with Google or Apple in the app.
 3. Over the home network, the app asks the controller for a claim token (admin keys only; works
-   once; valid for 5 minutes) and gives it to the cloud.
+   once; valid for 5 minutes, and only while the key that asked for it is still an admin key) and
+   gives it to the cloud.
 4. The cloud asks the controller, over the relay, whether the token is right. The controller
    confirms and forgets the token; the cloud records the account as the home's owner.
 
@@ -119,8 +121,9 @@ key's role), locks the answer and sends it back.
    invitation's role and returns it inside the locked answer. The invitation is used up.
 
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
-still has to sign in as the invited email. Revoking an admin's key revokes the invitations it made,
-and Composer's **Revoke All API Keys** revokes every invitation and claim token too.
+still has to sign in as the invited email. Revoking or demoting an admin's key revokes the
+invitations it made, and Composer's **Revoke All API Keys** revokes every invitation and claim token
+too. Each account may have 20 invitations waiting per home.
 
 ### 4. Removing someone, or a lost phone
 
@@ -141,8 +144,10 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 - `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
 - `homes`: home id, owner, claimed (`migrations/0002`).
 - `members`: home, user, added.
-- `invitations`: home, invitation id, email, expiry, created by, accepted by and when. Expired and
-  accepted ones are removed with the home's next invitation.
+- `invitations`: home, invitation id, email, expiry, created by. A used invitation is removed when
+  it is accepted; an expired one a day after its expiry (daily cron). When its email's account, its
+  creator or the home's owner goes, a pending invitation keeps only its id until then, so that it
+  cannot be registered again for another email.
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 
