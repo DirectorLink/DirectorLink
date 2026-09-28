@@ -39,7 +39,7 @@ SECURITY_CONTRACT = {
     ),
     "src/auth/keys.lua": (
         # Only hashes are stored, never the keys themselves.
-        "return Store.write(STORE_KEY, { version = 3, keys = records }, false)",
+        "local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)",
         "        records[#records + 1] = {\n"
         "            id = key.id,\n"
         "            name = key.name,\n"
