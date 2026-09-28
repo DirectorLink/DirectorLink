@@ -131,3 +131,8 @@ export function formatRelative(value, now = Date.now()) {
 export function formatTime(date) {
   return new Intl.DateTimeFormat(current, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
 }
+
+// "28 Sept 2026, 14:05": when an invitation expires, days ahead.
+export function formatDateTime(date) {
+  return new Intl.DateTimeFormat(current, { dateStyle: "medium", timeStyle: "short" }).format(date);
+}

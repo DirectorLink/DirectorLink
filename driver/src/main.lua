@@ -9,6 +9,8 @@ local RoomNames = require("src.core.room_names")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
+local Remote = require("src.cloud.remote")
+local Invitations = require("src.auth.invitations")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -83,8 +85,27 @@ local services = {
     registry = Registry,
     adapters = AdapterManager,
     keys = Keys,
+    invitations = Invitations,
     pairing = Pairing,
     log = Log,
+    -- Remote access with accounts (src/cloud/remote.lua, src/api/handlers/remote.lua).
+    remote = {
+        enabled = function()
+            return Properties ~= nil and Properties["Remote Access"] == "On"
+        end,
+        connected = function()
+            return Relay.connected()
+        end,
+        available = function()
+            return Remote.available()
+        end,
+        homeId = function()
+            return Relay.identity().home_id
+        end,
+        createClaim = function(keyId)
+            return Remote.createClaim(keyId)
+        end,
+    },
     startedAt = os.time(),
     controllerVersion = nil,
     lifecycle = lifecycle,
@@ -190,6 +211,7 @@ function OnDriverLateInit(driverInitType)
     local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
     Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
     RoomNames.load()
+    Invitations.load()
     publishKeyCount()
 
     -- A driver without keys (just added, or all keys revoked) offers a pairing code right away;
@@ -214,9 +236,16 @@ function OnDriverLateInit(driverInitType)
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
     discover()
 
-    Relay.init({
+    Remote.init({
         services = services,
         handleRequest = Api.handleRequest,
+        homeId = function()
+            return Relay.identity().home_id
+        end,
+    })
+    Relay.init({
+        services = services,
+        remote = Remote.handle,
         onStatus = function(text)
             updateProperty("Remote Status", text)
         end,
@@ -236,8 +265,11 @@ function ExecuteCommand(command, params)
         Pairing.open()
     elseif params.ACTION == "REVOKE_API_KEYS" then
         local count = Keys.revokeAll()
+        -- Nobody may join afterwards with an invitation or claim the home with an older token.
+        local invitations = Invitations.revokeAll()
+        Remote.clearClaim()
         publishKeyCount()
-        Log.warn("auth", "all API keys revoked from Composer", { count = count })
+        Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
     end
 end
 

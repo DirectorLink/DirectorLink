@@ -1,9 +1,13 @@
 // Connection to the controller: first-time access, reconnecting with the saved key, loading
-// and refreshing device state.
+// and refreshing device state. Requests go over the home network (api-client.js), or sealed
+// through the account (remote.js) when the home network cannot be reached and on iPhone and iPad.
 
+import { loadAccount } from "./account.js";
 import {
   ApiError,
   apiCall,
+  apiImage,
+  apiRequest,
   clearApiKey,
   normalizeHost,
   normalizePairingCode,
@@ -13,6 +17,8 @@ import {
   savedHost,
 } from "../api-client.js";
 import { notificationsOn, notifyRings, trackRings } from "./doorbells.js";
+import { IS_IOS } from "./platform.js";
+import { RemoteError, forgetRemote, remoteCall, remoteImage, savedRemote } from "./remote.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
 
@@ -25,8 +31,66 @@ let pollTimer = null;
 let failedRefreshes = 0;
 let connectRun = 0;
 
-export function api(path, options = {}) {
-  return apiCall(state.host, path, { apiKey: state.apiKey, ...options });
+// This device can reach its home: over the home network, or through the account.
+export function reachable() {
+  return Boolean(state.apiKey && ((state.host && !IS_IOS) || savedRemote()));
+}
+
+function useTransport(transport) {
+  if (state.transport !== transport) {
+    state.transport = transport;
+    notify();
+  }
+}
+
+// A request that got no answer on the home network goes through the account from then on, when
+// this device has it; HTTP answers from the home are final.
+function viaRemote(error) {
+  return !error?.status && !(error instanceof RemoteError) && savedRemote() && state.apiKey;
+}
+
+export async function api(path, options = {}) {
+  if (state.transport === "remote") {
+    return remoteCall(state.apiKey, path, options);
+  }
+  try {
+    return await apiCall(state.host, path, { apiKey: state.apiKey, ...options });
+  } catch (error) {
+    if (!viaRemote(error)) throw error;
+    useTransport("remote");
+    // Only reads are sent again: a command may have reached the home before its answer was lost,
+    // and must not run twice. Pressing again sends it through the account.
+    if ((options.method || "GET") !== "GET") throw error;
+    return remoteCall(state.apiKey, path, options);
+  }
+}
+
+// A camera picture, over whichever connection is in use.
+export async function image(path) {
+  if (state.transport === "remote") {
+    return remoteImage(state.apiKey, path);
+  }
+  try {
+    return await apiImage(state.host, path, { apiKey: state.apiKey });
+  } catch (error) {
+    if (!viaRemote(error)) throw error;
+    useTransport("remote");
+    return remoteImage(state.apiKey, path);
+  }
+}
+
+// Away from home, look once a minute whether the home network is back; it is faster. Only this
+// home's controller, answering this key, counts: another network may have a device at the same
+// address. Whatever it answers, the key is kept.
+async function tryHomeNetwork() {
+  const remote = savedRemote();
+  if (state.transport !== "remote" || IS_IOS || !state.host || !remote) return;
+  try {
+    const result = await apiRequest(state.host, "/v1/remote", { apiKey: state.apiKey, timeoutMs: 2500 });
+    if (result.ok && result.data?.home_id === remote.home) useTransport("lan");
+  } catch {
+    // Still away.
+  }
 }
 
 // The new key's name, e.g. "Chrome on Windows" or "Safari on iPhone" (the API console lists it).
@@ -58,17 +122,22 @@ export function clientName() {
 export function restoreSaved() {
   state.host = savedHost();
   state.apiKey = savedApiKey();
-  state.status = state.host && state.apiKey ? "connecting" : "setup";
+  state.transport = (IS_IOS || !state.host) && savedRemote() ? "remote" : "lan";
+  state.status = reachable() ? "connecting" : "setup";
 }
 
-// Validates and stores the controller address. A different controller needs a new key.
+// Validates and stores the controller address. A different controller needs a new key; a device
+// that joined with an invitation (no address yet) keeps its key for its home's address.
 export function useHost(value) {
   const host = normalizeHost(value);
   if (!host) {
     throw new ApiError(t("connect.invalidHost"), { code: "INVALID_HOST" });
   }
-  if (host !== state.host && state.apiKey) {
+  if (state.host && host !== state.host && state.apiKey) {
     forgetKey();
+  }
+  if (host !== state.host) {
+    state.remoteInfo = null;
   }
   saveHost(host);
   state.host = host;
@@ -77,6 +146,9 @@ export function useHost(value) {
 
 export function forgetKey() {
   clearApiKey();
+  forgetRemote();
+  state.transport = "lan";
+  state.remoteInfo = null;
   stopPolling();
   state.apiKey = "";
   state.role = null;
@@ -112,7 +184,42 @@ function pairingError(error) {
   }
 }
 
+// Problems of the account connection (remote.js), which never mean the key is invalid.
+function remoteErrorText(error) {
+  switch (error.code) {
+    case "UNREACHABLE":
+    case "TIMEOUT":
+      return t("errors.remote.unreachable");
+    case "NOT_SIGNED_IN":
+      return t("errors.remote.signIn");
+    case "HOME_OFFLINE":
+    case "HOME_TIMEOUT":
+    case "HOME_DISCONNECTED":
+      return t("errors.remote.homeOffline");
+    case "NOT_A_MEMBER":
+      return t("errors.remote.notMember");
+    case "UNKNOWN_KEY":
+      return t("errors.remote.unknownKey");
+    case "LOCK_UNAVAILABLE":
+      return t("errors.remote.lock");
+    case "STALE":
+      return t("errors.remote.clock");
+    case "INVALID_CLAIM":
+      return t("errors.remote.invalidClaim");
+    case "KEY_LIMIT_REACHED":
+      return t("connect.errors.keyLimit");
+    case "INVITATION_LIMIT_REACHED":
+      return t("errors.invitationLimit");
+    default:
+      // The cloud's own text is not shown: it is in English only, and not the app's to trust.
+      return t("errors.remote.failed", { code: String(error.code || "UNKNOWN").slice(0, 40) });
+  }
+}
+
 function describeError(error) {
+  if (error instanceof RemoteError) {
+    return remoteErrorText(error);
+  }
   if (error?.status === 401) {
     return t("errors.keyRevoked");
   }
@@ -130,6 +237,9 @@ function describeError(error) {
   if (error?.code === "INVALID_HOST") {
     return error.message;
   }
+  if (error?.code === "INVITATION_LIMIT_REACHED") {
+    return t("errors.invitationLimit");
+  }
   if (error?.name === "AbortError") {
     return t("errors.timeout");
   }
@@ -143,11 +253,49 @@ export function errorText(error) {
   return describeError(error);
 }
 
-// Any request answered 401: the key was revoked or DirectorLink was re-added. Start over.
-export function handleUnauthorized() {
+// A connection problem to show. Problems of the account connection say why (signed out, home
+// offline, …); an ended session is looked up again, so the app offers to sign in.
+function connectionNotice(error) {
+  const remote = error instanceof RemoteError;
+  if (remote && error.code === "NOT_SIGNED_IN" && state.account.status === "signed-in") {
+    loadAccount();
+  }
+  return { kind: "error", text: describeError(error), remote };
+}
+
+function forgetRevokedKey() {
   forgetKey();
   state.notice = { kind: "error", text: t("errors.keyRevoked") };
   notify();
+}
+
+// Any request answered 401: the key was revoked or DirectorLink was re-added. Start over. A 401 on
+// the home network, for a device linked to its home through the account, is checked with the home
+// first: another controller at the same address (another network) must not wipe this home's key.
+let checkingKey = null;
+export function handleUnauthorized(error) {
+  if (error?.sealed || !savedRemote() || !state.apiKey) {
+    forgetRevokedKey();
+    return Promise.resolve();
+  }
+  if (!checkingKey) {
+    checkingKey = (async () => {
+      try {
+        await remoteCall(state.apiKey, "/v1/api-keys/current");
+        // The key works at home: the controller that refused it is another one.
+        useTransport("remote");
+        connect();
+      } catch (failure) {
+        if (failure?.status === 401 || failure?.code === "UNKNOWN_KEY") {
+          forgetRevokedKey();
+        }
+        // Otherwise the home cannot be asked now: the key is kept.
+      } finally {
+        checkingKey = null;
+      }
+    })();
+  }
+  return checkingKey;
 }
 
 // Resources newer drivers add (doors and gates, doorbells): an older driver answers 404, so
@@ -223,20 +371,20 @@ function useDoorbells(doorbells) {
 
 // Doorbells only: what a page in the background still polls when doorbell notifications are on.
 export async function refreshDoorbells() {
-  if (!state.apiKey || !state.host) return false;
+  if (!reachable()) return false;
   try {
     useDoorbells(await optionalList("/v1/doorbells", state.doorbells));
     notify();
     return true;
   } catch (error) {
-    if (error?.status === 401) handleUnauthorized();
+    if (error?.status === 401) handleUnauthorized(error);
     return false;
   }
 }
 
 // Connects with the saved key. Used on start (automatic reconnect) and by Retry.
 export async function connect() {
-  if (!state.host || !state.apiKey) {
+  if (!reachable()) {
     state.status = "setup";
     notify();
     return false;
@@ -254,12 +402,16 @@ export async function connect() {
   } catch (error) {
     if (run !== connectRun) return false;
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return false;
     }
     console.error("DirectorLink connection failed", error);
+    state.notice = connectionNotice(error);
+    // The next attempt tries the home network first again.
+    if (state.transport === "remote" && !IS_IOS && state.host) {
+      state.transport = "lan";
+    }
     state.status = "unreachable";
-    state.notice = { kind: "error", text: describeError(error) };
     scheduleRetry();
     return false;
   } finally {
@@ -290,6 +442,10 @@ export async function pairWithCode(hostValue, pairingCode) {
     }
     saveApiKey(created.key);
     state.apiKey = created.key;
+    // Remote access belonged to the previous key: link the home again for this one.
+    forgetRemote();
+    state.transport = "lan";
+    state.remoteInfo = null;
     return connect();
   } catch (error) {
     state.status = "setup";
@@ -302,7 +458,7 @@ export async function pairWithCode(hostValue, pairingCode) {
 // Device state, every 10 s while the page is visible. Devices with a command in flight keep
 // their optimistic state until the command is confirmed.
 export async function refreshDevices() {
-  if (!state.apiKey || !state.host) return false;
+  if (!reachable()) return false;
   try {
     const kinds = ["light", "thermostat", "blind"];
     const [doorbells, ...results] = await Promise.all([
@@ -326,7 +482,7 @@ export async function refreshDevices() {
     }
   } catch (error) {
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return false;
     }
     failedRefreshes += 1;
@@ -336,7 +492,7 @@ export async function refreshDevices() {
       return false;
     }
     state.status = "unreachable";
-    state.notice = { kind: "error", text: describeError(error) };
+    state.notice = connectionNotice(error);
   }
   notify();
   return failedRefreshes === 0;
@@ -382,6 +538,7 @@ async function poll() {
     }
     const ok = await refreshDevices();
     pollCount += 1;
+    if (pollCount % 6 === 0) await tryHomeNetwork();
     if (ok && pollCount % 6 === 0 && state.status === "connected") {
       await refreshRooms();
     }
@@ -421,10 +578,14 @@ document.addEventListener("visibilitychange", () => {
 // Settings → Controller → Forget key: revokes this browser's key on the controller when it can
 // be reached (so the key stops working everywhere), then removes it from this browser.
 export async function revokeAndForget() {
-  if (state.host && state.apiKey) {
+  if (reachable()) {
     try {
-      // Any key may revoke itself (drivers with API key roles).
-      await api("/v1/api-keys/current", { method: "DELETE", timeoutMs: 4000 });
+      // Any key may revoke itself (drivers with API key roles). Without an answer on the home
+      // network it is revoked through the account (revoking twice changes nothing).
+      await api("/v1/api-keys/current", { method: "DELETE", timeoutMs: 4000 }).catch((error) => {
+        if (error?.status || error instanceof RemoteError || !savedRemote()) throw error;
+        return remoteCall(state.apiKey, "/v1/api-keys/current", { method: "DELETE" });
+      });
     } catch (error) {
       if (error?.status === 404 || error?.status === 405) {
         // Older driver: find this key in the list and revoke it (every key was admin there).

@@ -1,6 +1,7 @@
 // Page header, connection chip and the states every screen shares (not connected, loading,
 // controller unreachable).
 
+import { signIn } from "../account.js";
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -12,7 +13,8 @@ export function connectionChip() {
   const status = state.status;
   const kind =
     status === "connected" ? "ok" : status === "unreachable" ? "error" : status === "connecting" ? "busy" : "idle";
-  const label = t(`status.${status}`);
+  // Through the account (away from home, or on iPhone) the chip says so.
+  const label = status === "connected" && state.transport === "remote" ? t("status.connectedRemote") : t(`status.${status}`);
   return h(
     "a",
     {
@@ -57,12 +59,18 @@ export function offlineBanner() {
 // Data is shown from the last successful read while the controller cannot be reached.
 export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
+  // Through the account the reason is known (signed out, home offline, …); signed out, the banner
+  // offers to sign in again.
+  const remote = Boolean(state.notice?.remote);
+  const signedOut = remote && state.account.status === "signed-out";
   return h(
     "div",
     { class: "banner banner-error", role: "status" },
     icon("wifiOff"),
-    h("span", {}, t("status.staleBanner")),
-    h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
+    h("span", {}, remote ? state.notice.text : t("status.staleBanner")),
+    signedOut
+      ? h("button", { type: "button", class: "button button-small", dataset: { key: "stale-sign-in" }, onclick: () => signIn("#/") }, t("connect.signIn"))
+      : h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
   );
 }
 

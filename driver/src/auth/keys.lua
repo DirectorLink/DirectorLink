@@ -1,10 +1,13 @@
 -- API keys: named bearer secrets. Only a hash of each key is stored, so the controller's storage,
--- or a backup of it, holds nothing that opens the API.
+-- or a backup of it, holds nothing that opens the API. Each key also has a lock key for remote
+-- access (src/cloud/lock.lua, derived from the key), made when the key is created or, for older
+-- keys, the first time the key is used on the home network.
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
 local Roles = require("src.auth.roles")
 local Store = require("src.core.store")
+local Lock = require("src.cloud.lock")
 
 local Keys = {}
 
@@ -87,13 +90,24 @@ local function save()
             role = key.role,
             alg = key.alg,
             hash = key.hash,
+            lock = key.lock,
             created_at = key.created_at,
         }
     end
     return Store.write(STORE_KEY, { version = 3, keys = records }, false)
 end
 
-local function addLoaded(key, hash, alg)
+local function validLock(value)
+    return type(value) == "string" and value:match("^%x+$") and #value == 64 and value:lower() or nil
+end
+
+-- The lock key of a key (hex), or nil when this controller cannot make one.
+local function lockFor(secret)
+    local ok, lock = pcall(Lock.deviceKey, secret)
+    return ok and lock or nil
+end
+
+local function addLoaded(key, hash, alg, lock)
     state.keys[#state.keys + 1] = {
         id = key.id,
         name = tostring(key.name or "API key"),
@@ -101,6 +115,7 @@ local function addLoaded(key, hash, alg)
         role = Roles.valid(key.role) and key.role or "admin",
         alg = alg,
         hash = hash,
+        lock = validLock(lock),
         created_at = type(key.created_at) == "string" and key.created_at or Clock.iso(),
     }
 end
@@ -113,7 +128,7 @@ local function migrate()
         if type(key) == "table" and type(key.id) == "string" and type(key.secret) == "string" then
             local hash, alg = hashKey(key.secret)
             if hash then
-                addLoaded(key, hash, alg)
+                addLoaded(key, hash, alg, lockFor(key.secret))
             end
         end
     end
@@ -135,7 +150,7 @@ function Keys.load()
     end
     for _, key in ipairs(Store.items(stored and stored.keys)) do
         if type(key) == "table" and type(key.id) == "string" and type(key.hash) == "string" and algorithmNamed(key.alg) then
-            addLoaded(key, key.hash, key.alg)
+            addLoaded(key, key.hash, key.alg, key.lock)
         end
     end
     -- Written by 0.9.1 as plain JSON, which Director hands back decoded: store it as it is now.
@@ -166,8 +181,33 @@ function Keys.verify(presented)
     end
     if match then
         state.lastUsed[match.id] = Clock.iso()
+        -- A key from before remote access gets its lock key the first time it is used here.
+        if not match.lock then
+            match.lock = lockFor(presented)
+            if match.lock then
+                save()
+            end
+        end
     end
     return match
+end
+
+-- A key for a remote request: { id, name, role, lock }, or nil when unknown or without a lock key.
+function Keys.remote(id)
+    for _, key in ipairs(state.keys) do
+        if key.id == id and key.lock then
+            return { id = key.id, name = key.name, role = key.role, lock = key.lock }
+        end
+    end
+    return nil
+end
+
+function Keys.touch(id)
+    for _, key in ipairs(state.keys) do
+        if key.id == id then
+            state.lastUsed[id] = Clock.iso()
+        end
+    end
 end
 
 -- Returns the new record (including its secret, which is not kept), or nil plus an error code.
@@ -206,6 +246,7 @@ function Keys.create(name, role)
         role = role,
         alg = alg,
         hash = hash,
+        lock = lockFor(secret),
         created_at = Clock.iso(),
     }
     table.insert(state.keys, record)

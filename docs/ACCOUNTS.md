@@ -1,9 +1,10 @@
 # Accounts and end-to-end encrypted remote access
 
-**Status: approved on 2026-09-27 (ADR-029), with Google as the only sign-in until the whole flow
-works end to end; Apple follows.** Sign-in with Google is built (`cloud/src/accounts.js`, the app's
-Settings → Account); the rest is not yet. It extends the remote-access test (`docs/RELAY.md`,
-version 0) and ADR-027.
+**Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google as the only
+sign-in. Apple follows.** The driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
+`driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
+app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
+`docs/RELAY.md`, version 1. Known issues are listed at the end.
 
 ## Goals
 
@@ -45,8 +46,7 @@ K_enc = HMAC-SHA256(K, "enc")        K_mac = HMAC-SHA256(K, "mac")
 - The app keeps `S`, as today, and holds `K` as a non-extractable WebCrypto key.
 - The controller keeps `S` only as a hash (ADR-028). It therefore stores `K` alongside each key
   when it creates that key, and for older keys the first time they are used on the home network.
-  `K` goes into Director's encrypted persistence once that is shown to survive updates on a real
-  controller; otherwise it goes into plain persistence.
+  Both are in Director's plain persistence, which survives driver updates (`src/core/store.lua`).
 - Revoking an API key revokes its remote access too. There is no second secret to lose, rotate or
   copy between devices.
 
@@ -65,7 +65,12 @@ Every remote request and every answer travels as one envelope:
   "status", "content_type", "body" | "body_base64"}`. These are the same requests and answers as
   the LAN API.
 - The controller accepts a request only within 2 minutes of its own clock, and only once per `id`
-  (it remembers ids for 5 minutes), so a captured envelope cannot be replayed.
+  (it remembers ids for 5 minutes), so a captured envelope cannot be replayed. A request sealed
+  before the driver started is refused; the ids of requests dated ahead of the controller's clock
+  are also saved in persistence until the window has passed, so a restart does not open a replay.
+- At every start the driver checks `C4:HMAC` and `C4:Encrypt` against a known vector
+  (`tests/vectors/lock.json`, which the app and cloud tests check too). If that fails, remote
+  requests, claims and invitations are refused (`LOCK_UNAVAILABLE`) rather than weakened.
 - Why not AES-GCM: DriverWorks documents `C4:Encrypt` with AES-256-CBC, and `C4:HMAC`, but no GCM
   tags. CBC with an HMAC over the ciphertext is the standard safe construction, and browsers have
   both in WebCrypto. The driver functions are native, so camera pictures stay fast.
@@ -79,14 +84,15 @@ Every remote request and every answer travels as one envelope:
    device gets an admin key `S`.
 2. Sign in with Google or Apple in the app.
 3. Over the home network, the app asks the controller for a claim token (admin keys only; works
-   once; valid for 5 minutes) and gives it to the cloud.
+   once; valid for 5 minutes, and only while the key that asked for it is still an admin key) and
+   gives it to the cloud.
 4. The cloud asks the controller, over the relay, whether the token is right. The controller
-   confirms and forgets the token; the cloud records the account as the home's owner and renews
-   the home's connection secret.
+   confirms and forgets the token; the cloud records the account as the home's owner.
 
-From then on this device also works away from home. A later claim from the home network, which
-again needs an admin key there, moves the home to the new account: whoever controls the controller
-controls the home (ADR-027).
+From then on this device also works away from home. Another device of the same account links with
+its own key and skips the claim. A later claim from the home network, which again needs an admin
+key there, moves the home to the new account and removes the previous members and invitations:
+whoever controls the controller controls the home (ADR-027). The app asks before doing that.
 
 ### 2. Away from home
 
@@ -103,25 +109,28 @@ key's role), locks the answer and sends it back.
 2. The admin's app asks the controller, locally or through the lock, for an invitation. The
    controller creates an invitation id and a random secret `I`, and remembers the role and the
    expiry.
-3. The app shows a link and a QR code: `https://app.directorlink.io/join#<home_id>.<invitation id>.<I>`.
-   Everything after `#` stays in the browser and is never sent to any server. The admin shares it
-   (WhatsApp, email, a QR code on screen). The cloud is told only the invitation id, the email and
-   the expiry.
+3. The app shows a link and a QR code: `https://app.directorlink.io/#/join/<home_id>.<invitation id>.<I>`.
+   Everything after `#` stays in the browser and is never sent to any server; the app takes it out
+   of the address as the page opens and keeps it for that tab only. The admin shares it (WhatsApp,
+   email, a QR code on screen). The cloud is told only the invitation id, the email and the
+   expiry, once: an invitation cannot be moved to another email.
 4. The invited person opens the link and signs in. The cloud checks their email against the
-   invitation. If the two differ (for example with Apple's *Hide My Email*), it asks the owner to
-   approve. Then it passes on the person's first envelope, which is locked with keys derived from
-   `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
+   invitation and refuses another one (`EMAIL_MISMATCH`). Then it passes on the person's first
+   envelope, which is locked with keys derived from `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
 5. The controller checks the invitation (unused, not expired), creates a new API key with the
    invitation's role and returns it inside the locked answer. The invitation is used up.
 
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
-still has to sign in as the invited email.
+still has to sign in as the invited email. Revoking or demoting an admin's key revokes the
+invitations it made, and Composer's **Revoke All API Keys** revokes every invitation and claim token
+too. Each account may have 20 invitations waiting per home.
 
 ### 4. Removing someone, or a lost phone
 
-An admin revokes that device's key (Settings → Members, or the API console). It stops working at
-home and away at once, and the cloud membership goes with it. Signing in to the account alone gives
-no access, because the keys live only on the devices.
+An admin revokes that device's key (the API console, or Composer's Revoke All API Keys). It stops
+working at home and away at once. Signing in to the account alone gives no access, because the
+keys live only on the devices. The account stays a member of the home in the cloud until the owner
+removes it (`DELETE /v1/homes/{home_id}/members/{user_id}`); see Known issues.
 
 ### 5. The home network without an account
 
@@ -131,30 +140,26 @@ Unchanged: pair with a code and use the LAN API. No cloud is involved.
 
 Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 
-- `users`: id, sign-in provider, provider subject, email, name, created.
-- `homes`: home id, owner, created, hash of the connection secret.
-- `members`: home, user, key id, label, added.
-- `invitations`: id, home, email, expiry, state.
-- No device data, no keys and no message contents. Only message counters, for rate limits.
+- `users`: id, sign-in provider, provider subject, email, name, created (`migrations/0001`).
+- `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
+- `homes`: home id, owner, claimed (`migrations/0002`).
+- `members`: home, user, added.
+- `invitations`: home, invitation id, email, expiry, created by. A used invitation is removed when
+  it is accepted; an expired one a day after its expiry (daily cron). When its email's account, its
+  creator or the home's owner goes, a pending invitation keeps only its id until then, so that it
+  cannot be registered again for another email.
+- No device data, no keys and no message contents. The hash of each home's connection secret is
+  in the relay's Durable Object storage.
 
 After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie for
-`directorlink.io`. The page's scripts cannot read it. It lasts 30 days and can be ended from the
-app.
+`api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days and can be ended from the
+app. Deleting the account deletes its sessions, memberships, owned homes and invitations.
 
 ## Relay protocol, version 1
 
-Additions to `docs/RELAY.md`; the version 0 messages stay:
-
-| Direction | Message |
-| --- | --- |
-| relay → driver | `{"type": "claim", "token": "…"}` |
-| driver → relay | `{"type": "claim_result", "ok": true, "home_secret": "…"}` (the new connection secret; the relay keeps only its hash) |
-| relay → driver | `{"type": "e2e", "envelope": {…}}` |
-| driver → relay | `{"type": "e2e", "envelope": {…}}` |
-| relay → driver | `{"type": "join", "invitation": "…", "envelope": {…}}` |
-
-The version 0 test endpoints and the viewer-only rule are removed. Roles come from the device's
-key.
+In `docs/RELAY.md`: `e2e`, `join` and `claim` from the relay, answered with `e2e`, `join_result` and
+`claim_result`. Version 0's plain requests are refused (410 `RELAY_REQUESTS_RETIRED`) and its test
+endpoints are off in production. Roles come from the device's key.
 
 ## What the lock does not protect
 
@@ -176,16 +181,16 @@ from a computer or an Android phone; the owner's iPhone then joins as *my other 
 
 ## Phases
 
-1. **Driver:** lock keys, envelopes over the relay, claim and invitations, with tests against the
-   fake Director. On the real controller, check `C4:Encrypt`, `C4:HMAC` and encrypted persistence
-   across updates.
-2. **Cloud:** Google and Apple sign-in, sessions, homes, members, invitations and routing. Remove
-   the test endpoints.
-3. **App:** sign-in, claim, automatic choice between home and remote connection, Invite (link and
-   QR), Members, iPhone and iPad.
-4. **Docs and release:** a privacy page on directorlink.io, and `RELAY.md` version 1.
+1. **Driver** (0.10.0): lock keys, envelopes over the relay, claim and invitations, with tests
+   against the fake Director, and a self-test of `C4:Encrypt` and `C4:HMAC` at every start.
+2. **Cloud** (0.10.0): Google sign-in, sessions, homes, members, invitations and routing. Apple
+   later.
+3. **App** (0.10.0): sign-in, linking the home, automatic choice between home and remote
+   connection, Add my other device and Invite (link and QR), iPhone and iPad. A Members screen
+   later.
+4. **Docs and release** (0.10.0): the privacy page on directorlink.io, and `RELAY.md` version 1.
 
-Sign-in details (phase 2, built):
+Sign-in details:
 - Google's authorization-code flow with PKCE, run by `api.directorlink.io`; the app only navigates
   to `/auth/google/start` and comes back with `?signin=…`. No Google script runs in the app's pages.
 - The browser holds the sign-in's state in a 10-minute `__Host-dl_signin` cookie, so a sign-in
@@ -199,7 +204,15 @@ Sign-in details (phase 2, built):
 Needed later, for Apple: the Services ID, Team ID, Key ID and `.p8` key, plus domain verification
 of directorlink.io.
 
-## To decide
+## Known issues
+
+- Cloud membership is not tied to a key: revoking a device's key ends its access, but the account
+  stays listed as a member until the owner removes it. A member without a key can reach nothing.
+- An invitation must be accepted with the email it was made for; owner approval of another address
+  comes later.
+- Sign in with Apple comes later.
+
+## Decisions
 
 1. Lock keys are derived from each device's API key; there is no separate secret.
 2. AES-256-CBC with HMAC-SHA256, a 2-minute window and one-time request ids.
@@ -207,8 +220,8 @@ of directorlink.io.
    A later claim from the home network moves the home to a new owner.
 4. Everyone else joins by an invitation link or QR code that the admin shares. The secret sits
    after `#`, and the invitation is bound to an email, works once and lasts 7 days (10 minutes for
-   *my other device*). The owner approves email mismatches.
+   *my other device*). Owner approval of email mismatches comes later.
 5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works.
 6. The cloud stores only accounts, homes, members and pending invitations.
 7. Home-network use without an account stays.
-8. The test endpoints and the viewer-only rule go when this ships.
+8. The version 0 relayed requests, the test endpoints and the viewer-only rule are gone.

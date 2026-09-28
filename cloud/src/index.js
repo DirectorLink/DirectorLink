@@ -10,11 +10,14 @@
 //   GET /test/homes/{home_id}/status   the home's connection     } Authorization: Bearer <TEST_TOKEN>
 //   GET /test/homes/{home_id}/v1/...   relayed to the driver     } (version 0 only)
 //   /auth/google/start, /auth/google/callback, /auth/logout, /v1/me   accounts (accounts.js)
+//   /v1/homes/..., /v1/join            homes, members, invitations, sealed requests (homes.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
 import { handleAccounts } from "./accounts.js";
+import { handleHomes } from "./homes.js";
 import { HomeRelay } from "./home-relay.js";
+import { purgeInvitations } from "./invitations.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
 
 export { HomeRelay };
@@ -24,6 +27,11 @@ const HOME_SECRET = /^[0-9a-f]{64}$/i;
 const TEST_ROUTE = /^\/test\/homes\/([^/]*)(\/status|\/v1(?:\/.*)?)$/;
 
 export default {
+  // Daily housekeeping (wrangler.jsonc → triggers).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(purgeInvitations(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
@@ -40,6 +48,10 @@ export default {
       const account = await handleAccounts(request, env);
       if (account) {
         return account;
+      }
+      const home = await handleHomes(request, env);
+      if (home) {
+        return home;
       }
       return problem(404, "NOT_FOUND", `${url.pathname} is not a DirectorLink relay endpoint`);
     } catch (error) {
