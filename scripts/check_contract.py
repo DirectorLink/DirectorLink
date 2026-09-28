@@ -7,7 +7,9 @@ declared media type, and the JSON body validates against the declared schema. Fa
 operation in the spec was not exercised.
 """
 
+import base64
 import json
+import os
 import re
 import shutil
 import sys
@@ -42,6 +44,43 @@ def resolve(node):
             target = target[part]
         node = target
     return node
+
+
+def x25519_public(private):
+    """The X25519 public key (RFC 7748) of 32 private bytes, for pairing with a key exchange."""
+    p = 2**255 - 19
+    scalar = bytearray(private)
+    scalar[0] &= 248
+    scalar[31] &= 127
+    scalar[31] |= 64
+    k = int.from_bytes(scalar, "little")
+    x1, x2, z2, x3, z3, swap = 9, 1, 0, 9, 1, 0
+    for t in reversed(range(255)):
+        bit = (k >> t) & 1
+        swap ^= bit
+        if swap:
+            x2, x3, z2, z3 = x3, x2, z3, z2
+        swap = bit
+        a, b = (x2 + z2) % p, (x2 - z2) % p
+        aa, bb = a * a % p, b * b % p
+        e = (aa - bb) % p
+        c, d = (x3 + z3) % p, (x3 - z3) % p
+        da, cb = d * a % p, c * b % p
+        x3, z3 = (da + cb) ** 2 % p, x1 * (da - cb) ** 2 % p
+        x2, z2 = aa * bb % p, e * (aa + 121665 * e) % p
+    if swap:
+        x2, z2 = x3, z3
+    return (x2 * pow(z2, p - 2, p) % p).to_bytes(32, "little")
+
+
+def absolute(schema):
+    """The schema with its references pointing into the spec (also inside oneOf, items, ...)."""
+    if isinstance(schema, dict):
+        return {key: ("urn:spec#" + value[1:] if key == "$ref" and isinstance(value, str) and value.startswith("#") else absolute(value))
+                for key, value in schema.items()}
+    if isinstance(schema, list):
+        return [absolute(item) for item in schema]
+    return schema
 
 
 def template_regex(path):
@@ -107,8 +146,7 @@ class Client:
                 return raw
             data = json.loads(raw)
             schema = content[media_type].get("schema", {})
-            validator = Draft202012Validator({"$ref": "urn:spec#" + schema["$ref"][1:]} if "$ref" in schema else schema,
-                                             registry=REGISTRY)
+            validator = Draft202012Validator(absolute(schema), registry=REGISTRY)
             errors = sorted(validator.iter_errors(data), key=lambda e: list(e.path))
             if errors:
                 details = "; ".join(f"{'/'.join(map(str, e.path)) or '(root)'}: {e.message}" for e in errors[:5])
@@ -199,6 +237,7 @@ def scenario(client, bridge):
     # Remote access is off on the dev bridge: status, and the refusals that follow from it.
     client.check("GET", "/v1/remote", 200)
     client.check("POST", "/v1/remote/claim", 409)
+    client.check("POST", "/v1/remote/secret", 409)
     client.check("GET", "/v1/invitations", 200)
     client.check("POST", "/v1/invitations", 409, body={"role": "member"})
     client.check("POST", "/v1/invitations", 400, body={"role": "owner"})
@@ -313,6 +352,16 @@ def scenario(client, bridge):
     client.check("GET", "/v1/logs?level=loud", 400)
     client.check("PATCH", "/v1/logs/settings", 400, body={"level": "verbose"})
     client.check("GET", "/v1/logs", 401, auth=False)
+
+    # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
+    # open real ones). Pairing with a key exchange answers sealed.
+    info = client.check("GET", "/v1/sealed", 200, auth=False)
+    stray = {"v": 1, "home": info["home"], "key": "deadbeef", "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "A" * 43 + "="}
+    client.check("POST", "/v1/sealed", 401, body={"envelope": stray}, auth=False)
+    client.check("POST", "/v1/sealed", 400, body={"envelope": "not an envelope", "extra": 1}, auth=False)
+    bridge.new_pairing_code()
+    exchange = {"public_key": base64.b64encode(x25519_public(os.urandom(32))).decode()}
+    client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "sealed pairing", "exchange": exchange}, auth=False)
 
     # Last, because it locks pairing for a minute.
     bridge.new_pairing_code()

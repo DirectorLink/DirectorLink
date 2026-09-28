@@ -123,7 +123,16 @@ local function relayRequest(mock, connection, message)
     return Json.decode(frames[1].payload), frames[1], keys
 end
 
+-- Accepts the upgrade `request` the driver sent (a reconnect).
+local function accept(request)
+    local key = request:match("\r\nSec%-WebSocket%-Key: ([^\r\n]+)")
+    T.truthy(key, "an upgrade request")
+    ReceivedFromNetwork(BINDING, 443, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        .. "Sec-WebSocket-Accept: " .. C4:Base64Encode(sha1(key .. GUID)) .. "\r\n\r\n")
+end
+
 Harness.BINDING = BINDING
+Harness.accept = accept
 Harness.bigEndian = bigEndian
 Harness.serverFrame = serverFrame
 Harness.clientFrames = clientFrames

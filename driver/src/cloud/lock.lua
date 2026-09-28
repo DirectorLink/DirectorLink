@@ -6,6 +6,7 @@
 -- matter; tests/vectors/lock.json is shared with the app and the cloud tests.
 
 local Base64 = require("src.core.base64")
+local Random = require("src.core.random")
 
 local Lock = {}
 
@@ -14,6 +15,7 @@ Lock.REMEMBER_SECONDS = 300 -- request ids are remembered this long, so none can
 
 local DEVICE_LABEL = "DirectorLink e2e v1"
 local INVITATION_LABEL = "DirectorLink invite v1"
+local PAIRING_LABEL = "DirectorLink pair v1"
 
 local function hmac(key, keyEncoding, data)
     local mac, err = C4:HMAC("SHA256", key, data, { key_encoding = keyEncoding, data_encoding = "NONE", return_encoding = "HEX" })
@@ -31,6 +33,12 @@ end
 -- An invitation's lock key (hex) from its secret.
 function Lock.invitationKey(secret)
     return hmac(secret, "NONE", INVITATION_LABEL)
+end
+
+-- The lock key (hex) that seals a pairing answer: from the X25519 shared secret (hex), bound to
+-- the pairing code and both public keys (base64), so the answer opens only for that exchange.
+function Lock.pairingKey(sharedHex, code, appPublic, driverPublic)
+    return hmac(sharedHex, "HEX", PAIRING_LABEL .. "|" .. code .. "|" .. appPublic .. "|" .. driverPublic)
 end
 
 local function subkeys(lockKey)
@@ -55,9 +63,7 @@ local function sameText(left, right)
 end
 
 function Lock.randomIv()
-    local seed = tostring(C4:UUID("RANDOM")) .. tostring(C4:UUID("RANDOM")) .. tostring(os.time())
-    local hash = C4:Hash("SHA256", seed, { return_encoding = "HEX" })
-    return hash:lower():sub(1, 32)
+    return Random.hex(32)
 end
 
 -- Seals a plaintext for `home` and `key` (a key id or an invitation id). dir: "req" or "res".

@@ -153,7 +153,9 @@ function tests.a_claim_token_works_once_and_only_from_the_home_network()
     T.eq(claim.status, 201)
     T.eq(claim.json.home_id, s.home)
     T.truthy(claim.json.claim_token:match("^%x+$") and #claim.json.claim_token == 48)
-    T.eq(send(s, { type = "claim", id = "c1", token = "0" .. claim.json.claim_token:sub(2) }).ok, false, "a wrong token")
+    local token = claim.json.claim_token
+    local wrong = (token:sub(1, 1) == "0" and "1" or "0") .. token:sub(2)
+    T.eq(send(s, { type = "claim", id = "c1", token = wrong }).ok, false, "a wrong token")
     local right = send(s, { type = "claim", id = "c2", token = claim.json.claim_token })
     T.eq(right.type, "claim_result")
     T.eq(right.ok, true)
@@ -162,6 +164,17 @@ function tests.a_claim_token_works_once_and_only_from_the_home_network()
     local remote = e2e(s, { method = "POST", path = "/v1/remote/claim" })
     T.eq(remote.status, 403)
     T.eq(Json.decode(remote.body).code, "CLAIM_ONLY_ON_HOME_NETWORK")
+    -- Nor wrapped in a home-network sealed request sent through the relay.
+    local inner = Lock().seal(Lock().deviceKey(s.key), "lan", s.keyId, "req", Json.encode({ id = "inner-1", ts = os.time(), method = "POST", path = "/v1/remote/claim" }))
+    local nested = e2e(s, { method = "POST", path = "/v1/sealed", body = { envelope = inner } })
+    T.eq(nested.status, 400)
+    T.eq(Json.decode(nested.body).code, "BAD_REQUEST")
+    T.eq(e2e(s, { method = "POST", path = "/v1/sealed/", body = { envelope = inner } }).status, 400)
+    -- Nor can a pairing code be guessed from outside, even while one is active.
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local pair = e2e(s, { method = "POST", path = "/v1/auth/pair", body = Json.encode({ pairing_code = s.mock.properties["Pairing Code"] }) })
+    T.eq(pair.status, 403)
+    T.eq(Json.decode(pair.body).code, "PAIRING_ONLY_ON_HOME_NETWORK")
     local viewer = createKey(s, "viewer")
     T.eq(T.http(s.mock, "POST", "/v1/remote/claim", { key = viewer }).status, 403, "admins only")
     for _, line in ipairs(s.mock.debugLog) do
@@ -407,6 +420,198 @@ function tests.my_other_device_invitation_keeps_its_profile_across_a_restart()
     local after = { mock = updated, connection = connection, key = s.key, keyId = s.keyId, home = s.home }
     local phone = Json.decode(join(after, forMe, "Safari on iPhone").body)
     T.eq(T.http(updated, "GET", "/v1/profile", { key = phone.key }).json.id, mine.id)
+end
+
+-- What the driver sent the relay since `from` (not key announcements).
+local function sentFrames(s)
+    local frames = {}
+    for _, frame in ipairs(Harness.answers(Harness.clientFrames(s.connection.sent))) do
+        frames[#frames + 1] = Json.decode(frame.payload)
+    end
+    s.connection.sent = ""
+    return frames
+end
+
+local function relayAnswers(message)
+    ReceivedFromNetwork(Harness.BINDING, 443, Harness.serverFrame(1, Json.encode(message)))
+end
+
+function tests.an_invitation_with_an_email_is_registered_by_the_controller()
+    local s = session()
+    s.connection.sent = ""
+    local pending = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member", email = " Dana@Example.com " } })
+    T.eq(pending.status, nil, "the answer waits for the account service")
+    local asked = sentFrames(s)
+    T.eq(#asked, 1)
+    T.eq(asked[1].type, "invitation")
+    T.eq(asked[1].email, "dana@example.com")
+    T.truthy(asked[1].invitation_id:match("^%x+$") and asked[1].expires_at:match("Z$"))
+    T.eq(asked[1].secret, nil, "the secret never goes to the relay")
+    T.same(asked[1].pending, { asked[1].invitation_id }, "with the invitations still waiting here")
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = true })
+    local created = T.response(s.mock, pending.handle)
+    T.eq(created.status, 201, created.body)
+    T.eq(created.json.registered, true)
+    T.truthy(created.json.secret:match("^%x+$"))
+
+    -- Refused by the account service: the invitation goes, since its link would not work.
+    local refused = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "guest@example.com" } })
+    local second = sentFrames(s)[1]
+    relayAnswers({ type = "invitation_result", id = second.id, ok = false, code = "INVITATION_EXISTS" })
+    T.eq(T.response(s.mock, refused.handle).status, 502)
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 1, "only the registered one is left")
+
+    -- No answer at all.
+    local silent = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "late@example.com" } })
+    sentFrames(s)
+    Mock.fireTimers(s.mock, 1)
+    local timedOut = T.response(s.mock, silent.handle)
+    T.eq(timedOut.status, 503)
+    T.eq(timedOut.json.code, "REMOTE_OFFLINE")
+    local cancelled = false
+    for _, frame in pairs(sentFrames(s)) do
+        cancelled = cancelled or (type(frame) == "table" and frame.type == "invitation_cancel" and frame.invitation_id ~= nil)
+    end
+    T.truthy(cancelled, "the account service is told to forget it, had it taken it after all")
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 1)
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "not an email" } }).status, 400)
+
+    -- Revoked here: the account service is told to forget it too.
+    sentFrames(s)
+    T.eq(T.http(s.mock, "DELETE", "/v1/invitations/" .. created.json.id, { key = s.key }).status, 204)
+    local told = false
+    for _, frame in pairs(sentFrames(s)) do
+        told = told or (type(frame) == "table" and frame.type == "invitation_cancel" and frame.invitation_id == created.json.id)
+    end
+    T.truthy(told)
+end
+
+-- The retry timer the driver set last (reconnecting).
+local function fireRetry(mock)
+    for index = #mock.timers, 1, -1 do
+        local timer = mock.timers[index]
+        if not timer.fired and not timer.cancelled and not timer.repeating then
+            timer.fired = true
+            timer.callback()
+            return timer.delay / 1000
+        end
+    end
+end
+
+-- The relay refuses the connection attempt the driver is making now.
+local function refuse(s)
+    local body = '{"type":"about:blank","title":"Unauthorized","status":401,"code":"HOME_SECRET_MISMATCH"}'
+    ReceivedFromNetwork(Harness.BINDING, 443, "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/problem+json\r\n"
+        .. "Content-Length: " .. #body .. "\r\n\r\n" .. body)
+end
+
+local function identity(s)
+    return Json.decode(s.mock.persist.directorlink_remote_identity:sub(#"json:" + 1))
+end
+
+-- Reconnects after the relay closed the connection, and returns the upgrade request sent.
+local function reconnect(s)
+    s.connection.sent = ""
+    OnConnectionStatusChanged(Harness.BINDING, 443, "OFFLINE")
+    fireRetry(s.mock)
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    local request = s.connection.sent
+    s.connection.sent = ""
+    return request
+end
+
+local function sha256(text)
+    return C4:Hash("SHA256", text, { return_encoding = "HEX" }):lower()
+end
+
+function tests.a_new_home_secret_waits_for_the_owner_and_is_used_once_approved()
+    local s = session()
+    local before = identity(s)
+    local first = T.http(s.mock, "POST", "/v1/remote/secret", { key = s.key })
+    T.eq(first.status, 200, first.body)
+    T.eq(first.json.home_id, s.home)
+    local second = T.http(s.mock, "POST", "/v1/remote/secret", { key = s.key }).json
+    T.truthy(second.secret_sha256 ~= first.json.secret_sha256, "a new one each time, never one made earlier")
+    local waiting = identity(s)
+    T.eq(waiting.home_secret, before.home_secret, "the secret in use stays until a new one works")
+    T.eq(#waiting.next_secrets, 2)
+    T.eq(sha256(waiting.next_secrets[1].secret), second.secret_sha256, "newest first")
+    T.eq(sha256(waiting.next_secrets[2].secret), first.json.secret_sha256)
+    T.notContains(first.body, waiting.next_secrets[2].secret, "only its hash leaves the controller")
+
+    -- Not approved yet: the current secret still works, and the new ones keep waiting.
+    local request = reconnect(s)
+    T.contains(request, "Authorization: Bearer " .. before.home_secret)
+    Harness.accept(request)
+    T.eq(#identity(s).next_secrets, 2)
+
+    -- The owner approved the first one: the relay refuses the old secret, the driver tries the
+    -- waiting ones, newest first.
+    T.contains(reconnect(s), "Authorization: Bearer " .. before.home_secret)
+    refuse(s)
+    T.eq(fireRetry(s.mock), 1)
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    T.contains(s.connection.sent, "Authorization: Bearer " .. waiting.next_secrets[1].secret)
+    refuse(s)
+    T.eq(fireRetry(s.mock), 1)
+    s.connection.sent = ""
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    T.contains(s.connection.sent, "Authorization: Bearer " .. waiting.next_secrets[2].secret)
+    Harness.accept(s.connection.sent)
+    local after = identity(s)
+    T.eq(after.home_secret, waiting.next_secrets[2].secret, "the approved one is the home secret now")
+    T.eq(after.next_secrets, nil, "and the others are gone")
+end
+
+function tests.only_the_newest_replacements_wait()
+    local s = session()
+    local hashes = {}
+    for index = 1, 4 do
+        hashes[index] = T.http(s.mock, "POST", "/v1/remote/secret", { key = s.key }).json.secret_sha256
+    end
+    local waiting = identity(s).next_secrets
+    T.eq(#waiting, 3)
+    T.eq(sha256(waiting[1].secret), hashes[4])
+    T.eq(sha256(waiting[3].secret), hashes[2], "the oldest one went")
+end
+
+function tests.a_refused_new_secret_is_tried_once_then_the_driver_waits()
+    local s = session()
+    local before = identity(s)
+    T.eq(T.http(s.mock, "POST", "/v1/remote/secret", { key = s.key }).status, 200)
+    reconnect(s)
+    refuse(s)
+    T.eq(fireRetry(s.mock), 1, "the new secret is tried")
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    refuse(s)
+    T.contains(s.mock.properties["Remote Status"], "Reconnecting in 300 s", "then the usual wait, with the reason")
+    T.eq(fireRetry(s.mock), 300)
+    s.connection.sent = ""
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    T.contains(s.connection.sent, "Authorization: Bearer " .. before.home_secret, "and the current secret again, no loop")
+    T.truthy(identity(s).next_secrets, "the new one still waits")
+end
+
+function tests.the_home_secret_is_replaced_only_from_the_home_network()
+    local s = session()
+    local answer = e2e(s, { method = "POST", path = "/v1/remote/secret" })
+    T.eq(answer.status, 403)
+    T.eq(Json.decode(answer.body).code, "SECRET_ONLY_ON_HOME_NETWORK")
+    T.eq(identity(s).next_secrets, nil)
+    local member = createKey(s, "member")
+    T.eq(T.http(s.mock, "POST", "/v1/remote/secret", { key = member }).status, 403, "admins only")
+end
+
+function tests.composer_resets_the_remote_identity()
+    local s = session()
+    local before = identity(s)
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member" } }).status, 201)
+    ExecuteCommand("LUA_ACTION", { ACTION = "RESET_REMOTE_IDENTITY" })
+    local after = identity(s)
+    T.truthy(after.home_id ~= before.home_id and after.home_secret ~= before.home_secret, "a new home id and secret")
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 0, "invitations for the old home are gone")
+    T.eq(T.http(s.mock, "GET", "/v1/remote", { key = s.key }).json.home_id, after.home_id)
+    T.contains(reconnect(s), "X-DirectorLink-Home: " .. after.home_id)
 end
 
 return tests

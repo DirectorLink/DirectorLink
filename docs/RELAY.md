@@ -20,6 +20,30 @@ The relay trusts the first secret it sees for a `home_id` (it stores the SHA-256
 only accepts that secret. This only decides which connection carries the home's envelopes: who may
 use the home is decided by the account's claim and by the device keys (`docs/ACCOUNTS.md`).
 
+**Replacing the secret** (1.0.0), for instance after a copy of the controller's data went missing,
+needs the home's owner, since whoever holds that copy can connect as the home:
+
+1. The owner's app, on the home network, asks the controller for a new secret
+   (`POST /v1/remote/secret`, admin key, refused through the relay). The driver makes a new one for
+   every request (never one made earlier, which a copy of its data taken meanwhile would hold),
+   keeps the newest three for a day next to the one in use, and answers only its SHA-256.
+2. The app gives the SHA-256 to the account service (`POST /v1/homes/{home_id}/secret`, the owner's
+   session only). From then on the relay accepts only the new secret, and it closes the driver's
+   socket (4001 `secret replaced`).
+3. The driver reconnects with the secret in use, is refused (401), and tries the waiting ones once
+   each, newest first. The one that connects is the home secret from then on, and the others go.
+   If all are refused, the driver waits as for any refusal (300 s) and starts again with the secret
+   in use.
+
+The account service trusts the owner's session for this: someone who stole it could approve a
+secret of their own and cut the controller off from the relay (they still could not read or change
+anything, and a stolen owner session could already delete the home). The owner then signs out
+everywhere and replaces the secret again at home, or the installer runs Reset Remote Identity.
+
+The Composer action **Reset Remote Identity** is the last resort, for when the owner cannot do this
+(someone else took the home over): the driver makes a new `home_id` and secret, revokes its pending
+invitations and claim token, and connects as a new home, which the owner links again.
+
 ## Connecting
 
 ```
@@ -45,7 +69,8 @@ The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, the
 ## Messages
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a
-`type`. Every message the relay sends has an `id`; the driver's reply carries the same `id`.
+`type`. Every message the relay sends has an `id`; the driver's reply carries the same `id`. The
+same holds the other way for what the driver asks the relay (`invitation`).
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
@@ -59,6 +84,9 @@ All frames are **text**. Apart from the keep-alive words below, each is one JSON
 | driver → relay | `{"type":"join_result","id":"…","ok":true,"key_id":"…","envelope":{…}}` | The new key, sealed for the invited device; or `"ok":false` with a `code`. |
 | relay → driver | `{"type":"claim","id":"…","token":"<48 hex>"}` | Is this the claim token the controller gave out? |
 | driver → relay | `{"type":"claim_result","id":"…","ok":true}` | Yes (the token is used up); or `"ok":false,"code":"INVALID_CLAIM"`. |
+| driver → relay | `{"type":"invitation","id":"…","invitation_id":"<8 hex>","email":"…","expires_at":"<ISO time>","pending":["<8 hex>", …]}` | Registers an invitation the controller made for an admin (`POST /v1/invitations` with `email`), binding it to that email. `pending`: the ids of every invitation still waiting on the controller (this one included); the relay forgets the others it registered for the home. Since 1.0.0. |
+| relay → driver | `{"type":"invitation_result","id":"…","ok":true}` | Registered; or `"ok":false` with `INVALID_REQUEST`, `INVITATION_EXISTS` (an id is bound to its email once), `INVITATION_LIMIT_REACHED` (20 waiting), `NOT_CLAIMED` (no account has claimed the home) or `INTERNAL`: the driver revokes the invitation and answers the admin `502` with that code. With no answer within 10 s, or while not connected, it revokes it and answers `503 REMOTE_OFFLINE`. |
+| driver → relay | `{"type":"invitation_cancel","invitation_id":"<8 hex>"}` | The driver revoked the invitation, or gave up waiting for `invitation_result`: the relay forgets it if it took it. No answer. Since 1.0.0. |
 | relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. |
 
 Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CIPHERTEXT`, `BAD_REQUEST`, `STALE`
@@ -75,7 +103,10 @@ The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer tha
 - A sealed request runs as the device's own API key, with that key's role (viewer, member, doors,
   admin) and the Composer Door Control switch, exactly as on the home network.
 - The driver logs it like a LAN request, with `client` = `relay` and the key id.
-- Claim tokens (`POST /v1/remote/claim`) are given out only on the home network, to admin keys.
+- Claim tokens (`POST /v1/remote/claim`) are given out only on the home network, to admin keys,
+  and pairing (`POST /v1/auth/pair`) works only there too (`PAIRING_ONLY_ON_HOME_NETWORK`).
+- Only the controller registers invitations for its home; the account service's own endpoint for
+  it is kept for the home's owner, for drivers before 1.0.0 (`OWNER_ONLY` for other members).
 
 ## Test endpoints
 

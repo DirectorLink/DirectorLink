@@ -3,7 +3,7 @@
 //   node --test tests/cloud/homes.test.mjs
 
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { after, afterEach, before, test } from "node:test";
 
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
@@ -237,6 +237,113 @@ test("an invitation is registered by a member and accepted once, by the invited 
   assert.equal(outsider.status, 403, "only members register invitations");
   const tooLong = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: "x@example.com", expires_at: new Date(Date.now() + 30 * 86400_000).toISOString() } });
   assert.equal(tooLong.status, 400);
+});
+
+// The controller's own answer to something it asked the relay (`type`, with `id`).
+async function answerTo(state, type, id) {
+  for (let tries = 0; tries < 100; tries += 1) {
+    const found = state.seen.find((message) => message.type === type && message.id === id);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`no ${type} for ${id}`);
+}
+
+test("the controller registers its own invitations; members who are not the owner cannot", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const avi = await signIn(AVI);
+  const aviInvitation = await invite(state, dana, AVI.email);
+  assert.equal((await joinWith(state, avi, aviInvitation.invitationId, aviInvitation.secret)).status, 200, "Avi is a member");
+
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  const byMember = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: avi, body: { invitation_id: randomHex(4), email: NOA.email, expires_at: expires } });
+  assert.equal(byMember.status, 403);
+  assert.equal(byMember.json.code, "OWNER_ONLY", "the cloud does not know members' roles: only the home decides");
+
+  // The controller registers an invitation an admin made.
+  const invitationId = randomHex(4);
+  const secret = randomBytes(32).toString("hex");
+  state.invitations.set(invitationId, secret);
+  state.connection.sendJson({ type: "invitation", id: "d1", invitation_id: invitationId, email: " Noa@Example.com ", expires_at: expires });
+  const registered = await answerTo(state, "invitation_result", "d1");
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+  state.connection.sendJson({ type: "invitation", id: "d2", invitation_id: invitationId, email: "other@example.com", expires_at: expires });
+  assert.equal((await answerTo(state, "invitation_result", "d2")).code, "INVITATION_EXISTS", "an id is bound to its email once");
+  state.connection.sendJson({ type: "invitation", id: "d3", invitation_id: "nothex", email: "x@example.com", expires_at: expires });
+  assert.equal((await answerTo(state, "invitation_result", "d3")).code, "INVALID_REQUEST");
+
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret)).status, 200, "Noa joins with it");
+
+  // One the controller gave up on (no answer in time) is forgotten when it says so.
+  const dropped = randomHex(4);
+  state.invitations.set(dropped, randomBytes(32).toString("hex"));
+  state.connection.sendJson({ type: "invitation", id: "d4", invitation_id: dropped, email: "late@example.com", expires_at: expires });
+  assert.equal((await answerTo(state, "invitation_result", "d4")).ok, true);
+  state.connection.sendJson({ type: "invitation_cancel", invitation_id: dropped });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const late = await signIn({ sub: "google-late", email: "late@example.com", name: "Late" });
+  assert.equal((await joinWith(state, late, dropped, state.invitations.get(dropped))).status, 404, "the cancelled invitation is gone");
+
+  // At most 20 waiting from the controller.
+  let limited = null;
+  for (let index = 0; index < 21 && !limited; index += 1) {
+    const id = `m${index}`;
+    state.connection.sendJson({ type: "invitation", id, invitation_id: randomHex(4), email: `guest${index}@example.com`, expires_at: expires });
+    const answer = await answerTo(state, "invitation_result", id);
+    if (!answer.ok) limited = answer.code;
+  }
+  assert.equal(limited, "INVITATION_LIMIT_REACHED");
+  // The controller says which are still waiting there: the others (revoked there) are forgotten.
+  const fresh = randomHex(4);
+  state.connection.sendJson({ type: "invitation", id: "p1", invitation_id: fresh, email: "fresh@example.com", expires_at: expires, pending: [fresh] });
+  assert.equal((await answerTo(state, "invitation_result", "p1")).ok, true, "room again once the revoked ones are forgotten");
+
+  // A home nobody claimed cannot register any.
+  const lone = await home();
+  lone.connection.sendJson({ type: "invitation", id: "u1", invitation_id: randomHex(4), email: "x@example.com", expires_at: expires });
+  assert.equal((await answerTo(lone, "invitation_result", "u1")).code, "NOT_CLAIMED");
+});
+
+test("only the home's owner replaces its secret; the controller cannot over its connection", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const avi = await signIn(AVI);
+  const aviInvitation = await invite(state, dana, AVI.email);
+  assert.equal((await joinWith(state, avi, aviInvitation.invitationId, aviInvitation.secret)).status, 200);
+  const oldSecret = state.connection.secret;
+  const newSecret = randomHex(32);
+  const hash = createHash("sha256").update(newSecret).digest("hex");
+
+  // Whoever holds the current secret (a copy of the controller's data) cannot replace it.
+  state.connection.sendJson({ type: "rotate_secret", id: "r1", secret_sha256: createHash("sha256").update(randomHex(32)).digest("hex") });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(state.seen.some((message) => message.type === "rotate_result"), false, "not answered: the relay does not do that any more");
+  const stillOld = await connectDriver({ url: worker.ws, home: state.home, secret: oldSecret, pingIntervalMs: 0, silenceTimeoutMs: 0 });
+  drivers.push(stillOld);
+
+  const byMember = await call("POST", `/v1/homes/${state.home}/secret`, { cookie: avi, body: { secret_sha256: hash } });
+  assert.equal(byMember.status, 403);
+  assert.equal(byMember.json.code, "OWNER_ONLY");
+  assert.equal((await call("POST", `/v1/homes/${state.home}/secret`, { cookie: dana, body: { secret_sha256: hash }, origin: null })).status, 403, "only from the app's own origins");
+  assert.equal((await call("POST", `/v1/homes/${state.home}/secret`, { cookie: dana, body: { secret_sha256: "short" } })).status, 400);
+
+  const approved = await call("POST", `/v1/homes/${state.home}/secret`, { cookie: dana, body: { secret_sha256: hash } });
+  assert.equal(approved.status, 204, approved.text);
+  await assert.rejects(connectDriver({ url: worker.ws, home: state.home, secret: oldSecret, pingIntervalMs: 0, silenceTimeoutMs: 0 }), "the old secret is refused");
+  const again = await connectDriver({ url: worker.ws, home: state.home, secret: newSecret, pingIntervalMs: 0, silenceTimeoutMs: 0 });
+  drivers.push(again);
+});
+
+test("signing out everywhere ends every session of the account", TEST, async () => {
+  const phone = await signIn(DANA);
+  const computer = await signIn(DANA);
+  assert.equal((await call("GET", "/v1/me", { cookie: phone })).status, 200);
+  assert.equal((await call("POST", "/auth/logout?everywhere=1", { cookie: computer })).status, 204);
+  assert.equal((await call("GET", "/v1/me", { cookie: phone })).status, 401, "the other device is signed out too");
+  assert.equal((await call("GET", "/v1/me", { cookie: computer })).status, 401);
+  const again = await call("POST", "/auth/logout?everywhere=1", { cookie: computer });
+  assert.equal(again.status, 401, "with no live session nothing was ended, and it says so");
+  assert.equal(again.json.code, "NOT_SIGNED_IN");
 });
 
 test("the owner sees and removes members; members may leave, the owner may not", TEST, async () => {

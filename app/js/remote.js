@@ -1,9 +1,10 @@
-// Remote access through the account (docs/ACCOUNTS.md): API requests sealed with this device's
-// lock key go to api.directorlink.io, which passes them to the home without being able to read
-// them; the answer comes back sealed. Used when the home network cannot be reached, and always on
-// iPhone and iPad (which cannot use the home-network connection).
+// Sealed requests (docs/ACCOUNTS.md): API requests sealed with this device's lock key. Through the
+// account they go to api.directorlink.io, which passes them to the home without being able to read
+// them (away from home, and always on iPhone and iPad). On the home network they go to the
+// controller itself (POST /v1/sealed), so the API key never crosses the network after pairing.
+// The answer comes back sealed either way.
 
-import { ApiError } from "../api-client.js";
+import { ApiError, apiRequest } from "../api-client.js";
 import { ACCOUNTS_API } from "./account.js";
 import { deriveLock, fromBase64, invitationLock, open, seal } from "./lock.js";
 
@@ -103,18 +104,75 @@ async function openAnswer(lock, envelope, id) {
   };
 }
 
+// One sealed exchange for `target` ({ home, keyId, offset: seconds the controller's clock is
+// ahead }): `deliver(envelope)` sends it and returns the answer's envelope, which is opened here.
+async function sealedExchange(apiKey, target, path, { method = "GET", body } = {}, deliver) {
+  const lock = await deviceLock(apiKey);
+  const id = requestId();
+  const ts = Math.floor(Date.now() / 1000) + (target.offset || 0);
+  const plaintext = JSON.stringify({ id, ts, method, path, body: body ?? null });
+  const envelope = await seal(lock, { home: target.home, key: target.keyId }, "req", plaintext);
+  return openAnswer(lock, await deliver(envelope), id);
+}
+
 // Sends one API request through the account; returns the home's answer.
-export async function remoteRequest(apiKey, path, { method = "GET", body } = {}) {
+export async function remoteRequest(apiKey, path, options = {}) {
   const remote = savedRemote();
   if (!remote || !apiKey) {
     throw new RemoteError("NOT_SET_UP", "Remote access is not set up on this device");
   }
-  const lock = await deviceLock(apiKey);
-  const id = requestId();
-  const plaintext = JSON.stringify({ id, ts: Math.floor(Date.now() / 1000), method, path, body: body ?? null });
-  const envelope = await seal(lock, { home: remote.home, key: remote.keyId }, "req", plaintext);
-  const reply = await post(`/v1/homes/${remote.home}/e2e`, { envelope });
-  return openAnswer(lock, reply.envelope, id);
+  return sealedExchange(apiKey, { home: remote.home, keyId: remote.keyId }, path, options, async (envelope) => {
+    const reply = await post(`/v1/homes/${remote.home}/e2e`, { envelope });
+    return reply.envelope;
+  });
+}
+
+// ---- sealed on the home network --------------------------------------------------------------
+
+// The controller refused a sealed request on the home network (POST /v1/sealed): `code` (STALE,
+// UNKNOWN_KEY, …) and its clock (`time`, seconds), to seal the next one right. Nothing ran.
+export class SealRefused extends Error {
+  constructor(code, status, time) {
+    super(`The controller refused the sealed request (${code})`);
+    this.name = "SealRefused";
+    this.code = code;
+    this.httpStatus = status;
+    this.time = time;
+  }
+}
+
+function lanDelivery(host, timeoutMs) {
+  return async (envelope) => {
+    const result = await apiRequest(host, "/v1/sealed", { method: "POST", body: { envelope }, timeoutMs });
+    if (result.ok && result.data?.envelope) return result.data.envelope;
+    throw new SealRefused(result.data?.code || `HTTP_${result.status}`, result.status, Number(result.data?.time));
+  };
+}
+
+// A read that got no answer is sealed again (a new id) and sent once more, as apiRequest does for
+// plain reads (api-client.js): one lost request must not make the controller look unreachable.
+// Refusals and writes are never repeated.
+const READ_RETRY_DELAY_MS = 400;
+
+async function lanExchange(host, apiKey, target, path, options, timeoutMs) {
+  const deliver = lanDelivery(host, timeoutMs);
+  try {
+    return await sealedExchange(apiKey, target, path, options, deliver);
+  } catch (error) {
+    if ((options.method || "GET") !== "GET" || error instanceof SealRefused || error instanceof RemoteError) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, READ_RETRY_DELAY_MS));
+    return sealedExchange(apiKey, target, path, options, deliver);
+  }
+}
+
+// Like apiCall, sealed, on the home network.
+export async function lanCall(host, apiKey, target, path, options = {}) {
+  return answerData(await lanExchange(host, apiKey, target, path, options, options.timeoutMs || 8000));
+}
+
+// A camera picture, sealed, on the home network.
+export async function lanImage(host, apiKey, target, path) {
+  return answerBlob(await lanExchange(host, apiKey, target, path, {}, 12000));
 }
 
 // The home's refusal, from its sealed answer: `sealed` marks it as the home's own word (a 401 there
@@ -129,9 +187,8 @@ function homeError(answer, problem) {
   return error;
 }
 
-// Like apiCall (api-client.js): the data, or ApiError for the home's non-2xx answers.
-export async function remoteCall(apiKey, path, options = {}) {
-  const answer = await remoteRequest(apiKey, path, options);
+// A sealed answer's data (JSON or text), or ApiError for the home's non-2xx answers.
+function answerData(answer) {
   let data = null;
   if (answer.text) {
     try {
@@ -146,9 +203,18 @@ export async function remoteCall(apiKey, path, options = {}) {
   return data;
 }
 
+// Like apiCall (api-client.js): the data, or ApiError for the home's non-2xx answers.
+export async function remoteCall(apiKey, path, options = {}) {
+  return answerData(await remoteRequest(apiKey, path, options));
+}
+
 // A camera picture through the account, as a Blob.
 export async function remoteImage(apiKey, path) {
-  const answer = await remoteRequest(apiKey, path);
+  return answerBlob(await remoteRequest(apiKey, path));
+}
+
+// A sealed answer's picture, as a Blob.
+function answerBlob(answer) {
   if (answer.status < 200 || answer.status > 299 || !answer.bytes) {
     let problem = null;
     try {
@@ -179,6 +245,12 @@ export function homeStatus(homeId) {
 // { transferred: true } when it belonged to another account until now.
 export function claimHome(homeId, claimToken) {
   return post("/v1/homes/claim", { home_id: homeId, claim_token: claimToken });
+}
+
+// The owner approves the new secret the controller made (POST /v1/remote/secret, at home): from
+// then on the relay accepts only it (docs/RELAY.md).
+export function approveHomeSecret(homeId, secretSha256) {
+  return post(`/v1/homes/${homeId}/secret`, { secret_sha256: secretSha256 });
 }
 
 export function registerInvitation(homeId, invitation, email) {

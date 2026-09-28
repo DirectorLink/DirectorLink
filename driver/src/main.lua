@@ -166,6 +166,18 @@ local services = {
         createClaim = function(keyId)
             return Remote.createClaim(keyId)
         end,
+        -- A replacement home secret for the owner to approve (POST /v1/remote/secret).
+        prepareSecret = function()
+            return Relay.prepareSecret()
+        end,
+        -- Asks the account service over the home's connection (invitations).
+        ask = function(message, seconds, done)
+            Relay.ask(message, seconds, done)
+        end,
+        -- Tells it something that needs no answer; false when not connected.
+        tell = function(message)
+            return Relay.tell(message)
+        end,
     },
     startedAt = os.time(),
     controllerVersion = nil,
@@ -361,6 +373,18 @@ function ExecuteCommand(command, params)
     end
     if params.ACTION == "NEW_PAIRING_CODE" then
         Pairing.open()
+    elseif params.ACTION == "RESET_REMOTE_IDENTITY" then
+        -- The last resort when the home's connection cannot be trusted and its secret cannot be
+        -- replaced by the owner (someone else holds it, or took the home over): a new home id.
+        -- Invitations and claim tokens were for the old one. The owner links the home again.
+        local ok, code = Relay.resetIdentity()
+        if ok then
+            local invitations = Invitations.revokeAll()
+            Remote.clearClaim()
+            Log.warn("relay", "remote identity reset from Composer", { invitations = invitations })
+        else
+            updateProperty("Remote Status", "Identity not reset: " .. tostring(code))
+        end
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
         local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry)

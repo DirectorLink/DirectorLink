@@ -141,6 +141,20 @@ function tests.pairing_is_rate_limited()
     T.eq(response.json.retry_after, 60, "the wait is in the body too")
     local locked = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = mock.properties["Pairing Code"] } })
     T.eq(locked.status, 429, "even the right code waits for the lock")
+    local other = T.http(mock, "POST", "/v1/auth/pair", { ip = "192.168.1.77", body = { pairing_code = mock.properties["Pairing Code"] } })
+    T.eq(other.status, 201, "another device is not locked out by the first one's guesses")
+end
+
+function tests.a_pairing_code_closes_after_twenty_wrong_codes()
+    local mock = Mock.startDriver()
+    local code = mock.properties["Pairing Code"]
+    local response
+    for attempt = 1, 20 do
+        response = T.http(mock, "POST", "/v1/auth/pair", { ip = "10.0.0." .. attempt, body = { pairing_code = "00000000" } })
+    end
+    T.eq(response.json.code, "PAIRING_NOT_ACTIVE", "from many devices, the code is closed")
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { ip = "10.0.0.99", body = { pairing_code = code } }).json.code, "PAIRING_NOT_ACTIVE")
+    T.contains(mock.properties["Pairing Status"], "Closed after 20 wrong codes")
 end
 
 function tests.pairing_validates_its_body()
@@ -838,12 +852,30 @@ function tests.cors_allows_the_app_and_console_and_rejects_other_origins()
     T.eq(fromConsole.headers["access-control-allow-origin"], "https://console.directorlink.io")
     T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://app.c4bridge.io" } }).status, 403,
         "the old app is retired")
-    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://localhost:8080" } }).status, 200)
+    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://localhost:8080" } }).status, 403,
+        "a page on the same computer is not the app")
+    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "http://127.0.0.1:5500" } }).status, 403)
 
     local evil = T.http(mock, "GET", "/v1/lights", { key = key, headers = { Origin = "https://evil.example" } })
     T.eq(evil.status, 403)
     T.eq(evil.json.code, "ORIGIN_NOT_ALLOWED")
     T.eq(evil.headers["access-control-allow-origin"], nil)
+end
+
+function tests.only_the_controllers_address_is_accepted_as_host()
+    local mock, key = start()
+    for _, host in ipairs({ "192.168.1.201:41999", "director.local:41999", "core1-000fff9c6a1a:41999", "[fe80::1]:41999", "controller.home.arpa",
+        "Director.Local.:41999", "[::ffff:192.168.1.5]:41999", "[fe80::1%25eth0]", "my_controller.lan" }) do
+        T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 200, host)
+    end
+    -- DNS rebinding: a public name made to point at the controller.
+    local rebound = T.http(mock, "GET", "/v1/health", { host = "evil.example:41999" })
+    T.eq(rebound.status, 421)
+    T.eq(rebound.json.code, "MISDIRECTED_REQUEST")
+    T.eq(T.http(mock, "GET", "/v1/lights", { key = key, host = "attacker.com" }).status, 421)
+    for _, host in ipairs({ "evil.com.", "1.2.3.4.nip.io", "director.local..", "[evil.com]", "user@director.local", "controller.myhome.net" }) do
+        T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 421, host)
+    end
 end
 
 function tests.unknown_routes_and_methods()

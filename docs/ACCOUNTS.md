@@ -2,7 +2,9 @@
 
 **Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google. Sign in with
 Apple is built in the cloud and the app (`cloud/src/apple.js`), and is switched on in the app once
-its keys are set up (cloud/README.md).** The driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
+its keys are set up (cloud/README.md). 1.0.0 seals the app's requests on the home network too,
+pairs with a key exchange, and lets the controller register its own invitations (ADR-032).** The
+driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
 `docs/RELAY.md`, version 1. Known issues are listed at the end.
@@ -77,12 +79,54 @@ Every remote request and every answer travels as one envelope:
   both in WebCrypto. The driver functions are native, so camera pictures stay fast.
 - The cloud sees the home id, the key id, the size and the time of each envelope.
 
+## On the home network (1.0.0)
+
+The same lock seals the app's requests at home, so its API key does not cross the home network
+either:
+
+- **Sealed requests.** The app reads the controller's clock from `GET /v1/sealed` (public; it does
+  not give out the remote-access home id), seals each request with its lock key `K`, exactly as
+  for the cloud but naming the home `lan`, and sends it to `POST /v1/sealed`. The controller
+  answers sealed. The window, the one-time ids and the roles are those of remote requests; a
+  refused envelope gets a problem with its `code` and the controller's `time`, so a device whose
+  clock is off can correct for it. An envelope for the relay's home id is refused here and one for
+  `lan` through the relay, and a sealed request cannot carry another one. The app keeps its key id
+  (not secret) to name its key; for a key paired before 1.0.0 it learns it once with a plain
+  `GET /v1/api-keys/current`.
+- **Once sealed, never in the clear.** The app remembers that a controller seals as soon as one
+  sealed request there works, or its pairing was sealed. From then on it never sends its key to
+  that controller: refusals are not signed, so anyone on the network could send them, and a
+  `404` on `GET /v1/sealed`, a `BAD_MAC` or a lost answer only mean "not reachable" (a linked
+  device then goes through the account). `UNKNOWN_KEY` means the key is gone, as a `401` did.
+  Only a device that never sealed with that controller sends its key as before: a controller from
+  before 1.0.0, one whose lock failed its self-test (`LOCK_UNAVAILABLE`), or a key whose `K` it
+  does not have yet (the plain request stores it). Away from home, the app goes back to the home
+  network only after a sealed request there works.
+- **Pairing with a key exchange.** The app sends its X25519 public key with the pairing code; the
+  driver answers with its own public key and the new key sealed with
+  `HMAC-SHA256(shared secret, "DirectorLink pair v1|" + code + "|" + app key + "|" + driver key)`
+  (the public keys in base64), then the usual `K_enc` and `K_mac` from it. Someone who only listens
+  on the network cannot read the key. Public keys of small order are refused before the code is
+  used. Browsers without X25519 in WebCrypto, drivers from before 1.0.0, and controllers whose lock
+  failed its self-test (they refuse the field `exchange` before using the code) pair as before,
+  with the key in the answer.
+- **Pairing is local and slow to guess.** Pairing is refused as a sealed or remote request
+  (`PAIRING_ONLY_ON_HOME_NETWORK`). Five wrong codes lock pairing for that device's address for a
+  minute, and twenty wrong codes in all close the code, so Composer has to make a new one.
+- **Only DirectorLink's sites, only local names.** Browsers may call the controller only from
+  app.directorlink.io and console.directorlink.io; any other origin, `localhost` included, is
+  refused. A request whose `Host` is not an IP address or a local name (`director.local`, a name
+  without dots, `.lan`, `.home.arpa`, …) is refused with `421 MISDIRECTED_REQUEST`, so a web page
+  cannot reach the controller through a DNS name it controls (DNS rebinding).
+- Scripts and the API console may keep using `Authorization: Bearer`; the key then travels in the
+  clear on the home network, as the README says.
+
 ## Flows
 
 ### 1. The owner claims the home (once, on the home network)
 
-1. Pair as today, on a computer or an Android phone, with the pairing code from Composer. The
-   device gets an admin key `S`.
+1. Pair on a computer or an Android phone, on the home network, with the pairing code from
+   Composer. The device gets an admin key `S`, sealed for it (see *On the home network*).
 2. Sign in with Google or Apple in the app.
 3. Over the home network, the app asks the controller for a claim token (admin keys only; works
    once; valid for 5 minutes, and only while the key that asked for it is still an admin key) and
@@ -114,7 +158,12 @@ key's role), locks the answer and sends it back.
    Everything after `#` stays in the browser and is never sent to any server; the app takes it out
    of the address as the page opens and keeps it for that tab only. The admin shares it (WhatsApp,
    email, a QR code on screen). The cloud is told only the invitation id, the email and the
-   expiry, once: an invitation cannot be moved to another email.
+   expiry, once: an invitation cannot be moved to another email. Since 1.0.0 the controller tells
+   it itself, over its relay connection, before answering the admin (`{"type":"invitation"}`,
+   `docs/RELAY.md`); if that fails the invitation is revoked. Only the home can therefore bind an
+   invitation to an email: the cloud does not know members' roles, so a viewer cannot. For drivers
+   before 1.0.0 the home's owner registers it from the app; other members are refused
+   (`OWNER_ONLY`).
 4. The invited person opens the link and signs in. The cloud checks their email against the
    invitation and refuses another one (`EMAIL_MISMATCH`). Then it passes on the person's first
    envelope, which is locked with keys derived from `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
@@ -124,13 +173,16 @@ key's role), locks the answer and sends it back.
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
 still has to sign in as the invited email. Revoking or demoting an admin's key revokes the
 invitations it made, and Composer's **Revoke All API Keys** revokes every invitation and claim token
-too. Each account may have 20 invitations waiting per home.
+too. The controller keeps at most 20 invitations waiting (409 `INVITATION_LIMIT_REACHED`); for
+drivers before 1.0.0, which the owner registers, the cloud allows 20 waiting per account and home.
 
 ### 4. Removing someone, or a lost phone
 
 An admin revokes that device's key: in the app (Settings → Controller → **People and devices**),
 the API console, or Composer's Revoke All API Keys. It stops working at home and away at once.
 Signing in to the account alone gives no access, because the keys live only on the devices.
+Settings → Account → **Sign out everywhere** also ends every session of the account, on every
+device (`POST /auth/logout?everywhere=1`).
 
 The cloud keeps which accounts use which key, by key id only (`member_keys`; a shared device's key
 may belong to several): the key an invitation made (the controller's `join_result`), and the key
@@ -147,7 +199,8 @@ membership.
 
 ### 5. The home network without an account
 
-Unchanged: pair with a code and use the LAN API. No cloud is involved.
+Pair with a code (with the key exchange) and use the LAN API; the app seals its requests there too
+(*On the home network*). No cloud is involved.
 
 ## Google and Apple
 
@@ -206,24 +259,43 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 
 After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie for
 `api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days and can be ended from the
-app. Deleting the account deletes its sessions, memberships, owned homes and invitations.
+app, on this device or on every device. Expired sessions and unfinished sign-ins are deleted every
+day. Deleting the account deletes its sessions, memberships, owned homes and invitations.
 
 ## Relay protocol, version 1
 
 In `docs/RELAY.md`: `e2e`, `join` and `claim` from the relay, answered with `e2e`, `join_result` and
-`claim_result`. Version 0's plain requests are refused (410 `RELAY_REQUESTS_RETIRED`) and its test
-endpoints are off in production. Roles come from the device's key.
+`claim_result`; `invitation` (answered `invitation_result`) and `invitation_cancel` from the
+controller (1.0.0). Version 0's plain requests are refused (410
+`RELAY_REQUESTS_RETIRED`) and its test endpoints are off in production. Roles come from the
+device's key.
 
 ## What the lock does not protect
 
 - **The app's code.** The app is a web page served from app.directorlink.io. Whoever controls that
   site could ship code that reads keys in the browser. The code is open source and deployed only
   from this repository by CI (`deploy.yml`). A native app would remove this trust, later.
-- **The controller's storage.** The lock keys `K` are stored on the controller. Whoever can read
-  its storage (root access, possibly a project backup) could act as those devices remotely. They
-  could not use the LAN API with them, which needs `S`, stored only as a hash.
-- **The home network.** The LAN link stays plain HTTP until local HTTPS exists. Someone on the home
-  Wi-Fi could capture an API key during pairing, or later.
+- **The controller's storage.** The lock keys `K` and the home secret are stored on the
+  controller. Whoever can read its storage (root access, possibly a project backup) could act as
+  those devices, remotely and with sealed requests at home. With the home secret as well, they
+  could also connect to the relay as the home itself, read the apps' remote requests and send
+  back false answers (a door's state, a camera picture). The API keys `S` themselves are only
+  hashes there. After such a copy is lost: Composer's **Revoke All API Keys** (then pair again and
+  invite again), and the owner's **Replace the remote secret** in the app (Settings → Account, on
+  the home network), which the account service accepts only from the owner (`docs/RELAY.md`). If
+  someone else took the home over first, Composer's **Reset Remote Identity** makes it a new home,
+  which the owner links again.
+- **The owner's account session.** Replacing the home secret trusts it: someone who stole it could
+  approve a secret of their own and cut the controller off from the relay, without reading or
+  changing anything (a stolen owner session could already delete the home). Sign out everywhere,
+  then replace the secret again at home.
+- **Someone who can change traffic on the home network.** Sealed requests cannot be read, changed
+  or replayed on the Wi-Fi, but the pairing code travels with the pairing request: someone who
+  intercepts and changes traffic during pairing (not only listens) could put themselves between
+  the app and the controller and take that key. Local HTTPS, or a code compared on both sides,
+  would close this; until then pair on a network you trust. Plain pairing (browsers without
+  X25519) and scripts using `Authorization: Bearer` send their key in the clear, and a key paired
+  before 1.0.0 was sent in the clear then: revoke it and pair again if that matters.
 - **Metadata:** which account uses which home, when, and how much.
 
 ## iPhone and iPad
@@ -237,10 +309,10 @@ from a computer or an Android phone; the owner's iPhone then joins as *my other 
 1. **Driver** (0.10.0): lock keys, envelopes over the relay, claim and invitations, with tests
    against the fake Director, and a self-test of `C4:Encrypt` and `C4:HMAC` at every start.
 2. **Cloud** (0.10.0): Google sign-in, sessions, homes, members, invitations and routing. Apple
-   later.
+   is built since (`cloud/src/apple.js`), off in the app until its keys are set up.
 3. **App** (0.10.0): sign-in, linking the home, automatic choice between home and remote
-   connection, Add my other device and Invite (link and QR), iPhone and iPad. A Members screen
-   later.
+   connection, Add my other device and Invite (link and QR), iPhone and iPad. People and devices
+   (members and their keys) followed in 0.11.0.
 4. **Docs and release** (0.10.0): the privacy page on directorlink.io, and `RELAY.md` version 1.
 
 Sign-in details:
@@ -276,3 +348,7 @@ of directorlink.io.
 6. The cloud stores only accounts, homes, members and pending invitations.
 7. Home-network use without an account stays.
 8. The version 0 relayed requests, the test endpoints and the viewer-only rule are gone.
+9. (1.0.0, ADR-032) The app seals its requests on the home network too and pairs with an X25519 key
+   exchange, and never falls back to sending its key once a controller sealed; pairing works only
+   on the home network; the controller registers its own invitations; the home's owner replaces
+   the home secret, from the home network; an account can sign out everywhere.

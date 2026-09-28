@@ -32,6 +32,10 @@
         <name>Print Schedules and Scenes</name>
         <command>PRINT_AUTOMATION</command>
       </action>
+      <action>
+        <name>Reset Remote Identity</name>
+        <command>RESET_REMOTE_IDENTITY</command>
+      </action>
     </actions>
     <properties>
       <property>

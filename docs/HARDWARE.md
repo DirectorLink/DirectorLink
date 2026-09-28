@@ -119,7 +119,7 @@ Two temperatures are readable: the processor (`cpu-thermal`, about 60 °C) and t
 
 - DirectorLink is a Lua driver inside Director. It does not need root access, extra software or changes to the operating system, and must keep working with whatever Control4 ships.
 - There is plenty of headroom: 4 cores and about 0.8 GB of free memory, while the driver handles a few requests per second; fetching camera pictures and TLS are done by Director and the hardware crypto.
-- Remote access needs one outgoing TLS connection kept open by the driver through Director's network API; the relay proof of concept tests exactly that. The CPU's crypto extensions keep TLS cheap.
+- Remote access needs one outgoing TLS connection kept open by the driver through Director's network API, as DirectorLink's remote access does (first validated on this CORE-1 in 0.9.0, docs/VALIDATION.md). The CPU's crypto extensions keep TLS cheap.
 - Everything the homeowner controls is reached through Director's drivers (KNX, CoolMaster, cameras, …), not through CORE-1 ports, except IR and serial, which Director drives through `ioserver`.
 
 ## How this was gathered

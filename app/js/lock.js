@@ -8,6 +8,7 @@ const decoder = new TextDecoder();
 
 export const DEVICE_LABEL = "DirectorLink e2e v1";
 export const INVITATION_LABEL = "DirectorLink invite v1";
+export const PAIRING_LABEL = "DirectorLink pair v1";
 
 export function toBase64(bytes) {
   let binary = "";
@@ -35,9 +36,10 @@ async function hmac(rawKey, data) {
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(data)));
 }
 
-// The lock of a secret: the two keys, which never leave WebCrypto, and the lock key's hex (tests).
-export async function deriveLock(secret, label = DEVICE_LABEL) {
-  const lock = await hmac(encoder.encode(secret), label);
+// The lock of a key (bytes) and a label: the two keys, which never leave WebCrypto, and the lock
+// key's hex (tests).
+async function lockOf(rawKey, label) {
+  const lock = await hmac(rawKey, label);
   const [enc, mac] = await Promise.all([hmac(lock, "enc"), hmac(lock, "mac")]);
   return {
     lockHex: toHex(lock),
@@ -46,7 +48,31 @@ export async function deriveLock(secret, label = DEVICE_LABEL) {
   };
 }
 
+export const deriveLock = (secret, label = DEVICE_LABEL) => lockOf(encoder.encode(secret), label);
+
 export const invitationLock = (secret) => deriveLock(secret, INVITATION_LABEL);
+
+// The lock of a pairing answer (driver: Lock.pairingKey): from the X25519 shared secret, bound to
+// the code and both public keys (base64).
+export const pairingLock = (shared, code, appPublic, driverPublic) =>
+  lockOf(shared, `${PAIRING_LABEL}|${code}|${appPublic}|${driverPublic}`);
+
+// X25519 in this browser (WebCrypto); null where it is missing (older browsers).
+export async function keyExchange() {
+  try {
+    const pair = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const publicKey = toBase64(new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey)));
+    return {
+      publicKey,
+      async shared(otherPublic) {
+        const other = await crypto.subtle.importKey("raw", fromBase64(otherPublic), { name: "X25519" }, false, []);
+        return new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: other }, pair.privateKey, 256));
+      },
+    };
+  } catch {
+    return null;
+  }
+}
 
 const macInput = (envelope, dir) => `v1|${envelope.home}|${envelope.key}|${dir}|${envelope.iv}|${envelope.ct}`;
 

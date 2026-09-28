@@ -2,6 +2,20 @@
 
 ## Current release
 
+`v1.0.0` — the app's key stays off the home network (sealed requests, pairing with a key exchange) and the security review's fixes (issue #43, ADR-032). Update DirectorLink in Composer (no reboot).
+
+## 0o. Security (1.0.0)
+
+1. An app already paired keeps working at home after the update, without pairing again. In the browser's developer tools (Network), requests to the controller are `POST /v1/sealed` and carry no `Authorization` header; the answers are envelopes.
+2. **New Pairing Code** in Composer, pair a second computer: the pairing answer holds `exchange` and `sealed`, not `key`. The new device works.
+3. Type a wrong code five times from one computer: that computer is locked for a minute (*Too many wrong codes …*); another computer can still pair meanwhile.
+4. `curl -H "Host: example.com" http://<controller-ip>:41999/v1/health` answers `421`; with the IP address as the host it answers `200`. A page served from `http://localhost` cannot reach the controller (a CORS error).
+5. With a viewer key, `GET /v1/system` has `latitude` and `longitude` `null`; with an admin key they are rounded to two decimals.
+6. With remote access: invite someone by email; the invitation is created (the controller registered it; `GET /v1/logs?category=remote` shows no *invitation not registered*) and they can join with it. With the controller's internet unplugged (Remote Status not connected), inviting fails within about 10 seconds and no invitation is left behind.
+7. As the home's owner, at home: Settings → Account → **Replace the remote secret**: *Done*; Remote Status shows a reconnect within a minute (the Lua log says *home secret replaced*); the app away from home (a phone on mobile data) still works. From an admin who is not the owner: *Only the home's owner can replace its secret*.
+8. Settings → Account → **Sign out everywhere** on one device: *Signed out on every device*; the other signed-in devices need to sign in again for remote use; at home they keep working.
+9. (Only on a test project.) Actions → **Reset Remote Identity**: Remote Status connects with a new home id; the home must be linked again from Settings → Account.
+
 `v0.15.0` — DirectorLink's automation is visible to the installer in Composer. Update DirectorLink in Composer (no reboot).
 
 ## 0n. Schedules and scenes in Composer
@@ -137,10 +151,13 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.15.0`
+- Version: `1.0.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
+- API Keys: how many keys exist
 - Door Control: `Disabled`; Log Level: `Info`
+- Remote Access and Remote Status: `Off` (new driver)
+- Schedules: `On`; Schedule Status: `None` (new driver); Last Automation: empty
 - Inventory: rooms, devices, lights, thermostats, blinds, cameras, relays and doorbells (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras, 3 relays)
 
 ## 2. Request bodies
@@ -152,8 +169,8 @@ The driver runs the DriverWorks TCP server without a delimiter and reads bodies 
 
 ## 3. Pair and connect
 
-1. Open `https://app.directorlink.io` (or a local copy, see step 7), enter the controller IP and the Pairing Code, and click **Pair & connect**.
-2. Expect rooms, devices, lights and thermostats to load. The Pairing Code in Composer changes after pairing and **API Keys** shows `1`.
+1. Open `https://app.directorlink.io`, enter the controller IP and the Pairing Code, and click **Connect**.
+2. Expect rooms, devices, lights and thermostats to load. After pairing the Pairing Code in Composer shows `-`, Pairing Status `Used at HH:MM - …`, and **API Keys** goes up by one.
 
 ## 4. Lights and thermostats
 
@@ -166,13 +183,13 @@ Repeat the alpha checks through the new API:
 
 ## 5. API console
 
-Open **API console** from the dashboard, click **Load API** and check:
+Open https://console.directorlink.io (or the app's Settings → App → API console) and check:
 
-- every endpoint is listed, grouped by tag
+- the API tab lists every endpoint, grouped by tag
 - `GET /v1/system` returns controller, location and inventory
 - `GET /v1/devices?type=light&room_id=<id>` filters
 - an invalid `PATCH` (for example `{"brightness": 150}`) returns `400` with `code: INVALID_FIELD`
-- **Follow** in the log panel shows new `api` entries as requests are made
+- the Logs tab follows new `api` entries every 2 seconds as requests are made
 
 ## 6. API keys and logs
 
@@ -183,13 +200,18 @@ Open **API console** from the dashboard, click **Load API** and check:
 
 ## 7. Testing the app before it is deployed
 
-The driver accepts `http://localhost` origins, so the app can be tested from this PC:
+The driver answers browsers only from app.directorlink.io and console.directorlink.io (since 1.0.0,
+not `localhost`): a copy of the app served from this PC talks only to the fake controller of the dev
+server, which allows local origins.
 
 ```bash
-python -m http.server 8080 --directory app
+python scripts/dev_server.py                  # fake controller on http://localhost:41999
+python -m http.server 8080 --directory app    # app on http://localhost:8080
 ```
 
-Then open `http://localhost:8080`.
+Then open `http://localhost:8080`, with `localhost` as the controller address and the code the dev
+server prints (`docs/BUILD.md`). Changes are tried against the real controller once they are
+deployed (a merge to `main`).
 
 ## If something fails
 

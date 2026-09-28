@@ -15,17 +15,22 @@ console/ (console.directorlink.io), site/ (directorlink.io)
         | HTTPS: static files only
         v
 Browser / any API client (curl, Home Assistant, scripts)
-        |
-        | LAN HTTP + API key, described by api/openapi.yaml
-        v
-DirectorLink.c4z inside Director
+        |                                     |
+        | at home: LAN HTTP,                  | away (the app): HTTPS,
+        | sealed (app) or API key (scripts),  | sealed end to end
+        | described by api/openapi.yaml       v
+        |                          api.directorlink.io (cloud/): accounts and the relay
+        |                                     |
+        |                                     | the driver's one outgoing WebSocket
+        v                                     | (docs/RELAY.md)
+DirectorLink.c4z inside Director  <-----------+
         |
         | DriverWorks
         v
 Existing Control4 project devices
 ```
 
-Cloudflare does not relay Control4 commands. Clients talk directly to DirectorLink on the LAN.
+At home, clients talk to DirectorLink directly: the app with sealed requests, scripts with an API key. Away, the app's requests go through api.directorlink.io (`cloud/`), sealed end to end, so the relay cannot read them (docs/ACCOUNTS.md, docs/RELAY.md). Remote access is optional and off by default.
 
 ## Repository
 
@@ -33,15 +38,19 @@ Cloudflare does not relay Control4 commands. Clients talk directly to DirectorLi
 api/        openapi.yaml — the API contract (single source of truth)
 driver/     the DriverWorks driver
   src/api/        HTTP server, router, handlers, views (API ↔ internal model)
-  src/auth/       API keys, pairing
+  src/auth/       API keys, roles, pairing, profiles, invitations
   src/adapters/   Control4 proxy adapters (Light V2, Thermostat V2, Blind, Camera, KNX Contact/Relay, DoorBird)
-  src/cloud/      remote access: WebSocket client and relay connection (docs/RELAY.md)
+  src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end
+                  lock (lock.lua) and sealed requests, claims and joins (remote.lua)
   src/control4/   discovery and normalization
-  src/core/       json, log, registry, version
+  src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
+                  scenes, schedules, scheduler, sun, weather, installer view; room names and layout
   tests/          driver tests against a fake Director
 app/        the app (PWA), deployed to app.directorlink.io
 console/    API console, debugging and logs, deployed to console.directorlink.io
 site/       landing page, deployed to directorlink.io
+cloud/      accounts and the relay (Cloudflare Worker), api.directorlink.io
+tests/      app and cloud tests, shared test vectors
 scripts/    build and validation
 docs/       specification, decisions, research, releases
 ```
@@ -49,8 +58,10 @@ docs/       specification, decisions, research, releases
 ## Driver layers
 
 ```text
-request bytes → api/http.lua (parse) → api/server.lua (CORS, auth, routing, errors, access log)
+request bytes → api/http.lua (parse) → api/server.lua (Host check, CORS, auth, routing, errors, access log)
              → api/handlers/*.lua → api/views.lua (public JSON)
+sealed request (POST /v1/sealed, or an envelope from the relay)
+             → api/handlers/sealed.lua → cloud/remote.lua (open, check, run as the key) → the same handlers
              → adapters/*.lua (Control4 commands) → Director
 ```
 
@@ -65,6 +76,6 @@ Control4 specifics — proxy drivers, command names, variable IDs — live only 
 5. Unknown device types are visible but marked unsupported.
 6. The public API uses logical names, never raw Control4 command names.
 7. OS/version differences stay behind the Control4 compatibility layer.
-8. V1 is LAN-only and needs an API key for everything except health, the API description and pairing.
+8. The API needs an API key (or a request sealed with a key's lock key, `/v1/sealed`) for everything except health, the API description and pairing. Remote access is optional, off by default, and sealed end to end.
 9. No automatic C4Z self-update in V1.
 10. `api/openapi.yaml` and the driver routes must always match (enforced in CI).

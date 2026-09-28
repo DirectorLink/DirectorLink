@@ -30,15 +30,16 @@ After installation, DirectorLink depends on **Director**, not Composer.
 ## V1 architecture
 
 ```text
-Cloudflare Pages PWA
+PWA on Cloudflare Workers (app.directorlink.io)
         |
         | static HTML / JS / CSS
         v
 Browser
-        |
-        | Local Network Access permission
-        | authenticated direct LAN connection
-        v
+        |                                   |
+        | at home: Local Network Access,    | away (optional): api.directorlink.io,
+        | direct LAN connection, sealed     | sealed end to end; the driver keeps
+        | requests (app) or API key         | one outgoing WebSocket to it
+        v                                   v
 DirectorLink.c4z
         |
         | Control4 DriverWorks APIs
@@ -49,33 +50,37 @@ Control4 Director
 Existing Control4 project/devices
 ```
 
-Cloudflare is **not** a relay. Control commands and project data are not intended to pass through DirectorLink cloud infrastructure in V1.
+At home the browser talks to DirectorLink directly. Remote access, when switched on, passes the app's requests through DirectorLink's relay, sealed end to end so that the relay cannot read or change them (docs/ACCOUNTS.md, ADR-029).
 
 ## V1 connectivity
 
-- LAN only
-- No remote-control cloud service
+- LAN first
+- Optional remote access through api.directorlink.io (off by default; Composer **Remote Access**), sealed end to end, with Google sign-in
 - No Internet-exposed DirectorLink port
 - No port forwarding recommendation
-- Remote users can use their own VPN/Tailscale/WireGuard outside the scope of DirectorLink
-- Browser frontend is hosted on Cloudflare Pages and should become an installable/cacheable PWA
+- The app, console and landing page are Cloudflare Workers static sites; the app is an installable PWA with an offline copy
 
 ## V1 authentication
 
-- One owner; every client (browser, phone, Home Assistant, script) gets its own named API key
-- Authenticated API even on LAN: `Authorization: Bearer <api key>` on every route except health, the API description and pairing
+- One owner and invited family members; every client (browser, phone, Home Assistant, script) gets its own named API key with a role (`viewer`, `member`, `doors`, `admin`), grouped by person (profiles)
+- Authenticated API even on LAN: `Authorization: Bearer <api key>`, or a request sealed with the key's lock key (`/v1/sealed`, the app's way since 1.0.0), on every route except health, the API description and pairing
 - No default/shared password; credentials do not depend on Control4 cloud credentials
-- Keys are random; Director keeps only a SHA-256 hash of each, and keys survive driver updates and restarts; listed without secrets and revocable (through the API, or all at once with a Composer action)
+- Keys are random; Director keeps only a SHA-256 hash of each (SHA-1 where SHA-256 is missing) and, for sealed requests, each key's lock key; keys survive driver updates and restarts; listed without secrets and revocable (through the API, or all at once with a Composer action)
 - First key (0.2.0): exchange the 8-digit Composer pairing code — valid 15 minutes, rotated after use, rate-limited
-- Since 0.8.0: the owner pairs once with a pairing code created in Composer (**New Pairing Code**, valid 15 minutes, works once); further keys are created by an admin, and family members will join remote access by invitation (0.3.0–0.7.0 approved clients with a **C4Bridge Access** button instead) (the pairing code remains a fallback)
+- Since 0.8.0: the owner pairs once with a pairing code created in Composer (**New Pairing Code**, valid 15 minutes, works once, only on the home network); it is the only way to a first key. Further keys are created by an admin, and family members and the owner's other devices join by invitation (0.10.0). (0.3.0–0.7.0 approved clients with a **C4Bridge Access** button instead.)
 
 ## V1 device scope
 
-Initial device families:
+Supported device families (1.0.0):
 
-1. Lights
-2. HVAC / thermostat / climate
+1. Lights (Light V2)
+2. HVAC / thermostat / climate (Thermostat V2)
 3. Shades / blinds / motorized covers/windows
+4. Cameras (snapshots)
+5. Doors and gates on KNX Contact/Relay devices
+6. DoorBird doorbells (rings, and opening their door)
+
+Proposed in open pull requests, not merged: Light V1, fans, dual-setpoint thermostats, alarm status.
 
 Policy for everything else:
 
@@ -128,17 +133,18 @@ DirectorLink does **not** import or depend on:
 
 ## V1 scheduler scope
 
-Later V1 scheduler work will support:
+Built in 0.14.0 (docs/SCHEDULES.md):
 
 - fixed clock time
 - day-of-week rules
 - sunrise
 - sunset
 - positive/negative sunrise/sunset offsets
+- the weather (heat, wind, rain, from Open-Meteo) as a trigger, and as an "only if" condition
 - persistent schedules that survive Director restart
 - DirectorLink scenes as schedule actions
 
-The scheduler will run inside DirectorLink/Director so a PC, browser, or phone does not need to remain online.
+The scheduler runs inside DirectorLink/Director so a PC, browser, or phone does not need to remain online, and is visible and pausable in Composer (0.15.0).
 
 ## Solar data
 
@@ -151,7 +157,6 @@ Use project location/time-zone data exposed by Director. Solar calculations shou
 - Composer-style programming editor
 - importing Composer programming
 - Control4 project upgrades
-- DirectorLink cloud remote-access relay
 - automatic `.c4z` self-update
 - generic execution of raw commands against unknown devices
 
@@ -172,7 +177,10 @@ A plugin architecture may be added later for niche functionality. A Jewish-calen
 
 Apache License 2.0.
 
-## Current implementation milestone
+## History: the first milestones (to 0.2.0)
+
+What was built first, kept as written then. What has been built since is in `docs/ROADMAP.md` and
+`docs/releases/`.
 
 ### Step 1 — bootstrap/package
 
@@ -218,7 +226,7 @@ DirectorLink sends control only to the Light V2 proxy ID. It does not address ba
 
 ### PWA shell — implemented ahead of transport
 
-The initial Cloudflare Pages PWA shell is implemented under `app/`:
+The initial Cloudflare Pages PWA shell is implemented under `app/` (Workers static assets since 0.8.0):
 
 - framework-free HTML/CSS/JavaScript
 - installable web manifest
@@ -228,7 +236,7 @@ The initial Cloudflare Pages PWA shell is implemented under `app/`:
 - security headers
 - raster/SVG application icons
 
-The PWA talks to the driver's LAN API directly. The service worker ignores all cross-origin requests so LAN traffic is never cached or proxied by the web shell. An API console page (`app/console.html`) lists every endpoint from the live API description and follows the bridge log.
+The PWA talks to the driver's LAN API directly. The service worker ignores all cross-origin requests so LAN traffic is never cached or proxied by the web shell. An API console page (`app/console.html`; `console/` since 0.8.0) lists every endpoint from the live API description and follows the bridge log.
 
 
 
@@ -239,7 +247,7 @@ The LAN API is described by `api/openapi.yaml` (OpenAPI 3.1) and served on TCP p
 - HTTP on the LAN only; the public app remains HTTPS
 - Chrome Local Network Access permission gates the public-to-local browser request
 - API keys (Bearer) on every route except health, the API description and pairing
-- CORS restricted to official DirectorLink origins, plus localhost for development
+- CORS restricted to official DirectorLink origins, plus localhost for development (localhost removed in 1.0.0, ADR-032)
 - logical resources: system, rooms, devices, lights, thermostats, logs, API keys
 - `PATCH` with the desired state, answered with `202 Accepted`; RFC 9457 errors
 

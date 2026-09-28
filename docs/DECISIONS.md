@@ -26,13 +26,19 @@ This file records decisions that should not be silently changed.
 
 **Consequence:** Browser Local Network Access permission and correct CORS/private-network handling are part of onboarding.
 
+**Superseded in part by ADR-026 (0.8.0):** the sites are Cloudflare Workers static assets, deployed by `deploy.yml`.
+
 ## ADR-005 — LAN only in V1
 
 **Decision:** No DirectorLink-hosted remote-control relay in V1.
 
+**Superseded by ADR-029 (0.10.0):** optional remote access through api.directorlink.io, sealed end to end.
+
 ## ADR-006 — One owner
 
 **Decision:** One paired owner identity/account in V1. Multi-user/roles are deferred.
+
+**Superseded by ADR-025, ADR-027 and ADR-029:** keys have roles, the owner pairs and everyone else is invited.
 
 ## ADR-007 — Adapter-based devices
 
@@ -81,6 +87,8 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Version source:** root `VERSION` file using semantic versioning. Versions with a prerelease suffix such as `-alpha.1` are published as prereleases.
 
+**Since changed (ADR-022):** releases also carry `openapi.json`, and `VERSION` is plain `MAJOR.MINOR.PATCH`, without prerelease suffixes.
+
 
 ## ADR-015 — Start the PWA without a frontend framework
 
@@ -88,7 +96,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Why:** The current UI is small, this removes Node/framework dependencies from deployment, and it lets us prove the harder browser-to-LAN transport before committing to a larger frontend stack.
 
-**Cloudflare configuration:** root `web`, build command `exit 0`, output directory `.`.
+**Cloudflare configuration:** root `web`, build command `exit 0`, output directory `.`. (Superseded by ADR-026: `app/`, `console/` and `site/` are deployed by `deploy.yml`.)
 
 **Revisit:** A framework/build tool may be introduced later if the device dashboard, state management, routing, or component complexity justifies it.
 
@@ -213,7 +221,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Decision (0.8.0):** The project, driver and API are named **DirectorLink** (slogan: *Direct to Director. End-to-end integration. Open source.*), on `directorlink.io`. The driver package is `DirectorLink.c4z` and its button **DirectorLink Access**. The repository holds three static sites, each its own Cloudflare Worker with a custom domain: `app/` (formerly `web/`) on `app.directorlink.io`, `console/` (API console, debugging, logs, key management) on `console.directorlink.io`, and `site/` (landing page) on `directorlink.io`. GitHub Actions deploys them (`deploy.yml`) instead of dashboard-configured builds, so the deployment is part of the repository. Past release notes and the validation log keep the old name as written.
 
-**Consequence:** Control4 sees DirectorLink as a different driver: moving from C4Bridge means removing it and adding DirectorLink, so API keys, room names and the Door Control setting start fresh. The driver's CORS allowlist is the two new sites plus localhost; the old `app.c4bridge.io` no longer reaches a DirectorLink controller.
+**Consequence:** Control4 sees DirectorLink as a different driver: moving from C4Bridge means removing it and adding DirectorLink, so API keys, room names and the Door Control setting start fresh. The driver's CORS allowlist is the two new sites plus localhost (localhost removed in 1.0.0, ADR-032); the old `app.c4bridge.io` no longer reaches a DirectorLink controller.
 
 ## ADR-027 — Owners pair once with an on-demand code; everyone else is invited
 
@@ -229,7 +237,15 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Decision (0.9.2):** `src/core/store.lua` writes every stored value as `json:` followed by JSON, which Director returns unchanged, and accepts tables Director has already decoded, so data written by 0.9.1 and older is read and then rewritten. Keys are kept in plain persistence as SHA-256 hashes (SHA-1 on a controller without SHA-256; each key records its algorithm). A presented key is hashed and compared in constant time; the key itself exists only in the response that creates it. Keys in the encrypted store of 0.8.0 and 0.9.0 are moved when Director can read that store, which is then emptied. The remote-access identity is kept in plain persistence as well: its secret has to be sent to the relay, so it cannot be kept as a hash.
 
-**Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way.
+**Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way. (Since ADR-029 each key's lock key is stored too; ADR-032 lets the owner replace the home secret and says what such a copy allows.)
+
+## ADR-032 — The app's key stays off the home network; security review fixes
+
+**Context:** A public review of the code (issue #43) pointed out that an admin key picked up on the home Wi-Fi (plain HTTP) was enough to claim the home to another account and to use it from anywhere; that pairing codes could be guessed through the relay and one person's wrong guesses locked pairing for everyone; that `localhost` was an allowed origin and the `Host` header was not checked (DNS rebinding); that every secret came from `C4:UUID("RANDOM")` alone; that viewers saw the home's exact location; that any member could register invitation ids with the cloud; and that a copy of the controller's data (home secret and lock keys) was enough to pose as the controller.
+
+**Decision (1.0.0):** The app seals its requests on the home network with the lock of ADR-029 (`GET`/`POST /v1/sealed`) and pairs with an X25519 key exchange whose lock also covers the pairing code and both public keys, so its key is not sent in the clear; `Authorization: Bearer` stays for scripts and the console. Pairing is refused as a sealed or relayed request; five wrong codes lock pairing per client address for 60 s and twenty close the code. The driver accepts only DirectorLink's two sites as origins (no `localhost`, also not in development builds: only the local test bridge, `driver/tests/dev_bridge.lua`, also allows `http://localhost:<port>` and `http://127.0.0.1:<port>`) and only IP addresses and local names as `Host` (`421 MISDIRECTED_REQUEST`). Every secret comes from `src/core/random.lua`, a SHA-256 pool stirred with `C4:UUID`, clocks, `/dev/urandom` when readable and each request; only a hash of it is saved across restarts. Once a controller sealed for a device, the app never sends it the key in the clear again (unsigned refusals cannot make it fall back), and `GET /v1/sealed` no longer gives out the home id (envelopes at home name the home `lan`); a sealed request cannot carry another. The location is shown to admins only, rounded to two decimals. The controller registers its own invitations over the relay socket, and the cloud's member endpoint is kept for the home's owner (drivers before 1.0.0). The home's owner replaces the home secret from the app on the home network: the controller makes it and gives only its hash, the account service accepts it only from the owner, and the relay then accepts only it (the controller cannot replace it alone, or a copy of its data could lock it out). The Composer action **Reset Remote Identity** makes a new home id as a last resort. Accounts can sign out everywhere and expired sessions are purged daily. CI actions are pinned to commits, wrangler to an exact version, and `scripts/check_repo.py` refuses local configuration and secret files.
+
+**Consequence:** Someone who only listens on the home network learns nothing that opens the home. Someone who can change traffic during pairing still could (the code travels with the request); local HTTPS or a code compared on both sides would close that, later. Old browsers, old drivers and scripts keep working unsealed. A copy of the controller's data still allows acting as its devices and as the home until **Revoke All API Keys** and the owner's **Replace the remote secret** are used (docs/ACCOUNTS.md, *What the lock does not protect*). A device with no sealed request yet (a key paired before 1.0.0) can still be made to send its key once by someone who changes traffic. The API console does not seal. Envelope sizes remain visible to the cloud.
 
 ## ADR-031 — DirectorLink's automation is visible and pausable in Composer
 

@@ -5,6 +5,7 @@
 -- when the scene runs, so a light added to the room later is included.
 
 local Clock = require("src.core.clock")
+local Random = require("src.core.random")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 local Store = require("src.core.store")
@@ -26,11 +27,7 @@ Scenes.MAX_TEMPERATURE = 40
 local state = { scenes = {}, complete = true }
 
 local function randomHex(length)
-    local hex = ""
-    while #hex < length do
-        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
-    end
-    return hex:sub(1, length)
+    return Random.hex(length)
 end
 
 local function isWhole(value, minimum, maximum)

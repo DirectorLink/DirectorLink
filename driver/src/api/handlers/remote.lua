@@ -34,4 +34,24 @@ function Remote.claim(ctx)
     return 201, { home_id = remote.homeId(), claim_token = claim.claim_token, expires_at = claim.expires_at }
 end
 
+-- A new secret for the home's relay connection, for the home's owner to approve: the app gives its
+-- SHA-256 to the account service, which then accepts only the new secret (docs/RELAY.md). Only on
+-- the home network, like a claim, so that whoever holds a copy of this controller's data and
+-- connects as the home cannot replace the secret; the same one is given until it is in use.
+function Remote.secret(ctx)
+    local remote = ctx.services.remote
+    if ctx.apiKey.remote then
+        return Problem.new(403, "SECRET_ONLY_ON_HOME_NETWORK", "The home's secret is replaced from its own network, not through remote access")
+    end
+    if not remote.enabled() then
+        return Problem.new(409, "REMOTE_ACCESS_OFF", "Turn on Remote Access in Composer (DirectorLink properties) first")
+    end
+    local hash, failure = remote.prepareSecret()
+    if not hash then
+        return Problem.internal("A new home secret could not be made (" .. tostring(failure) .. ")")
+    end
+    ctx.services.log.info("remote", "new home secret given for approval", { key_id = ctx.apiKey.id })
+    return 200, { home_id = remote.homeId(), secret_sha256 = hash }
+end
+
 return Remote

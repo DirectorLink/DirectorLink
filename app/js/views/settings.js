@@ -3,7 +3,7 @@
 import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
-import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
+import { approveHomeSecret, claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, iconButton, name } from "../dom.js";
 import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
@@ -463,6 +463,41 @@ async function linkHome() {
   }
 }
 
+// The owner replaces the secret the controller connects to the relay with (docs/RELAY.md): the
+// controller makes it and gives only its hash, here on the home network; the account service
+// then accepts only the new one. Someone with a copy of the controller's data cannot do this.
+async function replaceHomeSecret() {
+  const linked = savedRemote();
+  if (!linked || !window.confirm(t("settings.account.home.secretConfirm"))) return;
+  ui.homeBusy = true;
+  ui.homeMessage = null;
+  notify();
+  try {
+    const prepared = await api("/v1/remote/secret", { method: "POST" });
+    if (prepared?.home_id !== linked.home) {
+      throw new Error("The controller at this address is not this home's");
+    }
+    await approveHomeSecret(linked.home, prepared.secret_sha256);
+    ui.homeMessage = { kind: "success", text: t("settings.account.home.secretReplaced") };
+  } catch (error) {
+    ui.homeMessage = { kind: "error", text: error?.code === "OWNER_ONLY" ? t("settings.account.home.secretOwnerOnly") : errorText(error) };
+  } finally {
+    ui.homeBusy = false;
+    notify();
+  }
+}
+
+function secretPanel() {
+  return [
+    h("p", { class: "field-help" }, t("settings.account.home.secretHelp")),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "button", class: "button button-secondary", dataset: { key: "replace-secret" }, disabled: Boolean(ui.homeBusy), onclick: replaceHomeSecret }, t("settings.account.home.secret"))
+    ),
+  ];
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function createInvitation({ forSelf }) {
@@ -482,8 +517,16 @@ async function createInvitation({ forSelf }) {
     // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
     const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
     if (forSelf && state.profile) body.for_me = true;
-    invitation = await api("/v1/invitations", { method: "POST", body });
-    await registerInvitation(invitation.home_id, invitation, email);
+    try {
+      // The controller registers it with the account service itself (1.0.0 and later).
+      invitation = await api("/v1/invitations", { method: "POST", body: { ...body, email } });
+    } catch (error) {
+      const field = error?.problem?.errors?.[0]?.field;
+      if (error?.code !== "INVALID_FIELD" || field !== "email") throw error;
+      // A driver before 1.0.0: the home's owner registers it from here.
+      invitation = await api("/v1/invitations", { method: "POST", body });
+      await registerInvitation(invitation.home_id, invitation, email);
+    }
     ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
     ui.inviteForm = false;
   } catch (error) {
@@ -578,6 +621,8 @@ function homeSection() {
   if (linked) {
     content.push(h("p", { class: "field-help", id: "account-home-linked" }, t("settings.account.home.linked")));
     if (can("admin")) content.push(invitePanel());
+    // On the home network only: the controller refuses it through the account.
+    if (can("admin") && !ui.homeInvitation && !ui.inviteForm && state.status === "connected" && state.transport === "lan") content.push(...secretPanel());
   } else if (IS_IOS) {
     content.push(h("p", { class: "field-help" }, t("settings.account.home.iosJoin")));
   } else if (state.status !== "connected" || state.transport !== "lan") {
@@ -614,7 +659,7 @@ function homeSection() {
 function accountSection() {
   const account = state.account;
   const notice = account.notice
-    ? h("p", { class: `notice ${["deleted", "linked", "removed"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    ? h("p", { class: `notice ${["deleted", "linked", "removed", "signedOutEverywhere"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
   let body;
   if (account.status === "signed-in") {
@@ -631,7 +676,20 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: signOut }, t("settings.account.signOut")),
+        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: () => signOut() }, t("settings.account.signOut")),
+        h(
+          "button",
+          {
+            type: "button",
+            class: "button button-secondary",
+            dataset: { key: "account-sign-out-everywhere" },
+            disabled: account.busy,
+            onclick: () => {
+              if (window.confirm(t("settings.account.signOutEverywhereConfirm"))) signOut({ everywhere: true });
+            },
+          },
+          t("settings.account.signOutEverywhere")
+        ),
         // Signing in with another provider gives another account; adding it here, while signed in,
         // makes both sign in to this one.
         ...SIGN_IN_PROVIDERS.filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider)).map((provider) =>

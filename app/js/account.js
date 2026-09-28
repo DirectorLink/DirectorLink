@@ -90,8 +90,28 @@ export function signIn(hash = "#/settings", provider = "google", { link = false 
   window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}${link ? "&link=1" : ""}`);
 }
 
-export async function signOut() {
+// `everywhere`: every device signed in to this account is signed out (a lost phone).
+export async function signOut({ everywhere = false } = {}) {
   set({ ...state.account, busy: true });
+  if (everywhere) {
+    // It must be known to have worked: someone signing out a lost phone relies on it.
+    let response = null;
+    try {
+      response = await call("/auth/logout?everywhere=1", "POST");
+    } catch {
+      response = null;
+    }
+    if (response?.status === 204) {
+      remember(false);
+      set({ status: "signed-out", notice: "signedOutEverywhere" });
+    } else if (response?.status === 401) {
+      remember(false);
+      set({ status: "signed-out", notice: "signOutEverywhereExpired" });
+    } else {
+      set({ ...state.account, busy: false, notice: "signOutEverywhereFailed" });
+    }
+    return;
+  }
   try {
     await call("/auth/logout", "POST");
   } catch {

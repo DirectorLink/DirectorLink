@@ -6,6 +6,7 @@
 -- A profile goes when its last key does.
 
 local Clock = require("src.core.clock")
+local Random = require("src.core.random")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 local Store = require("src.core.store")
@@ -20,11 +21,7 @@ Profiles.THEMES = { auto = true, light = true, dark = true }
 local state = { profiles = {} }
 
 local function randomHex(length)
-    local hex = ""
-    while #hex < length do
-        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
-    end
-    return hex:sub(1, length)
+    return Random.hex(length)
 end
 
 -- The stored preferences, as the API shows them (favorites always a list).

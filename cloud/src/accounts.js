@@ -4,6 +4,7 @@
 //   GET    /auth/google/callback                             (Google redirects here)
 //   POST   /auth/apple/callback                              (Apple posts its form here)
 //   POST   /auth/logout                                      ends this session
+//   POST   /auth/logout?everywhere=1                         ends every session of this account
 //   GET    /v1/me                                            the signed-in account, or 401
 //   DELETE /v1/me                                            deletes the account and all its sessions
 //   DELETE /v1/me/identities/{google|apple}                  it no longer signs in with that provider
@@ -398,8 +399,24 @@ async function logout(request, env, headers) {
     return withHeaders(methodNotAllowed("POST"), headers);
   }
   const token = readCookie(request, SESSION_COOKIE);
-  if (token) {
-    await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(await sha256Hex(token)).run();
+  const hash = token ? await sha256Hex(token) : null;
+  if (new URL(request.url).searchParams.get("everywhere") === "1") {
+    // Every device signed in to this account: a lost phone, a shared computer. Only a live session
+    // says whose account that is; without one nothing was ended, and the app must say so.
+    const session = hash
+      ? await env.DB.prepare("SELECT user_id FROM sessions WHERE token_sha256 = ? AND expires_at > ?").bind(hash, iso(Date.now())).first()
+      : null;
+    if (!session) {
+      if (hash) await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(hash).run();
+      const refused = withHeaders(problem(401, "NOT_SIGNED_IN", "This session has ended: sign in again, then sign out everywhere"), headers);
+      refused.headers.set("Set-Cookie", clearSession());
+      return refused;
+    }
+    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id).run();
+    log("signed_out_everywhere", { user: session.user_id });
+  }
+  if (hash) {
+    await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(hash).run();
   }
   return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });
 }
@@ -446,4 +463,8 @@ export async function handleAccounts(request, env) {
     return removeIdentity(request, env, headers, identity[1]);
   }
   return path === "/v1/me" ? me(request, env, headers) : logout(request, env, headers);
+}
+
+function log(event, fields) {
+  console.log(JSON.stringify({ event, ...fields }));
 }

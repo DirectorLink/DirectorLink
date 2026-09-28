@@ -72,7 +72,8 @@ skipped. Opening a door or gate needs a person.
   schedule with "only if" due right after a restart waits a few minutes for a first reading.
 - Open-Meteo's free service is for non-commercial use, which a household's own schedules are. An
   installer offering this commercially should check Open-Meteo's terms (they have paid plans).
-- `GET /v1/weather` also gives today's sunrise and sunset.
+- `GET /v1/weather` also gives today's sunrise and sunset. Its `location` is given to admin keys
+  only, rounded to two decimals; other roles get `null` (1.0.0).
 
 ## For installers (Composer)
 

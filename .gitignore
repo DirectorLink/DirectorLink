@@ -5,3 +5,14 @@ build/
 Thumbs.db
 dist/
 __pycache__/
+
+# Local tool configuration (it holds account details) and secrets: never committed
+# (scripts/check_repo.py fails the build if they are).
+.claude.json
+.claude/
+.dev.vars
+.env
+.env.*
+*.p8
+*.pem
+*.key

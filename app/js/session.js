@@ -1,6 +1,8 @@
 // Connection to the controller: first-time access, reconnecting with the saved key, loading
-// and refreshing device state. Requests go over the home network (api-client.js), or sealed
-// through the account (remote.js) when the home network cannot be reached and on iPhone and iPad.
+// and refreshing device state. On the home network requests are sealed with this device's lock key
+// (POST /v1/sealed, remote.js), so the API key never crosses the network; with a driver from before
+// 1.0.0 they carry the key (api-client.js). Through the account they are sealed too (remote.js),
+// when the home network cannot be reached and on iPhone and iPad.
 
 import { loadAccount } from "./account.js";
 import {
@@ -18,7 +20,8 @@ import {
 } from "../api-client.js";
 import { notificationsOn, notifyRings, trackRings } from "./doorbells.js";
 import { IS_IOS } from "./platform.js";
-import { RemoteError, forgetRemote, remoteCall, remoteImage, savedRemote } from "./remote.js";
+import { RemoteError, SealRefused, forgetRemote, lanCall, lanImage, remoteCall, remoteImage, savedRemote } from "./remote.js";
+import { keyExchange, open, pairingLock } from "./lock.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
 
@@ -50,6 +53,191 @@ export function reachable() {
   return Boolean(state.apiKey && ((state.host && !IS_IOS) || savedRemote()));
 }
 
+// ---- sealing on the home network ------------------------------------------------------------
+
+// What this device knows about sealing with its controller: { host, keyId, seals }. `keyId` names
+// its key in sealed requests; `seals` says a sealed request there has worked (or the pairing was
+// sealed). From then on the key is never sent to that controller in the clear: answers that
+// would make it fall back (a 404 on GET /v1/sealed, UNKNOWN_KEY, …) are not signed, so anyone on
+// the network could send them. Only a device that never sealed there falls back (drivers before
+// 1.0.0).
+const SEAL_KEY = "directorlink.seal";
+const OLD_KEY_ID_KEY = "directorlink.keyId"; // development builds before 1.0.0
+// What envelopes on the home network name as their home (driver: Remote.LAN_HOME).
+const LAN_HOME = "lan";
+
+function savedSeal() {
+  try {
+    const value = JSON.parse(localStorage.getItem(SEAL_KEY) || "null");
+    return value && typeof value.host === "string" && /^[0-9a-f]{8}$/.test(value.keyId || "") ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberSeal(host, keyId, seals) {
+  try {
+    if (host && /^[0-9a-f]{8}$/.test(keyId || "")) localStorage.setItem(SEAL_KEY, JSON.stringify({ host, keyId, seals: Boolean(seals) }));
+  } catch {
+    // Blocked storage: the key id is asked for again at the next start.
+  }
+}
+
+function forgetSeal() {
+  try {
+    localStorage.removeItem(SEAL_KEY);
+    localStorage.removeItem(OLD_KEY_ID_KEY);
+  } catch {
+    // Nothing saved.
+  }
+}
+
+// The record for the controller in use.
+function sealHere() {
+  const seal = savedSeal();
+  return seal && seal.host === state.host ? seal : null;
+}
+
+function sealsHere() {
+  return sealHere()?.seals === true;
+}
+
+// { home, keyId, offset } once known; null with a controller that cannot seal (before 1.0.0, or
+// its lock failed), for a device that never sealed there; undefined until looked at (after
+// connecting, or when the home network is back). Requests that start together wait for the same
+// look; `sealGeneration` changes with the key, so a look for the previous key never counts.
+let lanSeal;
+let lanSealLook = null;
+let sealGeneration = 0;
+// False once the controller did not know the key id linking saved (savedRemote): ask it instead.
+let trustLinkedKeyId = true;
+
+function resetSeal() {
+  sealGeneration += 1;
+  lanSeal = undefined;
+  lanSealLook = null;
+}
+
+// A new key on this device (pairing, an invitation): what was known about the previous one goes.
+export function forgetSealing() {
+  forgetSeal();
+  resetSeal();
+  trustLinkedKeyId = true;
+}
+
+// A problem of the home-network connection that says nothing about the key: without a status, so
+// it never wipes the key (401 handling) and a linked device goes through the account instead.
+function notReachable(code) {
+  return new ApiError(t(code === "MISDIRECTED_REQUEST" ? "errors.misdirected" : "errors.unreachable"), { code });
+}
+
+// Seconds the controller's clock is ahead of this device's, rounded down so that a request is
+// never dated after the controller's clock (the driver would keep its id in storage).
+function clockOffset(time) {
+  return Math.floor(Number(time) - Date.now() / 1000) || 0;
+}
+
+// What sealing needs from this controller: its clock (GET /v1/sealed, without a key), and this
+// device's key id (saved at pairing or linking; for a device paired before 1.0.0, asked for once).
+async function setupLanSeal() {
+  const generation = sealGeneration;
+  const host = state.host;
+  const known = sealHere();
+  const seals = known?.seals === true;
+  const result = await apiRequest(host, "/v1/sealed", { timeoutMs: 8000 });
+  if (generation !== sealGeneration) return;
+  if (!result.ok) {
+    const code = result.data?.code;
+    if (!seals && (result.status === 404 || result.status === 405 || code === "LOCK_UNAVAILABLE")) {
+      // A driver before 1.0.0, or one that cannot seal: requests carry the key, as before.
+      lanSeal = null;
+      return;
+    }
+    throw notReachable(code === "MISDIRECTED_REQUEST" ? code : "SEALING_UNAVAILABLE");
+  }
+  let keyId = known?.keyId || (trustLinkedKeyId ? savedRemote()?.keyId : null) || null;
+  if (!keyId && !seals) {
+    const key = await apiCall(host, "/v1/api-keys/current", { apiKey: state.apiKey });
+    if (generation !== sealGeneration) return;
+    keyId = key?.id;
+    rememberSeal(host, keyId, false);
+  }
+  if (!keyId) {
+    lanSeal = null;
+    return;
+  }
+  lanSeal = { home: LAN_HOME, keyId, offset: clockOffset(result.data?.time) };
+}
+
+// A refused sealed request (nothing ran), for a device that seals with this controller.
+function refusal(error) {
+  if (error.code === "UNKNOWN_KEY") {
+    // The controller does not know this key: it was revoked, or DirectorLink was added again. A
+    // linked device asks its home through the account before forgetting it (handleUnauthorized).
+    return new ApiError(t("errors.keyRevoked"), { status: 401, code: "UNKNOWN_KEY" });
+  }
+  return notReachable(error.code);
+}
+
+// One request on the home network: sealed when the controller can open it, else with the key
+// (only for a device that never sealed with this controller).
+async function homeRequest(send, plain) {
+  const generation = sealGeneration;
+  if (lanSeal === undefined) {
+    lanSealLook ??= setupLanSeal().finally(() => {
+      if (generation === sealGeneration) lanSealLook = null;
+    });
+    await lanSealLook;
+    // The key changed meanwhile (pairing, forgetting it): look again for the one in use now.
+    if (generation !== sealGeneration) return homeRequest(send, plain);
+  }
+  const seal = lanSeal;
+  if (!seal) {
+    if (sealsHere()) throw notReachable("SEALING_UNAVAILABLE");
+    return plain();
+  }
+  let answer;
+  try {
+    answer = await send(seal);
+  } catch (error) {
+    if (error instanceof RemoteError) {
+      // The answer could not be verified: not the home's word, and perhaps not the home at all.
+      throw notReachable(error.code);
+    }
+    if (!(error instanceof SealRefused)) throw error;
+    if (error.code === "STALE" && Number.isFinite(error.time)) {
+      // This device's clock is off: seal with the controller's, once.
+      const again = { ...seal, offset: clockOffset(error.time) };
+      if (lanSeal === seal) lanSeal = again;
+      try {
+        answer = await send(again);
+      } catch (retry) {
+        if (retry instanceof SealRefused) throw refusal(retry);
+        if (retry instanceof RemoteError) throw notReachable(retry.code);
+        throw retry;
+      }
+    } else if (sealsHere()) {
+      throw refusal(error);
+    } else {
+      // Never sealed with this controller: a key it has no lock key for yet (it gets one when the
+      // key is used once), or a key id it does not know. This request goes with the key.
+      if (generation === sealGeneration) {
+        if (error.code === "UNKNOWN_KEY") {
+          forgetSeal();
+          trustLinkedKeyId = false;
+          lanSeal = undefined;
+        } else {
+          lanSeal = null;
+        }
+      }
+      return plain();
+    }
+  }
+  // It seals: from now on this device never sends its key to this controller in the clear.
+  if (generation === sealGeneration && !sealsHere()) rememberSeal(state.host, seal.keyId, true);
+  return answer;
+}
+
 function useTransport(transport) {
   if (state.transport !== transport) {
     state.transport = transport;
@@ -68,7 +256,10 @@ export async function api(path, options = {}) {
     return remoteCall(state.apiKey, path, options);
   }
   try {
-    return await apiCall(state.host, path, { apiKey: state.apiKey, ...options });
+    return await homeRequest(
+      (seal) => lanCall(state.host, state.apiKey, seal, path, options),
+      () => apiCall(state.host, path, { apiKey: state.apiKey, ...options })
+    );
   } catch (error) {
     if (!viaRemote(error)) throw error;
     useTransport("remote");
@@ -85,7 +276,10 @@ export async function image(path) {
     return remoteImage(state.apiKey, path);
   }
   try {
-    return await apiImage(state.host, path, { apiKey: state.apiKey });
+    return await homeRequest(
+      (seal) => lanImage(state.host, state.apiKey, seal, path),
+      () => apiImage(state.host, path, { apiKey: state.apiKey })
+    );
   } catch (error) {
     if (!viaRemote(error)) throw error;
     useTransport("remote");
@@ -118,14 +312,23 @@ export async function checkInThroughAccount(force = false) {
 }
 
 // Away from home, look once a minute whether the home network is back; it is faster. Only this
-// home's controller, answering this key, counts: another network may have a device at the same
-// address. Whatever it answers, the key is kept.
+// home's controller counts, and only a request sealed with this device's key proves it: another
+// network may have a device at the same address, and nothing unsealed is trusted. The key is never
+// sent to find out, and whatever answers, it is kept. (With a driver before 1.0.0 the app stays with
+// the account until it starts again.)
 async function tryHomeNetwork() {
   const remote = savedRemote();
-  if (state.transport !== "remote" || IS_IOS || !state.host || !remote) return;
+  if (state.transport !== "remote" || IS_IOS || !state.host || !remote || !state.apiKey) return;
+  const generation = sealGeneration;
   try {
-    const result = await apiRequest(state.host, "/v1/remote", { apiKey: state.apiKey, timeoutMs: 2500 });
-    if (result.ok && result.data?.home_id === remote.home) useTransport("lan");
+    const result = await apiRequest(state.host, "/v1/sealed", { timeoutMs: 2500 });
+    if (!result.ok) return;
+    const seal = { home: LAN_HOME, keyId: sealHere()?.keyId || remote.keyId, offset: clockOffset(result.data?.time) };
+    await lanCall(state.host, state.apiKey, seal, "/v1/api-keys/current", { timeoutMs: 2500 });
+    if (generation !== sealGeneration || state.transport !== "remote") return;
+    rememberSeal(state.host, seal.keyId, true);
+    lanSeal = seal;
+    useTransport("lan");
   } catch {
     // Still away.
   }
@@ -184,6 +387,7 @@ export function useHost(value) {
 
 export function forgetKey() {
   clearApiKey();
+  forgetSealing();
   forgetRemote();
   state.transport = "lan";
   state.remoteInfo = null;
@@ -248,6 +452,8 @@ function remoteErrorText(error) {
       return t("connect.errors.keyLimit");
     case "INVITATION_LIMIT_REACHED":
       return t("errors.invitationLimit");
+    case "OWNER_ONLY":
+      return t("errors.remote.ownerOnly");
     default:
       // The cloud's own text is not shown: it is in English only, and not the app's to trust.
       return t("errors.remote.failed", { code: String(error.code || "UNKNOWN").slice(0, 40) });
@@ -275,6 +481,12 @@ function describeError(error, pairing = false) {
   }
   if (error?.code === "INVALID_HOST") {
     return error.message;
+  }
+  if (error?.code === "MISDIRECTED_REQUEST") {
+    return t("errors.misdirected");
+  }
+  if (error?.code === "SEALING_UNAVAILABLE") {
+    return t("errors.sealing");
   }
   if (error?.code === "INVITATION_LIMIT_REACHED") {
     return t("errors.invitationLimit");
@@ -430,6 +642,8 @@ export async function connect() {
   }
   const run = ++connectRun;
   state.status = "connecting";
+  // Sealing is looked at again: the driver may have been updated.
+  resetSeal();
   notify();
   try {
     await loadAll();
@@ -459,6 +673,30 @@ export async function connect() {
   }
 }
 
+// Pairs with a key exchange (X25519), so the new key is never readable on the network: the answer
+// is sealed for this exchange and this code. Browsers without X25519, drivers before 1.0.0 (which
+// refuse the field) and controllers that cannot seal (they refuse it too) pair as before.
+// Returns { created, sealed }.
+async function pairSealed(host, code) {
+  const exchange = await keyExchange();
+  const request = (body) => apiCall(host, "/v1/auth/pair", { method: "POST", body });
+  const plain = { pairing_code: code, name: clientName() };
+  if (!exchange) return { created: await request(plain), sealed: false };
+  let answer;
+  try {
+    answer = await request({ ...plain, exchange: { public_key: exchange.publicKey } });
+  } catch (error) {
+    const field = error?.problem?.errors?.[0]?.field;
+    if (error?.code === "INVALID_FIELD" && field === "exchange") return { created: await request(plain), sealed: false };
+    throw error;
+  }
+  if (!answer?.sealed) return { created: answer, sealed: false };
+  const lock = await pairingLock(await exchange.shared(answer.exchange.public_key), code, exchange.publicKey, answer.exchange.public_key);
+  const plaintext = await open(lock, answer.sealed, "res");
+  if (!plaintext) throw new ApiError(t("errors.noKey"), { code: "PAIRING_NO_KEY" });
+  return { created: JSON.parse(plaintext), sealed: true };
+}
+
 // The only way to get a first key: the pairing code created in Composer (DirectorLink →
 // Actions → New Pairing Code). It lasts 15 minutes, works once and gives an admin key.
 export async function pairWithCode(hostValue, pairingCode) {
@@ -473,15 +711,15 @@ export async function pairWithCode(hostValue, pairingCode) {
     state.status = "connecting";
     state.notice = null;
     notify();
-    const created = await apiCall(host, "/v1/auth/pair", {
-      method: "POST",
-      body: { pairing_code: code, name: clientName() },
-    });
+    const { created, sealed } = await pairSealed(host, code);
     if (!created?.key) {
       throw new ApiError(t("errors.noKey"), { code: "PAIRING_NO_KEY" });
     }
     saveApiKey(created.key);
     state.apiKey = created.key;
+    // A sealed pairing means this controller seals: the key never goes to it in the clear.
+    forgetSealing();
+    rememberSeal(host, created.id, sealed);
     // Remote access belonged to the previous key: link the home again for this one.
     forgetRemote();
     state.transport = "lan";

@@ -8,6 +8,9 @@ return {
     { method = "GET", path = "/v1/system", handler = "system.info", role = "viewer" },
 
     { method = "POST", path = "/v1/auth/pair", handler = "auth.pair", public = true },
+    -- Sealed with the device's lock key instead of an Authorization header (handlers/sealed.lua).
+    { method = "GET", path = "/v1/sealed", handler = "sealed.info", public = true },
+    { method = "POST", path = "/v1/sealed", handler = "sealed.request", public = true },
     { method = "GET", path = "/v1/api-keys", handler = "auth.list_keys", role = "admin" },
     { method = "POST", path = "/v1/api-keys", handler = "auth.create_key", role = "admin" },
     { method = "GET", path = "/v1/api-keys/current", handler = "auth.current_key", role = "viewer" },
@@ -22,6 +25,7 @@ return {
 
     { method = "GET", path = "/v1/remote", handler = "remote.status", role = "viewer" },
     { method = "POST", path = "/v1/remote/claim", handler = "remote.claim", role = "admin" },
+    { method = "POST", path = "/v1/remote/secret", handler = "remote.secret", role = "admin" },
     { method = "GET", path = "/v1/invitations", handler = "invitations.list", role = "admin" },
     { method = "POST", path = "/v1/invitations", handler = "invitations.create", role = "admin" },
     { method = "DELETE", path = "/v1/invitations/{invitationId}", handler = "invitations.delete", role = "admin" },

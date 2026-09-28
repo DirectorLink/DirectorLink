@@ -4,9 +4,9 @@ A C4Z is a ZIP-based Control4 driver package. DirectorLink packages `driver.xml`
 
 ## Tools
 
-- Python 3 with `pip install -r requirements-dev.txt` (PyYAML, openapi-spec-validator)
+- Python 3 with `pip install -r requirements-dev.txt` (PyYAML, openapi-spec-validator, jsonschema)
 - Lua 5.1 (`lua5.1`, `luac5.1`) for syntax checks and the driver tests
-- Node.js for the app JavaScript syntax check
+- Node.js 22 for the JavaScript syntax check and the app tests; the cloud tests also run `wrangler dev` (`npx wrangler@4.143.0`)
 
 ## Everything CI runs
 
@@ -15,15 +15,19 @@ From the repository root:
 ```bash
 find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
 lua5.1 driver/tests/run.lua                                    # driver tests (fake Director)
+python scripts/check_repo.py                                   # no local tool configuration or secrets tracked
 python scripts/check_api.py                                    # spec is valid and matches the driver routes
 python scripts/build.py                                        # dist/DirectorLink.c4z + dist/openapi.json
 python scripts/check_package.py                                # package contents and contracts
+(cd dist && sha256sum DirectorLink.c4z openapi.json)           # checksums, compared with the release's
 python scripts/check_contract.py                               # real HTTP responses vs the spec
 python scripts/check_app.py                                    # the app
 python scripts/check_sites.py                                  # console and landing page
-find app console -name '*.js' -print0 | xargs -0 -n1 node --check   # JavaScript syntax
-node --test tests/app/*.test.mjs                               # offline service worker
+find app console cloud -name '*.js' -print0 | xargs -0 -n1 node --check   # JavaScript syntax
+node --test tests/app/*.test.mjs                               # app: lock, sealed requests, pairing code, offline mode, …
 ```
+
+Not in CI (they start `wrangler dev`): `node --test tests/cloud/*.test.mjs`, the account service and relay against a local D1.
 
 ## Package layout
 
@@ -33,10 +37,13 @@ driver.lua
 src/
   main.lua
   api/        HTTP server, router, handlers, generated openapi_spec.lua
-  auth/       API keys and pairing
-  adapters/   lights, thermostats
+  auth/       API keys, roles, pairing, profiles, invitations
+  adapters/   Light V2, Thermostat V2, blinds, cameras, KNX Contact/Relay, DoorBird
+  cloud/      relay connection, WebSocket, the end-to-end lock, sealed requests
   control4/   discovery and normalization
-  core/       json, log, registry, version
+  core/       json, log, store, random, x25519, registry, version, scenes, schedules, sun, weather, …
+www/
+  icons/      the device's icons in Composer and the Control4 app
 ```
 
 No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The source manifest `driver/DirectorLink.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
@@ -69,7 +76,7 @@ python scripts/dev_server.py                   # driver + fake Director on http:
 python -m http.server 8080 --directory app     # app on http://localhost:8080
 ```
 
-Use `localhost` as the controller address and the pairing code the dev server prints. The fake project has two rooms, three lights and one thermostat; commands are recorded but not executed.
+Use `localhost` as the controller address and the pairing code the dev server prints. The fake project has two rooms, three lights, a thermostat, two blinds, two cameras, a DoorBird and a KNX door relay, and answers the weather itself; commands are recorded but not executed.
 
 ## Versions
 
@@ -106,7 +113,9 @@ Release notes come from `docs/releases/v<version>.md`. The workflow refuses to r
 
 The workflow needs two repository secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the jobs succeed and deploy nothing.
 
-The driver only answers browsers from `https://app.directorlink.io`, `https://console.directorlink.io` and `http://localhost` / `127.0.0.1` (for local testing), so a preview URL can show a site but cannot talk to a controller.
+The workflows' actions are pinned to exact commits (Dependabot proposes updates, `.github/dependabot.yml`) and wrangler to an exact version. The cloud (`cloud/`) is not deployed by a workflow: see `cloud/README.md`.
+
+The driver only answers browsers from `https://app.directorlink.io` and `https://console.directorlink.io` (since 1.0.0, not `localhost` either), so a preview URL can show a site but cannot talk to a controller. The dev server (`scripts/dev_server.py`) also allows `http://localhost` and `http://127.0.0.1`, for local testing.
 
 ## Minimum Director version
 
