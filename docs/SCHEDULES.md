@@ -47,10 +47,12 @@ skipped. Opening a door or gate needs a person.
 ## Running
 
 - Every minute the controller checks the schedules. A time or sun schedule runs at its minute —
-  up to 5 minutes late after a restart — and once; a schedule changed after its time today starts
-  the next day.
+  up to 5 minutes late after a restart, also across midnight — and once; a schedule changed after
+  its time starts with the next one. On the day clocks go forward, a time in the skipped hour runs
+  when it would have (e.g. 02:30 at 03:30).
+- Switching a schedule off and on, or changing it, does not make it run again the same day.
 - Weather schedules run when the reading crosses the threshold (or rain starts), on their days,
-  within their hours.
+  within their hours; hours across midnight (22:00–06:00) belong to the day they start.
 - What the scheduler remembers (last run, whether a weather schedule may run again) is saved, so a
   restart does not run anything twice.
 - Each run is logged (`GET /v1/logs?category=schedules`).
@@ -65,7 +67,11 @@ skipped. Opening a door or gate needs a person.
   servers. It sends the project's location rounded to two decimals (about a kilometre).
 - The location is the project's latitude and longitude in Composer (project properties). Without
   them, `GET /v1/weather` says `no_location` and weather schedules do not run.
-- A reading older than 45 minutes counts as none.
+- A reading older than 45 minutes counts as none. After a failed read the controller tries again
+  every 5 minutes (and logs the failure once). The last reading is kept across restarts; a
+  schedule with "only if" due right after a restart waits a few minutes for a first reading.
+- Open-Meteo's free service is for non-commercial use, which a household's own schedules are. An
+  installer offering this commercially should check Open-Meteo's terms (they have paid plans).
 - `GET /v1/weather` also gives today's sunrise and sunset.
 
 ## The app

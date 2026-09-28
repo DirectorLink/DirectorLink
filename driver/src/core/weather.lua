@@ -7,6 +7,7 @@
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
+local Store = require("src.core.store")
 
 local Weather = {}
 
@@ -14,7 +15,10 @@ Weather.REFRESH_SECONDS = 15 * 60
 -- Older than this, the weather is unknown: schedules then do what they say for no data.
 Weather.STALE_SECONDS = 45 * 60
 Weather.TIMEOUT_SECONDS = 15
+-- After a failed read, the next try (not every minute).
+Weather.RETRY_SECONDS = 5 * 60
 Weather.HOST = "https://api.open-meteo.com"
+local STORE_KEY = "directorlink_weather"
 
 -- WMO weather codes with rain: drizzle, rain, freezing rain, showers, thunderstorms.
 local RAIN_CODES = {}
@@ -30,11 +34,25 @@ local state = {
     fetchedAt = nil,
     fetching = false,
     failure = nil, -- why the last fetch failed
+    attemptedAt = nil, -- when the last fetch started
     wantedUntil = 0, -- the app looked at the weather: keep it fresh a while
 }
 
 function Weather.reset()
-    state.data, state.fetchedAt, state.fetching, state.failure, state.wantedUntil = nil, nil, false, nil, 0
+    state.data, state.fetchedAt, state.fetching, state.failure, state.attemptedAt, state.wantedUntil = nil, nil, false, nil, nil, 0
+end
+
+-- The last reading, kept across restarts (it stays usable for STALE_SECONDS), so schedules due
+-- just after a restart do not decide without it.
+function Weather.load()
+    Weather.reset()
+    local saved = Store.read(STORE_KEY, false)
+    if type(saved) == "table" and type(saved.fetched_at) == "number" and type(saved.data) == "table" then
+        local data = saved.data
+        if type(data.temperature) == "number" and type(data.raining) == "boolean" and type(data.today) == "table" then
+            state.data, state.fetchedAt = data, saved.fetched_at
+        end
+    end
 end
 
 -- `location()` returns the project's latitude and longitude (numbers) or nil.
@@ -100,11 +118,18 @@ end
 local function finish(data, failure)
     state.fetching = false
     if data then
+        if state.failure then
+            Log.info("weather", "the weather can be read again")
+        end
         state.data, state.fetchedAt, state.failure = data, Clock.now(), nil
+        Store.write(STORE_KEY, { version = 1, fetched_at = state.fetchedAt, data = data }, false)
         Log.debug("weather", "weather read", { temperature = data.temperature, wind_speed = data.wind_speed or Json.null, raining = data.raining })
     else
+        -- Once per kind of failure, so an outage does not fill the log.
+        if failure ~= state.failure then
+            Log.warn("weather", "could not read the weather", { reason = failure })
+        end
         state.failure = failure
-        Log.warn("weather", "could not read the weather", { reason = failure })
     end
 end
 
@@ -119,6 +144,7 @@ function Weather.refresh()
         return
     end
     state.fetching = true
+    state.attemptedAt = Clock.now()
     local done = false
     local guard
     local function complete(data, failure)
@@ -165,9 +191,17 @@ function Weather.tick(needed, now)
     if not needed and now >= state.wantedUntil then
         return
     end
-    if not state.fetchedAt or now - state.fetchedAt >= Weather.REFRESH_SECONDS then
+    local due = not state.fetchedAt or now - state.fetchedAt >= Weather.REFRESH_SECONDS
+    -- Not more often than that after a failure either.
+    local tooSoon = state.attemptedAt and now - state.attemptedAt < (state.failure and Weather.RETRY_SECONDS or Weather.REFRESH_SECONDS)
+    if due and not tooSoon then
         Weather.refresh()
     end
+end
+
+-- True while a read is on its way, or none was tried since the start.
+function Weather.pending()
+    return state.fetching or (not state.attemptedAt and not state.data and not state.failure)
 end
 
 -- The app shows the weather: read it now if it is old, and keep it fresh for the next hour.

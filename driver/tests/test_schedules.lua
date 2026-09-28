@@ -281,4 +281,94 @@ function tests.schedule_input_and_roles_are_checked()
     T.eq(T.http(mock, "DELETE", "/v1/scenes/" .. sceneId, { key = admin }).status, 204, "free once no schedule runs it")
 end
 
+function tests.a_weather_outage_is_retried_every_five_minutes_not_every_minute()
+    local noon = at(1, 12, 0)
+    local mock, admin, clock, Scheduler = start(noon)
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    local function requests()
+        local count = 0
+        for _, request in ipairs(mock.urlRequests) do
+            if request.url:match("open%-meteo") then
+                count = count + 1
+            end
+        end
+        return count
+    end
+    for minute = 0, 11 do
+        clock.set(noon + minute * 60)
+        Scheduler.tick()
+        T.http(mock, "GET", "/v1/weather", { key = admin })
+    end
+    T.eq(requests(), 3, "at 12:00, 12:05 and 12:10")
+    mock.weather = weather(31)
+    clock.set(noon + 15 * 60)
+    T.eq(Scheduler.tick(), 1, "back: it runs")
+    clock.set(noon + 16 * 60)
+    Scheduler.tick()
+    T.eq(requests(), 4, "then every 15 minutes")
+end
+
+function tests.switching_a_weather_rule_off_and_on_does_not_run_it_twice_a_day()
+    local noon = at(1, 12, 0)
+    local mock, admin, clock, Scheduler = start(noon)
+    local sceneId = scene(mock, admin)
+    local rule = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    mock.weather = weather(33)
+    T.eq(Scheduler.tick(), 1)
+    T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. rule.id, { key = admin, body = { enabled = false } }).status, 200)
+    T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. rule.id, { key = admin, body = { enabled = true } }).status, 200)
+    clock.set(noon + 16 * 60)
+    T.eq(Scheduler.tick(), 0, "still once a day")
+    -- The last reading survives a driver update.
+    local updated = Mock.updateDriver(mock)
+    require("src.core.clock").now = function()
+        return noon + 20 * 60
+    end
+    updated.weather = nil
+    T.eq(T.http(updated, "GET", "/v1/weather", { key = admin }).json.status, "ok", "the saved reading, 20 minutes old")
+end
+
+function tests.a_run_just_before_midnight_is_not_lost_to_a_restart()
+    local late = at(1, 23, 58)
+    local mock, admin, clock, Scheduler = start(late - 3600)
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "23:58" }, days = { weekday(late) } })
+    clock.set(late + 3 * 60)
+    T.eq(Scheduler.tick(), 1, "00:01 the next day, within the 5 minutes")
+    clock.set(late + 4 * 60)
+    T.eq(Scheduler.tick(), 0)
+end
+
+function tests.night_hours_belong_to_the_day_they_start()
+    local friday = at(1, 12, 0)
+    while weekday(friday) ~= 5 do
+        friday = friday + 86400
+    end
+    local fields = os.date("*t", friday)
+    fields.hour, fields.min = 0, 30
+    local earlyFriday = os.time(fields)
+    local mock, admin, clock, Scheduler = start(earlyFriday - 3600)
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "rain", from = "22:00", to = "06:00" }, days = { 5 } })
+    mock.weather = weather(15, { rain = 1 })
+    clock.set(earlyFriday)
+    T.eq(Scheduler.tick(), 0, "00:30 on Friday is Thursday night")
+    fields.day, fields.hour = fields.day + 1, 0
+    clock.set(os.time(fields))
+    T.eq(Scheduler.tick(), 1, "00:30 on Saturday is Friday night")
+end
+
+function tests.enabled_null_and_unknown_trigger_fields_are_refused()
+    local mock, admin = start(os.time())
+    local sceneId = scene(mock, admin)
+    local post = function(body)
+        return T.http(mock, "POST", "/v1/schedules", { key = admin, body = body }).json
+    end
+    T.eq(post({ scene_id = sceneId, trigger = { type = "time", at = "06:00", bogus = 1 }, days = { 0 } }).code, "INVALID_FIELD")
+    T.eq(post({ scene_id = sceneId, trigger = { type = "sun", event = "sunset", at = "06:00" }, days = { 0 } }).code, "INVALID_FIELD")
+    local created = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "06:00" }, days = { 0 }, enabled = false })
+    T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. created.id, { key = admin, body = { enabled = Json.null } }).json.code, "INVALID_FIELD")
+end
+
 return tests

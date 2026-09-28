@@ -69,13 +69,14 @@ local function storeProblem(failure, what)
     return Problem.internal("The schedule could not be " .. what)
 end
 
--- Checks the merged fields; the scene must exist.
-local function checked(input)
+-- Checks the merged fields; a scene given in the request must exist (switching off a schedule
+-- whose scene is gone still works).
+local function checked(input, sceneGiven)
     local record, field, message = Schedules.check(input)
     if not record then
         return nil, Problem.invalidField(field, message)
     end
-    if not Scenes.find(record.scene_id) then
+    if sceneGiven and not Scenes.find(record.scene_id) then
         return nil, Problem.invalidField("scene_id", "Unknown scene: " .. record.scene_id)
     end
     return record
@@ -105,7 +106,7 @@ function Handlers.create(ctx)
         return problem
     end
     local record
-    record, problem = checked(body)
+    record, problem = checked(body, true)
     if not record then
         return problem
     end
@@ -151,7 +152,7 @@ function Handlers.update(ctx)
         return Problem.invalidRequest("Send at least one field to change")
     end
     local record
-    record, problem = checked(merged)
+    record, problem = checked(merged, body.scene_id ~= nil)
     if not record then
         return problem
     end

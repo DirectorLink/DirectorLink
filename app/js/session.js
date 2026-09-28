@@ -195,11 +195,11 @@ export function forgetKey() {
 }
 
 // Pairing failures (POST /v1/auth/pair) as RFC 9457 problem codes.
-function pairingError(error) {
+function pairingError(error, pairing) {
   switch (error?.code) {
     case "INVALID_FIELD":
     case "INVALID_REQUEST":
-      return t("connect.errors.invalidCode");
+      return pairing ? t("connect.errors.invalidCode") : null;
     case "PAIRING_CODE_INVALID": {
       const left = Number(error.problem?.attempts_remaining);
       return Number.isFinite(left) && left > 0 ? t("connect.errors.wrongCode", { count: left }) : t("connect.errors.wrongCodeNoCount");
@@ -254,16 +254,17 @@ function remoteErrorText(error) {
   }
 }
 
-function describeError(error) {
+// `pairing`: the error of POST /v1/auth/pair, where a refused field is the code.
+function describeError(error, pairing = false) {
   if (error instanceof RemoteError) {
     return remoteErrorText(error);
   }
   if (error?.status === 401) {
     return t("errors.keyRevoked");
   }
-  const pairing = pairingError(error);
-  if (pairing) {
-    return pairing;
+  const pairingText = pairingError(error, pairing);
+  if (pairingText) {
+    return pairingText;
   }
   // 403 FORBIDDEN: this key's role is too low; DOOR_CONTROL_DISABLED: the Composer switch is off.
   if (error?.code === "DOOR_CONTROL_DISABLED") {
@@ -488,7 +489,7 @@ export async function pairWithCode(hostValue, pairingCode) {
     return connect();
   } catch (error) {
     state.status = "setup";
-    state.notice = { kind: "error", text: describeError(error) };
+    state.notice = { kind: "error", text: describeError(error, true) };
     notify();
     return false;
   }

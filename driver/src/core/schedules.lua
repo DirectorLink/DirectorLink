@@ -67,7 +67,7 @@ function Schedules.check(input)
         return nil, "scene_id", "scene_id is the scene to run (8 hex characters)"
     end
     record.scene_id = input.scene_id
-    if present(input.enabled) and type(input.enabled) ~= "boolean" then
+    if input.enabled ~= nil and type(input.enabled) ~= "boolean" then
         return nil, "enabled", "enabled must be true or false"
     end
     record.enabled = input.enabled ~= false
@@ -77,6 +77,18 @@ function Schedules.check(input)
         return nil, "trigger", "trigger says when the schedule runs"
     end
     local kind = trigger.type
+    local known = ({
+        time = { type = true, at = true },
+        sun = { type = true, event = true, offset = true },
+        weather = { type = true, kind = true, above = true, from = true, to = true, once_a_day = true },
+    })[kind]
+    if known then
+        for key in pairs(trigger) do
+            if not known[key] then
+                return nil, "trigger." .. tostring(key), "Unknown field for a " .. kind .. " trigger: " .. tostring(key)
+            end
+        end
+    end
     if kind == "time" then
         if not Schedules.minutes(trigger.at) then
             return nil, "trigger.at", 'at is a time of day, "HH:MM"'
@@ -329,8 +341,14 @@ function Schedules.replace(id, record, expected)
         state.schedules[index] = current
         return nil, "PERSIST_FAILED"
     end
-    -- A changed schedule starts afresh (a weather rule may run again).
-    state.runtime[id] = { last_run = (state.runtime[id] or {}).last_run }
+    -- What it ran today stays (switching it off and on does not run it again); a weather rule with
+    -- a new kind or threshold waits for the weather anew.
+    local runtime = state.runtime[id] or {}
+    local before, after = current.trigger, record.trigger
+    if before.type ~= after.type or before.kind ~= after.kind or before.above ~= after.above then
+        runtime.armed, runtime.dry_since = nil, nil
+    end
+    state.runtime[id] = runtime
     saveRuntime()
     return copy(record)
 end

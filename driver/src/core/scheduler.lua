@@ -99,11 +99,10 @@ function Scheduler.nextRun(schedule, now)
     if schedule.enabled == false or schedule.trigger.type == "weather" then
         return nil
     end
+    local today = Scheduler.localTime(now)
     for add = 0, 7 do
-        -- Noon of each day, so a daylight saving change never skips or repeats a date.
-        local info = Scheduler.localTime(now + add * 86400)
-        local noon = epochAt(info, 720)
-        info = Scheduler.localTime(noon)
+        -- By calendar date, at noon, so a daylight saving change never skips or repeats a day.
+        local info = Scheduler.localTime(os.time({ year = today.year, month = today.month, day = today.day + add, hour = 12, min = 0, sec = 0 }))
         if hasDay(schedule, info.weekday) then
             local minute = Scheduler.targetMinute(schedule, info)
             local at = minute and epochAt(info, minute)
@@ -154,7 +153,10 @@ end
 
 local function run(schedule, now, note)
     local runtime = Schedules.runtime(schedule.id)
-    local result, failure = state.services.runScene(schedule.scene_id, { id = "schedule:" .. schedule.id, role = "member" })
+    local ok, result, failure = pcall(state.services.runScene, schedule.scene_id, { id = "schedule:" .. schedule.id, role = "member" })
+    if not ok then
+        result, failure = nil, "FAILED: " .. tostring(result)
+    end
     local lastRun = { at = Clock.iso(now), note = note }
     if result then
         lastRun.ran, lastRun.skipped, lastRun.failed = result.ran, result.skipped, result.failed
@@ -205,6 +207,27 @@ local function weatherActive(trigger, weather)
     return weather.raining == true
 end
 
+-- The day before `info` (its noon), for times just before midnight and night-time hours.
+local function dayBefore(info)
+    return Scheduler.localTime(os.time({ year = info.year, month = info.month, day = info.day - 1, hour = 12, min = 0, sec = 0 }))
+end
+
+-- A time or sun schedule due at `now`: its run today, or yesterday's just before midnight, when
+-- `now` is at most GRACE_MINUTES after it. Returns the key of that run and its moment.
+local function dueRun(schedule, info, now)
+    for _, day in ipairs({ info, dayBefore(info) }) do
+        if hasDay(schedule, day.weekday) then
+            local minute = Scheduler.targetMinute(schedule, day)
+            -- On the day clocks go forward, a time that does not exist runs when it would have.
+            local at = minute and epochAt(day, minute)
+            if at and now >= at and now < at + Scheduler.GRACE_MINUTES * 60 then
+                return day.date .. "@" .. minute, at
+            end
+        end
+    end
+    return nil
+end
+
 -- One pass over the schedules for the minute of `now`. Returns how many ran.
 function Scheduler.tick(now)
     now = now or Clock.now()
@@ -218,6 +241,8 @@ function Scheduler.tick(now)
     end
     Weather.tick(needsWeather, now)
     local weather = Weather.current(now)
+    -- A reading on its way (just after a restart): conditions wait for it, within the grace time.
+    local weatherComing = not weather and Weather.pending()
     local ran, changed = 0, false
     for _, schedule in ipairs(records) do
         local runtime = Schedules.runtime(schedule.id)
@@ -231,41 +256,44 @@ function Scheduler.tick(now)
                     runtime.armed = true
                 end
                 rearm(trigger, runtime, weather, now)
-                local onceDone = trigger.once_a_day ~= false and runtime.fired_day == info.date
-                if runtime.armed and weatherActive(trigger, weather) and hasDay(schedule, info.weekday) and inHours(trigger, info.minute) and not onceDone then
+                -- Hours across midnight (22:00 to 06:00) belong to the day they started.
+                local day = info
+                if trigger.from and Schedules.minutes(trigger.from) > Schedules.minutes(trigger.to) and info.minute < Schedules.minutes(trigger.to) then
+                    day = dayBefore(info)
+                end
+                local onceDone = trigger.once_a_day ~= false and runtime.fired_day == day.date
+                if runtime.armed and weatherActive(trigger, weather) and hasDay(schedule, day.weekday) and inHours(trigger, info.minute) and not onceDone then
                     runtime.armed = false
                     runtime.dry_since = nil
-                    runtime.fired_day = info.date
+                    runtime.fired_day = day.date
                     run(schedule, now, trigger.kind)
                     ran = ran + 1
                 end
                 changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince
             end
-        elseif hasDay(schedule, info.weekday) then
-            local minute = Scheduler.targetMinute(schedule, info)
-            if minute and info.minute >= minute and info.minute < minute + Scheduler.GRACE_MINUTES then
-                local key = info.date .. "@" .. minute
-                if runtime.last_fired ~= key then
-                    runtime.last_fired = key
-                    changed = true
-                    -- Changed after its time today: it starts tomorrow.
-                    if (schedule.updated_epoch or 0) <= epochAt(info, minute) then
-                        local met = Scheduler.conditionsMet(schedule, weather)
-                        if met == nil then
-                            met = schedule.if_no_weather ~= "skip"
-                            if met then
-                                run(schedule, now, "no_weather")
-                                ran = ran + 1
-                            else
-                                runtime.last_run = { at = Clock.iso(now), skipped_by = "no_weather" }
-                            end
-                        elseif met then
-                            run(schedule, now, nil)
+        else
+            local key, at = dueRun(schedule, info, now)
+            local waitForWeather = key and weatherComing and next(schedule.only_if or {}) ~= nil and now < at + (Scheduler.GRACE_MINUTES - 1) * 60
+            if key and runtime.last_fired ~= key and not waitForWeather then
+                runtime.last_fired = key
+                changed = true
+                -- Changed after its time: it starts with the next one.
+                if (schedule.updated_epoch or 0) <= at then
+                    local met = Scheduler.conditionsMet(schedule, weather)
+                    if met == nil then
+                        met = schedule.if_no_weather ~= "skip"
+                        if met then
+                            run(schedule, now, "no_weather")
                             ran = ran + 1
                         else
-                            runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
-                            Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
+                            runtime.last_run = { at = Clock.iso(now), skipped_by = "no_weather" }
                         end
+                    elseif met then
+                        run(schedule, now, nil)
+                        ran = ran + 1
+                    else
+                        runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
+                        Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
                     end
                 end
             end
@@ -298,6 +326,17 @@ end
 function Scheduler.start(services)
     state.services = services
     Scheduler.stop()
+    local now = Clock.now()
+    local info = Scheduler.localTime(now)
+    local ok, zone = pcall(function()
+        return C4:GetTimeZone()
+    end)
+    Log.info("schedules", "scheduler started", {
+        local_time = os.date("%Y-%m-%d %H:%M", now),
+        utc_offset_minutes = info.offset,
+        timezone = ok and zone or Json.null,
+        schedules = #Schedules.records(),
+    })
     scheduleNext()
 end
 

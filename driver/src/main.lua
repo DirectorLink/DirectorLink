@@ -282,7 +282,7 @@ function OnDriverLateInit(driverInitType)
 
     -- Schedules run on the controller (src/core/scheduler.lua); the weather is for the project's
     -- location (Composer project properties).
-    Weather.reset()
+    Weather.load()
     Weather.configure(function()
         local properties = (Registry.metadata or {}).properties or {}
         return tonumber(properties.Latitude), tonumber(properties.Longitude)

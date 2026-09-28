@@ -39,9 +39,9 @@ function notice(message) {
   return message ? h("p", { class: `notice notice-${message.kind}`, role: message.kind === "error" ? "alert" : "status" }, message.text) : null;
 }
 
-function flash(text) {
+function flash(text, kind = "success") {
   const stamp = Date.now();
-  ui.schedulesMessage = { kind: "success", text, stamp };
+  ui.schedulesMessage = { kind, text, stamp };
   window.setTimeout(() => {
     if (ui.schedulesMessage?.stamp === stamp) {
       ui.schedulesMessage = null;
@@ -190,12 +190,13 @@ export function schedulesView() {
 
 async function setEnabled(schedule, enabled) {
   state.schedules = state.schedules.map((item) => (item.id === schedule.id ? { ...item, enabled } : item));
+  ui.schedulesMessage = null;
   notify();
   try {
     await api(`/v1/schedules/${schedule.id}`, { method: "PATCH", body: { enabled } });
   } catch (error) {
     noteForbidden(error);
-    ui.schedulesMessage = { kind: "error", text: errorText(error) };
+    flash(errorText(error), "error");
   }
   await loadSchedules();
 }
@@ -275,7 +276,7 @@ function draftFor(key) {
     busy: false,
     message: null,
     dirty: false,
-    from: ui.cameFrom,
+    cameFrom: ui.cameFrom,
   };
   return ui.scheduleEditor;
 }
@@ -350,7 +351,10 @@ function toggle(label, on, key, onChange, help) {
   );
 }
 
-function timeInput(value, key, label, onChange) {
+// The value is kept as it is typed (browsers report each finished part) without redrawing the
+// screen, which would rebuild the field: the times are not in the screen's signature (app.js).
+// Only the sentence that sums up the schedule is brought up to date.
+function timeInput(draft, value, key, label, onChange) {
   return h("input", {
     type: "time",
     class: "time-input",
@@ -358,9 +362,13 @@ function timeInput(value, key, label, onChange) {
     "aria-label": label,
     required: true,
     dataset: { key },
-    // On change only: the field is not redrawn while a time is typed.
     onchange: (event) => {
-      if (/^\d{2}:\d{2}$/.test(event.target.value)) onChange(event.target.value);
+      if (/^\d{2}:\d{2}$/.test(event.target.value)) {
+        onChange(event.target.value);
+        draft.dirty = true;
+        const summary = document.querySelector(".schedule-summary .add-summary");
+        if (summary) summary.textContent = sentence(draft);
+      }
     },
   });
 }
@@ -390,7 +398,7 @@ function whenSection(draft) {
     ),
   ];
   if (draft.type === "time") {
-    parts.push(h("label", { class: "field schedule-field" }, h("span", { class: "field-label" }, t("schedules.editor.time")), timeInput(draft.at, "schedule-at", t("schedules.editor.time"), (value) => change(draft, () => { draft.at = value; }))));
+    parts.push(h("label", { class: "field schedule-field" }, h("span", { class: "field-label" }, t("schedules.editor.time")), timeInput(draft, draft.at, "schedule-at", t("schedules.editor.time"), (value) => { draft.at = value; })));
   } else if (draft.type === "sun") {
     const today = weather?.today || {};
     parts.push(
@@ -458,9 +466,9 @@ function whenSection(draft) {
         ? h(
             "div",
             { class: "input-row schedule-hours" },
-            timeInput(draft.from, "schedule-from", t("schedules.editor.from"), (value) => change(draft, () => { draft.from = value; })),
+            timeInput(draft, draft.from, "schedule-from", t("schedules.editor.from"), (value) => { draft.from = value; }),
             h("span", { class: "muted-note" }, "–"),
-            timeInput(draft.to, "schedule-to", t("schedules.editor.to"), (value) => change(draft, () => { draft.to = value; }))
+            timeInput(draft, draft.to, "schedule-to", t("schedules.editor.to"), (value) => { draft.to = value; })
           )
         : null,
       toggle(t("schedules.onceADay"), draft.once, "schedule-once", (on) => change(draft, () => { draft.once = on; }))
@@ -617,7 +625,7 @@ async function saveDraft(draft) {
     draft.dirty = false;
     flash(t("schedules.saved"));
     await loadSchedules();
-    leave("#/schedules", draft.from);
+    leave("#/schedules", draft.cameFrom);
     return;
   } catch (error) {
     noteForbidden(error);
@@ -647,5 +655,5 @@ async function deleteDraft(draft) {
   draft.dirty = false;
   flash(t("schedules.deleted"));
   await loadSchedules();
-  leave("#/schedules", draft.from);
+  leave("#/schedules", draft.cameFrom);
 }

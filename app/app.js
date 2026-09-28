@@ -223,7 +223,8 @@ function signature() {
     state.schedulesUnsupported,
     state.weather,
     ui.schedulesMessage,
-    route.name === "schedule" ? ui.scheduleEditor : 0,
+    // Times being typed are left out: the editor does not rebuild a time field while it is used.
+    route.name === "schedule" ? { ...ui.scheduleEditor, at: undefined, from: undefined, to: undefined } : 0,
     // "Ran today", "next: tomorrow" move on with the day.
     route.name === "schedules" ? Math.floor(Date.now() / 60000) : 0,
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.

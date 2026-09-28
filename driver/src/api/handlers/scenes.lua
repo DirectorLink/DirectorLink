@@ -475,6 +475,10 @@ function Handlers.delete(ctx)
     if not scene then
         return problem
     end
+    -- Unknown which schedules run it while they could not be read.
+    if not Schedules.complete() then
+        return Problem.new(503, "UNAVAILABLE", "The saved schedules could not be read when DirectorLink started; restart the driver and try again")
+    end
     local schedules = Schedules.usingScene(scene.id)
     if schedules > 0 then
         return Problem.new(409, "SCENE_IN_USE", "Schedules run this scene; change or delete them first", { schedules = schedules })

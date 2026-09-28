@@ -133,8 +133,12 @@ export function formatTime(date) {
 }
 
 // "06:45": a time of day, as schedules show it (24 hours, like the times they are set with).
-export function formatClock(date) {
-  return new Intl.DateTimeFormat(current, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+export function formatClock(date, timeZone) {
+  try {
+    return new Intl.DateTimeFormat(current, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat(current, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  }
 }
 
 // "28 Sept 2026, 14:05": when an invitation expires, days ahead.

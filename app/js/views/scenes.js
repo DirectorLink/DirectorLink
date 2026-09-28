@@ -215,7 +215,7 @@ export function resetSceneEditor() {
 // `dirty`: something changed (Back asks first); `stepsChanged`: the steps are sent with Save.
 function draftFor(key) {
   if (ui.sceneEditor?.key === key) return ui.sceneEditor;
-  const base = { key, adding: null, busy: false, message: null, dirty: false, from: ui.cameFrom };
+  const base = { key, adding: null, busy: false, message: null, dirty: false, cameFrom: ui.cameFrom };
   if (key === "new") {
     const idea = ui.sceneIdea;
     ui.sceneIdea = null;
@@ -537,7 +537,7 @@ async function saveDraft(draft) {
     draft.dirty = false;
     flash(sending?.changed ? t("scenes.savedPruned", { name: sceneName }) : t("scenes.saved", { name: sceneName }));
     await loadScenes();
-    leave("#/scenes", draft.from);
+    leave("#/scenes", draft.cameFrom);
     return;
   } catch (error) {
     noteForbidden(error);
@@ -568,7 +568,7 @@ async function deleteDraft(draft) {
   draft.dirty = false;
   flash(t("scenes.deleted", { name: draft.name }));
   await loadScenes();
-  leave("#/scenes", draft.from);
+  leave("#/scenes", draft.cameFrom);
 }
 
 // ---- adding an action ----------------------------------------------------------------------

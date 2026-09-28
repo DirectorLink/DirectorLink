@@ -30,14 +30,23 @@ export async function loadSchedules() {
   notify();
 }
 
-// While the Schedules screen is open: the controller then keeps the weather fresh.
-export async function loadWeather() {
+const WEATHER_RETRY_MS = 3000;
+const WEATHER_RETRIES = 5;
+let weatherRetry = null;
+
+// While the Schedules screen is open: the controller then keeps the weather fresh. While it is
+// still reading it (just asked, or after a restart), ask again a few seconds later.
+export async function loadWeather(retries = WEATHER_RETRIES) {
+  window.clearTimeout(weatherRetry);
   try {
     state.weather = await api("/v1/weather");
   } catch {
     // Kept as it was; the screen says nothing new.
   }
   notify();
+  if (state.weather?.status === "waiting" && retries > 0 && window.location.hash.startsWith("#/schedule")) {
+    weatherRetry = window.setTimeout(() => loadWeather(retries - 1), WEATHER_RETRY_MS);
+  }
 }
 
 export function findSchedule(id) {
@@ -100,32 +109,68 @@ export function conditionText(schedule) {
   return t("schedules.if.only", { conditions: parts.join(t("schedules.if.and")) });
 }
 
-// "today 06:45", "tomorrow 06:45", "Tue 06:45" for a controller time.
+// The home's time zone (the controller's), as the times schedules are set in; else the phone's.
+function homeZone() {
+  const zone = state.system?.location?.timezone;
+  if (typeof zone !== "string" || !zone) return undefined;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: zone });
+    return zone;
+  } catch {
+    return undefined;
+  }
+}
+
+// The calendar date (as a day number) and weekday of `date` in the home's time zone.
+function homeDay(date, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric", day: "numeric", weekday: "short" })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value])
+  );
+  return {
+    number: Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)) / 86400000,
+    weekday: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday),
+  };
+}
+
+// "today 06:45", "tomorrow 06:45", "Tue 06:45" (or a date, a week or more away) for a controller
+// time, in the home's time zone.
 export function dayAndTime(iso) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-  const today = new Date();
-  const midnight = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
-  const days = Math.round((midnight(date) - midnight(today)) / 86400000);
-  const time = formatClock(date);
+  const timeZone = homeZone();
+  const target = homeDay(date, timeZone);
+  const days = target.number - homeDay(new Date(), timeZone).number;
+  const time = formatClock(date, timeZone);
   if (days === 0) return t("schedules.today", { time });
   if (days === 1) return t("schedules.tomorrow", { time });
   if (days === -1) return t("schedules.yesterday", { time });
-  return `${dayName(date.getDay())} ${time}`;
+  if (Math.abs(days) >= 6) {
+    const day = new Intl.DateTimeFormat(currentLanguage(), { timeZone, weekday: "short", day: "numeric", month: "short" }).format(date);
+    return `${day} ${time}`;
+  }
+  return `${dayName(target.weekday)} ${time}`;
 }
 
-// What happened last, or what comes next.
+// What happened the last time, if it was within a day: ran, ran with problems, or did not run.
+function lastText(last) {
+  if (!last?.at || Date.now() - new Date(last.at).getTime() >= 24 * 3600 * 1000) return "";
+  const when = dayAndTime(last.at);
+  if (last.skipped_by) return t(`schedules.skipped.${last.skipped_by}`, { when });
+  if (last.error) return t("schedules.ranError", { when });
+  if (last.failed > 0) return t("schedules.ranFailed", { when, count: last.failed });
+  if (last.ran === 0) return t("schedules.ranNothing", { when });
+  return t("schedules.ran", { when });
+}
+
+// What happened last, and what comes next.
 export function statusText(schedule) {
   if (schedule.enabled === false) return t("schedules.off");
-  const last = schedule.last_run;
-  const recent = last?.at && Date.now() - new Date(last.at).getTime() < 24 * 3600 * 1000;
-  if (recent && last.skipped_by) return t(`schedules.skipped.${last.skipped_by}`, { when: dayAndTime(last.at) });
-  if (schedule.next_run) {
-    const next = t("schedules.next", { when: dayAndTime(schedule.next_run) });
-    return recent && !last.skipped_by ? `${t("schedules.ran", { when: dayAndTime(last.at) })} · ${next}` : next;
-  }
-  if (recent) return t("schedules.ran", { when: dayAndTime(last.at) });
-  return weatherNow(schedule.trigger?.kind);
+  const parts = [lastText(schedule.last_run)];
+  if (schedule.next_run) parts.push(t("schedules.next", { when: dayAndTime(schedule.next_run) }));
+  else if (!parts[0]) parts.push(weatherNow(schedule.trigger?.kind));
+  return parts.filter(Boolean).join(" · ");
 }
 
 // "Now 27°", "Now 12 km/h", "Dry now" for a weather schedule's kind.
