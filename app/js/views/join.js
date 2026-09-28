@@ -2,7 +2,7 @@
 // address as the page opened (app.js) and is kept for this tab only, so it survives the Google
 // sign-in but is never sent to a server or left in the history.
 
-import { saveApiKey } from "../../api-client.js";
+import { clearHost, saveApiKey } from "../../api-client.js";
 import { signIn } from "../account.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
@@ -44,8 +44,11 @@ function joinError(error) {
       case "EMAIL_MISMATCH":
         return t("join.errors.emailMismatch");
       case "INVITATION_NOT_FOUND":
+      case "INVITATION_EXPIRED":
       case "JOIN_REFUSED":
         return t("join.errors.used");
+      case "KEY_LIMIT_REACHED":
+        return t("connect.errors.keyLimit");
       case "HOME_OFFLINE":
       case "HOME_TIMEOUT":
         return t("join.errors.homeOffline");
@@ -59,6 +62,10 @@ function joinError(error) {
 }
 
 async function accept(invitation, navigate) {
+  // This device already has a key (its home, or another): the invitation's key replaces it.
+  if (state.apiKey && !window.confirm(t("join.replaceConfirm"))) {
+    return;
+  }
   ui.joinBusy = true;
   ui.joinMessage = null;
   notify();
@@ -66,7 +73,14 @@ async function accept(invitation, navigate) {
     const key = await acceptInvitation(invitation, clientName());
     saveApiKey(key.key);
     saveRemote({ home: invitation.home, keyId: key.id });
+    // The saved address may be another controller's; the new key starts through the account and
+    // the address can be entered again in Settings.
+    clearHost();
+    state.host = "";
     state.apiKey = key.key;
+    state.role = null;
+    state.loaded = false;
+    state.remoteInfo = null;
     state.transport = "remote";
     state.status = "connecting";
     clearInvitation();

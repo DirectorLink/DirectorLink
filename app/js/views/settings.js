@@ -3,10 +3,10 @@
 import { deleteAccount, loadAccount, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
-import { claimHome, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
+import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, name } from "../dom.js";
-import { LANGUAGES, formatTime, languagePreference, t } from "../i18n.js";
+import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { installApp } from "../pwa.js";
@@ -234,7 +234,8 @@ function controllerSection(navigate) {
       const host = useHost(hostInput.value);
       delete ui.drafts.settingsHost;
       ui.controllerMessage = null;
-      if (host !== previous || !state.apiKey) {
+      // A device that joined with an invitation keeps its key for its home's first address.
+      if ((previous && host !== previous) || !state.apiKey) {
         // A new controller needs its own key: pair with a code from its Composer project.
         state.notice = { kind: "info", text: t("connect.pairNew") };
         navigate("#/");
@@ -277,18 +278,21 @@ function controllerSection(navigate) {
     "controller",
     "controller",
     t("settings.controller.title"),
-    h(
-      "form",
-      { class: "inline-form", onsubmit: submit },
-      h("label", { class: "field-label", for: "settings-host" }, t("connect.hostLabel")),
-      h(
-        "div",
-        { class: "input-row" },
-        hostInput,
-        h("button", { type: "submit", class: "button button-primary", dataset: { key: "settings-host-save" } }, t("settings.controller.connect"))
-      ),
-      h("p", { class: "field-help" }, t("connect.hostHelp"))
-    ),
+    // iPhone and iPad cannot use the home-network connection (docs/ACCOUNTS.md).
+    IS_IOS
+      ? null
+      : h(
+          "form",
+          { class: "inline-form", onsubmit: submit },
+          h("label", { class: "field-label", for: "settings-host" }, t("connect.hostLabel")),
+          h(
+            "div",
+            { class: "input-row" },
+            hostInput,
+            h("button", { type: "submit", class: "button button-primary", dataset: { key: "settings-host-save" } }, t("settings.controller.connect"))
+          ),
+          h("p", { class: "field-help" }, t("connect.hostHelp"))
+        ),
     ui.controllerMessage ? h("p", { class: `notice notice-${ui.controllerMessage.kind}`, role: "alert" }, ui.controllerMessage.text) : null,
     h(
       "dl",
@@ -364,15 +368,27 @@ function loadRemoteInfo() {
 }
 
 async function linkHome() {
+  const homeId = state.remoteInfo?.home_id;
   ui.homeBusy = true;
   ui.homeMessage = null;
   notify();
   try {
-    const claim = await api("/v1/remote/claim", { method: "POST" });
-    await claimHome(claim.home_id, claim.claim_token);
+    // Already this account's home (another device linked it): this device only needs its key id.
+    // Another account's: linking takes it over, so ask first.
+    const known = homeId ? await homeStatus(homeId) : null;
+    let linked = homeId;
+    let transferred = false;
+    if (!known?.owner && !known?.member) {
+      if (known?.claimed && !window.confirm(t("settings.account.home.takeOverConfirm"))) {
+        return;
+      }
+      const claim = await api("/v1/remote/claim", { method: "POST" });
+      transferred = Boolean((await claimHome(claim.home_id, claim.claim_token))?.transferred);
+      linked = claim.home_id;
+    }
     const me = await api("/v1/api-keys/current");
-    saveRemote({ home: claim.home_id, keyId: me.id });
-    ui.homeMessage = { kind: "success", text: t("settings.account.home.linkedNow") };
+    saveRemote({ home: linked, keyId: me.id });
+    ui.homeMessage = { kind: "success", text: transferred ? t("settings.account.home.takenOver") : t("settings.account.home.linkedNow") };
   } catch (error) {
     ui.homeMessage = { kind: "error", text: error?.code === "REMOTE_ACCESS_OFF" ? t("settings.account.home.turnOn") : errorText(error) };
   } finally {
@@ -394,12 +410,18 @@ async function createInvitation({ forSelf }) {
   ui.homeBusy = true;
   ui.homeMessage = null;
   notify();
+  let invitation = null;
   try {
-    const invitation = await api("/v1/invitations", { method: "POST", body: { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 } });
+    // Just under 7 days: the account refuses invitations longer than that.
+    invitation = await api("/v1/invitations", { method: "POST", body: { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 } });
     await registerInvitation(invitation.home_id, invitation, email);
     ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
     ui.inviteForm = false;
   } catch (error) {
+    // An invitation the account does not know can never be accepted: revoke it at home too.
+    if (invitation?.id) {
+      api(`/v1/invitations/${invitation.id}`, { method: "DELETE" }).catch(() => {});
+    }
     ui.homeMessage = { kind: "error", text: errorText(error) };
   } finally {
     ui.homeBusy = false;
@@ -440,7 +462,7 @@ function invitationResult(invitation) {
         : null,
       h("button", { type: "button", class: "button button-quiet", dataset: { key: "invitation-done" }, onclick: () => { ui.homeInvitation = null; ui.homeMessage = null; notify(); } }, t("common.done"))
     ),
-    h("p", { class: "field-help" }, t("settings.account.home.expires", { time: formatTime(new Date(invitation.expiresAt)) }))
+    h("p", { class: "field-help" }, t("settings.account.home.expires", { time: formatDateTime(new Date(invitation.expiresAt)) }))
   );
 }
 

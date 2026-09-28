@@ -97,6 +97,7 @@ export default {
       lock: "Your controller cannot lock remote requests. Update DirectorLink and check its log.",
       clock: "This device’s clock is too far off. Set the right time and try again.",
       unreachable: "DirectorLink’s servers can’t be reached right now. Check the internet connection.",
+      invalidClaim: "Your controller did not confirm linking this home (the request expired). Try again.",
     },
   },
   home: {
@@ -267,6 +268,7 @@ export default {
     as: "Signed in as {email}",
     accept: "Accept invitation",
     accepting: "Accepting…",
+    replaceConfirm: "This device is already connected to a home. Accepting replaces its access key with this invitation’s. Continue?",
     errors: {
       emailMismatch: "This invitation is for another email address. Sign in with that account, or ask for an invitation for this one.",
       used: "This invitation was used, revoked or has expired. Ask for a new one.",
@@ -337,6 +339,8 @@ export default {
         linkHelp: "Link this home to your account once, here on the home network. Then your devices reach it from anywhere, sealed so that DirectorLink’s servers cannot read anything.",
         link: "Link this home to my account",
         linkedNow: "Linked. This device now reaches your home from anywhere.",
+        takeOverConfirm: "This home is linked to another DirectorLink account. Linking it to yours removes that account and the people it invited (their devices still work on the home network). Continue?",
+        takenOver: "Linked. This home now belongs to your account; the previous account and its invitations were removed.",
         addHelp: "Add your phone or another computer with a code, or invite family with a link.",
         addDevice: "Add my other device",
         invite: "Invite someone",
