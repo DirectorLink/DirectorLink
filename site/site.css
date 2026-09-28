@@ -277,8 +277,19 @@ main {
   font-size: 16px;
 }
 
+.how .note {
+  margin-block-start: 16px;
+  color: var(--muted);
+  font-size: 15px;
+}
+
 .features {
   margin-block-start: 40px;
+}
+
+.features h2 {
+  margin-block-end: 20px;
+  font-size: 26px;
 }
 
 .feature-list {

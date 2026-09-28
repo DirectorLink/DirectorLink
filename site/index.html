@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
     <meta
       name="description"
-      content="DirectorLink: an open-source Control4 driver and app. A standard local REST API described by OpenAPI, per-device access roles, and pairing with a one-time code from Composer."
+      content="DirectorLink: an open-source Control4 driver and app. Control your home at home and away, locked end to end; one-tap scenes; schedules by the clock, the sun and the weather; access for the family; everything visible to your installer in Composer."
     />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
@@ -35,13 +35,14 @@
       <section class="hero" aria-labelledby="hero-title">
         <h1 id="hero-title">Direct to Director. <span>End-to-end integration.</span> <span>Open source.</span></h1>
         <p class="intro">
-          DirectorLink is an open-source driver for Control4 and an app for phones and computers. The
-          driver gives your home a standard local REST API, described by OpenAPI, with its own access
-          role for every device and app. Each phone or computer pairs once with a one-time code from
-          Composer — your installer can read it out for you.
+          DirectorLink is a free, open-source driver for Control4 and an app for phones and computers.
+          Control lights, AC, blinds, cameras and gates at home and away, make one-tap scenes, and
+          schedule them by the clock, the sun or the weather. You make the changes yourself, and your
+          installer still sees everything in Composer. In English and Hebrew.
         </p>
         <div class="actions">
           <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
+          <a class="button button-secondary" href="https://github.com/IsraelCIL/DirectorLink/releases/latest" rel="noreferrer">Download the driver</a>
           <a class="button button-secondary" href="https://console.directorlink.io">API console</a>
           <a class="button button-secondary" href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">Source on GitHub</a>
         </div>
@@ -53,35 +54,48 @@
           <li class="step">
             <span class="step-number" aria-hidden="true">1</span>
             <h3>Install the driver</h3>
-            <p>Add the DirectorLink driver to the Control4 project. It serves the API on your home network, on port 41999.</p>
+            <p>Add DirectorLink to the Control4 project in Composer Pro. It finds the rooms and devices by itself and loads without a reboot.</p>
           </li>
           <li class="step">
             <span class="step-number" aria-hidden="true">2</span>
-            <h3>Open the app</h3>
-            <p>On your phone or computer, open the app and enter the controller's address.</p>
+            <h3>Pair at home</h3>
+            <p>On a computer at home, open the app and enter the controller's address and the 8-digit pairing code from Composer (DirectorLink → Actions → New Pairing Code). The installer can read it out for you. A code lasts 15 minutes and works once.</p>
           </li>
           <li class="step">
             <span class="step-number" aria-hidden="true">3</span>
-            <h3>Enter the pairing code</h3>
-            <p>Type the 8-digit code from Composer (DirectorLink → Actions → New Pairing Code) — the installer can read it for you. A code lasts 15 minutes and works once.</p>
+            <h3>Use it anywhere</h3>
+            <p>Turn on Remote Access in Composer, sign in with Google and link the home. Add your phone with Add my other device and invite the family by email.</p>
           </li>
         </ol>
+        <p class="note">Needs a Control4 controller with OS 3.3.0 or newer. This is an early release, used every day in one home so far: tell us what works on <a href="https://github.com/IsraelCIL/DirectorLink/issues" rel="noreferrer">GitHub</a>.</p>
       </section>
 
       <section class="features" aria-labelledby="features-title">
-        <h2 id="features-title" class="visually-hidden">What you get</h2>
+        <h2 id="features-title">What you get</h2>
         <ul class="feature-list">
           <li>
-            <h3>Local and direct</h3>
-            <p>The browser talks to the controller over your LAN. No cloud relay, no port forwarding.</p>
+            <h3>At home and away</h3>
+            <p>At home the app talks to the controller directly. Away, and on iPhone, it goes through your account, locked end to end: our servers pass it along but can't read it.</p>
+          </li>
+          <li>
+            <h3>Scenes</h3>
+            <p>One tap for lights, AC, blinds and gates. Pick single lights, or copy the house as it is right now.</p>
+          </li>
+          <li>
+            <h3>Schedules</h3>
+            <p>By the clock, at sunrise or sunset, or when it gets hot, windy or rainy (weather from Open-Meteo). The controller runs them on its own.</p>
+          </li>
+          <li>
+            <h3>The family, with the right access</h3>
+            <p>View only, control, doors, or admin, for every person and device. Each person keeps their own language, theme and favorites.</p>
+          </li>
+          <li>
+            <h3>Visible to your installer</h3>
+            <p>Composer shows what DirectorLink automates and what it ran last, and one switch pauses all its schedules.</p>
           </li>
           <li>
             <h3>A real API</h3>
-            <p>Rooms, lights, climate, blinds, cameras and doors as plain REST resources, described by OpenAPI 3.1.</p>
-          </li>
-          <li>
-            <h3>Roles per device</h3>
-            <p>viewer, member, doors or admin — each app and script gets only what it needs, and can be revoked.</p>
+            <p>Rooms, lights, climate, blinds, cameras, doors, scenes and schedules as REST resources, described by OpenAPI 3.1, with a key and a role for every app.</p>
           </li>
         </ul>
       </section>
