@@ -13,6 +13,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
+import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved } from "./js/session.js";
 import { state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
@@ -159,6 +160,11 @@ function signature() {
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
     state.role,
     state.account,
+    // Remote access (remote.js): the connection in use, the controller's answer, and whether this
+    // device is linked (kept in localStorage, so it is read here).
+    state.transport,
+    state.remoteInfo,
+    savedRemote(),
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),
@@ -173,6 +179,12 @@ function signature() {
     ui.roomMessages,
     ui.controllerMessage,
     ui.featuredCamera,
+    ui.homeBusy,
+    ui.homeMessage,
+    ui.homeInvitation,
+    ui.inviteForm,
+    ui.joinBusy,
+    ui.joinMessage,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
