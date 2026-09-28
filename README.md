@@ -13,7 +13,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - Installation method is outside the scope of this project
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN
-- LAN-first, with no port forwarding; remote access through `api.directorlink.io` is in testing (read-only, off by default)
+- LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner, with a separate named API key per browser, app or script
 - Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
 - Room names in several languages
@@ -74,9 +74,9 @@ If the status shows an error, open `GET /v1/logs` (see below) or capture the Dir
 
 Open **https://app.directorlink.io**, enter the controller IP and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
 
-> **Pair from a computer or an Android phone, not from an iPhone or iPad.** On iPhone and iPad every browser (Safari, Chrome, Edge, …) uses Apple's WebKit, which blocks a secure page such as app.directorlink.io from reaching the controller's plain `http://` address on the home network, and offers no permission to allow it. There the app shows "Could not reach DirectorLink", and pairing cannot work. iPhones and iPads will join through remote access with accounts, which is being designed.
+> **Pair from a computer or an Android phone, not from an iPhone or iPad.** On iPhone and iPad every browser (Safari, Chrome, Edge, …) uses Apple's WebKit, which blocks a secure page such as app.directorlink.io from reaching the controller's plain `http://` address on the home network, and offers no permission to allow it. Pairing cannot work there. iPhones and iPads join through the account instead: on a paired computer at home, sign in and use Settings → Account → **Link this home**, then **Add my other device**, and scan the QR code with the iPhone.
 
-A code is valid for 15 minutes and works once. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin creates their keys (API console → Keys), and with remote access they will join by invitation.
+A code is valid for 15 minutes and works once. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin invites them (Settings → Account → **Invite someone**, with remote access) or creates their keys (API console → Keys).
 
 ### Updating DirectorLink
 
