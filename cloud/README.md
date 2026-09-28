@@ -101,6 +101,7 @@ curl https://api.directorlink.io/health
 | --- | --- |
 | `GET /auth/google/start?return_to=<app URL>` | 302 to Google; sets the 10-minute `__Host-dl_signin` cookie. `return_to` must be on one of `APP_ORIGINS`, else the app's Settings |
 | `GET /auth/google/callback` | Google comes back here; 302 to `return_to` with `?signin=ok`, `cancelled`, `expired`, `failed` or `unverified`, and on success the `__Host-dl_session` cookie |
+| `GET /auth/{google\|apple}/start?…&link=1` | the same, adding that provider to the signed-in account (session cookie required; else `?signin=expired`). Outcomes `linked`, `taken` (the identity belongs to another account), `duplicate` (the account has one from this provider) |
 | `GET /auth/apple/start?return_to=<app URL>` | 302 to Apple (`response_mode=form_post`); sets the 10-minute `__Host-dl_signin_apple` cookie (`SameSite=None`: Apple's answer is a POST from its site). 503 `SIGN_IN_NOT_CONFIGURED` until the Apple settings exist |
 | `POST /auth/apple/callback` | Apple's form comes here; 303 to `return_to` with the same outcomes as Google's |
 | `GET /v1/me` | `{"id", "email", "name", "created_at", "providers"}` (`providers`: `google`, `apple`), or 401 `NOT_SIGNED_IN` |

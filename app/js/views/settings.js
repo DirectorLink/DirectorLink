@@ -1,6 +1,6 @@
 // Settings: appearance, language, room names, controller, account, app and about.
 
-import { deleteAccount, loadAccount, signOut } from "../account.js";
+import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
@@ -551,7 +551,7 @@ function homeSection() {
 function accountSection() {
   const account = state.account;
   const notice = account.notice
-    ? h("p", { class: `notice ${account.notice === "deleted" ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    ? h("p", { class: `notice ${account.notice === "deleted" || account.notice === "linked" ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
   let body;
   if (account.status === "signed-in") {
@@ -569,6 +569,16 @@ function accountSection() {
         "div",
         { class: "button-row" },
         h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: signOut }, t("settings.account.signOut")),
+        // Signing in with another provider gives another account; adding it here, while signed in,
+        // makes both sign in to this one.
+        ...SIGN_IN_PROVIDERS.filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider)).map((provider) =>
+          h(
+            "button",
+            { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+            icon(provider === "apple" ? "apple" : "user"),
+            t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
+          )
+        ),
         h(
           "button",
           {

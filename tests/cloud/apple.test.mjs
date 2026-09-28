@@ -56,6 +56,7 @@ test("starting a sign-in sends the browser to Apple for a posted answer with nam
   assert.equal(params.get("response_type"), "code");
   assert.equal(params.get("response_mode"), "form_post");
   assert.equal(params.get("scope"), "name email");
+  assert.ok(location.includes("scope=name%20email"), "Apple asks for %20 between scopes, not +");
   assert.match(params.get("state"), /^[\w-]{20,}$/);
   assert.match(params.get("nonce"), /^[\w-]{20,}$/);
   const cookie = cookiesOf(response)["__Host-dl_signin_apple"];
@@ -84,21 +85,77 @@ test("a sign-in with Apple makes an account, with the name Apple posted the firs
   assert.equal(later.json.name, "Noam Cohen", "Apple sends the name only once; it is kept");
 });
 
-test("Apple and Google with the same email are one account; Hide My Email is another", TEST, async () => {
-  const email = "both@example.com";
-  const viaGoogle = await signInAs(worker.http, google, { sub: "google-both", email, name: "Both Google" }, APP);
-  const googleAccount = await me(viaGoogle);
-  const viaApple = await signInWithApple(worker.http, apple, { sub: "001.both", email: "Both@Example.com", firstName: "Both", lastName: "Apple" }, APP);
+test("accounts are never joined by email: another provider or a reused address makes a new account", TEST, async () => {
+  const email = "reused@example.com";
+  const first = await me(await signInAs(worker.http, google, { sub: "google-reused-1", email, name: "First" }, APP));
+  const later = await me(await signInAs(worker.http, google, { sub: "google-reused-2", email, name: "Later" }, APP));
+  assert.notEqual(later.json.id, first.json.id, "a new Google account with the same address is someone else");
+  const viaApple = await signInWithApple(worker.http, apple, { sub: "001.reused", email: "Reused@Example.com", firstName: "Apple", lastName: "Person" }, APP);
   const appleAccount = await me(viaApple.cookie);
-  assert.equal(appleAccount.json.id, googleAccount.json.id, "a second provider joins the account with that verified email");
-  assert.deepEqual(appleAccount.json.providers, ["google", "apple"]);
-  assert.equal(appleAccount.json.name, "Both Google", "the account keeps its name");
+  assert.notEqual(appleAccount.json.id, first.json.id, "Apple with that address is its own account until it is added");
+  assert.deepEqual(appleAccount.json.providers, ["apple"]);
+  assert.equal(appleAccount.json.email, email, "and can still accept invitations for that address");
 
   const hidden = await signInWithApple(worker.http, apple, { sub: "001.hidden", email: "x7k2abc@privaterelay.appleid.com", private: true }, APP);
-  const hiddenAccount = await me(hidden.cookie);
-  assert.notEqual(hiddenAccount.json.id, googleAccount.json.id);
-  assert.equal(hiddenAccount.json.email, "x7k2abc@privaterelay.appleid.com");
-  assert.equal(hiddenAccount.json.name, null);
+  assert.equal((await me(hidden.cookie)).json.email, "x7k2abc@privaterelay.appleid.com");
+});
+
+test("a signed-in account adds Apple, and both then sign in to it", TEST, async () => {
+  const cookie = await signInAs(worker.http, google, { sub: "google-linker", email: "linker@example.com", name: "Linker" }, APP);
+  const account = await me(cookie);
+  const person = { sub: "001.linker", email: "linker.apple@example.com", firstName: "L", lastName: "A" };
+  const linked = await signInWithApple(worker.http, apple, person, APP, { link: cookie });
+  assert.equal(outcome(linked.response), "linked");
+  assert.equal(linked.cookie, null, "the account keeps its session");
+  const after = await me(cookie);
+  assert.deepEqual(after.json.providers, ["google", "apple"]);
+  assert.equal(after.json.email, "linker@example.com", "the account's email stays Google's");
+  assert.equal(after.json.name, "Linker");
+  const viaApple = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  assert.equal((await me(viaApple.cookie)).json.id, account.json.id, "Apple now signs in to the same account");
+
+  const again = await signInWithApple(worker.http, apple, person, APP, { link: cookie });
+  assert.equal(outcome(again.response), "linked", "adding it twice changes nothing");
+  const second = await signInWithApple(worker.http, apple, { sub: "001.linker.2", email: "other@example.com" }, APP, { link: cookie });
+  assert.equal(outcome(second.response), "duplicate", "one Apple ID per account");
+
+  const other = await signInAs(worker.http, google, { sub: "google-other-linker", email: "other.linker@example.com", name: "Other" }, APP);
+  const taken = await signInWithApple(worker.http, apple, person, APP, { link: other });
+  assert.equal(outcome(taken.response), "taken", "an Apple ID that belongs to another account");
+  assert.deepEqual((await me(other)).json.providers, ["google"]);
+
+  const noSession = await fetch(`${worker.http}/auth/apple/start?link=1&return_to=${encodeURIComponent(`${APP}/#/settings`)}`, { redirect: "manual" });
+  assert.equal(new URL(noSession.headers.get("location")).searchParams.get("signin"), "expired", "adding needs the session: from another site nothing is linked");
+});
+
+test("a returning Apple ID is found by its id even when Apple leaves out the email", TEST, async () => {
+  const person = { ...APPLE_PERSON, sub: "001.no-email-later", email: "later@example.com" };
+  const first = await signInWithApple(worker.http, apple, person, APP);
+  const account = await me(first.cookie);
+  const later = await signInWithApple(worker.http, apple, person, APP, { withUser: false, claims: { email: undefined, email_verified: undefined } });
+  assert.equal(outcome(later.response), "ok");
+  const again = await me(later.cookie);
+  assert.equal(again.json.id, account.json.id);
+  assert.equal(again.json.email, "later@example.com", "the email it had is kept");
+});
+
+test("a callback body larger than 16 KiB is not read, even without Content-Length", TEST, async () => {
+  const big = "state=x&code=" + "a".repeat(64 * 1024);
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(big));
+      controller.close();
+    },
+  });
+  const response = await fetch(`${worker.http}/auth/apple/callback`, {
+    method: "POST",
+    redirect: "manual",
+    duplex: "half",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: stream,
+  });
+  assert.equal(response.status, 303);
+  assert.equal(outcome(response), "expired");
 });
 
 test("Apple's answer counts only for the sign-in this browser started, at Apple's own callback", TEST, async () => {

@@ -142,14 +142,29 @@ Unchanged: pair with a code and use the LAN API. No cloud is involved.
 Both are OpenID Connect sign-ins run by `api.directorlink.io` (`google.js`, `apple.js`, the shared
 ID token checks in `jwt.js`); no provider script runs in the app's pages.
 
-- **One account per person:** each provider identity (provider and its `sub`) is kept in
-  `identities`. A new identity joins the account that has the same verified email, so a person who
-  signs in with Google on a computer and with Apple on an iPhone has one account, one set of homes
-  and one email for invitations. The account's email stays that of the identity it was created
-  with.
-- **Hide My Email:** Apple may give a relay address instead of the person's own. That is another
-  account, and invitations for the person's real email are refused there (`EMAIL_MISMATCH`); the
-  join page says to sign in again and choose Share My Email.
+- **Accounts are found by identity, never by email.** Each provider identity (provider and its
+  `sub`) is kept in `identities`, and a sign-in with an identity nobody has makes a new account,
+  even when an account with that email exists. Google vouches for an address other than Gmail or
+  Workspace only as of when the Google account was made, and addresses pass to other people
+  (reused mailboxes, re-registered domains); joining by email would hand them the account.
+- **Adding the other provider:** while signed in, Settings → Account → *Also sign in with Apple*
+  (or Google) runs that provider's sign-in with `link=1`. The app's page navigates to
+  `api.directorlink.io` on the same site, so the session comes along and the sign-in remembers
+  which account asked; from another site it does not, and nothing is linked. An identity that
+  already belongs to another account is refused (`taken`), and an account has one identity per
+  provider. The account's email stays that of the identity it was created with, so invitations for
+  it can be accepted with either.
+- **Separate accounts still work together:** an invitation checks the signed-in account's email,
+  so a person who signs in with Apple with the same address as their Google account can accept
+  one, as a second account.
+- **Hide My Email:** Apple may give a relay address instead of the person's own, and keeps giving
+  it for DirectorLink. Invitations for the real address are refused there (`EMAIL_MISMATCH`); the
+  join page says to sign in with Google, to stop using Sign in with Apple for DirectorLink in the
+  Apple ID settings and sign in again choosing Share My Email (Apple asks only on the first
+  sign-in), or to ask for an invitation to the hidden address. Adding Apple to a Google account
+  avoids it.
+- **A returning Apple ID without an email** (Apple may leave it out, e.g. after Hide My Email
+  forwarding is turned off) is still found by its `sub`; a new account needs a verified email.
 - **Apple's form:** Apple posts its answer (`response_mode=form_post`, the only way it sends the name
   and email scopes) from appleid.apple.com, so the 10-minute sign-in cookie for Apple is
   `SameSite=None`; the state, the nonce and the cookie are checked as for Google, and a state only

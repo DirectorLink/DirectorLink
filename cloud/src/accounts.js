@@ -1,14 +1,15 @@
 // Accounts (docs/ACCOUNTS.md): sign in with Google or Apple, the session, and deleting the account.
 //
-//   GET    /auth/{google|apple}/start?return_to=<app URL>   → the provider, then back to the app
+//   GET    /auth/{google|apple}/start?return_to=<app URL>[&link=1]   → the provider, then back
 //   GET    /auth/google/callback                             (Google redirects here)
 //   POST   /auth/apple/callback                              (Apple posts its form here)
 //   POST   /auth/logout                                      ends this session
 //   GET    /v1/me                                            the signed-in account, or 401
 //   DELETE /v1/me                                            deletes the account and all its sessions
 //
-// One account may sign in with both: a sign-in with a new identity joins the account that has the
-// same verified email (identities table), so homes and invitations do not depend on the provider.
+// An account is found by the provider's own id for the person (identities), never by email: an
+// address can pass to someone else. A signed-in account may add the other provider (`link=1`, from
+// the app's Settings); both then sign in to it.
 //
 // The session is a random token in the `__Host-dl_session` cookie of api.directorlink.io; D1 keeps
 // only its SHA-256. The app calls /v1/me and /auth/logout with `credentials: "include"`; only the
@@ -16,7 +17,7 @@
 
 import { apple } from "./apple.js";
 import { google } from "./google.js";
-import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, setCookie, sha256Hex } from "./http.js";
+import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, readText, setCookie, sha256Hex } from "./http.js";
 import { forgetInvitations } from "./invitations.js";
 import { SignInError } from "./jwt.js";
 
@@ -97,14 +98,23 @@ async function startSignIn(request, env, provider) {
   }
   const url = new URL(request.url);
   const returnTo = safeReturn(env, url.searchParams.get("return_to"));
+  // Adding this provider to the signed-in account: the app's own page navigates here (same site,
+  // so the session cookie comes along); from another site it does not, and nothing is linked.
+  let linkTo = null;
+  if (url.searchParams.get("link") === "1") {
+    linkTo = await currentUser(request, env);
+    if (!linkTo) {
+      return backToApp(returnTo, "expired");
+    }
+  }
   const state = randomToken();
   const nonce = randomToken();
   const verifier = provider.usesVerifier ? randomToken(48) : "";
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sign_ins WHERE expires_at < ?").bind(iso(now)),
-    env.DB.prepare("INSERT INTO sign_ins (state_sha256, nonce, verifier, return_to, expires_at, provider) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(await sha256Hex(state), nonce, verifier, returnTo, iso(now + SIGN_IN_SECONDS * 1000), provider.name),
+    env.DB.prepare("INSERT INTO sign_ins (state_sha256, nonce, verifier, return_to, expires_at, provider, link_user_id) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(await sha256Hex(state), nonce, verifier, returnTo, iso(now + SIGN_IN_SECONDS * 1000), provider.name, linkTo?.id ?? null),
   ]);
   const location = await provider.authorizationUrl(env, { redirectUri: callbackUrl(env, provider.name), state, nonce, verifier });
   const cookie = SIGN_IN_COOKIES[provider.name];
@@ -123,45 +133,76 @@ async function callbackParams(request) {
   if (request.method !== "POST") {
     return new URL(request.url).searchParams;
   }
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_FORM_BYTES) {
-    return new URLSearchParams();
-  }
-  const text = await request.text();
-  return new URLSearchParams(text.length > MAX_FORM_BYTES ? "" : text);
+  return new URLSearchParams((await readText(request, MAX_FORM_BYTES)) ?? "");
 }
 
-// The account for a person the provider vouched for: the one this identity belongs to, else the
-// one with the same verified email (a second provider for it), else a new one.
+// The account of a person the provider vouched for: the one this identity belongs to, else a new
+// one. Never an account found by email: Google, for one, vouches for an address only when the
+// account was made, and addresses get reused.
 async function accountFor(env, provider, person) {
   const now = iso(Date.now());
-  const identity = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+  const find = () => env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+  const identity = await find();
   if (identity) {
-    // The account's email follows the identity it was created with; a later provider's does not.
+    // The account's email follows the identity it was created with; a linked provider's does not.
     await env.DB.batch([
-      env.DB.prepare("UPDATE identities SET email = ?, last_sign_in_at = ? WHERE provider = ? AND subject = ?").bind(person.email, now, provider, person.subject),
+      env.DB.prepare("UPDATE identities SET email = COALESCE(?, email), last_sign_in_at = ? WHERE provider = ? AND subject = ?").bind(person.email, now, provider, person.subject),
       env.DB.prepare(
-        "UPDATE users SET email = CASE WHEN provider = ? AND subject = ? THEN ? ELSE email END, name = COALESCE(?, name), last_sign_in_at = ? WHERE id = ?"
+        "UPDATE users SET email = CASE WHEN provider = ? AND subject = ? THEN COALESCE(?, email) ELSE email END, name = COALESCE(?, name), last_sign_in_at = ? WHERE id = ?"
       ).bind(provider, person.subject, person.email, person.name, now, identity.user_id),
     ]);
-    return { userId: identity.user_id, created: false, linked: false };
+    return { userId: identity.user_id, created: false };
   }
-  const same = await env.DB.prepare("SELECT id FROM users WHERE email = ? ORDER BY created_at LIMIT 1").bind(person.email).first();
-  if (same) {
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .bind(provider, person.subject, same.id, person.email, now, now),
-      env.DB.prepare("UPDATE users SET name = COALESCE(name, ?), last_sign_in_at = ? WHERE id = ?").bind(person.name, now, same.id),
-    ]);
-    return { userId: same.id, created: false, linked: true };
+  if (!person.email) {
+    throw new SignInError("EMAIL_NOT_VERIFIED", "A new account needs a verified email address");
   }
   const userId = randomHex(16);
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO users (id, provider, subject, email, name, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind(userId, provider, person.subject, person.email, person.name, now, now),
-    env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind(provider, person.subject, userId, person.email, now, now),
-  ]);
-  return { userId, created: true, linked: false };
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users (id, provider, subject, email, name, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(userId, provider, person.subject, person.email, person.name, now, now),
+      env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(provider, person.subject, userId, person.email, now, now),
+    ]);
+  } catch (error) {
+    // The same person signing in twice at once: the other request made the account.
+    const made = await find();
+    if (made) {
+      return { userId: made.user_id, created: false };
+    }
+    throw error;
+  }
+  return { userId, created: true };
+}
+
+// Adds an identity to the signed-in account that asked for it (link=1). Returns the outcome for
+// the app: linked, taken (another account signs in with it) or duplicate (this account already
+// has one from this provider).
+async function linkIdentity(env, provider, person, userId) {
+  const now = iso(Date.now());
+  const owner = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
+  if (owner) {
+    return owner.user_id === userId ? "linked" : "taken";
+  }
+  const account = await env.DB.prepare(
+    "SELECT users.id AS id, (SELECT COUNT(*) FROM identities WHERE user_id = users.id AND provider = ?) AS same FROM users WHERE users.id = ?"
+  )
+    .bind(provider, userId)
+    .first();
+  if (!account) {
+    return "expired";
+  }
+  if (account.same > 0) {
+    return "duplicate";
+  }
+  try {
+    await env.DB.prepare("INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .bind(provider, person.subject, userId, person.email ?? "", now, now)
+      .run();
+  } catch {
+    return "taken";
+  }
+  return "linked";
 }
 
 async function finishSignIn(request, env, provider) {
@@ -174,7 +215,7 @@ async function finishSignIn(request, env, provider) {
   // The state must be the one this browser started, with this provider, and each works once.
   const cookieState = readCookie(request, cookie.name);
   const row = state
-    ? await env.DB.prepare("DELETE FROM sign_ins WHERE state_sha256 = ? RETURNING nonce, verifier, return_to, expires_at, provider")
+    ? await env.DB.prepare("DELETE FROM sign_ins WHERE state_sha256 = ? RETURNING nonce, verifier, return_to, expires_at, provider, link_user_id")
         .bind(await sha256Hex(state))
         .first()
     : null;
@@ -192,32 +233,40 @@ async function finishSignIn(request, env, provider) {
     return backToApp(returnTo, "failed", [clearSignIn], status);
   }
 
-  let person;
+  let userId;
+  let created;
   try {
-    person = await provider.finish(env, {
+    const person = await provider.finish(env, {
       code,
       redirectUri: callbackUrl(env, provider.name),
       verifier: row.verifier,
       nonce: row.nonce,
       user: params.get("user"),
     });
+    if (row.link_user_id) {
+      // Adding this provider to the account that asked; its session stays as it is.
+      const outcome = await linkIdentity(env, provider.name, person, row.link_user_id);
+      console.log(JSON.stringify({ event: "identity_linked", provider: provider.name, user: row.link_user_id, outcome }));
+      return backToApp(returnTo, outcome, [clearSignIn], status);
+    }
+    ({ userId, created } = await accountFor(env, provider.name, person));
   } catch (failure) {
     if (failure instanceof SignInError) {
       console.log(JSON.stringify({ event: "sign_in_refused", provider: provider.name, code: failure.code, detail: failure.message }));
       return backToApp(returnTo, failure.code === "EMAIL_NOT_VERIFIED" ? "unverified" : "failed", [clearSignIn], status);
     }
-    throw failure;
+    console.log(JSON.stringify({ event: "sign_in_failed", provider: provider.name, error: String(failure?.message ?? failure) }));
+    return backToApp(returnTo, "failed", [clearSignIn], status);
   }
 
   const now = Date.now();
-  const { userId, created, linked } = await accountFor(env, provider.name, person);
   const token = randomToken();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND expires_at < ?").bind(userId, iso(now)),
     env.DB.prepare("INSERT INTO sessions (token_sha256, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)")
       .bind(await sha256Hex(token), userId, iso(now), iso(now + SESSION_SECONDS * 1000)),
   ]);
-  console.log(JSON.stringify({ event: "signed_in", provider: provider.name, user: userId, new_account: created, linked }));
+  console.log(JSON.stringify({ event: "signed_in", provider: provider.name, user: userId, new_account: created }));
   return backToApp(returnTo, "ok", [clearSignIn, ["Set-Cookie", setCookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS })]], status);
 }
 

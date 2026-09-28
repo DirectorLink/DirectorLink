@@ -88,7 +88,9 @@ export function staleBanner() {
     icon("wifiOff"),
     h("span", {}, remote ? state.notice.text : t("status.staleBanner")),
     signedOut
-      ? signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
+      ? SIGN_IN_PROVIDERS.length > 1
+        ? h("a", { class: "button button-small", href: "#/settings", dataset: { key: "stale-sign-in" } }, t("connect.signInShort"))
+        : signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
       : h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
   );
 }

@@ -140,8 +140,13 @@ export function postBack(workerUrl, fields, cookie) {
 }
 
 // A whole sign-in with Apple as `person`; returns { response, cookie } (the session cookie header).
+// options: withUser (false: no name posted, as on later sign-ins), claims, forged, and link (a
+// session cookie: add Apple to that account).
 export async function signInWithApple(workerUrl, fake, person = APPLE_PERSON, app = "http://localhost:8080", options = {}) {
-  const start = await fetch(`${workerUrl}/auth/apple/start?return_to=${encodeURIComponent(`${app}/#/settings`)}`, { redirect: "manual" });
+  const start = await fetch(`${workerUrl}/auth/apple/start?return_to=${encodeURIComponent(`${app}/#/settings`)}${options.link ? "&link=1" : ""}`, {
+    redirect: "manual",
+    headers: options.link ? { Cookie: options.link } : {},
+  });
   const location = start.headers.get("location");
   const signIn = cookiesOf(start)["__Host-dl_signin_apple"]?.value;
   const code = fake.approve(location, { person, ...options });
