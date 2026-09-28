@@ -8,24 +8,24 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
-    **Authentication.** Every operation except health, this API description and pairing needs an
-    API key: `Authorization: Bearer <api key>`. The first key comes from a pairing code: in
+    **Authentication.** Every operation except health, this API description, pairing and
+    `/v1/sealed` (sealed requests, below) needs an API key: `Authorization: Bearer <api key>`. The first key comes from a pairing code: in
     Composer, the **New Pairing Code** action on DirectorLink shows an 8-digit code (`1234 5678`)
     that is valid for 15 minutes and works once (`POST /v1/auth/pair`). An admin key then creates
     more keys under `/v1/api-keys`.
 
     **Roles.** Every API key has a role, and each role can do everything the ones before it
     can: `viewer` reads everything (including camera pictures), `member` also controls lights,
-    thermostats and blinds, `doors` also opens doors and gates, `admin` also manages API keys,
-    room names and the log. Each operation lists the least role it needs as `x-directorlink-role`;
+    thermostats and blinds and runs scenes, `doors` also opens doors and gates, `admin` also
+    manages API keys, rooms, scenes, schedules, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
     property of DirectorLink in Composer set to Enabled.
 
-    **Changing state.** Send the desired state with `PATCH`. The bridge answers `202 Accepted` once
-    the command has been handed to the controller. The returned object holds the last state the
+    **Changing state.** Send a device's desired state with `PATCH`. The bridge answers
+    `202 Accepted` once the command has been handed to the controller. The returned object holds the last state the
     controller reported, so read the resource again to confirm the change.
 
     **Addresses and browsers.** Requests must be sent to the controller's IP address or a local name
@@ -193,15 +193,17 @@ paths:
       tags: [Auth]
       operationId: sealedInfo
       summary: What a sealed request needs from this controller
-      description: The home id and the controller's clock, for sealing requests on the home network.
+      description: The controller's clock, for sealing requests on the home network.
       security: []
       responses:
         "200":
-          description: The home id and time.
+          description: The time, and what envelopes name as their home.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/SealedInfo"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     post:
       tags: [Auth]
       operationId: sealedRequest
@@ -211,7 +213,9 @@ paths:
         lock key, derived from its API key; it runs with that key's role, and the answer comes back
         sealed the same way. Each envelope works once, within two minutes of the controller's clock.
         Refused envelopes get a problem with `code` (`UNKNOWN_KEY`, `BAD_MAC`, `BAD_ENVELOPE`,
-        `STALE`, `REPLAYED`) and the controller's `time`; nothing ran.
+        `STALE`, `REPLAYED`, `LOCK_UNAVAILABLE`) and the controller's `time`; nothing ran. Envelopes
+        name the home `lan`. Only straight from the home network: a sealed request cannot carry
+        another one (`BAD_REQUEST`).
       security: []
       requestBody:
         required: true
@@ -232,6 +236,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "413":
           $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/api-keys:
     get:
@@ -399,6 +405,34 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/remote/secret:
+    post:
+      tags: [Remote]
+      operationId: prepareHomeSecret
+      x-directorlink-role: admin
+      summary: A new secret for the home's relay connection, for the owner to approve
+      description: |
+        The controller makes a new secret for its connection to the relay and keeps it next to the
+        one in use; the answer holds only its SHA-256. The home's owner gives that to the account
+        service (`POST /v1/homes/{home_id}/secret` on api.directorlink.io), which from then on
+        accepts only the new secret, and the controller connects with it (docs/RELAY.md). Each
+        request gets a new secret; the newest three wait for a day. Only from the home network
+        (`SECRET_ONLY_ON_HOME_NETWORK`), so that whoever holds a copy of this controller's data
+        cannot replace it.
+      responses:
+        "200":
+          description: The waiting secret's SHA-256.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NewHomeSecret"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /v1/invitations:
     get:
@@ -2047,6 +2081,18 @@ components:
               type: string
               description: The 32-byte X25519 public key, base64.
 
+    NewHomeSecret:
+      type: object
+      required: [home_id, secret_sha256]
+      properties:
+        home_id:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        secret_sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: SHA-256 (hex) of the new secret; the secret itself never leaves the controller.
+
     SealedPairing:
       type: object
       required: [exchange, sealed]
@@ -2082,12 +2128,12 @@ components:
 
     SealedInfo:
       type: object
-      required: [home_id, time, window_seconds]
+      required: [home, time, window_seconds]
       properties:
-        home_id:
+        home:
           type: string
-          pattern: "^[0-9a-f]{32}$"
-          description: The home id sealed requests name.
+          enum: [lan]
+          description: What envelopes on the home network name as their home (not the remote-access home id, which is not given out without a key).
         time:
           type: integer
           description: The controller's clock, seconds since 1970; a request's `ts` must be within `window_seconds` of it.

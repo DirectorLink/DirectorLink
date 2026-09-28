@@ -2,18 +2,18 @@
 
 [`openapi.yaml`](openapi.yaml) is the contract for the LAN API that the DirectorLink driver serves on the Control4 controller. It is the single source of truth: the driver routes are checked against it in CI (`scripts/check_api.py`), the build embeds it in the driver, and every release publishes it as `openapi.json`.
 
-A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The app's [API console](../app/console.html) reads it to list and try every endpoint.
+A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The [API console](https://console.directorlink.io) ([`../console/`](../console/)) reads it to list and try every endpoint.
 
 ## Conventions
 
 | Topic | Rule |
 | --- | --- |
-| Base URL | `http://<controller-ip>:41999`, LAN only. Every path starts with `/v1`. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells. No Control4 command names, proxy IDs or variable numbers. |
-| Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json` and pairing (`POST /v1/auth/pair`). |
-| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds), `doors` (also doors and gates), `admin` (also keys, room names, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
+| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
+| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds, running scenes), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
-| Changing | `PATCH` with the desired state, e.g. `{"on": true}`. The answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. |
+| Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
 | JSON | snake_case properties, ISO 8601 UTC times, temperatures in °C, `null` for unknown values. |
 | IDs | The numeric IDs of the Control4 project. Treat them as opaque. |
@@ -31,7 +31,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
      -d '{"pairing_code": "1234 5678", "name": "My laptop"}'
    ```
 
-2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`; five wrong codes lock pairing for a minute.
+2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`. Five wrong codes within a minute lock pairing for that device (IP address) for 60 s (`429`, `Retry-After`); twenty wrong codes in all close the code. Pairing works only on the home network. With `"exchange": {"public_key": …}` (X25519, base64) the answer is sealed instead, as the app does (`docs/ACCOUNTS.md`).
 
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 
@@ -42,7 +42,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
      -d '{"brightness": 40}'
    ```
 
-The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. The Composer action **Revoke All API Keys** removes every key if one is lost.
+The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. It also keeps each key's lock key, for sealed requests: if a copy of the controller's data is lost, use **Revoke All API Keys** in Composer (which also removes every key if one is lost) and the owner's **Replace the remote secret** in the app (`docs/ACCOUNTS.md`).
 
 ## Debugging
 

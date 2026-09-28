@@ -1,7 +1,9 @@
--- API keys: named bearer secrets. Only a hash of each key is stored, so the controller's storage,
--- or a backup of it, holds nothing that opens the API. Each key also has a lock key for remote
--- access (src/cloud/lock.lua, derived from the key), made when the key is created or, for older
--- keys, the first time the key is used on the home network.
+-- API keys: named bearer secrets. Only a hash of each key is stored, so the key itself cannot be
+-- read back from the controller's storage or a backup of it. Each key also has a lock key for
+-- sealed requests (src/cloud/lock.lua, derived from the key), made when the key is created or, for
+-- older keys, the first time the key is used on the home network; that one is stored as it is, and
+-- opens sealed requests at home and through the relay (docs/ACCOUNTS.md, "What the lock does not
+-- protect").
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")

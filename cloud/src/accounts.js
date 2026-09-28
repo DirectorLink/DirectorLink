@@ -399,16 +399,23 @@ async function logout(request, env, headers) {
     return withHeaders(methodNotAllowed("POST"), headers);
   }
   const token = readCookie(request, SESSION_COOKIE);
-  if (token) {
-    const hash = await sha256Hex(token);
-    if (new URL(request.url).searchParams.get("everywhere") === "1") {
-      // Every device signed in to this account: a lost phone, a shared computer.
-      const session = await env.DB.prepare("SELECT user_id FROM sessions WHERE token_sha256 = ?").bind(hash).first();
-      if (session) {
-        await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id).run();
-        log("signed_out_everywhere", { user: session.user_id });
-      }
+  const hash = token ? await sha256Hex(token) : null;
+  if (new URL(request.url).searchParams.get("everywhere") === "1") {
+    // Every device signed in to this account: a lost phone, a shared computer. Only a live session
+    // says whose account that is; without one nothing was ended, and the app must say so.
+    const session = hash
+      ? await env.DB.prepare("SELECT user_id FROM sessions WHERE token_sha256 = ? AND expires_at > ?").bind(hash, iso(Date.now())).first()
+      : null;
+    if (!session) {
+      if (hash) await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(hash).run();
+      const refused = withHeaders(problem(401, "NOT_SIGNED_IN", "This session has ended: sign in again, then sign out everywhere"), headers);
+      refused.headers.set("Set-Cookie", clearSession());
+      return refused;
     }
+    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id).run();
+    log("signed_out_everywhere", { user: session.user_id });
+  }
+  if (hash) {
     await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(hash).run();
   }
   return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });

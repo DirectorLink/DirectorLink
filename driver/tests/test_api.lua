@@ -864,7 +864,8 @@ end
 
 function tests.only_the_controllers_address_is_accepted_as_host()
     local mock, key = start()
-    for _, host in ipairs({ "192.168.1.201:41999", "director.local:41999", "core1-000fff9c6a1a:41999", "[fe80::1]:41999", "controller.home.arpa" }) do
+    for _, host in ipairs({ "192.168.1.201:41999", "director.local:41999", "core1-000fff9c6a1a:41999", "[fe80::1]:41999", "controller.home.arpa",
+        "Director.Local.:41999", "[::ffff:192.168.1.5]:41999", "[fe80::1%25eth0]", "my_controller.lan" }) do
         T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 200, host)
     end
     -- DNS rebinding: a public name made to point at the controller.
@@ -872,6 +873,9 @@ function tests.only_the_controllers_address_is_accepted_as_host()
     T.eq(rebound.status, 421)
     T.eq(rebound.json.code, "MISDIRECTED_REQUEST")
     T.eq(T.http(mock, "GET", "/v1/lights", { key = key, host = "attacker.com" }).status, 421)
+    for _, host in ipairs({ "evil.com.", "1.2.3.4.nip.io", "director.local..", "[evil.com]", "user@director.local", "controller.myhome.net" }) do
+        T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 421, host)
+    end
 end
 
 function tests.unknown_routes_and_methods()

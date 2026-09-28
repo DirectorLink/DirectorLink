@@ -33,7 +33,7 @@ REQUIRED_PROPERTIES = (
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "ROTATE_HOME_SECRET")
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "RESET_REMOTE_IDENTITY")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
@@ -64,6 +64,8 @@ SECURITY_CONTRACT = {
     "src/core/random.lua": (
         'out = out .. hash(state.pool .. "|out|" .. state.counter .. "|" .. sources())',
         'state.pool = hash(state.pool .. "|next|" .. state.counter .. "|" .. sources())',
+        # Only a hash of the pool is kept: a copy of the driver's data does not tell what follows.
+        'pool = hash("seed|" .. state.pool)',
     ),
     "src/auth/pairing.lua": (
         "Pairing.CODE_TTL_SECONDS = 15 * 60",
@@ -98,6 +100,8 @@ SECURITY_CONTRACT = {
         # A claim token dies with its admin key.
         'return owner ~= nil and owner.role == "admin"',
         "state.services.invitations.consume(invitationId)",
+        # A sealed request never carries another (it would run as one from the home network).
+        'if path:gsub("/+$", "") == "/v1/sealed" then',
         "state.services.keys.remote(keyId)",
     ),
     # Doors and gates in a scene: only a pulse (never held closed), only for keys with door access,

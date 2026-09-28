@@ -149,14 +149,30 @@ function lanDelivery(host, timeoutMs) {
   };
 }
 
+// A read that got no answer is sealed again (a new id) and sent once more, as apiRequest does for
+// plain reads (api-client.js): one lost request must not make the controller look unreachable.
+// Refusals and writes are never repeated.
+const READ_RETRY_DELAY_MS = 400;
+
+async function lanExchange(host, apiKey, target, path, options, timeoutMs) {
+  const deliver = lanDelivery(host, timeoutMs);
+  try {
+    return await sealedExchange(apiKey, target, path, options, deliver);
+  } catch (error) {
+    if ((options.method || "GET") !== "GET" || error instanceof SealRefused || error instanceof RemoteError) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, READ_RETRY_DELAY_MS));
+    return sealedExchange(apiKey, target, path, options, deliver);
+  }
+}
+
 // Like apiCall, sealed, on the home network.
 export async function lanCall(host, apiKey, target, path, options = {}) {
-  return answerData(await sealedExchange(apiKey, target, path, options, lanDelivery(host, options.timeoutMs || 8000)));
+  return answerData(await lanExchange(host, apiKey, target, path, options, options.timeoutMs || 8000));
 }
 
 // A camera picture, sealed, on the home network.
 export async function lanImage(host, apiKey, target, path) {
-  return answerBlob(await sealedExchange(apiKey, target, path, {}, lanDelivery(host, 12000)));
+  return answerBlob(await lanExchange(host, apiKey, target, path, {}, 12000));
 }
 
 // The home's refusal, from its sealed answer: `sealed` marks it as the home's own word (a 401 there
@@ -229,6 +245,12 @@ export function homeStatus(homeId) {
 // { transferred: true } when it belonged to another account until now.
 export function claimHome(homeId, claimToken) {
   return post("/v1/homes/claim", { home_id: homeId, claim_token: claimToken });
+}
+
+// The owner approves the new secret the controller made (POST /v1/remote/secret, at home): from
+// then on the relay accepts only it (docs/RELAY.md).
+export function approveHomeSecret(homeId, secretSha256) {
+  return post(`/v1/homes/${homeId}/secret`, { secret_sha256: secretSha256 });
 }
 
 export function registerInvitation(homeId, invitation, email) {

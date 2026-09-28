@@ -66,6 +66,8 @@ Cloudflare Pages supports GitHub-connected projects and preview deployments. For
 - output directory: `.`
 - production branch: `main`
 
+(Historical: since 0.8.0 the app, console and landing page are Cloudflare Workers static-asset sites deployed by `.github/workflows/deploy.yml`; ADR-026.)
+
 References:
 - https://developers.cloudflare.com/pages/get-started/git-integration/
 - https://developers.cloudflare.com/pages/configuration/build-configuration/
@@ -85,7 +87,7 @@ References:
 
 DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10 and can accept multiple TCP clients. DirectorLink alpha.2 uses it as a small HTTP/1.1 server with header delimiter `\r\n\r\n`.
 
-DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`.
+DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`. (Superseded: keys are stored as hashes since 0.9.2, ADR-028, and every secret comes from the driver's own random pool since 1.0.0, `src/core/random.lua`, ADR-032, because how Director makes its UUIDs is not documented.)
 
 **Finding (0.9.1, OS 3.4.3):** `C4:PersistGetValue` returns a stored string that is JSON decoded, as a Lua table; strings that are not JSON come back as written. Other drivers' typed values are stored the same way (`{":boolean:":true}` in `state.db`). The values themselves survive driver updates in `state.db` (`item_state`, one row per name and device). DirectorLink therefore stores `json:` plus JSON and accepts decoded tables (`src/core/store.lua`, ADR-028).
 

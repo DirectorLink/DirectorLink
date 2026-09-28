@@ -33,8 +33,8 @@
         <command>PRINT_AUTOMATION</command>
       </action>
       <action>
-        <name>Rotate Remote Secret</name>
-        <command>ROTATE_HOME_SECRET</command>
+        <name>Reset Remote Identity</name>
+        <command>RESET_REMOTE_IDENTITY</command>
       </action>
     </actions>
     <properties>

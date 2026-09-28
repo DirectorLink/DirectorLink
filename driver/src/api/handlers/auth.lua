@@ -11,6 +11,22 @@ local X25519 = require("src.core.x25519")
 
 local Auth = {}
 
+-- X25519 public keys of small order, and their other encodings (libsodium's list, top bit
+-- cleared): the shared secret would be zero. Refused before the pairing code is used.
+local SMALL_ORDER = {
+    ["0000000000000000000000000000000000000000000000000000000000000000"] = true,
+    ["0100000000000000000000000000000000000000000000000000000000000000"] = true,
+    ["e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"] = true,
+    ["5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"] = true,
+    ["ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+    ["edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+    ["eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+}
+
+local function smallOrder(raw)
+    return SMALL_ORDER[Base64.toHex(raw:sub(1, 31) .. string.char(raw:byte(32) % 128))] == true
+end
+
 local function keyLimitProblem(keys)
     return Problem.new(409, "KEY_LIMIT_REACHED",
         "The bridge already has " .. keys.MAX_KEYS .. " API keys; revoke one first")
@@ -61,8 +77,13 @@ function Auth.pair(ctx)
     if body.exchange ~= nil then
         local exchange = body.exchange
         local raw = type(exchange) == "table" and type(exchange.public_key) == "string" and Base64.decode(exchange.public_key) or nil
-        if not raw or #raw ~= 32 then
+        if not raw or #raw ~= 32 or smallOrder(raw) then
             return Problem.invalidField("exchange.public_key", "exchange.public_key is a 32-byte X25519 public key, base64")
+        end
+        -- A controller whose lock failed its self-test cannot seal: the app pairs without the
+        -- exchange (it does so when the field "exchange" is refused), and the code is kept.
+        if not ctx.services.remote.available() then
+            return Problem.invalidField("exchange", "This controller cannot seal the answer (the lock self-test failed); pair without exchange")
         end
         appPublic = { raw = raw, text = exchange.public_key }
     end

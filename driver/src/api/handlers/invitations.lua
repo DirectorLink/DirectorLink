@@ -67,8 +67,14 @@ function Invitations.create(ctx)
         -- Registered by the app (the home's owner only; see docs/ACCOUNTS.md).
         return 201, invitation
     end
+    -- With the ids of every invitation still waiting here: the account service forgets the ones
+    -- this controller revoked meanwhile (which would count against its limit).
+    local pending = Json.array()
+    for _, item in ipairs(invitations.list()) do
+        pending[#pending + 1] = item.id
+    end
     return Response.later(function(respond)
-        remote.ask({ type = "invitation", invitation_id = invitation.id, email = email, expires_at = invitation.expires_at }, 10, function(answer, code)
+        remote.ask({ type = "invitation", invitation_id = invitation.id, email = email, expires_at = invitation.expires_at, pending = pending }, 10, function(answer, code)
             if answer and answer.ok == true then
                 invitation.registered = true
                 invitation.email = email
@@ -78,6 +84,10 @@ function Invitations.create(ctx)
             -- Not registered: the link would not work, so the invitation goes.
             invitations.revoke(invitation.id)
             local failure = code or (answer and answer.code) or "REGISTRATION_FAILED"
+            if code == "RELAY_TIMEOUT" and remote.tell then
+                -- The account service may still have taken it: it is to forget it.
+                remote.tell({ type = "invitation_cancel", invitation_id = invitation.id })
+            end
             ctx.services.log.warn("remote", "invitation not registered", { invitation = invitation.id, code = failure })
             if failure == "REMOTE_OFFLINE" or failure == "RELAY_TIMEOUT" then
                 respond(Problem.new(503, "REMOTE_OFFLINE", "The controller is not connected to DirectorLink's servers right now; try again in a minute"))
@@ -103,6 +113,10 @@ function Invitations.delete(ctx)
     end
     if not ctx.services.invitations.revoke(id) then
         return Problem.notFound("Invitation", id)
+    end
+    -- The account service may know it (it was registered with an email): it is to forget it.
+    if ctx.services.remote and ctx.services.remote.tell then
+        ctx.services.remote.tell({ type = "invitation_cancel", invitation_id = id })
     end
     ctx.services.log.info("remote", "invitation revoked", { invitation = id, key_id = ctx.apiKey.id })
     return 204

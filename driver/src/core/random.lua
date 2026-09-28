@@ -3,8 +3,9 @@
 -- makes it is not documented, so it is never used alone: every output is a SHA-256 over a pool
 -- that keeps what it has seen (earlier outputs' state, the arrival times of requests, the clock,
 -- and /dev/urandom where the sandbox lets the driver read it) together with fresh UUIDs. The pool
--- changes after every output and is kept across restarts, so one weak source is not enough to
--- predict a secret.
+-- changes after every output, so one weak source is not enough to predict a secret. What is kept
+-- across restarts is a hash of the pool, never the pool itself: a copy of the driver's data does
+-- not tell the outputs that follow it.
 
 local Clock = require("src.core.clock")
 local Store = require("src.core.store")
@@ -12,9 +13,11 @@ local Store = require("src.core.store")
 local Random = {}
 
 local POOL_KEY = "directorlink_entropy"
-local SAVE_EVERY = 16
+-- Saved at most this often (sealed answers each take an IV from the pool: a camera shown live
+-- would otherwise write to the controller's storage every few seconds).
+local SAVE_SECONDS = 600
 
-local state = { pool = nil, counter = 0, unsaved = 0, algorithm = nil }
+local state = { pool = nil, counter = 0, unsaved = 0, savedAt = 0, algorithm = nil }
 
 local function detect()
     state.algorithm = nil
@@ -83,7 +86,8 @@ end
 
 local function save()
     state.unsaved = 0
-    Store.write(POOL_KEY, { version = 1, pool = state.pool }, false)
+    state.savedAt = os.time()
+    Store.write(POOL_KEY, { version = 2, pool = hash("seed|" .. state.pool) }, false)
 end
 
 local function ensure()
@@ -113,7 +117,7 @@ function Random.hex(length)
     -- The pool moves on: an output never tells what the next one is.
     state.pool = hash(state.pool .. "|next|" .. state.counter .. "|" .. sources())
     state.unsaved = state.unsaved + 1
-    if state.unsaved >= SAVE_EVERY then
+    if os.time() - state.savedAt >= SAVE_SECONDS then
         save()
     end
     return out:sub(1, length)
@@ -133,7 +137,7 @@ end
 
 -- Forgets the pool in memory (tests: a new driver instance).
 function Random.reset()
-    state.pool, state.counter, state.unsaved = nil, 0, 0
+    state.pool, state.counter, state.unsaved, state.savedAt = nil, 0, 0, 0
 end
 
 return Random

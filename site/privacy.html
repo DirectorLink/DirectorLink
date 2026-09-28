@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 28 September 2026</p>
+      <p class="updated">Last updated 29 September 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -40,7 +40,8 @@
       <p>
         The app talks to the DirectorLink driver on your controller directly, over your home network.
         Device names, states, commands and camera pictures do not pass through our servers. The app
-        keeps its access key and the controller's address in your browser only; your preferences
+        locks each request with its own key there too, so its access key does not travel openly on
+        your Wi-Fi. It keeps that key and the controller's address in your browser only; your preferences
         (language, theme, favorites, the rooms you hide), scenes and schedules are kept on your
         controller, shared by your own devices.
       </p>
@@ -71,9 +72,9 @@
       <h2>What our servers store</h2>
       <ul>
         <li>Your account: your Google and/or Apple account ID, email address and name, and when you signed in.</li>
-        <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out.</li>
-        <li>Homes: which homes your account owns or belongs to, and since when.</li>
-        <li>Invitations waiting to be accepted: the invited email, who made it and the expiry date. A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
+        <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out. Expired ones are deleted every day.</li>
+        <li>Homes: which homes your account owns or belongs to, and since when, and the ids (never the keys themselves) of the access keys your account uses at each home.</li>
+        <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
@@ -98,7 +99,8 @@
 
       <h2>Deleting your data</h2>
       <p>
-        Signing out ends the session on that device. <strong>Settings → Account → Delete account</strong>
+        Signing out ends the session on that device; <strong>Sign out everywhere</strong> ends it on
+        all your devices. <strong>Settings → Account → Delete account</strong>
         in the app deletes your account and signs out all your devices.
       </p>
 

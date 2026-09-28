@@ -25,6 +25,7 @@ return {
 
     { method = "GET", path = "/v1/remote", handler = "remote.status", role = "viewer" },
     { method = "POST", path = "/v1/remote/claim", handler = "remote.claim", role = "admin" },
+    { method = "POST", path = "/v1/remote/secret", handler = "remote.secret", role = "admin" },
     { method = "GET", path = "/v1/invitations", handler = "invitations.list", role = "admin" },
     { method = "POST", path = "/v1/invitations", handler = "invitations.create", role = "admin" },
     { method = "DELETE", path = "/v1/invitations/{invitationId}", handler = "invitations.delete", role = "admin" },

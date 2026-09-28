@@ -16,7 +16,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
-import { registerHomeInvitation } from "./homes.js";
+import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -64,6 +64,8 @@ export class HomeRelay extends DurableObject {
         return this.forward(request.headers.get("X-DirectorLink-Path") ?? "", homeId);
       case "/message":
         return this.message(await request.json(), homeId, request.headers.get("X-DirectorLink-User"));
+      case "/secret":
+        return this.replaceSecret(await request.json(), homeId);
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -170,22 +172,24 @@ export class HomeRelay extends DurableObject {
       case "invitation": {
         // The controller registers an invitation it made for an admin: only the home can, so a
         // member cannot bind an invitation id to an email (docs/ACCOUNTS.md).
-        const result = await registerHomeInvitation(this.env, attachment.home, data);
+        let result;
+        try {
+          result = await registerHomeInvitation(this.env, attachment.home, data);
+        } catch (error) {
+          log("invitation_failed", { home: attachment.home, error: String(error?.message ?? error) });
+          result = { ok: false, code: "INTERNAL" };
+        }
         this.reply(ws, { type: "invitation_result", id: data.id, ...result });
         return;
       }
-      case "rotate_secret": {
-        // The controller replaces its home secret, over the connection the old one opened.
-        const hash = typeof data.secret_sha256 === "string" ? data.secret_sha256.toLowerCase() : "";
-        if (!/^[0-9a-f]{64}$/.test(hash)) {
-          this.reply(ws, { type: "rotate_result", id: data.id, ok: false, code: "INVALID_REQUEST" });
-          return;
+      case "invitation_cancel":
+        // It gave up waiting for invitation_result: nothing to answer.
+        try {
+          await cancelHomeInvitation(this.env, attachment.home, data);
+        } catch (error) {
+          log("invitation_cancel_failed", { home: attachment.home, error: String(error?.message ?? error) });
         }
-        await this.ctx.storage.put("secret_sha256", hash);
-        log("home_secret_replaced", { home: attachment.home });
-        this.reply(ws, { type: "rotate_result", id: data.id, ok: true });
         return;
-      }
       case "response":
       case "claim_result":
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
@@ -207,6 +211,26 @@ export class HomeRelay extends DurableObject {
     } catch {
       // The driver went away; it asks again.
     }
+  }
+
+  // The home's owner approved a new secret (homes.js replaceSecret): only it opens the home's
+  // connection from now on. The driver is disconnected and connects again with the new one, which
+  // it has been keeping for this (docs/RELAY.md).
+  async replaceSecret(input, homeId) {
+    const hash = typeof input?.secret_sha256 === "string" ? input.secret_sha256 : "";
+    if (!/^[0-9a-f]{64}$/.test(hash)) {
+      return problem(400, "INVALID_REQUEST", "secret_sha256 must be 64 hex characters");
+    }
+    await this.ctx.storage.put("secret_sha256", hash);
+    for (const ws of this.ctx.getWebSockets(DRIVER)) {
+      try {
+        ws.close(4001, "secret replaced");
+      } catch {
+        // Already closing.
+      }
+    }
+    log("home_secret_replaced", { home: homeId });
+    return json({ ok: true });
   }
 
   async webSocketClose(ws, code, reason) {

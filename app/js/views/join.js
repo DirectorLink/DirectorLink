@@ -7,7 +7,7 @@ import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { RemoteError, acceptInvitation, parseInvitation, saveRemote } from "../remote.js";
-import { clientName, connect, errorText } from "../session.js";
+import { clientName, connect, errorText, forgetSealing } from "../session.js";
 import { notify, state, ui } from "../state.js";
 import { pageHeader, signInButtons } from "./common.js";
 
@@ -80,6 +80,8 @@ async function accept(invitation, navigate) {
       return;
     }
     saveApiKey(key.key);
+    // What was known about the previous key (its id, whether it sealed) goes with it.
+    forgetSealing();
     saveRemote({ home: invitation.home, keyId: key.id });
     // The saved address may be another controller's; the new key starts through the account and
     // the address can be entered again in Settings.

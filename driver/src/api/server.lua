@@ -1,5 +1,5 @@
--- DirectorLink LAN API server: DriverWorks TCP server + HTTP parsing + CORS + API-key auth +
--- routing + RFC 9457 errors + access logging.
+-- DirectorLink LAN API server: DriverWorks TCP server + HTTP parsing + Host check (421) + CORS +
+-- API-key auth (sealed requests: handlers/sealed.lua) + routing + RFC 9457 errors + access logging.
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
@@ -78,19 +78,22 @@ function Server.hostAllowed(host)
         return true
     end
     host = string.lower(host)
-    local name = host:match("^%[([%x:]+)%]:?%d*$")
-    if name then
-        return true
+    -- An IPv6 address, possibly IPv4-mapped (::ffff:192.168.1.5) or with a zone (%25eth0).
+    local literal = host:match("^%[([^%]]+)%]:?%d*$")
+    if literal then
+        return literal:gsub("%%25[%w%-%._~]*$", ""):match("^[%x:%.]+$") ~= nil
     end
-    name = host:match("^([^:]+):?%d*$")
+    local name = host:match("^([^:]+):?%d*$")
     if not name then
         return false
     end
-    if name:match("^%d+%.%d+%.%d+%.%d+$") or name:match("^[%w%-]+$") then
+    -- One trailing dot is the same name, fully qualified (director.local.).
+    name = name:gsub("%.$", "")
+    if name:match("^%d+%.%d+%.%d+%.%d+$") or name:match("^[%w%-_]+$") then
         return true
     end
     for _, suffix in ipairs(LOCAL_SUFFIXES) do
-        if #name > #suffix and name:sub(-#suffix) == suffix and name:sub(1, -#suffix - 1):match("^[%w%-%.]+$") then
+        if #name > #suffix and name:sub(-#suffix) == suffix and name:sub(1, -#suffix - 1):match("^[%w%-%._]+$") then
             return true
         end
     end

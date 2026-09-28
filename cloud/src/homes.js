@@ -36,6 +36,9 @@ const HOME_CREATOR = "home";
 
 // Pending invitations one account may have registered for one home (the controller allows 20).
 const MAX_PENDING_PER_MEMBER = 20;
+// Pending invitations a controller may have registered for its home (it keeps at most 20 itself).
+const MAX_PENDING_PER_HOME = 20;
+const SECRET_SHA256 = /^[0-9a-f]{64}$/;
 
 // The driver's codes (driver/src/cloud/remote.lua) as HTTP answers.
 const CODES = {
@@ -224,16 +227,79 @@ export async function registerHomeInvitation(env, homeId, data) {
   if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + INVITATION_SKEW_MS) {
     return { ok: false, code: "INVALID_REQUEST" };
   }
-  const [, inserted] = await env.DB.batch([
+  // Invitations belong to a home an account has claimed; nobody could accept one otherwise.
+  if (!(await env.DB.prepare("SELECT 1 AS found FROM homes WHERE id = ?").bind(homeId).first())) {
+    return { ok: false, code: "NOT_CLAIMED" };
+  }
+  const now = iso();
+  const statements = [
     env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND (expires_at < ? OR accepted_by IS NOT NULL)").bind(homeId, iso(Date.now() - PURGE_GRACE_MS)),
-    env.DB.prepare("INSERT INTO invitations (home_id, id, email, expires_at, created_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (home_id, id) DO NOTHING")
-      .bind(homeId, data.invitation_id, email, iso(expires), HOME_CREATOR),
-  ]);
+  ];
+  // The controller's list of invitations still waiting there (with this one): those it revoked
+  // meanwhile are forgotten, so they no longer count against the limit.
+  const pending = Array.isArray(data.pending) ? data.pending : null;
+  if (pending && pending.length > 0 && pending.length <= 50 && pending.every((id) => SHORT_ID.test(id ?? ""))) {
+    statements.push(
+      env.DB.prepare(
+        `DELETE FROM invitations WHERE home_id = ? AND created_by = ? AND accepted_by IS NULL AND id NOT IN (${pending.map(() => "?").join(", ")})`
+      ).bind(homeId, HOME_CREATOR, ...pending)
+    );
+  }
+  statements.push(
+    env.DB.prepare(
+      "INSERT INTO invitations (home_id, id, email, expires_at, created_by) SELECT ?, ?, ?, ?, ? " +
+        "WHERE (SELECT COUNT(*) FROM invitations WHERE home_id = ? AND created_by = ? AND accepted_by IS NULL AND expires_at > ?) < ? " +
+        "ON CONFLICT (home_id, id) DO NOTHING"
+    ).bind(homeId, data.invitation_id, email, iso(expires), HOME_CREATOR, homeId, HOME_CREATOR, now, MAX_PENDING_PER_HOME)
+  );
+  const results = await env.DB.batch(statements);
+  const inserted = results[results.length - 1];
   if (!inserted.meta.changes) {
-    return { ok: false, code: "INVITATION_EXISTS" };
+    const exists = await env.DB.prepare("SELECT 1 AS found FROM invitations WHERE home_id = ? AND id = ?").bind(homeId, data.invitation_id).first();
+    return { ok: false, code: exists ? "INVITATION_EXISTS" : "INVITATION_LIMIT_REACHED" };
   }
   log("invitation_registered", { home: homeId, by: "home", invitation: data.invitation_id });
   return { ok: true };
+}
+
+// The controller gave up on an invitation it asked to register (no answer in time): the row goes,
+// unless someone already accepted it.
+export async function cancelHomeInvitation(env, homeId, data) {
+  if (!SHORT_ID.test(data?.invitation_id ?? "")) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  await env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND created_by = ? AND accepted_by IS NULL")
+    .bind(homeId, data.invitation_id, HOME_CREATOR)
+    .run();
+  log("invitation_cancelled", { home: homeId, by: "home", invitation: data.invitation_id });
+  return { ok: true };
+}
+
+// The owner approves a new secret for the home's relay connection: its SHA-256, which the owner's
+// app got from the controller on the home network (POST /v1/remote/secret there). From then on the
+// relay accepts only the new secret, and the controller connects with it (docs/RELAY.md). Whoever
+// holds a copy of the controller's data can connect as the home, but cannot do this.
+async function replaceSecret(request, env, user, homeId) {
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  if (!home || home.owner_id !== user.id) {
+    return problem(403, "OWNER_ONLY", "Only the home's owner replaces its secret");
+  }
+  const input = await body(request);
+  const hash = typeof input?.secret_sha256 === "string" ? input.secret_sha256.toLowerCase() : "";
+  if (!SECRET_SHA256.test(hash)) {
+    return problem(400, "INVALID_REQUEST", "Send { secret_sha256 } from your controller (POST /v1/remote/secret on the home network)");
+  }
+  const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
+  const response = await stub.fetch("https://home-relay/secret", {
+    method: "POST",
+    headers: { "X-DirectorLink-Home": homeId, "content-type": "application/json" },
+    body: JSON.stringify({ secret_sha256: hash }),
+  });
+  if (!response.ok) {
+    return new Response(response.body, response);
+  }
+  log("home_secret_approved", { home: homeId, user: user.id });
+  return new Response(null, { status: 204 });
 }
 
 // Registered by the home's owner, for controllers before 1.0.0 (which do not register their
@@ -393,6 +459,7 @@ const ROUTES = [
   [/^\/v1\/homes\/([0-9a-f]{32})$/, { GET: (r, env, user, m) => homeInfo(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/e2e$/, { POST: (r, env, user, m) => e2e(r, env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/invitations$/, { POST: (r, env, user, m) => registerInvitation(r, env, user, m[1]) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})\/secret$/, { POST: (r, env, user, m) => replaceSecret(r, env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/members$/, { GET: (r, env, user, m) => listMembers(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/members\/([0-9a-f]{32})$/, { DELETE: (r, env, user, m) => removeMember(env, user, m[1], m[2]) }],
   [/^\/v1\/join$/, { POST: (r, env, user) => join(r, env, user) }],

@@ -237,6 +237,7 @@ def scenario(client, bridge):
     # Remote access is off on the dev bridge: status, and the refusals that follow from it.
     client.check("GET", "/v1/remote", 200)
     client.check("POST", "/v1/remote/claim", 409)
+    client.check("POST", "/v1/remote/secret", 409)
     client.check("GET", "/v1/invitations", 200)
     client.check("POST", "/v1/invitations", 409, body={"role": "member"})
     client.check("POST", "/v1/invitations", 400, body={"role": "owner"})
@@ -355,7 +356,7 @@ def scenario(client, bridge):
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
     info = client.check("GET", "/v1/sealed", 200, auth=False)
-    stray = {"v": 1, "home": info["home_id"], "key": "deadbeef", "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "A" * 43 + "="}
+    stray = {"v": 1, "home": info["home"], "key": "deadbeef", "iv": "AAAAAAAAAAAAAAAAAAAAAA==", "ct": "AAAAAAAAAAAAAAAAAAAAAA==", "mac": "A" * 43 + "="}
     client.check("POST", "/v1/sealed", 401, body={"envelope": stray}, auth=False)
     client.check("POST", "/v1/sealed", 400, body={"envelope": "not an envelope", "extra": 1}, auth=False)
     bridge.new_pairing_code()

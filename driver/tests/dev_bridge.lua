@@ -26,7 +26,10 @@ Properties["Door Control"] = "Enabled"
 local Server = require("src.api.server")
 local driverOrigins = Server.originAllowed
 Server.originAllowed = function(origin)
-    return driverOrigins(origin) or (type(origin) == "string" and origin:match("^http://localhost:%d+$") ~= nil)
+    if type(origin) ~= "string" then
+        return driverOrigins(origin)
+    end
+    return driverOrigins(origin) or origin:match("^http://localhost:%d+$") ~= nil or origin:match("^http://127%.0%.0%.1:%d+$") ~= nil
 end
 -- And a fake Open-Meteo answers for its weather.
 local Json = require("src.core.json")

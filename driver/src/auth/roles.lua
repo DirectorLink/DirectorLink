@@ -1,8 +1,9 @@
 -- API key roles. Each role can do everything the roles before it can:
 --   viewer  read everything (rooms, devices, states, camera pictures)
---   member  also control lights, thermostats and blinds
+--   member  also control lights, thermostats and blinds, and run scenes
 --   doors   also open doors and gates (relays; needs "Door Control" enabled in Composer)
---   admin   also manage API keys, room names and the log
+--   admin   also manage API keys, rooms, scenes, schedules, invitations, profiles, remote access
+--           and the log
 
 local Roles = {}
 

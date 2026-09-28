@@ -6,7 +6,8 @@
 --   claim  the cloud checks a claim token, which proves that whoever claims this home holds an
 --          admin key here on the home network
 -- Problems the relay has to know about (unknown key, broken seal, replay) are sent in the clear as
--- a `code`; they reveal nothing about the home.
+-- a `code`; they reveal nothing about the home. Remote.handleLocal opens requests sealed the same
+-- way on the home network (POST /v1/sealed, naming the home "lan").
 
 local Json = require("src.core.json")
 local Random = require("src.core.random")
@@ -19,6 +20,9 @@ local Remote = {}
 
 Remote.CLAIM_SECONDS = 300
 Remote.MAX_REQUEST_BYTES = 64 * 1024
+-- The home that sealed requests on the home network name (POST /v1/sealed): not the relay's home
+-- id, which is not given out without a key, and never valid through the relay.
+Remote.LAN_HOME = "lan"
 
 local METHODS = { GET = true, POST = true, PATCH = true, DELETE = true }
 local JOIN_PATH = "/v1/auth/join"
@@ -185,8 +189,8 @@ end
 
 -- Opens `envelope` with `lockKey` and checks it is a fresh request. Returns the request, or nil
 -- and a code.
-local function openRequest(lockKey, envelope, keyId)
-    if type(envelope) ~= "table" or envelope.key ~= keyId or envelope.home ~= state.homeId() then
+local function openRequest(lockKey, envelope, keyId, home)
+    if type(envelope) ~= "table" or envelope.key ~= keyId or envelope.home ~= home then
         return nil, "BAD_ENVELOPE"
     end
     if type(envelope.ct) == "string" and #envelope.ct > Remote.MAX_REQUEST_BYTES * 2 then
@@ -208,14 +212,14 @@ local function openRequest(lockKey, envelope, keyId)
 end
 
 -- Seals an answer to `request` for `keyId`.
-local function sealAnswer(lockKey, keyId, request, status, contentType, body)
+local function sealAnswer(lockKey, home, keyId, request, status, contentType, body)
     local answer = { id = request.id, ts = Clock.now(), status = status, content_type = contentType or "" }
     if isText(contentType) then
         answer.body = body or ""
     else
         answer.body_base64 = C4:Base64Encode(body or ""):gsub("%s+", "")
     end
-    return Lock.seal(lockKey, state.homeId(), keyId, "res", Json.encode(answer))
+    return Lock.seal(lockKey, home, keyId, "res", Json.encode(answer))
 end
 
 -- Runs an API request as `principal` through the same code as LAN requests; done(status, headers,
@@ -225,6 +229,11 @@ local function run(request, principal, done, client)
     local path, query = tostring(request.path or ""):match("^([^?]*)%??(.*)$")
     if not METHODS[method] or not path or path:sub(1, 4) ~= "/v1/" then
         done(400, { { "Content-Type", "application/problem+json" } }, problemJson(400, "BAD_REQUEST", "Remote requests are GET, POST, PATCH or DELETE on /v1/..."))
+        return
+    end
+    -- A sealed request inside a sealed request would run as one from the home network.
+    if path:gsub("/+$", "") == "/v1/sealed" then
+        done(400, { { "Content-Type", "application/problem+json" } }, problemJson(400, "BAD_REQUEST", "A sealed request cannot carry another sealed request"))
         return
     end
     local hasBody = request.body ~= nil and request.body ~= Json.null
@@ -249,7 +258,8 @@ local function handleE2e(message, send)
         send({ type = "e2e", id = message.id, code = "UNKNOWN_KEY" })
         return
     end
-    local request, code = openRequest(key.lock, message.envelope, keyId)
+    local home = state.homeId()
+    local request, code = openRequest(key.lock, message.envelope, keyId, home)
     if not request then
         log("warn", "refused a remote request", { key_id = keyId, code = code })
         send({ type = "e2e", id = message.id, code = code })
@@ -262,7 +272,7 @@ local function handleE2e(message, send)
             return
         end
         answered = true
-        local envelope = sealAnswer(key.lock, keyId, request, status, headerValue(headers, "content-type"), body)
+        local envelope = sealAnswer(key.lock, home, keyId, request, status, headerValue(headers, "content-type"), body)
         send({ type = "e2e", id = message.id, envelope = envelope })
     end)
 end
@@ -270,13 +280,17 @@ end
 -- A sealed request that came on the home network (POST /v1/sealed): opened and checked exactly
 -- like one through the account; done(envelope) with the sealed answer, or done(nil, code).
 function Remote.handleLocal(envelope, client, done)
+    if not state.available then
+        done(nil, "LOCK_UNAVAILABLE")
+        return
+    end
     local keyId = type(envelope) == "table" and envelope.key or nil
     local key = type(keyId) == "string" and state.services.keys.remote(keyId) or nil
     if not key then
         done(nil, "UNKNOWN_KEY")
         return
     end
-    local request, code = openRequest(key.lock, envelope, keyId)
+    local request, code = openRequest(key.lock, envelope, keyId, Remote.LAN_HOME)
     if not request then
         log("warn", "refused a sealed request on the home network", { key_id = keyId, code = code })
         done(nil, code)
@@ -289,7 +303,7 @@ function Remote.handleLocal(envelope, client, done)
             return
         end
         answered = true
-        done(sealAnswer(key.lock, keyId, request, status, headerValue(headers, "content-type"), body))
+        done(sealAnswer(key.lock, Remote.LAN_HOME, keyId, request, status, headerValue(headers, "content-type"), body))
     end, client)
 end
 
@@ -309,7 +323,7 @@ local function handleJoin(message, send)
         send({ type = "join_result", id = message.id, ok = false, code = "INVITATION_NOT_FOUND" })
         return
     end
-    local request, code = openRequest(invitation.lock, message.envelope, invitationId)
+    local request, code = openRequest(invitation.lock, message.envelope, invitationId, state.homeId())
     if not request then
         log("warn", "refused an invitation", { invitation = invitationId, code = code })
         send({ type = "join_result", id = message.id, ok = false, code = code })
@@ -344,7 +358,7 @@ local function handleJoin(message, send)
     end
     log("info", "an invitation was accepted", { invitation = invitationId, key_id = record.id, role = record.role })
     local body = Json.encode({ key = record.secret, id = record.id, name = record.name, role = record.role, created_at = record.created_at })
-    local envelope = sealAnswer(invitation.lock, invitationId, request, 201, "application/json; charset=utf-8", body)
+    local envelope = sealAnswer(invitation.lock, state.homeId(), invitationId, request, 201, "application/json; charset=utf-8", body)
     send({ type = "join_result", id = message.id, ok = true, key_id = record.id, envelope = envelope })
 end
 

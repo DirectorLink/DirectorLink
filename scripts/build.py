@@ -95,7 +95,7 @@ def package_entries(version, driver_version, spec):
         entries[name] = path.read_text(encoding="utf-8")
     if SPEC_MODULE in entries:
         fail(f"{SPEC_MODULE} is generated; remove it from the source tree")
-    # Driver assets (Control4 app button icons), served as controller://driver/DirectorLink/<path>.
+    # Driver assets (the device's icons in Composer and the Control4 app), served as controller://driver/DirectorLink/<path>.
     for path in sorted((DRIVER / "www").rglob("*")):
         if path.is_file():
             entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()

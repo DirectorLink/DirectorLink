@@ -19,6 +19,9 @@ Relay.KEEPALIVE_MS = 25000
 Relay.SILENCE_SECONDS = 60
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
+-- Replacement home secrets waiting for the owner's approval: the newest few, for a day.
+Relay.CANDIDATES = 3
+Relay.CANDIDATE_SECONDS = 24 * 3600
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -37,6 +40,10 @@ local state = {
     services = nil,
     onStatus = nil,
     status = "Off",
+    -- Which secret this connection attempt uses: nil for the current one, or the index of a
+    -- waiting replacement, tried one after another (newest first) after the relay refused the
+    -- current one: the owner may have approved one of them meanwhile.
+    trying = nil,
 }
 
 local function log(level, message, data)
@@ -56,13 +63,27 @@ local function randomHex(length)
     return Random.hex(length)
 end
 
+local function validSecret(value)
+    return type(value) == "string" and #value == 64 and value:match("^%x+$") ~= nil
+end
+
 local function readIdentity(name, encrypted)
     local stored, form = Store.read(name, encrypted)
     if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
-        local next = type(stored.next_secret) == "string" and stored.next_secret:match("^%x+$") and #stored.next_secret == 64 and stored.next_secret or nil
-        return { home_id = stored.home_id, home_secret = stored.home_secret, next_secret = next }, form
+        local candidates = {}
+        for _, item in ipairs(type(stored.next_secrets) == "table" and stored.next_secrets or {}) do
+            if type(item) == "table" and validSecret(item.secret) and tonumber(item.at) then
+                candidates[#candidates + 1] = { secret = item.secret, at = tonumber(item.at) }
+            end
+        end
+        return { home_id = stored.home_id, home_secret = stored.home_secret, next_secrets = #candidates > 0 and candidates or nil }, form
     end
     return nil, form
+end
+
+-- The waiting replacement a connection attempt uses, if any.
+local function candidateInUse(identity)
+    return state.trying and identity.next_secrets and identity.next_secrets[state.trying] or nil
 end
 
 local function saveIdentity(identity)
@@ -168,7 +189,7 @@ local function onMessage(text, kind)
     end
     -- Answers to what the driver asked (Relay.ask).
     local waiting = type(message.id) == "string" and state.asked[message.id]
-    if waiting and (message.type == "invitation_result" or message.type == "rotate_result") then
+    if waiting and message.type == "invitation_result" then
         state.asked[message.id] = nil
         waiting(message)
         return
@@ -221,12 +242,28 @@ function Relay.announceKeys()
 end
 
 local function onOpen()
-    -- The secret in use works: a replacement that was not confirmed is dropped.
+    -- Connected with a replacement: the owner approved it, and it is the home secret from now on
+    -- (the others go). Connected with the current one: none was approved; replacements waiting
+    -- for approval stay for a day.
     local current = Relay.identity()
-    if current.next_secret then
-        current.next_secret = nil
+    local candidate = candidateInUse(current)
+    if candidate then
+        current.home_secret, current.next_secrets = candidate.secret, nil
         saveIdentity(current)
+        log("info", "home secret replaced", { home_id = current.home_id })
+    elseif current.next_secrets then
+        local kept = {}
+        for _, item in ipairs(current.next_secrets) do
+            if os.time() - item.at < Relay.CANDIDATE_SECONDS then
+                kept[#kept + 1] = item
+            end
+        end
+        if #kept ~= #current.next_secrets then
+            current.next_secrets = #kept > 0 and kept or nil
+            saveIdentity(current)
+        end
     end
+    state.trying = nil
     state.attempts = 0
     state.lastHeard = os.time()
     state.connectedAt = os.time()
@@ -245,15 +282,16 @@ local function onClose(reason, status, body)
     if reason == "refused" then
         local problem = Json.decode(body or "")
         local detail = type(problem) == "table" and (problem.code or problem.detail) or ("HTTP " .. tostring(status))
-        -- A new secret the relay may have taken before its answer was lost: try the other one.
+        -- The owner may have approved a waiting replacement: try each once, newest first.
         local identity = Relay.identity()
-        if status == 401 and identity.next_secret then
-            identity.home_secret, identity.next_secret = identity.next_secret, identity.home_secret
-            saveIdentity(identity)
-            log("info", "trying the other home secret", {})
-            scheduleReconnect("trying the other home secret", 1)
+        local nextTry = (state.trying or 0) + 1
+        if status == 401 and identity.next_secrets and identity.next_secrets[nextTry] then
+            state.trying = nextTry
+            log("info", "trying a new home secret", { candidate = nextTry })
+            scheduleReconnect("trying a new home secret", 1)
             return
         end
+        state.trying = nil
         log("warn", "the relay refused the connection", { status = status, detail = tostring(detail) })
         scheduleReconnect("refused: " .. tostring(detail), status == 401 and Relay.REFUSED_RETRY_SECONDS or nil)
         return
@@ -279,8 +317,10 @@ connect = function()
             onClose = onClose,
         })
     end
+    local candidate = candidateInUse(identity)
+    local secret = candidate and candidate.secret or identity.home_secret
     state.socket.headers = {
-        { "Authorization", "Bearer " .. identity.home_secret },
+        { "Authorization", "Bearer " .. secret },
         { "X-DirectorLink-Home", identity.home_id },
         { "X-DirectorLink-Version", Version.BRIDGE_VERSION },
         { "User-Agent", "DirectorLink/" .. Version.BRIDGE_VERSION },
@@ -325,36 +365,64 @@ function Relay.ask(message, seconds, done)
     send(message)
 end
 
--- Replaces the home secret (Composer: Rotate Remote Secret), e.g. after a copy of the controller's
--- data was lost. The relay learns the new one's SHA-256 over the connection the old one opened;
--- the new one is kept as "next" until the relay confirms, so neither can be lost.
-function Relay.rotateSecret(done)
-    local identity = Relay.identity()
-    if not state.connectedAt then
-        done(false, "REMOTE_OFFLINE")
-        return
+-- Tells the relay something that needs no answer; false when not connected.
+function Relay.tell(message)
+    if not state.socket or not state.connectedAt then
+        return false
     end
+    send(message)
+    return true
+end
+
+-- A replacement for the home secret, for the home's owner to approve (docs/RELAY.md): the owner's
+-- app asks for it on the home network (POST /v1/remote/secret) and gives its SHA-256 to the
+-- account service, which from then on accepts only it. Each request gets a new one, never one
+-- made earlier (a copy of the controller's data taken meanwhile would hold that). The newest few
+-- are kept until one of them connects, so an approval that arrives late still works. Returns the
+-- SHA-256 (hex), or nil and a code.
+function Relay.prepareSecret()
+    local identity = Relay.identity()
     local secret = Random.hex(64)
-    identity.next_secret = secret
-    saveIdentity(identity)
-    local hash = C4:Hash("SHA256", secret, { return_encoding = "HEX" }):lower()
-    Relay.ask({ type = "rotate_secret", secret_sha256 = hash }, 15, function(answer, code)
-        if not answer or answer.ok ~= true then
-            -- Kept as "next": tried if the relay did take it and refuses the old one.
-            log("warn", "the home secret was not replaced", { code = tostring(code or (answer and answer.code) or "REFUSED") })
-            done(false, code or (answer and answer.code) or "REFUSED")
-            return
+    local ok, hash = pcall(C4.Hash, C4, "SHA256", secret, { return_encoding = "HEX" })
+    if not ok or type(hash) ~= "string" or not hash:match("^%x+$") or #hash ~= 64 then
+        return nil, "HASH_UNAVAILABLE"
+    end
+    local candidates = { { secret = secret, at = os.time() } }
+    for _, item in ipairs(identity.next_secrets or {}) do
+        if #candidates < Relay.CANDIDATES and os.time() - item.at < Relay.CANDIDATE_SECONDS then
+            candidates[#candidates + 1] = item
         end
-        identity.home_secret, identity.next_secret = secret, nil
-        saveIdentity(identity)
-        log("info", "home secret replaced", { home_id = identity.home_id })
-        -- Connect again with it.
+    end
+    local previous = identity.next_secrets
+    identity.next_secrets = candidates
+    if not saveIdentity(identity) then
+        identity.next_secrets = previous
+        return nil, "STORE_FAILED"
+    end
+    -- An attempt in progress keeps its place in the list.
+    state.trying = nil
+    log("info", "new home secret waiting for the owner's approval", { home_id = identity.home_id, waiting = #candidates })
+    return hash:lower()
+end
+
+-- Composer: Reset Remote Identity. A new home id and secret, for when the old ones cannot be
+-- trusted and cannot be replaced (someone else holds the home's connection). The account service
+-- sees a new home: the owner links it again and invites everyone again.
+function Relay.resetIdentity()
+    local identity = { home_id = randomHex(32), home_secret = randomHex(64) }
+    if not saveIdentity(identity) then
+        return false, "STORE_FAILED"
+    end
+    state.identity = identity
+    state.trying = nil
+    log("warn", "remote identity reset", { home_id = identity.home_id })
+    if state.enabled then
         if state.socket then
             state.socket:close(nil, true)
         end
-        scheduleReconnect("new home secret", 1)
-        done(true)
-    end)
+        scheduleReconnect("new remote identity", 1)
+    end
+    return true
 end
 
 -- options: { services, onStatus = function(text), remote = Remote.handle }

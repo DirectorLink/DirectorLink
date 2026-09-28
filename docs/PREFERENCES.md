@@ -13,7 +13,7 @@
 
 Everything on the controller works without the internet and without DirectorLink's servers,
 survives driver updates (`src/core/store.lua`), and travels through the end-to-end lock when used
-away from home. The cloud never sees any of it.
+away from home, and from the app on the home network too (1.0.0). The cloud never sees any of it.
 
 ## Profiles
 

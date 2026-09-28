@@ -1,6 +1,6 @@
 # DirectorLink Console
 
-The API console, debugging and log viewer for DirectorLink, on **https://console.directorlink.io**. Plain HTML, CSS and ES modules — no build step, no service worker (it is not a PWA). Like the app, it talks to the driver directly over the LAN at `http://<controller>:41999`; nothing goes through Cloudflare.
+The API console, debugging and log viewer for DirectorLink, on **https://console.directorlink.io**. Plain HTML, CSS and ES modules — no build step, no service worker (it is not a PWA). Like the app, it talks to the driver directly over the LAN at `http://<controller>:41999`; nothing goes through Cloudflare. Unlike the app, it sends its key in the `Authorization` header and pairs without a key exchange, so its (admin) key travels in the clear on the home network: use it on a network you trust, and revoke its key (Forget key) when done.
 
 ## Structure
 
@@ -18,7 +18,7 @@ The API console, debugging and log viewer for DirectorLink, on **https://console
 
 The controller address and the API key are stored in this origin's `localStorage` (`directorlink.directorHost`, `directorlink.apiKey`), separate from the app's. Two ways to get a key:
 
-1. **Pairing code** — in Composer: DirectorLink → Actions → **New Pairing Code** (the installer can read it out). Composer shows it as `1234 5678`; it lasts 15 minutes and works once. The field formats it as it is typed or pasted and `POST /v1/auth/pair` sends the 8 digits with the name "DirectorLink Console". A paired key is always admin. Each problem gets its own message: `INVALID_FIELD`, `PAIRING_CODE_INVALID` (tries left), `PAIRING_NOT_ACTIVE`, `PAIRING_RATE_LIMITED` (5 wrong codes lock pairing for 60 s), `KEY_LIMIT_REACHED`, `PAIRING_UNAVAILABLE`.
+1. **Pairing code** — in Composer: DirectorLink → Actions → **New Pairing Code** (the installer can read it out). Composer shows it as `1234 5678`; it lasts 15 minutes and works once. The field formats it as it is typed or pasted and `POST /v1/auth/pair` sends the 8 digits with the name "DirectorLink Console". A paired key is always admin. Each problem gets its own message: `INVALID_FIELD`, `PAIRING_CODE_INVALID` (tries left), `PAIRING_NOT_ACTIVE`, `PAIRING_RATE_LIMITED` (5 wrong codes lock pairing for this device for 60 s; 20 in all close the code), `KEY_LIMIT_REACHED`, `PAIRING_UNAVAILABLE`.
 2. **Paste a key** — for example one created in the Keys tab.
 
 After connecting the console reads `GET /v1/api-keys/current` (its role; 404 on drivers before roles → admin), `GET /v1/system` and `GET /v1/openapi.json`. **Forget key** revokes the key with `DELETE /v1/api-keys/current`, then removes it from the browser.
@@ -39,7 +39,7 @@ python scripts/dev_server.py                                      # fake control
 python -m http.server 8081 --bind 127.0.0.1 --directory console   # console on http://127.0.0.1:8081
 ```
 
-Use `localhost` as the controller address and the pairing code the dev server prints (type `code` + Enter in the dev server for a new one: codes work once). The driver accepts `http://localhost` and `http://127.0.0.1` origins. The app's Settings → API console opens this local copy when the app itself runs on localhost.
+Use `localhost` as the controller address and the pairing code the dev server prints (type `code` + Enter in the dev server for a new one: codes work once). The dev server allows `http://localhost` and `http://127.0.0.1` origins; a real driver answers only `https://app.directorlink.io` and `https://console.directorlink.io` (since 1.0.0). The app's Settings → API console opens this local copy when the app itself runs on localhost.
 
 ## Deploying
 

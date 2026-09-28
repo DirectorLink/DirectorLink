@@ -25,6 +25,8 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 1. The driver connects: `GET /relay/connect` with `Upgrade: websocket`, `X-DirectorLink-Home: <home_id>` and `Authorization: Bearer <home_secret>`. The Worker checks the headers (400) and passes the request to the home's object.
 2. The object compares the secret's SHA-256 with the one stored for the home (`secret_sha256`, stored by the first connection) and answers 401 if it differs. Otherwise it closes an earlier driver socket with 4000 `replaced`, accepts the new one with the Hibernation API (`ctx.acceptWebSocket(server, ["driver"])`) and answers 101.
 3. The app posts a sealed envelope to `/v1/homes/{home_id}/e2e` (or `/v1/join`, or a claim) with the account's session. `homes.js` checks that the account is a member, keeps only the envelope's own fields and hands it to the object's `/message` operation, which sends `{"type":"e2e",...}` over the socket and waits up to 15 s for the reply with the same `id`. The sealed answer goes back to the app as it came; a refusal code becomes Problem Details.
+4. The driver may ask the object too (1.0.0): `invitation` registers an invitation it made in D1 (`registerHomeInvitation`, answered `invitation_result`; at most 20 waiting per home, only for a claimed home, and those missing from the controller's `pending` list are forgotten), and `invitation_cancel` forgets one it revoked or gave up waiting for. Only the socket the home's secret opened can send them.
+5. The home's owner can replace the home's secret (`POST /v1/homes/{home_id}/secret`, below): the object stores the new SHA-256 and closes the driver's socket (4001 `secret replaced`); the driver, which has been keeping the new secret, connects again with it. The driver itself cannot replace it: whoever holds a copy of its data could.
 
 Between requests the object is evicted from memory while the socket stays connected. The driver's `ping` is answered `pong` by the runtime itself (`setWebSocketAutoResponse`), which does not wake the object; `getWebSocketAutoResponseTimestamp` gives the time of the last one for the status. What must outlive an eviction is kept in the socket's attachment (connection id, connect time, version, last message) or in storage (`secret_sha256`, `connected_at`, `disconnected_at`, `last_seen`, `version`). Requests waiting for their answer are kept in memory: while one waits, its caller keeps the object awake.
 
@@ -82,7 +84,7 @@ npx wrangler@4.143.0 deploy                   # Worker, Durable Object migration
 curl https://api.directorlink.io/health
 ```
 
-`.github/workflows/deploy.yml` does not deploy this folder yet. Logs are in Workers Observability: each event is one JSON line (`home_registered`, `driver_connected`, `driver_hello`, `request_relayed`, `request_timeout`, `driver_disconnected`, `wrong_secret`, ...). Secrets and tokens are never logged.
+`.github/workflows/deploy.yml` does not deploy this folder yet. Logs are in Workers Observability: each event is one JSON line (`home_registered`, `driver_connected`, `driver_hello`, `request_relayed`, `request_timeout`, `driver_disconnected`, `wrong_secret`, `invitation_registered`, `invitation_cancelled`, `home_secret_approved`, `home_secret_replaced`, `signed_out_everywhere`, `sessions_purged`, ...). Secrets and tokens are never logged.
 
 ## Cost
 
@@ -92,7 +94,7 @@ curl https://api.directorlink.io/health
 
 ## Limits
 
-- Trust on first use: the first secret that connects with a `home_id` owns its connection (who may use the home is decided by the claim and the device keys). The driver makes up its `home_id` (128 random bits), so only someone who learned it before the driver's first connection could take it. A registration cannot be reset short of deleting the object's storage; a driver that loses its identity simply creates a new `home_id`.
+- Trust on first use: the first secret that connects with a `home_id` owns its connection (who may use the home is decided by the claim and the device keys). The driver makes up its `home_id` (128 random bits), so only someone who learned it before the driver's first connection could take it. The home's owner can replace its secret (the app's **Replace the remote secret**, `POST /v1/homes/{home_id}/secret`); otherwise a registration cannot be reset short of deleting the object's storage, and a driver that loses its identity, or is reset (Composer: Reset Remote Identity), simply creates a new `home_id`.
 - A WebSocket message may be at most 32 MiB: a binary answer larger than about 24 MiB (as `body_base64`) makes the runtime close the driver's connection (1009), and the caller gets 502.
 - No rate limiting yet.
 
@@ -109,6 +111,7 @@ curl https://api.directorlink.io/health
 | `DELETE /v1/me/identities/{google\|apple}` | 204: the account no longer signs in with that provider; 409 `LAST_SIGN_IN` for its only one |
 | `DELETE /v1/me` | 204; the account and all its sessions are deleted |
 | `POST /auth/logout` | 204; this session ends |
+| `POST /auth/logout?everywhere=1` | 204; every session of the account ends, on every device |
 
 ## Homes
 
@@ -118,12 +121,13 @@ curl https://api.directorlink.io/health
 | `GET /v1/homes` | the account's homes: `{"items": [{"home_id", "owner", "added_at", "connected"}]}` |
 | `GET /v1/homes/{home_id}` | `{"home_id", "claimed", "owner", "member"}`, so the app can ask before taking a home over |
 | `POST /v1/homes/{home_id}/e2e` | `{ envelope }` sealed by a member's device; `{ envelope }` sealed by the home. 403 `NOT_A_MEMBER`, 400 `INVALID_ENVELOPE` (also for requests over 128 KiB), 503 `HOME_OFFLINE`, 504 `HOME_TIMEOUT`, or the driver's refusal code |
-| `POST /v1/homes/{home_id}/invitations` | `{ invitation_id, email, expires_at }` of an invitation the controller made; 201. Registered once: 409 `INVITATION_EXISTS`; at most 20 waiting per member and home: 429 `INVITATION_LIMIT_REACHED` |
+| `POST /v1/homes/{home_id}/secret` | `{ secret_sha256 }` from the controller (`POST /v1/remote/secret`, home network); the owner only (403 `OWNER_ONLY`). 204: only the new secret opens the home's connection from now on, and the driver is reconnected |
+| `POST /v1/homes/{home_id}/invitations` | For drivers before 1.0.0, which do not register their invitations themselves: `{ invitation_id, email, expires_at }` of an invitation the controller made; 201. The home's owner only (403 `OWNER_ONLY`). Registered once: 409 `INVITATION_EXISTS`; at most 20 waiting per account and home: 429 `INVITATION_LIMIT_REACHED` |
 | `POST /v1/join` | `{ home_id, invitation_id, envelope }` sealed with the invitation's secret, by the invited email (403 `EMAIL_MISMATCH`, 404 `INVITATION_NOT_FOUND`); `{ home_id, envelope, member }` with the new key sealed inside; `member` says whether the account now belongs to the home |
 | `GET /v1/homes/{home_id}/members` | the owner only: `{"items": [{"user_id", "email", "name", "owner", "added_at", "key_ids"}]}`; `key_ids`: the home's API keys this account uses, as far as the cloud has seen (the key an invitation made, and each key the home accepted a sealed request with) |
 | `DELETE /v1/homes/{home_id}/members/{user_id}` | 204: the owner removes someone, or anyone leaves (the owner cannot, 409) |
 
-They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`) removes invitations a day after their expiry.
+They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`, `src/index.js`) removes invitations a day after their expiry, and expired sessions and unfinished sign-ins.
 
 `/v1/me`, `/v1/homes…`, `/v1/join` and `/auth/logout` answer CORS with credentials only for `APP_ORIGINS`, and `DELETE`/`POST` from any other origin (or none) are refused with 403 `ORIGIN_NOT_ALLOWED`.
 

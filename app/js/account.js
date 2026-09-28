@@ -93,8 +93,27 @@ export function signIn(hash = "#/settings", provider = "google", { link = false 
 // `everywhere`: every device signed in to this account is signed out (a lost phone).
 export async function signOut({ everywhere = false } = {}) {
   set({ ...state.account, busy: true });
+  if (everywhere) {
+    // It must be known to have worked: someone signing out a lost phone relies on it.
+    let response = null;
+    try {
+      response = await call("/auth/logout?everywhere=1", "POST");
+    } catch {
+      response = null;
+    }
+    if (response?.status === 204) {
+      remember(false);
+      set({ status: "signed-out", notice: "signedOutEverywhere" });
+    } else if (response?.status === 401) {
+      remember(false);
+      set({ status: "signed-out", notice: "signOutEverywhereExpired" });
+    } else {
+      set({ ...state.account, busy: false, notice: "signOutEverywhereFailed" });
+    }
+    return;
+  }
   try {
-    await call(everywhere ? "/auth/logout?everywhere=1" : "/auth/logout", "POST");
+    await call("/auth/logout", "POST");
   } catch {
     // The session ends on the server when it can be reached; here it is forgotten either way.
   }

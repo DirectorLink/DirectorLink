@@ -3,7 +3,7 @@
 import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
-import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
+import { approveHomeSecret, claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, iconButton, name } from "../dom.js";
 import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
@@ -463,6 +463,41 @@ async function linkHome() {
   }
 }
 
+// The owner replaces the secret the controller connects to the relay with (docs/RELAY.md): the
+// controller makes it and gives only its hash, here on the home network; the account service
+// then accepts only the new one. Someone with a copy of the controller's data cannot do this.
+async function replaceHomeSecret() {
+  const linked = savedRemote();
+  if (!linked || !window.confirm(t("settings.account.home.secretConfirm"))) return;
+  ui.homeBusy = true;
+  ui.homeMessage = null;
+  notify();
+  try {
+    const prepared = await api("/v1/remote/secret", { method: "POST" });
+    if (prepared?.home_id !== linked.home) {
+      throw new Error("The controller at this address is not this home's");
+    }
+    await approveHomeSecret(linked.home, prepared.secret_sha256);
+    ui.homeMessage = { kind: "success", text: t("settings.account.home.secretReplaced") };
+  } catch (error) {
+    ui.homeMessage = { kind: "error", text: error?.code === "OWNER_ONLY" ? t("settings.account.home.secretOwnerOnly") : errorText(error) };
+  } finally {
+    ui.homeBusy = false;
+    notify();
+  }
+}
+
+function secretPanel() {
+  return [
+    h("p", { class: "field-help" }, t("settings.account.home.secretHelp")),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "button", class: "button button-secondary", dataset: { key: "replace-secret" }, disabled: Boolean(ui.homeBusy), onclick: replaceHomeSecret }, t("settings.account.home.secret"))
+    ),
+  ];
+}
+
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 async function createInvitation({ forSelf }) {
@@ -586,6 +621,8 @@ function homeSection() {
   if (linked) {
     content.push(h("p", { class: "field-help", id: "account-home-linked" }, t("settings.account.home.linked")));
     if (can("admin")) content.push(invitePanel());
+    // On the home network only: the controller refuses it through the account.
+    if (can("admin") && !ui.homeInvitation && !ui.inviteForm && state.status === "connected" && state.transport === "lan") content.push(...secretPanel());
   } else if (IS_IOS) {
     content.push(h("p", { class: "field-help" }, t("settings.account.home.iosJoin")));
   } else if (state.status !== "connected" || state.transport !== "lan") {
@@ -622,7 +659,7 @@ function homeSection() {
 function accountSection() {
   const account = state.account;
   const notice = account.notice
-    ? h("p", { class: `notice ${["deleted", "linked", "removed"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    ? h("p", { class: `notice ${["deleted", "linked", "removed", "signedOutEverywhere"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
   let body;
   if (account.status === "signed-in") {
