@@ -124,6 +124,9 @@ end
 function Auth.revoke_current_key(ctx)
     local id = ctx.apiKey.id
     ctx.services.keys.revoke(id)
+    if ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
+    end
     ctx.services.log.info("auth", "API key revoked by its own client", { key_id = id })
     ctx.services.onKeysChanged()
     return 204, nil
@@ -160,6 +163,11 @@ function Auth.update_key(ctx)
         end
         return Problem.internal("The API key could not be changed (" .. tostring(failure) .. ")")
     end
+    -- Only admins make invitations: a key that is no longer admin keeps none (its claim token
+    -- stops working too, src/cloud/remote.lua).
+    if record.role ~= "admin" and ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
+    end
     ctx.services.log.info("auth", "API key changed", { key_id = id, name = record.name, role = record.role, by = ctx.apiKey.id })
     ctx.services.onKeysChanged()
     return 200, Views.apiKey(record, ctx.apiKey.id)
@@ -169,6 +177,9 @@ function Auth.delete_key(ctx)
     local id = ctx.params.keyId
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)
+    end
+    if ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
     end
     ctx.services.log.info("auth", "API key revoked", { key_id = id, by = ctx.apiKey.id })
     ctx.services.onKeysChanged()

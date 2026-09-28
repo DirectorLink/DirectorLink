@@ -5,14 +5,15 @@
 //
 // Markup: <div class="cam" data-state="loading|ok|busy|none"><img data-camera-id data-width [data-live]></div>
 
-import { apiImage } from "../api-client.js";
 import { formatTime, t } from "./i18n.js";
-import { handleUnauthorized } from "./session.js";
+import { handleUnauthorized, image } from "./session.js";
 import { findDevice, state } from "./state.js";
 
-const GRID_REFRESH_MS = 3000;
-const FULL_REFRESH_MS = 1000;
-const LIVE_REFRESH_MS = 1000;
+// Through the account every picture is sealed and relayed, so it refreshes less often.
+const remote = () => state.transport === "remote";
+const GRID_REFRESH_MS = () => (remote() ? 10000 : 3000);
+const FULL_REFRESH_MS = () => (remote() ? 3000 : 1000);
+const LIVE_REFRESH_MS = () => (remote() ? 2000 : 1000);
 const pictures = new Map(); // "cameraId:width" -> { url, at }
 const visible = new WeakSet();
 const observed = new Set();
@@ -41,7 +42,7 @@ const observer =
     : null;
 
 async function fetchPicture(camera, width) {
-  const blob = await apiImage(state.host, `${camera.snapshot_href}?width=${width}`, { apiKey: state.apiKey });
+  const blob = await image(`${camera.snapshot_href}?width=${width}`);
   const key = `${camera.id}:${width}`;
   const previous = pictures.get(key);
   const url = URL.createObjectURL(blob);
@@ -89,7 +90,7 @@ export function attachCameraImages(root) {
     }
   }
   forgetRemoved();
-  scheduleGrid(picturesPending(root) ? 400 : GRID_REFRESH_MS);
+  scheduleGrid(picturesPending(root) ? 400 : GRID_REFRESH_MS());
   if (!liveRunning && root.querySelector("img[data-camera-id][data-live]")) {
     liveRunning = true;
     window.setTimeout(refreshLive, 250);
@@ -139,7 +140,7 @@ async function refreshImages(images, stillWanted) {
       }
     } catch (error) {
       if (error?.status === 401) {
-        handleUnauthorized();
+        handleUnauthorized(error);
         return false;
       }
       for (const image of targets) {
@@ -161,7 +162,7 @@ async function refreshLive() {
     liveRunning = false;
     return;
   }
-  window.setTimeout(refreshLive, LIVE_REFRESH_MS);
+  window.setTimeout(refreshLive, LIVE_REFRESH_MS());
 }
 
 async function refreshGrid() {
@@ -174,7 +175,7 @@ async function refreshGrid() {
   } finally {
     gridRunning = false;
   }
-  scheduleGrid(GRID_REFRESH_MS);
+  scheduleGrid(GRID_REFRESH_MS());
 }
 
 // Full view in a <dialog>; the picture size follows the screen.
@@ -207,7 +208,7 @@ async function refreshFull() {
       if (full !== current) return;
       if (error?.status === 401) {
         closeFullView();
-        handleUnauthorized();
+        handleUnauthorized(error);
         return;
       }
       if (error?.status === 503) {
@@ -218,7 +219,7 @@ async function refreshFull() {
       }
     }
   }
-  if (full === current) current.timer = window.setTimeout(refreshFull, FULL_REFRESH_MS);
+  if (full === current) current.timer = window.setTimeout(refreshFull, FULL_REFRESH_MS());
 }
 
 export function closeFullView() {

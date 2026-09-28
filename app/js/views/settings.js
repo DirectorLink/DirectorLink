@@ -1,13 +1,16 @@
 // Settings: appearance, language, room names, controller, account, app and about.
 
 import { deleteAccount, loadAccount, signIn, signOut } from "../account.js";
+import { IS_IOS } from "../platform.js";
+import { qrCanvas } from "../qr.js";
+import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, name } from "../dom.js";
-import { LANGUAGES, formatTime, languagePreference, t } from "../i18n.js";
+import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { installApp } from "../pwa.js";
-import { connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
+import { api, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { offlineBanner, pageHeader } from "./common.js";
@@ -231,7 +234,8 @@ function controllerSection(navigate) {
       const host = useHost(hostInput.value);
       delete ui.drafts.settingsHost;
       ui.controllerMessage = null;
-      if (host !== previous || !state.apiKey) {
+      // A device that joined with an invitation keeps its key for its home's first address.
+      if ((previous && host !== previous) || !state.apiKey) {
         // A new controller needs its own key: pair with a code from its Composer project.
         state.notice = { kind: "info", text: t("connect.pairNew") };
         navigate("#/");
@@ -274,18 +278,21 @@ function controllerSection(navigate) {
     "controller",
     "controller",
     t("settings.controller.title"),
-    h(
-      "form",
-      { class: "inline-form", onsubmit: submit },
-      h("label", { class: "field-label", for: "settings-host" }, t("connect.hostLabel")),
-      h(
-        "div",
-        { class: "input-row" },
-        hostInput,
-        h("button", { type: "submit", class: "button button-primary", dataset: { key: "settings-host-save" } }, t("settings.controller.connect"))
-      ),
-      h("p", { class: "field-help" }, t("connect.hostHelp"))
-    ),
+    // iPhone and iPad cannot use the home-network connection (docs/ACCOUNTS.md).
+    IS_IOS
+      ? null
+      : h(
+          "form",
+          { class: "inline-form", onsubmit: submit },
+          h("label", { class: "field-label", for: "settings-host" }, t("connect.hostLabel")),
+          h(
+            "div",
+            { class: "input-row" },
+            hostInput,
+            h("button", { type: "submit", class: "button button-primary", dataset: { key: "settings-host-save" } }, t("settings.controller.connect"))
+          ),
+          h("p", { class: "field-help" }, t("connect.hostHelp"))
+        ),
     ui.controllerMessage ? h("p", { class: `notice notice-${ui.controllerMessage.kind}`, role: "alert" }, ui.controllerMessage.text) : null,
     h(
       "dl",
@@ -341,6 +348,204 @@ function controllerSection(navigate) {
 
 // ---- account -------------------------------------------------------------------------------
 
+// ---- This home: linking it to the account, adding devices, inviting (docs/ACCOUNTS.md) --------
+
+let remoteInfoLoading = false;
+function loadRemoteInfo() {
+  if (remoteInfoLoading) return;
+  remoteInfoLoading = true;
+  api("/v1/remote")
+    .then((info) => {
+      state.remoteInfo = info;
+    })
+    .catch((error) => {
+      state.remoteInfo = { enabled: false, lock: false, missing: error?.status === 404 || error?.status === 405 };
+    })
+    .finally(() => {
+      remoteInfoLoading = false;
+      notify();
+    });
+}
+
+async function linkHome() {
+  ui.homeBusy = true;
+  ui.homeMessage = null;
+  notify();
+  try {
+    // The home is asked again: the address may have changed since the card was drawn.
+    const info = await api("/v1/remote");
+    state.remoteInfo = info;
+    const homeId = info?.home_id;
+    // Already this account's home (another device linked it): this device only needs its key id.
+    // Another account's: linking takes it over, so ask first.
+    const known = homeId ? await homeStatus(homeId) : null;
+    let linked = homeId;
+    let transferred = false;
+    if (!known?.owner && !known?.member) {
+      if (known?.claimed && !window.confirm(t("settings.account.home.takeOverConfirm"))) {
+        return;
+      }
+      const claim = await api("/v1/remote/claim", { method: "POST" });
+      if (homeId && claim.home_id !== homeId) {
+        throw new Error("The controller changed while linking");
+      }
+      transferred = Boolean((await claimHome(claim.home_id, claim.claim_token))?.transferred);
+      linked = claim.home_id;
+    }
+    const me = await api("/v1/api-keys/current");
+    saveRemote({ home: linked, keyId: me.id });
+    ui.homeMessage = { kind: "success", text: transferred ? t("settings.account.home.takenOver") : t("settings.account.home.linkedNow") };
+  } catch (error) {
+    ui.homeMessage = { kind: "error", text: error?.code === "REMOTE_ACCESS_OFF" ? t("settings.account.home.turnOn") : errorText(error) };
+  } finally {
+    ui.homeBusy = false;
+    notify();
+  }
+}
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function createInvitation({ forSelf }) {
+  const email = forSelf ? state.account.user.email : (ui.drafts["invite-email"] || "").trim();
+  const role = forSelf ? state.role || "admin" : ui.drafts["invite-role"] || "member";
+  if (!EMAIL.test(email)) {
+    ui.homeMessage = { kind: "error", text: t("settings.account.home.badEmail") };
+    notify();
+    return;
+  }
+  ui.homeBusy = true;
+  ui.homeMessage = null;
+  notify();
+  let invitation = null;
+  try {
+    // Just under 7 days: the account refuses invitations longer than that.
+    invitation = await api("/v1/invitations", { method: "POST", body: { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 } });
+    await registerInvitation(invitation.home_id, invitation, email);
+    ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
+    ui.inviteForm = false;
+  } catch (error) {
+    // An invitation the account does not know can never be accepted: revoke it at home too.
+    if (invitation?.id) {
+      api(`/v1/invitations/${invitation.id}`, { method: "DELETE" }).catch(() => {});
+    }
+    ui.homeMessage = { kind: "error", text: errorText(error) };
+  } finally {
+    ui.homeBusy = false;
+    notify();
+  }
+}
+
+function draftField(key, fallback, props) {
+  const input = h("input", { ...props, value: ui.drafts[key] ?? fallback, dataset: { key } });
+  input.addEventListener("input", () => {
+    ui.drafts[key] = input.value;
+  });
+  return input;
+}
+
+function invitationResult(invitation) {
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(invitation.link);
+      ui.homeMessage = { kind: "success", text: t("settings.account.home.copied") };
+    } catch {
+      ui.homeMessage = { kind: "error", text: t("settings.account.home.copyFailed") };
+    }
+    notify();
+  };
+  return h(
+    "div",
+    { class: "invitation" },
+    h("p", {}, invitation.forSelf ? t("settings.account.home.scanHelp") : t("settings.account.home.sendHelp", { email: invitation.email })),
+    qrCanvas(invitation.link, { label: t("settings.account.home.qrLabel") }),
+    h("input", { class: "invitation-link", type: "text", readonly: true, dir: "ltr", value: invitation.link, "aria-label": t("settings.account.home.linkLabel"), onfocus: (event) => event.target.select() }),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "button", class: "button button-primary", dataset: { key: "invitation-copy" }, onclick: copy }, t("settings.account.home.copy")),
+      navigator.share
+        ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "invitation-share" }, onclick: () => navigator.share({ title: "DirectorLink", url: invitation.link }).catch(() => {}) }, t("settings.account.home.share"))
+        : null,
+      h("button", { type: "button", class: "button button-quiet", dataset: { key: "invitation-done" }, onclick: () => { ui.homeInvitation = null; ui.homeMessage = null; notify(); } }, t("common.done"))
+    ),
+    h("p", { class: "field-help" }, t("settings.account.home.expires", { time: formatDateTime(new Date(invitation.expiresAt)) }))
+  );
+}
+
+function invitePanel() {
+  if (ui.homeInvitation) {
+    return invitationResult(ui.homeInvitation);
+  }
+  if (ui.inviteForm) {
+    const roles = ["viewer", "member", "doors", "admin"];
+    const role = h("select", { id: "invite-role", dataset: { key: "invite-role" } }, ...roles.map((value) => h("option", { value, selected: (ui.drafts["invite-role"] || "member") === value }, roleLabel(value))));
+    role.addEventListener("change", () => {
+      ui.drafts["invite-role"] = role.value;
+    });
+    return h(
+      "form",
+      { class: "invite-form", novalidate: true, onsubmit: (event) => { event.preventDefault(); createInvitation({ forSelf: false }); } },
+      h("label", { class: "field-label", for: "invite-email" }, t("settings.account.home.email")),
+      draftField("invite-email", "", { id: "invite-email", type: "email", autocomplete: "off", dir: "ltr", placeholder: "name@example.com" }),
+      h("label", { class: "field-label", for: "invite-role" }, t("settings.account.home.role")),
+      role,
+      h("p", { class: "field-help" }, t("settings.account.home.inviteHelp")),
+      h(
+        "div",
+        { class: "button-row" },
+        h("button", { type: "submit", class: "button button-primary", dataset: { key: "invite-create" }, disabled: Boolean(ui.homeBusy) }, t("settings.account.home.create")),
+        h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.inviteForm = false; notify(); } }, t("common.cancel"))
+      )
+    );
+  }
+  return [
+    h("p", { class: "field-help" }, t("settings.account.home.addHelp")),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "button", class: "button button-secondary", dataset: { key: "add-device" }, disabled: Boolean(ui.homeBusy), onclick: () => createInvitation({ forSelf: true }) }, icon("plus"), t("settings.account.home.addDevice")),
+      h("button", { type: "button", class: "button button-secondary", dataset: { key: "invite" }, disabled: Boolean(ui.homeBusy), onclick: () => { ui.inviteForm = true; notify(); } }, icon("user"), t("settings.account.home.invite"))
+    ),
+  ];
+}
+
+function homeSection() {
+  const linked = savedRemote();
+  const content = [];
+  if (linked) {
+    content.push(h("p", { class: "field-help", id: "account-home-linked" }, t("settings.account.home.linked")));
+    if (can("admin")) content.push(invitePanel());
+  } else if (IS_IOS) {
+    content.push(h("p", { class: "field-help" }, t("settings.account.home.iosJoin")));
+  } else if (state.status !== "connected" || state.transport !== "lan") {
+    content.push(h("p", { class: "field-help" }, t("settings.account.home.connectFirst")));
+  } else if (!can("admin")) {
+    content.push(h("p", { class: "field-help" }, t("settings.account.home.askAdmin")));
+  } else {
+    const info = state.remoteInfo;
+    if (!info) {
+      loadRemoteInfo();
+      content.push(h("p", { class: "field-help", role: "status" }, t("common.loading")));
+    } else if (info.missing) {
+      content.push(h("p", { class: "notice notice-info" }, t("settings.account.home.updateDriver")));
+    } else if (!info.enabled) {
+      content.push(
+        h("p", { class: "notice notice-info" }, t("settings.account.home.turnOn")),
+        h("div", { class: "button-row" }, h("button", { type: "button", class: "button button-secondary", onclick: () => { state.remoteInfo = null; notify(); } }, icon("refresh"), t("common.retry")))
+      );
+    } else if (!info.lock) {
+      content.push(h("p", { class: "notice notice-error" }, t("settings.account.home.noLock")));
+    } else {
+      content.push(
+        h("p", { class: "field-help" }, t("settings.account.home.linkHelp")),
+        h("div", { class: "button-row" }, h("button", { type: "button", class: "button button-primary", dataset: { key: "link-home" }, disabled: Boolean(ui.homeBusy), onclick: linkHome }, t("settings.account.home.link")))
+      );
+    }
+  }
+  const message = ui.homeMessage ? h("p", { class: `notice notice-${ui.homeMessage.kind}`, role: "status" }, ui.homeMessage.text) : null;
+  return h("div", { class: "account-home", id: "account-home" }, h("h3", { class: "settings-subtitle" }, t("settings.account.home.title")), message, ...content);
+}
+
 // Signing in is optional: it is for using the home away from the home network, and for inviting
 // family (docs/ACCOUNTS.md). Google shows its own page; this card only shows the result.
 function accountSection() {
@@ -375,6 +580,7 @@ function accountSection() {
           t("settings.account.delete")
         )
       ),
+      homeSection(),
     ];
   } else if (account.status === "unknown" || account.status === "loading") {
     body = [h("p", { class: "field-help", role: "status" }, t("common.loading"))];

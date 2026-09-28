@@ -8,100 +8,10 @@ local sha1 = require("sha1")
 
 local tests = {}
 
-local BINDING = 6001
-local GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
-local function bigEndian(value, bytes)
-    local chars = {}
-    for index = bytes, 1, -1 do
-        chars[index] = string.char(value % 256)
-        value = math.floor(value / 256)
-    end
-    return table.concat(chars)
-end
-
--- A server frame (never masked).
-local function serverFrame(opcode, payload, fin)
-    local b1 = (fin == false and 0 or 128) + opcode
-    local length = #payload
-    if length < 126 then
-        return string.char(b1, length) .. payload
-    elseif length < 65536 then
-        return string.char(b1, 126) .. bigEndian(length, 2) .. payload
-    end
-    return string.char(b1, 127) .. bigEndian(length, 8) .. payload
-end
-
-local function xorByte(a, b)
-    local result, bit = 0, 1
-    for _ = 1, 8 do
-        if a % 2 ~= b % 2 then
-            result = result + bit
-        end
-        a, b, bit = math.floor(a / 2), math.floor(b / 2), bit * 2
-    end
-    return result
-end
-
--- Parses the client frames in `data`; every one must be masked.
-local function clientFrames(data)
-    local frames = {}
-    local offset = 1
-    while offset <= #data do
-        local b1, b2 = data:byte(offset, offset + 1)
-        T.truthy(b2 >= 128, "client frames are masked")
-        local length = b2 % 128
-        local header = 2
-        if length == 126 then
-            length = data:byte(offset + 2) * 256 + data:byte(offset + 3)
-            header = 4
-        elseif length == 127 then
-            length = 0
-            for index = offset + 2, offset + 9 do
-                length = length * 256 + data:byte(index)
-            end
-            header = 10
-        end
-        local mask = { data:byte(offset + header, offset + header + 3) }
-        local start = offset + header + 4
-        local chars = {}
-        for index = 0, length - 1 do
-            chars[#chars + 1] = string.char(xorByte(data:byte(start + index), mask[index % 4 + 1]))
-        end
-        frames[#frames + 1] = { fin = b1 >= 128, opcode = b1 % 16, payload = table.concat(chars), header = header }
-        offset = start + length
-    end
-    return frames
-end
-
--- Starts the driver, switches Remote Access on and completes the connection.
-local function connected(options)
-    options = options or {}
-    local mock = options.mock or Mock.startDriver()
-    Properties["Remote Access"] = "On"
-    OnPropertyChanged("Remote Access")
-    local connection = mock.network[BINDING]
-    T.truthy(connection, "a network connection is created")
-    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
-    local request = connection.sent
-    connection.sent = ""
-    local key = request:match("\r\nSec%-WebSocket%-Key: ([^\r\n]+)")
-    local accept = C4:Base64Encode(sha1(key .. GUID))
-    ReceivedFromNetwork(BINDING, 443, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
-        .. "Sec-WebSocket-Accept: " .. accept .. "\r\n\r\n")
-    local hello = clientFrames(connection.sent)
-    connection.sent = ""
-    return mock, connection, request, hello
-end
-
-local function relayRequest(mock, connection, message)
-    connection.sent = ""
-    ReceivedFromNetwork(BINDING, 443, serverFrame(1, Json.encode(message)))
-    local frames = clientFrames(connection.sent)
-    connection.sent = ""
-    T.eq(#frames, 1, "one response frame")
-    return Json.decode(frames[1].payload), frames[1]
-end
+local Harness = require("relay_harness")
+local BINDING = Harness.BINDING
+local bigEndian, serverFrame, clientFrames = Harness.bigEndian, Harness.serverFrame, Harness.clientFrames
+local connected, relayRequest = Harness.connected, Harness.relayRequest
 
 local function lastTimer(mock, delay)
     for index = #mock.timers, 1, -1 do
@@ -154,38 +64,23 @@ function tests.handshake_sends_the_home_identity_and_hello_follows()
     T.contains(mock.properties["Remote Status"], home:sub(1, 8))
 end
 
-function tests.relayed_reads_use_the_lan_api()
-    local mock, connection = connected()
-    local response = relayRequest(mock, connection, { type = "request", id = "r1", method = "GET", path = "/v1/lights?room_id=11", body = Json.null })
-    T.eq(response.type, "response")
-    T.eq(response.id, "r1")
-    T.eq(response.status, 200)
-    T.contains(response.content_type, "application/json")
-    local body = Json.decode(response.body)
-    T.eq(#body.items, 2, "the query string reaches the API")
-end
-
-function tests.relayed_requests_are_read_only()
+function tests.plain_relayed_requests_are_refused_without_reaching_the_api()
     local mock, connection = connected()
     local before = #mock.commands
-    local logs = relayRequest(mock, connection, { type = "request", id = "r2", method = "GET", path = "/v1/logs" })
-    T.eq(logs.status, 403, "viewer cannot read the log")
-    T.eq(Json.decode(logs.body).required_role, "admin")
-    local patch = relayRequest(mock, connection, { type = "request", id = "r3", method = "PATCH", path = "/v1/lights/21", body = '{"on":true}' })
-    T.eq(patch.status, 405)
-    T.eq(Json.decode(patch.body).code, "RELAY_READ_ONLY")
-    local outside = relayRequest(mock, connection, { type = "request", id = "r4", method = "GET", path = "/health" })
-    T.eq(outside.status, 405, "only /v1/ paths")
+    for _, message in ipairs({
+        { type = "request", id = "r1", method = "GET", path = "/v1/lights?room_id=11", body = Json.null },
+        { type = "request", id = "r2", method = "GET", path = "/v1/cameras/61/snapshot" },
+        { type = "request", id = "r3", method = "PATCH", path = "/v1/lights/21", body = '{"on":true}' },
+    }) do
+        local response = relayRequest(mock, connection, message)
+        T.eq(response.type, "response")
+        T.eq(response.id, message.id)
+        T.eq(response.status, 410, "since 0.10.0 only sealed requests are accepted")
+        T.eq(Json.decode(response.body).code, "RELAY_REQUESTS_RETIRED")
+        T.notContains(response.body, "Kitchen", "nothing of the home")
+        T.eq(response.body_base64, nil)
+    end
     T.eq(#mock.commands, before, "nothing reaches a device")
-end
-
-function tests.binary_answers_are_base64()
-    local mock, connection = connected()
-    local response = relayRequest(mock, connection, { type = "request", id = "p1", method = "GET", path = "/v1/cameras/61/snapshot" })
-    T.eq(response.status, 200)
-    T.eq(response.content_type, "image/jpeg")
-    T.eq(response.body, nil)
-    T.truthy(#response.body_base64 > 0, "picture sent as base64")
 end
 
 function tests.pings_are_answered_and_fragments_joined()

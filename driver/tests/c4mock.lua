@@ -7,6 +7,54 @@ local Json = require("src.core.json")
 local md5 = require("md5")
 local sha1 = require("sha1")
 local sha256 = require("sha256")
+local aes = require("aes")
+local Base64 = require("src.core.base64")
+
+-- Byte XOR without bit operators (HMAC pads are short).
+local function xorByte(a, b)
+    local result, bit = 0, 1
+    for _ = 1, 8 do
+        if a % 2 ~= b % 2 then
+            result = result + bit
+        end
+        a, b, bit = math.floor(a / 2), math.floor(b / 2), bit * 2
+    end
+    return result
+end
+
+local function hmacSha256(key, data)
+    if #key > 64 then
+        key = sha256(key)
+    end
+    key = key .. string.rep("\000", 64 - #key)
+    local inner, outer = {}, {}
+    for i = 1, 64 do
+        inner[i] = string.char(xorByte(key:byte(i), 0x36))
+        outer[i] = string.char(xorByte(key:byte(i), 0x5c))
+    end
+    return sha256(table.concat(outer) .. sha256(table.concat(inner) .. data))
+end
+
+-- Values in and out of Director's crypto functions: NONE (bytes), HEX or BASE64. Like OpenSSL,
+-- BASE64 output is broken into lines of 64 characters, so the driver must not depend on it.
+local function decodeValue(value, encoding)
+    if encoding == "HEX" then
+        return Base64.fromHex(value)
+    elseif encoding == "BASE64" then
+        return Base64.decode(value)
+    end
+    return value
+end
+
+local function encodeValue(value, encoding)
+    if encoding == "HEX" then
+        return Base64.toHex(value)
+    elseif encoding == "BASE64" then
+        local text = Base64.encode(value)
+        return (text:gsub(("."):rep(64), "%0\n"))
+    end
+    return value
+end
 
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
@@ -332,6 +380,41 @@ function Mock.install(project)
         end
         assert(algorithm == "MD5", "only MD5, SHA1 and SHA256 are faked")
         return string.upper(md5(data))
+    end
+
+    function C4:HMAC(digest, key, data, options)
+        options = options or {}
+        assert(digest == "SHA256", "only HMAC-SHA256 is faked")
+        key, data = decodeValue(key, options.key_encoding), decodeValue(data, options.data_encoding)
+        if not key or not data then
+            return nil, "bad encoding"
+        end
+        return encodeValue(hmacSha256(key, data), options.return_encoding or "NONE")
+    end
+
+    local function crypt(encrypt, cipher, key, iv, data, options)
+        options = options or {}
+        if cipher ~= "AES-256-CBC" then
+            return nil, "unsupported cipher " .. tostring(cipher)
+        end
+        key, iv, data = decodeValue(key, options.key_encoding), decodeValue(iv, options.iv_encoding), decodeValue(data, options.data_encoding)
+        if not key or not iv or not data or #key ~= 32 then
+            return nil, "bad key, IV or data"
+        end
+        mock.cryptCalls = (mock.cryptCalls or 0) + 1
+        local result, err = (encrypt and aes.encryptCBC or aes.decryptCBC)(key, iv, data, options.padding ~= false)
+        if not result then
+            return nil, err
+        end
+        return encodeValue(result, options.return_encoding or "NONE")
+    end
+
+    function C4:Encrypt(cipher, key, iv, data, options)
+        return crypt(true, cipher, key, iv, data, options)
+    end
+
+    function C4:Decrypt(cipher, key, iv, data, options)
+        return crypt(false, cipher, key, iv, data, options)
     end
 
     function C4:CreateNetworkConnection(binding, host)

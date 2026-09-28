@@ -8,9 +8,9 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 - `theme-boot.js` — blocking script in `<head>`: applies the saved palette, theme and text direction before the first paint (the CSP forbids inline scripts)
 - `app.js` — entry module: hash router, renderer, dialogs, start-up
 - `js/` — ES modules, no build step:
-  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden; live pictures about every second), `doorbells.js` (noticing rings, Dismiss, notifications), `account.js` (sign in with Google through api.directorlink.io, sign out, delete the account; a device that never signed in never asks), `rings.js` (when a ring is recent, relative times; no browser dependencies, unit-tested)
+  - `state.js` (shared state + redraw scheduling), `session.js` (pairing code, reconnect, 10 s refresh, 401 handling, room rename, key revocation), `controls.js` (optimistic device commands, confirmation by re-reading, door/gate pulse with confirm step), `camera-feed.js` (snapshots as blobs, visible tiles only, paused while hidden; live pictures about every second), `doorbells.js` (noticing rings, Dismiss, notifications), `account.js` (sign in with Google through api.directorlink.io, sign out, delete the account; a device that never signed in never asks), `lock.js` (the end-to-end lock in WebCrypto, checked against `tests/vectors/lock.json`), `remote.js` (sealed requests through the account, linking a home, invitations and their links), `platform.js` (iPhone and iPad), `qr.js` (QR codes, with the vendored MIT `vendor/qrcodegen.js`), `rings.js` (when a ring is recent, relative times; no browser dependencies, unit-tested)
   - `model.js` (room names per language, grouping, "on" counts), `favorites.js` (per controller, in `localStorage`), `components.js` (device rows and tiles), `dom.js`, `icons.js` (inline stroke SVG), `theme.js`, `i18n.js`, `pwa.js` (service worker, install prompt)
-  - `views/` — `home.js`, `room.js`, `cameras.js`, `climate.js`, `settings.js`, `connect.js` (first-time setup), `common.js` (header, connection chip, shared states)
+  - `views/` — `home.js`, `room.js`, `cameras.js`, `climate.js`, `settings.js`, `connect.js` (first-time setup), `join.js` (accepting an invitation), `common.js` (header, connection chip, shared states)
 - `i18n/en.js`, `i18n/he.js` — interface text
 - `styles.css` — the app's styles
 - `api-client.js` — shared client for the LAN API (API port, API key storage, pairing code format, `fetch` with Local Network Access annotations); `console/api-client.js` is an exact copy (`scripts/check_sites.py` compares them)
@@ -19,13 +19,13 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 
 ## Screens
 
-Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`.
+Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`, `#/join/<invitation>` (taken out of the address as the page opens; see Remote access).
 
 - **Home** — a doorbell banner while someone rings (see Doorbells), connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address and **pairing code** (see below).
 - **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doorbells (drivers with `/v1/doorbells`), Doors & gates (drivers with `/v1/relays`), Cameras (without the doorbell's own camera, shown with the doorbell) and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
 - **Cameras** — one large picture and a grid; thumbnails refresh about every 3 s, the full view about every second.
 - **Climate** — all thermostats grouped by room.
-- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), account (sign in with Google, sign out, delete account; `docs/ACCOUNTS.md`), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost; doorbell notifications), about. The controller's project counts include doorbells.
+- **Settings** — appearance, language, room names per language (`PATCH /v1/rooms/{id}`), controller (address, status, versions, pair again, forget key), account (sign in with Google, sign out, delete account, and This home: link it, Add my other device, Invite someone; `docs/ACCOUNTS.md`), app (offline copy, install, API console — opens https://console.directorlink.io, or `http://127.0.0.1:8081` when the app runs on localhost; doorbell notifications), about. The controller's project counts include doorbells.
 
 ## Pairing
 
@@ -93,6 +93,16 @@ Then open `http://localhost:8080`. Without a controller, run `python scripts/dev
 
 The production site is served over HTTPS and talks to the controller over plain HTTP on the LAN. Chromium browsers gate these requests behind Local Network Access permission; requests to private IP literals or `.local` hostnames, annotated with `targetAddressSpace: "local"`, are allowed after the user grants it. A controller on this computer (`localhost`, the dev server) is annotated `"loopback"` instead, because Chromium blocks a request whose annotation does not match the address.
 
-**iPhone and iPad cannot use the LAN connection.** Every browser on iOS and iPadOS uses WebKit, which blocks these HTTP requests from an HTTPS page as mixed content and has no Local Network Access permission to allow them; the request never leaves the device (the controller logs nothing) and the app shows "Could not reach DirectorLink". Pairing therefore has to happen on a computer or an Android phone. iPhones and iPads will connect through remote access (`docs/ACCOUNTS.md`).
+**iPhone and iPad cannot use the LAN connection.** Every browser on iOS and iPadOS uses WebKit, which blocks these HTTP requests from an HTTPS page as mixed content and has no Local Network Access permission to allow them; the request never leaves the device (the controller logs nothing) and the app shows "Could not reach DirectorLink". Pairing therefore has to happen on a computer or an Android phone. iPhones and iPads connect through the account instead (Remote access, below).
+
+## Remote access
+
+With an account (`docs/ACCOUNTS.md`), requests are sealed on the device with its lock key (`js/lock.js`) and sent to `api.directorlink.io`, which passes them to the home without being able to read them.
+
+- **Link this home** (Settings → Account, on the home network, admin key, Remote Access On in Composer): the app asks the controller for a claim token and gives it to the account. A home already linked to this account is only linked for this device; one linked to another account is taken over only after a confirmation.
+- **Add my other device** / **Invite someone**: the controller makes an invitation (10 minutes, or 7 days for an email), the account learns its id, email and expiry, and the app shows the link and a QR code: `https://app.directorlink.io/#/join/<home>.<invitation>.<secret>`. The secret never reaches a server.
+- **Joining** (`#/join`): sign in with the invited email and accept; the controller's new key comes back sealed. It replaces a key the device already had, after a confirmation.
+- **Choosing the connection**: the home network first; when it gives no answer, the account (reads are sent again that way, commands are not, so a gate never opens twice). Away from home the app checks once a minute whether the home network is back, with `GET /v1/remote` and its key, and returns only when the controller there is this home. iPhone and iPad always use the account. The chip says **Connected · via account**.
+- Failures of the account connection (signed out, home offline) never forget the device's key; signed out, the banner offers to sign in again.
 
 The CSP in `_headers` allows Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) and `blob:` images (camera pictures are fetched with the API key and shown as blobs).

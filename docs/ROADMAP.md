@@ -38,7 +38,10 @@
 - [x] Pair once with an on-demand code (New Pairing Code, 15 minutes, one use); the Access button and access requests are gone (0.8.0)
 - [x] DoorBird doorbells: rings, motion, access, open the gate (0.9.2)
 - [x] Keys, room names and the remote identity survive driver updates and restarts; keys stored only as hashes (0.9.2)
-- [ ] Remote access: relay connection proof (0.9.2, test), then Google/Apple accounts with end-to-end encryption, claiming a home on the LAN, invitations (design: `docs/ACCOUNTS.md`, awaiting approval)
+- [x] Remote access: relay connection proof (0.9.2, test)
+- [x] Remote access with Google accounts, end-to-end encryption, claiming a home on the LAN, invitations, iPhone and iPad (0.10.0; `docs/ACCOUNTS.md`)
+- [ ] Sign in with Apple; a Members screen; owner approval of email mismatches
+- [ ] Remote access: tie cloud membership to device keys
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA
@@ -86,8 +89,6 @@
 
 ## Deferred
 
-- multiple users/roles
-- remote cloud relay
 - automatic C4Z update
 - advanced project editing
 - plugin ecosystem

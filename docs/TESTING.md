@@ -2,7 +2,17 @@
 
 ## Current release
 
-`v0.9.2` — DoorBird, pairing that survives updates and restarts, and the remote-access test. Update DirectorLink in Composer (no reboot), then pair once more if the app asks.
+`v0.10.0` — remote access with your account, locked end to end, on iPhone too. Update DirectorLink in Composer (no reboot) and set Remote Access to On.
+
+## 0i. Remote access with an account
+
+1. After the update, DirectorLink's log (`GET /v1/logs?category=remote`) shows `lock self-test passed`, and `GET /v1/remote` answers `enabled: true`, `connected: true`, `lock: true` and the home id.
+2. On a computer at home (already paired): Settings → Account → **Sign in with Google**, then **Link this home to my account**. The card says the home is linked.
+3. **Add my other device**: a QR code and a link appear, valid for 10 minutes. Scan the code with the iPhone camera and open it; the address bar shows only `#/join`. Sign in with the same Google account and **Accept invitation**.
+4. The iPhone opens Home with **Connected · via account**; lights, climate and blinds work, and a light switched on the iPhone switches in the Control4 app.
+5. On the computer, switch Wi-Fi off and use a phone hotspot: within a few seconds the chip says **Connected · via account**; back on the home Wi-Fi it returns to **Connected** within a minute.
+6. **Invite someone** with another Google account's email and the `viewer` role; open the link in a private window signed in as that account: it can read but not switch lights (403 FORBIDDEN in the log). Opened with a third account, the link answers "for another email address".
+7. In the log, remote requests appear with `client` = `relay` and the device's key id; the cloud's own logs show only home ids, key ids, sizes and codes.
 
 ## 0h. Staying paired through updates
 
@@ -69,7 +79,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.9.2`
+- Version: `0.10.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`
