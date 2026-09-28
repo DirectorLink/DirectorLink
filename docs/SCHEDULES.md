@@ -74,6 +74,26 @@ skipped. Opening a door or gate needs a person.
   installer offering this commercially should check Open-Meteo's terms (they have paid plans).
 - `GET /v1/weather` also gives today's sunrise and sunset.
 
+## For installers (Composer)
+
+Automation that nobody can see is the hardest thing to troubleshoot, so DirectorLink shows its own
+in Composer, on the DirectorLink device (0.15.0):
+
+- **Schedules** (On / Paused): pauses every DirectorLink schedule at once, without deleting
+  anything — e.g. while troubleshooting. Nothing runs, and nothing is caught up afterwards (except a
+  time due in the last 5 minutes). The app says the schedules are paused by the installer.
+- **Schedule Status** (read-only): e.g. `3 on · next tomorrow 06:45 Good morning · 1 weather rule`,
+  or `Paused in Composer - 3 schedules are not running`, or `None`.
+- **Last Automation** (read-only): the last scene DirectorLink ran, when, why and what happened,
+  e.g. `28 Sep 13:10 Cool the house · heat rule, 31C outside · 22 devices`, or
+  `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
+- **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
+  and last run) and every scene with its steps and device names and ids to the Lua output.
+
+Scenes and schedules are DirectorLink's own: they are not in Composer programming, and DirectorLink
+does not read that programming. A Composer schedule and a DirectorLink schedule acting on the same
+device will both run; these properties are how to find the DirectorLink side.
+
 ## The app
 
 - **Scenes → Schedules**: the weather at home (with the Open-Meteo credit) and every schedule in a

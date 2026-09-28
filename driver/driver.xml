@@ -28,6 +28,10 @@
         <name>Revoke All API Keys</name>
         <command>REVOKE_API_KEYS</command>
       </action>
+      <action>
+        <name>Print Schedules and Scenes</name>
+        <command>PRINT_AUTOMATION</command>
+      </action>
     </actions>
     <properties>
       <property>
@@ -87,6 +91,27 @@
       <property>
         <name>Remote Status</name>
         <default>Off</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Schedules</name>
+        <type>LIST</type>
+        <items>
+          <item>On</item>
+          <item>Paused</item>
+        </items>
+        <default>On</default>
+      </property>
+      <property>
+        <name>Schedule Status</name>
+        <default>None</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
+        <name>Last Automation</name>
+        <default></default>
         <type>STRING</type>
         <readonly>true</readonly>
       </property>

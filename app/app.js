@@ -220,6 +220,7 @@ function signature() {
     ui.sceneRuns,
     ui.scenesMessage,
     state.schedules,
+    state.schedulesPaused,
     state.schedulesUnsupported,
     state.weather,
     ui.schedulesMessage,

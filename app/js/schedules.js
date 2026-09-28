@@ -17,6 +17,7 @@ export async function loadSchedules() {
   try {
     const answer = await api("/v1/schedules");
     state.schedules = Array.isArray(answer?.items) ? answer.items : [];
+    state.schedulesPaused = answer?.paused === true;
     state.schedulesUnsupported = false;
     state.schedulesError = null;
   } catch (error) {
@@ -167,6 +168,7 @@ function lastText(last) {
 // What happened last, and what comes next.
 export function statusText(schedule) {
   if (schedule.enabled === false) return t("schedules.off");
+  if (state.schedulesPaused) return t("schedules.pausedShort");
   const parts = [lastText(schedule.last_run)];
   if (schedule.next_run) parts.push(t("schedules.next", { when: dayAndTime(schedule.next_run) }));
   else if (!parts[0]) parts.push(weatherNow(schedule.trigger?.kind));

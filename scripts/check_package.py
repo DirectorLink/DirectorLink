@@ -24,11 +24,16 @@ REQUIRED_PROPERTIES = (
     "Door Control",
     "Remote Access",
     "Remote Status",
+    # What DirectorLink automates, visible to the installer (0.15.0): a pause switch, a summary
+    # and the last run.
+    "Schedules",
+    "Schedule Status",
+    "Last Automation",
     "Log Level",
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS")
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {

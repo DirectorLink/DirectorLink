@@ -12,6 +12,9 @@ local Schedules = require("src.core.schedules")
 local Scheduler = require("src.core.scheduler")
 local Weather = require("src.core.weather")
 local SceneHandlers = require("src.api.handlers.scenes")
+local InstallerView = require("src.core.installer_view")
+local Store = require("src.core.store")
+local Clock = require("src.core.clock")
 local Profiles = require("src.auth.profiles")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
@@ -114,6 +117,30 @@ local function assignProfiles()
     end
 end
 
+-- What DirectorLink automates, shown to the installer in Composer (src/core/installer_view.lua).
+local LAST_AUTOMATION_KEY = "directorlink_last_automation"
+local shownScheduleStatus = nil
+
+local function schedulesPaused()
+    return Properties ~= nil and Properties["Schedules"] == "Paused"
+end
+
+local function refreshScheduleStatus(now)
+    local ok, text = pcall(InstallerView.scheduleStatus, now or Clock.now(), schedulesPaused())
+    if ok and text ~= shownScheduleStatus then
+        shownScheduleStatus = text
+        updateProperty("Schedule Status", text)
+    end
+end
+
+local function automationRan(event)
+    local ok, text = pcall(InstallerView.lastAutomation, event)
+    if ok then
+        updateProperty("Last Automation", text)
+        Store.write(LAST_AUTOMATION_KEY, { version = 1, text = text }, false)
+    end
+end
+
 local services = {
     registry = Registry,
     adapters = AdapterManager,
@@ -151,6 +178,11 @@ local services = {
         return { state = STATE.status, detail = STATE.detail }
     end,
     onKeysChanged = keysChanged,
+    schedulesPaused = schedulesPaused,
+    onAutomation = automationRan,
+    onSchedulesChanged = function()
+        refreshScheduleStatus()
+    end,
     onLogLevelChanged = function(level)
         updateProperty("Log Level", COMPOSER_LEVEL[level] or "Info")
     end,
@@ -291,7 +323,16 @@ function OnDriverLateInit(driverInitType)
         runScene = function(sceneId, caller)
             return SceneHandlers.runSaved(services, sceneId, caller)
         end,
+        paused = schedulesPaused,
+        onRun = automationRan,
+        onTick = refreshScheduleStatus,
     })
+    shownScheduleStatus = nil
+    refreshScheduleStatus()
+    local last = Store.read(LAST_AUTOMATION_KEY, false)
+    if type(last) == "table" and type(last.text) == "string" then
+        updateProperty("Last Automation", last.text)
+    end
 
     Remote.init({
         services = services,
@@ -320,6 +361,13 @@ function ExecuteCommand(command, params)
     end
     if params.ACTION == "NEW_PAIRING_CODE" then
         Pairing.open()
+    elseif params.ACTION == "PRINT_AUTOMATION" then
+        -- To Composer's Lua output, for the installer: every schedule and scene in full.
+        local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry)
+        for _, line in ipairs(ok and lines or { "DirectorLink could not list its schedules: " .. tostring(lines) }) do
+            print(line)
+        end
+        Log.info("schedules", "schedules and scenes printed for Composer")
     elseif params.ACTION == "REVOKE_API_KEYS" then
         local count = Keys.revokeAll()
         -- Nobody may join afterwards with an invitation or claim the home with an older token.
@@ -337,6 +385,10 @@ function OnPropertyChanged(name)
         else
             Relay.stop()
         end
+    end
+    if name == "Schedules" and Properties then
+        Log.info("schedules", schedulesPaused() and "schedules paused in Composer" or "schedules resumed in Composer")
+        refreshScheduleStatus()
     end
     if name == "Door Control" and Properties then
         Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")

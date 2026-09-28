@@ -88,7 +88,9 @@ function Handlers.list(ctx)
     for _, schedule in ipairs(Schedules.list()) do
         items[#items + 1] = view(schedule, now)
     end
-    return 200, { items = items }
+    -- Paused by the installer in Composer (the Schedules property): nothing runs.
+    local paused = ctx.services.schedulesPaused and ctx.services.schedulesPaused() or false
+    return 200, { items = items, paused = paused }
 end
 
 function Handlers.get(ctx)
@@ -116,6 +118,9 @@ function Handlers.create(ctx)
             return Problem.new(409, failure, "This home has " .. Schedules.MAX_SCHEDULES .. " schedules, as many as it allows")
         end
         return storeProblem(failure, "saved")
+    end
+    if ctx.services.onSchedulesChanged then
+        ctx.services.onSchedulesChanged()
     end
     ctx.services.log.info("schedules", "schedule created", { schedule = created.id, scene = created.scene_id, trigger = created.trigger.type, by = ctx.apiKey.id })
     return 201, view(created, Clock.now())
@@ -165,6 +170,9 @@ function Handlers.update(ctx)
         end
         return storeProblem(failure, "saved")
     end
+    if ctx.services.onSchedulesChanged then
+        ctx.services.onSchedulesChanged()
+    end
     ctx.services.log.info("schedules", "schedule changed", { schedule = schedule.id, enabled = updated.enabled, by = ctx.apiKey.id })
     return 200, view(updated, Clock.now())
 end
@@ -180,6 +188,9 @@ function Handlers.delete(ctx)
             return Problem.notFound("Schedule", schedule.id)
         end
         return storeProblem(failure, "deleted")
+    end
+    if ctx.services.onSchedulesChanged then
+        ctx.services.onSchedulesChanged()
     end
     ctx.services.log.info("schedules", "schedule deleted", { schedule = schedule.id, by = ctx.apiKey.id })
     return 204
