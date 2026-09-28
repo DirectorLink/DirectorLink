@@ -15,7 +15,8 @@ import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
 import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
-import { connect, reachable, restoreSaved } from "./js/session.js";
+import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
+import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
@@ -192,6 +193,8 @@ function signature() {
     ui.inviteForm,
     ui.joinBusy,
     ui.joinMessage,
+    state.profile,
+    ui.roomOrderMessage,
     route.name === "access" ? ui.access : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
@@ -216,14 +219,17 @@ function screen() {
         navigate,
         onPalette: (palette) => {
           setPalette(palette);
+          saveProfilePrefs({ palette });
           render(true);
         },
         onTheme: (theme) => {
           setTheme(theme);
+          saveProfilePrefs({ theme });
           render(true);
         },
         onLanguage: async (language) => {
           await setLanguage(language);
+          saveProfilePrefs({ language });
           applyLanguage();
         },
       });
@@ -317,6 +323,8 @@ function applyLanguage() {
 // ---- start ---------------------------------------------------------------------------------
 
 subscribe(() => render());
+// The person's profile: language, theme and palette from their other devices apply here too.
+whenConnected(() => syncProfile(applyLanguage));
 watchSystemTheme(() => render(true));
 window.addEventListener("pointerup", () => window.setTimeout(() => render(), 0));
 

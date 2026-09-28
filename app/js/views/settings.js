@@ -5,10 +5,11 @@ import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
-import { h, name } from "../dom.js";
+import { h, iconButton, name } from "../dom.js";
 import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { roomName } from "../model.js";
+import { hiddenRoomIds, roomName } from "../model.js";
+import { setRoomHidden } from "../profile.js";
 import { installApp } from "../pwa.js";
 import { api, checkInThroughAccount, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
@@ -134,16 +135,69 @@ function roomsSection() {
   if (!state.loaded || !state.rooms.length) {
     return card("rooms", "rooms", t("settings.rooms.title"), h("p", { class: "muted-note" }, t("settings.rooms.connectFirst")));
   }
+  const admin = can("admin");
+  const personal = Boolean(state.profile);
+  const hidden = hiddenRoomIds();
   return card(
     "rooms",
     "rooms",
     t("settings.rooms.title"),
-    h("p", { class: "field-help" }, t("settings.rooms.help")),
+    h("p", { class: "field-help" }, personal ? (admin ? t("settings.rooms.orderHelpAdmin") : t("settings.rooms.orderHelp")) : t("settings.rooms.updateForHiding")),
+    ui.roomOrderMessage ? h("p", { class: `notice notice-${ui.roomOrderMessage.kind}`, role: "alert" }, ui.roomOrderMessage.text) : null,
+    h("ul", { class: "room-order-list" }, state.rooms.map((room, index) => roomRow(room, index, hidden, { admin, personal }))),
+    h("h3", { class: "settings-subtitle" }, t("settings.rooms.namesTitle")),
     // Renaming rooms (PATCH /v1/rooms/{id}) needs an admin key.
-    can("admin")
-      ? h("div", { class: "room-editor-list" }, state.rooms.map(roomEditor))
+    admin
+      ? [h("p", { class: "field-help" }, t("settings.rooms.help")), h("div", { class: "room-editor-list" }, state.rooms.map(roomEditor))]
       : h("p", { class: "notice notice-info" }, t("settings.rooms.askAdmin", { role: roleLabel(state.role) }))
   );
+}
+
+// One room: shown or hidden for this person, and (admins) moved up or down for everyone.
+function roomRow(room, index, hidden, { admin, personal }) {
+  const id = `room-show-${room.id}`;
+  const shown = !hidden.has(room.id);
+  return h(
+    "li",
+    { class: "room-order-row", dataset: { key: `room-row:${room.id}` } },
+    personal
+      ? h("input", { type: "checkbox", id, checked: shown, dataset: { key: `room-show:${room.id}` }, onchange: (event) => setRoomHidden(room.id, !event.target.checked) })
+      : null,
+    h(
+      "label",
+      { class: "room-order-name", for: personal ? id : null },
+      name(roomName(room), "span"),
+      shown ? null : h("span", { class: "room-order-hidden" }, t("settings.rooms.hiddenForYou"))
+    ),
+    admin
+      ? h(
+          "span",
+          { class: "room-order-moves" },
+          iconButton("arrowUp", t("settings.rooms.moveUp", { name: roomName(room) }), { disabled: index === 0, dataset: { key: `room-up:${room.id}` }, onclick: () => moveRoom(index, -1) }),
+          iconButton("arrowDown", t("settings.rooms.moveDown", { name: roomName(room) }), { disabled: index === state.rooms.length - 1, dataset: { key: `room-down:${room.id}` }, onclick: () => moveRoom(index, 1) })
+        )
+      : null
+  );
+}
+
+// The home's room order, for everyone (PUT /v1/rooms/order; drivers before 0.12.0 answer 404).
+async function moveRoom(index, offset) {
+  const before = state.rooms;
+  const target = index + offset;
+  if (target < 0 || target >= before.length) return;
+  const rooms = [...before];
+  [rooms[index], rooms[target]] = [rooms[target], rooms[index]];
+  state.rooms = rooms;
+  ui.roomOrderMessage = null;
+  notify();
+  try {
+    const answer = await api("/v1/rooms/order", { method: "PUT", body: { room_ids: rooms.map((room) => room.id) } });
+    if (Array.isArray(answer?.items)) state.rooms = answer.items;
+  } catch (error) {
+    state.rooms = before;
+    ui.roomOrderMessage = { kind: "error", text: error?.status === 404 || error?.status === 405 ? t("settings.rooms.updateDriverOrder") : errorText(error) };
+  }
+  notify();
 }
 
 function roomEditor(room) {
@@ -425,7 +479,10 @@ async function createInvitation({ forSelf }) {
   let invitation = null;
   try {
     // Just under 7 days: the account refuses invitations longer than that.
-    invitation = await api("/v1/invitations", { method: "POST", body: { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 } });
+    // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
+    const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
+    if (forSelf && state.profile) body.for_me = true;
+    invitation = await api("/v1/invitations", { method: "POST", body });
     await registerInvitation(invitation.home_id, invitation, email);
     ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
     ui.inviteForm = false;

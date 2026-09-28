@@ -1,0 +1,49 @@
+# Preferences, profiles and the home's settings
+
+**Status: built in DirectorLink 0.12.0.** Scenes (0.13.0) and schedules with weather (0.14.0) will
+follow the same rules; their editors are sketched in the design mock linked from the roadmap.
+
+## Where each setting lives
+
+| Whose | Examples | Where | Who changes it |
+| --- | --- | --- | --- |
+| The home's | room names per language, the room order, scenes, schedules | the controller | admins (members run scenes) |
+| A person's | language, theme, palette, favorites, hidden rooms | the controller, in their **profile** | that person, from any of their devices |
+| This device's | the controller's address, the access key, the browser's notification permission | the browser | this device |
+
+Everything on the controller works without the internet and without DirectorLink's servers,
+survives driver updates (`src/core/store.lua`), and travels through the end-to-end lock when used
+away from home. The cloud never sees any of it.
+
+## Profiles
+
+- A profile is a person. **Every API key belongs to one profile** (`profile_id` on the key).
+- Pairing with a code, an admin creating a key, and an invitation for someone else each make a new
+  profile, named after the key. **Add my other device** (an invitation with `for_me`) puts the new
+  key in the inviter's profile, so a person's phone starts with their language, theme and
+  favorites.
+- An admin can move a key to another profile (`PATCH /v1/api-keys/{id}` `profile_id`, or People and
+  devices → Person) — for two devices of one person that were paired separately — and rename a
+  profile (`PATCH /v1/profiles/{id}`). A profile goes with its last key.
+- Keys from before 0.12.0 get a profile each at the first start; an admin can then merge them.
+- `GET /v1/profile` / `PATCH /v1/profile` are the caller's own (any role): `prefs` with `language`
+  (`auto` or a tag), `theme` (`auto`, `light`, `dark`), `palette`, `favorites` (`"kind:id"`, in
+  order) and `hidden_rooms` (room ids). `null` clears one. `version` goes up with every change; sent
+  back, it makes the change conditional (409 `VERSION_CONFLICT` if another device changed it).
+
+## The app
+
+- After connecting, and every minute, the app reads the profile and applies its language, theme and
+  palette. The first time a profile is used (version 0), this browser's own choices and favorites
+  become the profile's. Changes are saved to the profile a moment later, several together.
+- The browser keeps its own copy too, so the app opens in the right language before it reaches the
+  controller, and works as before with a driver older than 0.12.0 (no profiles).
+
+## Rooms
+
+- **The order is the home's**, one for everyone: admins set it in Settings → Rooms with the arrows
+  (`PUT /v1/rooms/order`); `GET /v1/rooms` answers in that order. Rooms not in the order follow, in
+  Control4's order.
+- **Hiding is personal**: anyone unticks a room in Settings → Rooms; it goes into their profile's
+  `hidden_rooms` and disappears from their Home and Climate, not anyone else's. Favorites in a
+  hidden room still show.

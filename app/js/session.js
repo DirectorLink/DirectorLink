@@ -28,6 +28,20 @@ const POLL_MS = 10000;
 const RETRY_MS = 2000;
 const FAILURES_BEFORE_UNREACHABLE = 2;
 let pollTimer = null;
+// Run after connecting and with each rooms refresh (app.js: the profile).
+const connectedHooks = [];
+
+export function whenConnected(hook) {
+  connectedHooks.push(hook);
+}
+
+function runConnectedHooks() {
+  for (const hook of connectedHooks) {
+    Promise.resolve()
+      .then(hook)
+      .catch((error) => console.warn("DirectorLink: after connecting", error));
+  }
+}
 let failedRefreshes = 0;
 let connectRun = 0;
 
@@ -422,6 +436,7 @@ export async function connect() {
     state.status = "connected";
     state.notice = null;
     startPolling();
+    runConnectedHooks();
     return true;
   } catch (error) {
     if (run !== connectRun) return false;
@@ -536,6 +551,7 @@ export async function refreshRooms() {
     state.relays = relays;
     state.role = role;
     notify();
+    runConnectedHooks();
   } catch {
     // The next device refresh reports connection problems.
   }
