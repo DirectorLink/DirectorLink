@@ -12,7 +12,7 @@ local ID = "^%x%x%x%x%x%x%x%x$"
 
 function Invitations.create(ctx)
     local body = ctx.body or {}
-    local problem = Validate.body(body, { role = true, expires_in = true })
+    local problem = Validate.body(body, { role = true, expires_in = true, for_me = true })
     if problem then
         return problem
     end
@@ -32,7 +32,16 @@ function Invitations.create(ctx)
     if not remote.available() then
         return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal remote requests (the lock self-test failed; see the log)")
     end
-    local invitation, failure = invitations.create(body.role, seconds, ctx.apiKey.id)
+    if body.for_me ~= nil and type(body.for_me) ~= "boolean" then
+        return Problem.invalidField("for_me", "for_me must be true or false")
+    end
+    -- For the admin's own other device: the new key joins the admin's profile.
+    local profile = nil
+    if body.for_me then
+        local me = ctx.services.keys.find(ctx.apiKey.id)
+        profile = me and me.profile or nil
+    end
+    local invitation, failure = invitations.create(body.role, seconds, ctx.apiKey.id, profile)
     if not invitation then
         if failure == "INVITATION_LIMIT_REACHED" then
             return Problem.new(409, failure, "There are already " .. invitations.MAX_PENDING .. " pending invitations; revoke one first")

@@ -234,6 +234,7 @@ function Views.apiKey(record, currentId)
         created_at = record.created_at,
         last_used_at = nullable(record.last_used_at),
         current = record.id == currentId,
+        profile_id = nullable(record.profile),
     }
 end
 

@@ -204,6 +204,21 @@ def scenario(client, bridge):
     client.check("POST", "/v1/invitations", 400, body={"role": "owner"})
     client.check("DELETE", "/v1/invitations/0123abcd", 404)
 
+    # Profiles: the caller's own, and the admin's list; the home's room order.
+    profile = client.check("GET", "/v1/profile", 200)
+    client.check("PATCH", "/v1/profile", 200, body={"prefs": {"language": "he", "theme": "dark", "favorites": ["light:20"]}})
+    client.check("PATCH", "/v1/profile", 200, body={"prefs": {"theme": None}})
+    client.check("PATCH", "/v1/profile", 400, body={"prefs": {"theme": "neon"}})
+    client.check("PATCH", "/v1/profile", 409, body={"prefs": {"language": "en"}, "version": 0})
+    client.check("GET", "/v1/profiles", 200)
+    client.check("PATCH", f"/v1/profiles/{profile['id']}", 200, body={"name": "Owner"})
+    client.check("PATCH", f"/v1/profiles/{profile['id']}", 400, body={"name": ""})
+    client.check("PATCH", "/v1/profiles/deadbeef", 404, body={"name": "Someone"})
+    client.check("GET", "/v1/profile", 401, auth=False)
+    client.check("PUT", "/v1/rooms/order", 200, body={"room_ids": [11, 10]})
+    client.check("PUT", "/v1/rooms/order", 400, body={"room_ids": [999]})
+    client.check("PATCH", "/v1/profile", 200, body={"prefs": {"hidden_rooms": [11]}})
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
@@ -218,6 +233,9 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
     client.check("POST", "/v1/relays/70/pulse", 403)
     client.check("GET", "/v1/api-keys", 403)
+    client.check("GET", "/v1/profiles", 403)
+    client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
+    client.check("GET", "/v1/profile", 200)
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key

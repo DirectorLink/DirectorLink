@@ -292,7 +292,16 @@ local function handleJoin(message, send)
     if name == "" then
         name = "Invited device"
     end
-    local record, failure = state.services.keys.create(name, invitation.role)
+    -- The inviter's own other device joins the inviter's profile; anyone else gets a new one.
+    local profiles = state.services.profiles
+    local profile = profiles and invitation.profile and profiles.find(invitation.profile)
+    if profiles and not profile then
+        profile = profiles.create(name)
+    end
+    local record, failure = state.services.keys.create(name, invitation.role, profile and profile.id or nil)
+    if not record and profiles then
+        profiles.prune(state.services.keys.list())
+    end
     if not record then
         send({ type = "join_result", id = message.id, ok = false, code = failure or "KEY_NOT_CREATED" })
         return

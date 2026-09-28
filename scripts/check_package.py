@@ -48,6 +48,7 @@ SECURITY_CONTRACT = {
         "            hash = key.hash,\n"
         "            lock = key.lock,\n"
         "            created_at = key.created_at,\n"
+        "            profile = key.profile,\n"
         "        }\n",
         'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
         'C4:UUID("RANDOM")',
@@ -93,7 +94,7 @@ SECURITY_CONTRACT = {
         "if ctx.apiKey.remote then",
     ),
     "src/auth/invitations.lua": (
-        "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by }",
+        "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by, profile = item.profile }",
     ),
     # Director hands stored JSON back decoded (ADR-028); keys must stay readable.
     "src/core/store.lua": (

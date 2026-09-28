@@ -62,9 +62,17 @@ function controllableCount(group) {
   );
 }
 
-// Rooms that have something to control, in Control4 order, plus "No room" when needed.
+// The rooms this person hides from their lists (their profile, profile.js).
+export function hiddenRoomIds() {
+  return new Set((state.profile?.prefs?.hidden_rooms || []).map(Number));
+}
+
+// Rooms that have something to control, in the home's order, without the ones this person hides,
+// plus "No room" when needed.
 export function visibleRooms() {
+  const hidden = hiddenRoomIds();
   const rooms = state.rooms
+    .filter((room) => !hidden.has(room.id))
     .map((room) => ({ room, group: devicesInRoom(room.id) }))
     .filter((entry) => controllableCount(entry.group) > 0);
   const known = new Set(state.rooms.map((room) => room.id));

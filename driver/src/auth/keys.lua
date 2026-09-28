@@ -92,6 +92,7 @@ local function save()
             hash = key.hash,
             lock = key.lock,
             created_at = key.created_at,
+            profile = key.profile,
         }
     end
     local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)
@@ -121,6 +122,8 @@ local function addLoaded(key, hash, alg, lock)
         hash = hash,
         lock = validLock(lock),
         created_at = type(key.created_at) == "string" and key.created_at or Clock.iso(),
+        -- The person's profile (profiles.lua); keys from before 0.12.0 get one at start.
+        profile = type(key.profile) == "string" and key.profile or nil,
     }
 end
 
@@ -209,7 +212,7 @@ end
 function Keys.remote(id)
     for _, key in ipairs(state.keys) do
         if key.id == id and key.lock then
-            return { id = key.id, name = key.name, role = key.role, lock = key.lock }
+            return { id = key.id, name = key.name, role = key.role, lock = key.lock, profile = key.profile }
         end
     end
     return nil
@@ -224,7 +227,8 @@ function Keys.touch(id)
 end
 
 -- Returns the new record (including its secret, which is not kept), or nil plus an error code.
-function Keys.create(name, role)
+-- `profile`: the id of the profile it belongs to (profiles.lua).
+function Keys.create(name, role, profile)
     role = role or "member"
     if not Roles.valid(role) then
         return nil, "INVALID_ROLE"
@@ -261,6 +265,7 @@ function Keys.create(name, role)
         hash = hash,
         lock = lockFor(secret),
         created_at = Clock.iso(),
+        profile = profile,
     }
     table.insert(state.keys, record)
 
@@ -273,6 +278,7 @@ function Keys.create(name, role)
         name = record.name,
         role = record.role,
         created_at = record.created_at,
+        profile = record.profile,
         secret = secret,
     }
 end
@@ -286,6 +292,7 @@ function Keys.list()
             role = key.role,
             created_at = key.created_at,
             last_used_at = state.lastUsed[key.id],
+            profile = key.profile,
         }
     end
     return items
@@ -310,6 +317,7 @@ function Keys.find(id)
                 role = key.role,
                 created_at = key.created_at,
                 last_used_at = state.lastUsed[key.id],
+                profile = key.profile,
             }
         end
     end
@@ -326,11 +334,12 @@ function Keys.update(id, changes)
             if changes.role and key.role == "admin" and changes.role ~= "admin" and Keys.adminCount() == 1 then
                 return nil, "LAST_ADMIN"
             end
-            local previous = { name = key.name, role = key.role }
+            local previous = { name = key.name, role = key.role, profile = key.profile }
             key.name = changes.name or key.name
             key.role = changes.role or key.role
+            key.profile = changes.profile or key.profile
             if not save() then
-                key.name, key.role = previous.name, previous.role
+                key.name, key.role, key.profile = previous.name, previous.role, previous.profile
                 return nil, "PERSIST_FAILED"
             end
             return Keys.find(id)
