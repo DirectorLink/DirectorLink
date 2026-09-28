@@ -2,6 +2,16 @@
 
 ## Current release
 
+`v0.15.0` — DirectorLink's automation is visible to the installer in Composer. Update DirectorLink in Composer (no reboot).
+
+## 0n. Schedules and scenes in Composer
+
+1. The DirectorLink device's properties now include **Schedules** (`On`), **Schedule Status** (e.g. `2 on · next tomorrow 06:45 Good morning`) and **Last Automation**.
+2. Run a scene from the app: Last Automation shows its name, *run from* the device's name, and how many devices.
+3. When a schedule runs, Last Automation says which schedule (or, for a weather rule, the reading, e.g. *heat rule, 31C outside*).
+4. Actions → **Print Schedules and Scenes**: the Lua output lists every schedule and scene with its steps.
+5. Set **Schedules** to `Paused`: Schedule Status says *Paused in Composer*, the app's Schedules page says the installer paused them, and a schedule due now does not run. Set it back to `On`.
+
 `v0.14.0` — schedules: scenes run by themselves at a time, at sunrise or sunset, or when it gets hot, windy or rainy (weather from Open-Meteo). Update DirectorLink in Composer (no reboot).
 
 ## 0m. Schedules and the weather
@@ -127,7 +137,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.14.0`
+- Version: `0.15.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`

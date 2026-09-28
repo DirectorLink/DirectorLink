@@ -231,6 +231,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way.
 
+## ADR-031 — DirectorLink's automation is visible and pausable in Composer
+
+**Context:** Dealers' main objection to homeowner-made automation is that it is invisible: "the AC shuts off at 11:30 and nobody knows why" sends the next technician hunting through Composer programming that is not there.
+
+**Decision (0.15.0):** The DirectorLink device shows its automation in Composer: a **Schedules** property (On / Paused) that pauses every DirectorLink schedule, **Schedule Status** (what is on and what runs next), **Last Automation** (the last scene run, when, why — schedule, weather reading or the device that ran it — and the result), and the action **Print Schedules and Scenes**, which lists everything in the Lua output. This extends the rule of 0.8.0 that Composer shows what an installer needs.
+
+**Consequence:** An installer can find, understand and stop DirectorLink's automation from Composer without the app. DirectorLink still does not read or change Composer programming, so conflicts between the two are found, not prevented.
+
 ## ADR-030 — Schedules run on the controller; the weather comes from Open-Meteo
 
 **Context:** Schedules must run without an app open and without the cloud, and the owner chose weather rules for heat, rain and wind, without local sensors for now.

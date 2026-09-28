@@ -365,6 +365,8 @@ export default {
     runs: "Runs {scene}",
     switchLabel: "{when}: on",
     off: "Off",
+    paused: "Paused by the installer in Composer: no schedule runs until DirectorLink’s Schedules property is set back to On.",
+    pausedShort: "Paused in Composer",
     next: "Next: {when}",
     ran: "Ran {when}",
     ranError: "Couldn’t run {when}",

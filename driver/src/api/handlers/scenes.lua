@@ -510,6 +510,11 @@ function Handlers.run(ctx)
     end
     local result = run(ctx, scene.steps)
     result.scene_id = scene.id
+    -- Shown to the installer in Composer (Last Automation), with the device that ran it.
+    if ctx.services.onAutomation then
+        local key = ctx.services.keys and ctx.services.keys.find and ctx.services.keys.find(ctx.apiKey.id)
+        pcall(ctx.services.onAutomation, { at = os.time(), scene_id = scene.id, key_name = key and key.name or nil, result = result })
+    end
     ctx.services.log.info("scenes", "scene ran", {
         scene = scene.id, by = ctx.apiKey.id, ran = result.ran, skipped = result.skipped, failed = result.failed,
     })
