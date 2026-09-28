@@ -13,6 +13,7 @@ local suites = {
     "test_remote",
     "test_profiles",
     "test_scenes",
+    "test_schedules",
 }
 
 local passed, failed = 0, 0

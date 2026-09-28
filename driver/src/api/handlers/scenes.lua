@@ -9,6 +9,7 @@ local Roles = require("src.auth.roles")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Scenes = require("src.core.scenes")
+local Schedules = require("src.core.schedules")
 
 local Handlers = {}
 
@@ -474,6 +475,14 @@ function Handlers.delete(ctx)
     if not scene then
         return problem
     end
+    -- Unknown which schedules run it while they could not be read.
+    if not Schedules.complete() then
+        return Problem.new(503, "UNAVAILABLE", "The saved schedules could not be read when DirectorLink started; restart the driver and try again")
+    end
+    local schedules = Schedules.usingScene(scene.id)
+    if schedules > 0 then
+        return Problem.new(409, "SCENE_IN_USE", "Schedules run this scene; change or delete them first", { schedules = schedules })
+    end
     local deleted, failure = Scenes.delete(scene.id)
     if not deleted then
         if failure == "NOT_FOUND" then
@@ -483,6 +492,15 @@ function Handlers.delete(ctx)
     end
     ctx.services.log.info("scenes", "scene deleted", { scene = scene.id, by = ctx.apiKey.id })
     return 204
+end
+
+-- A saved scene run by the controller itself (schedules): `caller` { id, role } stands for the key.
+function Handlers.runSaved(services, sceneId, caller)
+    local scene = Scenes.find(sceneId)
+    if not scene then
+        return nil, "SCENE_NOT_FOUND"
+    end
+    return run({ services = services, apiKey = caller }, scene.steps)
 end
 
 function Handlers.run(ctx)

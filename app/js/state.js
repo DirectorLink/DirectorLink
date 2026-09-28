@@ -16,6 +16,11 @@ export const state = {
   scenes: null,
   scenesUnsupported: false,
   scenesError: null, // the first read failed: why (shown with Retry)
+  // The home's schedules (schedules.js), like scenes; and the weather at home while Schedules is open.
+  schedules: null,
+  schedulesUnsupported: false,
+  schedulesError: null,
+  weather: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,
@@ -56,6 +61,9 @@ export const ui = {
   sceneEditor: null, // the scene being edited (views/scenes.js)
   sceneIdea: null, // an idea to start a new scene from
   scenesMessage: null, // scenes list: saved or deleted
+  scheduleEditor: null, // the schedule being edited (views/schedules.js)
+  cameFrom: null, // the screen before this one (app.js), so an editor can go back to its list
+  schedulesMessage: null, // schedules list: saved, deleted or not switched
   drafts: {}, // form fields being typed: key -> text
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"

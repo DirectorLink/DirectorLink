@@ -231,6 +231,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way.
 
+## ADR-030 — Schedules run on the controller; the weather comes from Open-Meteo
+
+**Context:** Schedules must run without an app open and without the cloud, and the owner chose weather rules for heat, rain and wind, without local sensors for now.
+
+**Decision (0.14.0):** The driver keeps and runs the schedules itself, once a minute, in the controller's local time; sunrise and sunset are computed on the controller. The weather is Open-Meteo's (free, no key, CC BY 4.0), asked by the controller directly every 15 minutes while an enabled schedule needs it (or for an hour after the app shows it), with the project's location rounded to two decimals. Weather rules have hysteresis (2°, 10 km/h, a dry hour) and run at most once a day by default. Scheduled scenes run with a member's rights: doors and gates are never opened by a schedule.
+
+**Consequence:** No DirectorLink server is involved in schedules or the weather; the privacy page says what Open-Meteo sees. A controller without internet still runs time and sun schedules; weather rules then wait, and "only if" follows the schedule's choice (run or skip).
+
 ## ADR-029 — Accounts, with remote access locked end to end
 
 **Context:** Remote access has to work for people other than the developer, on iPhones too (which cannot use the home-network connection), without the cloud being able to read what homes do. The owner asked for the end-to-end lock to be part of the design from the start, and for Google sign-in first.

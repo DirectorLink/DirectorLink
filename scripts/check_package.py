@@ -100,6 +100,10 @@ SECURITY_CONTRACT = {
     "src/core/scenes.lua": (
         'return set.action == "pulse" and { action = "pulse" } or nil',
     ),
+    # A schedule runs its scene like a member's key: never doors or gates.
+    "src/core/scheduler.lua": (
+        '{ id = "schedule:" .. schedule.id, role = "member" }',
+    ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
     ),

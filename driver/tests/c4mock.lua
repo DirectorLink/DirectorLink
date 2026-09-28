@@ -468,6 +468,12 @@ function Mock.install(project)
     -- A fake camera web server: digest (qop=auth) or basic login, answers with a tiny "JPEG".
     local function cameraAnswer(url, headers)
         mock.urlRequests[#mock.urlRequests + 1] = { url = url, headers = headers }
+        if url:match("^https://api%.open%-meteo%.com/") then
+            if not mock.weather then
+                return nil, "Couldn't resolve host"
+            end
+            return { code = 200, headers = { ["Content-Type"] = "application/json" }, body = Json.encode(mock.weather) }
+        end
         if mock.camerasOffline then
             return nil, "Couldn't connect to server"
         end

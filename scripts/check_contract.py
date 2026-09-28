@@ -251,6 +251,28 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/scenes/{spare['id']}", 404)
     client.check("GET", "/v1/scenes", 401, auth=False)
 
+    # Schedules run scenes by time, sun and weather; the weather view works without the internet.
+    client.check("GET", "/v1/weather", 200)
+    timed = client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0, 1, 2, 3, 4], "only_if": {"not_raining": True},
+    })
+    client.check("POST", "/v1/schedules", 201, body={"scene_id": scene["id"], "trigger": {"type": "sun", "event": "sunset", "offset": -30}, "days": [5, 6]})
+    hot = client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "weather", "kind": "heat", "above": 30, "from": "12:00", "to": "20:00"}, "days": [0, 1, 2, 3, 4, 5, 6],
+    })
+    client.check("POST", "/v1/schedules", 400, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "25:00"}, "days": [0]})
+    client.check("GET", "/v1/schedules", 200)
+    client.check("GET", f"/v1/schedules/{timed['id']}", 200)
+    client.check("GET", "/v1/schedules/deadbeef", 404)
+    client.check("GET", "/v1/schedules/nothex", 400)
+    client.check("PATCH", f"/v1/schedules/{timed['id']}", 200, body={"enabled": False, "version": 1})
+    client.check("PATCH", f"/v1/schedules/{timed['id']}", 409, body={"enabled": True, "version": 1})
+    client.check("PATCH", f"/v1/schedules/{timed['id']}", 400, body={"days": []})
+    client.check("PATCH", "/v1/schedules/deadbeef", 404, body={"enabled": True})
+    client.check("DELETE", f"/v1/scenes/{scene['id']}", 409)
+    client.check("DELETE", f"/v1/schedules/{hot['id']}", 204)
+    client.check("DELETE", f"/v1/schedules/{hot['id']}", 404)
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
@@ -274,6 +296,11 @@ def scenario(client, bridge):
     client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
     client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
+    client.check("GET", "/v1/schedules", 200)
+    client.check("GET", "/v1/weather", 200)
+    client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
+    client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
+    client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key

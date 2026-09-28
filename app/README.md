@@ -21,6 +21,10 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 
 Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`, `#/join/<invitation>` (taken out of the address as the page opens; see Remote access), `#/access` (People and devices).
 
+## Schedules
+
+Scenes → **Schedules** (`#/schedules`; `js/views/schedules.js`, `js/schedules.js`, `docs/SCHEDULES.md`) lists `GET /v1/schedules`, each in a sentence with its next or last run, and the weather at home from `GET /v1/weather` (read while the screen is open; the controller then keeps it fresh). Admins switch schedules on and off (`PATCH` `enabled`) and edit them at `#/schedule/new` and `#/schedule/{id}`: the scene, when (a time, sunrise/sunset with an offset, or heat/rain/wind with hours and at most once a day), the days, and "only if" weather conditions. Drivers older than 0.14.0 answer 404: the screen says to update the driver.
+
 ## Scenes
 
 The **Scenes** tab (`js/views/scenes.js`, `js/scenes.js`, `docs/SCENES.md`) lists the home's scenes from `GET /v1/scenes` with a Run button (`POST /v1/scenes/{id}/run`, members and above). Admins make and change them in the editor (`#/scene/new`, `#/scene/{id}`): name and icon, the actions (Add an action: where, what, which devices, what to do), **Copy the house as it is now**, **Show on Home**, **Try it now** (`POST /v1/scenes/try`) and Save (`POST`/`PATCH /v1/scenes`, with `version`). Scenes marked Show on Home are on Home, above the favorites. Drivers older than 0.13.0 answer 404: the tab says to update the driver.
