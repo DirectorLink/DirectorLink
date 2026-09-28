@@ -16,9 +16,21 @@ local function roleProblem()
     return Problem.invalidField("role", "role must be one of " .. Roles.list())
 end
 
-local function createKey(ctx, name, role)
+-- `profileId`: the profile the key joins; without one, it gets a new profile of its own.
+local function createKey(ctx, name, role, profileId)
     local keys = ctx.services.keys
-    local record, failure = keys.create(name, role)
+    local profiles = ctx.services.profiles
+    if not profileId and profiles then
+        local profile, profileFailure = profiles.create(name)
+        if not profile then
+            return nil, Problem.new(409, profileFailure, "This controller has as many profiles as it allows")
+        end
+        profileId = profile.id
+    end
+    local record, failure = keys.create(name, role, profileId)
+    if not record and profiles then
+        profiles.prune(keys.list())
+    end
     if not record then
         if failure == "KEY_LIMIT_REACHED" then
             return nil, keyLimitProblem(keys)
@@ -87,7 +99,7 @@ end
 
 function Auth.create_key(ctx)
     local body = ctx.body
-    local problem = Validate.body(body, { name = true, role = true })
+    local problem = Validate.body(body, { name = true, role = true, profile_id = true })
     if problem then
         return problem
     end
@@ -102,8 +114,12 @@ function Auth.create_key(ctx)
     if not Roles.valid(role) then
         return roleProblem()
     end
+    -- Another device of an existing person: it joins their profile.
+    if body.profile_id ~= nil and not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
+        return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+    end
 
-    local record, createProblem = createKey(ctx, name, role)
+    local record, createProblem = createKey(ctx, name, role, body.profile_id)
     if not record then
         return createProblem
     end
@@ -134,7 +150,7 @@ end
 
 function Auth.update_key(ctx)
     local body = ctx.body
-    local problem = Validate.body(body, { name = true, role = true }, true)
+    local problem = Validate.body(body, { name = true, role = true, profile_id = true }, true)
     if problem then
         return problem
     end
@@ -151,6 +167,13 @@ function Auth.update_key(ctx)
             return roleProblem()
         end
         changes.role = body.role
+    end
+    -- Moving a key to another person's profile (e.g. two devices of one person paired apart).
+    if body.profile_id ~= nil then
+        if not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
+            return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+        end
+        changes.profile = body.profile_id
     end
 
     local id = ctx.params.keyId

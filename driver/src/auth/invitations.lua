@@ -31,7 +31,7 @@ end
 local function save()
     local items = {}
     for _, item in ipairs(state.items) do
-        items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by }
+        items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by, profile = item.profile }
     end
     return Store.write(STORE_KEY, { version = 1, items = items }, false)
 end
@@ -64,6 +64,7 @@ function Invitations.load()
                 created_at = type(item.created_at) == "string" and item.created_at or Clock.iso(),
                 expires = item.expires,
                 created_by = type(item.created_by) == "string" and item.created_by or nil,
+                profile = type(item.profile) == "string" and item.profile or nil,
             }
         end
     end
@@ -72,13 +73,14 @@ function Invitations.load()
 end
 
 local function view(item)
-    return { id = item.id, role = item.role, created_at = item.created_at, expires_at = Clock.iso(item.expires), created_by = item.created_by }
+    return { id = item.id, role = item.role, created_at = item.created_at, expires_at = Clock.iso(item.expires), created_by = item.created_by, for_me = item.profile ~= nil }
 end
 
 -- Returns { id, secret, role, created_at, expires_at } (the secret only here), or nil and
 -- INVALID_ROLE, INVALID_DURATION, INVITATION_LIMIT_REACHED or LOCK_UNAVAILABLE. `createdBy` is the
--- key id of the admin who made it: revoking that key revokes its invitations.
-function Invitations.create(role, seconds, createdBy)
+-- key id of the admin who made it: revoking that key revokes its invitations. `profile`: for the
+-- admin's own other device, the admin's profile (the new key joins it).
+function Invitations.create(role, seconds, createdBy, profile)
     if not Roles.valid(role) then
         return nil, "INVALID_ROLE"
     end
@@ -96,7 +98,7 @@ function Invitations.create(role, seconds, createdBy)
     if not ok then
         return nil, "LOCK_UNAVAILABLE"
     end
-    local item = { id = randomHex(8), role = role, lock = lock, created_at = Clock.iso(now), expires = now + seconds, created_by = createdBy }
+    local item = { id = randomHex(8), role = role, lock = lock, created_at = Clock.iso(now), expires = now + seconds, created_by = createdBy, profile = profile }
     table.insert(state.items, item)
     if not save() then
         table.remove(state.items)
@@ -154,7 +156,7 @@ function Invitations.find(id)
     prune(Clock.now())
     for _, item in ipairs(state.items) do
         if item.id == id then
-            return { id = item.id, role = item.role, lock = item.lock }
+            return { id = item.id, role = item.role, lock = item.lock, profile = item.profile }
         end
     end
     return nil
