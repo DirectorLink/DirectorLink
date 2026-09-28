@@ -286,7 +286,22 @@ function tests.thermostats_report_state_and_options()
     T.eq(thermostat.fan_speed, "low")
     T.same(thermostat.fan_speeds, { "low", "medium", "high" })
     T.eq(thermostat.target_temperature_min, 16)
-    T.eq(thermostat.target_temperature_max, 25)
+    T.eq(thermostat.target_temperature_max, 32, "the range Control4 allows, for AC zones too")
+end
+
+-- An AC switched off at 32 °C (as found on the real system): the target it reports can be set.
+function tests.a_thermostat_accepts_the_target_it_reports()
+    local project = Mock.project()
+    project.variables[30][1107] = "Off"
+    project.variables[30][1149] = "89.6"
+    local mock = Mock.startDriver(project)
+    local key = T.pair(mock)
+    local thermostat = T.http(mock, "GET", "/v1/thermostats/30", { key = key }).json
+    T.eq(thermostat.target_temperature, 32)
+    T.truthy(thermostat.target_temperature <= thermostat.target_temperature_max, "never outside its own range")
+    for _, target in ipairs({ thermostat.target_temperature, 31, 25 }) do
+        T.eq(T.http(mock, "PATCH", "/v1/thermostats/30", { key = key, body = { target_temperature = target } }).status, 202, tostring(target))
+    end
 end
 
 function tests.thermostat_patch_applies_fields_in_order()
@@ -311,7 +326,8 @@ function tests.thermostat_patch_validates_input()
     end
     T.eq(patch({ mode = "auto" }).json.code, "MODE_NOT_SUPPORTED")
     T.eq(patch({ mode = "Cool" }).json.code, "INVALID_FIELD", "modes are lowercase")
-    T.eq(patch({ target_temperature = 30 }).json.code, "INVALID_FIELD", "AC zones stop at 25")
+    T.eq(patch({ target_temperature = 33 }).json.code, "INVALID_FIELD", "above the range")
+    T.eq(patch({ target_temperature = 15 }).json.code, "INVALID_FIELD", "below the range")
     T.eq(patch({ fan_speed = "turbo" }).json.code, "INVALID_FIELD")
     T.eq(patch({ fan_speed = "auto" }).json.code, "NOT_SUPPORTED")
     T.eq(patch({ humidity = 40 }).json.code, "INVALID_FIELD")
