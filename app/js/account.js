@@ -101,6 +101,23 @@ export async function signOut() {
   set({ status: "signed-out" });
 }
 
+// Stops signing in with `provider` (the account keeps at least one).
+export async function removeProvider(provider) {
+  set({ ...state.account, busy: true });
+  try {
+    const response = await call(`/v1/me/identities/${provider}`, "DELETE");
+    if (response.status === 204) {
+      await loadAccount();
+      set({ ...state.account, busy: false, notice: "removed" });
+      return true;
+    }
+  } catch {
+    // Reported below.
+  }
+  set({ ...state.account, busy: false, notice: "removeFailed" });
+  return false;
+}
+
 export async function deleteAccount() {
   set({ ...state.account, busy: true });
   try {

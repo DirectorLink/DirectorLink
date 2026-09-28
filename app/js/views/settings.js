@@ -1,6 +1,6 @@
 // Settings: appearance, language, room names, controller, account, app and about.
 
-import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, signIn, signOut } from "../account.js";
+import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
@@ -551,7 +551,7 @@ function homeSection() {
 function accountSection() {
   const account = state.account;
   const notice = account.notice
-    ? h("p", { class: `notice ${account.notice === "deleted" || account.notice === "linked" ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
+    ? h("p", { class: `notice ${["deleted", "linked", "removed"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
   let body;
   if (account.status === "signed-in") {
@@ -579,6 +579,25 @@ function accountSection() {
             t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
           )
         ),
+        // With two, either may go (the last one stays).
+        ...(Array.isArray(account.user.providers) && account.user.providers.length > 1
+          ? account.user.providers.map((provider) =>
+              h(
+                "button",
+                {
+                  type: "button",
+                  class: "button button-quiet",
+                  dataset: { key: `account-remove-${provider}` },
+                  disabled: account.busy,
+                  onclick: () => {
+                    const label = t(`settings.account.provider.${provider}`);
+                    if (window.confirm(t("settings.account.removeProviderConfirm", { provider: label }))) removeProvider(provider);
+                  },
+                },
+                t("settings.account.removeProvider", { provider: t(`settings.account.provider.${provider}`) })
+              )
+            )
+          : []),
         h(
           "button",
           {

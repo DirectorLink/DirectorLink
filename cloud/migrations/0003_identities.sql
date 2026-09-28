@@ -19,6 +19,8 @@ INSERT INTO identities (provider, subject, user_id, email, created_at, last_sign
   SELECT provider, subject, id, email, created_at, last_sign_in_at FROM users;
 
 -- Which provider a sign-in in progress is for (its state only works at that provider's callback),
--- and the signed-in account that asked to add it, if any.
+-- and, when a signed-in account asked to add it, that account and (as a hash) the session it asked
+-- from: signing out meanwhile cancels the adding.
 ALTER TABLE sign_ins ADD COLUMN provider TEXT NOT NULL DEFAULT 'google';
 ALTER TABLE sign_ins ADD COLUMN link_user_id TEXT;
+ALTER TABLE sign_ins ADD COLUMN link_session_sha256 TEXT;

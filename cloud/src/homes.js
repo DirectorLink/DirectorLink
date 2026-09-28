@@ -253,7 +253,12 @@ async function join(request, env, user) {
   if (!invitation || !invitation.email || invitation.accepted_by || invitation.expires_at < iso()) {
     return problem(404, "INVITATION_NOT_FOUND", "The invitation was used, revoked or has expired; ask for a new one");
   }
-  if (invitation.email !== user.email) {
+  // The account's email, or the email of one of its sign-ins (a Google address added to an account
+  // made with Apple's Hide My Email, for instance).
+  const mine =
+    invitation.email === user.email ||
+    Boolean(await env.DB.prepare("SELECT 1 AS found FROM identities WHERE user_id = ? AND email = ?").bind(user.id, invitation.email).first());
+  if (!mine) {
     log("join_email_mismatch", { home: homeId, user: user.id, invitation: input.invitation_id });
     return problem(403, "EMAIL_MISMATCH", "This invitation is for another email address; sign in with that account, or ask for an invitation for this one");
   }
@@ -274,8 +279,8 @@ async function join(request, env, user) {
       await env.DB.batch([
         env.DB.prepare(
           "INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)"
-        ).bind(homeId, user.id, now, homeId, input.invitation_id, user.email),
-        env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL").bind(homeId, input.invitation_id, user.email),
+        ).bind(homeId, user.id, now, homeId, input.invitation_id, invitation.email),
+        env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL").bind(homeId, input.invitation_id, invitation.email),
       ]);
       break;
     } catch (error) {
