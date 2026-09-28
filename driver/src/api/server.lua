@@ -24,6 +24,7 @@ local HANDLERS = {
     logs = require("src.api.handlers.logs"),
     remote = require("src.api.handlers.remote"),
     invitations = require("src.api.handlers.invitations"),
+    profiles = require("src.api.handlers.profiles"),
 }
 
 local Server = {}
@@ -199,7 +200,7 @@ function Server.handleRequest(request, client, respond)
     elseif request.method == "OPTIONS" then
         status = 204
         extraHeaders = {
-            { "Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS" },
+            { "Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS" },
             { "Access-Control-Allow-Headers", "Authorization, Content-Type" },
             { "Access-Control-Max-Age", "600" },
             { "Access-Control-Allow-Private-Network", "true" },

@@ -6,6 +6,8 @@ local Normalize = require("src.control4.normalize")
 local AdapterManager = require("src.adapters.manager")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
+local RoomLayout = require("src.core.room_layout")
+local Profiles = require("src.auth.profiles")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
@@ -81,16 +83,37 @@ local function publishKeyCount()
     updateProperty("API Keys", Keys.count())
 end
 
--- A key was created, changed or revoked: Composer's count, and the cloud's list of key ids.
+-- A key was created, changed or revoked: profiles nobody uses go, then Composer's count and the
+-- cloud's list of key ids.
 local function keysChanged()
+    Profiles.prune(Keys.list())
     publishKeyCount()
     Relay.announceKeys()
+end
+
+-- Keys from before 0.12.0 (or whose profile is gone) each get a profile of their own.
+local function assignProfiles()
+    local assigned = 0
+    for _, key in ipairs(Keys.list()) do
+        if not (key.profile and Profiles.find(key.profile)) then
+            local profile = Profiles.create(key.name)
+            if profile then
+                Keys.update(key.id, { profile = profile.id })
+                assigned = assigned + 1
+            end
+        end
+    end
+    local removed = Profiles.prune(Keys.list())
+    if assigned > 0 or removed > 0 then
+        Log.info("auth", "profiles updated", { new = assigned, removed = removed })
+    end
 end
 
 local services = {
     registry = Registry,
     adapters = AdapterManager,
     keys = Keys,
+    profiles = Profiles,
     invitations = Invitations,
     pairing = Pairing,
     log = Log,
@@ -217,6 +240,12 @@ function OnDriverLateInit(driverInitType)
     local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
     Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
     RoomNames.load()
+    RoomLayout.load()
+    Profiles.load()
+    -- Only with a key store read in full: after a failed read, keys may come back at the next start.
+    if Keys.complete() then
+        assignProfiles()
+    end
     Invitations.load()
     publishKeyCount()
 
