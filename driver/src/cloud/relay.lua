@@ -197,6 +197,12 @@ function Relay.announceKeys()
     if not state.socket or not state.services or not state.services.keys then
         return
     end
+    -- After a failed read of the key store the list may be short: the cloud would end the
+    -- membership of everyone missing from it.
+    if state.services.keys.complete and not state.services.keys.complete() then
+        log("warn", "key ids not announced: the key store could not be read")
+        return
+    end
     local ids = Json.array()
     for _, key in ipairs(state.services.keys.list()) do
         ids[#ids + 1] = key.id

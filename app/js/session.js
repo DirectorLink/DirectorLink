@@ -79,6 +79,30 @@ export async function image(path) {
   }
 }
 
+const CHECK_IN_KEY = "directorlink.checkIn"; // { home, at }: this device's last sealed request
+const CHECK_IN_MS = 24 * 3600 * 1000;
+
+// A device linked to its home through the account sends one sealed request a day, even when it
+// only uses the home network: the account service learns which key this account uses, so that
+// revoking it at home also ends the membership (docs/ACCOUNTS.md). `force`: right away (linking).
+export async function checkInThroughAccount(force = false) {
+  const remote = savedRemote();
+  if (!remote || !state.apiKey || state.account.status !== "signed-in") return;
+  let last = null;
+  try {
+    last = JSON.parse(localStorage.getItem(CHECK_IN_KEY) || "null");
+  } catch {
+    last = null;
+  }
+  if (!force && last?.home === remote.home && Date.now() - Number(last.at) < CHECK_IN_MS) return;
+  try {
+    await remoteCall(state.apiKey, "/v1/api-keys/current");
+    localStorage.setItem(CHECK_IN_KEY, JSON.stringify({ home: remote.home, at: Date.now() }));
+  } catch {
+    // Tried again at the next check.
+  }
+}
+
 // Away from home, look once a minute whether the home network is back; it is faster. Only this
 // home's controller, answering this key, counts: another network may have a device at the same
 // address. Whatever it answers, the key is kept.
@@ -539,6 +563,7 @@ async function poll() {
     const ok = await refreshDevices();
     pollCount += 1;
     if (pollCount % 6 === 0) await tryHomeNetwork();
+    if (ok && pollCount % 6 === 1) checkInThroughAccount();
     if (ok && pollCount % 6 === 0 && state.status === "connected") {
       await refreshRooms();
     }

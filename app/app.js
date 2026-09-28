@@ -13,7 +13,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
-import { accessView } from "./js/views/access.js";
+import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved } from "./js/session.js";
 import { state, subscribe, ui } from "./js/state.js";
@@ -70,7 +70,10 @@ export function navigate(hash) {
 window.addEventListener("hashchange", () => {
   // Entries reached inside the app: the Back button can use history.back().
   window.history.replaceState({ directorlinkInApp: true }, "");
+  const previous = route.name;
   route = parseRoute();
+  // People and devices loads fresh each time it is opened.
+  if (route.name === "access" && previous !== "access") resetAccess();
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
