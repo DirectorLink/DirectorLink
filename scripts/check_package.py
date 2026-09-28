@@ -62,8 +62,9 @@ SECURITY_CONTRACT = {
         'close("Used at "',
     ),
     "src/cloud/relay.lua": (
-        'Relay.ROLE = "viewer"',
-        'if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then',
+        # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.
+        'code = "RELAY_REQUESTS_RETIRED"',
+        "refuseRequest(message)",
         "Store.write(IDENTITY_KEY, identity, false)",
     ),
     # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
@@ -76,7 +77,7 @@ SECURITY_CONTRACT = {
     ),
     "src/cloud/remote.lua": (
         "if seen[requestId] then",
-        "math.abs(now - ts) > Lock.WINDOW_SECONDS",
+        "math.abs(now - ts) > Lock.WINDOW_SECONDS or ts < state.startedAt",
         "state.services.invitations.consume(invitationId)",
         "state.services.keys.remote(keyId)",
     ),
@@ -84,7 +85,7 @@ SECURITY_CONTRACT = {
         "if ctx.apiKey.remote then",
     ),
     "src/auth/invitations.lua": (
-        "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires }",
+        "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by }",
     ),
     # Director hands stored JSON back decoded (ADR-028); keys must stay readable.
     "src/core/store.lua": (

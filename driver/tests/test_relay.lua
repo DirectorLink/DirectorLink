@@ -64,38 +64,23 @@ function tests.handshake_sends_the_home_identity_and_hello_follows()
     T.contains(mock.properties["Remote Status"], home:sub(1, 8))
 end
 
-function tests.relayed_reads_use_the_lan_api()
-    local mock, connection = connected()
-    local response = relayRequest(mock, connection, { type = "request", id = "r1", method = "GET", path = "/v1/lights?room_id=11", body = Json.null })
-    T.eq(response.type, "response")
-    T.eq(response.id, "r1")
-    T.eq(response.status, 200)
-    T.contains(response.content_type, "application/json")
-    local body = Json.decode(response.body)
-    T.eq(#body.items, 2, "the query string reaches the API")
-end
-
-function tests.relayed_requests_are_read_only()
+function tests.plain_relayed_requests_are_refused_without_reaching_the_api()
     local mock, connection = connected()
     local before = #mock.commands
-    local logs = relayRequest(mock, connection, { type = "request", id = "r2", method = "GET", path = "/v1/logs" })
-    T.eq(logs.status, 403, "viewer cannot read the log")
-    T.eq(Json.decode(logs.body).required_role, "admin")
-    local patch = relayRequest(mock, connection, { type = "request", id = "r3", method = "PATCH", path = "/v1/lights/21", body = '{"on":true}' })
-    T.eq(patch.status, 405)
-    T.eq(Json.decode(patch.body).code, "RELAY_READ_ONLY")
-    local outside = relayRequest(mock, connection, { type = "request", id = "r4", method = "GET", path = "/health" })
-    T.eq(outside.status, 405, "only /v1/ paths")
+    for _, message in ipairs({
+        { type = "request", id = "r1", method = "GET", path = "/v1/lights?room_id=11", body = Json.null },
+        { type = "request", id = "r2", method = "GET", path = "/v1/cameras/61/snapshot" },
+        { type = "request", id = "r3", method = "PATCH", path = "/v1/lights/21", body = '{"on":true}' },
+    }) do
+        local response = relayRequest(mock, connection, message)
+        T.eq(response.type, "response")
+        T.eq(response.id, message.id)
+        T.eq(response.status, 410, "since 0.10.0 only sealed requests are accepted")
+        T.eq(Json.decode(response.body).code, "RELAY_REQUESTS_RETIRED")
+        T.notContains(response.body, "Kitchen", "nothing of the home")
+        T.eq(response.body_base64, nil)
+    end
     T.eq(#mock.commands, before, "nothing reaches a device")
-end
-
-function tests.binary_answers_are_base64()
-    local mock, connection = connected()
-    local response = relayRequest(mock, connection, { type = "request", id = "p1", method = "GET", path = "/v1/cameras/61/snapshot" })
-    T.eq(response.status, 200)
-    T.eq(response.content_type, "image/jpeg")
-    T.eq(response.body, nil)
-    T.truthy(#response.body_base64 > 0, "picture sent as base64")
 end
 
 function tests.pings_are_answered_and_fragments_joined()

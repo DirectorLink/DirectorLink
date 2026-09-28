@@ -31,7 +31,7 @@ end
 local function save()
     local items = {}
     for _, item in ipairs(state.items) do
-        items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires }
+        items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by }
     end
     return Store.write(STORE_KEY, { version = 1, items = items }, false)
 end
@@ -63,6 +63,7 @@ function Invitations.load()
                 lock = item.lock,
                 created_at = type(item.created_at) == "string" and item.created_at or Clock.iso(),
                 expires = item.expires,
+                created_by = type(item.created_by) == "string" and item.created_by or nil,
             }
         end
     end
@@ -75,8 +76,9 @@ local function view(item)
 end
 
 -- Returns { id, secret, role, created_at, expires_at } (the secret only here), or nil and
--- INVALID_ROLE, INVALID_DURATION, INVITATION_LIMIT_REACHED or LOCK_UNAVAILABLE.
-function Invitations.create(role, seconds)
+-- INVALID_ROLE, INVALID_DURATION, INVITATION_LIMIT_REACHED or LOCK_UNAVAILABLE. `createdBy` is the
+-- key id of the admin who made it: revoking that key revokes its invitations.
+function Invitations.create(role, seconds, createdBy)
     if not Roles.valid(role) then
         return nil, "INVALID_ROLE"
     end
@@ -94,7 +96,7 @@ function Invitations.create(role, seconds)
     if not ok then
         return nil, "LOCK_UNAVAILABLE"
     end
-    local item = { id = randomHex(8), role = role, lock = lock, created_at = Clock.iso(now), expires = now + seconds }
+    local item = { id = randomHex(8), role = role, lock = lock, created_at = Clock.iso(now), expires = now + seconds, created_by = createdBy }
     table.insert(state.items, item)
     if not save() then
         table.remove(state.items)
@@ -123,6 +125,28 @@ function Invitations.revoke(id)
         end
     end
     return false
+end
+
+-- Revokes every invitation (Composer's Revoke All API Keys); returns how many.
+function Invitations.revokeAll()
+    local count = #state.items
+    state.items = {}
+    save()
+    return count
+end
+
+-- Revokes the invitations a key made, when that key is revoked.
+function Invitations.revokeCreatedBy(keyId)
+    local kept = {}
+    for _, item in ipairs(state.items) do
+        if item.created_by ~= keyId then
+            kept[#kept + 1] = item
+        end
+    end
+    if #kept ~= #state.items then
+        state.items = kept
+        save()
+    end
 end
 
 -- A pending invitation with its lock key, or nil.

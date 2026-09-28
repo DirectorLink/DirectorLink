@@ -124,6 +124,9 @@ end
 function Auth.revoke_current_key(ctx)
     local id = ctx.apiKey.id
     ctx.services.keys.revoke(id)
+    if ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
+    end
     ctx.services.log.info("auth", "API key revoked by its own client", { key_id = id })
     ctx.services.onKeysChanged()
     return 204, nil
@@ -169,6 +172,9 @@ function Auth.delete_key(ctx)
     local id = ctx.params.keyId
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)
+    end
+    if ctx.services.invitations then
+        ctx.services.invitations.revokeCreatedBy(id)
     end
     ctx.services.log.info("auth", "API key revoked", { key_id = id, by = ctx.apiKey.id })
     ctx.services.onKeysChanged()

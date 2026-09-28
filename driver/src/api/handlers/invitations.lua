@@ -29,7 +29,10 @@ function Invitations.create(ctx)
     if not remote.enabled() then
         return Problem.new(409, "REMOTE_ACCESS_OFF", "Invitations work through remote access: turn on Remote Access in Composer first")
     end
-    local invitation, failure = invitations.create(body.role, seconds)
+    if not remote.available() then
+        return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal remote requests (the lock self-test failed; see the log)")
+    end
+    local invitation, failure = invitations.create(body.role, seconds, ctx.apiKey.id)
     if not invitation then
         if failure == "INVITATION_LIMIT_REACHED" then
             return Problem.new(409, failure, "There are already " .. invitations.MAX_PENDING .. " pending invitations; revoke one first")
