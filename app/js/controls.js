@@ -142,17 +142,21 @@ export function nudgeTarget(thermostat, delta) {
   let entry = nudges.get(id);
   const first = !entry;
   if (first) {
-    entry = { before: { ...current }, timer: null };
+    entry = { before: { ...current }, timer: null, target: null };
   }
-  const base = Number.isFinite(current.target_temperature)
-    ? current.target_temperature
+  // During a series of taps, from the value they have reached: a confirmation of another change
+  // (fan, mode) may have put the controller's older value back on screen meanwhile.
+  const shown = Number.isFinite(entry.target) ? entry.target : current.target_temperature;
+  const base = Number.isFinite(shown)
+    ? shown
     : Number.isFinite(current.current_temperature)
       ? Math.round(current.current_temperature)
       : 22;
   const target = clampTarget(current, base + delta);
-  if (target === current.target_temperature) {
+  if (target === shown) {
     return;
   }
+  entry.target = target;
   replaceDevice("thermostat", { ...current, target_temperature: target });
   if (first) {
     setPending(deviceKey("thermostat", id), true);
@@ -164,7 +168,7 @@ export function nudgeTarget(thermostat, delta) {
     const latest = findDevice("thermostat", id);
     setPending(deviceKey("thermostat", id), false);
     if (latest) {
-      await sendChange("thermostat", id, { target_temperature: latest.target_temperature }, { before: entry.before });
+      await sendChange("thermostat", id, { target_temperature: entry.target }, { before: entry.before });
     }
   }, 700);
   nudges.set(id, entry);

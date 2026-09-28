@@ -2,6 +2,8 @@
 
 ## Current release
 
+`v0.11.1` — air conditioning: the full 16–32 °C range, and − / + right after a fan or mode change send the temperature chosen. On an AC that is off at 32 °C, change the fan and tap − at once: the target becomes 31 °C, with no error.
+
 `v0.11.0` — People and devices: who has access, from the app; revoking a device's key also ends its account's membership. Update DirectorLink in Composer (no reboot).
 
 ## 0j. People and devices
@@ -89,7 +91,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.11.0`
+- Version: `0.11.1`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`
