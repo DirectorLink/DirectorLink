@@ -15,7 +15,7 @@
 // refuse changes from any other origin.
 
 import { appOrigins, currentUser } from "./accounts.js";
-import { json, problem } from "./http.js";
+import { json, problem, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
@@ -63,13 +63,9 @@ function driverProblem(code) {
 }
 
 async function body(request) {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (length > MAX_BODY_BYTES) {
-    return null;
-  }
   try {
-    const text = await request.text();
-    if (text.length > MAX_BODY_BYTES) {
+    const text = await readText(request, MAX_BODY_BYTES);
+    if (text === null) {
       return null;
     }
     const value = JSON.parse(text);

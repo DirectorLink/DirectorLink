@@ -42,7 +42,11 @@ export function authorizationUrl(env, { redirectUri, state, nonce }) {
     scope: "name email",
     state,
     nonce,
-  }).toString();
+  })
+    .toString()
+    // Apple asks for %20 between scopes, not the "+" of form encoding (values hold no other spaces;
+    // a "+" in a value is already %2B).
+    .replace(/\+/g, "%20");
   return url.toString();
 }
 
@@ -119,15 +123,15 @@ export function nameFromForm(user) {
   }
 }
 
-// Checks Apple's ID token (jwt.js) and its email. Returns the person; `private` is an address of
-// Apple's Hide My Email relay.
+// Checks Apple's ID token (jwt.js). Returns the person; `email` is null when Apple gave no verified
+// address (it may leave it out for a returning Apple ID, e.g. after Hide My Email forwarding was
+// turned off: the account is found by its sub, and a new one needs an email); `private` is an
+// address of Apple's Hide My Email relay.
 export async function verifyIdToken(env, idToken, { nonce, now = Date.now() }) {
   const ends = endpoints(env);
   const claims = await verifyJwt(idToken, { jwksUrl: ends.jwks, issuers: [ends.issuer], audience: env.APPLE_SERVICES_ID, nonce, now, provider: "Apple" });
-  if (typeof claims.email !== "string" || !claims.email.includes("@") || !isTrue(claims.email_verified)) {
-    throw new SignInError("EMAIL_NOT_VERIFIED", "Apple gave no verified email address for this Apple ID");
-  }
-  return { subject: claims.sub, email: claims.email.toLowerCase(), name: null, private: isTrue(claims.is_private_email) };
+  const verified = typeof claims.email === "string" && claims.email.includes("@") && claims.email.length <= 254 && isTrue(claims.email_verified);
+  return { subject: claims.sub, email: verified ? claims.email.toLowerCase() : null, name: null, private: isTrue(claims.is_private_email) };
 }
 
 // The Apple side of accounts.js: how a sign-in starts and comes back.

@@ -84,9 +84,10 @@ export function startAccount() {
 export const SIGN_IN_PROVIDERS = ["google"];
 
 // `hash`: the screen to come back to (Settings, or Home when signing in from the connect screen).
-export function signIn(hash = "#/settings", provider = "google") {
+// `link`: add this provider to the signed-in account instead (Settings → Account).
+export function signIn(hash = "#/settings", provider = "google", { link = false } = {}) {
   const back = `${window.location.origin}/${hash}`;
-  window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}`);
+  window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}${link ? "&link=1" : ""}`);
 }
 
 export async function signOut() {
