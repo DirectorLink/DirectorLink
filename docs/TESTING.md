@@ -2,6 +2,18 @@
 
 ## Current release
 
+`v0.13.0` — scenes: one tap sets lights, AC, blinds and gates; made in the app by admins, run by everyone with member access. Update DirectorLink in Composer (no reboot).
+
+## 0l. Scenes
+
+1. As an admin: **Scenes** tab → **Good night** under *Start from an idea*: the editor opens with all lights off and all blinds closed.
+2. **Add an action** → Living room → Lights → **Choose** → only one lamp → Dim to 15% → **Add to scene**. Add the bedroom AC: Cool, 24°.
+3. Turn on **Show on Home**, **Try it now** (the house changes, nothing is saved), then **Save scene**.
+4. On Home, tap the scene: it says *Done*, and the lights, AC and blinds follow. On a phone with a member key, the same; with a view-only key the scene is listed but has no Run.
+5. Add the gate (Doors & gates → Close) and run it from a member key: *doors and gates were skipped*; from an admin key with Door Control on, the gate closes.
+6. Set the house by hand, open the scene → **Copy the house as it is now** → Save: running it later puts the house back like that.
+7. Update the driver again in Composer: the scenes are still there.
+
 `v0.12.0` — profiles: your language, theme, favorites and hidden rooms follow you to all your devices; one room order for the home. Update DirectorLink in Composer (no reboot).
 
 ## 0k. Profiles and rooms
@@ -101,7 +113,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.12.0`
+- Version: `0.13.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`

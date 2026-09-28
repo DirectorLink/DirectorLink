@@ -21,6 +21,7 @@ import {
   visibleRooms,
 } from "../model.js";
 import { installApp } from "../pwa.js";
+import { runScene } from "../scenes.js";
 import { can, notify, state, ui } from "../state.js";
 import { connectScreen } from "./connect.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
@@ -54,6 +55,7 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     offlineBanner(),
     staleBanner(),
     summaryChips(),
+    scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),
     roomsSection(),
   ];
@@ -93,6 +95,47 @@ function summaryChips() {
   }
   if (!chips.length) return null;
   return h("div", { class: "summary", role: "group", "aria-label": t("home.filterLabel") }, chips);
+}
+
+// ---- scenes shown on Home ------------------------------------------------------------------
+
+function scenesRow() {
+  const scenes = (state.scenes || []).filter((scene) => scene.show_on_home);
+  if (!scenes.length || !can("member")) return null;
+  return h(
+    "section",
+    { class: "home-section", "aria-labelledby": "home-scenes-title" },
+    h(
+      "div",
+      { class: "section-head" },
+      h("h2", { id: "home-scenes-title", class: "section-title" }, icon("scene"), t("scenes.homeTitle")),
+      h("a", { class: "button button-quiet button-small", href: "#/scenes", dataset: { key: "home-scenes-all" } }, t("scenes.allLink"))
+    ),
+    h("div", { class: "home-scenes" }, scenes.map(sceneButton))
+  );
+}
+
+function sceneButton(scene) {
+  const run = ui.sceneRuns[scene.id];
+  const ran = run && run.stage !== "running" && run.stage !== "error";
+  return h(
+    "button",
+    {
+      type: "button",
+      class: `scene-chip ${run ? `is-${run.stage}` : ""}`,
+      title: t("scenes.runLabel", { name: scene.name }),
+      disabled: run?.stage === "running",
+      dataset: { key: `home-scene:${scene.id}` },
+      onclick: () => runScene(scene),
+    },
+    h("span", { class: "scene-chip-icon", "aria-hidden": "true" }, icon(ran ? "check" : scene.icon || "bulb")),
+    h(
+      "span",
+      { class: "scene-chip-text" },
+      name(scene.name, "span", "scene-chip-name"),
+      run ? h("span", { class: "scene-chip-state", role: "status" }, run.stage === "running" ? t("scenes.running") : run.text) : null
+    )
+  );
 }
 
 // ---- favorites -----------------------------------------------------------------------------

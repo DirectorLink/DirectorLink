@@ -1,7 +1,7 @@
 // DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
-// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/auth/pair" —
+// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { startAccount } from "./js/account.js";
@@ -17,18 +17,21 @@ import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
+import { loadScenes } from "./js/scenes.js";
 import { state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
+import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { settingsView } from "./js/views/settings.js";
 
 const view = document.querySelector("#view");
 const tabbar = document.querySelector("#tabbar");
 const TABS = [
   { name: "home", href: "#/", icon: "home" },
+  { name: "scenes", href: "#/scenes", icon: "scene" },
   { name: "cameras", href: "#/cameras", icon: "camera" },
   { name: "climate", href: "#/climate", icon: "climate" },
   { name: "settings", href: "#/settings", icon: "settings" },
@@ -49,7 +52,10 @@ function parseRoute() {
   if (parts[0] === "room" && /^\d+$/.test(parts[1] || "")) {
     return { name: "room", id: Number(parts[1]), tab: "home" };
   }
-  if (["cameras", "climate", "settings"].includes(parts[0])) {
+  if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
+    return { name: "scene", id: parts[1], tab: "scenes" };
+  }
+  if (["scenes", "cameras", "climate", "settings"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
   }
   if (parts[0] === "access") {
@@ -71,10 +77,11 @@ export function navigate(hash) {
 window.addEventListener("hashchange", () => {
   // Entries reached inside the app: the Back button can use history.back().
   window.history.replaceState({ directorlinkInApp: true }, "");
-  const previous = route.name;
+  const previous = route;
   route = parseRoute();
-  // People and devices loads fresh each time it is opened.
-  if (route.name === "access" && previous !== "access") resetAccess();
+  // People and devices loads fresh each time it is opened; a scene opens as it was saved.
+  if (route.name === "access" && previous.name !== "access") resetAccess();
+  if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -195,6 +202,11 @@ function signature() {
     ui.joinMessage,
     state.profile,
     ui.roomOrderMessage,
+    state.scenes,
+    state.scenesUnsupported,
+    ui.sceneRuns,
+    ui.scenesMessage,
+    route.name === "scene" ? ui.sceneEditor : 0,
     route.name === "access" ? ui.access : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
@@ -206,6 +218,10 @@ function screen() {
   switch (route.name) {
     case "room":
       return roomView(route.id, actions);
+    case "scenes":
+      return scenesView(actions);
+    case "scene":
+      return sceneEditorView(route.id, actions);
     case "cameras":
       return camerasView(actions);
     case "climate":
@@ -325,6 +341,8 @@ function applyLanguage() {
 subscribe(() => render());
 // The person's profile: language, theme and palette from their other devices apply here too.
 whenConnected(() => syncProfile(applyLanguage));
+// The home's scenes, for the Scenes tab and the ones shown on Home.
+whenConnected(loadScenes);
 watchSystemTheme(() => render(true));
 window.addEventListener("pointerup", () => window.setTimeout(() => render(), 0));
 

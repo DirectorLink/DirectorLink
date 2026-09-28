@@ -219,6 +219,38 @@ def scenario(client, bridge):
     client.check("PUT", "/v1/rooms/order", 400, body={"room_ids": [999]})
     client.check("PATCH", "/v1/profile", 200, body={"prefs": {"hidden_rooms": [11]}})
 
+    # Scenes: made by admins, run by members; a door in a scene runs with door access.
+    night = {
+        "name": "Good night",
+        "icon": "moon",
+        "show_on_home": True,
+        "steps": [
+            {"type": "lights", "set": {"on": False}},
+            {"type": "climate", "room_id": 11, "set": {"mode": "cool", "target_temperature": 24}},
+            {"type": "blinds", "room_id": None, "set": {"position": 0}},
+            {"type": "lights", "room_id": 10, "device_ids": [20], "set": {"brightness": 30}},
+            {"type": "relays", "device_ids": [70], "set": {"state": "closed"}},
+        ],
+    }
+    scene = client.check("POST", "/v1/scenes", 201, body=night)
+    client.check("POST", "/v1/scenes", 400, body={"name": "Bad", "steps": [{"type": "lights", "set": {"on": True, "brightness": 5}}]})
+    client.check("GET", "/v1/scenes", 200)
+    client.check("GET", f"/v1/scenes/{scene['id']}", 200)
+    client.check("GET", "/v1/scenes/deadbeef", 404)
+    client.check("GET", "/v1/scenes/nothex", 400)
+    client.check("PATCH", f"/v1/scenes/{scene['id']}", 200, body={"name": "Night", "version": 1})
+    client.check("PATCH", f"/v1/scenes/{scene['id']}", 409, body={"name": "Late", "version": 1})
+    client.check("PATCH", f"/v1/scenes/{scene['id']}", 400, body={"icon": "rocket"})
+    client.check("PATCH", "/v1/scenes/deadbeef", 404, body={"name": "Gone"})
+    client.check("POST", f"/v1/scenes/{scene['id']}/run", 202)
+    client.check("POST", "/v1/scenes/deadbeef/run", 404)
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {}}]})
+    spare = client.check("POST", "/v1/scenes", 201, body={"name": "Spare"})
+    client.check("DELETE", f"/v1/scenes/{spare['id']}", 204)
+    client.check("DELETE", f"/v1/scenes/{spare['id']}", 404)
+    client.check("GET", "/v1/scenes", 401, auth=False)
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
@@ -236,6 +268,12 @@ def scenario(client, bridge):
     client.check("GET", "/v1/profiles", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
     client.check("GET", "/v1/profile", 200)
+    client.check("GET", "/v1/scenes", 200)
+    client.check("POST", f"/v1/scenes/{scene['id']}/run", 403)
+    client.check("POST", "/v1/scenes", 403, body={"name": "Mine"})
+    client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
+    client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
+    client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key

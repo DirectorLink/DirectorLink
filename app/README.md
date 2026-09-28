@@ -21,6 +21,10 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 
 Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`, `#/join/<invitation>` (taken out of the address as the page opens; see Remote access), `#/access` (People and devices).
 
+## Scenes
+
+The **Scenes** tab (`js/views/scenes.js`, `js/scenes.js`, `docs/SCENES.md`) lists the home's scenes from `GET /v1/scenes` with a Run button (`POST /v1/scenes/{id}/run`, members and above). Admins make and change them in the editor (`#/scene/new`, `#/scene/{id}`): name and icon, the actions (Add an action: where, what, which devices, what to do), **Copy the house as it is now**, **Show on Home**, **Try it now** (`POST /v1/scenes/try`) and Save (`POST`/`PATCH /v1/scenes`, with `version`). Scenes marked Show on Home are on Home, above the favorites. Drivers older than 0.13.0 answer 404: the tab says to update the driver.
+
 ## Profiles
 
 Each person's language, theme, palette, favorites and hidden rooms are kept on the controller, in their profile, and shared by their devices (`js/profile.js`, `docs/PREFERENCES.md`). After connecting, and every minute, the app reads `GET /v1/profile` and applies it; the first time, this browser's own choices become the profile's; changes go back with `PATCH /v1/profile` a moment later. The browser keeps a copy, so the app opens in the right language before it reaches the controller and works as before with drivers older than 0.12.0. Settings → Rooms: untick a room to hide it for yourself; admins set the home's order with the arrows (`PUT /v1/rooms/order`). **Add my other device** makes the new device join your profile.

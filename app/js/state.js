@@ -12,6 +12,9 @@ export const state = {
   remoteInfo: null,
   // This person's profile (profile.js): null until read, and with drivers before 0.12.0.
   profile: null,
+  // The home's scenes (scenes.js): null until read; scenesUnsupported with drivers before 0.13.0.
+  scenes: null,
+  scenesUnsupported: false,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,
@@ -48,6 +51,10 @@ export const ui = {
   roomDrafts: {}, // settings: room names being edited, "roomId:lang" -> text
   roomMessages: {}, // settings: per-room save result
   roomOrderMessage: null, // settings: the room order could not be saved
+  sceneRuns: {}, // scene id -> { stage: "running" | "done" | "partial" | "error", text } after Run
+  sceneEditor: null, // the scene being edited (views/scenes.js)
+  sceneIdea: null, // an idea to start a new scene from
+  scenesMessage: null, // scenes list: saved or deleted
   drafts: {}, // form fields being typed: key -> text
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"

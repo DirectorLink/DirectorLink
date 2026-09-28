@@ -12,6 +12,7 @@ local suites = {
     "test_lock",
     "test_remote",
     "test_profiles",
+    "test_scenes",
 }
 
 local passed, failed = 0, 0
