@@ -1,12 +1,12 @@
-# DirectorLink relay protocol (v0, proof of concept)
-
-Version 1, with accounts and end-to-end encryption, is designed in `docs/ACCOUNTS.md` (proposal).
+# DirectorLink relay protocol (version 1)
 
 The relay lets the app reach a home from anywhere without opening anything on the home network:
 the **driver** keeps one outgoing WebSocket (TLS, port 443) to `api.directorlink.io`, and requests
 for that home travel over it. This document is the contract between `driver/src/cloud/` and
-`cloud/`. Version 0 exists to prove the connection on a real controller; accounts, invitations and
-the app come later (ADR-027).
+`cloud/`. Accounts, claiming a home, invitations and the lock are in `docs/ACCOUNTS.md` (ADR-029).
+
+Since version 1 (DirectorLink 0.10.0) **everything the relay passes on is sealed end to end**: the
+relay routes envelopes it cannot read. The plain requests of version 0 are refused by the driver.
 
 ## Identity of a home
 
@@ -16,9 +16,9 @@ persistent data (ADR-028):
 - `home_id` — 32 hex characters, random. Not secret; shown shortened in Composer.
 - `home_secret` — 64 hex characters, random. Never logged, never shown.
 
-Version 0 uses *trust on first use*: the relay stores the SHA-256 of the first secret it sees for a
-`home_id` and afterwards only accepts that secret. (Later, claiming a home with a pairing code while
-signed in replaces this.)
+The relay trusts the first secret it sees for a `home_id` (it stores the SHA-256) and afterwards
+only accepts that secret. This only decides which connection carries the home's envelopes: who may
+use the home is decided by the account's claim and by the device keys (`docs/ACCOUNTS.md`).
 
 ## Connecting
 
@@ -45,32 +45,41 @@ The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, the
 ## Messages
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a
-`type`.
+`type`. Every message the relay sends has an `id`; the driver's reply carries the same `id`.
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
 | driver → relay | `ping` (plain text) | Keep-alive, every 25 s. |
-| relay → driver | `pong` (plain text) | Answer to `ping`. The relay answers without waking its code (hibernation auto-response). |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.9.2"}` | First message after connecting. |
-| relay → driver | `{"type":"request","id":"<id>","method":"GET","path":"/v1/lights?room_id=10","body":null}` | Run an API request. `path` includes the query string; `body` is a JSON string or `null`. |
-| driver → relay | `{"type":"response","id":"<id>","status":200,"content_type":"application/json; charset=utf-8","body":"<text>"}` | The API's answer, byte for byte. Binary answers (camera pictures) use `"body_base64"` instead of `"body"`. |
+| relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.10.0"}` | First message after connecting. |
+| relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
+| driver → relay | `{"type":"e2e","id":"…","envelope":{…}}` | The sealed answer; or `{"type":"e2e","id":"…","code":"…"}` when the request is refused. |
+| relay → driver | `{"type":"join","id":"…","invitation":"<id>","envelope":{…}}` | Accepting an invitation: a request sealed with the invitation's secret. |
+| driver → relay | `{"type":"join_result","id":"…","ok":true,"key_id":"…","envelope":{…}}` | The new key, sealed for the invited device; or `"ok":false` with a `code`. |
+| relay → driver | `{"type":"claim","id":"…","token":"<48 hex>"}` | Is this the claim token the controller gave out? |
+| driver → relay | `{"type":"claim_result","id":"…","ok":true}` | Yes (the token is used up); or `"ok":false,"code":"INVALID_CLAIM"`. |
+| relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. |
+
+Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CIPHERTEXT`, `BAD_REQUEST`, `STALE`
+(outside the 2-minute window, or sealed before the driver started), `REPLAYED`, `TOO_LARGE`
+(requests over 64 KiB), `LOCK_UNAVAILABLE` (the lock self-test failed at start),
+`INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `INTERNAL`. The cloud turns them into Problem Details
+for the app (`cloud/src/homes.js`).
 
 If the driver hears nothing (not even `pong`) for 60 s, it drops the connection and reconnects.
-The relay answers `504` to its caller when a response takes longer than 15 s.
+The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s.
 
-## What a relayed request may do (version 0)
+## What a relayed request may do
 
-- The relay forwards only `GET` requests.
-- The driver runs every relayed request as a principal with role **viewer**, whatever the relay
-  sends: reads only, no control, no keys, no log. Later versions carry the signed-in member's role.
-- Relayed requests are logged by the driver like LAN requests, with `client` = `relay`.
+- A sealed request runs as the device's own API key, with that key's role (viewer, member, doors,
+  admin) and the Composer Door Control switch, exactly as on the home network.
+- The driver logs it like a LAN request, with `client` = `relay` and the key id.
+- Claim tokens (`POST /v1/remote/claim`) are given out only on the home network, to admin keys.
 
-## Test endpoints (version 0 only)
+## Test endpoints
 
-For proving the relay before accounts exist. They require `Authorization: Bearer <TEST_TOKEN>`
-(a Worker secret) and are removed once accounts replace them.
+Version 0's `GET /test/homes/{home_id}/status` and `GET /test/homes/{home_id}/v1/...` exist only
+while the Worker has a `TEST_TOKEN` secret; production has none, so they answer
+`503 TEST_TOKEN_NOT_SET`. Drivers from 0.10.0 refuse the relayed plain request in any case.
 
-- `GET /test/homes/{home_id}/status` → `{"connected": true, "since": "<ISO time>", "version": "0.9.2", "last_seen": "<ISO time>"}`
-- `GET /test/homes/{home_id}/v1/...` → forwarded to the driver as a `request`; the answer carries
-  the driver's status, content type and body.
 - `GET /health` → `{"status":"ok"}` (no token).

@@ -287,9 +287,23 @@ function tests.when_the_self_test_fails_nothing_remote_is_accepted()
 end
 
 function tests.a_request_captured_before_a_restart_is_refused_after_it()
-    local s = session()
-    local envelope = seal(s, { method = "GET", path = "/v1/system", ts = os.time() - 1 })
-    T.truthy(send(s, { type = "e2e", id = "before", envelope = envelope }).envelope, "accepted before the restart")
+    -- The driver started 30 s ago and the request was sealed then: well within the 2-minute window,
+    -- so only the start time refuses it after the restart.
+    local before = os.time() - 30
+    local Clock, now
+    local s = session({
+        prepare = function()
+            Clock = require("src.core.clock")
+            now = Clock.now
+            Clock.now = function()
+                return before
+            end
+        end,
+    })
+    local envelope = seal(s, { method = "GET", path = "/v1/system", ts = before })
+    local reply = send(s, { type = "e2e", id = "before", envelope = envelope })
+    Clock.now = now
+    T.truthy(reply.envelope, "accepted before the restart")
     local updated = Mock.updateDriver(s.mock)
     local _, connection = Harness.connected({ mock = updated })
     local again = Harness.relayRequest(updated, connection, { type = "e2e", id = "after", envelope = envelope })
