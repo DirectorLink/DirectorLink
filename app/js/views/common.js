@@ -27,14 +27,24 @@ export function connectionChip() {
   );
 }
 
-export function pageHeader({ title, back, actions = [], titleDir } = {}) {
+// `onBack(event)` runs first when Back is pressed; it may cancel with event.preventDefault().
+export function pageHeader({ title, back, onBack, actions = [], titleDir } = {}) {
   return h(
     "header",
     { class: "page-header" },
     back
       ? h(
           "a",
-          { class: "icon-button back-button", href: back, "aria-label": t("common.back"), dataset: { key: "back" }, onclick: goBack },
+          {
+            class: "icon-button back-button",
+            href: back,
+            "aria-label": t("common.back"),
+            dataset: { key: "back" },
+            onclick: (event) => {
+              onBack?.(event);
+              if (!event.defaultPrevented) goBack(event);
+            },
+          },
           icon("chevronBack")
         )
       : null,
