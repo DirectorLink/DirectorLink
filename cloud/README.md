@@ -12,8 +12,10 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/invitations.js` — tombstones for invitations whose email or creator goes, and the daily purge
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
 - `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account
-- `src/google.js` — Google's authorization-code flow with PKCE, and the ID token checks
-- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`
+- `src/google.js` — Google's authorization-code flow with PKCE
+- `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret
+- `src/jwt.js` — ID token checks shared by both (signature, issuer, audience, expiry, nonce)
+- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -99,7 +101,9 @@ curl https://api.directorlink.io/health
 | --- | --- |
 | `GET /auth/google/start?return_to=<app URL>` | 302 to Google; sets the 10-minute `__Host-dl_signin` cookie. `return_to` must be on one of `APP_ORIGINS`, else the app's Settings |
 | `GET /auth/google/callback` | Google comes back here; 302 to `return_to` with `?signin=ok`, `cancelled`, `expired`, `failed` or `unverified`, and on success the `__Host-dl_session` cookie |
-| `GET /v1/me` | `{"id", "email", "name", "created_at"}`, or 401 `NOT_SIGNED_IN` |
+| `GET /auth/apple/start?return_to=<app URL>` | 302 to Apple (`response_mode=form_post`); sets the 10-minute `__Host-dl_signin_apple` cookie (`SameSite=None`: Apple's answer is a POST from its site). 503 `SIGN_IN_NOT_CONFIGURED` until the Apple settings exist |
+| `POST /auth/apple/callback` | Apple's form comes here; 303 to `return_to` with the same outcomes as Google's |
+| `GET /v1/me` | `{"id", "email", "name", "created_at", "providers"}` (`providers`: `google`, `apple`), or 401 `NOT_SIGNED_IN` |
 | `DELETE /v1/me` | 204; the account and all its sessions are deleted |
 | `POST /auth/logout` | 204; this session ends |
 
@@ -120,7 +124,9 @@ They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wr
 
 `/v1/me`, `/v1/homes…`, `/v1/join` and `/auth/logout` answer CORS with credentials only for `APP_ORIGINS`, and `DELETE`/`POST` from any other origin (or none) are refused with 403 `ORIGIN_NOT_ALLOWED`.
 
-Settings (`wrangler.jsonc` → `vars`): `GOOGLE_CLIENT_ID` (public), `APP_ORIGINS`, `PUBLIC_URL` (the address Google redirects back to, registered with the client). Secret: `GOOGLE_CLIENT_SECRET` (`npx wrangler@4 secret put GOOGLE_CLIENT_SECRET`). Database: D1 `directorlink`, binding `DB`; schema changes go in `migrations/`:
+Settings (`wrangler.jsonc` → `vars`): `GOOGLE_CLIENT_ID` (public), `APP_ORIGINS`, `PUBLIC_URL` (the address Google and Apple send the browser back to, registered with each). Secret: `GOOGLE_CLIENT_SECRET` (`npx wrangler@4 secret put GOOGLE_CLIENT_SECRET`).
+
+Sign in with Apple needs, from the Apple Developer account: a Services ID with Sign in with Apple on, domain `api.directorlink.io` and return URL `https://api.directorlink.io/auth/apple/callback`; the Team ID; and a key with Sign in with Apple, its Key ID and `.p8` file. `APPLE_SERVICES_ID`, `APPLE_TEAM_ID` and `APPLE_KEY_ID` go in `vars`; the key is a secret (`npx wrangler@4 secret put APPLE_PRIVATE_KEY < AuthKey_XXXX.p8`). Then `SIGN_IN_PROVIDERS` in `app/js/account.js` gets `"apple"`. Tests: `apple.test.mjs` with a fake Apple (`fake-apple.mjs`) that checks the client secret as Apple does. Database: D1 `directorlink`, binding `DB`; schema changes go in `migrations/`:
 
 ```
 npx wrangler@4 d1 migrations apply directorlink --remote

@@ -79,10 +79,14 @@ export function startAccount() {
   }
 }
 
+// The sign-in providers the app offers; each must be set up on api.directorlink.io
+// (cloud/README.md). Apple is added once its keys are there.
+export const SIGN_IN_PROVIDERS = ["google"];
+
 // `hash`: the screen to come back to (Settings, or Home when signing in from the connect screen).
-export function signIn(hash = "#/settings") {
+export function signIn(hash = "#/settings", provider = "google") {
   const back = `${window.location.origin}/${hash}`;
-  window.location.assign(`${ACCOUNTS_API}/auth/google/start?return_to=${encodeURIComponent(back)}`);
+  window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}`);
 }
 
 export async function signOut() {

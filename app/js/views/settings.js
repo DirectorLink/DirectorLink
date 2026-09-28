@@ -1,6 +1,6 @@
 // Settings: appearance, language, room names, controller, account, app and about.
 
-import { deleteAccount, loadAccount, signIn, signOut } from "../account.js";
+import { deleteAccount, loadAccount, signOut } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
@@ -13,7 +13,7 @@ import { installApp } from "../pwa.js";
 import { api, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
-import { offlineBanner, pageHeader } from "./common.js";
+import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 
 export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
   return [
@@ -560,7 +560,10 @@ function accountSection() {
         "dl",
         { class: "facts" },
         h("div", { class: "fact" }, h("dt", {}, t("settings.account.signedInAs")), h("dd", { id: "account-email" }, account.user.email)),
-        account.user.name ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.name")), h("dd", {}, account.user.name)) : null
+        account.user.name ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.name")), h("dd", {}, account.user.name)) : null,
+        Array.isArray(account.user.providers) && account.user.providers.length
+          ? h("div", { class: "fact" }, h("dt", {}, t("settings.account.providers")), h("dd", { id: "account-providers" }, account.user.providers.map((provider) => t(`settings.account.provider.${provider}`)).join(" · ")))
+          : null
       ),
       h(
         "div",
@@ -591,7 +594,7 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-primary", dataset: { key: "account-sign-in" }, onclick: () => signIn() }, icon("user"), t("settings.account.signIn")),
+        signInButtons({ hash: "#/settings", key: "account-sign-in" }),
         account.status === "unavailable"
           ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
           : null
