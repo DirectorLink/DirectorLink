@@ -217,6 +217,7 @@ test("an invitation is registered by a member and accepted once, by the invited 
   const newKey = JSON.parse(answer.body);
   assert.match(newKey.key, /^ak_/);
   assert.doesNotMatch(joined.text, /ak_/, "the new key travels sealed");
+  assert.equal(joined.json.member, true, "the app learns that the account now belongs to the home");
 
   const works = await e2e(avi, state, newKey.key, newKey.id);
   assert.equal(works.status, 200, "Avi is a member now, with his own key");
@@ -307,6 +308,50 @@ test("only the envelope's own fields reach the home, and oversized requests are 
   assert.deepEqual(Object.keys(state.seen.at(-1).envelope).sort(), ["ct", "home", "iv", "key", "mac", "v"]);
   const huge = await call("POST", `/v1/homes/${state.home}/e2e`, { cookie: dana, body: { envelope: { ...envelope, ct: "A".repeat(200 * 1024) } } });
   assert.equal(huge.status, 400);
+});
+
+test("an invitation stays bound when its email's account, its creator or its home's owner goes", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  const register = (cookie, invitationId, email) => call("POST", `/v1/homes/${state.home}/invitations`, { cookie, body: { invitation_id: invitationId, email, expires_at: expires } });
+  const joinAs = (cookie, invitationId, secret) => {
+    const request = { id: randomHex(8), ts: nowSeconds(), method: "POST", path: "/v1/auth/join", body: { name: "Phone" } };
+    return call("POST", "/v1/join", { cookie, body: { home_id: state.home, invitation_id: invitationId, envelope: seal(invitationKey(secret), { home: state.home, key: invitationId }, "req", JSON.stringify(request)) } });
+  };
+
+  // The invited person deletes their account: the invitation's id stays taken.
+  const ori = { sub: "google-ori", email: "ori@example.com", name: "Ori" };
+  const forOri = randomHex(4);
+  const secret = randomBytes(32).toString("hex");
+  state.invitations.set(forOri, secret);
+  assert.equal((await register(dana, forOri, ori.email)).status, 201);
+  assert.equal((await call("DELETE", "/v1/me", { cookie: await signIn(ori) })).status, 204);
+  const moved = await register(dana, forOri, NOA.email);
+  assert.equal(moved.status, 409, "nobody can bind it to another email afterwards");
+  assert.equal(moved.json.code, "INVITATION_EXISTS");
+  assert.equal((await joinAs(await signIn(NOA), forOri, secret)).json.code, "INVITATION_NOT_FOUND");
+  assert.equal((await joinAs(await signIn(ori), forOri, secret)).json.code, "INVITATION_NOT_FOUND", "not even for the email it was for");
+  assert.ok(state.invitations.has(forOri), "the home never saw a join");
+
+  // A new owner: the old invitations cannot be registered again either.
+  const old = randomHex(4);
+  assert.equal((await register(dana, old, AVI.email)).status, 201);
+  const noa = await signIn(NOA);
+  state.claimToken = randomHex(24);
+  assert.equal((await call("POST", "/v1/homes/claim", { cookie: noa, body: { home_id: state.home, claim_token: state.claimToken } })).json.transferred, true);
+  assert.equal((await register(noa, old, NOA.email)).status, 409);
+});
+
+test("a member may have 20 invitations waiting for a home", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  for (let index = 0; index < 20; index += 1) {
+    const registered = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: `guest${index}@example.com`, expires_at: expires } });
+    assert.equal(registered.status, 201, registered.text);
+  }
+  const more = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: "one-more@example.com", expires_at: expires } });
+  assert.equal(more.status, 429);
+  assert.equal(more.json.code, "INVITATION_LIMIT_REACHED");
 });
 
 test("changes need the app's origin, and the app gets CORS answers", TEST, async () => {

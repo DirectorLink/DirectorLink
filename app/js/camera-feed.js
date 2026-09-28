@@ -140,7 +140,7 @@ async function refreshImages(images, stillWanted) {
       }
     } catch (error) {
       if (error?.status === 401) {
-        handleUnauthorized();
+        handleUnauthorized(error);
         return false;
       }
       for (const image of targets) {
@@ -208,7 +208,7 @@ async function refreshFull() {
       if (full !== current) return;
       if (error?.status === 401) {
         closeFullView();
-        handleUnauthorized();
+        handleUnauthorized(error);
         return;
       }
       if (error?.status === 503) {

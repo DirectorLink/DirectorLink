@@ -71,6 +71,12 @@ async function accept(invitation, navigate) {
   notify();
   try {
     const key = await acceptInvitation(invitation, clientName());
+    if (!key.member) {
+      // The home made the key but the account could not be added: it could not be used from here.
+      clearInvitation();
+      ui.joinMessage = t("join.errors.notRecorded");
+      return;
+    }
     saveApiKey(key.key);
     saveRemote({ home: invitation.home, keyId: key.id });
     // The saved address may be another controller's; the new key starts through the account and

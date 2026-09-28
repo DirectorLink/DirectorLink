@@ -303,7 +303,7 @@ function tests.a_request_captured_before_a_restart_is_refused_after_it()
     local envelope = seal(s, { method = "GET", path = "/v1/system", ts = before })
     local reply = send(s, { type = "e2e", id = "before", envelope = envelope })
     Clock.now = now
-    T.truthy(reply.envelope, "accepted before the restart")
+    T.truthy(reply.envelope, "accepted before the restart (" .. tostring(reply.code) .. ")")
     local updated = Mock.updateDriver(s.mock)
     local _, connection = Harness.connected({ mock = updated })
     local again = Harness.relayRequest(updated, connection, { type = "e2e", id = "after", envelope = envelope })
@@ -339,6 +339,43 @@ function tests.a_claim_answer_has_a_code_only_when_it_fails_and_joins_update_the
     local before = s.mock.properties["API Keys"]
     join(s, invitation, "Phone")
     T.eq(tonumber(s.mock.properties["API Keys"]), tonumber(before) + 1, "Composer shows the new key")
+end
+
+function tests.a_request_dated_ahead_of_the_controller_clock_cannot_be_replayed_after_a_restart()
+    local s = session()
+    local now = seal(s, { method = "GET", path = "/v1/system" })
+    T.truthy(send(s, { type = "e2e", id = "now", envelope = now }).envelope)
+    T.eq(s.mock.persist["directorlink_remote_seen"], nil, "requests dated now are not written to persistence")
+    -- A phone 100 s ahead: still inside the 2-minute window after a restart 20 s later.
+    local ahead = seal(s, { method = "GET", path = "/v1/system", ts = os.time() + 100 })
+    T.truthy(send(s, { type = "e2e", id = "ahead", envelope = ahead }).envelope, "accepted before the restart")
+    T.eq(send(s, { type = "e2e", id = "again", envelope = ahead }).code, "REPLAYED")
+    local updated = Mock.updateDriver(s.mock)
+    local _, connection = Harness.connected({ mock = updated })
+    local replay = Harness.relayRequest(updated, connection, { type = "e2e", id = "after", envelope = ahead })
+    T.eq(replay.code, "REPLAYED", "its id was saved")
+    local fresh = seal(s, { method = "GET", path = "/v1/system", ts = os.time() + 100 })
+    T.truthy(Harness.relayRequest(updated, connection, { type = "e2e", id = "new", envelope = fresh }).envelope, "new requests from that phone still work")
+end
+
+function tests.a_claim_token_dies_with_its_admin_key_and_demotion_revokes_invitations()
+    local s = session()
+    local admin, adminId = createKey(s, "admin")
+    local revoked = T.http(s.mock, "POST", "/v1/remote/claim", { key = admin }).json
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. adminId, { key = s.key }).status, 204)
+    T.eq(send(s, { type = "claim", id = "c1", token = revoked.claim_token }).ok, false, "the key that asked for it was revoked")
+
+    local other, otherId = createKey(s, "admin")
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = other }).json
+    local invitation = T.http(s.mock, "POST", "/v1/invitations", { key = other, body = { role = "admin" } }).json
+    T.eq(T.http(s.mock, "PATCH", "/v1/api-keys/" .. otherId, { key = s.key, body = { role = "member" } }).status, 200)
+    T.eq(send(s, { type = "claim", id = "c2", token = claim.claim_token }).ok, false, "the key is no longer admin")
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 0, "its invitations went with its admin role")
+    local _, refused = join(s, invitation, "Back door")
+    T.eq(refused.code, "INVITATION_NOT_FOUND")
+
+    local mine = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key }).json
+    T.eq(send(s, { type = "claim", id = "c3", token = mine.claim_token }).ok, true, "an admin's own token still works")
 end
 
 return tests

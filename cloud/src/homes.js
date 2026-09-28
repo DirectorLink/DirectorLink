@@ -16,6 +16,7 @@
 
 import { appOrigins, currentUser } from "./accounts.js";
 import { json, problem } from "./http.js";
+import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
@@ -29,6 +30,8 @@ const MAX_BODY_BYTES = MAX_REQUEST_CT + 4096;
 const MAX_INVITATION_MS = 7 * 24 * 3600 * 1000;
 // Controllers' clocks may run a little fast (the lock allows 2 minutes).
 const INVITATION_SKEW_MS = 10 * 60 * 1000;
+// Pending invitations one account may have registered for one home (the controller allows 20).
+const MAX_PENDING_PER_MEMBER = 20;
 
 // The driver's codes (driver/src/cloud/remote.lua) as HTTP answers.
 const CODES = {
@@ -158,7 +161,7 @@ async function claim(request, env, user) {
     statements.push(
       env.DB.prepare("UPDATE homes SET owner_id = ?, claimed_at = ? WHERE id = ?").bind(user.id, now, homeId),
       env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
-      env.DB.prepare("DELETE FROM invitations WHERE home_id = ?").bind(homeId)
+      ...forgetInvitations(env, "home_id = ?", homeId)
     );
   }
   statements.push(env.DB.prepare("INSERT OR IGNORE INTO members (home_id, user_id, added_at) VALUES (?, ?, ?)").bind(homeId, user.id, now));
@@ -221,16 +224,22 @@ async function registerInvitation(request, env, user, homeId) {
   if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + INVITATION_SKEW_MS) {
     return problem(400, "INVALID_REQUEST", "expires_at must be in the next 7 days");
   }
-  // Only pending invitations are kept. An invitation is bound to its email once: nobody, not even
-  // another member of the home, can move it to another address.
+  // An invitation is bound to its email once: nobody, not even another member of the home, can
+  // move it to another address. Each member has at most 20 pending here.
+  const now = iso();
   const [, inserted] = await env.DB.batch([
-    env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND (expires_at < ? OR accepted_by IS NOT NULL)").bind(homeId, iso()),
+    env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND (expires_at < ? OR accepted_by IS NOT NULL)").bind(homeId, iso(Date.now() - PURGE_GRACE_MS)),
     env.DB.prepare(
-      "INSERT INTO invitations (home_id, id, email, expires_at, created_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (home_id, id) DO NOTHING"
-    ).bind(homeId, input.invitation_id, email, iso(expires), user.id),
+      "INSERT INTO invitations (home_id, id, email, expires_at, created_by) SELECT ?, ?, ?, ?, ? " +
+        "WHERE (SELECT COUNT(*) FROM invitations WHERE home_id = ? AND created_by = ? AND accepted_by IS NULL AND expires_at > ?) < ? " +
+        "ON CONFLICT (home_id, id) DO NOTHING"
+    ).bind(homeId, input.invitation_id, email, iso(expires), user.id, homeId, user.id, now, MAX_PENDING_PER_MEMBER),
   ]);
   if (!inserted.meta.changes) {
-    return problem(409, "INVITATION_EXISTS", "This invitation is already registered");
+    const exists = await env.DB.prepare("SELECT 1 AS found FROM invitations WHERE home_id = ? AND id = ?").bind(homeId, input.invitation_id).first();
+    return exists
+      ? problem(409, "INVITATION_EXISTS", "This invitation is already registered")
+      : problem(429, "INVITATION_LIMIT_REACHED", `At most ${MAX_PENDING_PER_MEMBER} invitations may wait at a time; revoke some first`);
   }
   log("invitation_registered", { home: homeId, user: user.id, invitation: input.invitation_id });
   return json({ invitation_id: input.invitation_id, email, expires_at: iso(expires) }, 201);
@@ -245,7 +254,7 @@ async function join(request, env, user) {
   const invitation = await env.DB.prepare("SELECT email, expires_at, accepted_by FROM invitations WHERE home_id = ? AND id = ?")
     .bind(homeId, input.invitation_id)
     .first();
-  if (!invitation || invitation.accepted_by || invitation.expires_at < iso()) {
+  if (!invitation || !invitation.email || invitation.accepted_by || invitation.expires_at < iso()) {
     return problem(404, "INVITATION_NOT_FOUND", "The invitation was used, revoked or has expired; ask for a new one");
   }
   if (invitation.email !== user.email) {
@@ -261,20 +270,25 @@ async function join(request, env, user) {
     return driverProblem(reply.code ?? "INTERNAL");
   }
   // The controller has made the key; membership follows only while the invitation is still
-  // pending here (a change of owner meanwhile removes it). The sealed answer goes back either way.
+  // pending here (a change of owner meanwhile tombstones it), and the used invitation goes. The
+  // sealed answer goes back either way, with whether this account is now a member.
   const now = iso();
-  try {
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND accepted_by IS NULL)"
-      ).bind(homeId, user.id, now, homeId, input.invitation_id),
-      env.DB.prepare("UPDATE invitations SET accepted_by = ?, accepted_at = ? WHERE home_id = ? AND id = ? AND accepted_by IS NULL").bind(user.id, now, homeId, input.invitation_id),
-    ]);
-  } catch (error) {
-    log("join_record_failed", { home: homeId, user: user.id, error: String(error?.message ?? error) });
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await env.DB.batch([
+        env.DB.prepare(
+          "INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)"
+        ).bind(homeId, user.id, now, homeId, input.invitation_id, user.email),
+        env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL").bind(homeId, input.invitation_id, user.email),
+      ]);
+      break;
+    } catch (error) {
+      log("join_record_failed", { home: homeId, user: user.id, attempt, error: String(error?.message ?? error) });
+    }
   }
-  log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id });
-  return json({ home_id: homeId, envelope: reply.envelope });
+  const joined = Boolean(await member(env, homeId, user.id).catch(() => null));
+  log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined });
+  return json({ home_id: homeId, envelope: reply.envelope, member: joined });
 }
 
 async function listMembers(env, user, homeId) {

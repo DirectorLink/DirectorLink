@@ -136,6 +136,9 @@ export function useHost(value) {
   if (state.host && host !== state.host && state.apiKey) {
     forgetKey();
   }
+  if (host !== state.host) {
+    state.remoteInfo = null;
+  }
   saveHost(host);
   state.host = host;
   return host;
@@ -145,6 +148,7 @@ export function forgetKey() {
   clearApiKey();
   forgetRemote();
   state.transport = "lan";
+  state.remoteInfo = null;
   stopPolling();
   state.apiKey = "";
   state.role = null;
@@ -204,8 +208,11 @@ function remoteErrorText(error) {
       return t("errors.remote.invalidClaim");
     case "KEY_LIMIT_REACHED":
       return t("connect.errors.keyLimit");
+    case "INVITATION_LIMIT_REACHED":
+      return t("errors.invitationLimit");
     default:
-      return error.message || t("errors.remote.unreachable");
+      // The cloud's own text is not shown: it is in English only, and not the app's to trust.
+      return t("errors.remote.failed", { code: String(error.code || "UNKNOWN").slice(0, 40) });
   }
 }
 
@@ -230,6 +237,9 @@ function describeError(error) {
   if (error?.code === "INVALID_HOST") {
     return error.message;
   }
+  if (error?.code === "INVITATION_LIMIT_REACHED") {
+    return t("errors.invitationLimit");
+  }
   if (error?.name === "AbortError") {
     return t("errors.timeout");
   }
@@ -253,11 +263,39 @@ function connectionNotice(error) {
   return { kind: "error", text: describeError(error), remote };
 }
 
-// Any request answered 401: the key was revoked or DirectorLink was re-added. Start over.
-export function handleUnauthorized() {
+function forgetRevokedKey() {
   forgetKey();
   state.notice = { kind: "error", text: t("errors.keyRevoked") };
   notify();
+}
+
+// Any request answered 401: the key was revoked or DirectorLink was re-added. Start over. A 401 on
+// the home network, for a device linked to its home through the account, is checked with the home
+// first: another controller at the same address (another network) must not wipe this home's key.
+let checkingKey = null;
+export function handleUnauthorized(error) {
+  if (error?.sealed || !savedRemote() || !state.apiKey) {
+    forgetRevokedKey();
+    return Promise.resolve();
+  }
+  if (!checkingKey) {
+    checkingKey = (async () => {
+      try {
+        await remoteCall(state.apiKey, "/v1/api-keys/current");
+        // The key works at home: the controller that refused it is another one.
+        useTransport("remote");
+        connect();
+      } catch (failure) {
+        if (failure?.status === 401 || failure?.code === "UNKNOWN_KEY") {
+          forgetRevokedKey();
+        }
+        // Otherwise the home cannot be asked now: the key is kept.
+      } finally {
+        checkingKey = null;
+      }
+    })();
+  }
+  return checkingKey;
 }
 
 // Resources newer drivers add (doors and gates, doorbells): an older driver answers 404, so
@@ -339,7 +377,7 @@ export async function refreshDoorbells() {
     notify();
     return true;
   } catch (error) {
-    if (error?.status === 401) handleUnauthorized();
+    if (error?.status === 401) handleUnauthorized(error);
     return false;
   }
 }
@@ -364,7 +402,7 @@ export async function connect() {
   } catch (error) {
     if (run !== connectRun) return false;
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return false;
     }
     console.error("DirectorLink connection failed", error);
@@ -407,6 +445,7 @@ export async function pairWithCode(hostValue, pairingCode) {
     // Remote access belonged to the previous key: link the home again for this one.
     forgetRemote();
     state.transport = "lan";
+    state.remoteInfo = null;
     return connect();
   } catch (error) {
     state.status = "setup";
@@ -443,7 +482,7 @@ export async function refreshDevices() {
     }
   } catch (error) {
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return false;
     }
     failedRefreshes += 1;
@@ -541,8 +580,12 @@ document.addEventListener("visibilitychange", () => {
 export async function revokeAndForget() {
   if (reachable()) {
     try {
-      // Any key may revoke itself (drivers with API key roles).
-      await api("/v1/api-keys/current", { method: "DELETE", timeoutMs: 4000 });
+      // Any key may revoke itself (drivers with API key roles). Without an answer on the home
+      // network it is revoked through the account (revoking twice changes nothing).
+      await api("/v1/api-keys/current", { method: "DELETE", timeoutMs: 4000 }).catch((error) => {
+        if (error?.status || error instanceof RemoteError || !savedRemote()) throw error;
+        return remoteCall(state.apiKey, "/v1/api-keys/current", { method: "DELETE" });
+      });
     } catch (error) {
       if (error?.status === 404 || error?.status === 405) {
         // Older driver: find this key in the list and revoke it (every key was admin there).

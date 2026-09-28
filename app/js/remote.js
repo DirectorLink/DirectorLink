@@ -117,6 +117,18 @@ export async function remoteRequest(apiKey, path, { method = "GET", body } = {})
   return openAnswer(lock, reply.envelope, id);
 }
 
+// The home's refusal, from its sealed answer: `sealed` marks it as the home's own word (a 401 there
+// means the key really was revoked).
+function homeError(answer, problem) {
+  const error = new ApiError(problem?.detail || problem?.title || `DirectorLink returned HTTP ${answer.status}`, {
+    status: answer.status,
+    code: problem?.code,
+    problem,
+  });
+  error.sealed = true;
+  return error;
+}
+
 // Like apiCall (api-client.js): the data, or ApiError for the home's non-2xx answers.
 export async function remoteCall(apiKey, path, options = {}) {
   const answer = await remoteRequest(apiKey, path, options);
@@ -129,12 +141,7 @@ export async function remoteCall(apiKey, path, options = {}) {
     }
   }
   if (answer.status < 200 || answer.status > 299) {
-    const problem = data && typeof data === "object" ? data : null;
-    throw new ApiError(problem?.detail || problem?.title || `DirectorLink returned HTTP ${answer.status}`, {
-      status: answer.status,
-      code: problem?.code,
-      problem,
-    });
+    throw homeError(answer, data && typeof data === "object" ? data : null);
   }
   return data;
 }
@@ -149,7 +156,7 @@ export async function remoteImage(apiKey, path) {
     } catch {
       problem = null;
     }
-    throw new ApiError(problem?.detail || `DirectorLink returned HTTP ${answer.status}`, { status: answer.status, code: problem?.code, problem });
+    throw homeError(answer, problem);
   }
   return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
 }
@@ -169,7 +176,8 @@ export function registerInvitation(homeId, invitation, email) {
   return post(`/v1/homes/${homeId}/invitations`, { invitation_id: invitation.id, email, expires_at: invitation.expires_at });
 }
 
-// Accepts an invitation (link: #/join/<home>.<invitation>.<secret>); returns the new key.
+// Accepts an invitation (link: #/join/<home>.<invitation>.<secret>); returns the new key, with
+// `member`: whether the account now belongs to the home.
 export async function acceptInvitation({ home, invitation, secret }, name) {
   const lock = await invitationLock(secret);
   const id = requestId();
@@ -186,7 +194,7 @@ export async function acceptInvitation({ home, invitation, secret }, name) {
     }
     throw new RemoteError(problem?.code || "JOIN_REFUSED", problem?.detail || `The home refused the invitation (${answer.status})`);
   }
-  return JSON.parse(answer.text);
+  return { ...JSON.parse(answer.text), member: reply.member !== false };
 }
 
 // The invitation link a person or device opens. Everything after "#" stays in the browser.

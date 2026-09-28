@@ -368,11 +368,14 @@ function loadRemoteInfo() {
 }
 
 async function linkHome() {
-  const homeId = state.remoteInfo?.home_id;
   ui.homeBusy = true;
   ui.homeMessage = null;
   notify();
   try {
+    // The home is asked again: the address may have changed since the card was drawn.
+    const info = await api("/v1/remote");
+    state.remoteInfo = info;
+    const homeId = info?.home_id;
     // Already this account's home (another device linked it): this device only needs its key id.
     // Another account's: linking takes it over, so ask first.
     const known = homeId ? await homeStatus(homeId) : null;
@@ -383,6 +386,9 @@ async function linkHome() {
         return;
       }
       const claim = await api("/v1/remote/claim", { method: "POST" });
+      if (homeId && claim.home_id !== homeId) {
+        throw new Error("The controller changed while linking");
+      }
       transferred = Boolean((await claimHome(claim.home_id, claim.claim_token))?.transferred);
       linked = claim.home_id;
     }

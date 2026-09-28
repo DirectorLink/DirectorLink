@@ -29,6 +29,9 @@
     "APP_ORIGINS": "https://app.directorlink.io",
     "PUBLIC_URL": "https://api.directorlink.io"
   },
+  "triggers": {
+    "crons": ["17 3 * * *"]
+  },
   "routes": [
     { "pattern": "api.directorlink.io", "custom_domain": true }
   ]

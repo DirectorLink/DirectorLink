@@ -104,7 +104,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
     }
   } catch (error) {
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return;
     }
     noteForbidden(error);
@@ -194,7 +194,7 @@ export async function stopBlind(blind) {
     replaceDevice("blind", await api(`/v1/blinds/${blind.id}`));
   } catch (error) {
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return;
     }
     noteForbidden(error);
@@ -254,7 +254,7 @@ async function pressOpen({ map, kind, id, path, onDone }) {
     setStage(map, id, "sent", 3000);
   } catch (error) {
     if (error?.status === 401) {
-      handleUnauthorized();
+      handleUnauthorized(error);
       return;
     }
     setStage(map, id, null);

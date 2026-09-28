@@ -29,7 +29,7 @@ function Remote.claim(ctx)
     if not remote.available() then
         return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal remote requests (the lock self-test failed; see the log)")
     end
-    local claim = remote.createClaim()
+    local claim = remote.createClaim(ctx.apiKey.id)
     ctx.services.log.info("remote", "claim token created", { key_id = ctx.apiKey.id })
     return 201, { home_id = remote.homeId(), claim_token = claim.claim_token, expires_at = claim.expires_at }
 end

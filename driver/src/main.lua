@@ -102,8 +102,8 @@ local services = {
         homeId = function()
             return Relay.identity().home_id
         end,
-        createClaim = function()
-            return Remote.createClaim()
+        createClaim = function(keyId)
+            return Remote.createClaim(keyId)
         end,
     },
     startedAt = os.time(),

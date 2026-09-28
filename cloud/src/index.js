@@ -17,6 +17,7 @@
 import { handleAccounts } from "./accounts.js";
 import { handleHomes } from "./homes.js";
 import { HomeRelay } from "./home-relay.js";
+import { purgeInvitations } from "./invitations.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
 
 export { HomeRelay };
@@ -26,6 +27,11 @@ const HOME_SECRET = /^[0-9a-f]{64}$/i;
 const TEST_ROUTE = /^\/test\/homes\/([^/]*)(\/status|\/v1(?:\/.*)?)$/;
 
 export default {
+  // Daily housekeeping (wrangler.jsonc → triggers).
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(purgeInvitations(env));
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
