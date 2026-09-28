@@ -4,6 +4,7 @@
 //
 //   POST   /v1/homes/claim                          { home_id, claim_token }: the account owns the home
 //   GET    /v1/homes                                the account's homes
+//   GET    /v1/homes/{home_id}                      whether it is claimed, and by this account
 //   POST   /v1/homes/{home_id}/e2e                  { envelope }: a sealed request, answered sealed
 //   POST   /v1/homes/{home_id}/invitations          { invitation_id, email, expires_at }
 //   GET    /v1/homes/{home_id}/members              who belongs to the home (the owner only)
@@ -22,8 +23,12 @@ const USER_ID = /^[0-9a-f]{32}$/;
 const CLAIM_TOKEN = /^[0-9a-f]{48}$/;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_REQUEST_CT = 256 * 1024;
+// The driver refuses sealed requests over 64 KiB (Remote.MAX_REQUEST_BYTES), i.e. 128 KiB of base64.
+const MAX_REQUEST_CT = 128 * 1024;
+const MAX_BODY_BYTES = MAX_REQUEST_CT + 4096;
 const MAX_INVITATION_MS = 7 * 24 * 3600 * 1000;
+// Controllers' clocks may run a little fast (the lock allows 2 minutes).
+const INVITATION_SKEW_MS = 10 * 60 * 1000;
 
 // The driver's codes (driver/src/cloud/remote.lua) as HTTP answers.
 const CODES = {
@@ -55,12 +60,25 @@ function driverProblem(code) {
 }
 
 async function body(request) {
+  const length = Number(request.headers.get("content-length") ?? 0);
+  if (length > MAX_BODY_BYTES) {
+    return null;
+  }
   try {
-    const value = await request.json();
+    const text = await request.text();
+    if (text.length > MAX_BODY_BYTES) {
+      return null;
+    }
+    const value = JSON.parse(text);
     return value && typeof value === "object" && !Array.isArray(value) ? value : null;
   } catch {
     return null;
   }
+}
+
+// Only the envelope's own fields go on to the home.
+function cleanEnvelope(envelope) {
+  return { v: 1, home: envelope.home, key: envelope.key, iv: envelope.iv, ct: envelope.ct, mac: envelope.mac };
 }
 
 function validEnvelope(envelope, homeId, key) {
@@ -149,6 +167,14 @@ async function claim(request, env, user) {
   return json({ home_id: homeId, owner: true, transferred });
 }
 
+// Whether a home is claimed, and whether by this account: the app asks before offering to link
+// it, so that nobody takes a home from its owner without being told.
+async function homeInfo(env, user, homeId) {
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  const joined = home ? await member(env, homeId, user.id) : null;
+  return json({ home_id: homeId, claimed: Boolean(home), owner: Boolean(home && home.owner_id === user.id), member: Boolean(joined) });
+}
+
 async function listHomes(env, user) {
   const { results } = await env.DB.prepare(
     "SELECT homes.id AS id, homes.owner_id AS owner_id, members.added_at AS added_at FROM members JOIN homes ON homes.id = members.home_id WHERE members.user_id = ? ORDER BY members.added_at"
@@ -171,7 +197,7 @@ async function e2e(request, env, user, homeId) {
   if (!input || !validEnvelope(input.envelope, homeId)) {
     return problem(400, "INVALID_ENVELOPE", "Send { envelope } sealed for this home (docs/ACCOUNTS.md)");
   }
-  const { reply, response } = await relay(env, homeId, { type: "e2e", envelope: input.envelope });
+  const { reply, response } = await relay(env, homeId, { type: "e2e", envelope: cleanEnvelope(input.envelope) });
   if (response) {
     return response;
   }
@@ -192,14 +218,20 @@ async function registerInvitation(request, env, user, homeId) {
   if (!input || !SHORT_ID.test(input.invitation_id ?? "") || !EMAIL.test(email) || email.length > 254 || !Number.isFinite(expires)) {
     return problem(400, "INVALID_REQUEST", "Send { invitation_id: 8 hex characters, email, expires_at } for an invitation from your controller");
   }
-  if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + 60_000) {
+  if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + INVITATION_SKEW_MS) {
     return problem(400, "INVALID_REQUEST", "expires_at must be in the next 7 days");
   }
-  await env.DB.prepare(
-    "INSERT OR REPLACE INTO invitations (home_id, id, email, expires_at, created_by, accepted_by, accepted_at) VALUES (?, ?, ?, ?, ?, NULL, NULL)"
-  )
-    .bind(homeId, input.invitation_id, email, iso(expires), user.id)
-    .run();
+  // Only pending invitations are kept. An invitation is bound to its email once: nobody, not even
+  // another member of the home, can move it to another address.
+  const [, inserted] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND (expires_at < ? OR accepted_by IS NOT NULL)").bind(homeId, iso()),
+    env.DB.prepare(
+      "INSERT INTO invitations (home_id, id, email, expires_at, created_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (home_id, id) DO NOTHING"
+    ).bind(homeId, input.invitation_id, email, iso(expires), user.id),
+  ]);
+  if (!inserted.meta.changes) {
+    return problem(409, "INVITATION_EXISTS", "This invitation is already registered");
+  }
   log("invitation_registered", { home: homeId, user: user.id, invitation: input.invitation_id });
   return json({ invitation_id: input.invitation_id, email, expires_at: iso(expires) }, 201);
 }
@@ -220,7 +252,7 @@ async function join(request, env, user) {
     log("join_email_mismatch", { home: homeId, user: user.id, invitation: input.invitation_id });
     return problem(403, "EMAIL_MISMATCH", "This invitation is for another email address; sign in with that account, or ask for an invitation for this one");
   }
-  const { reply, response } = await relay(env, homeId, { type: "join", invitation: input.invitation_id, envelope: input.envelope });
+  const { reply, response } = await relay(env, homeId, { type: "join", invitation: input.invitation_id, envelope: cleanEnvelope(input.envelope) });
   if (response) {
     return response;
   }
@@ -228,11 +260,19 @@ async function join(request, env, user) {
     log("join_refused", { home: homeId, user: user.id, code: reply.code ?? null });
     return driverProblem(reply.code ?? "INTERNAL");
   }
+  // The controller has made the key; membership follows only while the invitation is still
+  // pending here (a change of owner meanwhile removes it). The sealed answer goes back either way.
   const now = iso();
-  await env.DB.batch([
-    env.DB.prepare("INSERT OR IGNORE INTO members (home_id, user_id, added_at) VALUES (?, ?, ?)").bind(homeId, user.id, now),
-    env.DB.prepare("UPDATE invitations SET accepted_by = ?, accepted_at = ? WHERE home_id = ? AND id = ?").bind(user.id, now, homeId, input.invitation_id),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND accepted_by IS NULL)"
+      ).bind(homeId, user.id, now, homeId, input.invitation_id),
+      env.DB.prepare("UPDATE invitations SET accepted_by = ?, accepted_at = ? WHERE home_id = ? AND id = ? AND accepted_by IS NULL").bind(user.id, now, homeId, input.invitation_id),
+    ]);
+  } catch (error) {
+    log("join_record_failed", { home: homeId, user: user.id, error: String(error?.message ?? error) });
+  }
   log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id });
   return json({ home_id: homeId, envelope: reply.envelope });
 }
@@ -273,6 +313,7 @@ async function removeMember(env, user, homeId, userId) {
 const ROUTES = [
   [/^\/v1\/homes\/claim$/, { POST: (r, env, user) => claim(r, env, user) }],
   [/^\/v1\/homes$/, { GET: (r, env, user) => listHomes(env, user) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})$/, { GET: (r, env, user, m) => homeInfo(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/e2e$/, { POST: (r, env, user, m) => e2e(r, env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/invitations$/, { POST: (r, env, user, m) => registerInvitation(r, env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/members$/, { GET: (r, env, user, m) => listMembers(env, user, m[1]) }],
