@@ -94,13 +94,33 @@ local function connected(options)
     return mock, connection, request, hello
 end
 
+-- The driver's frames other than its announcements of key ids ({"type":"keys"}), which follow
+-- any change of keys; `keys` gets those.
+local function answers(frames, keys)
+    local kept = {}
+    for _, frame in ipairs(frames) do
+        local message = Json.decode(frame.payload)
+        if type(message) == "table" and message.type == "keys" then
+            if keys then
+                keys[#keys + 1] = message.ids
+            end
+        else
+            kept[#kept + 1] = frame
+        end
+    end
+    return kept
+end
+
+-- Sends `message` from the relay; returns the driver's answer, its frame, and the key id lists it
+-- announced meanwhile.
 local function relayRequest(mock, connection, message)
     connection.sent = ""
     ReceivedFromNetwork(BINDING, 443, serverFrame(1, Json.encode(message)))
-    local frames = clientFrames(connection.sent)
+    local keys = {}
+    local frames = answers(clientFrames(connection.sent), keys)
     connection.sent = ""
     T.eq(#frames, 1, "one response frame")
-    return Json.decode(frames[1].payload), frames[1]
+    return Json.decode(frames[1].payload), frames[1], keys
 end
 
 Harness.BINDING = BINDING
@@ -108,6 +128,7 @@ Harness.bigEndian = bigEndian
 Harness.serverFrame = serverFrame
 Harness.clientFrames = clientFrames
 Harness.connected = connected
+Harness.answers = answers
 Harness.relayRequest = relayRequest
 
 return Harness

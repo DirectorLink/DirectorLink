@@ -19,7 +19,7 @@ The DirectorLink app on **https://app.directorlink.io**. It is framework-free HT
 
 ## Screens
 
-Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`, `#/join/<invitation>` (taken out of the address as the page opens; see Remote access).
+Hash routes, so Back and reload work: `#/` Home, `#/room/<id>`, `#/cameras`, `#/climate`, `#/settings`, `#/join/<invitation>` (taken out of the address as the page opens; see Remote access), `#/access` (People and devices).
 
 - **Home** — a doorbell banner while someone rings (see Doorbells), connection chip, summary chips ("2 lights on", "1 AC on", "1 blind open"; tapping one filters the rooms), Favorites (Edit mode to add, remove and reorder), room cards. Without a key it shows the connect screen: controller address and **pairing code** (see below).
 - **Room** — All off (lights and AC), then Lights, Climate, Blinds, Doorbells (drivers with `/v1/doorbells`), Doors & gates (drivers with `/v1/relays`), Cameras (without the doorbell's own camera, shown with the doorbell) and the room's other, uncontrollable devices. Empty sections are hidden; the star on each device adds it to Favorites.
@@ -104,5 +104,6 @@ With an account (`docs/ACCOUNTS.md`), requests are sealed on the device with its
 - **Joining** (`#/join`): sign in with the invited email and accept; the controller's new key comes back sealed. It replaces a key the device already had, after a confirmation.
 - **Choosing the connection**: the home network first; when it gives no answer, the account (reads are sent again that way, commands are not, so a gate never opens twice). Away from home the app checks once a minute whether the home network is back, with `GET /v1/remote` and its key, and returns only when the controller there is this home. iPhone and iPad always use the account. The chip says **Connected · via account**.
 - Failures of the account connection (signed out, home offline) never forget the device's key; signed out, the banner offers to sign in again.
+- **People and devices** (`#/access`, Settings → Controller, admin keys): every API key with its role (changeable), when it was last used, and Revoke; the invitations waiting, with Revoke; for the home's owner, the accounts that belong to the home with their devices, and Remove (their keys are revoked at home first, then the membership ends). Devices and invitations come from the controller, people from the account service (`GET /v1/homes/{home}/members`).
 
 The CSP in `_headers` allows Google Fonts (`fonts.googleapis.com`, `fonts.gstatic.com`) and `blob:` images (camera pictures are fetched with the API key and shown as blobs).

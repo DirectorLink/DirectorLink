@@ -13,6 +13,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
+import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved } from "./js/session.js";
 import { state, subscribe, ui } from "./js/state.js";
@@ -50,6 +51,9 @@ function parseRoute() {
   if (["cameras", "climate", "settings"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
   }
+  if (parts[0] === "access") {
+    return { name: "access", tab: "settings" };
+  }
   return { name: "home", tab: "home" };
 }
 
@@ -66,7 +70,10 @@ export function navigate(hash) {
 window.addEventListener("hashchange", () => {
   // Entries reached inside the app: the Back button can use history.back().
   window.history.replaceState({ directorlinkInApp: true }, "");
+  const previous = route.name;
   route = parseRoute();
+  // People and devices loads fresh each time it is opened.
+  if (route.name === "access" && previous !== "access") resetAccess();
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -185,6 +192,7 @@ function signature() {
     ui.inviteForm,
     ui.joinBusy,
     ui.joinMessage,
+    route.name === "access" ? ui.access : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
@@ -201,6 +209,8 @@ function screen() {
       return climateView(actions);
     case "join":
       return joinView(actions);
+    case "access":
+      return accessView(actions);
     case "settings":
       return settingsView({
         navigate,

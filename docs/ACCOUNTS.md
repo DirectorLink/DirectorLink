@@ -128,10 +128,22 @@ too. Each account may have 20 invitations waiting per home.
 
 ### 4. Removing someone, or a lost phone
 
-An admin revokes that device's key (the API console, or Composer's Revoke All API Keys). It stops
-working at home and away at once. Signing in to the account alone gives no access, because the
-keys live only on the devices. The account stays a member of the home in the cloud until the owner
-removes it (`DELETE /v1/homes/{home_id}/members/{user_id}`); see Known issues.
+An admin revokes that device's key: in the app (Settings → Controller → **People and devices**),
+the API console, or Composer's Revoke All API Keys. It stops working at home and away at once.
+Signing in to the account alone gives no access, because the keys live only on the devices.
+
+The cloud keeps which accounts use which key, by key id only (`member_keys`; a shared device's key
+may belong to several): the key an invitation made (the controller's `join_result`), and the key
+of each sealed request the home accepted, which only the key's holder can seal. A linked device
+sends one sealed request a day even when it only uses the home network, so its key is known too.
+The controller sends its list of key ids when it connects and after every change
+(`{"type":"keys"}`, `docs/RELAY.md`), never after a start at which its key store could not be read;
+an account whose recorded keys are all gone leaves the home, except its owner. The home's Durable
+Object handles the list and the recording of keys one after another, in the order the controller
+sent them, so an answer that follows a revocation cannot record the revoked key again; the list
+itself is applied as one transaction. The owner's **People and devices** screen shows each
+account with its devices; removing someone there revokes their keys at home first, then ends the
+membership.
 
 ### 5. The home network without an account
 
@@ -184,6 +196,7 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 - `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
 - `homes`: home id, owner, claimed (`migrations/0002`).
 - `members`: home, user, added.
+- `member_keys`: home, key id, the account that uses it (`migrations/0004`).
 - `invitations`: home, invitation id, email, expiry, created by. A used invitation is removed when
   it is accepted; an expired one a day after its expiry (daily cron). When its email's account, its
   creator or the home's owner goes, a pending invitation keeps only its id until then, so that it
@@ -246,8 +259,6 @@ of directorlink.io.
 
 ## Known issues
 
-- Cloud membership is not tied to a key: revoking a device's key ends its access, but the account
-  stays listed as a member until the owner removes it. A member without a key can reach nothing.
 - An invitation must be accepted with the email it was made for; owner approval of another address
   comes later.
 - Sign in with Apple is off in the app until its keys are set up.
