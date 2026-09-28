@@ -486,6 +486,74 @@ img {
   border-color: var(--line);
 }
 
+/* People and devices (#/access). */
+.access-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.access-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.access-item:first-child {
+  border-top: none;
+}
+
+.access-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 14em;
+}
+
+.access-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.access-sub {
+  color: var(--muted);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.access-badge {
+  display: inline-block;
+  margin-inline-start: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--chip, var(--line));
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.access-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+select.access-role {
+  width: auto;
+  min-height: 40px;
+  padding: 6px 10px;
+  font-size: 15px;
+}
+
+select:disabled {
+  opacity: 0.6;
+}
+
 /* Sign in with Apple: black, or white on a dark theme (Apple's button styles), in banners too. */
 .button-apple,
 .banner .button-apple {
@@ -1991,7 +2059,9 @@ input[type="text"].code-input {
   font-size: 14px;
 }
 
-input[type="text"] {
+input[type="text"],
+input[type="email"],
+select {
   width: 100%;
   min-height: 48px;
   padding: 10px 14px;
@@ -2002,7 +2072,9 @@ input[type="text"] {
   font-size: 16px;
 }
 
-input[type="text"]:focus-visible {
+input[type="text"]:focus-visible,
+input[type="email"]:focus-visible,
+select:focus-visible {
   outline-offset: 0;
   border-color: var(--primary);
 }

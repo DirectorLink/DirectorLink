@@ -49,6 +49,7 @@ async function home() {
   const state = { home: randomHex(16), keys: new Map(), invitations: new Map(), claimToken: randomHex(24), seen: [] };
   const connection = await connectDriver({ url: worker.ws, home: state.home, pingIntervalMs: 0, silenceTimeoutMs: 0 });
   drivers.push(connection);
+  state.connection = connection;
   connection.on("unknown", (text) => {
     const message = JSON.parse(text);
     state.seen.push(message);
@@ -400,6 +401,67 @@ test("deleting one of two accounts with the same email keeps that email's invita
   assert.equal((await call("DELETE", "/v1/me", { cookie: viaApple.cookie })).status, 204);
   const joined = await joinWith(state, viaGoogle, invitationId, secret);
   assert.equal(joined.status, 200, "the Google account can still accept it");
+});
+
+// Waits until `check()` is true (the relay handles the driver's messages on its own time).
+async function eventually(check, what) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+const membersOf = async (state, cookie) => (await call("GET", `/v1/homes/${state.home}/members`, { cookie })).json.items;
+
+test("the cloud learns each member's keys; a member whose keys are all revoked at home leaves", TEST, async () => {
+  const { state, dana, keyId, apiKey } = await claimedHome();
+  assert.equal((await e2e(dana, state, apiKey, keyId)).status, 200);
+  await eventually(async () => (await membersOf(state, dana))[0]?.key_ids.includes(keyId), "the owner's key from a sealed request");
+
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const joined = await joinWith(state, avi, invitationId, secret);
+  assert.equal(joined.status, 200, joined.text);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+  const aviMember = (await membersOf(state, dana)).find((m) => m.email === AVI.email);
+  assert.deepEqual(aviMember.key_ids, [aviKey.id], "the key the invitation made");
+
+  // A refused request records nothing: only the key's holder can seal one the home accepts.
+  const unknown = await e2e(avi, state, `ak_${randomHex(24)}`, randomHex(4));
+  assert.equal(unknown.json.code, "UNKNOWN_KEY");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === AVI.email).key_ids, [aviKey.id]);
+
+  // Nonsense from the controller changes nothing.
+  state.connection.sendJson({ type: "keys", ids: "all" });
+  state.connection.sendJson({ type: "keys", ids: ["not-a-key"] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await membersOf(state, dana)).length, 2);
+
+  // The admin revokes Avi's key at home: the controller's next list lacks it.
+  state.keys.delete(aviKey.id);
+  state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+  await eventually(async () => (await membersOf(state, dana)).length === 1, "Avi leaving");
+  assert.equal((await e2e(avi, state, aviKey.key, aviKey.id)).json.code, "NOT_A_MEMBER");
+
+  // The owner stays the owner, even with no keys left.
+  state.connection.sendJson({ type: "keys", ids: [] });
+  await eventually(async () => (await membersOf(state, dana))[0]?.key_ids.length === 0, "the owner's key going");
+  assert.deepEqual((await membersOf(state, dana)).map((m) => [m.email, m.owner]), [[DANA.email, true]]);
+});
+
+test("removing a member forgets their keys too", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, NOA.email);
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret)).status, 200);
+  const noaMember = (await membersOf(state, dana)).find((m) => m.email === NOA.email);
+  assert.equal(noaMember.key_ids.length, 1);
+  assert.equal((await call("DELETE", `/v1/homes/${state.home}/members/${noaMember.user_id}`, { cookie: dana })).status, 204);
+  // Invited again later, Noa starts with only the new key.
+  const again = await invite(state, dana, NOA.email);
+  assert.equal((await joinWith(state, noa, again.invitationId, again.secret)).status, 200);
+  assert.equal((await membersOf(state, dana)).find((m) => m.email === NOA.email).key_ids.length, 1);
 });
 
 test("changes need the app's origin, and the app gets CORS answers", TEST, async () => {

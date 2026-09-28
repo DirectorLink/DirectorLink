@@ -81,6 +81,12 @@ local function publishKeyCount()
     updateProperty("API Keys", Keys.count())
 end
 
+-- A key was created, changed or revoked: Composer's count, and the cloud's list of key ids.
+local function keysChanged()
+    publishKeyCount()
+    Relay.announceKeys()
+end
+
 local services = {
     registry = Registry,
     adapters = AdapterManager,
@@ -116,7 +122,7 @@ local services = {
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
-    onKeysChanged = publishKeyCount,
+    onKeysChanged = keysChanged,
     onLogLevelChanged = function(level)
         updateProperty("Log Level", COMPOSER_LEVEL[level] or "Info")
     end,
@@ -268,7 +274,7 @@ function ExecuteCommand(command, params)
         -- Nobody may join afterwards with an invitation or claim the home with an older token.
         local invitations = Invitations.revokeAll()
         Remote.clearClaim()
-        publishKeyCount()
+        keysChanged()
         Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
     end
 end

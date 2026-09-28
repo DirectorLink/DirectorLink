@@ -51,7 +51,8 @@ All frames are **text**. Apart from the keep-alive words below, each is one JSON
 | --- | --- | --- |
 | driver → relay | `ping` (plain text) | Keep-alive, every 25 s. |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.10.0"}` | First message after connecting. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.11.0"}` | First message after connecting. |
+| driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
 | relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
 | driver → relay | `{"type":"e2e","id":"…","envelope":{…}}` | The sealed answer; or `{"type":"e2e","id":"…","code":"…"}` when the request is refused. |
 | relay → driver | `{"type":"join","id":"…","invitation":"<id>","envelope":{…}}` | Accepting an invitation: a request sealed with the invitation's secret. |

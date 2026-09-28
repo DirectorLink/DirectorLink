@@ -2,6 +2,16 @@
 
 ## Current release
 
+`v0.11.0` — People and devices: who has access, from the app; revoking a device's key also ends its account's membership. Update DirectorLink in Composer (no reboot).
+
+## 0j. People and devices
+
+1. On the computer at home (admin key): Settings → Controller → **People and devices**. Devices lists every key, with *This device* for the computer (no Revoke, role fixed) and when each was last used; People lists your account as *Owner* with your devices, and anyone who joined with theirs; Invitations lists the ones waiting.
+2. Change the role of the iPhone's key to *Member*: the iPhone can still switch lights, and Door Control gates are refused. Set it back to *Admin*.
+3. **Add my other device** makes an invitation that appears under Invitations; **Revoke** it: its link answers "used, revoked or has expired".
+4. Invite a second Google account, accept it on another device, then **Remove** that person: their device shows "Your home does not know this device’s key" (or the account message), and they are gone from People.
+5. Revoke a device's key in the API console instead: within seconds that account also disappears from People (the controller told the cloud), unless it has another device.
+
 `v0.10.0` — remote access with your account, locked end to end, on iPhone too. Update DirectorLink in Composer (no reboot) and set Remote Access to On.
 
 ## 0i. Remote access with an account
@@ -79,7 +89,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.10.0`
+- Version: `0.11.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`

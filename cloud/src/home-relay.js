@@ -15,6 +15,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
+import { syncKeys } from "./member-keys.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -112,6 +113,14 @@ export class HomeRelay extends DurableObject {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
         }
         log("driver_hello", { home: attachment.home, version: attachment.version });
+        return;
+      case "keys":
+        // The home's key ids after a change: members whose keys are all revoked leave it.
+        try {
+          await syncKeys(this.env, attachment.home, data.ids);
+        } catch (error) {
+          log("keys_sync_failed", { home: attachment.home, error: String(error?.message ?? error) });
+        }
         return;
       case "response":
       case "e2e":

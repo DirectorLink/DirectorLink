@@ -2004,6 +2004,10 @@ components:
         expires_at:
           type: string
           format: date-time
+        created_by:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The id of the admin key that made it; revoking or demoting that key revokes the invitation.
 
     NewInvitation:
       allOf:

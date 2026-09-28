@@ -161,6 +161,15 @@ export async function remoteImage(apiKey, path) {
   return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
 }
 
+// The home's accounts, each with the key ids it uses (the owner only; OWNER_ONLY otherwise).
+export function listMembers(homeId) {
+  return send("GET", `/v1/homes/${homeId}/members`);
+}
+
+export function removeMember(homeId, userId) {
+  return send("DELETE", `/v1/homes/${homeId}/members/${userId}`);
+}
+
 // Whether the home is claimed, and whether by the signed-in account: { claimed, owner, member }.
 export function homeStatus(homeId) {
   return send("GET", `/v1/homes/${homeId}`);

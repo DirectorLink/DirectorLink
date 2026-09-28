@@ -10,12 +10,13 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/home-relay.js` — `HomeRelay`, the Durable Object (`idFromName(home_id)`): trust on first use, the driver's WebSocket (Hibernation API), messages to the driver and their replies, the status
 - `src/homes.js` — homes for accounts: claiming, members, invitations, sealed requests (`e2e`) and joining
 - `src/invitations.js` — tombstones for invitations whose email or creator goes, and the daily purge
+- `src/member-keys.js` — which account uses which key id; the controller's `keys` list ends the membership of accounts whose keys are all revoked
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
 - `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account
 - `src/google.js` — Google's authorization-code flow with PKCE
 - `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret
 - `src/jwt.js` — ID token checks shared by both (signature, issuer, audience, expiry, nonce)
-- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account)
+- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -119,7 +120,7 @@ curl https://api.directorlink.io/health
 | `POST /v1/homes/{home_id}/e2e` | `{ envelope }` sealed by a member's device; `{ envelope }` sealed by the home. 403 `NOT_A_MEMBER`, 400 `INVALID_ENVELOPE` (also for requests over 128 KiB), 503 `HOME_OFFLINE`, 504 `HOME_TIMEOUT`, or the driver's refusal code |
 | `POST /v1/homes/{home_id}/invitations` | `{ invitation_id, email, expires_at }` of an invitation the controller made; 201. Registered once: 409 `INVITATION_EXISTS`; at most 20 waiting per member and home: 429 `INVITATION_LIMIT_REACHED` |
 | `POST /v1/join` | `{ home_id, invitation_id, envelope }` sealed with the invitation's secret, by the invited email (403 `EMAIL_MISMATCH`, 404 `INVITATION_NOT_FOUND`); `{ home_id, envelope, member }` with the new key sealed inside; `member` says whether the account now belongs to the home |
-| `GET /v1/homes/{home_id}/members` | the owner only: `{"items": [{"user_id", "email", "name", "owner", "added_at"}]}` |
+| `GET /v1/homes/{home_id}/members` | the owner only: `{"items": [{"user_id", "email", "name", "owner", "added_at", "key_ids"}]}`; `key_ids`: the home's API keys this account uses, as far as the cloud has seen (the key an invitation made, and each key the home accepted a sealed request with) |
 | `DELETE /v1/homes/{home_id}/members/{user_id}` | 204: the owner removes someone, or anyone leaves (the owner cannot, 409) |
 
 They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`) removes invitations a day after their expiry.

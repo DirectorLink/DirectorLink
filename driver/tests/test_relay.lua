@@ -54,12 +54,16 @@ function tests.handshake_sends_the_home_identity_and_hello_follows()
     T.eq(#home, 32)
     T.truthy(request:match("\r\n\r\n$"), "headers end the request")
 
-    T.eq(#hello, 1)
+    T.eq(#hello, 2, "hello, then the key ids")
     T.eq(hello[1].opcode, 1, "text frame")
     local message = Json.decode(hello[1].payload)
     T.eq(message.type, "hello")
     T.eq(message.home, home)
     T.truthy(message.version, "driver version")
+    local keys = Json.decode(hello[2].payload)
+    T.eq(keys.type, "keys")
+    T.eq(#keys.ids, 0, "no keys yet")
+    T.contains(hello[2].payload, '"ids":[]', "an empty list is a JSON array")
     T.contains(mock.properties["Remote Status"], "Connected since")
     T.contains(mock.properties["Remote Status"], home:sub(1, 8))
 end
@@ -222,6 +226,37 @@ function tests.an_identity_stored_by_0_9_1_as_plain_json_is_kept()
     T.eq(mock.persist["directorlink_remote_identity"]:sub(1, 5), "json:", "and it is stored the current way")
     local _, _, again = connected({ mock = Mock.updateDriver(mock) })
     T.eq(again:match("X%-DirectorLink%-Home: (%x+)"), old.home_id)
+end
+
+function tests.the_relay_learns_the_key_ids_after_every_change_and_nothing_else()
+    local mock, connection = connected()
+    local key = T.pair(mock)
+    local sent = function()
+        local keys = {}
+        Harness.answers(Harness.clientFrames(connection.sent), keys)
+        connection.sent = ""
+        return keys
+    end
+    local afterPairing = sent()
+    T.eq(#afterPairing, 1, "pairing made a key")
+    local first = afterPairing[1]
+    T.eq(#first, 1)
+    T.truthy(first[1]:match("^%x+$"), "a key id")
+
+    local created = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Tablet", role = "viewer" } }).json
+    local afterCreate = sent()
+    T.eq(#afterCreate[#afterCreate], 2)
+    T.eq(T.http(mock, "DELETE", "/v1/api-keys/" .. created.id, { key = key }).status, 204)
+    local afterRevoke = sent()
+    T.eq(#afterRevoke[#afterRevoke], 1, "the revoked key is gone from the list")
+    T.eq(afterRevoke[#afterRevoke][1], first[1])
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "REVOKE_API_KEYS" })
+    local afterAll = sent()
+    T.eq(#afterAll[#afterAll], 0, "Revoke All API Keys: none")
+    for _, frame in ipairs(Harness.clientFrames(connection.sent)) do
+        T.notContains(frame.payload, "Tablet", "names never go to the relay")
+    end
 end
 
 return tests
