@@ -66,22 +66,26 @@ function scheduleRefresh() {
   if (refreshTimer) return;
   refreshTimer = window.setTimeout(() => {
     refreshTimer = null;
-    if (window.location.hash.startsWith("#/access") && !document.hidden) loadAccess();
+    if (!window.location.hash.startsWith("#/access")) return;
+    // In the background: try again later rather than stop.
+    if (document.hidden) scheduleRefresh();
+    else loadAccess();
   }, REFRESH_MS);
 }
 
 async function act(work, done) {
-  ui.access = { ...ui.access, busy: true, message: null };
+  ui.access = { ...(ui.access || {}), busy: true, message: null };
   notify();
+  let message;
   try {
     await work();
-    ui.access.message = { kind: "success", text: done };
+    message = { kind: "success", text: done };
   } catch (error) {
-    ui.access.message = { kind: "error", text: error?.code === "LAST_ADMIN" ? t("access.lastAdmin") : errorText(error) };
-  } finally {
-    ui.access.busy = false;
-    await loadAccess();
+    message = { kind: "error", text: error?.code === "LAST_ADMIN" ? t("access.lastAdmin") : errorText(error) };
   }
+  // The screen may have been left and opened again meanwhile (resetAccess).
+  ui.access = { ...(ui.access || {}), busy: false, message };
+  await loadAccess();
 }
 
 // Revoking a key: it stops working at home and away at once; an account whose last key it was
@@ -112,6 +116,12 @@ function revokeInvitation(invitation) {
 // usually ends the membership by itself, so "not a member any more" is the expected answer.
 function removePerson(person, devices) {
   const name = person.name || person.email;
+  // Without the controller's keys, their devices cannot be revoked: then nothing is done.
+  if (!Array.isArray(ui.access.devices)) {
+    ui.access = { ...ui.access, message: { kind: "error", text: t("access.devicesUnknown") } };
+    notify();
+    return;
+  }
   const current = devices.find((device) => device.current)?.id;
   const keys = person.key_ids.filter((id) => id !== current && devices.some((device) => device.id === id));
   const question = keys.length ? t("access.removeConfirm", { name, count: keys.length }) : t("access.removeConfirmUnknown", { name });

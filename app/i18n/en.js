@@ -279,6 +279,7 @@ export default {
     },
     removeConfirmUnknown: "Remove {name} from this home? DirectorLink has not seen which devices they use yet: revoke those under Devices too.",
     removeFor: "Remove {name}",
+    devicesUnknown: "The controller’s keys could not be read, so their devices cannot be revoked now. Try again in a moment.",
     removed: "{name} was removed.",
     devices: "Devices",
     devicesHelp: "Every access key of this controller. A revoked key stops working at once, at home and away; an account whose last key it was leaves the home.",

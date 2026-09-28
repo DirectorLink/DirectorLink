@@ -160,8 +160,13 @@ export class HomeRelay extends DurableObject {
         await work;
         return;
       }
-      case "response":
       case "join_result":
+        await this.keyWork;
+        if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
+          log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
+        }
+        return;
+      case "response":
       case "claim_result":
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
           log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
