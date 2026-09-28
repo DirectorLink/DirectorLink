@@ -90,10 +90,11 @@ export function signIn(hash = "#/settings", provider = "google", { link = false 
   window.location.assign(`${ACCOUNTS_API}/auth/${provider}/start?return_to=${encodeURIComponent(back)}${link ? "&link=1" : ""}`);
 }
 
-export async function signOut() {
+// `everywhere`: every device signed in to this account is signed out (a lost phone).
+export async function signOut({ everywhere = false } = {}) {
   set({ ...state.account, busy: true });
   try {
-    await call("/auth/logout", "POST");
+    await call(everywhere ? "/auth/logout?everywhere=1" : "/auth/logout", "POST");
   } catch {
     // The session ends on the server when it can be reached; here it is forgotten either way.
   }

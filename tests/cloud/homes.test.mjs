@@ -3,7 +3,7 @@
 //   node --test tests/cloud/homes.test.mjs
 
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { after, afterEach, before, test } from "node:test";
 
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
@@ -237,6 +237,65 @@ test("an invitation is registered by a member and accepted once, by the invited 
   assert.equal(outsider.status, 403, "only members register invitations");
   const tooLong = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: "x@example.com", expires_at: new Date(Date.now() + 30 * 86400_000).toISOString() } });
   assert.equal(tooLong.status, 400);
+});
+
+// The controller's own answer to something it asked the relay (`type`, with `id`).
+async function answerTo(state, type, id) {
+  for (let tries = 0; tries < 100; tries += 1) {
+    const found = state.seen.find((message) => message.type === type && message.id === id);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`no ${type} for ${id}`);
+}
+
+test("the controller registers its own invitations; members who are not the owner cannot", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const avi = await signIn(AVI);
+  const aviInvitation = await invite(state, dana, AVI.email);
+  assert.equal((await joinWith(state, avi, aviInvitation.invitationId, aviInvitation.secret)).status, 200, "Avi is a member");
+
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  const byMember = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: avi, body: { invitation_id: randomHex(4), email: NOA.email, expires_at: expires } });
+  assert.equal(byMember.status, 403);
+  assert.equal(byMember.json.code, "OWNER_ONLY", "the cloud does not know members' roles: only the home decides");
+
+  // The controller registers an invitation an admin made.
+  const invitationId = randomHex(4);
+  const secret = randomBytes(32).toString("hex");
+  state.invitations.set(invitationId, secret);
+  state.connection.sendJson({ type: "invitation", id: "d1", invitation_id: invitationId, email: " Noa@Example.com ", expires_at: expires });
+  const registered = await answerTo(state, "invitation_result", "d1");
+  assert.equal(registered.ok, true, JSON.stringify(registered));
+  state.connection.sendJson({ type: "invitation", id: "d2", invitation_id: invitationId, email: "other@example.com", expires_at: expires });
+  assert.equal((await answerTo(state, "invitation_result", "d2")).code, "INVITATION_EXISTS", "an id is bound to its email once");
+  state.connection.sendJson({ type: "invitation", id: "d3", invitation_id: "nothex", email: "x@example.com", expires_at: expires });
+  assert.equal((await answerTo(state, "invitation_result", "d3")).code, "INVALID_REQUEST");
+
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret)).status, 200, "Noa joins with it");
+});
+
+test("the controller replaces its home secret over its connection", TEST, async () => {
+  const state = await home();
+  const oldSecret = state.connection.secret;
+  const newSecret = randomHex(32);
+  const hash = createHash("sha256").update(newSecret).digest("hex");
+  state.connection.sendJson({ type: "rotate_secret", id: "r1", secret_sha256: hash });
+  assert.equal((await answerTo(state, "rotate_result", "r1")).ok, true);
+  await assert.rejects(connectDriver({ url: worker.ws, home: state.home, secret: oldSecret, pingIntervalMs: 0, silenceTimeoutMs: 0 }), "the old secret is refused");
+  const again = await connectDriver({ url: worker.ws, home: state.home, secret: newSecret, pingIntervalMs: 0, silenceTimeoutMs: 0 });
+  drivers.push(again);
+  state.connection.sendJson({ type: "rotate_secret", id: "r2", secret_sha256: "short" });
+});
+
+test("signing out everywhere ends every session of the account", TEST, async () => {
+  const phone = await signIn(DANA);
+  const computer = await signIn(DANA);
+  assert.equal((await call("GET", "/v1/me", { cookie: phone })).status, 200);
+  assert.equal((await call("POST", "/auth/logout?everywhere=1", { cookie: computer })).status, 204);
+  assert.equal((await call("GET", "/v1/me", { cookie: phone })).status, 401, "the other device is signed out too");
+  assert.equal((await call("GET", "/v1/me", { cookie: computer })).status, 401);
 });
 
 test("the owner sees and removes members; members may leave, the owner may not", TEST, async () => {

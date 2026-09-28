@@ -5,6 +5,7 @@
 -- invitation works once.
 
 local Clock = require("src.core.clock")
+local Random = require("src.core.random")
 local Roles = require("src.auth.roles")
 local Store = require("src.core.store")
 local Lock = require("src.cloud.lock")
@@ -21,11 +22,7 @@ local STORE_KEY = "directorlink_invitations"
 local state = { items = {} }
 
 local function randomHex(length)
-    local hex = ""
-    while #hex < length do
-        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
-    end
-    return hex:sub(1, length)
+    return Random.hex(length)
 end
 
 local function save()

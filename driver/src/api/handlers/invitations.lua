@@ -1,8 +1,11 @@
--- Invitations (docs/ACCOUNTS.md, src/auth/invitations.lua): an admin creates one for a role; the
--- app turns it into a link. The secret is in this answer only.
+-- Invitations (docs/ACCOUNTS.md, src/auth/invitations.lua): an admin creates one for a role and an
+-- email; the controller registers it with the account service itself, over its own connection, so
+-- only an admin's request can bind an invitation to an email. The app turns it into a link. The
+-- secret is in this answer only.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
+local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Roles = require("src.auth.roles")
 
@@ -12,7 +15,7 @@ local ID = "^%x%x%x%x%x%x%x%x$"
 
 function Invitations.create(ctx)
     local body = ctx.body or {}
-    local problem = Validate.body(body, { role = true, expires_in = true, for_me = true })
+    local problem = Validate.body(body, { role = true, expires_in = true, for_me = true, email = true })
     if problem then
         return problem
     end
@@ -35,6 +38,13 @@ function Invitations.create(ctx)
     if body.for_me ~= nil and type(body.for_me) ~= "boolean" then
         return Problem.invalidField("for_me", "for_me must be true or false")
     end
+    local email = nil
+    if body.email ~= nil then
+        email = type(body.email) == "string" and body.email:gsub("^%s+", ""):gsub("%s+$", ""):lower() or ""
+        if #email > 254 or not email:match("^[^@%s]+@[^@%s]+%.[^@%s]+$") then
+            return Problem.invalidField("email", "email is the address of the person invited")
+        end
+    end
     -- For the admin's own other device: the new key joins the admin's profile.
     local profile = nil
     if body.for_me then
@@ -53,7 +63,29 @@ function Invitations.create(ctx)
     end
     ctx.services.log.info("remote", "invitation created", { invitation = invitation.id, role = invitation.role, key_id = ctx.apiKey.id })
     invitation.home_id = remote.homeId()
-    return 201, invitation
+    if not email then
+        -- Registered by the app (the home's owner only; see docs/ACCOUNTS.md).
+        return 201, invitation
+    end
+    return Response.later(function(respond)
+        remote.ask({ type = "invitation", invitation_id = invitation.id, email = email, expires_at = invitation.expires_at }, 10, function(answer, code)
+            if answer and answer.ok == true then
+                invitation.registered = true
+                invitation.email = email
+                respond(201, invitation)
+                return
+            end
+            -- Not registered: the link would not work, so the invitation goes.
+            invitations.revoke(invitation.id)
+            local failure = code or (answer and answer.code) or "REGISTRATION_FAILED"
+            ctx.services.log.warn("remote", "invitation not registered", { invitation = invitation.id, code = failure })
+            if failure == "REMOTE_OFFLINE" or failure == "RELAY_TIMEOUT" then
+                respond(Problem.new(503, "REMOTE_OFFLINE", "The controller is not connected to DirectorLink's servers right now; try again in a minute"))
+            else
+                respond(Problem.new(502, failure, "DirectorLink's servers did not take the invitation (" .. tostring(failure) .. ")"))
+            end
+        end)
+    end)
 end
 
 function Invitations.list(ctx)

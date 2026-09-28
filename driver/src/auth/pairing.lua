@@ -3,14 +3,20 @@
 -- for 15 minutes, works once, and gives an admin key: whoever can run Composer actions controls the
 -- project anyway. Composer shows it as "1234 5678"; clients may send it with or without the space.
 
+local Random = require("src.core.random")
+
 local Pairing = {}
 
 local PAIRING_COUNT_KEY = "directorlink_pairing_count"
 
 Pairing.CODE_TTL_SECONDS = 15 * 60
 local FAILED_WINDOW_SECONDS = 60
+-- Per device (IP address): so one device's wrong guesses do not lock out everyone else.
 local MAX_FAILED_ATTEMPTS = 5
 local LOCK_SECONDS = 60
+-- Per code, from all devices together: then the code is closed and a new one is needed.
+local MAX_CODE_FAILURES = 20
+local MAX_TRACKED_CLIENTS = 200
 
 local OFF_TEXT = "Off - run New Pairing Code to pair a device"
 
@@ -19,9 +25,9 @@ local state = {
     codeExpiresAt = 0,
     closedText = OFF_TEXT,
     pairingCount = 0,
-    failedAttempts = 0,
-    failedWindowStartedAt = 0,
-    lockedUntil = 0,
+    clients = {}, -- ip -> { failed, windowStartedAt, lockedUntil }
+    trackedClients = 0,
+    codeFailures = 0,
     expiryTimer = nil,
     onChange = nil,
     log = nil,
@@ -34,15 +40,11 @@ local function log(message, data)
 end
 
 local function generateCode()
-    local uuid, err = C4:UUID("RANDOM")
-    if not uuid then
-        return nil, tostring(err or "UUID generation failed")
+    local ok, numeric = pcall(Random.below, 100000000)
+    if not ok then
+        return nil, tostring(numeric)
     end
-    local numeric = tonumber(tostring(uuid):gsub("[^%x]", ""):sub(1, 8), 16)
-    if not numeric then
-        return nil, "Unable to derive a pairing code"
-    end
-    return string.format("%08d", numeric % 100000000)
+    return string.format("%08d", numeric)
 end
 
 local function constantTimeEqual(left, right)
@@ -84,9 +86,6 @@ end
 
 function Pairing.statusText(now)
     now = now or os.time()
-    if state.lockedUntil > now then
-        return "Locked for " .. tostring(state.lockedUntil - now) .. "s after failed attempts"
-    end
     if Pairing.isActive(now) then
         return "Ready until " .. os.date("%H:%M", state.codeExpiresAt) .. " - works once"
     end
@@ -116,9 +115,25 @@ local function close(text)
     publish()
 end
 
-local function resetFailures(now)
-    state.failedAttempts = 0
-    state.failedWindowStartedAt = now
+local function resetFailures()
+    state.clients = {}
+    state.trackedClients = 0
+    state.codeFailures = 0
+end
+
+local function clientState(ip, now)
+    ip = tostring(ip or "unknown")
+    local client = state.clients[ip]
+    if not client then
+        if state.trackedClients >= MAX_TRACKED_CLIENTS then
+            -- Too many devices guessing: start counting afresh (the per-code limit still holds).
+            state.clients, state.trackedClients = {}, 0
+        end
+        client = { failed = 0, windowStartedAt = now, lockedUntil = 0 }
+        state.clients[ip] = client
+        state.trackedClients = state.trackedClients + 1
+    end
+    return client
 end
 
 -- Creates a new code, valid for CODE_TTL_SECONDS. Returns true, or false plus a reason.
@@ -129,6 +144,7 @@ function Pairing.open()
         return false, err
     end
     cancelTimer()
+    resetFailures()
     state.code = code
     state.codeExpiresAt = os.time() + Pairing.CODE_TTL_SECONDS
     pcall(function()
@@ -153,8 +169,7 @@ function Pairing.initialize(options)
         return C4:PersistGetValue(PAIRING_COUNT_KEY, false)
     end)
     state.pairingCount = ok and tonumber(count) or 0
-    resetFailures(os.time())
-    state.lockedUntil = 0
+    resetFailures()
 
     if options.openNow then
         return Pairing.open()
@@ -164,16 +179,16 @@ function Pairing.initialize(options)
 end
 
 -- Returns true, or false plus { code, message, retry_after?, attempts_remaining? }.
--- `input` is already normalized to 8 digits by the caller.
-function Pairing.verify(input)
+-- `input` is already normalized to 8 digits by the caller; `ip` is the device that sent it.
+function Pairing.verify(input, ip)
     local now = os.time()
+    local client = clientState(ip, now)
 
-    if state.lockedUntil > now then
-        publish()
+    if client.lockedUntil > now then
         return false, {
             code = "PAIRING_RATE_LIMITED",
             message = "Too many failed pairing attempts. Try again shortly.",
-            retry_after = state.lockedUntil - now,
+            retry_after = client.lockedUntil - now,
         }
     end
 
@@ -188,18 +203,28 @@ function Pairing.verify(input)
         }
     end
 
-    if now - state.failedWindowStartedAt >= FAILED_WINDOW_SECONDS then
-        resetFailures(now)
+    if now - client.windowStartedAt >= FAILED_WINDOW_SECONDS then
+        client.failed, client.windowStartedAt = 0, now
     end
 
     if not constantTimeEqual(input, state.code) then
-        state.failedAttempts = state.failedAttempts + 1
-        if state.failedAttempts >= MAX_FAILED_ATTEMPTS then
-            state.lockedUntil = now + LOCK_SECONDS
-            resetFailures(now)
-            publish()
+        client.failed = client.failed + 1
+        state.codeFailures = state.codeFailures + 1
+        if state.codeFailures >= MAX_CODE_FAILURES then
+            close("Closed after " .. MAX_CODE_FAILURES .. " wrong codes - run New Pairing Code to pair a device")
             if state.log then
-                state.log.warn("auth", "pairing locked after repeated failures", { seconds = LOCK_SECONDS })
+                state.log.warn("auth", "pairing code closed after repeated failures", { failures = MAX_CODE_FAILURES })
+            end
+            return false, {
+                code = "PAIRING_NOT_ACTIVE",
+                message = "This pairing code was closed after too many wrong attempts. Run New Pairing Code again.",
+            }
+        end
+        if client.failed >= MAX_FAILED_ATTEMPTS then
+            client.lockedUntil = now + LOCK_SECONDS
+            client.failed, client.windowStartedAt = 0, now
+            if state.log then
+                state.log.warn("auth", "pairing locked for a device after repeated failures", { seconds = LOCK_SECONDS, client = tostring(ip) })
             end
             return false, {
                 code = "PAIRING_RATE_LIMITED",
@@ -210,7 +235,7 @@ function Pairing.verify(input)
         return false, {
             code = "PAIRING_CODE_INVALID",
             message = "The pairing code is incorrect",
-            attempts_remaining = MAX_FAILED_ATTEMPTS - state.failedAttempts,
+            attempts_remaining = MAX_FAILED_ATTEMPTS - client.failed,
         }
     end
 
@@ -218,8 +243,7 @@ function Pairing.verify(input)
     pcall(function()
         C4:PersistSetValue(PAIRING_COUNT_KEY, tostring(state.pairingCount), false)
     end)
-    resetFailures(now)
-    state.lockedUntil = 0
+    resetFailures()
     close("Used at " .. os.date("%H:%M") .. " - run New Pairing Code to pair another device")
     return true
 end
@@ -229,7 +253,7 @@ function Pairing.status()
         active = Pairing.isActive(),
         pairing_count = state.pairingCount,
         code_expires_at = state.codeExpiresAt,
-        locked_until = state.lockedUntil,
+        code_failures = state.codeFailures,
     }
 end
 

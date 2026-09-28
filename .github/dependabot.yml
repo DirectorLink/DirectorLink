@@ -1,0 +1,7 @@
+# Keeps the pinned GitHub Actions (exact commits, see .github/workflows) up to date with pull requests.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

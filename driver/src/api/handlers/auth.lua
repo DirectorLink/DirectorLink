@@ -4,6 +4,10 @@ local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Roles = require("src.auth.roles")
+local Base64 = require("src.core.base64")
+local Lock = require("src.cloud.lock")
+local Random = require("src.core.random")
+local X25519 = require("src.core.x25519")
 
 local Auth = {}
 
@@ -41,10 +45,26 @@ local function createKey(ctx, name, role, profileId)
 end
 
 function Auth.pair(ctx)
+    -- A code is for the home network: a sealed remote request (any member, from anywhere) never
+    -- gets to guess it.
+    if ctx.request and ctx.request.principal then
+        return Problem.new(403, "PAIRING_ONLY_ON_HOME_NETWORK", "Pair on the home network, with the code from Composer")
+    end
     local body = ctx.body
-    local problem = Validate.body(body, { pairing_code = true, name = true })
+    local problem = Validate.body(body, { pairing_code = true, name = true, exchange = true })
     if problem then
         return problem
+    end
+    -- The app's half of a key exchange: the answer is then sealed, and the new key never crosses
+    -- the network in the clear (docs/ACCOUNTS.md). Without it (a script), the key comes back as is.
+    local appPublic
+    if body.exchange ~= nil then
+        local exchange = body.exchange
+        local raw = type(exchange) == "table" and type(exchange.public_key) == "string" and Base64.decode(exchange.public_key) or nil
+        if not raw or #raw ~= 32 then
+            return Problem.invalidField("exchange.public_key", "exchange.public_key is a 32-byte X25519 public key, base64")
+        end
+        appPublic = { raw = raw, text = exchange.public_key }
     end
 
     local code = ctx.services.pairing.normalize(body.pairing_code)
@@ -61,7 +81,7 @@ function Auth.pair(ctx)
         return keyLimitProblem(keys)
     end
 
-    local paired, failure = ctx.services.pairing.verify(code)
+    local paired, failure = ctx.services.pairing.verify(code, ctx.client and ctx.client.ip)
     if not paired then
         local status = 403
         local headers
@@ -83,9 +103,29 @@ function Auth.pair(ctx)
     if not record then
         return createProblem
     end
-    ctx.services.log.info("auth", "paired a new client", { key_id = record.id, name = record.name, role = record.role, client = ctx.client.ip })
+    ctx.services.log.info("auth", "paired a new client", { key_id = record.id, name = record.name, role = record.role, client = ctx.client.ip, sealed = appPublic ~= nil })
     ctx.services.onKeysChanged()
-    return 201, Views.newApiKey(record)
+    if not appPublic then
+        return 201, Views.newApiKey(record)
+    end
+    local ok, sealed = pcall(function()
+        local private = Random.bytes(32)
+        local driverPublic = Base64.encode(X25519.publicKey(private))
+        local shared = X25519.shared(private, appPublic.raw)
+        if not shared then
+            error("the app's public key is not usable", 0)
+        end
+        local lockKey = Lock.pairingKey(Base64.toHex(shared), code, appPublic.text, driverPublic)
+        return { exchange = { public_key = driverPublic }, sealed = Lock.seal(lockKey, "pair", "pair", "res", Json.encode(Views.newApiKey(record))) }
+    end)
+    if not ok then
+        -- Nobody can use a key they never got: take it back.
+        ctx.services.keys.revoke(record.id)
+        ctx.services.onKeysChanged()
+        ctx.services.log.error("auth", "could not seal the pairing answer", { error = tostring(sealed) })
+        return Problem.invalidField("exchange.public_key", "The key exchange failed; pair again")
+    end
+    return 201, sealed
 end
 
 function Auth.list_keys(ctx)

@@ -482,8 +482,16 @@ async function createInvitation({ forSelf }) {
     // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
     const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
     if (forSelf && state.profile) body.for_me = true;
-    invitation = await api("/v1/invitations", { method: "POST", body });
-    await registerInvitation(invitation.home_id, invitation, email);
+    try {
+      // The controller registers it with the account service itself (1.0.0 and later).
+      invitation = await api("/v1/invitations", { method: "POST", body: { ...body, email } });
+    } catch (error) {
+      const field = error?.problem?.errors?.[0]?.field;
+      if (error?.code !== "INVALID_FIELD" || field !== "email") throw error;
+      // A driver before 1.0.0: the home's owner registers it from here.
+      invitation = await api("/v1/invitations", { method: "POST", body });
+      await registerInvitation(invitation.home_id, invitation, email);
+    }
     ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
     ui.inviteForm = false;
   } catch (error) {
@@ -631,7 +639,20 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: signOut }, t("settings.account.signOut")),
+        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: () => signOut() }, t("settings.account.signOut")),
+        h(
+          "button",
+          {
+            type: "button",
+            class: "button button-secondary",
+            dataset: { key: "account-sign-out-everywhere" },
+            disabled: account.busy,
+            onclick: () => {
+              if (window.confirm(t("settings.account.signOutEverywhereConfirm"))) signOut({ everywhere: true });
+            },
+          },
+          t("settings.account.signOutEverywhere")
+        ),
         // Signing in with another provider gives another account; adding it here, while signed in,
         // makes both sign in to this one.
         ...SIGN_IN_PROVIDERS.filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider)).map((provider) =>

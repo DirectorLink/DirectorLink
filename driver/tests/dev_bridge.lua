@@ -21,6 +21,13 @@ end
 local mock = Mock.startDriver(nil, specText)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
+-- The app and console served from this PC (python -m http.server) may call this test bridge. The
+-- driver itself answers only DirectorLink's own sites; this is the test harness, never packaged.
+local Server = require("src.api.server")
+local driverOrigins = Server.originAllowed
+Server.originAllowed = function(origin)
+    return driverOrigins(origin) or (type(origin) == "string" and origin:match("^http://localhost:%d+$") ~= nil)
+end
 -- And a fake Open-Meteo answers for its weather.
 local Json = require("src.core.json")
 mock.weather = {

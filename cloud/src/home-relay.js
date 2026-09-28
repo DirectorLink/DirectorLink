@@ -16,6 +16,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
+import { registerHomeInvitation } from "./homes.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -166,6 +167,25 @@ export class HomeRelay extends DurableObject {
           log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
         }
         return;
+      case "invitation": {
+        // The controller registers an invitation it made for an admin: only the home can, so a
+        // member cannot bind an invitation id to an email (docs/ACCOUNTS.md).
+        const result = await registerHomeInvitation(this.env, attachment.home, data);
+        this.reply(ws, { type: "invitation_result", id: data.id, ...result });
+        return;
+      }
+      case "rotate_secret": {
+        // The controller replaces its home secret, over the connection the old one opened.
+        const hash = typeof data.secret_sha256 === "string" ? data.secret_sha256.toLowerCase() : "";
+        if (!/^[0-9a-f]{64}$/.test(hash)) {
+          this.reply(ws, { type: "rotate_result", id: data.id, ok: false, code: "INVALID_REQUEST" });
+          return;
+        }
+        await this.ctx.storage.put("secret_sha256", hash);
+        log("home_secret_replaced", { home: attachment.home });
+        this.reply(ws, { type: "rotate_result", id: data.id, ok: true });
+        return;
+      }
       case "response":
       case "claim_result":
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
@@ -178,6 +198,14 @@ export class HomeRelay extends DurableObject {
           type: type ?? null,
           message: typeof message === "string" ? message.slice(0, 100) : `${message.byteLength} binary bytes`,
         });
+    }
+  }
+
+  reply(ws, message) {
+    try {
+      ws.send(JSON.stringify(message));
+    } catch {
+      // The driver went away; it asks again.
     }
   }
 

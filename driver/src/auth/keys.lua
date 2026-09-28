@@ -8,6 +8,7 @@ local Clock = require("src.core.clock")
 local Roles = require("src.auth.roles")
 local Store = require("src.core.store")
 local Lock = require("src.cloud.lock")
+local Random = require("src.core.random")
 
 local Keys = {}
 
@@ -30,12 +31,9 @@ local state = {
     lastUsed = {},
 }
 
+-- 32 random hex characters (src/core/random.lua: Director's UUIDs mixed into a pool).
 local function randomHex()
-    local uuid, err = C4:UUID("RANDOM")
-    if not uuid then
-        error("UUID generation failed: " .. tostring(err))
-    end
-    return (tostring(uuid):gsub("[^%x]", "")):lower()
+    return Random.hex(32)
 end
 
 local function constantTimeEqual(left, right)

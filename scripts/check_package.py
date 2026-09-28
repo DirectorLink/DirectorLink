@@ -33,7 +33,7 @@ REQUIRED_PROPERTIES = (
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION")
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "ROTATE_HOME_SECRET")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
@@ -56,9 +56,14 @@ SECURITY_CONTRACT = {
         "            profile = key.profile,\n"
         "        }\n",
         'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
-        'C4:UUID("RANDOM")',
+        "return Random.hex(32)",
         "constantTimeEqual(hashes[key.alg], key.hash)",
         "Store.write(OLD_STORE_KEY, { version = 2, keys = Json.array() }, true)",
+    ),
+    # Secrets never come from Director's UUIDs alone: they are mixed into a pool that moves on.
+    "src/core/random.lua": (
+        'out = out .. hash(state.pool .. "|out|" .. state.counter .. "|" .. sources())',
+        'state.pool = hash(state.pool .. "|next|" .. state.counter .. "|" .. sources())',
     ),
     "src/auth/pairing.lua": (
         "Pairing.CODE_TTL_SECONDS = 15 * 60",

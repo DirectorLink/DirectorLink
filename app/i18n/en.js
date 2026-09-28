@@ -620,6 +620,8 @@ export default {
       removeProviderConfirm: "Stop signing in to this account with {provider}? The other way to sign in stays.",
       provider: { google: "Google", apple: "Apple" },
       signOut: "Sign out",
+      signOutEverywhere: "Sign out everywhere",
+      signOutEverywhereConfirm: "Sign out this account on every device, this one included? Each device then needs to sign in again to reach your home from away.",
       delete: "Delete account",
       deleteConfirm: "Delete your DirectorLink account? Your homes and access keys stay; this device and your other devices are signed out.",
       unavailable: "Can’t reach DirectorLink’s account service right now.",

@@ -4,6 +4,7 @@
 -- so the relay cannot read the home.
 
 local Json = require("src.core.json")
+local Random = require("src.core.random")
 local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
@@ -24,6 +25,7 @@ local IDENTITY_KEY = "directorlink_remote_identity"
 local OLD_IDENTITY_KEY = "DIRECTORLINK_REMOTE_IDENTITY"
 
 local state = {
+    asked = {}, -- id -> function(answer): what the driver asked the relay
     enabled = false,
     socket = nil,
     identity = nil,
@@ -51,19 +53,20 @@ local function publish(text)
 end
 
 local function randomHex(length)
-    local hex = ""
-    while #hex < length do
-        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
-    end
-    return hex:sub(1, length)
+    return Random.hex(length)
 end
 
 local function readIdentity(name, encrypted)
     local stored, form = Store.read(name, encrypted)
     if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
-        return { home_id = stored.home_id, home_secret = stored.home_secret }, form
+        local next = type(stored.next_secret) == "string" and stored.next_secret:match("^%x+$") and #stored.next_secret == 64 and stored.next_secret or nil
+        return { home_id = stored.home_id, home_secret = stored.home_secret, next_secret = next }, form
     end
     return nil, form
+end
+
+local function saveIdentity(identity)
+    return Store.write(IDENTITY_KEY, identity, false)
 end
 
 -- The home's identity: a public id and a secret, kept in the driver's data.
@@ -163,6 +166,13 @@ local function onMessage(text, kind)
         log("debug", "ignored a relay message that is not JSON")
         return
     end
+    -- Answers to what the driver asked (Relay.ask).
+    local waiting = type(message.id) == "string" and state.asked[message.id]
+    if waiting and (message.type == "invitation_result" or message.type == "rotate_result") then
+        state.asked[message.id] = nil
+        waiting(message)
+        return
+    end
     -- Sealed requests, invitations and claims (remote.lua).
     if state.remote and state.remote(message, send) then
         return
@@ -211,6 +221,12 @@ function Relay.announceKeys()
 end
 
 local function onOpen()
+    -- The secret in use works: a replacement that was not confirmed is dropped.
+    local current = Relay.identity()
+    if current.next_secret then
+        current.next_secret = nil
+        saveIdentity(current)
+    end
     state.attempts = 0
     state.lastHeard = os.time()
     state.connectedAt = os.time()
@@ -229,6 +245,15 @@ local function onClose(reason, status, body)
     if reason == "refused" then
         local problem = Json.decode(body or "")
         local detail = type(problem) == "table" and (problem.code or problem.detail) or ("HTTP " .. tostring(status))
+        -- A new secret the relay may have taken before its answer was lost: try the other one.
+        local identity = Relay.identity()
+        if status == 401 and identity.next_secret then
+            identity.home_secret, identity.next_secret = identity.next_secret, identity.home_secret
+            saveIdentity(identity)
+            log("info", "trying the other home secret", {})
+            scheduleReconnect("trying the other home secret", 1)
+            return
+        end
         log("warn", "the relay refused the connection", { status = status, detail = tostring(detail) })
         scheduleReconnect("refused: " .. tostring(detail), status == 401 and Relay.REFUSED_RETRY_SECONDS or nil)
         return
@@ -262,6 +287,74 @@ connect = function()
     }
     publish("Connecting...")
     state.socket:connect()
+end
+
+-- Asks the relay something over this home's connection; done(answer) once, or done(nil, code)
+-- after `seconds` or when not connected. Answers carry the same id (onMessage).
+function Relay.ask(message, seconds, done)
+    if not state.socket or not state.connectedAt then
+        done(nil, "REMOTE_OFFLINE")
+        return
+    end
+    state.askCount = (state.askCount or 0) + 1
+    local id = "d" .. state.askCount .. "-" .. os.time()
+    message.id = id
+    local finished = false
+    local timer
+    state.asked[id] = function(answer)
+        if finished then
+            return
+        end
+        finished = true
+        if timer then
+            pcall(function()
+                timer:Cancel()
+            end)
+        end
+        done(answer)
+    end
+    pcall(function()
+        timer = C4:SetTimer((seconds or 10) * 1000, function()
+            if not finished then
+                finished = true
+                state.asked[id] = nil
+                done(nil, "RELAY_TIMEOUT")
+            end
+        end)
+    end)
+    send(message)
+end
+
+-- Replaces the home secret (Composer: Rotate Remote Secret), e.g. after a copy of the controller's
+-- data was lost. The relay learns the new one's SHA-256 over the connection the old one opened;
+-- the new one is kept as "next" until the relay confirms, so neither can be lost.
+function Relay.rotateSecret(done)
+    local identity = Relay.identity()
+    if not state.connectedAt then
+        done(false, "REMOTE_OFFLINE")
+        return
+    end
+    local secret = Random.hex(64)
+    identity.next_secret = secret
+    saveIdentity(identity)
+    local hash = C4:Hash("SHA256", secret, { return_encoding = "HEX" }):lower()
+    Relay.ask({ type = "rotate_secret", secret_sha256 = hash }, 15, function(answer, code)
+        if not answer or answer.ok ~= true then
+            -- Kept as "next": tried if the relay did take it and refuses the old one.
+            log("warn", "the home secret was not replaced", { code = tostring(code or (answer and answer.code) or "REFUSED") })
+            done(false, code or (answer and answer.code) or "REFUSED")
+            return
+        end
+        identity.home_secret, identity.next_secret = secret, nil
+        saveIdentity(identity)
+        log("info", "home secret replaced", { home_id = identity.home_id })
+        -- Connect again with it.
+        if state.socket then
+            state.socket:close(nil, true)
+        end
+        scheduleReconnect("new home secret", 1)
+        done(true)
+    end)
 end
 
 -- options: { services, onStatus = function(text), remote = Remote.handle }

@@ -153,7 +153,9 @@ function tests.a_claim_token_works_once_and_only_from_the_home_network()
     T.eq(claim.status, 201)
     T.eq(claim.json.home_id, s.home)
     T.truthy(claim.json.claim_token:match("^%x+$") and #claim.json.claim_token == 48)
-    T.eq(send(s, { type = "claim", id = "c1", token = "0" .. claim.json.claim_token:sub(2) }).ok, false, "a wrong token")
+    local token = claim.json.claim_token
+    local wrong = (token:sub(1, 1) == "0" and "1" or "0") .. token:sub(2)
+    T.eq(send(s, { type = "claim", id = "c1", token = wrong }).ok, false, "a wrong token")
     local right = send(s, { type = "claim", id = "c2", token = claim.json.claim_token })
     T.eq(right.type, "claim_result")
     T.eq(right.ok, true)
@@ -162,6 +164,11 @@ function tests.a_claim_token_works_once_and_only_from_the_home_network()
     local remote = e2e(s, { method = "POST", path = "/v1/remote/claim" })
     T.eq(remote.status, 403)
     T.eq(Json.decode(remote.body).code, "CLAIM_ONLY_ON_HOME_NETWORK")
+    -- Nor can a pairing code be guessed from outside, even while one is active.
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local pair = e2e(s, { method = "POST", path = "/v1/auth/pair", body = Json.encode({ pairing_code = s.mock.properties["Pairing Code"] }) })
+    T.eq(pair.status, 403)
+    T.eq(Json.decode(pair.body).code, "PAIRING_ONLY_ON_HOME_NETWORK")
     local viewer = createKey(s, "viewer")
     T.eq(T.http(s.mock, "POST", "/v1/remote/claim", { key = viewer }).status, 403, "admins only")
     for _, line in ipairs(s.mock.debugLog) do
@@ -407,6 +414,87 @@ function tests.my_other_device_invitation_keeps_its_profile_across_a_restart()
     local after = { mock = updated, connection = connection, key = s.key, keyId = s.keyId, home = s.home }
     local phone = Json.decode(join(after, forMe, "Safari on iPhone").body)
     T.eq(T.http(updated, "GET", "/v1/profile", { key = phone.key }).json.id, mine.id)
+end
+
+-- What the driver sent the relay since `from` (not key announcements).
+local function sentFrames(s)
+    local frames = {}
+    for _, frame in ipairs(Harness.answers(Harness.clientFrames(s.connection.sent))) do
+        frames[#frames + 1] = Json.decode(frame.payload)
+    end
+    s.connection.sent = ""
+    return frames
+end
+
+local function relayAnswers(message)
+    ReceivedFromNetwork(Harness.BINDING, 443, Harness.serverFrame(1, Json.encode(message)))
+end
+
+function tests.an_invitation_with_an_email_is_registered_by_the_controller()
+    local s = session()
+    s.connection.sent = ""
+    local pending = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member", email = " Dana@Example.com " } })
+    T.eq(pending.status, nil, "the answer waits for the account service")
+    local asked = sentFrames(s)
+    T.eq(#asked, 1)
+    T.eq(asked[1].type, "invitation")
+    T.eq(asked[1].email, "dana@example.com")
+    T.truthy(asked[1].invitation_id:match("^%x+$") and asked[1].expires_at:match("Z$"))
+    T.eq(asked[1].secret, nil, "the secret never goes to the relay")
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = true })
+    local created = T.response(s.mock, pending.handle)
+    T.eq(created.status, 201, created.body)
+    T.eq(created.json.registered, true)
+    T.truthy(created.json.secret:match("^%x+$"))
+
+    -- Refused by the account service: the invitation goes, since its link would not work.
+    local refused = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "guest@example.com" } })
+    local second = sentFrames(s)[1]
+    relayAnswers({ type = "invitation_result", id = second.id, ok = false, code = "INVITATION_EXISTS" })
+    T.eq(T.response(s.mock, refused.handle).status, 502)
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 1, "only the registered one is left")
+
+    -- No answer at all.
+    local silent = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "late@example.com" } })
+    sentFrames(s)
+    Mock.fireTimers(s.mock, 1)
+    local timedOut = T.response(s.mock, silent.handle)
+    T.eq(timedOut.status, 503)
+    T.eq(timedOut.json.code, "REMOTE_OFFLINE")
+    T.eq(#T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items, 1)
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", email = "not an email" } }).status, 400)
+end
+
+function tests.composer_replaces_the_home_secret_and_the_driver_reconnects_with_it()
+    local s = session()
+    local before = s.mock.persist.directorlink_remote_identity
+    s.connection.sent = ""
+    ExecuteCommand("LUA_ACTION", { ACTION = "ROTATE_HOME_SECRET" })
+    local asked = sentFrames(s)[1]
+    T.eq(asked.type, "rotate_secret")
+    T.truthy(asked.secret_sha256:match("^%x+$") and #asked.secret_sha256 == 64)
+    T.truthy(s.mock.persist.directorlink_remote_identity:find("next_secret", 1, true), "kept as next until the relay confirms")
+    relayAnswers({ type = "rotate_result", id = asked.id, ok = true })
+    local identity = Json.decode(s.mock.persist.directorlink_remote_identity:sub(#"json:" + 1))
+    T.eq(C4:Hash("SHA256", identity.home_secret, { return_encoding = "HEX" }):lower(), asked.secret_sha256, "the new secret is the one the relay learned")
+    T.truthy(identity.next_secret == nil)
+    T.truthy(s.mock.persist.directorlink_remote_identity ~= before)
+    -- It connects again with the new secret.
+    Mock.fireTimers(s.mock, 1)
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    T.contains(s.connection.sent, "Authorization: Bearer " .. identity.home_secret)
+end
+
+function tests.a_replacement_the_relay_took_without_answering_is_tried_when_the_old_one_is_refused()
+    local s = session()
+    s.connection.sent = ""
+    ExecuteCommand("LUA_ACTION", { ACTION = "ROTATE_HOME_SECRET" })
+    sentFrames(s)
+    Mock.fireTimers(s.mock, 1)
+    local identity = Json.decode(s.mock.persist.directorlink_remote_identity:sub(#"json:" + 1))
+    local next = identity.next_secret
+    T.truthy(next, "still kept as next after no answer")
+    T.eq(s.mock.properties["Remote Status"]:find("Secret not replaced", 1, true), 1)
 end
 
 return tests

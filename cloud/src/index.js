@@ -30,6 +30,7 @@ export default {
   // Daily housekeeping (wrangler.jsonc → triggers).
   async scheduled(event, env, ctx) {
     ctx.waitUntil(purgeInvitations(env));
+    ctx.waitUntil(purgeSessions(env));
   },
 
   async fetch(request, env) {
@@ -110,4 +111,15 @@ async function testEndpoint(request, env, homeId, rest, search) {
   return relay.fetch("https://home-relay/forward", {
     headers: { "X-DirectorLink-Home": homeId, "X-DirectorLink-Path": rest + search },
   });
+}
+
+// Daily: sessions and sign-ins that have expired (otherwise only removed when that account signs
+// in again).
+async function purgeSessions(env) {
+  const now = new Date().toISOString();
+  const [sessions, signIns] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(now),
+    env.DB.prepare("DELETE FROM sign_ins WHERE expires_at < ?").bind(now),
+  ]);
+  console.log(JSON.stringify({ event: "sessions_purged", sessions: sessions.meta?.changes ?? 0, sign_ins: signIns.meta?.changes ?? 0 }));
 }

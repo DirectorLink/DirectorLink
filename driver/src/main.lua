@@ -166,6 +166,10 @@ local services = {
         createClaim = function(keyId)
             return Remote.createClaim(keyId)
         end,
+        -- Asks the account service over the home's connection (invitations).
+        ask = function(message, seconds, done)
+            Relay.ask(message, seconds, done)
+        end,
     },
     startedAt = os.time(),
     controllerVersion = nil,
@@ -361,6 +365,16 @@ function ExecuteCommand(command, params)
     end
     if params.ACTION == "NEW_PAIRING_CODE" then
         Pairing.open()
+    elseif params.ACTION == "ROTATE_HOME_SECRET" then
+        -- After a copy of the controller's data was lost (a backup, a replaced controller): the
+        -- relay then refuses the old secret. Keys are revoked separately (Revoke All API Keys).
+        Relay.rotateSecret(function(ok, code)
+            if ok then
+                Log.warn("relay", "home secret replaced from Composer")
+            else
+                updateProperty("Remote Status", "Secret not replaced: " .. tostring(code) .. " (Remote Access must be connected)")
+            end
+        end)
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
         local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry)

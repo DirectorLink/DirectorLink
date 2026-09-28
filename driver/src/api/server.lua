@@ -9,6 +9,7 @@ local Routes = require("src.api.routes")
 local Problem = require("src.api.problem")
 local Response = require("src.api.response")
 local Roles = require("src.auth.roles")
+local Random = require("src.core.random")
 
 local HANDLERS = {
     system = require("src.api.handlers.system"),
@@ -27,6 +28,7 @@ local HANDLERS = {
     profiles = require("src.api.handlers.profiles"),
     scenes = require("src.api.handlers.scenes"),
     schedules = require("src.api.handlers.schedules"),
+    sealed = require("src.api.handlers.sealed"),
 }
 
 local Server = {}
@@ -57,17 +59,42 @@ for _, route in ipairs(Routes) do
     assert(route.public or Roles.valid(route.role), "route needs a role: " .. route.method .. " " .. route.path)
 end
 
--- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not.
--- localhost origins are allowed so the app can be tested from a local server.
+-- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not. Only DirectorLink's
+-- own sites are allowed, never localhost: a page on the same computer is not the app.
 function Server.originAllowed(origin)
     if origin == nil or origin == "" then
         return true
     end
-    if ALLOWED_ORIGINS[origin] then
+    return ALLOWED_ORIGINS[origin] == true
+end
+
+-- Local names a home network uses; a public name (DNS rebinding: a site's own name made to point
+-- at the controller) is refused.
+local LOCAL_SUFFIXES = { ".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain" }
+
+-- The Host a LAN request was sent to: the controller's IP address, or a local name.
+function Server.hostAllowed(host)
+    if host == nil or host == "" then
         return true
     end
-    return origin:match("^http://localhost:?%d*$") ~= nil
-        or origin:match("^http://127%.0%.0%.1:?%d*$") ~= nil
+    host = string.lower(host)
+    local name = host:match("^%[([%x:]+)%]:?%d*$")
+    if name then
+        return true
+    end
+    name = host:match("^([^:]+):?%d*$")
+    if not name then
+        return false
+    end
+    if name:match("^%d+%.%d+%.%d+%.%d+$") or name:match("^[%w%-]+$") then
+        return true
+    end
+    for _, suffix in ipairs(LOCAL_SUFFIXES) do
+        if #name > #suffix and name:sub(-#suffix) == suffix and name:sub(1, -#suffix - 1):match("^[%w%-%.]+$") then
+            return true
+        end
+    end
+    return false
 end
 
 local function authenticate(request)
@@ -192,12 +219,17 @@ end
 -- snapshot) answers later: then nothing is returned and respond(status, headers, body) is called.
 function Server.handleRequest(request, client, respond)
     local started = Clock.millis()
+    pcall(Random.stir, tostring(started) .. "|" .. tostring(client and client.ip) .. "|" .. tostring(client and client.port))
     local origin = request.headers["origin"]
     local status, payload, extraHeaders, apiKey, route
 
     if not Server.originAllowed(origin) then
         status = 403
         payload = Problem.new(403, "ORIGIN_NOT_ALLOWED", "Requests from " .. tostring(origin) .. " are not allowed")
+        origin = nil
+    elseif not request.principal and not Server.hostAllowed(request.headers["host"]) then
+        status = 421
+        payload = Problem.new(421, "MISDIRECTED_REQUEST", "Reach DirectorLink by the controller's IP address or its local name")
         origin = nil
     elseif request.method == "OPTIONS" then
         status = 204

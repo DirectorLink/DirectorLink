@@ -1,7 +1,7 @@
 // Runs the cloud Worker (cloud/) under `wrangler dev --local` for the tests. Each run works in a
 // temporary copy of cloud/ with its own .dev.vars and local state, so a developer's
 // cloud/.dev.vars and .wrangler/ are never used or changed. The first run needs network access
-// (npx downloads wrangler@4).
+// (npx downloads wrangler@4.143.0).
 
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
@@ -43,7 +43,7 @@ export async function startWorker({ devVars = {}, migrate = false } = {}) {
   };
 
   if (migrate) {
-    const applied = spawnSync("npx --yes wrangler@4 d1 migrations apply directorlink --local", {
+    const applied = spawnSync("npx --yes wrangler@4.143.0 d1 migrations apply directorlink --local", {
       cwd: dir,
       shell: true,
       windowsHide: true,
@@ -59,7 +59,7 @@ export async function startWorker({ devVars = {}, migrate = false } = {}) {
 
   const port = await freePort();
   const inspectorPort = await freePort();
-  const command = `npx --yes wrangler@4 dev --local --ip 127.0.0.1 --port ${port} --inspector-port ${inspectorPort} --no-show-interactive-dev-session`;
+  const command = `npx --yes wrangler@4.143.0 dev --local --ip 127.0.0.1 --port ${port} --inspector-port ${inspectorPort} --no-show-interactive-dev-session`;
   const child = spawn(command, {
     cwd: dir,
     shell: true,

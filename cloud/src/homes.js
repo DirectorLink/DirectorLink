@@ -31,6 +31,9 @@ const MAX_BODY_BYTES = MAX_REQUEST_CT + 4096;
 const MAX_INVITATION_MS = 7 * 24 * 3600 * 1000;
 // Controllers' clocks may run a little fast (the lock allows 2 minutes).
 const INVITATION_SKEW_MS = 10 * 60 * 1000;
+// The creator recorded for invitations the controller registered itself.
+const HOME_CREATOR = "home";
+
 // Pending invitations one account may have registered for one home (the controller allows 20).
 const MAX_PENDING_PER_MEMBER = 20;
 
@@ -210,9 +213,38 @@ async function e2e(request, env, user, homeId) {
   return json({ envelope: reply.envelope });
 }
 
+// An invitation the controller registers itself (driver 1.0.0 and later, over its connection):
+// { id, invitation_id, email, expires_at } -> { ok } or { ok: false, code }.
+export async function registerHomeInvitation(env, homeId, data) {
+  const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
+  const expires = Date.parse(data?.expires_at ?? "");
+  if (!SHORT_ID.test(data?.invitation_id ?? "") || !EMAIL.test(email) || email.length > 254 || !Number.isFinite(expires)) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + INVITATION_SKEW_MS) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  const [, inserted] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND (expires_at < ? OR accepted_by IS NOT NULL)").bind(homeId, iso(Date.now() - PURGE_GRACE_MS)),
+    env.DB.prepare("INSERT INTO invitations (home_id, id, email, expires_at, created_by) VALUES (?, ?, ?, ?, ?) ON CONFLICT (home_id, id) DO NOTHING")
+      .bind(homeId, data.invitation_id, email, iso(expires), HOME_CREATOR),
+  ]);
+  if (!inserted.meta.changes) {
+    return { ok: false, code: "INVITATION_EXISTS" };
+  }
+  log("invitation_registered", { home: homeId, by: "home", invitation: data.invitation_id });
+  return { ok: true };
+}
+
+// Registered by the home's owner, for controllers before 1.0.0 (which do not register their
+// invitations themselves). Other members may not: the cloud does not know their role.
 async function registerInvitation(request, env, user, homeId) {
   if (!(await member(env, homeId, user.id))) {
     return problem(403, "NOT_A_MEMBER", "This account does not belong to that home");
+  }
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  if (!home || home.owner_id !== user.id) {
+    return problem(403, "OWNER_ONLY", "Only the home's owner registers invitations here; the controller registers the others itself");
   }
   const input = await body(request);
   const email = typeof input?.email === "string" ? input.email.trim().toLowerCase() : "";

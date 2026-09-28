@@ -622,6 +622,8 @@ export default {
       removeProviderConfirm: "להפסיק להתחבר לחשבון הזה עם {provider}? דרך ההתחברות השנייה נשארת.",
       provider: { google: "Google", apple: "Apple" },
       signOut: "התנתקות",
+      signOutEverywhere: "התנתקות מכל המכשירים",
+      signOutEverywhereConfirm: "לנתק את החשבון בכל המכשירים, כולל זה? כל מכשיר יצטרך להתחבר שוב כדי להגיע לבית מבחוץ.",
       delete: "מחיקת החשבון",
       deleteConfirm: "למחוק את חשבון DirectorLink שלך? הבתים ומפתחות הגישה נשארים; המכשיר הזה ושאר המכשירים שלך ינותקו.",
       unavailable: "אין כרגע גישה לשירות החשבונות של DirectorLink.",

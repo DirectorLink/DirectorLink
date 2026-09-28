@@ -39,7 +39,15 @@ function System.openapi(_ctx)
     return 200, document
 end
 
+local function rounded(value)
+    if type(value) ~= "number" then
+        return Json.null
+    end
+    return math.floor(value * 100 + 0.5) / 100
+end
+
 function System.info(ctx)
+    local admin = ctx.apiKey and ctx.apiKey.role == "admin"
     local services = ctx.services
     local registry = services.registry
     local metadata = registry.metadata or {}
@@ -65,8 +73,9 @@ function System.info(ctx)
             city = text(properties.CityName),
             country_code = text(properties.CountryCode),
             country = text(properties.CountryName),
-            latitude = number(properties.Latitude),
-            longitude = number(properties.Longitude),
+            -- Where the home is: for admins only, rounded to two decimals (about a kilometre).
+            latitude = admin and rounded(number(properties.Latitude)) or Json.null,
+            longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
         inventory = {

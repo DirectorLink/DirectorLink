@@ -9,6 +9,7 @@
 -- a `code`; they reveal nothing about the home.
 
 local Json = require("src.core.json")
+local Random = require("src.core.random")
 local Http = require("src.api.http")
 local Clock = require("src.core.clock")
 local Lock = require("src.cloud.lock")
@@ -44,11 +45,7 @@ local function log(level, message, data)
 end
 
 local function randomHex(length)
-    local hex = ""
-    while #hex < length do
-        hex = hex .. tostring(C4:UUID("RANDOM")):gsub("[^%x]", ""):lower()
-    end
-    return hex:sub(1, length)
+    return Random.hex(length)
 end
 
 local function sameText(left, right)
@@ -222,8 +219,8 @@ local function sealAnswer(lockKey, keyId, request, status, contentType, body)
 end
 
 -- Runs an API request as `principal` through the same code as LAN requests; done(status, headers,
--- body) is called once, now or later (camera pictures).
-local function run(request, principal, done)
+-- body) is called once, now or later (camera pictures). `client`: where it came from.
+local function run(request, principal, done, client)
     local method = string.upper(tostring(request.method or "GET"))
     local path, query = tostring(request.path or ""):match("^([^?]*)%??(.*)$")
     if not METHODS[method] or not path or path:sub(1, 4) ~= "/v1/" then
@@ -239,7 +236,7 @@ local function run(request, principal, done)
         body = hasBody and Json.encode(request.body) or "",
         principal = principal,
     }
-    local status, headers, body = state.handleRequest(apiRequest, { ip = "relay", port = "0" }, done)
+    local status, headers, body = state.handleRequest(apiRequest, client or { ip = "relay", port = "0" }, done)
     if status then
         done(status, headers, body)
     end
@@ -268,6 +265,41 @@ local function handleE2e(message, send)
         local envelope = sealAnswer(key.lock, keyId, request, status, headerValue(headers, "content-type"), body)
         send({ type = "e2e", id = message.id, envelope = envelope })
     end)
+end
+
+-- A sealed request that came on the home network (POST /v1/sealed): opened and checked exactly
+-- like one through the account; done(envelope) with the sealed answer, or done(nil, code).
+function Remote.handleLocal(envelope, client, done)
+    local keyId = type(envelope) == "table" and envelope.key or nil
+    local key = type(keyId) == "string" and state.services.keys.remote(keyId) or nil
+    if not key then
+        done(nil, "UNKNOWN_KEY")
+        return
+    end
+    local request, code = openRequest(key.lock, envelope, keyId)
+    if not request then
+        log("warn", "refused a sealed request on the home network", { key_id = keyId, code = code })
+        done(nil, code)
+        return
+    end
+    state.services.keys.touch(keyId)
+    local answered = false
+    run(request, { id = key.id, name = key.name, role = key.role, remote = false, sealed = true }, function(status, headers, body)
+        if answered then
+            return
+        end
+        answered = true
+        done(sealAnswer(key.lock, keyId, request, status, headerValue(headers, "content-type"), body))
+    end, client)
+end
+
+-- The home id sealed requests name, and how far their clock may be off.
+function Remote.homeId()
+    return state.homeId and state.homeId() or nil
+end
+
+function Remote.windowSeconds()
+    return Lock.WINDOW_SECONDS
 end
 
 local function handleJoin(message, send)

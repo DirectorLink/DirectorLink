@@ -215,7 +215,8 @@ function Handlers.weather(ctx)
     local result = {
         status = data and "ok" or string.lower(reason or "waiting"),
         detail = nullable(detail),
-        location = latitude and { latitude = rounded(latitude), longitude = rounded(longitude) } or Json.null,
+        -- Where the home is: for admins only (rounded).
+        location = latitude and ctx.apiKey and ctx.apiKey.role == "admin" and { latitude = rounded(latitude), longitude = rounded(longitude) } or Json.null,
         fetched_at = fetchedAt and Clock.iso(fetchedAt) or Json.null,
         current = data and {
             temperature = data.temperature,

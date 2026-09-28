@@ -4,6 +4,7 @@
 //   GET    /auth/google/callback                             (Google redirects here)
 //   POST   /auth/apple/callback                              (Apple posts its form here)
 //   POST   /auth/logout                                      ends this session
+//   POST   /auth/logout?everywhere=1                         ends every session of this account
 //   GET    /v1/me                                            the signed-in account, or 401
 //   DELETE /v1/me                                            deletes the account and all its sessions
 //   DELETE /v1/me/identities/{google|apple}                  it no longer signs in with that provider
@@ -399,7 +400,16 @@ async function logout(request, env, headers) {
   }
   const token = readCookie(request, SESSION_COOKIE);
   if (token) {
-    await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(await sha256Hex(token)).run();
+    const hash = await sha256Hex(token);
+    if (new URL(request.url).searchParams.get("everywhere") === "1") {
+      // Every device signed in to this account: a lost phone, a shared computer.
+      const session = await env.DB.prepare("SELECT user_id FROM sessions WHERE token_sha256 = ?").bind(hash).first();
+      if (session) {
+        await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id).run();
+        log("signed_out_everywhere", { user: session.user_id });
+      }
+    }
+    await env.DB.prepare("DELETE FROM sessions WHERE token_sha256 = ?").bind(hash).run();
   }
   return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });
 }
@@ -446,4 +456,8 @@ export async function handleAccounts(request, env) {
     return removeIdentity(request, env, headers, identity[1]);
   }
   return path === "/v1/me" ? me(request, env, headers) : logout(request, env, headers);
+}
+
+function log(event, fields) {
+  console.log(JSON.stringify({ event, ...fields }));
 }

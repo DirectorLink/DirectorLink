@@ -32,6 +32,10 @@
         <name>Print Schedules and Scenes</name>
         <command>PRINT_AUTOMATION</command>
       </action>
+      <action>
+        <name>Rotate Remote Secret</name>
+        <command>ROTATE_HOME_SECRET</command>
+      </action>
     </actions>
     <properties>
       <property>

@@ -58,7 +58,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 ## Local development
 
 ```bash
-cd cloud && echo 'TEST_TOKEN=local-test-token' > .dev.vars && npx --yes wrangler@4 dev --local --port 8787
+cd cloud && echo 'TEST_TOKEN=local-test-token' > .dev.vars && npx --yes wrangler@4.143.0 dev --local --port 8787
 ```
 
 `.dev.vars` may also set `REQUEST_TIMEOUT_MS` (default 15000). In another terminal, a fake driver and the test endpoints:
@@ -77,8 +77,8 @@ Tests: `node --test tests/cloud/*.test.mjs`. `frames.test.mjs` checks the smoke 
 
 ```bash
 cd cloud
-npx wrangler@4 d1 migrations apply directorlink --remote   # new tables first
-npx wrangler@4 deploy                   # Worker, Durable Object migration v1, custom domain api.directorlink.io
+npx wrangler@4.143.0 d1 migrations apply directorlink --remote   # new tables first
+npx wrangler@4.143.0 deploy                   # Worker, Durable Object migration v1, custom domain api.directorlink.io
 curl https://api.directorlink.io/health
 ```
 
@@ -127,12 +127,12 @@ They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wr
 
 `/v1/me`, `/v1/homes…`, `/v1/join` and `/auth/logout` answer CORS with credentials only for `APP_ORIGINS`, and `DELETE`/`POST` from any other origin (or none) are refused with 403 `ORIGIN_NOT_ALLOWED`.
 
-Settings (`wrangler.jsonc` → `vars`): `GOOGLE_CLIENT_ID` (public), `APP_ORIGINS`, `PUBLIC_URL` (the address Google and Apple send the browser back to, registered with each). Secret: `GOOGLE_CLIENT_SECRET` (`npx wrangler@4 secret put GOOGLE_CLIENT_SECRET`).
+Settings (`wrangler.jsonc` → `vars`): `GOOGLE_CLIENT_ID` (public), `APP_ORIGINS`, `PUBLIC_URL` (the address Google and Apple send the browser back to, registered with each). Secret: `GOOGLE_CLIENT_SECRET` (`npx wrangler@4.143.0 secret put GOOGLE_CLIENT_SECRET`).
 
-Sign in with Apple needs, from the Apple Developer account: a Services ID with Sign in with Apple on, domain `api.directorlink.io` and return URL `https://api.directorlink.io/auth/apple/callback`; the Team ID; and a key with Sign in with Apple, its Key ID and `.p8` file. `APPLE_SERVICES_ID`, `APPLE_TEAM_ID` and `APPLE_KEY_ID` go in `vars`; the key is a secret (`npx wrangler@4 secret put APPLE_PRIVATE_KEY < AuthKey_XXXX.p8`). Then `SIGN_IN_PROVIDERS` in `app/js/account.js` gets `"apple"`. Tests: `apple.test.mjs` with a fake Apple (`fake-apple.mjs`) that checks the client secret as Apple does. Database: D1 `directorlink`, binding `DB`; schema changes go in `migrations/`:
+Sign in with Apple needs, from the Apple Developer account: a Services ID with Sign in with Apple on, domain `api.directorlink.io` and return URL `https://api.directorlink.io/auth/apple/callback`; the Team ID; and a key with Sign in with Apple, its Key ID and `.p8` file. `APPLE_SERVICES_ID`, `APPLE_TEAM_ID` and `APPLE_KEY_ID` go in `vars`; the key is a secret (`npx wrangler@4.143.0 secret put APPLE_PRIVATE_KEY < AuthKey_XXXX.p8`). Then `SIGN_IN_PROVIDERS` in `app/js/account.js` gets `"apple"`. Tests: `apple.test.mjs` with a fake Apple (`fake-apple.mjs`) that checks the client secret as Apple does. Database: D1 `directorlink`, binding `DB`; schema changes go in `migrations/`:
 
 ```
-npx wrangler@4 d1 migrations apply directorlink --remote
+npx wrangler@4.143.0 d1 migrations apply directorlink --remote
 ```
 
 For `wrangler dev`, `.dev.vars` may set the Google endpoints (`GOOGLE_AUTH_URL`, `GOOGLE_TOKEN_URL`, `GOOGLE_JWKS_URL`, `GOOGLE_ISSUER`) to a fake Google, as `tests/cloud/accounts.test.mjs` does, and `APP_ORIGINS=http://localhost:8080` for a local app (whose account API is `http://localhost:8787`).

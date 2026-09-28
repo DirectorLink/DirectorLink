@@ -14,6 +14,8 @@ local suites = {
     "test_profiles",
     "test_scenes",
     "test_schedules",
+    "test_x25519",
+    "test_security",
 }
 
 local passed, failed = 0, 0

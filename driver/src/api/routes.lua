@@ -8,6 +8,9 @@ return {
     { method = "GET", path = "/v1/system", handler = "system.info", role = "viewer" },
 
     { method = "POST", path = "/v1/auth/pair", handler = "auth.pair", public = true },
+    -- Sealed with the device's lock key instead of an Authorization header (handlers/sealed.lua).
+    { method = "GET", path = "/v1/sealed", handler = "sealed.info", public = true },
+    { method = "POST", path = "/v1/sealed", handler = "sealed.request", public = true },
     { method = "GET", path = "/v1/api-keys", handler = "auth.list_keys", role = "admin" },
     { method = "POST", path = "/v1/api-keys", handler = "auth.create_key", role = "admin" },
     { method = "GET", path = "/v1/api-keys/current", handler = "auth.current_key", role = "viewer" },

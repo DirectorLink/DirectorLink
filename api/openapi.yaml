@@ -28,6 +28,15 @@ info:
     the command has been handed to the controller. The returned object holds the last state the
     controller reported, so read the resource again to confirm the change.
 
+    **Addresses and browsers.** Requests must be sent to the controller's IP address or a local name
+    (e.g. `director.local`); any other `Host` is refused with `421 MISDIRECTED_REQUEST` (this stops
+    DNS rebinding). Browsers may call the API only from DirectorLink's own sites.
+
+    **Sealed requests.** The DirectorLink app does not send its key on the home network: it seals
+    each request with its device's lock key and sends it to `POST /v1/sealed`, and pairs with a key
+    exchange so the new key is never readable on the network (docs/ACCOUNTS.md). Scripts may keep
+    using `Authorization: Bearer`.
+
     **Errors.** All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable,
     machine-readable `code`.
 
@@ -137,8 +146,14 @@ paths:
         (and automatically while the driver has no API keys, e.g. right after it is added). Composer
         shows the code as `1234 5678`; send it with or without the space. A code is valid for
         15 minutes and works once; without an active code the answer is `PAIRING_NOT_ACTIVE`.
-        Five wrong codes within a minute lock pairing for 60 seconds. The key is always `admin`:
-        running Composer actions already means full control of the project.
+        Five wrong codes within a minute lock pairing for that device (IP address) for 60 seconds;
+        twenty wrong codes in all close the code. Pairing works only on the home network, never as
+        a sealed request (`PAIRING_ONLY_ON_HOME_NETWORK`). The key is always `admin`: running
+        Composer actions already means full control of the project.
+
+        With `exchange` (the app's X25519 public key), the answer is sealed: it holds the driver's
+        public key and the new key sealed with a lock key derived from the shared secret, the code
+        and both public keys, so the key never crosses the network in the clear.
       security: []
       requestBody:
         required: true
@@ -151,15 +166,17 @@ paths:
               name: Chrome on my laptop
       responses:
         "201":
-          description: Paired. The response holds the new API key — it is shown only once.
+          description: Paired. The response holds the new API key, shown only once, or (with `exchange`) the key sealed for this exchange.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/NewApiKey"
+                oneOf:
+                  - $ref: "#/components/schemas/NewApiKey"
+                  - $ref: "#/components/schemas/SealedPairing"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
-          description: The pairing code is wrong (`PAIRING_CODE_INVALID`, with `attempts_remaining`), or no code is active — it expired, was used, or none was created (`PAIRING_NOT_ACTIVE`).
+          description: The pairing code is wrong (`PAIRING_CODE_INVALID`, with `attempts_remaining`), no code is active — it expired, was used, was closed after too many wrong codes, or none was created (`PAIRING_NOT_ACTIVE`) — or the request was sealed (`PAIRING_ONLY_ON_HOME_NETWORK`).
           content:
             application/problem+json:
               schema:
@@ -170,6 +187,51 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/sealed:
+    get:
+      tags: [Auth]
+      operationId: sealedInfo
+      summary: What a sealed request needs from this controller
+      description: The home id and the controller's clock, for sealing requests on the home network.
+      security: []
+      responses:
+        "200":
+          description: The home id and time.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SealedInfo"
+    post:
+      tags: [Auth]
+      operationId: sealedRequest
+      summary: Send a sealed request on the home network
+      description: |
+        The request inside the envelope ({ id, ts, method, path, body }) is sealed with the device's
+        lock key, derived from its API key; it runs with that key's role, and the answer comes back
+        sealed the same way. Each envelope works once, within two minutes of the controller's clock.
+        Refused envelopes get a problem with `code` (`UNKNOWN_KEY`, `BAD_MAC`, `BAD_ENVELOPE`,
+        `STALE`, `REPLAYED`) and the controller's `time`; nothing ran.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SealedRequest"
+      responses:
+        "200":
+          description: The answer, sealed (its `status` may be any HTTP status).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SealedAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "413":
+          $ref: "#/components/responses/BadRequest"
 
   /v1/api-keys:
     get:
@@ -365,6 +427,9 @@ paths:
         The answer holds the invitation's secret, once. The app puts it after `#` in the link it
         shares, so it never reaches a server; the controller keeps only a key derived from it.
         Whoever accepts gets their own API key with this role. Needs Remote Access switched on.
+        With `email`, the controller registers the invitation with the account service first; if
+        that fails (`REMOTE_OFFLINE`, or the service's own code with 502) the invitation is
+        revoked, since its link could not work.
       requestBody:
         required: true
         content:
@@ -386,6 +451,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
         "503":
           $ref: "#/components/responses/Unavailable"
 
@@ -1912,8 +1979,10 @@ components:
               type: [string, "null"]
             latitude:
               type: [number, "null"]
+              description: For admin keys only, rounded to two decimals; null for other roles.
             longitude:
               type: [number, "null"]
+              description: For admin keys only, rounded to two decimals; null for other roles.
             timezone:
               type: [string, "null"]
         inventory:
@@ -1968,6 +2037,77 @@ components:
           minLength: 1
           maxLength: 64
           description: A name for the new key, e.g. the browser or app using it.
+        exchange:
+          type: object
+          required: [public_key]
+          additionalProperties: false
+          description: The app's half of an X25519 key exchange; the answer is then sealed.
+          properties:
+            public_key:
+              type: string
+              description: The 32-byte X25519 public key, base64.
+
+    SealedPairing:
+      type: object
+      required: [exchange, sealed]
+      properties:
+        exchange:
+          type: object
+          required: [public_key]
+          properties:
+            public_key:
+              type: string
+              description: The driver's X25519 public key, base64.
+        sealed:
+          $ref: "#/components/schemas/Envelope"
+
+    Envelope:
+      type: object
+      description: "A sealed message (docs/ACCOUNTS.md): AES-256-CBC, then HMAC-SHA256 over it."
+      required: [v, home, key, iv, ct, mac]
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        home:
+          type: string
+        key:
+          type: string
+        iv:
+          type: string
+        ct:
+          type: string
+        mac:
+          type: string
+
+    SealedInfo:
+      type: object
+      required: [home_id, time, window_seconds]
+      properties:
+        home_id:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+          description: The home id sealed requests name.
+        time:
+          type: integer
+          description: The controller's clock, seconds since 1970; a request's `ts` must be within `window_seconds` of it.
+        window_seconds:
+          type: integer
+
+    SealedRequest:
+      type: object
+      required: [envelope]
+      additionalProperties: false
+      properties:
+        envelope:
+          $ref: "#/components/schemas/Envelope"
+
+    SealedAnswer:
+      type: object
+      required: [envelope]
+      properties:
+        envelope:
+          $ref: "#/components/schemas/Envelope"
 
     KeyRole:
       type: string
@@ -2501,6 +2641,7 @@ components:
           type: [string, "null"]
         location:
           type: [object, "null"]
+          description: For admin keys only (rounded); null for other roles.
           properties:
             latitude:
               type: number
@@ -3054,6 +3195,13 @@ components:
         for_me:
           type: boolean
           description: For the admin's own other device; the new key joins the admin's profile.
+        email:
+          type: string
+          maxLength: 254
+          description: |
+            The address of the person invited. The controller then registers the invitation with
+            the account service itself before answering (`registered: true`); without it, the
+            home's owner registers it from the app.
 
     Invitation:
       type: object
@@ -3091,6 +3239,11 @@ components:
             home_id:
               type: string
               pattern: "^[0-9a-f]{32}$"
+            registered:
+              type: boolean
+              description: The controller registered it with the account service, for `email`.
+            email:
+              type: string
 
     InvitationList:
       type: object

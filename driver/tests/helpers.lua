@@ -58,7 +58,7 @@ function T.http(mock, method, path, options)
         body = Json.encode(body)
     end
 
-    local lines = { method .. " " .. path .. " HTTP/1.1", "Host: 192.168.1.201:41999" }
+    local lines = { method .. " " .. path .. " HTTP/1.1", "Host: " .. (options.host or "192.168.1.201:41999") }
     if options.key then
         lines[#lines + 1] = "Authorization: Bearer " .. options.key
     end
@@ -73,12 +73,17 @@ function T.http(mock, method, path, options)
 
     local size = options.chunkSize or #raw
     for index = 1, #raw, size do
-        OnServerDataIn(handle, raw:sub(index, index + size - 1), "192.168.1.50", "50123")
+        OnServerDataIn(handle, raw:sub(index, index + size - 1), options.ip or "192.168.1.50", "50123")
     end
 
+    return T.response(mock, handle)
+end
+
+-- The answer sent on connection `handle` so far (a handler that answers later: read it again).
+function T.response(mock, handle)
     local response = mock.sent[handle]
     if not response then
-        return { status = nil, closed = mock.closed[handle] }
+        return { status = nil, closed = mock.closed[handle], handle = handle }
     end
     local head, payload = response:match("^(.-)\r\n\r\n(.*)$")
     local headers = {}
