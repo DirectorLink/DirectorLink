@@ -543,11 +543,12 @@ img {
   gap: 8px;
 }
 
+/* 16px, or iPhone Safari zooms in when it is tapped. */
 select.access-role {
   width: auto;
   min-height: 40px;
   padding: 6px 10px;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 select:disabled {

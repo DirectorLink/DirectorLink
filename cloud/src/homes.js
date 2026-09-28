@@ -17,7 +17,7 @@
 import { appOrigins, currentUser } from "./accounts.js";
 import { json, problem, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
-import { noteKeyUsed, validKeyId } from "./member-keys.js";
+import { validKeyId } from "./member-keys.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
@@ -105,11 +105,12 @@ function validEnvelope(envelope, homeId, key) {
 
 // Sends an e2e, join or claim message to the home's relay object and returns its reply (or a
 // problem Response: offline, timeout, disconnected).
-async function relay(env, homeId, message) {
+// `userId`: for e2e, the account sending it (the home's object records its key if accepted).
+async function relay(env, homeId, message, userId) {
   const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
   const response = await stub.fetch("https://home-relay/message", {
     method: "POST",
-    headers: { "X-DirectorLink-Home": homeId, "content-type": "application/json" },
+    headers: { "X-DirectorLink-Home": homeId, "content-type": "application/json", ...(userId ? { "X-DirectorLink-User": userId } : {}) },
     body: JSON.stringify(message),
   });
   if (!response.ok) {
@@ -198,7 +199,7 @@ async function e2e(request, env, user, homeId) {
   if (!input || !validEnvelope(input.envelope, homeId)) {
     return problem(400, "INVALID_ENVELOPE", "Send { envelope } sealed for this home (docs/ACCOUNTS.md)");
   }
-  const { reply, response } = await relay(env, homeId, { type: "e2e", envelope: cleanEnvelope(input.envelope) });
+  const { reply, response } = await relay(env, homeId, { type: "e2e", envelope: cleanEnvelope(input.envelope) }, user.id);
   if (response) {
     return response;
   }
@@ -206,8 +207,6 @@ async function e2e(request, env, user, homeId) {
     log("e2e_refused", { home: homeId, user: user.id, code: reply.code ?? null });
     return driverProblem(reply.code ?? "INTERNAL");
   }
-  // The home accepted a request sealed with this key: this account holds it.
-  await noteKeyUsed(env, homeId, user.id, input.envelope.key).catch((error) => log("key_note_failed", { home: homeId, error: String(error?.message ?? error) }));
   return json({ envelope: reply.envelope });
 }
 
@@ -294,7 +293,7 @@ async function join(request, env, user) {
         ...(validKeyId(reply.key_id)
           ? [
               env.DB.prepare(
-                `INSERT INTO member_keys (home_id, key_id, user_id, added_at) SELECT ?, ?, ?, ? WHERE ${pending} ON CONFLICT (home_id, key_id) DO UPDATE SET user_id = excluded.user_id`
+                `INSERT OR IGNORE INTO member_keys (home_id, key_id, user_id, added_at) SELECT ?, ?, ?, ? WHERE ${pending}`
               ).bind(homeId, reply.key_id, user.id, now, homeId, input.invitation_id, invitation.email),
             ]
           : []),

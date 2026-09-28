@@ -231,8 +231,12 @@ end
 function tests.the_relay_learns_the_key_ids_after_every_change_and_nothing_else()
     local mock, connection = connected()
     local key = T.pair(mock)
+    local frames = {}
     local sent = function()
         local keys = {}
+        for _, frame in ipairs(Harness.clientFrames(connection.sent)) do
+            frames[#frames + 1] = frame
+        end
         Harness.answers(Harness.clientFrames(connection.sent), keys)
         connection.sent = ""
         return keys
@@ -254,9 +258,29 @@ function tests.the_relay_learns_the_key_ids_after_every_change_and_nothing_else(
     ExecuteCommand("LUA_ACTION", { ACTION = "REVOKE_API_KEYS" })
     local afterAll = sent()
     T.eq(#afterAll[#afterAll], 0, "Revoke All API Keys: none")
-    for _, frame in ipairs(Harness.clientFrames(connection.sent)) do
+    T.truthy(#frames >= 4, "the frames were looked at")
+    for _, frame in ipairs(frames) do
         T.notContains(frame.payload, "Tablet", "names never go to the relay")
+        T.notContains(frame.payload, "viewer", "nor roles")
+        T.notContains(frame.payload, "ak_", "nor keys")
     end
+end
+
+function tests.a_key_store_that_could_not_be_read_is_never_announced_as_empty()
+    local mock = Mock.startDriver(nil, nil, nil, function(fresh)
+        fresh.persist["directorlink_api_key_hashes"] = "json:{not json"
+    end)
+    local _, connection, _, hello = connected({ mock = mock })
+    for _, frame in ipairs(hello) do
+        T.notContains(frame.payload, '"keys"', "no list that could be short")
+    end
+    -- Once a key is saved again the list is complete, and it is announced.
+    connection.sent = ""
+    T.pair(mock)
+    local keys = {}
+    Harness.answers(Harness.clientFrames(connection.sent), keys)
+    T.eq(#keys, 1)
+    T.eq(#keys[1], 1)
 end
 
 return tests

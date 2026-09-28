@@ -15,7 +15,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
-import { syncKeys } from "./member-keys.js";
+import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -30,6 +30,25 @@ export class HomeRelay extends DurableObject {
     // while a request waits, its caller's fetch keeps the object awake, so hibernation never
     // drops this map with anything in it.
     this.pending = new Map();
+    // Work on which account uses which key runs one step after another, in the order of the
+    // driver's frames (member-keys.js); `announced` is its last list of key ids.
+    this.keyWork = Promise.resolve();
+    this.announced = undefined;
+  }
+
+  // Queues `work` behind the key work already waiting; returns when it is done.
+  queueKeyWork(work, homeId) {
+    this.keyWork = this.keyWork.then(work).catch((error) => log("key_work_failed", { home: homeId, error: String(error?.message ?? error) }));
+    return this.keyWork;
+  }
+
+  // The driver's last list of key ids, from storage after a hibernation; null if it never sent one.
+  async announcedKeys() {
+    if (this.announced === undefined) {
+      const stored = await this.ctx.storage.get("key_ids");
+      this.announced = Array.isArray(stored) ? new Set(stored) : null;
+    }
+    return this.announced;
   }
 
   // Called by the Worker (index.js), which has already checked the request.
@@ -43,7 +62,7 @@ export class HomeRelay extends DurableObject {
       case "/forward":
         return this.forward(request.headers.get("X-DirectorLink-Path") ?? "", homeId);
       case "/message":
-        return this.message(await request.json(), homeId);
+        return this.message(await request.json(), homeId, request.headers.get("X-DirectorLink-User"));
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -114,16 +133,34 @@ export class HomeRelay extends DurableObject {
         }
         log("driver_hello", { home: attachment.home, version: attachment.version });
         return;
-      case "keys":
-        // The home's key ids after a change: members whose keys are all revoked leave it.
-        try {
-          await syncKeys(this.env, attachment.home, data.ids);
-        } catch (error) {
-          log("keys_sync_failed", { home: attachment.home, error: String(error?.message ?? error) });
+      case "keys": {
+        // The home's key ids after a change: members whose keys are all revoked leave it. The list
+        // counts from now on, before any frame that follows it.
+        if (!validKeyList(data.ids)) {
+          log("keys_ignored", { home: attachment.home, why: "not a list of key ids" });
+          return;
         }
+        const ids = [...new Set(data.ids)];
+        this.announced = new Set(ids);
+        await this.queueKeyWork(async () => {
+          await this.ctx.storage.put("key_ids", ids);
+          await syncKeys(this.env, attachment.home, ids);
+        }, attachment.home);
         return;
+      }
+      case "e2e": {
+        // The home accepted a request sealed with this key: the account that sent it holds it.
+        const record = data.envelope && typeof data.id === "string" ? this.pending.get(data.id)?.record : null;
+        const work = record
+          ? this.queueKeyWork(async () => recordUsedKey(this.env, attachment.home, record.user, record.key, await this.announcedKeys()), attachment.home)
+          : null;
+        if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
+          log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
+        }
+        await work;
+        return;
+      }
       case "response":
-      case "e2e":
       case "join_result":
       case "claim_result":
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
@@ -248,7 +285,9 @@ export class HomeRelay extends DurableObject {
 
   // Sends one account message (e2e, join or claim) and waits for the driver's reply with the same
   // id. The reply goes back as it came: sealed contents stay sealed.
-  async message(message, homeId) {
+  // `userId`: the account the Worker checked, for an e2e message (its key is recorded when the home
+  // accepts the request); it never goes to the driver.
+  async message(message, homeId, userId) {
     if (!message || !["e2e", "join", "claim"].includes(message.type)) {
       return problem(400, "INVALID_MESSAGE", "Only e2e, join and claim messages are relayed");
     }
@@ -262,7 +301,8 @@ export class HomeRelay extends DurableObject {
     const started = Date.now();
     const outcome = await new Promise((resolve) => {
       const timer = setTimeout(() => this.settle(id, { timeout: true }), timeoutMs);
-      this.pending.set(id, { resolve, timer, conn });
+      const record = message.type === "e2e" && typeof userId === "string" && userId ? { user: userId, key: message.envelope?.key } : null;
+      this.pending.set(id, { resolve, timer, conn, record });
       try {
         ws.send(JSON.stringify({ ...message, id }));
       } catch (error) {

@@ -68,6 +68,7 @@ async function home() {
         return reply({ type: "e2e", code: "BAD_MAC" });
       }
       const request = JSON.parse(plaintext);
+      state.beforeAnswer?.(request, message.envelope.key);
       const answer = { id: request.id, ts: nowSeconds(), status: 200, content_type: "application/json; charset=utf-8", body: JSON.stringify({ path: request.path, method: request.method, key: message.envelope.key }) };
       return reply({ type: "e2e", envelope: seal(lock, { home: state.home, key: message.envelope.key }, "res", JSON.stringify(answer)) });
     }
@@ -448,6 +449,47 @@ test("the cloud learns each member's keys; a member whose keys are all revoked a
   state.connection.sendJson({ type: "keys", ids: [] });
   await eventually(async () => (await membersOf(state, dana))[0]?.key_ids.length === 0, "the owner's key going");
   assert.deepEqual((await membersOf(state, dana)).map((m) => [m.email, m.owner]), [[DANA.email, true]]);
+});
+
+test("a key revoked by the request that used it is not recorded again", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const joined = await joinWith(state, avi, invitationId, secret);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+  // Avi forgets his key through the account: the driver revokes it, announces the keys without
+  // it, and only then sends the sealed answer.
+  state.beforeAnswer = (request, keyId) => {
+    if (request.method === "DELETE") {
+      state.keys.delete(keyId);
+      state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+    }
+  };
+  const forgot = await e2e(avi, state, aviKey.key, aviKey.id, { method: "DELETE", path: "/v1/api-keys/current" });
+  assert.equal(forgot.status, 200);
+  state.beforeAnswer = null;
+  await eventually(async () => (await membersOf(state, dana)).length === 1, "Avi leaving with his last key");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual((await membersOf(state, dana)).map((m) => m.email), [DANA.email], "and not coming back by the answer");
+});
+
+test("a shared device's key belongs to each account that used it", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const first = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(first.secret), (await joinWith(state, avi, first.invitationId, first.secret)).json.envelope, "res")).body);
+  const second = await invite(state, dana, NOA.email);
+  const noa = await signIn(NOA);
+  const noaKey = JSON.parse(JSON.parse(open(invitationKey(second.secret), (await joinWith(state, noa, second.invitationId, second.secret)).json.envelope, "res")).body);
+  // Noa signs in on Avi's tablet and uses its key.
+  assert.equal((await e2e(noa, state, aviKey.key, aviKey.id)).status, 200);
+  await eventually(async () => (await membersOf(state, dana)).find((m) => m.email === NOA.email)?.key_ids.length === 2, "the tablet's key for Noa too");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === AVI.email).key_ids, [aviKey.id], "and still for Avi");
+  // The tablet is lost: its key is revoked. Avi has no other key and leaves; Noa keeps hers.
+  state.keys.delete(aviKey.id);
+  state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+  await eventually(async () => !(await membersOf(state, dana)).some((m) => m.email === AVI.email), "Avi leaving");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === NOA.email).key_ids, [noaKey.id]);
 });
 
 test("removing a member forgets their keys too", TEST, async () => {

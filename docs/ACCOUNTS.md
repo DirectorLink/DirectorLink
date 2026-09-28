@@ -132,11 +132,16 @@ An admin revokes that device's key: in the app (Settings → Controller → **Pe
 the API console, or Composer's Revoke All API Keys. It stops working at home and away at once.
 Signing in to the account alone gives no access, because the keys live only on the devices.
 
-The cloud keeps which account uses which key, by key id only (`member_keys`): the key an
-invitation made (the controller's `join_result`), and the key of each sealed request the home
-accepted, which only the key's holder can seal. The controller sends its list of key ids when it
-connects and after every change (`{"type":"keys"}`, `docs/RELAY.md`); an account whose keys are all
-gone leaves the home, except its owner. The owner's **People and devices** screen shows each
+The cloud keeps which accounts use which key, by key id only (`member_keys`; a shared device's key
+may belong to several): the key an invitation made (the controller's `join_result`), and the key
+of each sealed request the home accepted, which only the key's holder can seal. A linked device
+sends one sealed request a day even when it only uses the home network, so its key is known too.
+The controller sends its list of key ids when it connects and after every change
+(`{"type":"keys"}`, `docs/RELAY.md`), never after a start at which its key store could not be read;
+an account whose recorded keys are all gone leaves the home, except its owner. The home's Durable
+Object handles the list and the recording of keys one after another, in the order the controller
+sent them, so an answer that follows a revocation cannot record the revoked key again; the list
+itself is applied as one transaction. The owner's **People and devices** screen shows each
 account with its devices; removing someone there revokes their keys at home first, then ends the
 membership.
 
