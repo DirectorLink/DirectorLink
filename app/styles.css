@@ -486,6 +486,53 @@ img {
   border-color: var(--line);
 }
 
+/* Settings → Rooms: shown or hidden (personal), and the home's order (admins). */
+.room-order-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.room-order-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 52px;
+  padding: 4px 8px 4px 14px;
+  border-top: 1px solid var(--line);
+}
+
+.room-order-row:first-child {
+  border-top: none;
+}
+
+.room-order-row input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.room-order-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.room-order-hidden {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.room-order-moves {
+  display: flex;
+  gap: 4px;
+}
+
 /* People and devices (#/access). */
 .access-list {
   list-style: none;
@@ -535,6 +582,14 @@ img {
   color: var(--ink);
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+.access-person {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 6px;
 }
 
 .access-actions {

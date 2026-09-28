@@ -24,7 +24,7 @@ function failure(error) {
 async function fetchAccess() {
   const home = savedRemote()?.home || state.remoteInfo?.home_id || null;
   const accountStatus = state.account.status;
-  const [devices, invitations, people] = await Promise.all([
+  const [devices, invitations, people, profiles] = await Promise.all([
     api("/v1/api-keys").then((answer) => answer?.items || [], failure),
     // Drivers before 0.10.0 have no invitations.
     api("/v1/invitations").then((answer) => answer?.items || [], (error) => (error?.status === 404 || error?.status === 405 ? [] : failure(error))),
@@ -35,8 +35,10 @@ async function fetchAccess() {
           (error) => (error?.code === "OWNER_ONLY" || error?.code === "NOT_A_MEMBER" ? null : failure(error))
         )
       : Promise.resolve(null),
+    // The profiles (persons) keys belong to; drivers before 0.12.0 have none.
+    api("/v1/profiles").then((answer) => answer?.items || [], () => null),
   ]);
-  ui.access = { ...(ui.access || {}), at: Date.now(), home, accountStatus, devices, invitations, people };
+  ui.access = { ...(ui.access || {}), at: Date.now(), home, accountStatus, devices, invitations, people, profiles };
   notify();
 }
 
@@ -106,6 +108,21 @@ function changeRole(device, role, select) {
   act(() => api(`/v1/api-keys/${device.id}`, { method: "PATCH", body: { role } }), t("access.roleChanged", { name: device.name, role: roleLabel(role) }));
 }
 
+// Moves a device to another person's profile: it then shares their language and favorites.
+function movePerson(device, profile, select) {
+  if (ui.access.busy || !window.confirm(t("access.moveConfirm", { device: device.name, person: profile.name }))) {
+    select.value = device.profile_id || "";
+    return;
+  }
+  act(() => api(`/v1/api-keys/${device.id}`, { method: "PATCH", body: { profile_id: profile.id } }), t("access.moved", { device: device.name, person: profile.name }));
+}
+
+function renamePerson(profile) {
+  const name = window.prompt(t("access.renamePrompt"), profile.name);
+  if (!name || !name.trim() || name.trim() === profile.name) return;
+  act(() => api(`/v1/profiles/${profile.id}`, { method: "PATCH", body: { name: name.trim().slice(0, 64) } }), t("access.renamed", { name: name.trim() }));
+}
+
 function revokeInvitation(invitation) {
   if (ui.access.busy || !window.confirm(t("access.revokeInvitationConfirm"))) return;
   act(() => api(`/v1/invitations/${invitation.id}`, { method: "DELETE" }), t("access.invitationRevoked"));
@@ -156,8 +173,32 @@ function lastUsed(device) {
   return device.last_used_at ? t("access.lastUsed", { time: formatRelative(device.last_used_at) }) : t("access.neverUsed");
 }
 
+// The person (profile) a device belongs to, and a way to move it to another one.
+function personPicker(device, profiles) {
+  if (!profiles?.length) return null;
+  const current = profiles.find((profile) => profile.id === device.profile_id);
+  const select = h(
+    "select",
+    { class: "access-role", "aria-label": t("access.personFor", { name: device.name }), dataset: { key: `access-person-${device.id}` } },
+    ...profiles.map((profile) => h("option", { value: profile.id, selected: profile.id === device.profile_id }, profile.name))
+  );
+  select.addEventListener("change", () => {
+    const target = profiles.find((profile) => profile.id === select.value);
+    if (target) movePerson(device, target, select);
+  });
+  return h(
+    "span",
+    { class: "access-person" },
+    h("span", { class: "access-sub" }, t("access.person")),
+    select,
+    current
+      ? h("button", { type: "button", class: "button button-small button-quiet", "aria-label": t("access.renameFor", { name: current.name }), dataset: { key: `access-rename-${device.id}` }, onclick: () => renamePerson(current) }, t("access.rename"))
+      : null
+  );
+}
+
 // `owners`: key id → the accounts that use it, or null when this view cannot know (not the owner).
-function deviceRow(device, owners) {
+function deviceRow(device, owners, profiles) {
   const busy = Boolean(ui.access.busy);
   const users = owners ? owners.get(device.id) || [] : null;
   const account = users === null ? null : users.length ? users.map((person) => person.name || person.email).join(", ") : t("access.noAccount");
@@ -174,7 +215,8 @@ function deviceRow(device, owners) {
       "div",
       { class: "access-main" },
       h("span", { class: "access-name", dir: "auto" }, device.name, device.current ? h("span", { class: "access-badge" }, t("access.thisDevice")) : null),
-      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device)].filter(Boolean).join(" · "))
+      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device)].filter(Boolean).join(" · ")),
+      personPicker(device, profiles)
     ),
     h(
       "div",
@@ -285,7 +327,7 @@ export function accessView() {
         "devices",
         t("access.devices"),
         t("access.devicesHelp"),
-        problemNote(access.devices) || h("ul", { class: "access-list" }, devices.map((device) => deviceRow(device, owners)))
+        problemNote(access.devices) || h("ul", { class: "access-list" }, devices.map((device) => deviceRow(device, owners, Array.isArray(access.profiles) ? access.profiles : null)))
       ),
       section(
         "invitations",

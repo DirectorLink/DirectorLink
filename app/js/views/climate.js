@@ -4,7 +4,7 @@ import { emptyState, skeletonCards, thermostatCard } from "../components.js";
 import { h, name } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { deviceRoomId, roomName } from "../model.js";
+import { deviceRoomId, hiddenRoomIds, roomName } from "../model.js";
 import { can, state } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
@@ -25,7 +25,8 @@ export function climateView() {
     if (!groups.has(id)) groups.set(id, { room: thermostat.room, items: [] });
     groups.get(id).items.push(thermostat);
   }
-  const sorted = [...groups.entries()].sort(([a], [b]) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9));
+  const hidden = hiddenRoomIds();
+  const sorted = [...groups.entries()].filter(([id]) => !hidden.has(Number(id))).sort(([a], [b]) => (order.get(a) ?? 1e9) - (order.get(b) ?? 1e9));
 
   return [
     header,

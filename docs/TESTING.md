@@ -2,6 +2,16 @@
 
 ## Current release
 
+`v0.12.0` — profiles: your language, theme, favorites and hidden rooms follow you to all your devices; one room order for the home. Update DirectorLink in Composer (no reboot).
+
+## 0k. Profiles and rooms
+
+1. On the PC (paired before the update): the app keeps its language, theme and favorites; `GET /v1/profile` now shows them.
+2. Settings → Rooms: untick a room: it disappears from Home and Climate on this device, and on your other devices of the same person within a minute; other people still see it.
+3. As an admin, move a room up with the arrow: the new order shows on every device.
+4. **Add my other device** and accept it on the iPhone: the iPhone opens in your language and theme, with your favorites and hidden rooms.
+5. People and devices: two devices of one person paired separately show as two persons; set one's Person to the other, then Rename the person: both now share the same preferences.
+
 `v0.11.1` — air conditioning: the full 16–32 °C range, and − / + right after a fan or mode change send the temperature chosen. On an AC that is off at 32 °C, change the fan and tap − at once: the target becomes 31 °C, with no error.
 
 `v0.11.0` — People and devices: who has access, from the app; revoking a device's key also ends its account's membership. Update DirectorLink in Composer (no reboot).
@@ -91,7 +101,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `0.11.1`
+- Version: `0.12.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - Door Control: `Disabled`; Log Level: `Info`

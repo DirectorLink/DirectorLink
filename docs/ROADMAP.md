@@ -41,6 +41,8 @@
 - [x] Remote access: relay connection proof (0.9.2, test)
 - [x] Remote access with Google accounts, end-to-end encryption, claiming a home on the LAN, invitations, iPhone and iPad (0.10.0; `docs/ACCOUNTS.md`)
 - [x] People and devices: keys, invitations and the home's accounts in the app; cloud membership follows the device keys (0.11.0)
+- [x] Profiles: each person's language, theme, favorites and hidden rooms on the controller, shared by their devices; the home's room order (0.12.0; `docs/PREFERENCES.md`)
+- [ ] DirectorLink scenes (0.13.0), then schedules by time and weather (Open-Meteo: heat, rain, wind; 0.14.0) — editor mock: https://claude.ai/artifact/2tArtCVj4UFSstfKrDmTh7
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
 - [ ] Rediscover the project without restarting the driver
 

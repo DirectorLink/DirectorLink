@@ -1,6 +1,9 @@
-// Favorite devices, in the order shown on Home. Stored in this browser, per controller.
+// Favorite devices, in the order shown on Home. Kept in the person's profile on the controller
+// (profile.js), so all their devices share them; this browser keeps a copy, per controller, which
+// is all there is with drivers before 0.12.0.
 // Entries are "kind:id", e.g. "light:22", "thermostat:30", "blind:50", "camera:60".
 
+import { saveProfilePrefs } from "./profile.js";
 import { findDevice, state } from "./state.js";
 
 const PREFIX = "directorlink.favorites.";
@@ -10,6 +13,10 @@ function storageKey() {
 }
 
 export function favorites() {
+  const shared = state.profile?.prefs?.favorites;
+  if (Array.isArray(shared)) {
+    return shared.filter((entry) => typeof entry === "string");
+  }
   try {
     const value = JSON.parse(localStorage.getItem(storageKey()) || "[]");
     return Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : [];
@@ -24,6 +31,7 @@ function save(list) {
   } catch {
     // Storage full or blocked: favorites last for this visit only.
   }
+  saveProfilePrefs({ favorites: list });
 }
 
 export function isFavorite(kind, id) {

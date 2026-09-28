@@ -190,8 +190,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v22", "directorlink-shell-v23"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v24"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v23", "directorlink-shell-v24"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v25"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
