@@ -208,6 +208,7 @@ async function me(request, env, headers) {
       env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
       env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
       env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
+      env.DB.prepare("DELETE FROM invitations WHERE accepted_by = ? OR created_by = ? OR email = ?").bind(user.id, user.id, user.email),
       env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
     ]);
     console.log(JSON.stringify({ event: "account_deleted", user: user.id }));

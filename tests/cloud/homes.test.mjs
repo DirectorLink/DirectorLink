@@ -276,6 +276,39 @@ test("deleting the owner's account removes the home", TEST, async () => {
   assert.deepEqual((await call("GET", "/v1/homes", { cookie: again })).json.items, []);
 });
 
+test("an invitation's email cannot be changed once registered, even by another member", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const invitationId = randomHex(4);
+  const expires = new Date(Date.now() + 3600_000).toISOString();
+  const first = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: invitationId, email: AVI.email, expires_at: expires } });
+  assert.equal(first.status, 201);
+  const again = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: invitationId, email: NOA.email, expires_at: expires } });
+  assert.equal(again.status, 409);
+  assert.equal(again.json.code, "INVITATION_EXISTS");
+  // A controller clock a few minutes fast still gives a valid 7-day invitation.
+  const fast = new Date(Date.now() + 7 * 86400_000 + 5 * 60_000).toISOString();
+  assert.equal((await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: AVI.email, expires_at: fast } })).status, 201);
+});
+
+test("the app learns whether a home is claimed, and by whom, before linking it", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  assert.deepEqual((await call("GET", `/v1/homes/${state.home}`, { cookie: dana })).json, { home_id: state.home, claimed: true, owner: true, member: true });
+  const avi = await signIn(AVI);
+  assert.deepEqual((await call("GET", `/v1/homes/${state.home}`, { cookie: avi })).json, { home_id: state.home, claimed: true, owner: false, member: false });
+  const other = randomHex(16);
+  assert.deepEqual((await call("GET", `/v1/homes/${other}`, { cookie: avi })).json, { home_id: other, claimed: false, owner: false, member: false });
+});
+
+test("only the envelope's own fields reach the home, and oversized requests are refused", TEST, async () => {
+  const { state, dana, keyId, apiKey } = await claimedHome();
+  const { envelope } = sealedRequest(state, apiKey, keyId, { method: "GET", path: "/v1/system" });
+  const answered = await call("POST", `/v1/homes/${state.home}/e2e`, { cookie: dana, body: { envelope: { ...envelope, note: "extra" }, other: 1 } });
+  assert.equal(answered.status, 200, answered.text);
+  assert.deepEqual(Object.keys(state.seen.at(-1).envelope).sort(), ["ct", "home", "iv", "key", "mac", "v"]);
+  const huge = await call("POST", `/v1/homes/${state.home}/e2e`, { cookie: dana, body: { envelope: { ...envelope, ct: "A".repeat(200 * 1024) } } });
+  assert.equal(huge.status, 400);
+});
+
 test("changes need the app's origin, and the app gets CORS answers", TEST, async () => {
   const state = await home();
   const dana = await signIn(DANA);
