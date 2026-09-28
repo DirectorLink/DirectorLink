@@ -105,6 +105,7 @@ curl https://api.directorlink.io/health
 | `GET /auth/apple/start?return_to=<app URL>` | 302 to Apple (`response_mode=form_post`); sets the 10-minute `__Host-dl_signin_apple` cookie (`SameSite=None`: Apple's answer is a POST from its site). 503 `SIGN_IN_NOT_CONFIGURED` until the Apple settings exist |
 | `POST /auth/apple/callback` | Apple's form comes here; 303 to `return_to` with the same outcomes as Google's |
 | `GET /v1/me` | `{"id", "email", "name", "created_at", "providers"}` (`providers`: `google`, `apple`), or 401 `NOT_SIGNED_IN` |
+| `DELETE /v1/me/identities/{google\|apple}` | 204: the account no longer signs in with that provider; 409 `LAST_SIGN_IN` for its only one |
 | `DELETE /v1/me` | 204; the account and all its sessions are deleted |
 | `POST /auth/logout` | 204; this session ends |
 

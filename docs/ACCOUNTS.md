@@ -152,8 +152,10 @@ ID token checks in `jwt.js`); no provider script runs in the app's pages.
   `api.directorlink.io` on the same site, so the session comes along and the sign-in remembers
   which account asked; from another site it does not, and nothing is linked. An identity that
   already belongs to another account is refused (`taken`), and an account has one identity per
-  provider. The account's email stays that of the identity it was created with, so invitations for
-  it can be accepted with either.
+  provider. The adding needs the session it was asked from to be still signed in when the provider
+  answers, so signing out meanwhile (a shared computer) cancels it. The account's email stays that
+  of the identity it was created with; an invitation may be accepted with it or with the email of
+  any of the account's sign-ins. Settings can remove either sign-in again, never the last one.
 - **Separate accounts still work together:** an invitation checks the signed-in account's email,
   so a person who signs in with Apple with the same address as their Google account can accept
   one, as a second account.

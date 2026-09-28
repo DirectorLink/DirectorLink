@@ -128,6 +128,35 @@ test("a signed-in account adds Apple, and both then sign in to it", TEST, async 
   assert.equal(new URL(noSession.headers.get("location")).searchParams.get("signin"), "expired", "adding needs the session: from another site nothing is linked");
 });
 
+test("signing out before Apple answers cancels adding it", TEST, async () => {
+  const cookie = await signInAs(worker.http, google, { sub: "google-shared-pc", email: "shared.pc@example.com", name: "Shared" }, APP);
+  const start = await fetch(`${worker.http}/auth/apple/start?link=1&return_to=${encodeURIComponent(`${APP}/#/settings`)}`, { redirect: "manual", headers: { Cookie: cookie } });
+  const location = start.headers.get("location");
+  const signIn = `__Host-dl_signin_apple=${cookiesOf(start)["__Host-dl_signin_apple"].value}`;
+  assert.equal((await fetch(`${worker.http}/auth/logout`, { method: "POST", headers: { Cookie: cookie, Origin: APP } })).status, 204);
+  const code = apple.approve(location, { person: { sub: "001.someone-else", email: "someone.else@example.com" } });
+  const back = await postBack(worker.http, { state: new URL(location).searchParams.get("state"), code }, signIn);
+  assert.equal(outcome(back), "expired", "the session that asked is gone");
+  const later = await signInWithApple(worker.http, apple, { sub: "001.someone-else", email: "someone.else@example.com" }, APP);
+  assert.deepEqual((await me(later.cookie)).json.providers, ["apple"], "that Apple ID was not added to the shared account");
+});
+
+test("an account stops signing in with one provider, but keeps the last", TEST, async () => {
+  const cookie = await signInAs(worker.http, google, { sub: "google-unlink", email: "unlink@example.com", name: "Unlink" }, APP);
+  const person = { sub: "001.unlink", email: "unlink.apple@example.com" };
+  assert.equal(outcome((await signInWithApple(worker.http, apple, person, APP, { link: cookie })).response), "linked");
+  const remove = (provider, origin = APP) => fetch(`${worker.http}/v1/me/identities/${provider}`, { method: "DELETE", headers: { Cookie: cookie, Origin: origin } });
+  assert.equal((await remove("apple", "https://attacker.example")).status, 403, "only the app's pages");
+  assert.equal((await remove("apple")).status, 204);
+  assert.deepEqual((await me(cookie)).json.providers, ["google"]);
+  assert.equal((await remove("apple")).status, 404);
+  const last = await remove("google");
+  assert.equal(last.status, 409);
+  assert.equal((await last.json()).code, "LAST_SIGN_IN");
+  const viaApple = await signInWithApple(worker.http, apple, person, APP);
+  assert.notEqual((await me(viaApple.cookie)).json.id, (await me(cookie)).json.id, "that Apple ID is its own account again");
+});
+
 test("a returning Apple ID is found by its id even when Apple leaves out the email", TEST, async () => {
   const person = { ...APPLE_PERSON, sub: "001.no-email-later", email: "later@example.com" };
   const first = await signInWithApple(worker.http, apple, person, APP);
