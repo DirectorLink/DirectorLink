@@ -3,6 +3,7 @@ local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local RoomNames = require("src.core.room_names")
+local RoomLayout = require("src.core.room_layout")
 
 local Rooms = {}
 
@@ -17,14 +18,46 @@ local function deviceCounts(registry)
     return counts
 end
 
+-- In the home's order (PUT /v1/rooms/order). Which rooms a person hides is in their profile.
 function Rooms.list(ctx)
     local registry = ctx.services.registry
     local counts = deviceCounts(registry)
     local items = Json.array()
-    for _, room in ipairs(registry.roomList()) do
+    for _, room in ipairs(RoomLayout.sort(registry.roomList())) do
         items[#items + 1] = Views.room(registry, room, counts)
     end
     return 200, { items = items }
+end
+
+-- PUT {"room_ids": [12, 10, 11]}: the home's room order, for everyone (admins). Rooms left out
+-- follow, in Control4's order.
+function Rooms.order(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { room_ids = true }, true)
+    if problem then
+        return problem
+    end
+    local ids = body.room_ids
+    if type(ids) ~= "table" or ids == Json.null or (not Json.isArray(ids) and next(ids) ~= nil) or #ids > RoomLayout.MAX_ROOMS then
+        return Problem.invalidField("room_ids", "room_ids must be a list of room ids")
+    end
+    local rooms = ctx.services.registry.rooms or {}
+    local seen, order = {}, {}
+    for _, id in ipairs(ids) do
+        if type(id) ~= "number" or id ~= math.floor(id) or not rooms[id] then
+            return Problem.invalidField("room_ids", "Unknown room: " .. tostring(id))
+        end
+        if seen[id] then
+            return Problem.invalidField("room_ids", "Room " .. id .. " is listed twice")
+        end
+        seen[id] = true
+        order[#order + 1] = id
+    end
+    if not RoomLayout.setOrder(order) then
+        return Problem.internal("The room order could not be saved")
+    end
+    ctx.services.log.info("rooms", "room order changed", { rooms = #order, by = ctx.apiKey.id })
+    return Rooms.list(ctx)
 end
 
 function Rooms.get(ctx)

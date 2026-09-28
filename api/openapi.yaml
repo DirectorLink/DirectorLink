@@ -50,6 +50,8 @@ tags:
     description: Bridge status and controller information.
   - name: Auth
     description: Pairing and API keys.
+  - name: Profiles
+    description: Each person's preferences (language, theme, palette, favorites), shared by their devices. Every API key belongs to one profile.
   - name: Rooms
     description: Rooms of the Control4 project.
   - name: Devices
@@ -403,6 +405,107 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/profile:
+    get:
+      tags: [Profiles]
+      operationId: getProfile
+      x-directorlink-role: viewer
+      summary: The caller's profile
+      description: The preferences of the person this API key belongs to, shared by all their devices.
+      responses:
+        "200":
+          description: The profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    patch:
+      tags: [Profiles]
+      operationId: updateProfile
+      x-directorlink-role: viewer
+      summary: Change the caller's preferences
+      description: |
+        Changes the named preferences; `null` clears one, others keep their values. With `version`,
+        the change applies only if the profile has not changed since that version was read
+        (otherwise 409 `VERSION_CONFLICT`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpdate"
+            example:
+              prefs:
+                language: he
+                favorites: ["light:21", "thermostat:30"]
+              version: 3
+      responses:
+        "200":
+          description: The profile after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /v1/profiles:
+    get:
+      tags: [Profiles]
+      operationId: listProfiles
+      x-directorlink-role: admin
+      summary: List profiles
+      description: Every profile with the ids of the API keys that belong to it.
+      responses:
+        "200":
+          description: The profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/profiles/{profileId}:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    patch:
+      tags: [Profiles]
+      operationId: renameProfile
+      x-directorlink-role: admin
+      summary: Rename a profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileRename"
+      responses:
+        "200":
+          description: The renamed profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileWithKeys"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /v1/rooms:
     get:
       tags: [Rooms]
@@ -411,13 +514,43 @@ paths:
       summary: List rooms
       responses:
         "200":
-          description: All rooms, sorted by name.
+          description: All rooms, in the home's order (PUT /v1/rooms/order); rooms a person hides are in their profile.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/RoomList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/rooms/order:
+    put:
+      tags: [Rooms]
+      operationId: setRoomOrder
+      x-directorlink-role: admin
+      summary: Set the home's room order
+      description: |
+        One order for everyone. Rooms left out follow the listed ones, in Control4's order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoomOrder"
+            example:
+              room_ids: [11, 10]
+      responses:
+        "200":
+          description: All rooms in the new order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoomList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/rooms/{roomId}:
     parameters:
@@ -448,7 +581,7 @@ paths:
       description: |
         Sets the room's name per language (the Control4 name itself does not change). An empty
         string removes a language; languages not in the request keep their names. At most 10
-        languages per room.
+        languages per room. Hiding a room is personal: the profile's `hidden_rooms`.
       requestBody:
         required: true
         content:
@@ -1158,6 +1291,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}$"
     RoomId:
       name: roomId
       in: path
@@ -1484,6 +1624,10 @@ components:
           maxLength: 64
         role:
           $ref: "#/components/schemas/KeyRole"
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: Moves the key to another person's profile; an empty profile left behind goes.
 
     ApiKeyCreate:
       type: object
@@ -1497,6 +1641,10 @@ components:
           type: string
           minLength: 1
           maxLength: 64
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: Another device of an existing person joins their profile; without it the key gets a new profile.
 
     ApiKey:
       type: object
@@ -1519,6 +1667,10 @@ components:
         current:
           type: boolean
           description: True for the key that made this request.
+        profile_id:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{8}$"
+          description: The profile (person) the key belongs to.
 
     NewApiKey:
       allOf:
@@ -1603,6 +1755,127 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Room"
+
+    RoomOrder:
+      type: object
+      required: [room_ids]
+      additionalProperties: false
+      properties:
+        room_ids:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          items:
+            type: integer
+
+    ProfilePrefs:
+      type: object
+      required: [language, theme, palette, favorites, hidden_rooms]
+      properties:
+        language:
+          type: [string, "null"]
+          description: '"auto" or a language tag such as "en" or "he".'
+        theme:
+          type: [string, "null"]
+          enum: [auto, light, dark, null]
+        palette:
+          type: [string, "null"]
+          maxLength: 20
+        favorites:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            pattern: "^[a-z]+:[0-9]+$"
+          description: Devices shown first on Home, in order, as "kind:id" (e.g. "light:21").
+        hidden_rooms:
+          type: array
+          maxItems: 1000
+          items:
+            type: integer
+          description: Rooms this person hides from their lists (only for them).
+
+    Profile:
+      type: object
+      required: [id, name, created_at, version, prefs]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 0
+          description: Goes up with every change; send it back to detect changes made meanwhile.
+        prefs:
+          $ref: "#/components/schemas/ProfilePrefs"
+
+    ProfileWithKeys:
+      allOf:
+        - $ref: "#/components/schemas/Profile"
+        - type: object
+          required: [key_ids]
+          properties:
+            key_ids:
+              type: array
+              items:
+                type: string
+                pattern: "^[0-9a-f]{8}$"
+
+    ProfileList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfileWithKeys"
+
+    ProfileUpdate:
+      type: object
+      required: [prefs]
+      additionalProperties: false
+      properties:
+        prefs:
+          type: object
+          additionalProperties: false
+          properties:
+            language:
+              type: [string, "null"]
+            theme:
+              type: [string, "null"]
+              enum: [auto, light, dark, null]
+            palette:
+              type: [string, "null"]
+              maxLength: 20
+            favorites:
+              type: array
+              maxItems: 200
+              items:
+                type: string
+                pattern: "^[a-z]+:[0-9]+$"
+            hidden_rooms:
+              type: array
+              maxItems: 1000
+              items:
+                type: integer
+        version:
+          type: integer
+          minimum: 0
+
+    ProfileRename:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
 
     DeviceType:
       type: string
@@ -1988,6 +2261,9 @@ components:
           minimum: 60
           maximum: 604800
           description: Seconds until the invitation expires (default 7 days).
+        for_me:
+          type: boolean
+          description: For the admin's own other device; the new key joins the admin's profile.
 
     Invitation:
       type: object
@@ -2008,6 +2284,9 @@ components:
           type: string
           pattern: "^[0-9a-f]{8}$"
           description: The id of the admin key that made it; revoking or demoting that key revokes the invitation.
+        for_me:
+          type: boolean
+          description: Made with "Add my other device" (the key joins its creator's profile).
 
     NewInvitation:
       allOf:

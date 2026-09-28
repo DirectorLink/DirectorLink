@@ -378,4 +378,35 @@ function tests.a_claim_token_dies_with_its_admin_key_and_demotion_revokes_invita
     T.eq(send(s, { type = "claim", id = "c3", token = mine.claim_token }).ok, true, "an admin's own token still works")
 end
 
+function tests.my_other_device_joins_my_profile_and_someone_else_gets_their_own()
+    local s = session()
+    local mine = T.http(s.mock, "GET", "/v1/profile", { key = s.key }).json
+    T.http(s.mock, "PATCH", "/v1/profile", { key = s.key, body = { prefs = { language = "he", favorites = { "light:21" } } } })
+    local forMe = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "admin", expires_in = 600, for_me = true } }).json
+    T.eq(forMe.for_me, true)
+    local phone = Json.decode(join(s, forMe, "Safari on iPhone").body)
+    local phoneProfile = T.http(s.mock, "GET", "/v1/profile", { key = phone.key }).json
+    T.eq(phoneProfile.id, mine.id, "my other device")
+    T.eq(phoneProfile.prefs.language, "he", "with my language and favorites")
+
+    local forGuest = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer" } }).json
+    T.eq(forGuest.for_me, false)
+    local guest = Json.decode(join(s, forGuest, "Guest").body)
+    local guestProfile = T.http(s.mock, "GET", "/v1/profile", { key = guest.key }).json
+    T.truthy(guestProfile.id ~= mine.id, "someone else: their own profile")
+    T.eq(guestProfile.name, "Guest")
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer", for_me = "yes" } }).json.code, "INVALID_FIELD")
+end
+
+function tests.my_other_device_invitation_keeps_its_profile_across_a_restart()
+    local s = session()
+    local mine = T.http(s.mock, "GET", "/v1/profile", { key = s.key }).json
+    local forMe = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "admin", expires_in = 600, for_me = true } }).json
+    local updated = Mock.updateDriver(s.mock)
+    local _, connection = Harness.connected({ mock = updated })
+    local after = { mock = updated, connection = connection, key = s.key, keyId = s.keyId, home = s.home }
+    local phone = Json.decode(join(after, forMe, "Safari on iPhone").body)
+    T.eq(T.http(updated, "GET", "/v1/profile", { key = phone.key }).json.id, mine.id)
+end
+
 return tests
