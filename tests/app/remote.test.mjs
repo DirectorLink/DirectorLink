@@ -1,0 +1,58 @@
+// The account connection (app/js/remote.js): its failures never look like the home's 401, and the
+// home's refusals keep their codes.
+//   node --test tests/app/
+
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { invitationLock, open, seal } from "../../app/js/lock.js";
+
+globalThis.window = globalThis;
+globalThis.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io" };
+const stored = new Map();
+globalThis.localStorage = {
+  getItem: (key) => (stored.has(key) ? stored.get(key) : null),
+  setItem: (key, value) => stored.set(key, String(value)),
+  removeItem: (key) => stored.delete(key),
+};
+
+const { RemoteError, acceptInvitation, invitationLink, parseInvitation, remoteCall, saveRemote } = await import("../../app/js/remote.js");
+
+const HOME = "0123456789abcdef0123456789abcdef";
+const INVITATION = "89abcdef";
+const SECRET = "ab".repeat(32);
+
+function answer(status, body) {
+  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+}
+
+test("an ended account session is a RemoteError without a status, so the key is kept", async () => {
+  saveRemote({ home: HOME, keyId: "0badc0de" });
+  globalThis.fetch = async () => answer(401, { code: "NOT_SIGNED_IN", detail: "Sign in first" });
+  const error = await remoteCall("ak_test", "/v1/lights").catch((failure) => failure);
+  assert.ok(error instanceof RemoteError);
+  assert.equal(error.code, "NOT_SIGNED_IN");
+  assert.equal(error.status, undefined, "session code forgets the key on status 401 only");
+  assert.equal(error.httpStatus, 401);
+});
+
+test("a refused invitation keeps the home's problem code", async () => {
+  const lock = await invitationLock(SECRET);
+  globalThis.fetch = async (url, init) => {
+    assert.match(url, /\/v1\/join$/);
+    const request = JSON.parse(await open(lock, JSON.parse(init.body).envelope, "req"));
+    const reply = { id: request.id, ts: request.ts, status: 409, content_type: "application/problem+json", body: JSON.stringify({ code: "KEY_LIMIT_REACHED", detail: "Too many keys" }) };
+    return answer(200, { envelope: await seal(lock, { home: HOME, key: INVITATION }, "res", JSON.stringify(reply)) });
+  };
+  const error = await acceptInvitation({ home: HOME, invitation: INVITATION, secret: SECRET }, "Test").catch((failure) => failure);
+  assert.ok(error instanceof RemoteError);
+  assert.equal(error.code, "KEY_LIMIT_REACHED");
+  assert.equal(error.message, "Too many keys");
+});
+
+test("invitation links carry the home, the invitation and its secret after #", () => {
+  const link = invitationLink(HOME, { id: INVITATION, secret: SECRET });
+  assert.equal(link, `https://app.directorlink.io/#/join/${HOME}.${INVITATION}.${SECRET}`);
+  assert.deepEqual(parseInvitation(link.split("#/join/")[1]), { home: HOME, invitation: INVITATION, secret: SECRET });
+  assert.equal(parseInvitation(`${HOME}.${INVITATION}`), null);
+});

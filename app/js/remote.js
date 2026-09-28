@@ -11,13 +11,14 @@ const REMOTE_KEY = "directorlink.remote"; // { home, keyId }: this device's home
 const TIMEOUT_MS = 20000;
 
 // A failure of the account service or the relay (not signed in, home offline, …). It never means
-// the device's key is invalid, so it must not be treated like the home's 401.
+// the device's key is invalid, so it has no `status`: code that forgets the key on a 401 (the
+// home's answer) must not forget it because the account's session expired.
 export class RemoteError extends Error {
-  constructor(code, message, status) {
+  constructor(code, message, httpStatus) {
     super(message);
     this.name = "RemoteError";
     this.code = code;
-    this.status = status;
+    this.httpStatus = httpStatus;
   }
 }
 
@@ -58,17 +59,17 @@ function requestId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function post(path, body) {
+async function send(method, path, body) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
   let response;
   try {
     response = await fetch(`${ACCOUNTS_API}${path}`, {
-      method: "POST",
+      method,
       credentials: "include",
       cache: "no-store",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      headers: body === undefined ? {} : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (error) {
@@ -81,6 +82,10 @@ async function post(path, body) {
     throw new RemoteError(data?.code || `HTTP_${response.status}`, data?.detail || `api.directorlink.io answered ${response.status}`, response.status);
   }
   return data;
+}
+
+function post(path, body) {
+  return send("POST", path, body);
 }
 
 // The home's answer, opened: { status, contentType, text, bytes }.
@@ -149,7 +154,13 @@ export async function remoteImage(apiKey, path) {
   return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
 }
 
-// Claims the home for the signed-in account with a token from the controller (POST /v1/remote/claim).
+// Whether the home is claimed, and whether by the signed-in account: { claimed, owner, member }.
+export function homeStatus(homeId) {
+  return send("GET", `/v1/homes/${homeId}`);
+}
+
+// Claims the home for the signed-in account with a token from the controller (POST /v1/remote/claim);
+// { transferred: true } when it belonged to another account until now.
 export function claimHome(homeId, claimToken) {
   return post("/v1/homes/claim", { home_id: homeId, claim_token: claimToken });
 }
@@ -167,7 +178,13 @@ export async function acceptInvitation({ home, invitation, secret }, name) {
   const reply = await post("/v1/join", { home_id: home, invitation_id: invitation, envelope });
   const answer = await openAnswer(lock, reply.envelope, id);
   if (answer.status !== 201) {
-    throw new RemoteError("JOIN_REFUSED", `The home refused the invitation (${answer.status})`);
+    let problem = null;
+    try {
+      problem = JSON.parse(answer.text);
+    } catch {
+      problem = null;
+    }
+    throw new RemoteError(problem?.code || "JOIN_REFUSED", problem?.detail || `The home refused the invitation (${answer.status})`);
   }
   return JSON.parse(answer.text);
 }

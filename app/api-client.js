@@ -55,6 +55,10 @@ export function saveHost(host) {
   localStorage.setItem(HOST_STORAGE_KEY, host);
 }
 
+export function clearHost() {
+  localStorage.removeItem(HOST_STORAGE_KEY);
+}
+
 export function savedApiKey() {
   return localStorage.getItem(API_KEY_STORAGE_KEY) || "";
 }
