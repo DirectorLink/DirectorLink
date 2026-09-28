@@ -49,6 +49,7 @@ async function home() {
   const state = { home: randomHex(16), keys: new Map(), invitations: new Map(), claimToken: randomHex(24), seen: [] };
   const connection = await connectDriver({ url: worker.ws, home: state.home, pingIntervalMs: 0, silenceTimeoutMs: 0 });
   drivers.push(connection);
+  state.connection = connection;
   connection.on("unknown", (text) => {
     const message = JSON.parse(text);
     state.seen.push(message);
@@ -67,6 +68,7 @@ async function home() {
         return reply({ type: "e2e", code: "BAD_MAC" });
       }
       const request = JSON.parse(plaintext);
+      state.beforeAnswer?.(request, message.envelope.key);
       const answer = { id: request.id, ts: nowSeconds(), status: 200, content_type: "application/json; charset=utf-8", body: JSON.stringify({ path: request.path, method: request.method, key: message.envelope.key }) };
       return reply({ type: "e2e", envelope: seal(lock, { home: state.home, key: message.envelope.key }, "res", JSON.stringify(answer)) });
     }
@@ -400,6 +402,108 @@ test("deleting one of two accounts with the same email keeps that email's invita
   assert.equal((await call("DELETE", "/v1/me", { cookie: viaApple.cookie })).status, 204);
   const joined = await joinWith(state, viaGoogle, invitationId, secret);
   assert.equal(joined.status, 200, "the Google account can still accept it");
+});
+
+// Waits until `check()` is true (the relay handles the driver's messages on its own time).
+async function eventually(check, what) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+const membersOf = async (state, cookie) => (await call("GET", `/v1/homes/${state.home}/members`, { cookie })).json.items;
+
+test("the cloud learns each member's keys; a member whose keys are all revoked at home leaves", TEST, async () => {
+  const { state, dana, keyId, apiKey } = await claimedHome();
+  assert.equal((await e2e(dana, state, apiKey, keyId)).status, 200);
+  await eventually(async () => (await membersOf(state, dana))[0]?.key_ids.includes(keyId), "the owner's key from a sealed request");
+
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const joined = await joinWith(state, avi, invitationId, secret);
+  assert.equal(joined.status, 200, joined.text);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+  const aviMember = (await membersOf(state, dana)).find((m) => m.email === AVI.email);
+  assert.deepEqual(aviMember.key_ids, [aviKey.id], "the key the invitation made");
+
+  // A refused request records nothing: only the key's holder can seal one the home accepts.
+  const unknown = await e2e(avi, state, `ak_${randomHex(24)}`, randomHex(4));
+  assert.equal(unknown.json.code, "UNKNOWN_KEY");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === AVI.email).key_ids, [aviKey.id]);
+
+  // Nonsense from the controller changes nothing.
+  state.connection.sendJson({ type: "keys", ids: "all" });
+  state.connection.sendJson({ type: "keys", ids: ["not-a-key"] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await membersOf(state, dana)).length, 2);
+
+  // The admin revokes Avi's key at home: the controller's next list lacks it.
+  state.keys.delete(aviKey.id);
+  state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+  await eventually(async () => (await membersOf(state, dana)).length === 1, "Avi leaving");
+  assert.equal((await e2e(avi, state, aviKey.key, aviKey.id)).json.code, "NOT_A_MEMBER");
+
+  // The owner stays the owner, even with no keys left.
+  state.connection.sendJson({ type: "keys", ids: [] });
+  await eventually(async () => (await membersOf(state, dana))[0]?.key_ids.length === 0, "the owner's key going");
+  assert.deepEqual((await membersOf(state, dana)).map((m) => [m.email, m.owner]), [[DANA.email, true]]);
+});
+
+test("a key revoked by the request that used it is not recorded again", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const joined = await joinWith(state, avi, invitationId, secret);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+  // Avi forgets his key through the account: the driver revokes it, announces the keys without
+  // it, and only then sends the sealed answer.
+  state.beforeAnswer = (request, keyId) => {
+    if (request.method === "DELETE") {
+      state.keys.delete(keyId);
+      state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+    }
+  };
+  const forgot = await e2e(avi, state, aviKey.key, aviKey.id, { method: "DELETE", path: "/v1/api-keys/current" });
+  assert.equal(forgot.status, 200);
+  state.beforeAnswer = null;
+  await eventually(async () => (await membersOf(state, dana)).length === 1, "Avi leaving with his last key");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.deepEqual((await membersOf(state, dana)).map((m) => m.email), [DANA.email], "and not coming back by the answer");
+});
+
+test("a shared device's key belongs to each account that used it", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const first = await invite(state, dana, AVI.email);
+  const avi = await signIn(AVI);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(first.secret), (await joinWith(state, avi, first.invitationId, first.secret)).json.envelope, "res")).body);
+  const second = await invite(state, dana, NOA.email);
+  const noa = await signIn(NOA);
+  const noaKey = JSON.parse(JSON.parse(open(invitationKey(second.secret), (await joinWith(state, noa, second.invitationId, second.secret)).json.envelope, "res")).body);
+  // Noa signs in on Avi's tablet and uses its key.
+  assert.equal((await e2e(noa, state, aviKey.key, aviKey.id)).status, 200);
+  await eventually(async () => (await membersOf(state, dana)).find((m) => m.email === NOA.email)?.key_ids.length === 2, "the tablet's key for Noa too");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === AVI.email).key_ids, [aviKey.id], "and still for Avi");
+  // The tablet is lost: its key is revoked. Avi has no other key and leaves; Noa keeps hers.
+  state.keys.delete(aviKey.id);
+  state.connection.sendJson({ type: "keys", ids: [...state.keys.keys()] });
+  await eventually(async () => !(await membersOf(state, dana)).some((m) => m.email === AVI.email), "Avi leaving");
+  assert.deepEqual((await membersOf(state, dana)).find((m) => m.email === NOA.email).key_ids, [noaKey.id]);
+});
+
+test("removing a member forgets their keys too", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, NOA.email);
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret)).status, 200);
+  const noaMember = (await membersOf(state, dana)).find((m) => m.email === NOA.email);
+  assert.equal(noaMember.key_ids.length, 1);
+  assert.equal((await call("DELETE", `/v1/homes/${state.home}/members/${noaMember.user_id}`, { cookie: dana })).status, 204);
+  // Invited again later, Noa starts with only the new key.
+  const again = await invite(state, dana, NOA.email);
+  assert.equal((await joinWith(state, noa, again.invitationId, again.secret)).status, 200);
+  assert.equal((await membersOf(state, dana)).find((m) => m.email === NOA.email).key_ids.length, 1);
 });
 
 test("changes need the app's origin, and the app gets CORS answers", TEST, async () => {

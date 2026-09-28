@@ -94,7 +94,11 @@ local function save()
             created_at = key.created_at,
         }
     end
-    return Store.write(STORE_KEY, { version = 3, keys = records }, false)
+    local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)
+    if ok then
+        state.complete = true
+    end
+    return ok
 end
 
 local function validLock(value)
@@ -145,6 +149,9 @@ function Keys.load()
     state.lastUsed = {}
 
     local stored, form = Store.read(STORE_KEY, false)
+    -- A store Director could not read this time may still hold keys: until one is saved again,
+    -- the list is not known to be complete (Keys.complete).
+    state.complete = form ~= "unreadable"
     if form == "missing" then
         return #state.keys, form, migrate()
     end
@@ -162,6 +169,12 @@ end
 
 function Keys.count()
     return #state.keys
+end
+
+-- False after a load that could not read the store (the keys may come back at the next start):
+-- then nobody may be told that keys are gone.
+function Keys.complete()
+    return state.complete ~= false
 end
 
 -- Returns the key record for a presented secret, or nil.

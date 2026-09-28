@@ -39,7 +39,7 @@ SECURITY_CONTRACT = {
     ),
     "src/auth/keys.lua": (
         # Only hashes are stored, never the keys themselves.
-        "return Store.write(STORE_KEY, { version = 3, keys = records }, false)",
+        "local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)",
         "        records[#records + 1] = {\n"
         "            id = key.id,\n"
         "            name = key.name,\n"
@@ -66,6 +66,9 @@ SECURITY_CONTRACT = {
         'code = "RELAY_REQUESTS_RETIRED"',
         "refuseRequest(message)",
         "Store.write(IDENTITY_KEY, identity, false)",
+        # Key ids only: never names, roles or secrets; and never a list that may be short.
+        "ids[#ids + 1] = key.id",
+        "if state.services.keys.complete and not state.services.keys.complete() then",
     ),
     # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
     # requests are fresh and used once, claims come only from the home network, and invitation

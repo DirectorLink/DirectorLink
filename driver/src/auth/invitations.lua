@@ -72,7 +72,7 @@ function Invitations.load()
 end
 
 local function view(item)
-    return { id = item.id, role = item.role, created_at = item.created_at, expires_at = Clock.iso(item.expires) }
+    return { id = item.id, role = item.role, created_at = item.created_at, expires_at = Clock.iso(item.expires), created_by = item.created_by }
 end
 
 -- Returns { id, secret, role, created_at, expires_at } (the secret only here), or nil and

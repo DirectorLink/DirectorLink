@@ -10,7 +10,7 @@ import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "..
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { installApp } from "../pwa.js";
-import { api, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
+import { api, checkInThroughAccount, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
@@ -307,6 +307,10 @@ function controllerSection(navigate) {
       state.status === "unreachable"
         ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "settings-retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry"))
         : null,
+      // Admins manage who has access: devices, invitations and, for the owner, people.
+      state.loaded && can("admin")
+        ? h("a", { class: "button button-secondary", href: "#/access", dataset: { key: "settings-access" } }, icon("user"), t("access.open"))
+        : null,
       state.apiKey
         ? h(
             "button",
@@ -394,6 +398,8 @@ async function linkHome() {
     }
     const me = await api("/v1/api-keys/current");
     saveRemote({ home: linked, keyId: me.id });
+    // The account service learns this device's key now, not only after its first remote use.
+    checkInThroughAccount(true);
     ui.homeMessage = { kind: "success", text: transferred ? t("settings.account.home.takenOver") : t("settings.account.home.linkedNow") };
   } catch (error) {
     ui.homeMessage = { kind: "error", text: error?.code === "REMOTE_ACCESS_OFF" ? t("settings.account.home.turnOn") : errorText(error) };

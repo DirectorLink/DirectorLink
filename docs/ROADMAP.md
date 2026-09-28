@@ -40,8 +40,8 @@
 - [x] Keys, room names and the remote identity survive driver updates and restarts; keys stored only as hashes (0.9.2)
 - [x] Remote access: relay connection proof (0.9.2, test)
 - [x] Remote access with Google accounts, end-to-end encryption, claiming a home on the LAN, invitations, iPhone and iPad (0.10.0; `docs/ACCOUNTS.md`)
-- [ ] Sign in with Apple; a Members screen; owner approval of email mismatches
-- [ ] Remote access: tie cloud membership to device keys
+- [x] People and devices: keys, invitations and the home's accounts in the app; cloud membership follows the device keys (0.11.0)
+- [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
 - [ ] Rediscover the project without restarting the driver
 
 ## Milestone 3 — PWA
