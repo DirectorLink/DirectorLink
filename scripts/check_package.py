@@ -66,6 +66,8 @@ SECURITY_CONTRACT = {
         'code = "RELAY_REQUESTS_RETIRED"',
         "refuseRequest(message)",
         "Store.write(IDENTITY_KEY, identity, false)",
+        # Key ids only: never names, roles or secrets.
+        "ids[#ids + 1] = key.id",
     ),
     # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
     # requests are fresh and used once, claims come only from the home network, and invitation

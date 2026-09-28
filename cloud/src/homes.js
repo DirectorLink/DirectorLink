@@ -7,7 +7,7 @@
 //   GET    /v1/homes/{home_id}                      whether it is claimed, and by this account
 //   POST   /v1/homes/{home_id}/e2e                  { envelope }: a sealed request, answered sealed
 //   POST   /v1/homes/{home_id}/invitations          { invitation_id, email, expires_at }
-//   GET    /v1/homes/{home_id}/members              who belongs to the home (the owner only)
+//   GET    /v1/homes/{home_id}/members              who belongs to the home, with their key ids (the owner only)
 //   DELETE /v1/homes/{home_id}/members/{user_id}    the owner removes someone; anyone may leave
 //   POST   /v1/join                                 { home_id, invitation_id, envelope }: accept an invitation
 //
@@ -17,6 +17,7 @@
 import { appOrigins, currentUser } from "./accounts.js";
 import { json, problem, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
+import { noteKeyUsed, validKeyId } from "./member-keys.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
@@ -157,6 +158,7 @@ async function claim(request, env, user) {
     statements.push(
       env.DB.prepare("UPDATE homes SET owner_id = ?, claimed_at = ? WHERE id = ?").bind(user.id, now, homeId),
       env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
+      env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
       ...forgetInvitations(env, "home_id = ?", homeId)
     );
   }
@@ -204,6 +206,8 @@ async function e2e(request, env, user, homeId) {
     log("e2e_refused", { home: homeId, user: user.id, code: reply.code ?? null });
     return driverProblem(reply.code ?? "INTERNAL");
   }
+  // The home accepted a request sealed with this key: this account holds it.
+  await noteKeyUsed(env, homeId, user.id, input.envelope.key).catch((error) => log("key_note_failed", { home: homeId, error: String(error?.message ?? error) }));
   return json({ envelope: reply.envelope });
 }
 
@@ -274,12 +278,26 @@ async function join(request, env, user) {
   // pending here (a change of owner meanwhile tombstones it), and the used invitation goes. The
   // sealed answer goes back either way, with whether this account is now a member.
   const now = iso();
+  const pending = "EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       await env.DB.batch([
-        env.DB.prepare(
-          "INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)"
-        ).bind(homeId, user.id, now, homeId, input.invitation_id, invitation.email),
+        env.DB.prepare(`INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE ${pending}`).bind(
+          homeId,
+          user.id,
+          now,
+          homeId,
+          input.invitation_id,
+          invitation.email
+        ),
+        // The new key is this account's (revoking it at home ends the membership).
+        ...(validKeyId(reply.key_id)
+          ? [
+              env.DB.prepare(
+                `INSERT INTO member_keys (home_id, key_id, user_id, added_at) SELECT ?, ?, ?, ? WHERE ${pending} ON CONFLICT (home_id, key_id) DO UPDATE SET user_id = excluded.user_id`
+              ).bind(homeId, reply.key_id, user.id, now, homeId, input.invitation_id, invitation.email),
+            ]
+          : []),
         env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL").bind(homeId, input.invitation_id, invitation.email),
       ]);
       break;
@@ -297,12 +315,22 @@ async function listMembers(env, user, homeId) {
   if (!row || row.owner_id !== user.id) {
     return problem(403, "OWNER_ONLY", "Only the home's owner sees its members");
   }
-  const { results } = await env.DB.prepare(
-    "SELECT users.id AS id, users.email AS email, users.name AS name, members.added_at AS added_at FROM members JOIN users ON users.id = members.user_id WHERE members.home_id = ? ORDER BY members.added_at"
-  )
-    .bind(homeId)
-    .all();
-  return json({ items: results.map((r) => ({ user_id: r.id, email: r.email, name: r.name, owner: r.id === user.id, added_at: r.added_at })) });
+  const [{ results }, { results: keys }] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT users.id AS id, users.email AS email, users.name AS name, members.added_at AS added_at FROM members JOIN users ON users.id = members.user_id WHERE members.home_id = ? ORDER BY members.added_at"
+    ).bind(homeId),
+    env.DB.prepare("SELECT user_id, key_id FROM member_keys WHERE home_id = ? ORDER BY added_at").bind(homeId),
+  ]);
+  return json({
+    items: results.map((r) => ({
+      user_id: r.id,
+      email: r.email,
+      name: r.name,
+      owner: r.id === user.id,
+      added_at: r.added_at,
+      key_ids: keys.filter((key) => key.user_id === r.id).map((key) => key.key_id),
+    })),
+  });
 }
 
 async function removeMember(env, user, homeId, userId) {
@@ -317,7 +345,10 @@ async function removeMember(env, user, homeId, userId) {
   if (self && row.owner_id === user.id) {
     return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; another account can claim the home at home instead");
   }
-  const { meta } = await env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id = ?").bind(homeId, userId).run();
+  const [{ meta }] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
+    env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
+  ]);
   if (!meta.changes) {
     return problem(404, "NOT_FOUND", "That account does not belong to the home");
   }

@@ -191,12 +191,26 @@ local function startKeepalive()
     end)
 end
 
+-- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway). The cloud
+-- keeps which account uses which key; a member whose keys are all revoked leaves the home.
+function Relay.announceKeys()
+    if not state.socket or not state.services or not state.services.keys then
+        return
+    end
+    local ids = Json.array()
+    for _, key in ipairs(state.services.keys.list()) do
+        ids[#ids + 1] = key.id
+    end
+    send({ type = "keys", ids = ids })
+end
+
 local function onOpen()
     state.attempts = 0
     state.lastHeard = os.time()
     state.connectedAt = os.time()
     local identity = Relay.identity()
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION })
+    Relay.announceKeys()
     startKeepalive()
     publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8))
     log("info", "connected to the relay", { home_id = identity.home_id })

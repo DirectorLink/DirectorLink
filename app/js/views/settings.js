@@ -307,6 +307,10 @@ function controllerSection(navigate) {
       state.status === "unreachable"
         ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "settings-retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry"))
         : null,
+      // Admins manage who has access: devices, invitations and, for the owner, people.
+      state.loaded && can("admin")
+        ? h("a", { class: "button button-secondary", href: "#/access", dataset: { key: "settings-access" } }, icon("user"), t("access.open"))
+        : null,
       state.apiKey
         ? h(
             "button",
