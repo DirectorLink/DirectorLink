@@ -99,6 +99,7 @@ test("a sign-in creates the account and a session; /v1/me shows it", TEST, async
   assert.equal(account.status, 200);
   assert.match(account.json.id, /^[0-9a-f]{32}$/);
   assert.equal(account.json.email, "noa@example.com", "stored in lowercase");
+  assert.deepEqual(account.json.providers, ["google"]);
   assert.equal(account.json.name, "Noa");
   assert.ok(!Number.isNaN(Date.parse(account.json.created_at)));
   assert.equal(account.headers.get("access-control-allow-origin"), APP);
@@ -212,4 +213,10 @@ test("deleting the account removes it and every session", TEST, async () => {
 test("/v1/me without a session is 401", TEST, async () => {
   assert.equal((await me(null)).status, 401);
   assert.equal((await me("__Host-dl_session=not-a-session")).status, 401);
+});
+
+test("Sign in with Apple answers 503 until it is set up", TEST, async () => {
+  const response = await get(`/auth/apple/start?return_to=${encodeURIComponent(`${APP}/#/settings`)}`);
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "SIGN_IN_NOT_CONFIGURED");
 });

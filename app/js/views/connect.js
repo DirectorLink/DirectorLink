@@ -3,12 +3,12 @@
 // signing in with Google (account.js), which will reach the home from anywhere (docs/ACCOUNTS.md).
 
 import { formatPairingCode } from "../../api-client.js";
-import { signIn } from "../account.js";
 import { IS_IOS } from "../platform.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { pairWithCode } from "../session.js";
+import { signInButtons } from "./common.js";
 import { state, ui } from "../state.js";
 
 function draftInput(key, fallback, props) {
@@ -66,12 +66,7 @@ function accountOption({ divider = true } = {}) {
     { class: "connect-account" },
     divider ? h("p", { class: "connect-or" }, h("span", {}, t("connect.or"))) : null,
     outcome ? h("p", { class: "notice notice-error", role: "status" }, t(`settings.account.notice.${outcome}`)) : null,
-    h(
-      "button",
-      { type: "button", class: "button button-secondary button-wide", dataset: { key: "connect-sign-in" }, onclick: () => signIn("#/") },
-      icon("user"),
-      t("connect.signIn")
-    ),
+    signInButtons({ hash: "#/", key: "connect-sign-in", style: "button-secondary", size: "button-wide" }),
     h("p", { class: "field-help" }, t("connect.signInHelp"))
   );
 }

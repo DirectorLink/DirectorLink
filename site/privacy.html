@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 27 September 2026</p>
+      <p class="updated">Last updated 28 September 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -43,21 +43,24 @@
         keeps its settings, its access key and the controller's address in your browser only.
       </p>
 
-      <h2>Signing in with Google</h2>
+      <h2>Signing in with Google or Apple</h2>
       <p>
         Signing in is optional. It is for using your home away from the home network and for inviting
-        family. When you sign in, Google tells us your Google account ID, your email address and your
-        name. We ask for nothing else, never see your Google password, and use these only to know
-        which homes your account belongs to and to match invitations. We do not sell or share them,
-        and there are no ads, tracking or analytics.
+        family. When you sign in, Google or Apple tells us your account ID with them, your email
+        address and your name (Apple sends the name only the first time, and may give an address of
+        its Hide My Email relay instead of yours). We ask for nothing else, never see your password,
+        and use these only to know which homes your account belongs to and to match invitations. If
+        you sign in with both and they give the same email address, they are one DirectorLink account.
+        We do not sell or share any of it, and there are no ads, tracking or analytics.
       </p>
       <p>A device that has never signed in does not contact our account service at all.</p>
 
       <h2>What our servers store</h2>
       <ul>
-        <li>Your account: your Google account ID, email address and name, and when you signed in.</li>
+        <li>Your account: your Google and/or Apple account ID, email address and name, and when you signed in.</li>
         <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out.</li>
-        <li>With remote access and invitations (coming): which homes your account belongs to, and invitations waiting to be accepted (the invited email and the expiry date).</li>
+        <li>Homes: which homes your account owns or belongs to, and since when.</li>
+        <li>Invitations waiting to be accepted: the invited email, who made it and the expiry date. A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
@@ -66,18 +69,18 @@
 
       <h2>Remote access</h2>
       <p>
-        Remote access is off unless you switch it on in Composer. Today it is a test: the controller
-        keeps one outgoing connection to api.directorlink.io, encrypted with TLS, and only the
-        DirectorLink team's test tool can send it read-only requests, which are passed through and not
-        stored. When remote access opens to accounts, every request and answer will also be locked
-        end to end, with keys that only your devices and your controller hold, so our servers can pass
-        them along but cannot read them.
+        Remote access is off unless you switch it on in Composer. Then the controller keeps one
+        outgoing connection to api.directorlink.io, encrypted with TLS, and your signed-in devices
+        reach your home through it. Every request and answer is also locked end to end, with keys that
+        only your devices and your controller hold: our servers pass them along but cannot read or
+        change them, and store none of them. What our servers do see is which account talks to which
+        home, when, and how much data.
       </p>
 
       <h2>Cookies</h2>
       <p>
         api.directorlink.io sets one cookie that keeps you signed in, and one for ten minutes while
-        you sign in. Neither can be read by the app's pages. The app and this website set no cookies.
+        you sign in. None can be read by the app's pages. The app and this website set no cookies.
       </p>
 
       <h2>Deleting your data</h2>

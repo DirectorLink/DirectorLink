@@ -1,7 +1,7 @@
 // Page header, connection chip and the states every screen shares (not connected, loading,
 // controller unreachable).
 
-import { signIn } from "../account.js";
+import { SIGN_IN_PROVIDERS, signIn } from "../account.js";
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -57,6 +57,25 @@ export function offlineBanner() {
 }
 
 // Data is shown from the last successful read while the controller cannot be reached.
+// One button per sign-in provider (account.js). `key` names Google's button; others add their
+// name. `style`: the button style for Google (Apple's is its own black or white); `size`: e.g.
+// "button-wide".
+export function signInButtons({ hash, key, style = "button-primary", size = "" }) {
+  return SIGN_IN_PROVIDERS.map((provider) =>
+    h(
+      "button",
+      {
+        type: "button",
+        class: `button ${provider === "apple" ? "button-apple" : style} ${size}`.trim(),
+        dataset: { key: provider === "google" ? key : `${key}-${provider}` },
+        onclick: () => signIn(hash, provider),
+      },
+      icon(provider === "apple" ? "apple" : "user"),
+      t(provider === "apple" ? "connect.signInApple" : "connect.signIn")
+    )
+  );
+}
+
 export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
   // Through the account the reason is known (signed out, home offline, …); signed out, the banner
@@ -69,7 +88,7 @@ export function staleBanner() {
     icon("wifiOff"),
     h("span", {}, remote ? state.notice.text : t("status.staleBanner")),
     signedOut
-      ? h("button", { type: "button", class: "button button-small", dataset: { key: "stale-sign-in" }, onclick: () => signIn("#/") }, t("connect.signIn"))
+      ? signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
       : h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
   );
 }
