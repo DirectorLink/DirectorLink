@@ -486,6 +486,21 @@ img {
   border-color: var(--line);
 }
 
+/* Sign in with Apple: black, or white on a dark theme (Apple's button styles), in banners too. */
+.button-apple,
+.banner .button-apple {
+  background: #000;
+  color: #fff;
+  border-color: #000;
+}
+
+:root[data-theme="dark"] .button-apple,
+:root[data-theme="dark"] .banner .button-apple {
+  background: #fff;
+  color: #000;
+  border-color: #fff;
+}
+
 .button-quiet {
   background: transparent;
   color: var(--primary);

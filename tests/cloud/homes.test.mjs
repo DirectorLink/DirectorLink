@@ -7,7 +7,8 @@ import { randomBytes } from "node:crypto";
 import { after, afterEach, before, test } from "node:test";
 
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
-import { googleVars, signInAs, startFakeGoogle } from "./fake-google.mjs";
+import { appleVars, signInWithApple, startFakeApple } from "./fake-apple.mjs";
+import { cookiesOf, googleVars, signInAs, startFakeGoogle } from "./fake-google.mjs";
 import { invitationKey, lockKey, open, seal } from "./lock.mjs";
 import { STARTUP_MS, startWorker } from "./worker.mjs";
 
@@ -19,16 +20,19 @@ const NOA = { sub: "google-noa", email: "noa@example.com", name: "Noa" };
 
 let worker;
 let google;
+let apple;
 const drivers = [];
 
 before(async () => {
   google = await startFakeGoogle();
-  worker = await startWorker({ migrate: true, devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), REQUEST_TIMEOUT_MS: 3000 } });
+  apple = await startFakeApple();
+  worker = await startWorker({ migrate: true, devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), ...appleVars(apple), REQUEST_TIMEOUT_MS: 3000 } });
 }, { timeout: STARTUP_MS + 10_000 });
 
 after(async () => {
   await worker?.stop();
   await google?.close();
+  await apple?.close();
 });
 
 afterEach(async () => {
@@ -352,6 +356,50 @@ test("a member may have 20 invitations waiting for a home", TEST, async () => {
   const more = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: randomHex(4), email: "one-more@example.com", expires_at: expires } });
   assert.equal(more.status, 429);
   assert.equal(more.json.code, "INVITATION_LIMIT_REACHED");
+});
+
+// Accepting an invitation for the home of `state` as the account of `cookie`.
+function joinWith(state, cookie, invitationId, secret) {
+  const request = { id: randomHex(8), ts: nowSeconds(), method: "POST", path: "/v1/auth/join", body: { name: "Phone" } };
+  return call("POST", "/v1/join", { cookie, body: { home_id: state.home, invitation_id: invitationId, envelope: seal(invitationKey(secret), { home: state.home, key: invitationId }, "req", JSON.stringify(request)) } });
+}
+
+async function invite(state, dana, email) {
+  const invitationId = randomHex(4);
+  const secret = randomBytes(32).toString("hex");
+  state.invitations.set(invitationId, secret);
+  const registered = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: invitationId, email, expires_at: new Date(Date.now() + 3600_000).toISOString() } });
+  assert.equal(registered.status, 201, registered.text);
+  return { invitationId, secret };
+}
+
+test("an invitation is accepted with the email of any of the account's sign-ins", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, "real.address@example.com");
+  // An account made with Apple's Hide My Email, which then adds Google with the real address.
+  const hidden = await signInWithApple(worker.http, apple, { sub: "001.hidden.joiner", email: "q9z@privaterelay.appleid.com", private: true }, APP);
+  assert.equal((await joinWith(state, hidden.cookie, invitationId, secret)).json.code, "EMAIL_MISMATCH");
+  const start = await fetch(`${worker.http}/auth/google/start?link=1&return_to=${encodeURIComponent(`${APP}/#/settings`)}`, { redirect: "manual", headers: { Cookie: hidden.cookie } });
+  const location = start.headers.get("location");
+  const code = google.approve(location, { person: { sub: "google-real-address", email: "real.address@example.com", name: "Real" } });
+  const back = await fetch(`${worker.http}/auth/google/callback?${new URLSearchParams({ code, state: new URL(location).searchParams.get("state") })}`, {
+    redirect: "manual",
+    headers: { Cookie: `__Host-dl_signin=${cookiesOf(start)["__Host-dl_signin"].value}` },
+  });
+  assert.equal(new URL(back.headers.get("location")).searchParams.get("signin"), "linked");
+  const joined = await joinWith(state, hidden.cookie, invitationId, secret);
+  assert.equal(joined.status, 200, joined.text);
+  assert.equal(joined.json.member, true);
+});
+
+test("deleting one of two accounts with the same email keeps that email's invitations", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, "twin@example.com");
+  const viaGoogle = await signInAs(worker.http, google, { sub: "google-twin", email: "twin@example.com", name: "Twin" }, APP);
+  const viaApple = await signInWithApple(worker.http, apple, { sub: "001.twin", email: "twin@example.com" }, APP);
+  assert.equal((await call("DELETE", "/v1/me", { cookie: viaApple.cookie })).status, 204);
+  const joined = await joinWith(state, viaGoogle, invitationId, secret);
+  assert.equal(joined.status, 200, "the Google account can still accept it");
 });
 
 test("changes need the app's origin, and the app gets CORS answers", TEST, async () => {
