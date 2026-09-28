@@ -53,7 +53,7 @@ function parseRoute() {
     return { name: "room", id: Number(parts[1]), tab: "home" };
   }
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
-    return { name: "scene", id: parts[1], tab: "scenes" };
+    return { name: "scene", id: parts[1], adding: parts[2] === "add", tab: "scenes" };
   }
   if (["scenes", "cameras", "climate", "settings"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
@@ -206,7 +206,8 @@ function signature() {
     state.scenesUnsupported,
     ui.sceneRuns,
     ui.scenesMessage,
-    route.name === "scene" ? ui.sceneEditor : 0,
+    // The scene's name is typed into a field: it is left out, so typing is never redrawn.
+    route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
@@ -221,7 +222,7 @@ function screen() {
     case "scenes":
       return scenesView(actions);
     case "scene":
-      return sceneEditorView(route.id, actions);
+      return sceneEditorView(route.id, route.adding, actions);
     case "cameras":
       return camerasView(actions);
     case "climate":

@@ -1,7 +1,8 @@
 // Scenes (#/scenes) and the scene editor (#/scene/new, #/scene/<id>; admins). The list runs a
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
-// what (lights, AC, blinds, doors and gates; all of them or chosen ones) and what to do. "Copy the
-// house as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
+// what (lights, AC, blinds, doors and gates; all of them or chosen ones) and what to do; "Add an
+// action" has its own address (#/scene/<id>/add), so Back returns to the editor. "Copy the house
+// as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
 
 import { emptyState, skeletonCards, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
@@ -9,12 +10,16 @@ import { formatNumber, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { blindStateLabel, deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness } from "../model.js";
 import {
+  MAX_DEVICE_IDS,
+  MAX_STEPS,
   SCENE_ICONS,
   STEP_ICONS,
   STEP_TYPES,
   copyHouse,
+  currentSteps,
   devicesOfType,
   findScene,
+  isolate,
   loadScenes,
   resultText,
   runScene,
@@ -27,7 +32,7 @@ import { api, errorText, noteForbidden, refreshDevices, roleLabel } from "../ses
 import { can, notify, state, ui } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
-const MAX_STEPS = 40;
+const MAX_SCENES = 50;
 const MESSAGE_MS = 6000;
 const MODE_ORDER = ["off", "cool", "heat", "auto"];
 
@@ -47,8 +52,30 @@ function flash(text) {
   }, MESSAGE_MS);
 }
 
-function waiting(header) {
-  return [header, h("div", { class: "scene-list", "aria-busy": "true" }, skeletonCards(3)), h("p", { class: "visually-hidden", role: "status" }, t("common.loading"))];
+// Leaves an editor screen for `hash`: back through the history when the app came from there, so
+// Back afterwards does not reopen what was just left.
+function leave(hash) {
+  if (window.history.state?.directorlinkInApp) window.history.back();
+  else window.location.replace(hash);
+}
+
+// Not ready: loading, or the first read failed (then with Retry).
+function notLoaded(header) {
+  if (state.scenes === null && state.scenesError && !isLoading()) {
+    return [
+      header,
+      emptyState(
+        "wifiOff",
+        t("scenes.loadFailed"),
+        state.scenesError,
+        h("button", { type: "button", class: "button button-primary", dataset: { key: "scenes-retry" }, onclick: () => loadScenes() }, icon("refresh"), t("common.retry"))
+      ),
+    ];
+  }
+  if (isLoading() || state.scenes === null) {
+    return [header, h("div", { class: "scene-list", "aria-busy": "true" }, skeletonCards(3)), h("p", { class: "visually-hidden", role: "status" }, t("common.loading"))];
+  }
+  return null;
 }
 
 // ---- the list ------------------------------------------------------------------------------
@@ -57,7 +84,8 @@ export function scenesView({ navigate }) {
   const header = pageHeader({ title: t("scenes.title") });
   const notReady = notReadyState();
   if (notReady) return [header, offlineBanner(), notReady];
-  if (isLoading() || state.scenes === null) return waiting(header);
+  const waiting = notLoaded(header);
+  if (waiting) return waiting;
   if (state.scenesUnsupported) return [header, emptyState("scene", t("scenes.title"), t("scenes.updateDriver"))];
   const admin = can("admin");
   const scenes = state.scenes;
@@ -77,7 +105,11 @@ export function scenesView({ navigate }) {
 
 function runButton(scene) {
   const run = ui.sceneRuns[scene.id];
-  const ran = run && run.stage !== "running" && run.stage !== "error";
+  const ran = run && (run.stage === "done" || run.stage === "partial");
+  let label = t("scenes.run");
+  if (run?.stage === "running") label = t("scenes.running");
+  else if (run?.stage === "confirm") label = t("scenes.tapAgain");
+  else if (ran) label = t("scenes.result.short");
   return h(
     "button",
     {
@@ -88,8 +120,8 @@ function runButton(scene) {
       dataset: { key: `scene-run:${scene.id}` },
       onclick: () => runScene(scene),
     },
-    icon(ran ? "check" : "play"),
-    run?.stage === "running" ? t("scenes.running") : ran ? t("scenes.result.short") : t("scenes.run")
+    icon(ran ? "check" : run?.stage === "confirm" ? "door" : "play"),
+    label
   );
 }
 
@@ -105,7 +137,7 @@ function sceneCard(scene, admin) {
       admin
         ? h("a", { class: "scene-name", href: `#/scene/${scene.id}`, dir: "auto", title: t("scenes.editLabel", { name: scene.name }), dataset: { key: `scene-edit:${scene.id}` } }, scene.name)
         : name(scene.name, "span", "scene-name"),
-      h("span", { class: "scene-summary", dir: "auto" }, sceneSummary(scene)),
+      h("span", { class: "scene-summary" }, sceneSummary(scene)),
       // A plain "Done" is on the button already.
       run?.text && run.stage !== "done" ? h("span", { class: `scene-result scene-result-${run.stage}`, role: "status" }, run.text) : null
     ),
@@ -130,7 +162,7 @@ function sceneIdeas() {
 
 function newScene(navigate, count) {
   const ideas = sceneIdeas();
-  const full = count >= 50;
+  const full = count >= MAX_SCENES;
   return h(
     "section",
     { class: "home-section scene-new" },
@@ -176,9 +208,10 @@ export function resetSceneEditor() {
   ui.sceneEditor = null;
 }
 
+// `dirty`: something changed (Back asks first); `stepsChanged`: the steps are sent with Save.
 function draftFor(key) {
   if (ui.sceneEditor?.key === key) return ui.sceneEditor;
-  const base = { key, adding: null, busy: false, message: null };
+  const base = { key, adding: null, busy: false, message: null, dirty: false };
   if (key === "new") {
     const idea = ui.sceneIdea;
     ui.sceneIdea = null;
@@ -190,6 +223,7 @@ function draftFor(key) {
       icon: idea?.icon || "bulb",
       show_on_home: false,
       steps: idea ? idea.steps : [],
+      stepsChanged: true,
     };
     return ui.sceneEditor;
   }
@@ -203,36 +237,57 @@ function draftFor(key) {
     icon: scene.icon || "bulb",
     show_on_home: Boolean(scene.show_on_home),
     steps: JSON.parse(JSON.stringify(scene.steps || [])),
+    stepsChanged: false,
   };
   return ui.sceneEditor;
 }
 
-export function sceneEditorView(key, { navigate }) {
+function changeSteps(draft, steps) {
+  draft.steps = steps;
+  draft.stepsChanged = true;
+  draft.dirty = true;
+  notify();
+}
+
+export function sceneEditorView(key, adding, { navigate }) {
   const title = key === "new" ? t("scenes.editor.newTitle") : t("scenes.editor.editTitle");
-  const header = pageHeader({ title, back: "#/scenes" });
+  const draft0 = ui.sceneEditor?.key === key ? ui.sceneEditor : null;
+  const header = pageHeader({
+    title,
+    back: "#/scenes",
+    // Back from a changed scene asks first.
+    onBack: (event) => {
+      if (draft0?.dirty && !window.confirm(t("scenes.editor.discard"))) event.preventDefault();
+    },
+  });
   const notReady = notReadyState();
   if (notReady) return [header, offlineBanner(), notReady];
-  if (isLoading() || state.scenes === null) return waiting(header);
+  const waiting = notLoaded(header);
+  if (waiting) return waiting;
   if (state.scenesUnsupported) return [header, emptyState("scene", title, t("scenes.updateDriver"))];
   if (!can("admin")) return [header, h("p", { class: "notice notice-info" }, t("scenes.editor.adminOnly", { role: roleLabel(state.role) }))];
   const draft = draftFor(key);
   if (!draft) {
     return [header, emptyState("scene", t("scenes.editor.notFound"), "", h("a", { class: "button button-primary", href: "#/scenes" }, t("scenes.title")))];
   }
-  if (draft.adding) return addActionView(draft);
+  if (adding) {
+    draft.adding ??= newAdding();
+    return addActionView(draft);
+  }
+  draft.adding = null;
   return [
-    header,
+    draft0 ? header : pageHeader({ title, back: "#/scenes" }),
     offlineBanner(),
     staleBanner(),
     h(
       "div",
       { class: "scene-editor" },
       nameSection(draft),
-      stepsSection(draft),
+      stepsSection(draft, navigate),
       copySection(draft),
       homeToggle(draft),
       notice(draft.message),
-      editorActions(draft, navigate)
+      editorActions(draft)
     ),
   ];
 }
@@ -254,8 +309,10 @@ function nameSection(draft) {
         dir: "auto",
         autocomplete: "off",
         dataset: { key: "scene-name" },
+        // Not redrawn while typing: the name is left out of the screen's signature (app.js).
         oninput: (event) => {
           draft.name = event.target.value;
+          draft.dirty = true;
         },
       })
     ),
@@ -274,6 +331,7 @@ function nameSection(draft) {
             dataset: { key: `scene-icon:${iconName}` },
             onclick: () => {
               draft.icon = iconName;
+              draft.dirty = true;
               notify();
             },
           },
@@ -284,7 +342,7 @@ function nameSection(draft) {
   );
 }
 
-function stepsSection(draft) {
+function stepsSection(draft, navigate) {
   const count = draft.steps.length;
   return h(
     "section",
@@ -304,10 +362,8 @@ function stepsSection(draft) {
         disabled: count >= MAX_STEPS,
         dataset: { key: "scene-add" },
         onclick: () => {
-          draft.adding = newAdding();
           draft.message = null;
-          notify();
-          window.scrollTo(0, 0);
+          navigate(`#/scene/${draft.key}/add`);
         },
       },
       icon("plus"),
@@ -321,10 +377,8 @@ function stepRow(draft, step, index) {
   const move = (offset) => {
     const steps = [...draft.steps];
     [steps[index], steps[index + offset]] = [steps[index + offset], steps[index]];
-    draft.steps = steps;
-    notify();
+    changeSteps(draft, steps);
   };
-  const where = stepWhere(step);
   return h(
     "li",
     { class: "step-row" },
@@ -333,7 +387,7 @@ function stepRow(draft, step, index) {
       "span",
       { class: "step-text" },
       name(what, "span", "step-what"),
-      h("span", { class: "step-where" }, name(where, "span"), step.type === "relays" ? h("span", {}, ` · ${t("scenes.editor.needsDoors")}`) : null)
+      h("span", { class: "step-where" }, name(stepWhere(step), "span"), step.type === "relays" ? h("span", {}, ` · ${t("scenes.editor.needsDoors")}`) : null)
     ),
     h("span", { class: "step-action" }, stepAction(step)),
     h(
@@ -344,10 +398,7 @@ function stepRow(draft, step, index) {
       iconButton("close", t("scenes.editor.remove", { what }), {
         class: "danger",
         dataset: { key: `step-remove:${index}` },
-        onclick: () => {
-          draft.steps = draft.steps.filter((_, other) => other !== index);
-          notify();
-        },
+        onclick: () => changeSteps(draft, draft.steps.filter((_, other) => other !== index)),
       })
     )
   );
@@ -366,9 +417,12 @@ function copySection(draft) {
         dataset: { key: "scene-copy" },
         onclick: () => {
           if (draft.steps.length && !window.confirm(t("scenes.editor.copyConfirm", { count: draft.steps.length }))) return;
-          draft.steps = copyHouse();
-          draft.message = { kind: draft.steps.length ? "success" : "info", text: t("scenes.editor.copied", { count: draft.steps.length }) };
-          notify();
+          const { steps, left } = copyHouse();
+          draft.message = {
+            kind: !steps.length ? "info" : left ? "error" : "success",
+            text: left ? t("scenes.editor.copiedSome", { count: steps.length, left }) : t("scenes.editor.copied", { count: steps.length }),
+          };
+          changeSteps(draft, steps);
         },
       },
       icon("copy"),
@@ -398,6 +452,7 @@ function homeToggle(draft) {
         dataset: { key: "scene-home" },
         onclick: () => {
           draft.show_on_home = !draft.show_on_home;
+          draft.dirty = true;
           notify();
         },
       },
@@ -406,7 +461,7 @@ function homeToggle(draft) {
   );
 }
 
-function editorActions(draft, navigate) {
+function editorActions(draft) {
   return h(
     "div",
     { class: "scene-actions" },
@@ -418,14 +473,14 @@ function editorActions(draft, navigate) {
     ),
     h(
       "button",
-      { type: "button", class: "button button-primary", disabled: draft.busy, dataset: { key: "scene-save" }, onclick: () => saveDraft(draft, navigate) },
+      { type: "button", class: "button button-primary", disabled: draft.busy, dataset: { key: "scene-save" }, onclick: () => saveDraft(draft) },
       icon("check"),
       draft.busy ? t("common.saving") : t("scenes.editor.save")
     ),
     draft.id
       ? h(
           "button",
-          { type: "button", class: "button button-danger", disabled: draft.busy, dataset: { key: "scene-delete" }, onclick: () => deleteDraft(draft, navigate) },
+          { type: "button", class: "button button-danger", disabled: draft.busy, dataset: { key: "scene-delete" }, onclick: () => deleteDraft(draft) },
           t("scenes.editor.delete")
         )
       : null
@@ -433,15 +488,19 @@ function editorActions(draft, navigate) {
 }
 
 async function tryDraft(draft) {
+  const { steps } = currentSteps(draft.steps);
+  if (!steps.length) {
+    draft.message = { kind: "error", text: t("scenes.editor.needSteps") };
+    notify();
+    return;
+  }
   draft.busy = true;
   draft.message = null;
   notify();
   try {
-    const result = await api("/v1/scenes/try", { method: "POST", body: { steps: draft.steps } });
-    draft.message = {
-      kind: result.failed ? "error" : result.skipped ? "info" : "success",
-      text: result.failed || result.skipped ? resultText(result) : t("scenes.editor.tried"),
-    };
+    const result = await api("/v1/scenes/try", { method: "POST", body: { steps } });
+    const plain = !result.failed && !result.skipped && !(result.problems || []).length;
+    draft.message = { kind: result.failed ? "error" : plain ? "success" : "info", text: plain ? t("scenes.editor.tried") : resultText(result) };
     window.setTimeout(() => refreshDevices(), 1500);
   } catch (error) {
     noteForbidden(error);
@@ -451,9 +510,11 @@ async function tryDraft(draft) {
   notify();
 }
 
-async function saveDraft(draft, navigate) {
+async function saveDraft(draft) {
   const sceneName = draft.name.trim();
-  const problem = !sceneName ? "needName" : !draft.steps.length ? "needSteps" : null;
+  // The steps are sent when they changed (a new scene always), without devices that are gone.
+  const sending = !draft.id || draft.stepsChanged ? currentSteps(draft.steps) : null;
+  const problem = !sceneName ? "needName" : !(sending ? sending.steps : draft.steps).length ? "needSteps" : null;
   if (problem) {
     draft.message = { kind: "error", text: t(`scenes.editor.${problem}`) };
     notify();
@@ -463,14 +524,16 @@ async function saveDraft(draft, navigate) {
   draft.busy = true;
   draft.message = null;
   notify();
-  const body = { name: sceneName.slice(0, 64), icon: draft.icon, show_on_home: draft.show_on_home, steps: draft.steps };
+  const body = { name: sceneName.slice(0, 64), icon: draft.icon, show_on_home: draft.show_on_home };
+  if (sending) body.steps = sending.steps;
   try {
     if (draft.id) await api(`/v1/scenes/${draft.id}`, { method: "PATCH", body: { ...body, version: draft.version } });
     else await api("/v1/scenes", { method: "POST", body });
     draft.busy = false;
-    flash(t("scenes.saved", { name: sceneName }));
+    draft.dirty = false;
+    flash(sending?.changed ? t("scenes.savedPruned", { name: sceneName }) : t("scenes.saved", { name: sceneName }));
     await loadScenes();
-    navigate("#/scenes");
+    leave("#/scenes");
     return;
   } catch (error) {
     noteForbidden(error);
@@ -481,7 +544,7 @@ async function saveDraft(draft, navigate) {
   notify();
 }
 
-async function deleteDraft(draft, navigate) {
+async function deleteDraft(draft) {
   if (draft.busy || !window.confirm(t("scenes.editor.deleteConfirm", { name: draft.name }))) return;
   draft.busy = true;
   notify();
@@ -498,15 +561,16 @@ async function deleteDraft(draft, navigate) {
     }
   }
   draft.busy = false;
+  draft.dirty = false;
   flash(t("scenes.deleted", { name: draft.name }));
   await loadScenes();
-  navigate("#/scenes");
+  leave("#/scenes");
 }
 
 // ---- adding an action ----------------------------------------------------------------------
 
 function newAdding() {
-  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, fan: null, blind: "close", position: 50, relay: "close" };
+  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, fan: null, blind: "close", position: 50 };
 }
 
 // Devices of `type` in `room` (null: the whole home).
@@ -553,18 +617,48 @@ function unique(values) {
   return [...new Set(values)];
 }
 
-// The step the choices describe, or null while chosen devices are wanted and none is picked.
-function buildStep(adding, devices) {
+// What the AC choices offer for these thermostats: their modes, temperature range and fan speeds.
+function climateChoices(devices) {
+  const offered = unique(devices.flatMap((device) => device.modes || []));
+  return {
+    modes: MODE_ORDER.filter((mode) => mode === "off" || offered.includes(mode)),
+    min: Math.min(...devices.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : 16))),
+    max: Math.max(...devices.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : 32))),
+    fans: unique(devices.flatMap((device) => device.fan_speeds || [])),
+  };
+}
+
+// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights), before
+// the steps are built from them.
+function settle(adding, devices) {
+  if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
+  if (adding.type === "climate" && devices.length) {
+    const { modes, min, max, fans } = climateChoices(devices);
+    if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
+    adding.temperature = Math.min(max, Math.max(min, adding.temperature));
+    if (!fans.includes(adding.fan)) adding.fan = null;
+  }
+}
+
+// The steps the choices describe: one, or several when more than 100 devices are picked; none
+// while chosen devices are wanted and none is picked. All of them picked is "all" (so devices
+// added to the room later are included).
+function buildSteps(adding, devices) {
   const picked = devices.filter((device) => adding.picked.includes(device.id)).map((device) => device.id);
-  if (adding.choose && !picked.length) return null;
+  if (adding.choose && !picked.length) return [];
   let set;
   if (adding.type === "lights") set = adding.light === "off" ? { on: false } : adding.light === "on" ? { on: true } : { brightness: adding.brightness };
   else if (adding.type === "climate") {
     set = adding.mode === "off" ? { mode: "off" } : { mode: adding.mode, target_temperature: adding.temperature };
     if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
   } else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
-  else set = { state: adding.relay === "open" ? "open" : "closed" };
-  return { type: adding.type, room_id: adding.room, device_ids: adding.choose ? picked : null, set };
+  else set = { action: "pulse" };
+  if (!adding.choose || picked.length === devices.length) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
+  const steps = [];
+  for (let start = 0; start < picked.length; start += MAX_DEVICE_IDS) {
+    steps.push({ type: adding.type, room_id: adding.room, device_ids: picked.slice(start, start + MAX_DEVICE_IDS), set });
+  }
+  return steps;
 }
 
 function nowText(type, device) {
@@ -581,7 +675,7 @@ function whichDevices(adding, devices, where) {
     return h(
       "div",
       { class: "which-row" },
-      h("span", {}, h("span", { class: "which-label" }, t("scenes.add.which", { kind })), " ", h("span", { dir: "auto" }, t("scenes.add.allIn", { count: devices.length, where }))),
+      h("span", {}, h("span", { class: "which-label" }, t("scenes.add.which", { kind })), " ", t("scenes.add.allIn", { count: devices.length, where: isolate(where) })),
       h(
         "button",
         {
@@ -625,7 +719,7 @@ function whichDevices(adding, devices, where) {
       { class: "pick-list" },
       devices.map((device) => {
         const id = `pick-${device.id}`;
-        const meta = [adding.room == null ? roomName(device.room) : null, nowText(adding.type, device)].filter(Boolean).join(" · ");
+        const meta = [adding.room == null ? isolate(roomName(device.room)) : null, nowText(adding.type, device)].filter(Boolean).join(" · ");
         return h(
           "li",
           { class: "pick-item" },
@@ -639,7 +733,7 @@ function whichDevices(adding, devices, where) {
               notify();
             },
           }),
-          h("label", { for: id, class: "pick-label" }, name(device.name, "span", "device-name"), meta ? h("span", { class: "device-meta", dir: "auto" }, meta) : null)
+          h("label", { for: id, class: "pick-label" }, name(device.name, "span", "device-name"), meta ? h("span", { class: "device-meta" }, meta) : null)
         );
       })
     ),
@@ -659,29 +753,6 @@ function whichDevices(adding, devices, where) {
       t("scenes.add.useAll", { count: devices.length })
     )
   );
-}
-
-// What the AC choices offer for these thermostats: their modes, temperature range and fan speeds.
-function climateChoices(devices) {
-  const offered = unique(devices.flatMap((device) => device.modes || []));
-  return {
-    modes: MODE_ORDER.filter((mode) => mode === "off" || offered.includes(mode)),
-    min: Math.min(...devices.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : 16))),
-    max: Math.max(...devices.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : 32))),
-    fans: unique(devices.flatMap((device) => device.fan_speeds || [])),
-  };
-}
-
-// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights), before
-// the step is built from them.
-function settle(adding, devices) {
-  if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
-  if (adding.type === "climate" && devices.length) {
-    const { modes, min, max, fans } = climateChoices(devices);
-    if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
-    adding.temperature = Math.min(max, Math.max(min, adding.temperature));
-    if (!fans.includes(adding.fan)) adding.fan = null;
-  }
 }
 
 function doControls(adding, devices) {
@@ -768,12 +839,8 @@ function doControls(adding, devices) {
         : null,
     ];
   }
-  return [
-    segments([["open", t("scenes.do.open")], ["close", t("scenes.do.close")]], adding.relay, "add-relay", (value) => {
-      adding.relay = value;
-    }),
-    h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote")),
-  ];
+  // Doors and gates: only what their Open button does.
+  return [h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote"))];
 }
 
 function addActionView(draft) {
@@ -788,7 +855,10 @@ function addActionView(draft) {
   const devices = adding.type ? scopeDevices(adding.type, adding.room) : [];
   const targets = adding.choose ? devices.filter((device) => adding.picked.includes(device.id)) : devices;
   settle(adding, targets.length ? targets : devices);
-  const step = adding.type ? buildStep(adding, devices) : null;
+  const steps = adding.type ? buildSteps(adding, devices) : [];
+  const fits = draft.steps.length + steps.length <= MAX_STEPS;
+  const shown = steps.length > 1 ? { ...steps[0], device_ids: steps.flatMap((step) => step.device_ids) } : steps[0];
+  const back = () => leave(`#/scene/${draft.key}`);
   const pickRoom = (id) => () => {
     adding.room = id;
     adding.choose = false;
@@ -796,7 +866,7 @@ function addActionView(draft) {
     notify();
   };
   return [
-    pageHeader({ title: t("scenes.add.title") }),
+    pageHeader({ title: t("scenes.add.title"), back: `#/scene/${draft.key}` }),
     h(
       "div",
       { class: "scene-editor" },
@@ -845,40 +915,32 @@ function addActionView(draft) {
         { class: "card scene-section add-foot" },
         h(
           "p",
-          { class: "add-summary", role: "status", dir: "auto" },
-          step ? t("scenes.add.adds", { summary: `${stepWhat(step)} (${stepWhere(step)}): ${stepAction(step)}` }) : t("scenes.add.pickOne")
+          { class: "add-summary", role: "status" },
+          shown
+            ? fits
+              ? t("scenes.add.adds", { summary: `${isolate(stepWhat(shown))} (${isolate(stepWhere(shown))}): ${stepAction(shown)}` })
+              : t("scenes.add.tooMany")
+            : t("scenes.add.pickOne")
         ),
         h(
           "div",
           { class: "scene-actions" },
-          h(
-            "button",
-            {
-              type: "button",
-              class: "button button-secondary",
-              dataset: { key: "add-cancel" },
-              onclick: () => {
-                draft.adding = null;
-                notify();
-              },
-            },
-            t("common.cancel")
-          ),
+          h("button", { type: "button", class: "button button-secondary", dataset: { key: "add-cancel" }, onclick: back }, t("common.cancel")),
           h(
             "button",
             {
               type: "button",
               class: "button button-primary",
-              disabled: !step,
+              disabled: !steps.length || !fits,
               dataset: { key: "add-confirm" },
               onclick: () => {
                 // Built again from the choices as they are at the tap.
                 settle(adding, targets.length ? targets : devices);
-                const chosen = buildStep(adding, devices);
-                if (!chosen) return;
-                draft.steps = [...draft.steps, chosen];
+                const chosen = buildSteps(adding, devices);
+                if (!chosen.length || draft.steps.length + chosen.length > MAX_STEPS) return;
                 draft.adding = null;
-                notify();
+                changeSteps(draft, [...draft.steps, ...chosen]);
+                back();
               },
             },
             icon("plus"),

@@ -242,7 +242,8 @@ function OnDriverLateInit(driverInitType)
     Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
     RoomNames.load()
     RoomLayout.load()
-    Log.info("scenes", "scenes loaded", { count = (Scenes.load()) })
+    local sceneCount, scenesStoredAs = Scenes.load()
+    Log.info("scenes", "scenes loaded", { count = sceneCount, stored_as = scenesStoredAs })
     Profiles.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then

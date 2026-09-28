@@ -31,7 +31,9 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
     (`low`, `medium`, `high`, `auto`). With `mode: off`, nothing else. The temperature is kept
     within each thermostat's range; a fan speed a unit does not have is left out.
   - blinds: `{"position": 0-100}` (0 closed, 100 open).
-  - relays: `{"state": "open"|"closed"}`.
+  - relays: `{"action": "pulse"}` — what the door's or gate's Open button does. A scene never
+    holds a relay closed: on door strikes and gate inputs that would leave the door unlocked or
+    the gate's button pressed.
 - At most 50 scenes. `version` goes up with every change; sent back with a change
   (`PATCH /v1/scenes/{id}`), it makes the change conditional (409 `VERSION_CONFLICT`).
 
@@ -40,14 +42,20 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 `POST /v1/scenes/{id}/run` sends the commands of each step, in order, through the same adapters as
 the device routes, and answers `202` with what happened to each device:
 
-- `ran`: commands handed to the controller;
+- `ran`: commands handed to the controller (a device that ran with a setting it does not have left
+  out, such as a fan speed, is also listed in `problems` as `partial`);
 - `skipped`: left alone, with the reason in `problems` — doors and gates for a key without door
   access (`FORBIDDEN`) or with Door Control off in Composer (`DOOR_CONTROL_DISABLED`), a mode a
   unit does not have (`MODE_NOT_SUPPORTED`), a device no longer in the project (`NOT_FOUND`);
 - `failed`: refused by the controller.
 
 The rest of the scene still runs when a device is skipped or fails. Doors and gates opened by a
-scene are logged like any other relay command, with the key that ran it.
+scene are logged like any other relay command, with the key that ran it. In the app, a scene that
+opens doors or gates asks for a second tap, like their Open button.
+
+Stored scenes are checked again when the driver starts: steps that are not valid are left out
+(and logged). If the stored scenes cannot be read at start, changes are refused (503) until a
+restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
 
@@ -63,3 +71,4 @@ scene are logged like any other relay command, with the key that ran it.
   state of every light, AC and blind (doors and gates are never copied); **Show on Home**; **Try it
   now**; **Save scene**.
 - **Home** shows the scenes marked Show on Home, with one-tap Run, above the favorites.
+- Saving leaves out devices and rooms that are no longer in the project, and says so.

@@ -15,6 +15,7 @@ export const state = {
   // The home's scenes (scenes.js): null until read; scenesUnsupported with drivers before 0.13.0.
   scenes: null,
   scenesUnsupported: false,
+  scenesError: null, // the first read failed: why (shown with Retry)
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,
@@ -51,7 +52,7 @@ export const ui = {
   roomDrafts: {}, // settings: room names being edited, "roomId:lang" -> text
   roomMessages: {}, // settings: per-room save result
   roomOrderMessage: null, // settings: the room order could not be saved
-  sceneRuns: {}, // scene id -> { stage: "running" | "done" | "partial" | "error", text } after Run
+  sceneRuns: {}, // scene id -> { stage: "confirm" | "running" | "done" | "partial" | "error", text } after Run
   sceneEditor: null, // the scene being edited (views/scenes.js)
   sceneIdea: null, // an idea to start a new scene from
   scenesMessage: null, // scenes list: saved or deleted

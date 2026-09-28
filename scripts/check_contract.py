@@ -229,7 +229,7 @@ def scenario(client, bridge):
             {"type": "climate", "room_id": 11, "set": {"mode": "cool", "target_temperature": 24}},
             {"type": "blinds", "room_id": None, "set": {"position": 0}},
             {"type": "lights", "room_id": 10, "device_ids": [20], "set": {"brightness": 30}},
-            {"type": "relays", "device_ids": [70], "set": {"state": "closed"}},
+            {"type": "relays", "device_ids": [70], "set": {"action": "pulse"}},
         ],
     }
     scene = client.check("POST", "/v1/scenes", 201, body=night)

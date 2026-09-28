@@ -669,6 +669,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/scenes/try:
     post:
@@ -749,6 +751,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     delete:
       tags: [Scenes]
       operationId: deleteScene
@@ -765,6 +769,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/scenes/{sceneId}/run:
     parameters:
@@ -776,8 +782,9 @@ paths:
       summary: Run a scene
       description: |
         Sends every step's commands, in order, and says what happened to each device. Doors and
-        gates run only for keys with the `doors` role and while Door Control is on; otherwise they
-        are skipped (`FORBIDDEN`, `DOOR_CONTROL_DISABLED`) and the rest of the scene still runs.
+        gates are pulsed only for keys with the `doors` role and while Door Control is on;
+        otherwise they are skipped (`FORBIDDEN`, `DOOR_CONTROL_DISABLED`) and the rest of the scene
+        still runs.
       responses:
         "202":
           description: The commands were handed to the controller.
@@ -1975,9 +1982,10 @@ components:
           description: |
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
-            each thermostat's range) and `fan_speed` (low, medium, high, auto; left out where there
-            is no fan control), and with `mode: off` nothing else; blinds `{"position": 0-100}`;
-            relays `{"state": "open"|"closed"}`.
+            each thermostat's range) and `fan_speed` (low, medium, high, auto; left out where a
+            unit does not have it), and with `mode: off` nothing else; blinds `{"position": 0-100}`;
+            relays `{"action": "pulse"}`, what their Open button does (a door or gate relay is
+            never held closed by a scene).
           type: object
           additionalProperties: false
           properties:
@@ -2001,9 +2009,9 @@ components:
               type: integer
               minimum: 0
               maximum: 100
-            state:
+            action:
               type: string
-              enum: [open, closed]
+              enum: [pulse]
 
     SceneIcon:
       type: string
@@ -2117,7 +2125,7 @@ components:
         problems:
           type: array
           maxItems: 50
-          description: What was skipped or failed, at most 50.
+          description: What was skipped or failed, and devices that ran with a setting left out (`partial`, counted in `ran`), at most 50.
           items:
             type: object
             required: [step, device_id, outcome, code, detail]
@@ -2130,7 +2138,7 @@ components:
                 type: integer
               outcome:
                 type: string
-                enum: [skipped, failed]
+                enum: [skipped, failed, partial]
               code:
                 type: string
               detail:

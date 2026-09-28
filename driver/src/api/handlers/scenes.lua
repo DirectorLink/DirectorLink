@@ -1,7 +1,7 @@
 -- Scenes (docs/SCENES.md, src/core/scenes.lua): the home's one-tap actions. Everyone sees them,
 -- members and above run them, admins make and change them, and try steps before saving
 -- (POST /v1/scenes/try). A run sends the same commands as the device routes do; doors and gates
--- run only for keys with the doors role, and only while Door Control is on.
+-- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -14,9 +14,6 @@ local Handlers = {}
 
 local KINDS = { lights = "light", climate = "climate", blinds = "blind", relays = "relay" }
 local LISTS = { lights = "lightList", climate = "climateList", blinds = "blindList", relays = "relayList" }
-local MODES = { off = true, heat = true, cool = true, auto = true }
-local FAN_SPEEDS = { low = true, medium = true, high = true, auto = true }
-local RELAY_STATES = { open = "open", closed = "close" }
 local MAX_PROBLEMS = 50
 
 local function nullable(value)
@@ -82,7 +79,7 @@ local function validateSet(stepType, set, field)
         lights = { on = true, brightness = true },
         climate = { mode = true, target_temperature = true, fan_speed = true },
         blinds = { position = true },
-        relays = { state = true },
+        relays = { action = true },
     })[stepType]
     for key in pairs(set) do
         if not allowed[key] then
@@ -106,20 +103,20 @@ local function validateSet(stepType, set, field)
     elseif stepType == "climate" then
         local result = {}
         if set.mode ~= nil then
-            if not MODES[set.mode] then
+            if not Scenes.MODES[set.mode] then
                 return nil, Problem.invalidField(field .. ".mode", "mode must be one of off, heat, cool, auto")
             end
             result.mode = set.mode
         end
         if set.fan_speed ~= nil then
-            if not FAN_SPEEDS[set.fan_speed] then
+            if not Scenes.FAN_SPEEDS[set.fan_speed] then
                 return nil, Problem.invalidField(field .. ".fan_speed", "fan_speed must be one of low, medium, high, auto")
             end
             result.fan_speed = set.fan_speed
         end
         if set.target_temperature ~= nil then
             local target = set.target_temperature
-            if type(target) ~= "number" or target < 5 or target > 40 then
+            if type(target) ~= "number" or target < Scenes.MIN_TEMPERATURE or target > Scenes.MAX_TEMPERATURE then
                 return nil, Problem.invalidField(field .. ".target_temperature", "target_temperature must be a number from 5 to 40")
             end
             result.target_temperature = target
@@ -137,10 +134,12 @@ local function validateSet(stepType, set, field)
         end
         return { position = set.position }
     end
-    if not RELAY_STATES[set.state] then
-        return nil, Problem.invalidField(field .. ".state", 'state must be "open" or "closed"')
+    -- A door or gate relay is only pulsed, like its Open button: holding it closed would keep the
+    -- door unlocked or the gate's input pressed.
+    if set.action ~= "pulse" then
+        return nil, Problem.invalidField(field .. ".action", 'doors and gates take {"action": "pulse"}, like their Open button')
     end
-    return { state = set.state }
+    return { action = "pulse" }
 end
 
 local function validateStep(registry, item, field)
@@ -184,6 +183,11 @@ local function validateStep(registry, item, field)
     local set, problem = validateSet(stepType, item.set, field .. ".set")
     if not set then
         return nil, problem
+    end
+    -- The same rules the store applies when it loads.
+    set = Scenes.cleanSet(stepType, set)
+    if not set then
+        return nil, Problem.invalidField(field .. ".set", "This step is not valid")
     end
     return { type = stepType, room_id = roomId, device_ids = deviceIds, set = set }
 end
@@ -238,9 +242,18 @@ local function validateFields(ctx, body, creating)
     return fields
 end
 
+-- A change the store could not make: not read at start (it would overwrite the saved scenes) or
+-- not saved.
+local function storeProblem(failure, what)
+    if failure == "STORE_UNREADABLE" then
+        return Problem.new(503, "UNAVAILABLE", "The saved scenes could not be read when DirectorLink started; restart the driver and try again")
+    end
+    return Problem.internal("The scene could not be " .. what)
+end
+
 local function findScene(ctx)
     local id = tostring(ctx.params.sceneId or "")
-    if not id:match("^%x%x%x%x%x%x%x%x$") then
+    if #id ~= 8 or not id:match("^[%da-f]+$") then
         return nil, Problem.invalidParameter("sceneId", "sceneId is 8 hex characters")
     end
     local scene = Scenes.find(id)
@@ -273,50 +286,61 @@ local function stepDevices(registry, step)
     return devices
 end
 
--- The adapter commands for one device, or nil and why it is skipped.
+-- The adapter commands for one device, or nil and why it is skipped; then what is left out, if
+-- anything (a fan speed the unit does not have).
 local function deviceCommands(step, device)
     local set = step.set
     if step.type == "lights" then
         if set.on == false or set.brightness == 0 then
             return { { action = "off" } }
         end
-        if set.brightness and device.capabilities and device.capabilities.brightness then
+        if type(set.brightness) == "number" and device.capabilities and device.capabilities.brightness then
             return { { action = "set_brightness", params = { value = set.brightness } } }
         end
-        return { { action = "on" } }
+        if set.on == true or type(set.brightness) == "number" then
+            return { { action = "on" } }
+        end
+        return nil, "INVALID_STEP", "This step does not say what to do"
     elseif step.type == "climate" then
         local options = Views.thermostatOptions(device)
-        local commands = {}
+        local commands, leftOut = {}, nil
         if set.mode then
             if not contains(options.modes, set.mode) then
                 return nil, "MODE_NOT_SUPPORTED", "This thermostat does not support mode " .. set.mode
             end
             commands[#commands + 1] = { action = "set_hvac_mode", params = { value = set.mode } }
         end
-        if set.fan_speed and contains(options.fan_speeds, set.fan_speed) then
-            commands[#commands + 1] = { action = "set_fan_mode", params = { value = set.fan_speed } }
+        if set.fan_speed then
+            if contains(options.fan_speeds, set.fan_speed) then
+                commands[#commands + 1] = { action = "set_fan_mode", params = { value = set.fan_speed } }
+            else
+                leftOut = "This thermostat has no fan speed " .. set.fan_speed
+            end
         end
         if set.target_temperature then
             local target = math.max(options.min, math.min(options.max, set.target_temperature))
             commands[#commands + 1] = { action = "set_temperature", params = { value = target } }
         end
         if #commands == 0 then
-            return nil, "NOT_SUPPORTED", "This thermostat has no fan control"
+            return nil, "NOT_SUPPORTED", leftOut or "Nothing in this step applies to this thermostat"
         end
-        return commands
+        return commands, leftOut
     elseif step.type == "blinds" then
         return { { action = "set_position", params = { position = set.position } } }
     end
-    return { { action = RELAY_STATES[set.state] } }
+    return { { action = "pulse" } }
 end
 
 -- Runs `steps` in order and reports what happened to each device: sent (ran), not for this key or
--- not possible (skipped), or refused by the controller (failed).
+-- not possible (skipped), or refused by the controller (failed). A device that ran with a setting
+-- left out is listed in `problems` as "partial" (it counts as ran).
 local function run(ctx, steps)
     local services = ctx.services
     local result = { ran = 0, skipped = 0, failed = 0, problems = Json.array() }
     local function note(outcome, index, deviceId, code, detail)
-        result[outcome] = result[outcome] + 1
+        if outcome ~= "partial" then
+            result[outcome] = result[outcome] + 1
+        end
         if #result.problems < MAX_PROBLEMS then
             result.problems[#result.problems + 1] = { step = index, device_id = deviceId, outcome = outcome, code = code, detail = detail }
         end
@@ -337,6 +361,7 @@ local function run(ctx, steps)
                 note("skipped", index, device.id, refusal, why)
             else
                 local commands, code, detail = deviceCommands(step, device)
+                local leftOut = commands and code or nil
                 if not commands then
                     note("skipped", index, device.id, code, detail)
                 else
@@ -352,8 +377,11 @@ local function run(ctx, steps)
                         note("failed", index, device.id, failure.code, failure.detail)
                     else
                         result.ran = result.ran + 1
+                        if leftOut then
+                            note("partial", index, device.id, "NOT_SUPPORTED", leftOut)
+                        end
                         if step.type == "relays" then
-                            services.log.info("relay_command", "relay " .. commands[1].action .. " requested by a scene", {
+                            services.log.info("relay_command", "relay pulse requested by a scene", {
                                 device_id = device.id,
                                 key_id = ctx.apiKey.id,
                                 client = ctx.client and ctx.client.ip or Json.null,
@@ -399,7 +427,7 @@ function Handlers.create(ctx)
         if failure == "SCENE_LIMIT_REACHED" then
             return Problem.new(409, failure, "This home has " .. Scenes.MAX_SCENES .. " scenes, as many as it allows")
         end
-        return Problem.internal("The scene could not be saved")
+        return storeProblem(failure, "saved")
     end
     ctx.services.log.info("scenes", "scene created", { scene = scene.id, steps = #scene.steps, by = ctx.apiKey.id })
     return 201, view(scene)
@@ -425,12 +453,17 @@ function Handlers.update(ctx)
     if not fields then
         return problem
     end
+    if next(fields) == nil then
+        return Problem.invalidRequest("Send at least one of name, icon, show_on_home or steps")
+    end
     local updated, failure = Scenes.update(scene.id, fields, body.version)
     if not updated then
         if failure == "VERSION_CONFLICT" then
             return Problem.new(409, failure, "The scene was changed on another device; read it again", { version = scene.version })
+        elseif failure == "NOT_FOUND" then
+            return Problem.notFound("Scene", scene.id)
         end
-        return Problem.notFound("Scene", scene.id)
+        return storeProblem(failure, "saved")
     end
     ctx.services.log.info("scenes", "scene changed", { scene = scene.id, by = ctx.apiKey.id })
     return 200, view(updated)
@@ -441,7 +474,13 @@ function Handlers.delete(ctx)
     if not scene then
         return problem
     end
-    Scenes.delete(scene.id)
+    local deleted, failure = Scenes.delete(scene.id)
+    if not deleted then
+        if failure == "NOT_FOUND" then
+            return Problem.notFound("Scene", scene.id)
+        end
+        return storeProblem(failure, "deleted")
+    end
     ctx.services.log.info("scenes", "scene deleted", { scene = scene.id, by = ctx.apiKey.id })
     return 204
 end

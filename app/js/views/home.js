@@ -117,7 +117,7 @@ function scenesRow() {
 
 function sceneButton(scene) {
   const run = ui.sceneRuns[scene.id];
-  const ran = run && run.stage !== "running" && run.stage !== "error";
+  const ran = run && (run.stage === "done" || run.stage === "partial");
   return h(
     "button",
     {
@@ -128,12 +128,12 @@ function sceneButton(scene) {
       dataset: { key: `home-scene:${scene.id}` },
       onclick: () => runScene(scene),
     },
-    h("span", { class: "scene-chip-icon", "aria-hidden": "true" }, icon(ran ? "check" : scene.icon || "bulb")),
+    h("span", { class: "scene-chip-icon", "aria-hidden": "true" }, icon(ran ? "check" : run?.stage === "confirm" ? "door" : scene.icon || "bulb")),
     h(
       "span",
       { class: "scene-chip-text" },
       name(scene.name, "span", "scene-chip-name"),
-      run ? h("span", { class: "scene-chip-state", role: "status" }, run.stage === "running" ? t("scenes.running") : run.text) : null
+      run ? h("span", { class: "scene-chip-state", role: "status" }, run.stage === "running" ? t("scenes.running") : run.stage === "confirm" ? t("scenes.tapAgain") : run.text) : null
     )
   );
 }

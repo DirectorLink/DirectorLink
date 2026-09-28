@@ -3,6 +3,7 @@
 
 local Mock = require("c4mock")
 local T = require("helpers")
+local Json = require("src.core.json")
 
 local tests = {}
 
@@ -43,7 +44,7 @@ local GOOD_NIGHT = {
         { type = "climate", room_id = 11, set = { mode = "cool", target_temperature = 24, fan_speed = "low" } },
         { type = "blinds", room_id = 10, set = { position = 0 } },
         { type = "lights", room_id = 11, device_ids = { 22 }, set = { brightness = 10 } },
-        { type = "relays", device_ids = { 70 }, set = { state = "closed" } },
+        { type = "relays", device_ids = { 70 }, set = { action = "pulse" } },
     },
 }
 
@@ -93,7 +94,7 @@ end
 
 function tests.doors_run_only_with_door_access_and_door_control()
     local mock, admin = start()
-    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { state = "open" } } } } }).json
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } } } } }).json
     local run = function()
         return T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = admin }).json
     end
@@ -105,7 +106,9 @@ function tests.doors_run_only_with_door_access_and_door_control()
     local before = #mock.commands
     local on = run()
     T.eq(on.ran, 1, on)
-    T.eq(mock.commands[before + 1].device, 70)
+    T.same(mock.commands[before + 1], { device = 70, command = "Close Relay", params = { Relay = "1" } }, "a pulse, like the Open button")
+    Mock.fireTimers(mock)
+    T.same(mock.commands[before + 2], { device = 70, command = "Open Relay", params = { Relay = "1" } }, "and released: never held closed")
     local doors = createKey(mock, admin, "doors")
     T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = doors }).json.ran, 1)
 end
@@ -152,7 +155,8 @@ function tests.scene_input_is_checked()
     step({ type = "climate", set = { mode = "dry" } })
     step({ type = "climate", set = { target_temperature = 60 } })
     step({ type = "blinds", set = { position = "open" } })
-    step({ type = "relays", set = { state = "pulse" } })
+    step({ type = "relays", set = { state = "closed" } })
+    step({ type = "relays", set = { action = "close" } })
     step({ type = "lights", set = { on = true }, delay = 5 })
     local many = {}
     for index = 1, 41 do
@@ -224,6 +228,88 @@ function tests.a_device_gone_from_the_project_is_skipped()
     T.eq(ran.problems[1].device_id, 22)
     T.eq(ran.problems[1].code, "NOT_FOUND")
     T.same(devicesOf(commandsSince(updated, before)), { 20 })
+end
+
+function tests.a_change_that_cannot_be_saved_changes_nothing()
+    local mock, admin = start()
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = GOOD_NIGHT }).json
+    local write = C4.PersistSetValue
+    C4.PersistSetValue = function()
+        error("disk full")
+    end
+    local renamed = T.http(mock, "PATCH", "/v1/scenes/" .. scene.id, { key = admin, body = { name = "Renamed" } })
+    local deleted = T.http(mock, "DELETE", "/v1/scenes/" .. scene.id, { key = admin })
+    C4.PersistSetValue = write
+    T.eq(renamed.status, 500, renamed.body)
+    T.eq(deleted.status, 500, deleted.body)
+    local now = T.http(mock, "GET", "/v1/scenes/" .. scene.id, { key = admin }).json
+    T.eq(now.name, "Good night", "the change was undone")
+    T.eq(now.version, 1)
+    T.eq(T.http(Mock.updateDriver(mock), "GET", "/v1/scenes/" .. scene.id, { key = admin }).json.name, "Good night")
+end
+
+function tests.stored_steps_are_checked_again_when_loaded()
+    local mock, admin = start()
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Mixed", steps = { { type = "lights", device_ids = { 20 }, set = { on = false } } } } }).json
+    local raw = mock.persist.directorlink_scenes
+    local data = Json.decode(raw:sub(#"json:" + 1))
+    local steps = data.scenes[1].steps
+    steps[#steps + 1] = { type = "climate", set = { mode = true } }
+    steps[#steps + 1] = { type = "climate", set = { target_temperature = "hot" } }
+    steps[#steps + 1] = { type = "lights", set = { on = "false" } }
+    steps[#steps + 1] = { type = "lights", set = {} }
+    steps[#steps + 1] = { type = "relays", device_ids = { 70 }, set = { state = "closed" } }
+    steps[#steps + 1] = { type = "lights", device_ids = Json.null, set = { on = false } }
+    steps[#steps + 1] = { type = "blinds", device_ids = {}, set = { position = 0 } }
+    mock.persist.directorlink_scenes = "json:" .. Json.encode(data)
+    local updated = Mock.updateDriver(mock)
+    local loaded = T.http(updated, "GET", "/v1/scenes/" .. scene.id, { key = admin }).json
+    T.eq(#loaded.steps, 2, "only the valid steps are kept")
+    T.same(loaded.steps[1].device_ids, { 20 })
+    T.truthy(loaded.steps[2].device_ids == Json.null, "a stored null is the whole home, not an empty list")
+    local ran = T.http(updated, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = admin })
+    T.eq(ran.status, 202, ran.body)
+    for _, command in ipairs(updated.commands) do
+        T.truthy(command.device ~= 70, "no relay held closed")
+    end
+end
+
+function tests.scenes_that_could_not_be_read_are_not_overwritten()
+    local mock, admin = start()
+    T.http(mock, "POST", "/v1/scenes", { key = admin, body = GOOD_NIGHT })
+    T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Morning" } })
+    local stuck = Mock.startDriver(nil, nil, "DIT_UPDATING", function(next)
+        next.uuidCount = mock.uuidCount
+        for name, value in pairs(mock.persist) do
+            next.persist[name] = value
+            next.persistEncrypted[name] = mock.persistEncrypted[name]
+        end
+        local read = C4.PersistGetValue
+        C4.PersistGetValue = function(self, name, encrypted)
+            if name == "directorlink_scenes" then
+                error("database busy")
+            end
+            return read(self, name, encrypted)
+        end
+    end)
+    T.eq(#T.http(stuck, "GET", "/v1/scenes", { key = admin }).json.items, 0)
+    local refused = T.http(stuck, "POST", "/v1/scenes", { key = admin, body = { name = "New" } })
+    T.eq(refused.status, 503, refused.body)
+    T.eq(refused.json.code, "UNAVAILABLE")
+    stuck.persist.directorlink_scenes = mock.persist.directorlink_scenes
+    local later = Mock.updateDriver(stuck)
+    T.eq(#T.http(later, "GET", "/v1/scenes", { key = admin }).json.items, 2, "both scenes are still there")
+end
+
+function tests.a_fan_speed_a_unit_does_not_have_is_reported()
+    local mock, admin = start()
+    local tried = T.http(mock, "POST", "/v1/scenes/try", { key = admin, body = { steps = { { type = "climate", set = { mode = "cool", fan_speed = "auto" } } } } }).json
+    T.eq(tried.ran, 1)
+    T.eq(tried.problems[1].outcome, "partial")
+    T.contains(tried.problems[1].detail, "auto")
+    local onlyFan = T.http(mock, "POST", "/v1/scenes/try", { key = admin, body = { steps = { { type = "climate", set = { fan_speed = "auto" } } } } }).json
+    T.eq(onlyFan.skipped, 1)
+    T.eq(onlyFan.problems[1].code, "NOT_SUPPORTED")
 end
 
 return tests

@@ -2567,7 +2567,8 @@ a.scene-name:hover {
   flex: none;
   max-width: 260px;
   min-height: 56px;
-  padding: 6px 16px 6px 8px;
+  padding-block: 6px;
+  padding-inline: 8px 16px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--card);
@@ -2585,6 +2586,10 @@ a.scene-name:hover {
   border-radius: 50%;
   background: var(--coolBg);
   color: var(--coolText);
+}
+
+.scene-chip.is-confirm {
+  border-color: var(--primary);
 }
 
 .scene-chip.is-done .scene-chip-icon,

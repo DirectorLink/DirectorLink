@@ -10,7 +10,7 @@
 2. **Add an action** → Living room → Lights → **Choose** → only one lamp → Dim to 15% → **Add to scene**. Add the bedroom AC: Cool, 24°.
 3. Turn on **Show on Home**, **Try it now** (the house changes, nothing is saved), then **Save scene**.
 4. On Home, tap the scene: it says *Done*, and the lights, AC and blinds follow. On a phone with a member key, the same; with a view-only key the scene is listed but has no Run.
-5. Add the gate (Doors & gates → Close) and run it from a member key: *doors and gates were skipped*; from an admin key with Door Control on, the gate closes.
+5. Add the gate (Doors & gates: *Open (short press)*) and run it from a member key: *doors and gates were skipped*. From an admin key with Door Control on, Run asks for a second tap, then the gate opens exactly like its Open button (the relay closes and releases).
 6. Set the house by hand, open the scene → **Copy the house as it is now** → Save: running it later puts the house back like that.
 7. Update the driver again in Composer: the scenes are still there.
 
