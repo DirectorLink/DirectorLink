@@ -66,6 +66,8 @@ A successful install shows:
 - **Pairing Code:** 8 digits shown as `1234 5678`, with **Pairing Status** `Ready until HH:MM - works once`
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app
+- **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
+- **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
 - **Log Level** and **Inventory** (rooms and devices found)
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.

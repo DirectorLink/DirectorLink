@@ -366,6 +366,8 @@ export default {
     runs: "מפעיל את {scene}",
     switchLabel: "{when}: פעיל",
     off: "כבוי",
+    paused: "התזמונים הושהו על ידי המתקין ב-Composer: אף תזמון לא יפעל עד שהמאפיין Schedules של DirectorLink יוחזר ל-On.",
+    pausedShort: "מושהה ב-Composer",
     next: "הבא: {when}",
     ran: "הופעל {when}",
     ranError: "לא ניתן היה להפעיל {when}",

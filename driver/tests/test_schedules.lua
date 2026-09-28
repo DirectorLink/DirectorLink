@@ -371,4 +371,70 @@ function tests.enabled_null_and_unknown_trigger_fields_are_refused()
     T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. created.id, { key = admin, body = { enabled = Json.null } }).json.code, "INVALID_FIELD")
 end
 
+function tests.composer_shows_the_schedules_and_the_last_run()
+    local runAt = at(1, 6, 45)
+    local mock, admin, clock, Scheduler = start(runAt - 3600)
+    local sceneId = scene(mock, admin)
+    T.eq(mock.properties["Schedule Status"], "None")
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "06:45" }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    T.contains(mock.properties["Schedule Status"], "1 on · next today 06:45 Evening")
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    T.contains(mock.properties["Schedule Status"], "2 on")
+    T.contains(mock.properties["Schedule Status"], "1 weather rule")
+
+    clock.set(runAt + 5)
+    T.eq(Scheduler.tick(), 1)
+    T.contains(mock.properties["Last Automation"], "Evening · schedule every day 06:45 · 1 device")
+    mock.weather = weather(31.5)
+    clock.set(runAt + 20 * 60)
+    T.eq(Scheduler.tick(), 1)
+    T.contains(mock.properties["Last Automation"], "Evening · heat rule, 31.5C outside · 1 device")
+    T.eq(T.http(mock, "POST", "/v1/scenes/" .. sceneId .. "/run", { key = admin }).status, 202)
+    T.contains(mock.properties["Last Automation"], "Evening · run from Chrome on Windows · 1 device")
+    T.contains(Mock.updateDriver(mock).properties["Last Automation"], "run from Chrome on Windows", "kept across an update")
+end
+
+function tests.the_installer_pauses_all_schedules_in_composer()
+    local runAt = at(1, 7, 30)
+    local mock, admin, clock, Scheduler = start(runAt - 3600)
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "07:30" }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    Properties["Schedules"] = "Paused"
+    OnPropertyChanged("Schedules")
+    T.contains(mock.properties["Schedule Status"], "Paused in Composer - 1 schedule is not running")
+    T.eq(T.http(mock, "GET", "/v1/schedules", { key = admin }).json.paused, true)
+    clock.set(runAt + 5)
+    T.eq(Scheduler.tick(), 0, "paused")
+    Properties["Schedules"] = "On"
+    OnPropertyChanged("Schedules")
+    T.eq(T.http(mock, "GET", "/v1/schedules", { key = admin }).json.paused, false)
+    clock.set(runAt + 65)
+    T.eq(Scheduler.tick(), 1, "resumed within its 5 minutes: it runs")
+end
+
+function tests.the_composer_action_prints_every_schedule_and_scene()
+    local mock, admin = start(os.time())
+    local sceneId = scene(mock, admin, {
+        { type = "lights", device_ids = { 20 }, set = { brightness = 40 } },
+        { type = "climate", room_id = 11, set = { mode = "cool", target_temperature = 24 } },
+        { type = "relays", device_ids = { 70 }, set = { action = "pulse" } },
+    })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "sun", event = "sunset", offset = -30 }, days = { 0, 1, 2, 3, 4 }, only_if = { not_raining = true } })
+    local lines = {}
+    local realPrint = print
+    _G.print = function(line)
+        lines[#lines + 1] = line
+    end
+    local ok, err = pcall(ExecuteCommand, "LUA_ACTION", { ACTION = "PRINT_AUTOMATION" })
+    _G.print = realPrint
+    T.truthy(ok, err)
+    local text = table.concat(lines, " | ")
+    T.contains(text, "DirectorLink schedules: 1")
+    T.contains(text, "[on] Sun-Thu 30 min before sunset -> Evening · only if not raining")
+    T.contains(text, "Kitchen Island (20) -> 40%")
+    T.contains(text, "all climate in Living Room (11) -> cool 24C")
+    T.contains(text, "Main Door (70) -> pulse (skipped when a schedule runs it)")
+    T.contains(text, "made in the DirectorLink app")
+end
+
 return tests

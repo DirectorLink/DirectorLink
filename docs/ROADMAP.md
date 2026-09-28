@@ -44,6 +44,7 @@
 - [x] Profiles: each person's language, theme, favorites and hidden rooms on the controller, shared by their devices; the home's room order (0.12.0; `docs/PREFERENCES.md`)
 - [x] DirectorLink scenes: made in the app, run with one tap, shown on Home (0.13.0; `docs/SCENES.md`)
 - [x] Schedules by time, sunrise/sunset and weather (Open-Meteo: heat, rain, wind), run by the controller (0.14.0; `docs/SCHEDULES.md`)
+- [x] Automation visible to the installer in Composer: pause switch, schedule status, last automation, printout (0.15.0)
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
 - [ ] Rediscover the project without restarting the driver
 

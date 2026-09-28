@@ -173,6 +173,7 @@ export function schedulesView() {
     staleBanner(),
     scenesNav("schedules"),
     notice(ui.schedulesMessage),
+    state.schedulesPaused ? h("p", { class: "notice notice-info", role: "status" }, t("schedules.paused")) : null,
     h("p", { class: "muted-note scene-intro" }, admin ? t("schedules.helpAdmin") : t("schedules.help")),
     weatherCard(),
     schedules.length

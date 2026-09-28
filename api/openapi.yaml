@@ -2436,12 +2436,15 @@ components:
 
     ScheduleList:
       type: object
-      required: [items]
+      required: [items, paused]
       properties:
         items:
           type: array
           items:
             $ref: "#/components/schemas/Schedule"
+        paused:
+          type: boolean
+          description: The installer paused all schedules in Composer (DirectorLink's Schedules property); none runs until it is set back to On.
 
     ScheduleCreate:
       type: object

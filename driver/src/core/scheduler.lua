@@ -7,6 +7,8 @@
 --   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
 --   it, or it has been dry for an hour.
 -- A scheduled scene runs like one from a member's key: doors and gates in it are skipped.
+-- The installer can pause them all in Composer (the Schedules property); each run is shown in the
+-- Last Automation property (src/core/installer_view.lua).
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -151,7 +153,7 @@ local function inHours(trigger, minute)
     return minute >= from or minute < to
 end
 
-local function run(schedule, now, note)
+local function run(schedule, now, note, weather)
     local runtime = Schedules.runtime(schedule.id)
     local ok, result, failure = pcall(state.services.runScene, schedule.scene_id, { id = "schedule:" .. schedule.id, role = "member" })
     if not ok then
@@ -164,6 +166,9 @@ local function run(schedule, now, note)
         lastRun.error = failure or "FAILED"
     end
     runtime.last_run = lastRun
+    if state.services.onRun then
+        pcall(state.services.onRun, { at = now, scene_id = schedule.scene_id, schedule = schedule, weather = weather, result = result, error = lastRun.error })
+    end
     Log.info("schedules", "schedule ran", {
         schedule = schedule.id,
         scene = schedule.scene_id,
@@ -228,9 +233,16 @@ local function dueRun(schedule, info, now)
     return nil
 end
 
--- One pass over the schedules for the minute of `now`. Returns how many ran.
+-- One pass over the schedules for the minute of `now`. Returns how many ran. While paused in
+-- Composer nothing runs and nothing is remembered as done.
 function Scheduler.tick(now)
     now = now or Clock.now()
+    if state.services and state.services.onTick then
+        pcall(state.services.onTick, now)
+    end
+    if state.services and state.services.paused and state.services.paused() then
+        return 0
+    end
     local info = Scheduler.localTime(now)
     local records = Schedules.records()
     local needsWeather = false
@@ -266,7 +278,7 @@ function Scheduler.tick(now)
                     runtime.armed = false
                     runtime.dry_since = nil
                     runtime.fired_day = day.date
-                    run(schedule, now, trigger.kind)
+                    run(schedule, now, trigger.kind, weather)
                     ran = ran + 1
                 end
                 changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince

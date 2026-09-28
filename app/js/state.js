@@ -18,6 +18,7 @@ export const state = {
   scenesError: null, // the first read failed: why (shown with Retry)
   // The home's schedules (schedules.js), like scenes; and the weather at home while Schedules is open.
   schedules: null,
+  schedulesPaused: false, // the installer paused them all in Composer
   schedulesUnsupported: false,
   schedulesError: null,
   weather: null,
