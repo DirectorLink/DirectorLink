@@ -1,7 +1,8 @@
 // DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
-// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/auth/pair" —
+// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
+// "/v1/weather", "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { startAccount } from "./js/account.js";
@@ -18,6 +19,7 @@ import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { loadScenes } from "./js/scenes.js";
+import { loadSchedules } from "./js/schedules.js";
 import { state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
@@ -25,6 +27,7 @@ import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
+import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { settingsView } from "./js/views/settings.js";
 
 const view = document.querySelector("#view");
@@ -55,6 +58,12 @@ function parseRoute() {
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     return { name: "scene", id: parts[1], adding: parts[2] === "add", tab: "scenes" };
   }
+  if (parts[0] === "schedule" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
+    return { name: "schedule", id: parts[1], tab: "scenes" };
+  }
+  if (parts[0] === "schedules") {
+    return { name: "schedules", tab: "scenes" };
+  }
   if (["scenes", "cameras", "climate", "settings"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
   }
@@ -79,9 +88,13 @@ window.addEventListener("hashchange", () => {
   window.history.replaceState({ directorlinkInApp: true }, "");
   const previous = route;
   route = parseRoute();
+  ui.cameFrom = previous.name;
   // People and devices loads fresh each time it is opened; a scene opens as it was saved.
   if (route.name === "access" && previous.name !== "access") resetAccess();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
+  if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
+  // The weather is read while Schedules is open.
+  if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -206,6 +219,14 @@ function signature() {
     state.scenesUnsupported,
     ui.sceneRuns,
     ui.scenesMessage,
+    state.schedules,
+    state.schedulesUnsupported,
+    state.weather,
+    ui.schedulesMessage,
+    // Times being typed are left out: the editor does not rebuild a time field while it is used.
+    route.name === "schedule" ? { ...ui.scheduleEditor, at: undefined, from: undefined, to: undefined } : 0,
+    // "Ran today", "next: tomorrow" move on with the day.
+    route.name === "schedules" ? Math.floor(Date.now() / 60000) : 0,
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
@@ -221,6 +242,10 @@ function screen() {
       return roomView(route.id, actions);
     case "scenes":
       return scenesView(actions);
+    case "schedules":
+      return schedulesView(actions);
+    case "schedule":
+      return scheduleEditorView(route.id, actions);
     case "scene":
       return sceneEditorView(route.id, route.adding, actions);
     case "cameras":
@@ -344,6 +369,11 @@ subscribe(() => render());
 whenConnected(() => syncProfile(applyLanguage));
 // The home's scenes, for the Scenes tab and the ones shown on Home.
 whenConnected(loadScenes);
+whenConnected(loadSchedules);
+// Opened on Schedules (a reload): the weather once connected.
+whenConnected(() => {
+  if (route.name === "schedules" || route.name === "schedule") keepWeatherFresh();
+});
 watchSystemTheme(() => render(true));
 window.addEventListener("pointerup", () => window.setTimeout(() => render(), 0));
 

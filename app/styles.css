@@ -2914,6 +2914,111 @@ a.scene-name:hover {
   font-weight: 500;
 }
 
+/* ---- Schedules ----------------------------------------------------------------------------- */
+
+.sub-nav {
+  margin-block-start: 0;
+  max-width: 420px;
+}
+
+.sub-nav .segment {
+  text-decoration: none;
+}
+
+.weather-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.weather-now {
+  font-family: var(--font-head);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.weather-more {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.weather-credit {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.schedule-card.is-off {
+  opacity: 0.65;
+}
+
+.schedule-sun,
+.schedule-climate {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.schedule-rain,
+.schedule-wind {
+  background: var(--okBg);
+  color: var(--okText);
+}
+
+.day-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.day-chip {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.day-chip.is-active {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: var(--primaryText);
+  font-weight: 600;
+}
+
+.time-input {
+  min-height: 48px;
+  max-width: 180px;
+  padding-inline: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-field {
+  align-items: flex-start;
+}
+
+.schedule-hours {
+  align-items: center;
+}
+
+.schedule-hours .time-input {
+  flex: 1;
+}
+
+.schedule-toggle {
+  display: flex;
+  gap: 12px;
+}
+
+.schedule-summary .add-summary {
+  font-size: 15px;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;

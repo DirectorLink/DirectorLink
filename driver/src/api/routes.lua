@@ -39,6 +39,13 @@ return {
     { method = "DELETE", path = "/v1/scenes/{sceneId}", handler = "scenes.delete", role = "admin" },
     { method = "POST", path = "/v1/scenes/{sceneId}/run", handler = "scenes.run", role = "member" },
 
+    { method = "GET", path = "/v1/schedules", handler = "schedules.list", role = "viewer" },
+    { method = "POST", path = "/v1/schedules", handler = "schedules.create", role = "admin" },
+    { method = "GET", path = "/v1/schedules/{scheduleId}", handler = "schedules.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/schedules/{scheduleId}", handler = "schedules.update", role = "admin" },
+    { method = "DELETE", path = "/v1/schedules/{scheduleId}", handler = "schedules.delete", role = "admin" },
+    { method = "GET", path = "/v1/weather", handler = "schedules.weather", role = "viewer" },
+
     { method = "GET", path = "/v1/devices", handler = "devices.list", role = "viewer" },
     { method = "GET", path = "/v1/devices/{deviceId}", handler = "devices.get", role = "viewer" },
 

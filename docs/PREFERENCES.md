@@ -1,7 +1,7 @@
 # Preferences, profiles and the home's settings
 
-**Status: built in DirectorLink 0.12.0.** Scenes (0.13.0, `docs/SCENES.md`) follow the same rules;
-schedules with weather (0.14.0) will too.
+**Status: built in DirectorLink 0.12.0.** Scenes (0.13.0, `docs/SCENES.md`) and schedules (0.14.0,
+`docs/SCHEDULES.md`) follow the same rules.
 
 ## Where each setting lives
 

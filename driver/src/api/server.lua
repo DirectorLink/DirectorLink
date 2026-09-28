@@ -26,6 +26,7 @@ local HANDLERS = {
     invitations = require("src.api.handlers.invitations"),
     profiles = require("src.api.handlers.profiles"),
     scenes = require("src.api.handlers.scenes"),
+    schedules = require("src.api.handlers.schedules"),
 }
 
 local Server = {}

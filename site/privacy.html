@@ -41,8 +41,18 @@
         The app talks to the DirectorLink driver on your controller directly, over your home network.
         Device names, states, commands and camera pictures do not pass through our servers. The app
         keeps its access key and the controller's address in your browser only; your preferences
-        (language, theme, favorites, the rooms you hide) are kept on your controller, shared by your
-        own devices.
+        (language, theme, favorites, the rooms you hide), scenes and schedules are kept on your
+        controller, shared by your own devices.
+      </p>
+
+      <h2>The weather</h2>
+      <p>
+        When a schedule uses the weather, or the app shows it, your controller asks Open-Meteo
+        (api.open-meteo.com, a free weather service) for the weather at the location set in your
+        Control4 project, rounded to about a kilometre, every 15 minutes. That request goes from your
+        controller straight to Open-Meteo, not through our servers; Open-Meteo sees the location and
+        your home's IP address. Without schedules that use the weather, it is asked only while someone
+        has the app's Schedules page open, and for an hour after.
       </p>
 
       <h2>Signing in with Google or Apple</h2>
