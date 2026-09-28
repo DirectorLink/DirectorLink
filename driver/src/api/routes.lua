@@ -31,6 +31,14 @@ return {
     { method = "GET", path = "/v1/rooms/{roomId}", handler = "rooms.get", role = "viewer" },
     { method = "PATCH", path = "/v1/rooms/{roomId}", handler = "rooms.update", role = "admin" },
 
+    { method = "GET", path = "/v1/scenes", handler = "scenes.list", role = "viewer" },
+    { method = "POST", path = "/v1/scenes", handler = "scenes.create", role = "admin" },
+    { method = "POST", path = "/v1/scenes/try", handler = "scenes.try", role = "admin" },
+    { method = "GET", path = "/v1/scenes/{sceneId}", handler = "scenes.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/scenes/{sceneId}", handler = "scenes.update", role = "admin" },
+    { method = "DELETE", path = "/v1/scenes/{sceneId}", handler = "scenes.delete", role = "admin" },
+    { method = "POST", path = "/v1/scenes/{sceneId}/run", handler = "scenes.run", role = "member" },
+
     { method = "GET", path = "/v1/devices", handler = "devices.list", role = "viewer" },
     { method = "GET", path = "/v1/devices/{deviceId}", handler = "devices.get", role = "viewer" },
 

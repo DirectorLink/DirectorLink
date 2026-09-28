@@ -90,6 +90,16 @@ SECURITY_CONTRACT = {
         "state.services.invitations.consume(invitationId)",
         "state.services.keys.remote(keyId)",
     ),
+    # Doors and gates in a scene: only a pulse (never held closed), only for keys with door access,
+    # and only with Door Control on.
+    "src/api/handlers/scenes.lua": (
+        'if not Roles.allows(ctx.apiKey.role, "doors") then',
+        "elseif not services.doorControlEnabled() then",
+        'return { { action = "pulse" } }',
+    ),
+    "src/core/scenes.lua": (
+        'return set.action == "pulse" and { action = "pulse" } or nil',
+    ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
     ),

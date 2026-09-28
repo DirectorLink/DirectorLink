@@ -54,6 +54,8 @@ tags:
     description: Each person's preferences (language, theme, palette, favorites), shared by their devices. Every API key belongs to one profile.
   - name: Rooms
     description: Rooms of the Control4 project.
+  - name: Scenes
+    description: "The home's scenes: one tap sets several lights, thermostats, blinds and gates. Admins make them, members run them."
   - name: Devices
     description: Every device in the project, including ones DirectorLink cannot control yet.
   - name: Lights
@@ -599,6 +601,197 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/scenes:
+    get:
+      tags: [Scenes]
+      operationId: listScenes
+      x-directorlink-role: viewer
+      summary: List scenes
+      responses:
+        "200":
+          description: The home's scenes, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Scenes]
+      operationId: createScene
+      x-directorlink-role: admin
+      summary: Create a scene
+      description: |
+        At most 50 scenes, each with at most 40 steps. Steps run in order; a step names its devices
+        (`device_ids`) or works on every device of its type in a room (`room_id`) or the whole
+        home (neither), worked out each time the scene runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneCreate"
+            example:
+              name: Good night
+              icon: moon
+              show_on_home: true
+              steps:
+                - type: lights
+                  set: { "on": false }
+                - type: climate
+                  room_id: 11
+                  set: { mode: cool, target_temperature: 24, fan_speed: low }
+                - type: lights
+                  room_id: 11
+                  device_ids: [22]
+                  set: { brightness: 10 }
+      responses:
+        "201":
+          description: The new scene.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/scenes/try:
+    post:
+      tags: [Scenes]
+      operationId: trySceneSteps
+      x-directorlink-role: admin
+      summary: Run steps once without saving them
+      description: For "Try it now" in a scene editor. Answers like running a scene.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneTry"
+      responses:
+        "202":
+          description: The commands were handed to the controller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/scenes/{sceneId}:
+    parameters:
+      - $ref: "#/components/parameters/SceneId"
+    get:
+      tags: [Scenes]
+      operationId: getScene
+      x-directorlink-role: viewer
+      summary: Get a scene
+      responses:
+        "200":
+          description: The scene.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Scenes]
+      operationId: updateScene
+      x-directorlink-role: admin
+      summary: Change a scene
+      description: |
+        Changes the fields sent; `steps` replaces all the steps. With `version`, the change applies
+        only if nobody changed the scene since (409 `VERSION_CONFLICT`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneUpdate"
+      responses:
+        "200":
+          description: The scene after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [Scenes]
+      operationId: deleteScene
+      x-directorlink-role: admin
+      summary: Delete a scene
+      responses:
+        "204":
+          description: Deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/scenes/{sceneId}/run:
+    parameters:
+      - $ref: "#/components/parameters/SceneId"
+    post:
+      tags: [Scenes]
+      operationId: runScene
+      x-directorlink-role: member
+      summary: Run a scene
+      description: |
+        Sends every step's commands, in order, and says what happened to each device. Doors and
+        gates are pulsed only for keys with the `doors` role and while Door Control is on;
+        otherwise they are skipped (`FORBIDDEN`, `DOOR_CONTROL_DISABLED`) and the rest of the scene
+        still runs.
+      responses:
+        "202":
+          description: The commands were handed to the controller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneRun"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
@@ -1291,6 +1484,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    SceneId:
+      name: sceneId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{8}$"
     ProfileId:
       name: profileId
       in: path
@@ -1395,7 +1595,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `VERSION_CONFLICT`).
       content:
         application/problem+json:
           schema:
@@ -1755,6 +1955,194 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Room"
+
+    SceneStep:
+      type: object
+      required: [type, set]
+      additionalProperties: false
+      description: |
+        One step: devices of one type, and what to set. `device_ids` names the devices (with
+        `room_id` as the room they were picked in); without it, every device of the type in
+        `room_id`, or in the whole home when `room_id` is null.
+      properties:
+        type:
+          type: string
+          enum: [lights, climate, blinds, relays]
+        room_id:
+          type: [integer, "null"]
+          minimum: 1
+        device_ids:
+          type: [array, "null"]
+          minItems: 1
+          maxItems: 100
+          items:
+            type: integer
+            minimum: 1
+        set:
+          description: |
+            lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
+            climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
+            each thermostat's range) and `fan_speed` (low, medium, high, auto; left out where a
+            unit does not have it), and with `mode: off` nothing else; blinds `{"position": 0-100}`;
+            relays `{"action": "pulse"}`, what their Open button does (a door or gate relay is
+            never held closed by a scene).
+          type: object
+          additionalProperties: false
+          properties:
+            "on":
+              type: boolean
+            brightness:
+              type: integer
+              minimum: 0
+              maximum: 100
+            mode:
+              type: string
+              enum: ["off", heat, cool, auto]
+            target_temperature:
+              type: number
+              minimum: 5
+              maximum: 40
+            fan_speed:
+              type: string
+              enum: [low, medium, high, auto]
+            position:
+              type: integer
+              minimum: 0
+              maximum: 100
+            action:
+              type: string
+              enum: [pulse]
+
+    SceneIcon:
+      type: string
+      enum: [moon, sun, leave, movie, bulb, climate, blinds, home]
+
+    Scene:
+      type: object
+      required: [id, name, icon, show_on_home, steps, created_at, updated_at, version]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+        icon:
+          $ref: "#/components/schemas/SceneIcon"
+        show_on_home:
+          type: boolean
+          description: Shown with a Run button at the top of Home.
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/SceneStep"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          minimum: 1
+
+    SceneList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Scene"
+
+    SceneCreate:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        icon:
+          $ref: "#/components/schemas/SceneIcon"
+        show_on_home:
+          type: boolean
+        steps:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/SceneStep"
+
+    SceneUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        icon:
+          $ref: "#/components/schemas/SceneIcon"
+        show_on_home:
+          type: boolean
+        steps:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/SceneStep"
+        version:
+          type: integer
+          minimum: 1
+
+    SceneTry:
+      type: object
+      required: [steps]
+      additionalProperties: false
+      properties:
+        steps:
+          type: array
+          maxItems: 40
+          items:
+            $ref: "#/components/schemas/SceneStep"
+
+    SceneRun:
+      type: object
+      required: [ran, skipped, failed, problems]
+      properties:
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        ran:
+          type: integer
+          description: Devices whose commands were handed to the controller.
+        skipped:
+          type: integer
+          description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project).
+        failed:
+          type: integer
+          description: Devices whose commands the controller refused.
+        problems:
+          type: array
+          maxItems: 50
+          description: What was skipped or failed, and devices that ran with a setting left out (`partial`, counted in `ran`), at most 50.
+          items:
+            type: object
+            required: [step, device_id, outcome, code, detail]
+            properties:
+              step:
+                type: integer
+                minimum: 1
+                description: The step, counted from 1.
+              device_id:
+                type: integer
+              outcome:
+                type: string
+                enum: [skipped, failed, partial]
+              code:
+                type: string
+              detail:
+                type: string
 
     RoomOrder:
       type: object
