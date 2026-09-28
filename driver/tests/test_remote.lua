@@ -282,7 +282,49 @@ function tests.when_the_self_test_fails_nothing_remote_is_accepted()
     local reply = send(s, { type = "e2e", id = "x", envelope = { v = 1, home = s.home, key = s.keyId, iv = "", ct = "", mac = "" } })
     T.eq(reply.code, "LOCK_UNAVAILABLE")
     T.eq(T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key }).status, 503)
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member" } }).json.code, "LOCK_UNAVAILABLE", "no invitations that could never work")
     T.contains(table.concat(s.mock.debugLog, "\n"), "lock self-test failed")
+end
+
+function tests.a_request_captured_before_a_restart_is_refused_after_it()
+    local s = session()
+    local envelope = seal(s, { method = "GET", path = "/v1/system", ts = os.time() - 1 })
+    T.truthy(send(s, { type = "e2e", id = "before", envelope = envelope }).envelope, "accepted before the restart")
+    local updated = Mock.updateDriver(s.mock)
+    local _, connection = Harness.connected({ mock = updated })
+    local again = Harness.relayRequest(updated, connection, { type = "e2e", id = "after", envelope = envelope })
+    T.eq(again.code, "STALE", "sealed before this start: refused, although its id is no longer remembered")
+end
+
+function tests.revoking_keys_revokes_their_invitations_and_the_claim_token()
+    local s = session()
+    local admin, adminId = createKey(s, "admin")
+    local byAdmin = T.http(s.mock, "POST", "/v1/invitations", { key = admin, body = { role = "member" } }).json
+    local byOwner = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "viewer" } }).json
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. adminId, { key = s.key }).status, 204)
+    local listed = T.http(s.mock, "GET", "/v1/invitations", { key = s.key }).json.items
+    T.eq(#listed, 1, "the revoked admin's invitation went with the key")
+    T.eq(listed[1].id, byOwner.id)
+    local _, refused = join(s, byAdmin, "Late")
+    T.eq(refused.code, "INVITATION_NOT_FOUND")
+
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key }).json
+    ExecuteCommand("LUA_ACTION", { ACTION = "REVOKE_API_KEYS" })
+    local _, afterAll = join(s, byOwner, "After revoke all")
+    T.eq(afterAll.code, "INVITATION_NOT_FOUND", "Revoke All API Keys revokes the invitations too")
+    T.eq(send(s, { type = "claim", id = "late", token = claim.claim_token }).ok, false, "and the claim token")
+end
+
+function tests.a_claim_answer_has_a_code_only_when_it_fails_and_joins_update_the_key_count()
+    local s = session()
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key }).json
+    local right = send(s, { type = "claim", id = "c", token = claim.claim_token })
+    T.eq(right.ok, true)
+    T.eq(right.code, nil)
+    local invitation = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member" } }).json
+    local before = s.mock.properties["API Keys"]
+    join(s, invitation, "Phone")
+    T.eq(tonumber(s.mock.properties["API Keys"]), tonumber(before) + 1, "Composer shows the new key")
 end
 
 return tests

@@ -246,7 +246,6 @@ function OnDriverLateInit(driverInitType)
     Relay.init({
         services = services,
         remote = Remote.handle,
-        handleRequest = Api.handleRequest,
         onStatus = function(text)
             updateProperty("Remote Status", text)
         end,
@@ -266,8 +265,11 @@ function ExecuteCommand(command, params)
         Pairing.open()
     elseif params.ACTION == "REVOKE_API_KEYS" then
         local count = Keys.revokeAll()
+        -- Nobody may join afterwards with an invitation or claim the home with an older token.
+        local invitations = Invitations.revokeAll()
+        Remote.clearClaim()
         publishKeyCount()
-        Log.warn("auth", "all API keys revoked from Composer", { count = count })
+        Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
     end
 end
 

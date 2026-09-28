@@ -23,6 +23,7 @@ local JOIN_PATH = "/v1/auth/join"
 
 local state = {
     available = false,
+    startedAt = 0,
     seen = {},
     claim = nil,
     services = nil,
@@ -64,6 +65,9 @@ function Remote.init(options)
     state.homeId = options.homeId
     state.seen = {}
     state.claim = nil
+    -- Request ids are remembered in memory only: anything sealed before this start is refused, so a
+    -- request captured before a restart cannot be replayed after it.
+    state.startedAt = Clock.now()
     local ok, step = Lock.selfTest()
     state.available = ok
     if ok then
@@ -84,6 +88,10 @@ function Remote.createClaim()
     return { claim_token = state.claim.token, expires_at = Clock.iso(state.claim.expires) }
 end
 
+function Remote.clearClaim()
+    state.claim = nil
+end
+
 local function useClaim(token)
     local claim = state.claim
     if not claim or Clock.now() > claim.expires or not sameText(token, claim.token) then
@@ -96,7 +104,7 @@ end
 -- A request id is accepted once, and only within the lock's window of this controller's clock.
 local function fresh(keyId, requestId, ts)
     local now = Clock.now()
-    if type(ts) ~= "number" or math.abs(now - ts) > Lock.WINDOW_SECONDS then
+    if type(ts) ~= "number" or math.abs(now - ts) > Lock.WINDOW_SECONDS or ts < state.startedAt then
         return false, "STALE"
     end
     if type(requestId) ~= "string" or not requestId:match("^[%w_-]+$") or #requestId > 64 then
@@ -246,6 +254,9 @@ local function handleJoin(message, send)
         return
     end
     state.services.invitations.consume(invitationId)
+    if state.services.onKeysChanged then
+        pcall(state.services.onKeysChanged)
+    end
     log("info", "an invitation was accepted", { invitation = invitationId, key_id = record.id, role = record.role })
     local body = Json.encode({ key = record.secret, id = record.id, name = record.name, role = record.role, created_at = record.created_at })
     local envelope = sealAnswer(invitation.lock, invitationId, request, 201, "application/json; charset=utf-8", body)
@@ -255,7 +266,7 @@ end
 local function handleClaim(message, send)
     local ok = useClaim(message.token)
     log(ok and "info" or "warn", ok and "the home was claimed for an account" or "refused a claim")
-    send({ type = "claim_result", id = message.id, ok = ok, code = ok and nil or "INVALID_CLAIM" })
+    send({ type = "claim_result", id = message.id, ok = ok, code = (not ok) and "INVALID_CLAIM" or nil })
 end
 
 -- True when `message` was one of the account messages (handled, or refused with a code).

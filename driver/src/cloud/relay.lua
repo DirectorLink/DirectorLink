@@ -1,9 +1,9 @@
--- Remote access, proof of concept (docs/RELAY.md): one outgoing WebSocket to the DirectorLink
--- relay, kept open while the Composer property "Remote Access" is On. Requests that arrive over it
--- run through the same API server as LAN requests, always as a read-only (viewer) principal.
+-- Remote access (docs/RELAY.md, docs/ACCOUNTS.md): one outgoing WebSocket to the DirectorLink
+-- relay, kept open while the Composer property "Remote Access" is On. Everything the relay passes
+-- on is sealed end to end and handled by remote.lua; the plain requests of version 0 are refused,
+-- so the relay cannot read the home.
 
 local Json = require("src.core.json")
-local Http = require("src.api.http")
 local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
@@ -18,8 +18,6 @@ Relay.KEEPALIVE_MS = 25000
 Relay.SILENCE_SECONDS = 60
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
--- Version 0: whatever the relay asks, relayed requests may only read.
-Relay.ROLE = "viewer"
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -35,7 +33,6 @@ local state = {
     keepalive = nil,
     retry = nil,
     services = nil,
-    handleRequest = nil,
     onStatus = nil,
     status = "Off",
 }
@@ -134,62 +131,26 @@ local function send(message)
     end
 end
 
-local function isText(contentType)
-    local value = string.lower(tostring(contentType or ""))
-    return value == "" or value:find("json", 1, true) ~= nil or value:find("^text/") ~= nil
-end
-
-local function headerValue(headers, name)
-    for _, header in ipairs(headers or {}) do
-        if string.lower(header[1]) == name then
-            return header[2]
-        end
-    end
-    return nil
-end
-
-local function respond(id, status, headers, body)
-    local contentType = headerValue(headers, "content-type") or ""
-    local message = { type = "response", id = id, status = status, content_type = contentType }
-    if isText(contentType) then
-        message.body = body or ""
-    else
-        message.body_base64 = C4:Base64Encode(body or "")
-    end
-    send(message)
-end
-
--- A relayed request, run as a viewer through the LAN API code.
-local function handleRequest(message)
-    local id = message.id
-    if type(id) ~= "string" or id == "" then
+-- Version 0 relayed plain requests. Since 0.10.0 every remote request is sealed (remote.lua), so a
+-- plain one is answered 410 without reaching the API: the relay cannot read the home.
+local function refuseRequest(message)
+    if type(message.id) ~= "string" or message.id == "" then
         return
     end
-    local method = tostring(message.method or "GET")
-    local target = tostring(message.path or "")
-    local path, query = target:match("^([^?]*)%??(.*)$")
-    if method ~= "GET" or not path or path:sub(1, 4) ~= "/v1/" then
-        respond(id, 405, { { "Content-Type", "application/problem+json" } }, Json.encode({
-            type = "about:blank", title = "Method Not Allowed", status = 405,
-            code = "RELAY_READ_ONLY", detail = "Remote access (test) only reads: GET /v1/...",
-        }))
-        return
-    end
-    local request = {
-        method = "GET",
-        path = path,
-        query = Http.parseQuery(query or ""),
-        headers = {},
-        body = "",
-        principal = { id = "relay", name = "Remote access (test)", role = Relay.ROLE },
-    }
-    local client = { ip = "relay", port = "0" }
-    local status, headers, body = state.handleRequest(request, client, function(laterStatus, laterHeaders, laterBody)
-        respond(id, laterStatus, laterHeaders, laterBody)
-    end)
-    if status then
-        respond(id, status, headers, body)
-    end
+    log("warn", "refused a plain relayed request")
+    send({
+        type = "response",
+        id = message.id,
+        status = 410,
+        content_type = "application/problem+json",
+        body = Json.encode({
+            type = "about:blank",
+            title = "Gone",
+            status = 410,
+            code = "RELAY_REQUESTS_RETIRED",
+            detail = "Plain relayed requests are refused; remote requests are sealed end to end (docs/ACCOUNTS.md)",
+        }),
+    })
 end
 
 local function onMessage(text, kind)
@@ -207,12 +168,7 @@ local function onMessage(text, kind)
         return
     end
     if message.type == "request" then
-        local ok, err = pcall(handleRequest, message)
-        if not ok then
-            log("error", "relayed request failed", { error = tostring(err) })
-            respond(message.id, 500, { { "Content-Type", "application/problem+json" } },
-                Json.encode({ type = "about:blank", title = "Internal Server Error", status = 500, code = "INTERNAL" }))
-        end
+        refuseRequest(message)
     else
         log("debug", "ignored relay message", { type = tostring(message.type) })
     end
@@ -288,11 +244,9 @@ connect = function()
     state.socket:connect()
 end
 
--- options: { services, handleRequest = Server.handleRequest, onStatus = function(text),
---            remote = Remote.handle }
+-- options: { services, onStatus = function(text), remote = Remote.handle }
 function Relay.init(options)
     state.services = options.services
-    state.handleRequest = options.handleRequest
     state.onStatus = options.onStatus
     state.remote = options.remote
 end
