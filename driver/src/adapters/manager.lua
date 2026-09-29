@@ -1,6 +1,8 @@
 local Log = require("src.core.log")
 local LightV2 = require("src.adapters.light_v2")
+local LightV1 = require("src.adapters.light_v1")
 local ThermostatV2 = require("src.adapters.thermostat_v2")
+local ThermostatProxy = require("src.adapters.thermostat_proxy")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
@@ -10,7 +12,9 @@ local Manager = {}
 
 local adapters = {
     LightV2,
+    LightV1,
     ThermostatV2,
+    ThermostatProxy,
     Blind,
     Camera,
     KnxRelay,
@@ -171,6 +175,22 @@ function Manager.execute(deviceId, action, params)
     end
 
     return true, result
+end
+
+-- Checks a command without sending anything: true, or false and a failure like execute's (a
+-- failure may name the request `field` it is about). A request that sends several commands checks
+-- them all first, so a refused setpoint cannot leave the mode already changed. Adapters without
+-- prepare accept everything here and check in execute.
+function Manager.prepare(deviceId, action, params)
+    local adapter = attached[tonumber(deviceId)]
+    if not adapter or not adapter.prepare or not registry then
+        return true
+    end
+    local ok, success, failure = pcall(adapter.prepare, registry.getDevice(tonumber(deviceId)), action, params or {})
+    if not ok then
+        return false, { code = "ADAPTER_ERROR", message = tostring(success) }
+    end
+    return success ~= false, failure
 end
 
 function Manager.shutdown()

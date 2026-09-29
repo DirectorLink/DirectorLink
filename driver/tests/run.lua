@@ -16,6 +16,9 @@ local suites = {
     "test_schedules",
     "test_x25519",
     "test_security",
+    "test_light_v1",
+    "test_thermostat_v2_heat",
+    "test_thermostat_proxy",
 }
 
 local passed, failed = 0, 0

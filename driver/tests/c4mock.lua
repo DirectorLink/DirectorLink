@@ -223,6 +223,140 @@ function Mock.project()
     }
 end
 
+-- Adds the device families of 1.1.0 to a project. Mock.project() itself stays as it is: the
+-- inventory and scene tests count its devices.
+
+-- Legacy Light proxies (light.c4i): a dimmer (25, Kitchen), a switch (26, Living Room) and one
+-- whose Light State cannot be read (27, its own proxy). The protocol driver names are placeholders.
+function Mock.withLegacyLights(project)
+    project.devices[120] = {
+        deviceName = "Pantry Dimmer", driverFileName = "ldz_dimmer.c4i", roomId = 10, roomName = "Kitchen",
+        proxies = { [25] = { deviceName = "Pantry", driverFileName = "light.c4i" } },
+    }
+    project.devices[25] = {
+        deviceName = "Pantry", driverFileName = "light.c4i", roomId = 10, roomName = "Kitchen",
+        protocol = { [120] = { deviceName = "Pantry Dimmer", driverFileName = "ldz_dimmer.c4i" } },
+    }
+    project.devices[121] = {
+        deviceName = "Porch Switch", driverFileName = "ldz_switch.c4i", roomId = 11, roomName = "Living Room",
+        proxies = { [26] = { deviceName = "Porch", driverFileName = "light.c4i" } },
+    }
+    project.devices[26] = {
+        deviceName = "Porch", driverFileName = "light.c4i", roomId = 11, roomName = "Living Room",
+        protocol = { [121] = { deviceName = "Porch Switch", driverFileName = "ldz_switch.c4i" } },
+    }
+    project.devices[27] = { deviceName = "Garage", driverFileName = "Light.c4i", roomId = 11, roomName = "Living Room" }
+    project.variables[25] = { [1000] = "1", [1001] = "65" }
+    project.variables[26] = { [1000] = "0" }
+    project.variableNames[25] = { [1000] = "LIGHT_STATE", [1001] = "LIGHT_LEVEL" }
+    project.variableNames[26] = { [1000] = "LIGHT_STATE" }
+    return project
+end
+
+-- A Thermostat V2 floor-heating zone that keeps its target in the heat setpoint (1133) and leaves
+-- the single setpoint at 0 in both scales, as on a contributor's °F project (#19).
+-- options: id (32), protocol (113), room (11), name, scale ("FAHRENHEIT"), heat ("21.5").
+function Mock.withHeatOnlyZone(project, options)
+    options = options or {}
+    local id, protocol = options.id or 32, options.protocol or 113
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local name = options.name or "Bathroom floor"
+    project.devices[protocol] = {
+        deviceName = "Floor Heating", driverFileName = "floor_heating.c4z", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = name, driverFileName = "thermostatV2.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "thermostatV2.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Floor Heating", driverFileName = "floor_heating.c4z" } },
+    }
+    project.variables[id] = {
+        [1100] = options.scale or "FAHRENHEIT",
+        [1104] = "Heat",
+        [1105] = "Undefined",
+        [1107] = "Heat",
+        [1112] = "1",
+        [1120] = "Off,Heat",
+        [1131] = "20",
+        [1133] = options.heat or "21.5",
+        [1149] = "0",
+        [1150] = "0",
+    }
+    project.variableNames[id] = {
+        [1100] = "SCALE", [1104] = "HVAC_MODE", [1105] = "FAN_MODE", [1107] = "HVAC_STATE",
+        [1112] = "IS_CONNECTED", [1120] = "HVAC_MODES_LIST", [1131] = "TEMPERATURE_C",
+        [1133] = "HEAT_SETPOINT_C", [1149] = "SINGLE_SETPOINT_F", [1150] = "SINGLE_SETPOINT_C",
+    }
+    return project
+end
+
+-- A Control4 thermostat (control4_thermostat_proxy.c4i) with separate heat and cool setpoints,
+-- in Auto. options: id (31), protocol (112), room (10), scale ("FAHRENHEIT" or "CELSIUS"),
+-- deadband (the project-scale deadband, e.g. "1.7" in °C; false for none).
+--   °F: current 71 °F, heat 68 °F (20 °C), cool 76 °F (24.4 °C), deadband 3 °F (1.7 °C)
+--   °C: current 21 °C, heat 20.5 °C, cool 24 °C, deadband 2 °C
+function Mock.withDualThermostat(project, options)
+    options = options or {}
+    local id, protocol = options.id or 31, options.protocol or 112
+    local roomId = options.room or 10
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local fahrenheit = (options.scale or "FAHRENHEIT") == "FAHRENHEIT"
+    project.devices[protocol] = {
+        deviceName = "Wireless Thermostat", driverFileName = "control4_wireless_thermostat.c4i", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = "Study", driverFileName = "control4_thermostat_proxy.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = "Study", driverFileName = "control4_thermostat_proxy.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Wireless Thermostat", driverFileName = "control4_wireless_thermostat.c4i" } },
+    }
+    local variables = {
+        [1100] = options.scale or "FAHRENHEIT",
+        [1104] = "Auto",
+        [1105] = "Auto",
+        [1107] = "Off",
+        [1112] = "1",
+        [1120] = "Off,Heat,Cool,Auto",
+        [1121] = "Auto,On",
+        [1130] = fahrenheit and "71" or "70",
+        [1131] = fahrenheit and "21.7" or "21",
+        [1132] = fahrenheit and "68" or "69",
+        [1133] = fahrenheit and "20" or "20.5",
+        [1134] = fahrenheit and "76" or "75",
+        [1135] = fahrenheit and "24.4" or "24",
+        [1146] = fahrenheit and "3" or "4",
+        [1147] = fahrenheit and "1.7" or "2",
+    }
+    if options.deadband == false then
+        variables[1146], variables[1147] = nil, nil
+    elseif options.deadband ~= nil then
+        local deadband = tonumber(options.deadband)
+        if fahrenheit then
+            variables[1146] = tostring(options.deadband)
+            variables[1147] = tostring(math.floor(deadband * 5 / 9 * 10 + 0.5) / 10)
+        else
+            variables[1146] = tostring(math.floor(deadband * 9 / 5 + 0.5))
+            variables[1147] = tostring(options.deadband)
+        end
+    end
+    project.variables[id] = variables
+    project.variableNames[id] = {
+        [1100] = "SCALE", [1104] = "HVAC_MODE", [1105] = "FAN_MODE", [1107] = "HVAC_STATE",
+        [1112] = "IS_CONNECTED", [1120] = "HVAC_MODES_LIST", [1121] = "FAN_MODES_LIST",
+        [1130] = "TEMPERATURE_F", [1131] = "TEMPERATURE_C", [1132] = "HEAT_SETPOINT_F",
+        [1133] = "HEAT_SETPOINT_C", [1134] = "COOL_SETPOINT_F", [1135] = "COOL_SETPOINT_C",
+        [1146] = "DEADBAND_F", [1147] = "DEADBAND_C",
+    }
+    return project
+end
+
+-- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
+function Mock.demoProject()
+    local project = Mock.withLegacyLights(Mock.project())
+    Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
+    Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
+    return project
+end
+
 -- Installs global C4 and Properties objects backed by `project`.
 function Mock.install(project)
     project = project or Mock.project()
