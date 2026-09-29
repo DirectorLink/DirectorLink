@@ -163,19 +163,27 @@ test("a new target wins over reports from before its answer", () => {
 });
 
 // Stop while it opens to 100: the Stop's answer, and reads from before it, still say it is opening.
+// So may a read after the answer: the controller reports the stop once the shade confirms it.
 test("after Stop the shade shows as stopped, then where it reports it stopped", () => {
   const opening = { ...terrace, moving: true, direction: "opening", target_position: 100, position: 35 };
   let settle = startSettle(1000, true);
   assert.deepEqual(shadeView(opening, settle), { moving: false, direction: null, target: null, slider: 35 });
   settle = answered(settle, 1300);
   assert.equal(settle.until, 1300 + STOP_SETTLE_MS, "read for a while after the answer");
-  settle = followSettle(settle, 2000, 1200);
+  settle = followSettle(settle, opening, 2000, 1200);
   assert.equal(shadeView(opening, settle).moving, false, "a read from before the answer");
-  settle = followSettle(settle, 3000, 2500);
+  settle = followSettle(settle, opening, 2500, 1400);
+  assert.equal(settle.fresh, false, "a read after the answer, before the controller has the stop");
+  assert.equal(shadeView(opening, settle).moving, false);
   const stopped = { ...opening, moving: false, direction: null, target_position: 61, position: 61 };
+  settle = followSettle(settle, stopped, 3000, 2500);
   assert.deepEqual(shadeView(stopped, settle), { moving: false, direction: null, target: null, slider: 61 });
-  assert.equal(shadeView(opening, settle).moving, true, "read after the answer, a report that it moves is believed");
-  assert.equal(followSettle(settle, 1300 + STOP_SETTLE_MS, 7000), null, "and the reads end");
+  assert.equal(shadeView(opening, settle).moving, true, "once it reported the stop, a report that it moves again is believed");
+  assert.equal(followSettle(settle, opening, 1300 + STOP_SETTLE_MS, 7000), null, "and the reads end");
+  // A shade that does not report its movement: the first read after the answer.
+  assert.equal(followSettle(answered(startSettle(1000, true), 1300), older, 2000, 1400).fresh, true);
+  // One that never reports the stop shows what it reports once the reads are over.
+  assert.equal(followSettle(answered(startSettle(1000, true), 1300), opening, 1300 + STOP_SETTLE_MS, 7000), null);
 });
 
 // The owner's KNX shades: the proxy's stop comes first, the actuator's real position about a
@@ -188,8 +196,8 @@ test("a move that ends is read a few seconds more", () => {
   const settle = afterMove(move, 22000);
   assert.deepEqual(settle, { settle: true, stopped: false, sentAt: 22000, until: 22000 + STOP_SETTLE_MS, answeredAt: null, fresh: true });
   assert.deepEqual(shadeView(stale, settle), shadeView(stale, null), "the reports show as they are");
-  assert.equal(followSettle(settle, 24000, 23000), settle);
-  assert.equal(followSettle(settle, 22000 + STOP_SETTLE_MS), null);
+  assert.equal(followSettle(settle, stale, 24000, 23000), settle);
+  assert.equal(followSettle(settle, stale, 22000 + STOP_SETTLE_MS), null);
   assert.equal(afterMove(move, MOVE_TIMEOUT_MS), null, "not after a move that timed out");
 });
 

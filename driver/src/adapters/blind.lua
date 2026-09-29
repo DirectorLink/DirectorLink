@@ -9,8 +9,10 @@ local Log = require("src.core.log")
 -- 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing; they are found by name. Whether a shade
 -- moves is told by Opening, Closing and Stopped (Snap One's proxy documentation). Movement is the
 -- shade's movement type (Up to Down, Down to Up, ...), not whether it moves: it is only logged.
--- Their values during a move have not been seen on a real controller, so each one is logged at
--- debug level with its raw value. A Level outside the shade's range is unknown: -255 after a
+-- On that controller Stopped, Opening and Closing read "1"/"0", and Movement "Up-Down",
+-- "Left-Right" or "Right-Left"; a move reads Stopped 0, then Target Level, then Opening or Closing
+-- 1, and its end Level = Target Level, then Stopped 1. Each change is still logged at debug level
+-- with its raw value. A Level outside the shade's range is unknown: -255 after a
 -- reboot on a blind without a KNX status address, -155 when the actuator reports 255 ("position
 -- unknown"). The proxy sets Level when a move starts (where it starts from), when it ends (the
 -- driver's timer) and whenever the actuator reports, on KNX about a second after the stop.
@@ -84,9 +86,10 @@ local function flag(value)
 end
 
 -- Moving (true/false, nil when the proxy does not tell) and the direction, if known. Opening or
--- Closing tell both; otherwise Stopped false is moving, unless the shade is where it is going
--- (Target Level is where it stops, so it equals Level at rest, and a Stopped that was never set
--- again must not keep a shade moving).
+-- Closing tell both; otherwise Stopped false is moving only while Level and Target Level are both
+-- known and apart (Target Level is where it stops, so it equals Level at rest). Stopped false alone
+-- says nothing: Director may leave it false after a reboot, with Level unknown, some proxies have no
+-- Target Level, and a Stopped that was never set again must not keep a shade moving.
 local function motion(values, level, target)
     local opening, closing = flag(values.opening), flag(values.closing)
     if opening or closing then
@@ -96,12 +99,9 @@ local function motion(values, level, target)
         return true, opening and "opening" or "closing"
     end
     local stopped = flag(values.stopped)
-    if stopped == false then
-        return not (level ~= nil and level == target)
-    elseif stopped == true then
-        return false
-    end
-    if opening == false or closing == false then
+    if stopped == false and level ~= nil and target ~= nil then
+        return level ~= target
+    elseif stopped == true or opening == false or closing == false then
         return false
     end
     return nil

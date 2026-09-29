@@ -23,6 +23,11 @@ export const POSITION_HOLD_MS = 2 * MOVE_POLL_MS;
 // After Stop, and after a move ends, the app reads the blinds this long, to show where the shade
 // stopped: a KNX actuator reports its real position about a second after the stop.
 export const STOP_SETTLE_MS = 6000;
+// A read of the blinds this long after the one before (the page was in the background, or the
+// controller out of reach): a shade that reported moving then may have stopped and started again
+// meanwhile, so its time moving starts over. Longer than the refresh every 10 s, which is all that
+// reads a shade that reports moving for longer than a move takes.
+export const REPORT_GAP_MS = 30000;
 
 // Drivers before 1.1.0 send no capabilities: their shades keep the slider and Stop.
 export const canSetPosition = (blind) => blind?.capabilities?.position !== false;
@@ -47,7 +52,8 @@ export function startMove(blind, target, now, reportsMotion = false) {
 
 // The reads after Stop (`stopped`), or after a move ended: STOP_SETTLE_MS more, for where the shade
 // stopped. After Stop, a report that the shade moves is from before it, until a read that started
-// after the Stop's answer.
+// after the Stop's answer has it stopped: the controller reports the stop once the shade confirms
+// it, on the owner's KNX shades 110 to 180 ms after the answer.
 export function startSettle(now, stopped = false) {
   return { settle: true, stopped, sentAt: now, until: now + STOP_SETTLE_MS, answeredAt: null, fresh: !stopped };
 }
@@ -92,11 +98,13 @@ export function followMove(move, blind, now, readAt = null) {
   return now - next.held.since >= POSITION_HOLD_MS ? null : next;
 }
 
-// The reads after Stop or a move, after a new read (`readAt` as for followMove): null once they are
-// over.
-export function followSettle(settle, now, readAt = null) {
+// The reads after Stop or a move, after a new report from the shade (`readAt` as for followMove):
+// null once they are over. After Stop, from the first read after its answer that has the shade
+// stopped, the reports show as they are (it may be moved again).
+export function followSettle(settle, blind, now, readAt = null) {
   if (!settle || now >= settle.until) return null;
-  return !settle.fresh && readAfter(settle, readAt) ? { ...settle, fresh: true } : settle;
+  const shows = readAfter(settle, readAt) && !(settle.stopped && blind?.moving === true);
+  return !settle.fresh && shows ? { ...settle, fresh: true } : settle;
 }
 
 // What comes after a move that ended: a few more reads, for the position the shade reports after
@@ -114,7 +122,7 @@ export function followsReport(blind, since, now) {
 // What a shade's row shows: { moving, direction, target, slider }. While it moves (it says so, or
 // a command was just sent) the slider stays on the target; at rest it is the reported position.
 // `move`: the app's command (startMove), or the reads after Stop (startSettle), during which the
-// shade shows as stopped until a read after the Stop's answer.
+// shade shows as stopped until a read after the Stop's answer has it stopped.
 export function shadeView(blind, move = null) {
   const position = finite(blind?.position);
   const rest = { moving: false, direction: null, target: null, slider: position ?? 0 };

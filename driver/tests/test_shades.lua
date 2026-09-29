@@ -201,7 +201,7 @@ function tests.movement_is_read_from_whichever_variables_the_proxy_has()
     T.eq(shade.direction, "opening")
     Mock.setShade(mock, 52, { ["Target Level"] = "-255" })
     shade = blind(mock, key, 52)
-    T.eq(shade.moving, true, "where to is not known")
+    T.eq(shade.moving, false, "where to is not known: Stopped alone does not say it moves")
     T.eq(shade.direction, Json.null)
 
     -- Only Level and Movement: whether it moves is not known, whatever Movement says.
@@ -228,6 +228,69 @@ function tests.movement_is_read_from_whichever_variables_the_proxy_has()
     T.eq(shade.target_position, 20)
     T.eq(shade.direction, "closing")
     T.eq(shade.position, 36)
+end
+
+-- Director may leave Stopped false (after a controller reboot, on a blind without a KNX status
+-- address) with Level or Target Level unknown: -255, or -155 when the actuator reports 255. Taken
+-- as a move, the shade showed Moving... for good and the app read the blinds every 2 s (1.1.0).
+function tests.a_stopped_left_false_does_not_keep_a_shade_moving()
+    local project = Mock.withShades(Mock.project())
+    project.variables[52][1002] = "0"
+    project.variables[52][1004] = "-255"
+    project.variables[52][1005] = "-255"
+    local mock, key = start(project)
+    local shade = blind(mock, key, 52)
+    T.eq(shade.moving, false, "Stopped 0 from the start, the level unknown")
+    T.eq(shade.direction, Json.null)
+    for _, levels in ipairs({ { "-155", "-155" }, { "-255", "50" }, { "35", "-255" } }) do
+        Mock.setShade(mock, 52, { Level = levels[1], ["Target Level"] = levels[2] })
+        T.eq(blind(mock, key, 52).moving, false, "Level " .. levels[1] .. ", Target Level " .. levels[2])
+    end
+    -- Both known and apart: Stopped false is a move (a proxy that sets no Opening or Closing).
+    Mock.setShade(mock, 52, { Level = "35", ["Target Level"] = "80" })
+    shade = blind(mock, key, 52)
+    T.eq(shade.moving, true)
+    T.eq(shade.direction, "opening")
+
+    -- A proxy with Stopped but no Target Level.
+    project = shadeWith({ Level = true, Stopped = true, Opening = true, Closing = true })
+    project.variables[52][1002] = "0"
+    mock, key = start(project)
+    T.eq(blind(mock, key, 52).moving, false, "no Target Level")
+    Mock.setShade(mock, 52, { Opening = "1" })
+    T.eq(blind(mock, key, 52).direction, "opening", "Opening still says it")
+    -- Nor Opening and Closing: whether it moves is not known.
+    project = shadeWith({ Level = true, Stopped = true })
+    project.variables[52][1002] = "0"
+    mock, key = start(project)
+    T.eq(blind(mock, key, 52).moving, Json.null, "only Level and Stopped")
+    Mock.setShade(mock, 52, { Stopped = "1" })
+    T.eq(blind(mock, key, 52).moving, false)
+end
+
+-- A move and a Stop as the owner's KNX shades report them on Director 3.4.3 (one variable at a
+-- time, in this order): Stopped 0, then Target Level, then Opening; at the stop Target Level goes
+-- to Level, Opening 0 (so no longer moving), Stopped 1, then the actuator's real position.
+function tests.a_move_and_a_stop_read_as_the_real_controller_reports_them()
+    local mock, key = start()
+    local steps = {
+        { "Stopped", "0", false },
+        { "Target Level", "67", true, "opening" },
+        { "Opening", "1", true, "opening" },
+        { "Target Level", "35", true, "opening" },
+        { "Opening", "0", false },
+        { "Stopped", "1", false },
+        { "Target Level", "41", false },
+        { "Level", "41", false },
+    }
+    for index, step in ipairs(steps) do
+        Mock.setShade(mock, 52, { [step[1]] = step[2] })
+        local shade = blind(mock, key, 52)
+        local label = "step " .. index .. ": " .. step[1] .. " " .. step[2]
+        T.eq(shade.moving, step[3], label)
+        T.eq(shade.direction, step[4] or Json.null, label)
+    end
+    T.eq(blind(mock, key, 52).position, 41)
 end
 
 function tests.the_setup_is_read_again_after_ten_minutes_or_on_a_project_refresh()
