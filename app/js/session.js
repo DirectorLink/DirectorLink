@@ -510,6 +510,10 @@ function describeError(error, pairing = false) {
   if (error?.code === "DOOR_CONTROL_DISABLED") {
     return t("errors.doorsDisabled");
   }
+  // 409 JEWISH_CALENDAR_OFF: the installer turned the Jewish calendar off in Composer (calendar.js).
+  if (error?.code === "JEWISH_CALENDAR_OFF") {
+    return t("errors.calendarOff");
+  }
   if (error?.code === "FORBIDDEN") {
     return t("errors.forbidden", { role: roleLabel(error.problem?.role || state.role) });
   }

@@ -22,6 +22,8 @@ export const state = {
   schedulesUnsupported: false,
   schedulesError: null,
   weather: null,
+  // GET /v1/calendar (calendar.js): null until read, and while the Jewish calendar is off.
+  calendar: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,
@@ -67,6 +69,7 @@ export const ui = {
   scheduleEditor: null, // the schedule being edited (views/schedules.js)
   cameFrom: null, // the screen before this one (app.js), so an editor can go back to its list
   schedulesMessage: null, // schedules list: saved, deleted or not switched
+  calendarSettings: null, // Settings → Shabbat and holidays: the settings being changed (views/settings.js)
   drafts: {}, // form fields being typed: key -> text
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"

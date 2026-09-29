@@ -1,8 +1,9 @@
-"""The release checks themselves (scripts/build.py, check_package.py and check_repo.py): the relay's
-CA file holds exactly the pinned roots however its blocks are written, nothing else in driver/certs
-reaches the package, line endings do not change it, check_repo vets what is staged, the door
-switches, the Jewish calendar and the alarm's status in driver.xml ship off, and the alarm stays
-read-only.
+"""The release checks themselves (scripts/build.py, check_package.py, check_repo.py and
+check_app.py): the relay's CA file holds exactly the pinned roots however its blocks are written,
+nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
+what is staged, the door switches, the Jewish calendar and the alarm's status in driver.xml ship
+off, the alarm stays read-only, and the app names every month, holiday and weekly reading the
+calendar API can send.
 
     python -m unittest discover -s tests/scripts
 """
@@ -22,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build  # noqa: E402
+import check_app  # noqa: E402
 import check_package  # noqa: E402
 import check_repo  # noqa: E402
 
@@ -217,6 +219,47 @@ class AlarmReadOnly(unittest.TestCase):
                 self.assertIn(old, files[name])
                 printed = self.refused({**files, name: files[name].replace(old, new, 1)})
                 self.assertIn("scene steps must never reach the alarm", printed or "")
+
+
+class CalendarNames(unittest.TestCase):
+    """check_app.py: every dictionary names what GET /v1/calendar sends by key (1.2.0, ADR-037)."""
+
+    def setUp(self):
+        import yaml
+
+        self.spec = yaml.safe_load((ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8"))
+        self.dictionaries = {code: check_app.read_dictionary((ROOT / "app" / "i18n" / f"{code}.js").read_text(encoding="utf-8")) for code in ("en", "he")}
+
+    def test_the_dictionaries_are_read_as_the_app_reads_them(self):
+        he = self.dictionaries["he"]
+        self.assertEqual(he["calendar"]["parashot"]["28"], "מצורע")
+        self.assertEqual(he["calendar"]["join"], "־")
+        self.assertEqual(he["connect"]["errors"]["wrongCode"]["two"], "הקוד שגוי. נותרו עוד {count} ניסיונות לפני שהצימוד יינעל לדקה.")
+        self.assertEqual(he["connect"]["errors"]["invalidCode"], "הזינו את קוד הצימוד בן 8 הספרות, למשל ⁦1234 5678⁩.")
+        self.assertEqual(check_app.read_dictionary('// x\nexport default { a: { "b-c": \'it\\\'s\', 1: "\\u{1F56F}" }, /* y */ d: [1, 2.5], };'), {"a": {"b-c": "it's", "1": "\U0001F56F"}, "d": [1, 2.5]})
+
+    def test_the_real_dictionaries_pass(self):
+        self.assertIsNone(refusal(check_app.check_calendar_names, self.spec, self.dictionaries))
+
+    def test_a_missing_month_holiday_or_reading_fails(self):
+        for group, key in (("months", "adar_2"), ("holidays", "shiva_asar_btamuz"), ("parashot", "54")):
+            with self.subTest(group=group):
+                del self.dictionaries["he"]["calendar"][group][key]
+                printed = refusal(check_app.check_calendar_names, self.spec, self.dictionaries)
+                self.assertIn(f"app/i18n/he.js has no calendar.{group} name for: {key}", printed or "")
+                self.setUp()
+
+    def test_a_key_added_to_the_api_fails_until_it_is_named(self):
+        self.spec["components"]["schemas"]["HolidayKey"]["enum"].append("yom_hamishpacha")
+        printed = refusal(check_app.check_calendar_names, self.spec, self.dictionaries)
+        self.assertIn("app/i18n/en.js has no calendar.holidays name for: yom_hamishpacha", printed or "")
+
+    def test_an_empty_name_or_rosh_chodesh_without_its_month_fails(self):
+        self.dictionaries["en"]["calendar"]["parashot"]["3"] = " "
+        self.assertIn("calendar.parashot name for: 3", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
+        self.setUp()
+        self.dictionaries["he"]["calendar"]["holidays"]["rosh_chodesh"] = "ראש חודש"
+        self.assertIn("rosh_chodesh must name the month", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
 
 
 class StagedRoots(unittest.TestCase):
