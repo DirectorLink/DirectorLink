@@ -5,3 +5,7 @@ Licensed under the Apache License, Version 2.0.
 
 DirectorLink is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
 Control4 and related product names are trademarks of their respective owners.
+
+The Jewish calendar's test data in tests/vectors/calendar/ (the hebcal-*.json files and names.json)
+comes from Hebcal.com (https://www.hebcal.com) and is licensed under the Creative Commons
+Attribution 4.0 International License (https://creativecommons.org/licenses/by/4.0/).
