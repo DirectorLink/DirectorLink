@@ -21,6 +21,23 @@ Project-wide discovery APIs should not be used during `OnDriverInit`. DirectorLi
 Reference:
 https://control4.github.io/docs-driverworks-api/#safe-usage-of-ondriverinit-and-ondriverlateinit
 
+## Composer changes (1.1.0)
+
+A driver learns about Composer's changes only through Director's system events: `C4:RegisterSystemEvent(C4SystemEvents[name], 0)` for every device, and a global `OnSystemEvent(data)` whose `data` is XML with the event's name first. DirectorLink watches `OnItemAdded`, `OnItemRemoved`, `OnItemNameChanged`, `OnItemMoved`, `OnPIP` (Composer → Refresh Navigators), `OnDriverAdded` and `OnProjectLoaded`, and reads the project again once they stop (`src/control4/project_events.lua`). The documentation deprecates `OnProjectChanged` (OS 2.10) and names the item events for add, remove and rename; the names and ids come from Snap One's drivers-common-public `handlers.lua`. No public source shows the parameters of `OnItemMoved`: DirectorLink treats every event only as a sign of change and logs the payload at debug level, and a payload whose name it does not recognise counts too (Director sends a driver only the events it registered). `OnPIP` is not only Refresh Navigators: the documentation has it fire "when bindings, device names, or device media has changed", so alone it starts a read at most every two minutes. None of this has run on a real controller yet.
+
+References:
+snap-one/docs-driverworks-api, `source/includes/7_event/` (RegisterSystemEvent, OnSystemEvent, Registering for System Events)
+https://raw.githubusercontent.com/snap-one/drivers-common-public/master/global/handlers.lua
+
+## Blind proxy (1.1.0)
+
+On Director 3.4.3 with KNX blinds (the "KNX Blinds (2.9+)" driver behind `blind.c4i`) the proxy's variables are 1000 Open, 1001 Fully Closed, 1002 Stopped, 1003 Fully Open, 1004 Level, 1005 Target Level, 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing. Level is set when a move starts (the proxy's estimate), when it ends (the driver's timer) and whenever the actuator reports; values outside 0–100 are unknown (-155 when the actuator reports 255, -255 after a restart). Control4's own UI reads the proxy's setup with a UI request (Director logs `UIRequest returned: <blind_setup><has_level>True</has_level><level_discrete_control>True</level_discrete_control><can_stop>True</can_stop>...<movement>1</movement>...<levels minimum="0" maximum="100" resolution="1" unknown="-1"><level name="Closed" ... level="0" .../><level name="Open" ... level="100" .../>...`); `level_discrete_control` is False on shades that only open and close fully, whose KNX driver sends up for any target above 0. DirectorLink sends `GET_SETUP` with `C4:SendUIRequest` (the return value is not documented) and logs the answer once per shade at debug level.
+
+What the proxy does during a move, on the same controller: it sends the UI `<moving><level>100</level><level_target>0</level_target><ramp_rate>25000</ramp_rate></moving>` when the move starts, `<stopped><level>0</level><level_target>0</level_target></stopped>` once the configured travel time is over, and the KNX actuator's real position comes about a second later as a change of Level. Snap One's proxy documentation (Blind: Variables) makes Stopped, Opening and Closing the motion variables (Stopped is false while the hardware moves, on drivers that report it) and Target Level where the blind is to stop, "used to know if a driver is currently going up or down". Movement is "a string representation of the enumeration for the movement": Open/Close, Up to Down, Down to Up, Out to In, Left to Right or Right to Left (`SET_MOVEMENT`; the setup's `<movement>`), the kind of movement and never whether the shade moves. The values of these variables during a move have not been seen: DirectorLink reads true and false as 1/0, true/false or True/False and logs every change. The documentation also lets a driver count its levels from 0 to another open level (`level_open` defaults to 1; a shade that can stop uses 0, 1 and 2): DirectorLink takes the range from the setup's Closed and Open levels (else `level_closed`/`level_open`, else the minimum and maximum of `<levels>`) and shows it as 0–100.
+
+Reference:
+https://snap-one.github.io/docs-driverworks-proxyprotocol/ (Blind Proxy: commands, notifications, capabilities, events and variables)
+
 ## Project metadata
 
 OS 3.0+ exposes project properties including latitude, longitude, country, city and related settings through `C4:GetProjectProperty()`; timezone is exposed through `C4:GetTimeZone()`.
@@ -121,6 +138,48 @@ References:
 - https://control4.github.io/docs-driverworks-proxyprotocol/
 - https://control4.github.io/docs-driverworks-api/
 - https://github.com/snap-one/docs-driverworks/tree/master/driver_development_training/sample_light_driver
+
+
+## Light (legacy) proxy
+
+Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy
+`light.c4i`. bkwagner read its variables and commands on a live Director over Director REST
+(`GET /api/v1/items/{id}/variables` and `/commands`, #14); in that installation 25 of 38 lights
+used it:
+
+- Light State `1000` and the level `1001`, as on Light V2; switches have no `1001`
+- the commands `ON`, `OFF` and `SET_LEVEL` with `LEVEL`, instead of `SET_BRIGHTNESS_TARGET`
+
+Not seen yet: a DirectorLink `SET_LEVEL` moving one of these lights (`LEVEL` goes out as XML
+`INT`, the form Control4 documents for `RAMP_TO_LEVEL`), and whether `1000` can read `100`
+rather than `1`.
+
+
+## Thermostat setpoint variables 1100–1150
+
+Thermostat V2 and the Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) share these
+ids. The names were read by bkwagner on a live Director: five proxy thermostats (#16), and a real
+heat-only floor-heating Thermostat V2 in a °F project (#19).
+
+| Id | Name | Notes |
+| --- | --- | --- |
+| 1100 | SCALE | the project's scale, `FAHRENHEIT` or `CELSIUS` |
+| 1104 | HVAC_MODE | |
+| 1105 | FAN_MODE | can read `Undefined` |
+| 1107 | HVAC_STATE | |
+| 1112 | IS_CONNECTED | |
+| 1120 | HVAC_MODES_LIST | comma-separated |
+| 1121 | FAN_MODES_LIST | comma-separated |
+| 1130 / 1131 | TEMPERATURE_F / TEMPERATURE_C | |
+| 1132 / 1133 | HEAT_SETPOINT_F / HEAT_SETPOINT_C | the floor-heating zone's real target |
+| 1134 / 1135 | COOL_SETPOINT_F / COOL_SETPOINT_C | |
+| 1146 / 1147 | DEADBAND_F / DEADBAND_C | the smallest gap between heat and cool |
+| 1149 / 1150 | the single setpoint, °F / °C | 0 in both on that floor-heating zone |
+
+On that zone only `SET_SETPOINT_HEAT {FAHRENHEIT}` was listed, no `SET_SETPOINT_SINGLE`. The proxy
+thermostats list `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL` with `FAHRENHEIT` or `CELSIUS`. Open:
+whether they take `CELSIUS` in a °F project, fractional `FAHRENHEIT`, what they do themselves
+when the deadband is broken, and the real spellings in their mode lists.
 
 
 ## Snapshot findings — 2026-09-25

@@ -15,7 +15,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
-- Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
@@ -68,7 +68,7 @@ A successful install shows:
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
 - **Log Level** and **Inventory** (rooms and devices found)
 
-Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home).
+Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home).
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.
 
@@ -84,9 +84,9 @@ A code is valid for 15 minutes and works once, and only on the home network. Fiv
 
 Automatic self-update is intentionally **not** part of V1.
 
-Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release.
+Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release. Admins see in the app when a newer release is out (Settings → Controller, and a notice on Home), with a download of its `DirectorLink.c4z` and the steps in Composer.
 
-**Important:** before updating, make sure the local file is named exactly `DirectorLink.c4z`. Do not select `DirectorLink (1).c4z`, `DirectorLink (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
+**Important:** before updating, make sure the local file is named exactly `DirectorLink.c4z`. Do not select `DirectorLink (1).c4z`, `DirectorLink (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package. A browser adds the suffix when an older `DirectorLink.c4z` is already in the download folder, so delete that one before downloading (or download into an empty folder).
 
 To downgrade, download `DirectorLink.c4z` from an older release and install that version through Composer Pro. Release notes say when a downgrade is not safe.
 

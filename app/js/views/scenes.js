@@ -8,7 +8,7 @@ import { emptyState, skeletonCards, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
 import { formatNumber, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { blindStateLabel, deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness } from "../model.js";
+import { blindStateLabel, deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness, targetText } from "../model.js";
 import {
   MAX_DEVICE_IDS,
   MAX_STEPS,
@@ -29,6 +29,8 @@ import {
   stepWhere,
 } from "../scenes.js";
 import { api, errorText, noteForbidden, refreshDevices, roleLabel } from "../session.js";
+import { isDual, setpointGap, withSetpoint } from "../setpoints.js";
+import { sceneBlindChoices } from "../shades.js";
 import { can, notify, state, ui } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { scenesNav } from "./schedules.js";
@@ -574,7 +576,7 @@ async function deleteDraft(draft) {
 // ---- adding an action ----------------------------------------------------------------------
 
 function newAdding() {
-  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, fan: null, blind: "close", position: 50 };
+  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, blind: "close", position: 50 };
 }
 
 // Devices of `type` in `room` (null: the whole home).
@@ -622,38 +624,64 @@ function unique(values) {
 }
 
 // What the AC choices offer for these thermostats: their modes, temperature range and fan speeds.
+// `dual`: some have heat and cool setpoints, which Auto then sets, kept at least `gap` apart (the
+// largest gap any of them needs).
 function climateChoices(devices) {
   const offered = unique(devices.flatMap((device) => device.modes || []));
+  const duals = devices.filter(isDual);
   return {
     modes: MODE_ORDER.filter((mode) => mode === "off" || offered.includes(mode)),
     min: Math.min(...devices.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : 16))),
     max: Math.max(...devices.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : 32))),
     fans: unique(devices.flatMap((device) => device.fan_speeds || [])),
+    dual: duals.length > 0,
+    gap: Math.max(0.5, ...duals.map(setpointGap)),
   };
 }
 
-// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights), before
-// the steps are built from them.
+// The Heat and Cool choices as a thermostat, so their steppers follow the same push rule as a
+// thermostat card (setpoints.js).
+function setpointChoices(adding, { min, max, gap }) {
+  return { heat_setpoint: adding.heat, cool_setpoint: adding.cool, target_temperature_min: min, target_temperature_max: max, setpoint_deadband: gap };
+}
+
+// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights, no position
+// for shades that only open and close), before the steps are built from them.
 function settle(adding, devices) {
   if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
+  if (adding.type === "blinds" && !sceneBlindChoices(devices).includes(adding.blind)) adding.blind = adding.position >= 50 ? "open" : "close";
   if (adding.type === "climate" && devices.length) {
-    const { modes, min, max, fans } = climateChoices(devices);
+    const { modes, min, max, fans, dual, gap } = climateChoices(devices);
     if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
     adding.temperature = Math.min(max, Math.max(min, adding.temperature));
     if (!fans.includes(adding.fan)) adding.fan = null;
+    if (dual) {
+      // Heat and cool inside the range and at least `gap` apart: cool goes up, and heat down when
+      // cool is at the top.
+      adding.heat = Math.min(max, Math.max(min, adding.heat));
+      adding.cool = Math.min(max, Math.max(min, adding.cool));
+      if (adding.cool < adding.heat + gap) {
+        adding.cool = Math.min(max, adding.heat + gap);
+        adding.heat = Math.min(adding.heat, adding.cool - gap);
+      }
+    }
   }
 }
 
 // The steps the choices describe: one, or several when more than 100 devices are picked; none
 // while chosen devices are wanted and none is picked. All of them picked is "all" (so devices
-// added to the room later are included).
+// added to the room later are included). Auto on thermostats with heat and cool setpoints sets
+// both setpoints instead of a target.
 function buildSteps(adding, devices) {
   const picked = devices.filter((device) => adding.picked.includes(device.id)).map((device) => device.id);
   if (adding.choose && !picked.length) return [];
   let set;
   if (adding.type === "lights") set = adding.light === "off" ? { on: false } : adding.light === "on" ? { on: true } : { brightness: adding.brightness };
   else if (adding.type === "climate") {
-    set = adding.mode === "off" ? { mode: "off" } : { mode: adding.mode, target_temperature: adding.temperature };
+    const dual = (adding.choose ? devices.filter((device) => picked.includes(device.id)) : devices).some(isDual);
+    if (adding.mode === "off") set = { mode: "off" };
+    else if (adding.mode === "auto" && dual) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
+    else set = { mode: adding.mode, target_temperature: adding.temperature };
     if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
   } else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
   else set = { action: "pulse" };
@@ -667,7 +695,11 @@ function buildSteps(adding, devices) {
 
 function nowText(type, device) {
   if (type === "lights") return device.on ? (device.dimmable ? t("lights.level", { percent: shownBrightness(device) }) : t("lights.on")) : t("lights.off");
-  if (type === "climate") return [modeLabel(device.mode), Number.isFinite(device.target_temperature) && device.mode !== "off" ? formatTemperature(device.target_temperature) : null].filter(Boolean).join(" ");
+  if (type === "climate") {
+    // The target (or the heat and cool range in auto) when there is one.
+    const target = device.mode === "off" ? null : targetText(device);
+    return [modeLabel(device.mode), target !== formatTemperature(null) ? target : null].filter(Boolean).join(" ");
+  }
   if (type === "blinds") return blindStateLabel(device);
   return "";
 }
@@ -783,9 +815,12 @@ function doControls(adding, devices) {
     ];
   }
   if (adding.type === "climate") {
-    const { modes, min, max, fans } = climateChoices(devices);
+    const choices = climateChoices(devices);
+    const { modes, min, max, fans } = choices;
     const parts = [segments(modes.map((mode) => [mode, modeLabel(mode)]), adding.mode, "add-mode", (value) => { adding.mode = value; })];
-    if (adding.mode !== "off") {
+    if (adding.mode === "auto" && choices.dual) {
+      parts.push(setpointSteppers(adding, choices), h("p", { class: "field-help" }, t("scenes.add.gap", { gap: formatTemperature(choices.gap) })));
+    } else if (adding.mode !== "off") {
       const nudge = (delta) => {
         adding.temperature = Math.min(max, Math.max(min, adding.temperature + delta));
         notify();
@@ -804,6 +839,8 @@ function doControls(adding, devices) {
           iconButton("plus", t("climate.raise"), { class: "stepper-button", disabled: adding.temperature >= max, dataset: { key: "add-temp-up" }, onclick: () => nudge(1) })
         )
       );
+    }
+    if (adding.mode !== "off") {
       if (fans.length) {
         parts.push(
           h(
@@ -823,8 +860,11 @@ function doControls(adding, devices) {
     return parts;
   }
   if (adding.type === "blinds") {
+    // Set position only when one of these shades can go to a position.
+    const choices = sceneBlindChoices(devices);
+    const options = [["open", t("scenes.do.open")], ["close", t("scenes.do.close")], ["set", t("scenes.add.position")]];
     return [
-      segments([["open", t("scenes.do.open")], ["close", t("scenes.do.close")], ["set", t("scenes.add.position")]], adding.blind, "add-blind", (value) => {
+      segments(options.filter(([value]) => choices.includes(value)), adding.blind, "add-blind", (value) => {
         adding.blind = value;
       }),
       adding.blind === "set"
@@ -845,6 +885,39 @@ function doControls(adding, devices) {
   }
   // Doors and gates: only what their Open button does.
   return [h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote"))];
+}
+
+// Auto on thermostats with heat and cool setpoints: a Heat and a Cool stepper. Each pushes the
+// other to keep the gap; a button is off when the other one has no room left.
+function setpointSteppers(adding, choices) {
+  const stepper = (field, which, label, lower, raise) => {
+    const next = (delta) => withSetpoint(setpointChoices(adding, choices), field, adding[which] + delta);
+    const nudge = (delta) => {
+      const both = next(delta);
+      if (!both) return;
+      adding.heat = both.heat_setpoint;
+      adding.cool = both.cool_setpoint;
+      notify();
+    };
+    return h(
+      "div",
+      { class: "stepper", role: "group", "aria-label": t(label) },
+      iconButton("minus", t(lower), { class: "stepper-button", disabled: !next(-1), dataset: { key: `add-${which}-down` }, onclick: () => nudge(-1) }),
+      h(
+        "div",
+        { class: "stepper-value" },
+        h("output", { class: "stepper-number", "aria-live": "polite" }, formatTemperature(adding[which])),
+        h("span", { class: "stepper-label" }, t(label))
+      ),
+      iconButton("plus", t(raise), { class: "stepper-button", disabled: !next(1), dataset: { key: `add-${which}-up` }, onclick: () => nudge(1) })
+    );
+  };
+  return h(
+    "div",
+    { class: "stepper-pair", role: "group", "aria-label": t("climate.setpoints") },
+    stepper("heat_setpoint", "heat", "climate.heatShort", "climate.lowerHeat", "climate.raiseHeat"),
+    stepper("cool_setpoint", "cool", "climate.coolShort", "climate.lowerCool", "climate.raiseCool")
+  );
 }
 
 function addActionView(draft) {

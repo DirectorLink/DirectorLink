@@ -296,6 +296,13 @@ device's key.
   would close this; until then pair on a network you trust. Plain pairing (browsers without
   X25519) and scripts using `Authorization: Bearer` send their key in the clear, and a key paired
   before 1.0.0 was sent in the clear then: revoke it and pair again if that matters.
+- **Someone in the network path with a certificate for another name.** The controller asks
+  Director to check the relay's certificate against the authorities Cloudflare issues it from
+  (`docs/RELAY.md`, 1.1.0), but whether Director also checks that the certificate names
+  `api.directorlink.io` is not known. If it does not, someone between the controller and the
+  internet with a certificate one of those authorities issued for any other name could pose as the
+  relay, take the home secret from the connection and keep the home offline; sealed requests stay
+  unreadable to them.
 - **Metadata:** which account uses which home, when, and how much.
 
 ## iPhone and iPad

@@ -1,7 +1,7 @@
 // Home: summary chips, the favorites strip and the room cards.
 
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
-import { setLight } from "../controls.js";
+import { blindMove, setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
 import { ringIsActive, ringingDoorbells } from "../doorbells.js";
 import { favoriteDevices, moveFavorite, toggleFavorite } from "../favorites.js";
@@ -18,13 +18,16 @@ import {
   roomName,
   shownBrightness,
   summaryCounts,
+  targetText,
   visibleRooms,
 } from "../model.js";
 import { installApp } from "../pwa.js";
 import { runScene } from "../scenes.js";
+import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
 import { connectScreen } from "./connect.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
+import { updateBanner } from "./updates.js";
 
 export function homeView({ openCamera, openFavoritesPicker }) {
   const header = pageHeader({
@@ -54,6 +57,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     ringingDoorbells().map((doorbell) => doorbellBanner(doorbell, { openCamera })),
     offlineBanner(),
     staleBanner(),
+    // Admins: a newer DirectorLink is out, until dismissed for that version.
+    updateBanner(),
     summaryChips(),
     scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),
@@ -214,24 +219,27 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     ];
   } else if (kind === "thermostat") {
     stateClass = climateIsOn(device) ? "is-cool" : "";
+    const parts = [
+      Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
+      climateIsOn(device) ? `${modeLabel(device.mode)} ${targetText(device)}` : modeLabel(device.mode),
+    ].filter(Boolean);
     content = [
       h("span", { class: "fav-icon" }, icon("climate")),
       name(device.name, "span", "fav-name"),
       room,
-      h(
-        "span",
-        { class: "fav-state" },
-        [
-          Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
-          climateIsOn(device) ? `${modeLabel(device.mode)} ${formatTemperature(device.target_temperature)}` : modeLabel(device.mode),
-        ]
-          .filter(Boolean)
-          .join(" · ")
-      ),
+      isDual(device)
+        ? // "21.7° · Auto 20°–24.4°" is wider than a phone tile: the parts go on two lines rather
+          // than cut the range off.
+          h(
+            "span",
+            { class: "fav-state fav-state-parts" },
+            parts.map((part, index) => [index ? " " : null, h("span", {}, index < parts.length - 1 ? `${part}\u00a0·` : part)])
+          )
+        : h("span", { class: "fav-state" }, parts.join(" · ")),
     ];
   } else if (kind === "blind") {
     stateClass = blindIsOpen(device) ? "is-open" : "";
-    content = [h("span", { class: "fav-icon" }, icon("blinds")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, blindStateLabel(device))];
+    content = [h("span", { class: "fav-icon" }, icon("blinds")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, blindStateLabel(device, blindMove(device.id)))];
   } else if (kind === "camera") {
     content = [cameraPicture(device, 320), h("span", { class: "fav-caption" }, name(device.name, "span", "fav-name"))];
     stateClass = "fav-camera";
@@ -335,7 +343,7 @@ function roomStatus(group) {
   for (const thermostat of group.thermostats) {
     parts.push(
       climateIsOn(thermostat)
-        ? t("rooms.climateOn", { mode: modeLabel(thermostat.mode), temperature: formatTemperature(thermostat.target_temperature) })
+        ? t("rooms.climateOn", { mode: modeLabel(thermostat.mode), temperature: targetText(thermostat) })
         : t("rooms.climateOff")
     );
   }
@@ -343,7 +351,7 @@ function roomStatus(group) {
     const open = group.blinds.filter(blindIsOpen).length;
     parts.push(
       group.blinds.length === 1
-        ? blindStateLabel(group.blinds[0])
+        ? blindStateLabel(group.blinds[0], blindMove(group.blinds[0].id))
         : open
           ? t("rooms.blindsOpen", { count: open })
           : t("rooms.blindsClosed")

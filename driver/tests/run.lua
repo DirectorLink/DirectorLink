@@ -8,6 +8,8 @@ local suites = {
     "test_http",
     "test_router",
     "test_api",
+    "test_discovery",
+    "test_shades",
     "test_relay",
     "test_lock",
     "test_remote",
@@ -16,6 +18,10 @@ local suites = {
     "test_schedules",
     "test_x25519",
     "test_security",
+    "test_light_v1",
+    "test_thermostat_v2_heat",
+    "test_thermostat_proxy",
+    "test_dual_thermostat",
 }
 
 local passed, failed = 0, 0

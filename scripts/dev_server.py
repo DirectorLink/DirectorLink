@@ -8,7 +8,12 @@ and API clients can be developed without a controller:
     python scripts/dev_server.py                   # API on http://localhost:41999
     python -m http.server 8080 --directory app     # app; use "localhost" as the controller
 
-The fake project has two rooms, three lights, one thermostat, two blinds, two cameras and a door relay.
+The fake project has two rooms; five lights (two of them older Light proxies), plus an older light
+that cannot be read and is listed as unsupported; three thermostats (an AC zone, and two that report
+in °F: a Control4 thermostat with heat and cool setpoints, and floor heating set through its heat
+setpoint); two blinds, two cameras and a door relay.
+Two more shades report their movement as KNX blinds do (one of them only opens and closes fully),
+and every blind moves over some seconds, reported while the requests come in.
 The pairing code is printed at start (valid 15 minutes, works once); type "code" and Enter for a new
 one, as the Composer action New Pairing Code would.
 """

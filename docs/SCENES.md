@@ -28,8 +28,15 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 - What a step sets:
   - lights: `{"on": true|false}` or `{"brightness": 0-100}`; on/off-only lights turn on.
   - climate: any of `mode` (`off`, `heat`, `cool`, `auto`), `target_temperature`, `fan_speed`
-    (`low`, `medium`, `high`, `auto`). With `mode: off`, nothing else. The temperature is kept
-    within each thermostat's range; a fan speed a unit does not have is left out.
+    (`low`, `medium`, `high`, `auto`, `on`, `circulate`), and since 1.1.0 `heat_setpoint` and
+    `cool_setpoint` instead of `target_temperature` (5–40, cool above heat). With `mode: off`,
+    nothing else. The temperature is kept within each thermostat's range; a fan speed a unit does
+    not have is left out.
+  - Thermostats with heat and cool setpoints (1.1.0) take `heat_setpoint` and `cool_setpoint` as
+    their setpoints, and `target_temperature` as the setpoint of the step's mode (or of the current
+    mode); in auto and off a target is left out. Setpoints that come closer than the thermostat's
+    deadband are left out. Single-setpoint thermostats take `heat_setpoint` in heat and
+    `cool_setpoint` in cool, and leave out any other setpoint.
   - blinds: `{"position": 0-100}` (0 closed, 100 open).
   - relays: `{"action": "pulse"}` — what the door's or gate's Open button does. A scene never
     holds a relay closed: on door strikes and gate inputs that would leave the door unlocked or
@@ -43,11 +50,21 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 the device routes, and answers `202` with what happened to each device:
 
 - `ran`: commands handed to the controller (a device that ran with a setting it does not have left
-  out, such as a fan speed, is also listed in `problems` as `partial`);
+  out, such as a fan speed, or a setpoint the thermostat refuses, is also listed in `problems` as
+  `partial`, `NOT_SUPPORTED`);
 - `skipped`: left alone, with the reason in `problems` — doors and gates for a key without door
   access (`FORBIDDEN`) or with Door Control off in Composer (`DOOR_CONTROL_DISABLED`), a mode a
-  unit does not have (`MODE_NOT_SUPPORTED`), a device no longer in the project (`NOT_FOUND`);
+  unit does not have (`MODE_NOT_SUPPORTED`), a device no longer in the project (`NOT_FOUND`), a
+  thermostat left with nothing to do once its refused setpoints are left out;
 - `failed`: refused by the controller.
+
+A thermostat's temperature command is checked before the thermostat gets any command: a refused
+one is left out (`partial`), and the rest of the step, such as its mode, still goes to it.
+
+Steps without `device_ids` take the devices DirectorLink supports when the scene runs. So when an
+update adds a device family (1.1.0: the older Light proxy and thermostats with heat and cool
+setpoints), room and whole-home steps, and the schedules that run them, include those devices
+from then on.
 
 The rest of the scene still runs when a device is skipped or fails. Doors and gates opened by a
 scene are logged like any other relay command, with the key that ran it. In the app, a scene that
@@ -70,5 +87,11 @@ restart reads them, so they are never overwritten by an empty list.
   reading lamp of the six"); **Copy the house as it is now** makes the actions from the current
   state of every light, AC and blind (doors and gates are never copied); **Show on Home**; **Try it
   now**; **Save scene**.
+- Auto for thermostats with heat and cool setpoints (1.1.0) offers a Heat and a Cool stepper, kept
+  at least the largest deadband of the chosen thermostats apart; copying the house keeps both
+  setpoints of such a thermostat in auto. Copied temperatures stay within what an action takes
+  (5–40 °C) and the thermostat's own range, as brightness and positions do: a setpoint set on the
+  thermostat itself below that (40 °F is 4.4 °C) is copied as the lowest the thermostat takes, and
+  a pair left with cool not above heat is not copied.
 - **Home** shows the scenes marked Show on Home, with one-tap Run, above the favorites.
 - Saving leaves out devices and rooms that are no longer in the project, and says so.

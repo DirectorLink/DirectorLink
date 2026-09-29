@@ -46,10 +46,11 @@
 - [x] Schedules by time, sunrise/sunset and weather (Open-Meteo: heat, rain, wind), run by the controller (0.14.0; `docs/SCHEDULES.md`)
 - [x] Automation visible to the installer in Composer: pause switch, schedule status, last automation, printout (0.15.0)
 - [x] Security review fixes (issue #43, ADR-032): the app seals its requests at home too and pairs with a key exchange; pairing only at home, locked per device; origin and Host checks; location for admins only; secrets from a random pool; invitations registered by the controller; the owner replaces the home secret; Reset Remote Identity; sign out everywhere (1.0.0)
+- [x] The driver checks the relay's certificate against the roots it carries (1.1.0, ADR-034)
 - [ ] The API console seals its requests like the app
 - [ ] Local HTTPS, or a code compared on both sides, against someone who changes traffic during pairing
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
-- [ ] Rediscover the project without restarting the driver
+- [x] Rediscover the project without restarting the driver: Director's project events and the action Refresh Project (1.1.0); real-system validation pending
 
 ## Milestone 3 — PWA
 
@@ -71,11 +72,13 @@
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
+- [x] Shades: a slider and Stop only where the shade can use them, and its movement shown while it moves (1.1.0); real-system validation pending
 - [x] Cameras: snapshots through the camera proxy, near-live grid in the app (0.5.0)
 - [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
-- [ ] Proposed in pull requests from bkwagner, not merged yet: Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16), fans (#18), alarm status (#15)
+- [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
+- [ ] Proposed in pull requests from bkwagner, not merged yet: fans (#18), alarm status (#15)
 
 ## Milestone 5 — DirectorLink scenes
 
@@ -95,6 +98,13 @@
 - [x] Weather triggers and conditions from Open-Meteo: heat, wind, rain (0.14.0)
 - [x] Recalculate after reboot/timezone/location changes (0.14.0: worked out each minute)
 - [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
+
+## Driver updates (ADR-035)
+
+- [x] Step 1, a guided update: admins see a newer release in the app, with what's new, the download of its `DirectorLink.c4z` and the Composer steps (1.1.0)
+- [ ] Test on the owner's CORE-1 with a throwaway driver whether a driver can install a `.c4z` on OS 3.4.3
+- [ ] If it can: one-tap install from the app, admins only, behind the Composer property **App Updates** (default Not allowed), only to newer versions; going back stays in Composer
+- [ ] Releases signed in GitHub, the signature checked by the driver in plain Lua (minimum OS stays 3.3.0)
 
 ## Deferred
 

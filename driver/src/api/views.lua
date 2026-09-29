@@ -31,6 +31,17 @@ local SETTABLE_MODES = {
     auto = true,
 }
 
+-- The FanSpeed values of the API. A thermostat may list others (e.g. "Humidify"); they are not
+-- offered, so every fan speed shown can be sent back with PATCH.
+local SETTABLE_FAN_SPEEDS = {
+    low = true,
+    medium = true,
+    high = true,
+    auto = true,
+    on = true,
+    circulate = true,
+}
+
 local function nullable(value)
     if value == nil or value == "" then
         return Json.null
@@ -103,6 +114,8 @@ function Views.light(registry, device)
     }
 end
 
+-- `capabilities` and the movement fields came in 1.1.0: a shade may only open and close fully
+-- (PATCH takes 0 and 100), or not stop; `moving` is null when the controller does not report it.
 function Views.blind(registry, device)
     local capabilities = device.capabilities or {}
     local state = device.state or {}
@@ -112,6 +125,13 @@ function Views.blind(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         position = nullable(state.position),
         position_reported = capabilities.position_reported == true,
+        capabilities = {
+            position = capabilities.position ~= false,
+            stop = capabilities.stop ~= false,
+        },
+        moving = state.moving == nil and Json.null or state.moving,
+        direction = nullable(state.direction),
+        target_position = nullable(state.target_position),
     }
 end
 
@@ -196,7 +216,10 @@ function Views.thermostatOptions(device)
     end
     local fanSpeeds = Json.array()
     for _, speed in ipairs(capabilities.fan_modes or {}) do
-        fanSpeeds[#fanSpeeds + 1] = string.lower(tostring(speed))
+        local name = string.lower(tostring(speed))
+        if SETTABLE_FAN_SPEEDS[name] then
+            fanSpeeds[#fanSpeeds + 1] = name
+        end
     end
     return {
         modes = modes,
@@ -206,9 +229,22 @@ function Views.thermostatOptions(device)
     }
 end
 
+-- True for thermostats with separate heat and cool setpoints (the Control4 thermostat proxy).
+function Views.isDual(device)
+    return (device.capabilities or {}).setpoints == "dual"
+end
+
+-- On a dual-setpoint thermostat `target_temperature` is the setpoint of the current mode (null in
+-- auto and off); the three setpoint keys are null on single-setpoint ones. A setpoint the
+-- thermostat does not use (no mode for it, such as heat on an Off,Cool one) is null too, even when
+-- the proxy has its variables: clients treat a reported setpoint as one they can set.
 function Views.thermostat(registry, device)
     local state = device.state or {}
+    local capabilities = device.capabilities or {}
     local options = Views.thermostatOptions(device)
+    local dual = capabilities.setpoints == "dual"
+    local heat = dual and capabilities.has_heat and state.heat_setpoint_c or nil
+    local cool = dual and capabilities.has_cool and state.cool_setpoint_c or nil
     return {
         id = device.id,
         name = device.name,
@@ -223,6 +259,10 @@ function Views.thermostat(registry, device)
         activity = activity(state.hvac_state),
         fan_speed = state.fan_mode and slug(state.fan_mode) or Json.null,
         fan_speeds = options.fan_speeds,
+        setpoints = dual and "dual" or "single",
+        heat_setpoint = nullable(heat),
+        cool_setpoint = nullable(cool),
+        setpoint_deadband = nullable(capabilities.deadband_c),
     }
 end
 

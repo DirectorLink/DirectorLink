@@ -15,6 +15,7 @@ import { api, checkInThroughAccount, connect, errorText, revokeAndForget, roleLa
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { updateFact, updatePanel } from "./updates.js";
 
 export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
   return [
@@ -180,7 +181,15 @@ function roomRow(room, index, hidden, { admin, personal }) {
   );
 }
 
-// The home's room order, for everyone (PUT /v1/rooms/order; drivers before 0.12.0 answer 404).
+// Why the room order was not saved. Drivers before 0.12.0 have no room order (404, 405), and 1.0.0
+// refuses PUT in the sealed requests the app sends at home and away (400 BAD_REQUEST, "Remote
+// requests are GET, POST, PATCH or DELETE on /v1/..."): both need a newer DirectorLink.
+export function roomOrderErrorText(error) {
+  const older = error?.status === 404 || error?.status === 405 || (error?.status === 400 && error?.code === "BAD_REQUEST");
+  return older ? t("settings.rooms.updateDriverOrder") : errorText(error);
+}
+
+// The home's room order, for everyone (PUT /v1/rooms/order).
 async function moveRoom(index, offset) {
   const before = state.rooms;
   const target = index + offset;
@@ -195,7 +204,7 @@ async function moveRoom(index, offset) {
     if (Array.isArray(answer?.items)) state.rooms = answer.items;
   } catch (error) {
     state.rooms = before;
-    ui.roomOrderMessage = { kind: "error", text: error?.status === 404 || error?.status === 405 ? t("settings.rooms.updateDriverOrder") : errorText(error) };
+    ui.roomOrderMessage = { kind: "error", text: roomOrderErrorText(error) };
   }
   notify();
 }
@@ -308,6 +317,8 @@ function controllerSection(navigate) {
     state.role ? [t("settings.controller.access"), roleLabel(state.role)] : null,
     state.lastUpdated && state.loaded ? [t("settings.controller.updated"), formatTime(state.lastUpdated)] : null,
     system?.bridge?.version ? [t("settings.controller.bridgeVersion"), system.bridge.version] : null,
+    // Admins: whether a newer DirectorLink is out (views/updates.js).
+    updateFact(),
     system?.controller?.model ? [t("settings.controller.model"), system.controller.model] : null,
     system?.controller?.os_version ? [t("settings.controller.os"), system.controller.os_version] : null,
     system?.inventory
@@ -353,6 +364,7 @@ function controllerSection(navigate) {
       { class: "facts" },
       rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", { dir: "auto" }, value)))
     ),
+    updatePanel(),
     state.role && !can("member") ? h("p", { class: "notice notice-info" }, t("roles.viewOnly")) : null,
     state.status === "unreachable" && state.notice ? h("p", { class: "notice notice-error" }, state.notice.text) : null,
     h(

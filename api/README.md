@@ -26,7 +26,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 1. Exchange the code for a key:
 
    ```bash
-   curl -X POST http://192.168.1.201:41999/v1/auth/pair \
+   curl -X POST http://<controller-ip>:41999/v1/auth/pair \
      -H "Content-Type: application/json" \
      -d '{"pairing_code": "1234 5678", "name": "My laptop"}'
    ```
@@ -36,13 +36,65 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 
    ```bash
-   curl http://192.168.1.201:41999/v1/lights -H "Authorization: Bearer ak_..."
-   curl -X PATCH http://192.168.1.201:41999/v1/lights/259 \
+   curl http://<controller-ip>:41999/v1/lights -H "Authorization: Bearer ak_..."
+   curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
      -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
      -d '{"brightness": 40}'
    ```
 
 The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. It also keeps each key's lock key, for sealed requests: if a copy of the controller's data is lost, use **Revoke All API Keys** in Composer (which also removes every key if one is lost) and the owner's **Replace the remote secret** in the app (`docs/ACCOUNTS.md`).
+
+## Thermostats
+
+Most thermostats have one `target_temperature` (`"setpoints": "single"`). Thermostats with separate heat and cool setpoints (`"setpoints": "dual"`, the Control4 thermostat) also report both, and the smallest gap they keep between them:
+
+```json
+{
+  "id": 31,
+  "name": "Study",
+  "mode": "auto",
+  "target_temperature": null,
+  "target_temperature_min": 5,
+  "target_temperature_max": 35,
+  "setpoints": "dual",
+  "heat_setpoint": 20,
+  "cool_setpoint": 24.4,
+  "setpoint_deadband": 1.7
+}
+```
+
+(Other fields left out.) Set both in auto:
+
+```bash
+curl -X PATCH http://<controller-ip>:41999/v1/thermostats/31 \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}'
+```
+
+- Sending one setpoint moves the other when needed to keep `setpoint_deadband`. Two setpoints sent together must already be that far apart, or the answer is `400 INVALID_FIELD`. When `setpoint_deadband` is `null`, cool must still be above heat.
+- `target_temperature` sets the setpoint of the mode (the one in the same request, else the current one). In auto and off it is refused with `409 NOT_SUPPORTED`.
+- Temperatures stay in °C, whatever scale the Control4 project uses. `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` are `null` on single-setpoint thermostats. A dual thermostat reports `null` for a setpoint none of its modes uses, such as the heat setpoint of one with only Off and Cool.
+
+## Blinds
+
+Since 1.1.0 a blind says what it can do, and whether it is moving:
+
+```json
+{
+  "id": 52,
+  "name": "Terrace Shade",
+  "position": 40,
+  "position_reported": true,
+  "capabilities": { "position": true, "stop": true },
+  "moving": true,
+  "direction": "opening",
+  "target_position": 80
+}
+```
+
+- `capabilities.position` is false for a blind that only opens and closes fully: `PATCH` then takes only `{"position": 0}` and `{"position": 100}`, and anything else is `409 POSITION_NOT_SUPPORTED`. With `capabilities.stop` false, `POST /v1/blinds/{id}/stop` is `409 STOP_NOT_SUPPORTED`. Both are true where the controller does not say.
+- A move takes seconds to a minute, and `position` may keep the value the blind left until it stops: while `moving` is true, show `target_position`, and read the blind again every few seconds. `moving` is `null` when the controller does not report movement.
+- `position` and `target_position` are `null` when unknown.
 
 ## Debugging
 

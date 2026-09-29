@@ -78,7 +78,7 @@ local function validateSet(stepType, set, field)
     end
     local allowed = ({
         lights = { on = true, brightness = true },
-        climate = { mode = true, target_temperature = true, fan_speed = true },
+        climate = { mode = true, target_temperature = true, fan_speed = true, heat_setpoint = true, cool_setpoint = true },
         blinds = { position = true },
         relays = { action = true },
     })[stepType]
@@ -111,22 +111,31 @@ local function validateSet(stepType, set, field)
         end
         if set.fan_speed ~= nil then
             if not Scenes.FAN_SPEEDS[set.fan_speed] then
-                return nil, Problem.invalidField(field .. ".fan_speed", "fan_speed must be one of low, medium, high, auto")
+                return nil, Problem.invalidField(field .. ".fan_speed", "fan_speed must be one of low, medium, high, auto, on, circulate")
             end
             result.fan_speed = set.fan_speed
         end
-        if set.target_temperature ~= nil then
-            local target = set.target_temperature
-            if type(target) ~= "number" or target < Scenes.MIN_TEMPERATURE or target > Scenes.MAX_TEMPERATURE then
-                return nil, Problem.invalidField(field .. ".target_temperature", "target_temperature must be a number from 5 to 40")
+        for _, name in ipairs({ "target_temperature", "heat_setpoint", "cool_setpoint" }) do
+            local value = set[name]
+            if value ~= nil then
+                if type(value) ~= "number" or value < Scenes.MIN_TEMPERATURE or value > Scenes.MAX_TEMPERATURE then
+                    return nil, Problem.invalidField(field .. "." .. name, name .. " must be a number from 5 to 40")
+                end
+                result[name] = value
             end
-            result.target_temperature = target
+        end
+        local heat, cool = result.heat_setpoint, result.cool_setpoint
+        if (heat or cool) and result.target_temperature then
+            return nil, Problem.invalidField(field, "Send either target_temperature or heat_setpoint/cool_setpoint")
+        end
+        if heat and cool and cool <= heat then
+            return nil, Problem.invalidField(field .. ".cool_setpoint", "cool_setpoint must be above heat_setpoint")
         end
         if next(result) == nil then
             return nil, Problem.invalidField(field, "Set a mode, a temperature or a fan speed")
         end
-        if result.mode == "off" and (result.fan_speed or result.target_temperature) then
-            return nil, Problem.invalidField(field, 'mode "off" turns the AC off; leave out the temperature and fan speed')
+        if result.mode == "off" and (result.fan_speed or result.target_temperature or heat or cool) then
+            return nil, Problem.invalidField(field, 'mode "off" turns the AC off; leave out the temperature, setpoints and fan speed')
         end
         return result
     elseif stepType == "blinds" then
@@ -287,8 +296,44 @@ local function stepDevices(registry, step)
     return devices
 end
 
+-- "a; b": what a step leaves out on one device, when more than one thing is.
+local function also(leftOut, detail)
+    return leftOut and (leftOut .. "; " .. detail) or detail
+end
+
+-- The temperature commands of a climate step. A thermostat with heat and cool setpoints takes
+-- them as they are, and a target as the setpoint of the mode; one with a single target takes the
+-- setpoint of the mode it will be in. Returns the command, or nil and what is left out.
+local function temperatureCommand(set, device, options)
+    local function clamp(value)
+        return math.max(options.min, math.min(options.max, value))
+    end
+    local heat, cool = set.heat_setpoint, set.cool_setpoint
+    -- The step's mode, else the one the thermostat reports: the mode command sent just before
+    -- changes the reported one only later.
+    local mode = set.mode or string.lower(tostring((device.state or {}).hvac_mode or ""))
+    if Views.isDual(device) then
+        if set.target_temperature then
+            if mode ~= "heat" and mode ~= "cool" then
+                return nil, "In " .. (mode ~= "" and mode or "this mode") .. " this thermostat takes a heat and a cool setpoint"
+            end
+            return { action = "set_temperature", params = { value = clamp(set.target_temperature), mode = set.mode } }
+        end
+        return { action = "set_setpoints", params = { heat = heat and clamp(heat), cool = cool and clamp(cool) } }
+    end
+    if set.target_temperature then
+        -- Thermostat V2 reads only the value.
+        return { action = "set_temperature", params = { value = clamp(set.target_temperature), mode = set.mode } }
+    end
+    local value = (mode == "heat" and heat) or (mode == "cool" and cool) or nil
+    if not value then
+        return nil, "This thermostat has one target temperature"
+    end
+    return { action = "set_temperature", params = { value = clamp(value) } }
+end
+
 -- The adapter commands for one device, or nil and why it is skipped; then what is left out, if
--- anything (a fan speed the unit does not have).
+-- anything (a fan speed the unit does not have, a setpoint it cannot take).
 local function deviceCommands(step, device)
     local set = step.set
     if step.type == "lights" then
@@ -318,18 +363,43 @@ local function deviceCommands(step, device)
                 leftOut = "This thermostat has no fan speed " .. set.fan_speed
             end
         end
-        if set.target_temperature then
-            local target = math.max(options.min, math.min(options.max, set.target_temperature))
-            commands[#commands + 1] = { action = "set_temperature", params = { value = target } }
+        if set.target_temperature or set.heat_setpoint or set.cool_setpoint then
+            local command, why = temperatureCommand(set, device, options)
+            if command then
+                command.check = true
+                commands[#commands + 1] = command
+            else
+                leftOut = also(leftOut, why)
+            end
         end
         if #commands == 0 then
             return nil, "NOT_SUPPORTED", leftOut or "Nothing in this step applies to this thermostat"
         end
         return commands, leftOut
     elseif step.type == "blinds" then
-        return { { action = "set_position", params = { position = set.position } } }
+        -- Checked first: a shade that only opens and closes fully is skipped for a position between.
+        return { { action = "set_position", params = { position = set.position }, check = true } }
     end
     return { { action = "pulse" } }
+end
+
+-- The thermostat checks its setpoint commands before anything is sent to it: one it refuses (heat
+-- and cool closer than its deadband, no room to move the other one) is left out, and the rest of
+-- the step still runs on it, like a fan speed it does not have.
+local function withoutRefused(services, device, commands, leftOut)
+    local kept = {}
+    for _, command in ipairs(commands) do
+        local ok, failure = true, nil
+        if command.check then
+            ok, failure = services.adapters.prepare(device.id, command.action, command.params)
+        end
+        if ok then
+            kept[#kept + 1] = command
+        else
+            leftOut = also(leftOut, failure and failure.message or "This thermostat refused the temperature")
+        end
+    end
+    return kept, leftOut
 end
 
 -- Runs `steps` in order and reports what happened to each device: sent (ran), not for this key or
@@ -363,6 +433,12 @@ local function run(ctx, steps)
             else
                 local commands, code, detail = deviceCommands(step, device)
                 local leftOut = commands and code or nil
+                if commands then
+                    commands, leftOut = withoutRefused(services, device, commands, leftOut)
+                    if #commands == 0 then
+                        commands, code, detail = nil, "NOT_SUPPORTED", leftOut
+                    end
+                end
                 if not commands then
                     note("skipped", index, device.id, code, detail)
                 else

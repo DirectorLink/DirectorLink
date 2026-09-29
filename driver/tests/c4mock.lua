@@ -10,6 +10,9 @@ local sha256 = require("sha256")
 local aes = require("aes")
 local Base64 = require("src.core.base64")
 
+-- The driver folder, which build.py packages as the .c4z root (this file is driver/tests/c4mock.lua).
+local DRIVER_ROOT = debug.getinfo(1, "S").source:match("^@(.-)[/\\]tests[/\\][^/\\]+$") or "./driver"
+
 -- Byte XOR without bit operators (HMAC pads are short).
 local function xorByte(a, b)
     local result, bit = 0, 1
@@ -203,15 +206,15 @@ function Mock.project()
         -- Camera proxies: what GET_PROPERTIES / GET_SNAPSHOT_QUERY_STRING return, and the fake camera.
         cameras = {
             [60] = {
-                address = "192.168.1.81", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
+                address = "192.0.2.21", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
                 query = "ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&amp;size=%dx%d",
             },
             [61] = {
-                address = "192.168.1.117", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
+                address = "192.0.2.22", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
                 query = "/bha-api/image.cgi",
             },
             [92] = {
-                address = "192.168.1.118", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
+                address = "192.0.2.23", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
                 query = "/bha-api/image.cgi",
             },
         },
@@ -223,10 +226,154 @@ function Mock.project()
     }
 end
 
+-- Adds the device families of 1.1.0 to a project. Mock.project() itself stays as it is: the
+-- inventory and scene tests count its devices.
+
+-- Legacy Light proxies (light.c4i): a dimmer (25, Kitchen), a switch (26, Living Room) and one
+-- whose Light State cannot be read (27, its own proxy). The protocol driver names are placeholders.
+function Mock.withLegacyLights(project)
+    project.devices[120] = {
+        deviceName = "Pantry Dimmer", driverFileName = "ldz_dimmer.c4i", roomId = 10, roomName = "Kitchen",
+        proxies = { [25] = { deviceName = "Pantry", driverFileName = "light.c4i" } },
+    }
+    project.devices[25] = {
+        deviceName = "Pantry", driverFileName = "light.c4i", roomId = 10, roomName = "Kitchen",
+        protocol = { [120] = { deviceName = "Pantry Dimmer", driverFileName = "ldz_dimmer.c4i" } },
+    }
+    project.devices[121] = {
+        deviceName = "Porch Switch", driverFileName = "ldz_switch.c4i", roomId = 11, roomName = "Living Room",
+        proxies = { [26] = { deviceName = "Porch", driverFileName = "light.c4i" } },
+    }
+    project.devices[26] = {
+        deviceName = "Porch", driverFileName = "light.c4i", roomId = 11, roomName = "Living Room",
+        protocol = { [121] = { deviceName = "Porch Switch", driverFileName = "ldz_switch.c4i" } },
+    }
+    project.devices[27] = { deviceName = "Garage", driverFileName = "Light.c4i", roomId = 11, roomName = "Living Room" }
+    project.variables[25] = { [1000] = "1", [1001] = "65" }
+    project.variables[26] = { [1000] = "0" }
+    project.variableNames[25] = { [1000] = "LIGHT_STATE", [1001] = "LIGHT_LEVEL" }
+    project.variableNames[26] = { [1000] = "LIGHT_STATE" }
+    return project
+end
+
+-- A Thermostat V2 floor-heating zone that keeps its target in the heat setpoint (1133) and leaves
+-- the single setpoint at 0 in both scales, as seen on a real °F project (#19).
+-- options: id (32), protocol (113), room (11), name, scale ("FAHRENHEIT"), heat ("21.5").
+function Mock.withHeatOnlyZone(project, options)
+    options = options or {}
+    local id, protocol = options.id or 32, options.protocol or 113
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local name = options.name or "Bathroom floor"
+    project.devices[protocol] = {
+        deviceName = "Floor Heating", driverFileName = "floor_heating.c4z", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = name, driverFileName = "thermostatV2.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "thermostatV2.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Floor Heating", driverFileName = "floor_heating.c4z" } },
+    }
+    project.variables[id] = {
+        [1100] = options.scale or "FAHRENHEIT",
+        [1104] = "Heat",
+        [1105] = "Undefined",
+        [1107] = "Heat",
+        [1112] = "1",
+        [1120] = "Off,Heat",
+        [1131] = "20",
+        [1133] = options.heat or "21.5",
+        [1149] = "0",
+        [1150] = "0",
+    }
+    project.variableNames[id] = {
+        [1100] = "SCALE", [1104] = "HVAC_MODE", [1105] = "FAN_MODE", [1107] = "HVAC_STATE",
+        [1112] = "IS_CONNECTED", [1120] = "HVAC_MODES_LIST", [1131] = "TEMPERATURE_C",
+        [1133] = "HEAT_SETPOINT_C", [1149] = "SINGLE_SETPOINT_F", [1150] = "SINGLE_SETPOINT_C",
+    }
+    return project
+end
+
+-- A Control4 thermostat (control4_thermostat_proxy.c4i) with separate heat and cool setpoints,
+-- in Auto. options: id (31), protocol (112), room (10), scale ("FAHRENHEIT" or "CELSIUS"),
+-- deadband (the project-scale deadband, e.g. "1.7" in °C; false for none).
+--   °F: current 71 °F, heat 68 °F (20 °C), cool 76 °F (24.4 °C), deadband 3 °F (1.7 °C)
+--   °C: current 21 °C, heat 20.5 °C, cool 24 °C, deadband 2 °C
+function Mock.withDualThermostat(project, options)
+    options = options or {}
+    local id, protocol = options.id or 31, options.protocol or 112
+    local roomId = options.room or 10
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local fahrenheit = (options.scale or "FAHRENHEIT") == "FAHRENHEIT"
+    project.devices[protocol] = {
+        deviceName = "Wireless Thermostat", driverFileName = "control4_wireless_thermostat.c4i", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = "Study", driverFileName = "control4_thermostat_proxy.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = "Study", driverFileName = "control4_thermostat_proxy.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Wireless Thermostat", driverFileName = "control4_wireless_thermostat.c4i" } },
+    }
+    local variables = {
+        [1100] = options.scale or "FAHRENHEIT",
+        [1104] = "Auto",
+        [1105] = "Auto",
+        [1107] = "Off",
+        [1112] = "1",
+        [1120] = "Off,Heat,Cool,Auto",
+        [1121] = "Auto,On",
+        [1130] = fahrenheit and "71" or "70",
+        [1131] = fahrenheit and "21.7" or "21",
+        [1132] = fahrenheit and "68" or "69",
+        [1133] = fahrenheit and "20" or "20.5",
+        [1134] = fahrenheit and "76" or "75",
+        [1135] = fahrenheit and "24.4" or "24",
+        [1146] = fahrenheit and "3" or "4",
+        [1147] = fahrenheit and "1.7" or "2",
+    }
+    if options.deadband == false then
+        variables[1146], variables[1147] = nil, nil
+    elseif options.deadband ~= nil then
+        local deadband = tonumber(options.deadband)
+        if fahrenheit then
+            variables[1146] = tostring(options.deadband)
+            variables[1147] = tostring(math.floor(deadband * 5 / 9 * 10 + 0.5) / 10)
+        else
+            variables[1146] = tostring(math.floor(deadband * 9 / 5 + 0.5))
+            variables[1147] = tostring(options.deadband)
+        end
+    end
+    project.variables[id] = variables
+    project.variableNames[id] = {
+        [1100] = "SCALE", [1104] = "HVAC_MODE", [1105] = "FAN_MODE", [1107] = "HVAC_STATE",
+        [1112] = "IS_CONNECTED", [1120] = "HVAC_MODES_LIST", [1121] = "FAN_MODES_LIST",
+        [1130] = "TEMPERATURE_F", [1131] = "TEMPERATURE_C", [1132] = "HEAT_SETPOINT_F",
+        [1133] = "HEAT_SETPOINT_C", [1134] = "COOL_SETPOINT_F", [1135] = "COOL_SETPOINT_C",
+        [1146] = "DEADBAND_F", [1147] = "DEADBAND_C",
+    }
+    return project
+end
+
+-- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
+function Mock.demoProject()
+    local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
+    Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
+    Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
+    return project
+end
+
+-- Director's C4SystemEvents (names and ids as in Snap One's drivers-common-public handlers.lua).
+Mock.SYSTEM_EVENTS = {
+    OnAll = 1, OnAlive = 2, OnProjectChanged = 3, OnProjectNew = 4, OnProjectLoaded = 5, OnPIP = 6,
+    OnItemAdded = 7, OnItemNameChanged = 8, OnItemDataChanged = 9, OnDeviceDataChanged = 10,
+    OnItemRemoved = 11, OnItemMoved = 12, OnDriverAdded = 13, OnDeviceIdentified = 14,
+    OnBindingAdded = 15, OnBindingRemoved = 16,
+}
+
 -- Installs global C4 and Properties objects backed by `project`.
 function Mock.install(project)
     project = project or Mock.project()
     local mock = {
+        -- The project Director serves: tests change it as an installer would in Composer.
+        project = project,
         persist = {},
         persistEncrypted = {},
         -- Outgoing network connections (the relay): binding -> { host, port, kind, options,
@@ -241,6 +388,8 @@ function Mock.install(project)
         listeners = {},
         urlRequests = {},
         deviceEvents = {},
+        -- System events registered: { eventId, deviceId }.
+        systemEvents = {},
         servers = {},
         timers = {},
         uuidCount = 0,
@@ -335,6 +484,14 @@ function Mock.install(project)
         mock.deviceEvents[#mock.deviceEvents + 1] = { deviceId, eventId }
     end
 
+    function C4:RegisterSystemEvent(eventId, deviceId)
+        mock.systemEvents[#mock.systemEvents + 1] = { eventId, deviceId }
+    end
+
+    function C4:UnregisterAllSystemEvents()
+        mock.systemEvents = {}
+    end
+
     function C4:RegisterVariableListener(deviceId, variableId)
         mock.listeners[#mock.listeners + 1] = { deviceId, variableId }
     end
@@ -351,6 +508,12 @@ function Mock.install(project)
     end
 
     function C4:SendUIRequest(deviceId, request, params)
+        -- Blind proxies of Mock.withShade answer GET_SETUP; the others fail it, like a Director
+        -- that does not know the request.
+        local setup = project.blindSetups and project.blindSetups[deviceId]
+        if setup and request == "GET_SETUP" then
+            return setup
+        end
         local camera = project.cameras and project.cameras[deviceId]
         if camera and request == "GET_PROPERTIES" then
             return string.format(
@@ -425,6 +588,15 @@ function Mock.install(project)
     function C4:NetPortOptions(binding, port, kind, options)
         local connection = assert(mock.network[binding], "NetPortOptions before CreateNetworkConnection")
         connection.port, connection.kind, connection.options = port, kind, options
+        -- Like Director, a CA file is read from the driver package (its path is relative to it);
+        -- nil when the package has no such file.
+        if options and options.CACERTFILE then
+            local file = io.open(DRIVER_ROOT .. "/" .. tostring(options.CACERTFILE):gsub("^%./", ""), "rb")
+            connection.caCertificates = file and file:read("*a") or nil
+            if file then
+                file:close()
+            end
+        end
     end
 
     function C4:NetConnect(binding, port)
@@ -565,6 +737,10 @@ function Mock.install(project)
 
     _G.C4 = C4
     _G.Properties = { ["Log Level"] = "Info" }
+    _G.C4SystemEvents = {}
+    for name, id in pairs(Mock.SYSTEM_EVENTS) do
+        C4SystemEvents[name] = id
+    end
     return mock
 end
 
@@ -624,6 +800,226 @@ function Mock.updateDriver(previous, project)
             mock.persistEncrypted[name] = previous.persistEncrypted[name]
         end
     end)
+end
+
+-- ---- Director while the driver runs ----------------------------------------------------------
+
+-- A variable changes: Director tells the driver once per listener registered for it. Returns how
+-- many times it did.
+function Mock.changeVariable(mock, deviceId, variableId, value)
+    mock.project.variables[deviceId] = mock.project.variables[deviceId] or {}
+    mock.project.variables[deviceId][variableId] = value
+    local delivered = 0
+    for _, listener in ipairs(mock.listeners) do
+        if listener[1] == deviceId and listener[2] == variableId then
+            delivered = delivered + 1
+            OnWatchedVariableChanged(deviceId, variableId, value)
+        end
+    end
+    return delivered
+end
+
+-- A device fires an event: delivered once per registration of it. Returns how many times.
+function Mock.fireDeviceEvent(mock, deviceId, eventId)
+    local delivered = 0
+    for _, event in ipairs(mock.deviceEvents) do
+        if event[1] == deviceId and event[2] == eventId then
+            delivered = delivered + 1
+            OnDeviceEvent(deviceId, eventId)
+        end
+    end
+    return delivered
+end
+
+-- A system event, as XML with its name and parameters (e.g. { iditem = 51 }), to a driver that
+-- registered for it on every device (id 0). Returns whether it was delivered.
+function Mock.systemEvent(mock, name, params)
+    local id = Mock.SYSTEM_EVENTS[name]
+    local registered = false
+    for _, event in ipairs(mock.systemEvents) do
+        registered = registered or (event[1] == id and event[2] == 0)
+    end
+    if not registered then
+        return false
+    end
+    local names = {}
+    for param in pairs(params or {}) do
+        names[#names + 1] = param
+    end
+    table.sort(names)
+    local parts = { '<systemevent name="' .. name .. '">' }
+    for _, param in ipairs(names) do
+        parts[#parts + 1] = string.format('<param name="%s" type="ulong">%s</param>', param, tostring(params[param]))
+    end
+    parts[#parts + 1] = "</systemevent>"
+    OnSystemEvent(table.concat(parts))
+    return true
+end
+
+-- ---- Composer changes to the project (read again when the driver refreshes it) ---------------
+
+local function findRoom(node, roomId)
+    if type(node) ~= "table" then
+        return nil
+    end
+    if node.id == roomId then
+        return node
+    end
+    for _, child in ipairs(node) do
+        local found = findRoom(child, roomId)
+        if found then
+            return found
+        end
+    end
+    return nil
+end
+
+-- The floor that holds the rooms (Ground Floor in Mock.project).
+local function roomsFloor(project)
+    return project.hierarchy[1][1]
+end
+
+function Mock.moveDevice(project, id, roomId)
+    local room = assert(findRoom(project.hierarchy, roomId), "no room " .. tostring(roomId))
+    project.devices[id].roomId, project.devices[id].roomName = roomId, room.name
+end
+
+function Mock.renameDevice(project, id, name)
+    project.devices[id].deviceName = name
+    for _, device in pairs(project.devices) do
+        for _, links in ipairs({ device.proxies or {}, device.protocol or {} }) do
+            if links[id] then
+                links[id].deviceName = name
+            end
+        end
+    end
+end
+
+-- Removes the device, its variables and every link to it (its protocol driver's proxy list).
+function Mock.removeDevice(project, id)
+    project.devices[id] = nil
+    project.variables[id] = nil
+    for _, device in pairs(project.devices) do
+        if device.proxies then
+            device.proxies[id] = nil
+        end
+        if device.protocol then
+            device.protocol[id] = nil
+        end
+    end
+end
+
+-- A Light V2 dimmer (proxy `id`, protocol driver `protocol`) in `roomId`, at `level` percent.
+function Mock.addLight(project, id, protocol, roomId, name, level)
+    local room = assert(findRoom(project.hierarchy, roomId), "no room " .. tostring(roomId))
+    project.devices[protocol] = {
+        deviceName = "Dimmer " .. tostring(id), driverFileName = "zigbee_dimmer.c4i", roomId = roomId, roomName = room.name,
+        proxies = { [id] = { deviceName = name, driverFileName = "light_v2.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "light_v2.c4i", roomId = roomId, roomName = room.name,
+        protocol = { [protocol] = { deviceName = "Dimmer " .. tostring(id), driverFileName = "zigbee_dimmer.c4i" } },
+    }
+    project.variables[id] = { [1000] = (level or 0) > 0 and "1" or "0", [1001] = tostring(level or 0) }
+end
+
+function Mock.addRoom(project, id, name)
+    local floor = roomsFloor(project)
+    floor[#floor + 1] = { id = id, name = name, type = 8 }
+end
+
+-- The room goes from the hierarchy; move its devices first, or they bring it back by their room id.
+function Mock.removeRoom(project, id)
+    local floor = roomsFloor(project)
+    for index = #floor, 1, -1 do
+        if floor[index].id == id then
+            table.remove(floor, index)
+        end
+    end
+end
+
+-- ---- Shades as the blind proxy shows KNX blinds on Director 3.4.3 (1.1.0) --------------------
+
+local SHADE_VARIABLES = {
+    [1000] = "Open", [1001] = "Fully Closed", [1002] = "Stopped", [1003] = "Fully Open", [1004] = "Level",
+    [1005] = "Target Level", [1006] = "Type", [1007] = "Movement", [1008] = "Opening", [1009] = "Closing",
+}
+
+-- What GET_SETUP answered for the KNX blinds of a real Director 3.4.3 (the levels trimmed of their
+-- colours and texts): level_discrete_control, can_stop, the movement type, and the levels.
+local SHADE_SETUP = "<blind_setup><has_level>True</has_level><level_discrete_control>%s</level_discrete_control>"
+    .. "<can_stop>%s</can_stop><type_locked>False</type_locked>"
+    .. "<types>Shade,Group,Blind,Louver,Curtain,Shutter,Blackout,Opaque Glass,Awning,Door,Screen</types><type>4</type>"
+    .. "<movements>Open-Close,Up-Down,Down-Up,Out-In,Left-Right,Right-Left</movements><movement_locked>False</movement_locked>"
+    .. '<movement>1</movement><online>True</online><levels minimum="%d" maximum="%d" resolution="1" unknown="-1">'
+    .. '<level name="Closed" id="2" level_setable="true" level="%d" levelType="1" buttonLinkBindingId="301"/>'
+    .. '<level name="Open" id="1" level_setable="true" level="%d" levelType="1" buttonLinkBindingId="300"/>'
+    .. '<level name="Toggle" buttonLinkBindingId="0" level_setable="false"/>'
+    .. '<level name="Stop" buttonLinkBindingId="0" level_setable="false"/></levels>'
+    .. '<presets><preset name="Closed" id="2" level="%d" levelType="1"/><preset name="Open" id="1" level="%d" levelType="1"/></presets>'
+    .. "</blind_setup>"
+
+-- A shade with the proxy's ten variables, at rest, and the setup GET_SETUP returns. options: id,
+-- protocol, room (11), name, level ("0"), position (level_discrete_control, true), stop (can_stop,
+-- true), open (its Open level, 100; Closed is 0), movement (the Movement variable, the movement
+-- type: "Up to Down"), setup (the whole GET_SETUP answer instead).
+function Mock.withShade(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    project.devices[protocol] = {
+        deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = options.name, driverFileName = "blind.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = options.name, driverFileName = "blind.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
+    }
+    local level = options.level or "0"
+    local number = tonumber(level) or -255
+    local open = options.open or 100
+    project.variables[id] = {
+        [1000] = number > 0 and "1" or "0",
+        [1001] = number == 0 and "1" or "0",
+        [1002] = "1",
+        [1003] = number == open and "1" or "0",
+        [1004] = level,
+        [1005] = level,
+        [1006] = "0",
+        [1007] = options.movement or "Up to Down",
+        [1008] = "0",
+        [1009] = "0",
+    }
+    project.variableNames[id] = {}
+    for variableId, name in pairs(SHADE_VARIABLES) do
+        project.variableNames[id][variableId] = name
+    end
+    project.blindSetups = project.blindSetups or {}
+    project.blindSetups[id] = options.setup or string.format(
+        SHADE_SETUP,
+        options.position == false and "False" or "True",
+        options.stop == false and "False" or "True",
+        0, open, 0, open, 0, open
+    )
+    return project
+end
+
+-- The demo's shades: 52 goes to any position and stops (a KNX blind with a percent address),
+-- 53 only opens and closes fully and cannot stop.
+function Mock.withShades(project)
+    Mock.withShade(project, { id = 52, protocol = 114, room = 11, name = "Terrace Shade", level = "35" })
+    Mock.withShade(project, { id = 53, protocol = 115, room = 10, name = "Patio Shutter", level = "0", position = false, stop = false })
+    return project
+end
+
+-- A shade reports: variables by name, e.g. { Level = "45", Opening = "1", Stopped = "0" }, each
+-- delivered like any variable change.
+function Mock.setShade(mock, id, values)
+    for variableId, name in pairs(mock.project.variableNames[id] or {}) do
+        if values[name] ~= nil then
+            Mock.changeVariable(mock, id, variableId, values[name])
+        end
+    end
 end
 
 return Mock

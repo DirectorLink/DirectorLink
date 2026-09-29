@@ -56,6 +56,14 @@
         has the app's Schedules page open, and for an hour after.
       </p>
 
+      <h2>Update checks</h2>
+      <p>
+        On devices with an admin key, the app asks GitHub (api.github.com) about twice a day which
+        DirectorLink version is the newest, to say when an update is out. That request goes from the
+        device straight to GitHub, not through our servers: GitHub sees that device's IP address, and
+        nothing about your home is sent. Devices with other access never ask.
+      </p>
+
       <h2>Signing in with Google or Apple</h2>
       <p>
         Signing in is optional. It is for using your home away from the home network and for inviting

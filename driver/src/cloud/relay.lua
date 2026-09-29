@@ -19,6 +19,8 @@ Relay.KEEPALIVE_MS = 25000
 Relay.SILENCE_SECONDS = 60
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
+-- How long an attempt may take from NetConnect to the relay's answer to the upgrade.
+Relay.CONNECT_SECONDS = 30
 -- Replacement home secrets waiting for the owner's approval: the newest few, for a day.
 Relay.CANDIDATES = 3
 Relay.CANDIDATE_SECONDS = 24 * 3600
@@ -37,6 +39,7 @@ local state = {
     lastHeard = 0,
     keepalive = nil,
     retry = nil,
+    connecting = nil, -- the limit on the attempt in progress (watchConnect)
     services = nil,
     onStatus = nil,
     status = "Off",
@@ -124,8 +127,10 @@ end
 local function stopTimers()
     cancel(state.keepalive)
     cancel(state.retry)
+    cancel(state.connecting)
     state.keepalive = nil
     state.retry = nil
+    state.connecting = nil
 end
 
 local connect
@@ -145,6 +150,31 @@ local function scheduleReconnect(reason, seconds)
         state.retry = C4:SetTimer(seconds * 1000, function()
             state.retry = nil
             connect()
+        end, false)
+    end)
+end
+
+-- Gives up on an attempt that has not opened within CONNECT_SECONDS, and retries with the
+-- backoff. Director reports a lost connection as OFFLINE, but Control4 does not document how it
+-- reports a certificate that fails VERIFY_MODE: if it reports nothing, the attempt would
+-- otherwise stay at "Connecting..." until the driver restarts.
+local function watchConnect()
+    cancel(state.connecting)
+    state.connecting = nil
+    pcall(function()
+        state.connecting = C4:SetTimer(Relay.CONNECT_SECONDS * 1000, function()
+            state.connecting = nil
+            local socket = state.socket
+            if not state.enabled or not socket or (socket.state ~= "connecting" and socket.state ~= "handshake") then
+                return
+            end
+            if socket.state == "connecting" then
+                log("warn", "no TLS connection to the relay within " .. Relay.CONNECT_SECONDS .. " s; the certificate check may have failed")
+            else
+                log("warn", "the relay did not answer the upgrade within " .. Relay.CONNECT_SECONDS .. " s")
+            end
+            socket:close(nil, true)
+            scheduleReconnect("no connection within " .. Relay.CONNECT_SECONDS .. " s")
         end, false)
     end)
 end
@@ -263,6 +293,8 @@ local function onOpen()
             saveIdentity(current)
         end
     end
+    cancel(state.connecting)
+    state.connecting = nil
     state.trying = nil
     state.attempts = 0
     state.lastHeard = os.time()
@@ -326,6 +358,8 @@ connect = function()
         { "User-Agent", "DirectorLink/" .. Version.BRIDGE_VERSION },
     }
     publish("Connecting...")
+    -- Before connect(): a connection that fails at once cancels it on its way to the backoff.
+    watchConnect()
     state.socket:connect()
 end
 

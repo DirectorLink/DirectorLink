@@ -1229,8 +1229,16 @@ paths:
       tags: [Thermostats]
       operationId: updateThermostat
       x-directorlink-role: member
-      summary: Change mode, target temperature or fan speed
-      description: Fields are applied in the order mode, fan speed, target temperature.
+      summary: Change mode, target temperature, heat/cool setpoints or fan speed
+      description: >-
+        Fields are applied in the order mode, fan speed, then the temperature: `target_temperature`,
+        or `heat_setpoint` and `cool_setpoint` on dual-setpoint thermostats (`setpoints: dual`).
+        There, `target_temperature` sets the setpoint of the mode (the one in this request, else
+        the current one) and is refused in auto and off (409 `NOT_SUPPORTED`). One setpoint moves
+        the other when needed to keep `setpoint_deadband`; both together must already be that far
+        apart (400 `INVALID_FIELD`); `target_temperature` with a setpoint is 400 `INVALID_REQUEST`.
+        Nothing is sent when a request is refused. Auto example:
+        `{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}`.
       requestBody:
         required: true
         content:
@@ -1307,8 +1315,11 @@ paths:
       x-directorlink-role: member
       summary: Open, close or move a blind to a position
       description: |
-        `{"position": 100}` opens, `{"position": 0}` closes. Blinds that only support open and
-        close (no percentage control on the KNX side) close at 0 and open fully for any other value.
+        `{"position": 100}` opens, `{"position": 0}` closes. A blind that only opens and closes
+        fully (`capabilities.position` false) takes only 0 and 100: any other position is refused
+        with 409 `POSITION_NOT_SUPPORTED` and nothing is sent. Where the controller does not say,
+        a blind without percentage control on the KNX side opens fully for any position above 0.
+        While it moves, `moving`, `direction` and `target_position` say so.
       requestBody:
         required: true
         content:
@@ -1345,7 +1356,9 @@ paths:
       operationId: stopBlind
       x-directorlink-role: member
       summary: Stop a moving blind
-      description: Blinds without a stop command on the KNX side ignore it.
+      description: >-
+        A blind that cannot stop (`capabilities.stop` false) answers 409 `STOP_NOT_SUPPORTED`.
+        Where the controller does not say, blinds without a stop command on the KNX side ignore it.
       responses:
         "202":
           description: Command sent. The body is the last state the controller reported.
@@ -1859,7 +1872,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
       content:
         application/problem+json:
           schema:
@@ -2331,10 +2344,16 @@ components:
           description: |
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
-            each thermostat's range) and `fan_speed` (low, medium, high, auto; left out where a
-            unit does not have it), and with `mode: off` nothing else; blinds `{"position": 0-100}`;
-            relays `{"action": "pulse"}`, what their Open button does (a door or gate relay is
-            never held closed by a scene).
+            each thermostat's range) and `fan_speed` (low, medium, high, auto, on, circulate; left
+            out where a unit does not have it), and with `mode: off` nothing else; blinds
+            `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
+            door or gate relay is never held closed by a scene).
+            climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
+            `target_temperature` (cool above heat): dual-setpoint thermostats take them as their
+            setpoints (left out where they come closer than the thermostat's deadband);
+            single-setpoint thermostats take `heat_setpoint` in heat and `cool_setpoint` in cool.
+            On dual-setpoint thermostats `target_temperature` sets the setpoint of the step's mode
+            (or of the current mode), and is left out in auto and off.
           type: object
           additionalProperties: false
           properties:
@@ -2351,9 +2370,17 @@ components:
               type: number
               minimum: 5
               maximum: 40
+            heat_setpoint:
+              type: number
+              minimum: 5
+              maximum: 40
+            cool_setpoint:
+              type: number
+              minimum: 5
+              maximum: 40
             fan_speed:
               type: string
-              enum: [low, medium, high, auto]
+              enum: [low, medium, high, auto, "on", circulate]
             position:
               type: integer
               minimum: 0
@@ -2940,7 +2967,7 @@ components:
 
     Blind:
       type: object
-      required: [id, name, room, position, position_reported]
+      required: [id, name, room, position, position_reported, capabilities, moving, direction, target_position]
       properties:
         id:
           type: integer
@@ -2958,6 +2985,31 @@ components:
         position_reported:
           type: boolean
           description: False when the blind never reports its position.
+        capabilities:
+          type: object
+          required: [position, stop]
+          description: What the blind can do, from its Control4 setup; true where the controller does not say. Since 1.1.0.
+          properties:
+            position:
+              type: boolean
+              description: False when it only opens and closes fully; PATCH then takes only 0 and 100.
+            stop:
+              type: boolean
+              description: False when it cannot be stopped while it moves.
+        moving:
+          type: [boolean, "null"]
+          description: True while the blind moves. Null when the controller does not report its movement. Since 1.1.0.
+        direction:
+          oneOf:
+            - type: string
+              enum: [opening, closing]
+            - type: "null"
+          description: Which way it moves; null when it stands still or the controller does not say. Since 1.1.0.
+        target_position:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: Where the blind was last sent, so while `moving` where it is going. Null when not known. Since 1.1.0.
 
     BlindUpdate:
       type: object
@@ -3116,7 +3168,7 @@ components:
 
     FanSpeed:
       type: string
-      enum: [low, medium, high, auto]
+      enum: [low, medium, high, auto, "on", circulate]
 
     Thermostat:
       type: object
@@ -3134,6 +3186,10 @@ components:
         - activity
         - fan_speed
         - fan_speeds
+        - setpoints
+        - heat_setpoint
+        - cool_setpoint
+        - setpoint_deadband
       properties:
         id:
           type: integer
@@ -3149,10 +3205,13 @@ components:
           type: [number, "null"]
         target_temperature:
           type: [number, "null"]
+          description: Degrees Celsius. On dual-setpoint thermostats, the setpoint of the current mode (null in auto and off).
         target_temperature_min:
           type: number
+          description: Applies to `target_temperature`, `heat_setpoint` and `cool_setpoint`. 5 on floor heating set through its heat setpoint.
         target_temperature_max:
           type: number
+          description: Applies to `target_temperature`, `heat_setpoint` and `cool_setpoint`.
         mode:
           type: [string, "null"]
           description: Current mode as reported, e.g. `off`, `heat`, `cool`, `auto`.
@@ -3171,6 +3230,22 @@ components:
           description: Fan speeds that can be set with PATCH. Empty when the zone has no fan control.
           items:
             $ref: "#/components/schemas/FanSpeed"
+        setpoints:
+          type: string
+          enum: [single, dual]
+          description: |
+            `single`: one target temperature. `dual`: separate heat and cool setpoints
+            (`heat_setpoint`, `cool_setpoint`); `target_temperature` is then the setpoint the current
+            mode uses (heat or cool) and null in auto and off.
+        heat_setpoint:
+          type: [number, "null"]
+          description: Degrees Celsius. Dual-setpoint thermostats with a heat or auto mode; null otherwise.
+        cool_setpoint:
+          type: [number, "null"]
+          description: Degrees Celsius. Dual-setpoint thermostats with a cool or auto mode; null otherwise.
+        setpoint_deadband:
+          type: [number, "null"]
+          description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats. When not reported, cool must still be above heat (by 1 °F in a Fahrenheit project, 0.1 °C otherwise).
 
     ThermostatUpdate:
       type: object
@@ -3184,6 +3259,12 @@ components:
           description: Degrees Celsius, between `target_temperature_min` and `target_temperature_max`.
         fan_speed:
           $ref: "#/components/schemas/FanSpeed"
+        heat_setpoint:
+          type: number
+          description: Degrees Celsius, between `target_temperature_min` and `target_temperature_max`. Dual-setpoint thermostats only (409 `NOT_SUPPORTED` otherwise). The cool setpoint moves up with it when needed to keep `setpoint_deadband`.
+        cool_setpoint:
+          type: number
+          description: Degrees Celsius, as `heat_setpoint`; the heat setpoint moves down with it when needed.
 
     ThermostatList:
       type: object

@@ -1,6 +1,8 @@
 local Log = require("src.core.log")
 local LightV2 = require("src.adapters.light_v2")
+local LightV1 = require("src.adapters.light_v1")
 local ThermostatV2 = require("src.adapters.thermostat_v2")
+local ThermostatProxy = require("src.adapters.thermostat_proxy")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
@@ -10,7 +12,9 @@ local Manager = {}
 
 local adapters = {
     LightV2,
+    LightV1,
     ThermostatV2,
+    ThermostatProxy,
     Blind,
     Camera,
     KnxRelay,
@@ -27,11 +31,16 @@ local function log(message)
     Log.info("adapters", tostring(message))
 end
 
-function Manager.initialize(deviceRegistry)
+-- previous: the devices before a project refresh (id -> device). An adapter gets the device it
+-- controlled with the same id and kind, to keep what Director cannot tell it again (a relay's last
+-- state, a doorbell's rings); everything else is read again. What the adapters log at info level
+-- about each device is written at debug level then: the first discovery logged it already.
+function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
     initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    local refreshing = previous ~= nil and next(previous) ~= nil
 
     pcall(function()
         C4:UnregisterAllVariableListeners()
@@ -46,11 +55,20 @@ function Manager.initialize(deviceRegistry)
     local initialized = 0
 
     for id, device in pairs(registry.devices or {}) do
+        local before = previous and previous[tonumber(id)]
+        if before and (before.kind ~= device.kind or before.supported ~= true) then
+            before = nil
+        end
         for _, adapter in ipairs(adapters) do
             if adapter.matches(device) then
                 attached[tonumber(id)] = adapter
 
-                local ok, success, err = pcall(adapter.initialize, device, registry)
+                local ok, success, err
+                if refreshing then
+                    ok, success, err = Log.quietly(pcall, adapter.initialize, device, registry, before)
+                else
+                    ok, success, err = pcall(adapter.initialize, device, registry, before)
+                end
                 if not ok then
                     attached[tonumber(id)] = nil
                     device.supported = false
@@ -171,6 +189,35 @@ function Manager.execute(deviceId, action, params)
     end
 
     return true, result
+end
+
+-- Checks a command without sending anything: true, or false and a failure like execute's (a
+-- failure may name the request `field` it is about). A request that sends several commands checks
+-- them all first, so a refused setpoint cannot leave the mode already changed. Adapters without
+-- prepare accept everything here and check in execute.
+function Manager.prepare(deviceId, action, params)
+    local adapter = attached[tonumber(deviceId)]
+    if not adapter or not adapter.prepare or not registry then
+        return true
+    end
+    local ok, success, failure = pcall(adapter.prepare, registry.getDevice(tonumber(deviceId)), action, params or {})
+    if not ok then
+        return false, { code = "ADAPTER_ERROR", message = tostring(success) }
+    end
+    return success ~= false, failure
+end
+
+-- Lets an adapter read again what it keeps about a device and what may change without a project
+-- refresh (a blind's setup, when it is some minutes old). Cheap when nothing is due.
+function Manager.refresh(deviceId)
+    local adapter = attached[tonumber(deviceId)]
+    local device = adapter and adapter.refresh and registry and registry.getDevice(tonumber(deviceId))
+    if device then
+        local ok, err = pcall(adapter.refresh, device)
+        if not ok then
+            log("refresh failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
+        end
+    end
 end
 
 function Manager.shutdown()

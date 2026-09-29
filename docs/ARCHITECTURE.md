@@ -39,10 +39,12 @@ api/        openapi.yaml — the API contract (single source of truth)
 driver/     the DriverWorks driver
   src/api/        HTTP server, router, handlers, views (API ↔ internal model)
   src/auth/       API keys, roles, pairing, profiles, invitations
-  src/adapters/   Control4 proxy adapters (Light V2, Thermostat V2, Blind, Camera, KNX Contact/Relay, DoorBird)
+  src/adapters/   Control4 proxy adapters (Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4
+                  thermostat proxy, Blind, Camera, KNX Contact/Relay, DoorBird)
   src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end
                   lock (lock.lua) and sealed requests, claims and joins (remote.lua)
-  src/control4/   discovery and normalization
+  src/control4/   discovery and normalization; Director's project events (Composer changes, read
+                  again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, schedules, scheduler, sun, weather, installer view; room names and layout
   tests/          driver tests against a fake Director

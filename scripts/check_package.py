@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Checks the built dist/DirectorLink.c4z against the source tree and the release contract."""
 
+import base64
+import binascii
+import hashlib
 import json
 import re
 import sys
@@ -33,7 +36,8 @@ REQUIRED_PROPERTIES = (
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "RESET_REMOTE_IDENTITY")
+# Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
@@ -134,12 +138,107 @@ SECURITY_CONTRACT = {
         "pairing_code = true",
         "authorization = true",
     ),
+    # Director checks the relay's certificate only when asked (NetPortOptions VERIFY_MODE); the CA
+    # file is checked in check_relay_roots.
+    "src/cloud/websocket.lua": (
+        'VERIFY_MODE = "peer",',
+        "CACERTFILE = WebSocket.CA_FILE,",
+    ),
 }
+
+# The roots the relay connection trusts: the authorities Cloudflare issues from (docs/RELAY.md),
+# in file order, each with the SHA-256 of its certificate (checked against certifi 2026.07.22). A
+# label alone would let a rebuild put the wrong certificate under the right name; remote access
+# would then fail only on the controller. Today's chain ends at GTS Root R4.
+RELAY_ROOTS = {
+    "ISRG Root X1": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+    "ISRG Root X2": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+    "GTS Root R1": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+    "GTS Root R3": "34d8a73ee208d9bcdb0d956520934b4e40e69482596e8b6f73c8426b010a6f48",
+    "GTS Root R4": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+    "SSL.com TLS RSA Root CA 2022": "8faf7d2e2cb4709bb8e0b33666bf75a5dd45b5de480f8ea8d4bfe6bebc17f2ed",
+    "SSL.com TLS ECC Root CA 2022": "c32ffd9f46f936d16c3673990959434b9ad60aafbb9e7cf33654f144cc1ba143",
+    "SSL.com Root Certification Authority RSA": "85666a562ee0be5ce925c1d8890a6f76a87ec16d4d7d5f29ea7419cf20123b69",
+    "SSL.com Root Certification Authority ECC": "3417bb06cc6007da1b961c920b8ab4ce3fad820e4aa30b9acbc4a74ebdcebc65",
+}
+
+# Where websocket.lua names the CA file, relative to the package root.
+CA_FILE_PATTERN = re.compile(r'WebSocket\.CA_FILE = "\./([^"]+)"')
+
+# What OpenSSL's PEM reader, which loads Director's CA file, drops from the end of every line:
+# every character up to and including the space (CR, tab, trailing spaces).
+PEM_LINE_END = "".join(chr(code) for code in range(33))
 
 
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def ca_file_name(websocket_source):
+    """The package path of the relay's CA file, as src/cloud/websocket.lua names it (WebSocket.CA_FILE)."""
+    match = CA_FILE_PATTERN.search(websocket_source)
+    if not match:
+        fail('src/cloud/websocket.lua must set WebSocket.CA_FILE = "./<path in the package>"')
+    return match.group(1)
+
+
+def pem_certificates(data):
+    """The certificates in a PEM file (bytes) as OpenSSL would load them as trust anchors, in file
+    order: (label, SHA-256 of the DER), the label being the "# ..." line just before the block.
+
+    OpenSSL drops trailing whitespace (CR included) from each line and also takes TRUSTED
+    CERTIFICATE and X509 CERTIFICATE blocks, so a narrower reading could miss a root. Here every
+    line that holds -----BEGIN or -----END, however written, must open or close a plain
+    CERTIFICATE block, the lines in a block must be base64 only, and the file must be ASCII with no
+    key. Anything else raises ValueError, so nothing OpenSSL would trust can go uncounted."""
+    try:
+        text = data.decode("ascii")
+    except UnicodeDecodeError:
+        raise ValueError("it must be plain ASCII") from None
+    if "PRIVATE KEY" in text:
+        raise ValueError("it holds a private key")
+    certificates = []
+    body, label, previous = None, None, ""
+    for number, raw in enumerate(text.split("\n"), 1):
+        line = raw.rstrip(PEM_LINE_END)
+        marker = "-----BEGIN" in line.upper() or "-----END" in line.upper()
+        if body is None:
+            if line == "-----BEGIN CERTIFICATE-----":
+                body, label = [], (previous[2:] if previous.startswith("# ") else None)
+            elif marker:
+                raise ValueError(f"line {number} ({raw.rstrip(chr(13))!r}) is not -----BEGIN CERTIFICATE-----: only plain certificates belong here")
+        elif line == "-----END CERTIFICATE-----":
+            try:
+                der = base64.b64decode("".join(body), validate=True)
+            except binascii.Error:
+                raise ValueError(f"the certificate that ends on line {number} is not valid base64") from None
+            certificates.append((label, hashlib.sha256(der).hexdigest()))
+            body = None
+        elif marker or not re.fullmatch(r"[A-Za-z0-9+/=]+", line):
+            raise ValueError(f"line {number} ({raw.rstrip(chr(13))!r}) is inside a certificate block and is not base64")
+        else:
+            body.append(line)
+        previous = line
+    if body is not None:
+        raise ValueError("a certificate block has no -----END CERTIFICATE-----")
+    return certificates
+
+
+def relay_roots_problem(data):
+    """Why a CA file (bytes) is not exactly the relay's pinned roots, or None."""
+    try:
+        certificates = pem_certificates(data)
+    except ValueError as exc:
+        return str(exc)
+    digests = [digest for _, digest in certificates]
+    if sorted(digests) != sorted(RELAY_ROOTS.values()):
+        unknown = [label or digest for label, digest in certificates if digest not in RELAY_ROOTS.values()]
+        return (
+            f"it must hold exactly the roots {', '.join(RELAY_ROOTS)}, once each "
+            f"(it holds {len(digests)} certificates{'; not pinned: ' + ', '.join(unknown) if unknown else ''})"
+        )
+    return None
 
 
 def expected_versions():
@@ -164,6 +263,8 @@ def check_contents(names):
     expected = {"driver.xml", "driver.lua", SPEC_MODULE}
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "src").rglob("*.lua"))
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "www").rglob("*") if path.is_file())
+    # Of driver/certs, only the CA file websocket.lua names: never a key or test file left there.
+    expected.add(ca_file_name((DRIVER / "src" / "cloud" / "websocket.lua").read_text(encoding="utf-8")))
     missing = expected - names
     if missing:
         fail(f"package is missing files: {sorted(missing)}")
@@ -242,6 +343,47 @@ def check_embedded_spec(text, version):
         fail("embedded API description version does not match VERSION")
 
 
+def check_relay_roots(files):
+    """The CA file websocket.lua names is in the package and holds exactly the relay's roots: every
+    certificate OpenSSL would load from it is one of the pinned ones, each once, under its label."""
+    name = ca_file_name(files.get("src/cloud/websocket.lua", ""))
+    if name not in files:
+        fail(f"the relay's CA file {name} is not in the package; with VERIFY_MODE peer no connection would verify")
+    data = files[name].encode("utf-8")
+    problem = relay_roots_problem(data)
+    if problem:
+        fail(f"{name}: {problem}")
+    # Each certificate is the one its label names: the SHA-256 of its DER bytes is pinned above.
+    certificates = pem_certificates(data)
+    labels = [label for label, _ in certificates]
+    if labels != list(RELAY_ROOTS):
+        fail(f"{name} must label its roots {', '.join(RELAY_ROOTS)}, in this order (found {labels})")
+    for label, digest in certificates:
+        if digest != RELAY_ROOTS[label]:
+            fail(f"{name}: the certificate under '# {label}' is not {label} (SHA-256 {digest})")
+    # The header lists every root's SHA-256 for readers; it must list the same ones.
+    text = files[name].replace("\r\n", "\n")
+    header = {
+        subject: fingerprint.replace(":", "").lower()
+        for subject, fingerprint in re.findall(r"^# CN=([^,\n]+),[^\n]*\n#   for: [^\n]*\n#   SHA-256: ([0-9A-F:]+)$", text, re.M)
+    }
+    if header != RELAY_ROOTS:
+        fail(f"the SHA-256 list at the top of {name} does not match its certificates")
+
+
+def check_remote_methods(files):
+    """Sealed requests (the app's, at home and through the account) may use every method the API
+    routes: one missing from src/cloud/remote.lua fails everywhere, as PUT /v1/rooms/order did in 1.0.0."""
+    routed = set(re.findall(r'\bmethod\s*=\s*"([A-Z]+)"', files.get("src/api/routes.lua", "")))
+    match = re.search(r"^local METHODS = \{([^}]*)\}", files.get("src/cloud/remote.lua", ""), re.M)
+    if not routed or not match:
+        fail("could not read the methods of src/api/routes.lua and src/cloud/remote.lua (local METHODS = { ... })")
+    allowed = set(re.findall(r"\b([A-Z]+)\s*=\s*true\b", match.group(1)))
+    missing = sorted(routed - allowed)
+    if missing:
+        fail(f"src/cloud/remote.lua refuses {', '.join(missing)}, which src/api/routes.lua uses: sealed requests with it would fail")
+
+
 def check_security_contract(files):
     for name, fragments in SECURITY_CONTRACT.items():
         text = files.get(name, "")
@@ -267,6 +409,8 @@ def main():
     check_requires(files)
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
+    check_remote_methods(files)
+    check_relay_roots(files)
     print(f"OK: validated {len(files)} packaged files for version {version}")
 
 

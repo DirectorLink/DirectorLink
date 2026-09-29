@@ -45,6 +45,12 @@ function runConnectedHooks() {
       .catch((error) => console.warn("DirectorLink: after connecting", error));
   }
 }
+// Run when this browser's key is forgotten (controls.js: the shades it follows).
+const forgottenHooks = [];
+
+export function whenForgotten(hook) {
+  forgottenHooks.push(hook);
+}
 let failedRefreshes = 0;
 let connectRun = 0;
 
@@ -396,6 +402,7 @@ export function forgetKey() {
   state.role = null;
   state.status = "setup";
   state.loaded = false;
+  for (const hook of forgottenHooks) hook();
 }
 
 // Pairing failures (POST /v1/auth/pair) as RFC 9457 problem codes.
@@ -633,6 +640,18 @@ export async function refreshDoorbells() {
   }
 }
 
+// Every device of the project, for the devices a room has that the app cannot control: they change
+// with the project in Composer (which the driver picks up by itself), so with the rooms, once a minute.
+async function refreshDeviceList() {
+  try {
+    const devices = await api("/v1/devices");
+    if (Array.isArray(devices?.items)) state.devices = devices.items;
+    notify();
+  } catch {
+    // The next device refresh reports connection problems.
+  }
+}
+
 // Connects with the saved key. Used on start (automatic reconnect) and by Retry.
 export async function connect() {
   if (!reachable()) {
@@ -776,15 +795,18 @@ export async function refreshDevices() {
   return failedRefreshes === 0;
 }
 
-// Rooms and cameras change rarely (renames, new devices); refreshed now and then.
+// Rooms and cameras change rarely (renames, new devices); refreshed now and then. So is the
+// driver's version: Update Driver in Composer reloads DirectorLink without the app reconnecting.
 export async function refreshRooms() {
   try {
-    const [rooms, cameras, relays, role] = await Promise.all([
+    const [system, rooms, cameras, relays, role] = await Promise.all([
+      api("/v1/system").catch(() => state.system),
       api("/v1/rooms"),
       api("/v1/cameras"),
       optionalList("/v1/relays"),
       loadRole().catch(() => state.role),
     ]);
+    state.system = system || state.system;
     state.rooms = rooms?.items || state.rooms;
     state.cameras = cameras?.items || state.cameras;
     state.relays = relays;
@@ -820,7 +842,7 @@ async function poll() {
     if (pollCount % 6 === 0) await tryHomeNetwork();
     if (ok && pollCount % 6 === 1) checkInThroughAccount();
     if (ok && pollCount % 6 === 0 && state.status === "connected") {
-      await refreshRooms();
+      await Promise.all([refreshRooms(), refreshDeviceList()]);
     }
     // After a failure, try again soon instead of waiting a whole interval.
     if (!ok && state.apiKey) {

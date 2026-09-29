@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also opens the app when a doorbell notification is clicked.
 
-const CACHE_NAME = "directorlink-shell-v29";
+const CACHE_NAME = "directorlink-shell-v31";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -41,8 +41,11 @@ const ASSETS = [
   "/js/pwa.js",
   "/js/rings.js",
   "/js/session.js",
+  "/js/setpoints.js",
+  "/js/shades.js",
   "/js/state.js",
   "/js/theme.js",
+  "/js/updates.js",
   "/js/views/cameras.js",
   "/js/views/climate.js",
   "/js/views/common.js",
@@ -50,6 +53,7 @@ const ASSETS = [
   "/js/views/home.js",
   "/js/views/room.js",
   "/js/views/settings.js",
+  "/js/views/updates.js",
   // Languages. One added later is saved on first use even if it is not listed here.
   "/i18n/en.js",
   "/i18n/he.js",

@@ -5,6 +5,7 @@ local Views = require("src.api.views")
 
 local Blinds = {}
 
+-- What a shade can do is read again when it is some minutes old (src/adapters/blind.lua).
 local function findBlind(ctx)
     local id, problem = Validate.id(ctx.params.blindId, "blindId")
     if not id then
@@ -14,6 +15,7 @@ local function findBlind(ctx)
     if not device or device.kind ~= "blind" or device.supported ~= true then
         return nil, Problem.notFound("Blind", id)
     end
+    ctx.services.adapters.refresh(device.id)
     return device
 end
 
@@ -26,6 +28,7 @@ function Blinds.list(ctx)
     local items = Json.array()
     for _, device in ipairs(registry.blindList()) do
         if roomId == nil or tonumber(device.room_id) == roomId then
+            ctx.services.adapters.refresh(device.id)
             items[#items + 1] = Views.blind(registry, device)
         end
     end
@@ -56,6 +59,8 @@ function Blinds.update(ctx)
         return Problem.invalidField("position", "position must be a whole number from 0 (closed) to 100 (open)")
     end
 
+    -- A shade that only opens and closes fully refuses the positions between: 409
+    -- POSITION_NOT_SUPPORTED, and nothing is sent (the adapter checks it).
     local ok, failure = ctx.services.adapters.execute(device.id, "set_position", { position = position })
     if not ok then
         return Problem.fromAdapter(failure)

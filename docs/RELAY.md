@@ -64,7 +64,40 @@ User-Agent: DirectorLink/<driver version>
 - `400` — missing or malformed headers; `401` — wrong secret for this `home_id`. Problem Details
   JSON (`application/problem+json`) with a `code`.
 
-The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, then every 60 s.
+The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, then every 60 s. An
+attempt that has not opened within 30 s (no TLS connection, or no answer to the upgrade) counts as
+lost too.
+
+The driver asks Director to check the relay's certificate (`VERIFY_MODE = "peer"` in
+`driver/src/cloud/websocket.lua`). Without it, Director checks nothing, and anyone in the network
+path could pose as the relay and catch the home secret. The chain must end at one of the root
+certificates in the driver package, `certs/directorlink-roots.pem`. These are the authorities
+Cloudflare issues the relay's certificate from, and Cloudflare may switch between them at any renewal:
+- Let's Encrypt: ISRG Root X1 and X2.
+- Google Trust Services: GTS Root R1, R3 and R4. Today's chain is WE1 → GTS Root R4.
+- SSL.com: the TLS RSA and ECC roots of 2022, and the older RSA and ECC roots.
+
+This check is new in 1.1.0 (ADR-034). Control4 does not document two things, which a controller
+has to show: whether Director also checks that the certificate names `api.directorlink.io`, and
+how it reports a certificate that does not verify. `Connected` alone shows neither: 1.0.0 connected
+with no check at all. docs/TESTING.md 0p has the negative test for the check itself: a test package
+(`scripts/build.py --roots-only`) that trusts only a root the relay's chain does not end at must
+never connect. The name is not tested; if Director does not check it, a certificate that one of
+these authorities issued for another name passes too. Either way the driver retries with the
+backoff:
+- If Director reports the connection offline, Remote Status shows
+  `Reconnecting in N s (connection lost)`.
+- If Director reports nothing, the 30 s limit ends the attempt. Remote Status shows
+  `Reconnecting in N s (no connection within 30 s)`, and the relay log says *no TLS connection to
+  the relay within 30 s; the certificate check may have failed*.
+
+The file lists each root's SHA-256. Rebuild it from a current CA list (such as certifi) before a
+root expires or when Cloudflare adds an authority. `scripts/build.py` packages only this file of
+`driver/certs/` (any other file there stops the build), with LF line endings.
+`scripts/check_package.py` reads it as OpenSSL does (every `BEGIN` block, trailing whitespace and
+CRLF included) and checks that the certificates in it are exactly these roots, each once, with its
+pinned SHA-256, and nothing else: no key and no other block. `scripts/check_repo.py` checks the
+staged file the same way.
 
 ## Messages
 

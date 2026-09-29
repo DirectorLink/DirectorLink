@@ -58,7 +58,7 @@ function T.http(mock, method, path, options)
         body = Json.encode(body)
     end
 
-    local lines = { method .. " " .. path .. " HTTP/1.1", "Host: " .. (options.host or "192.168.1.201:41999") }
+    local lines = { method .. " " .. path .. " HTTP/1.1", "Host: " .. (options.host or "192.168.1.10:41999") }
     if options.key then
         lines[#lines + 1] = "Authorization: Bearer " .. options.key
     end

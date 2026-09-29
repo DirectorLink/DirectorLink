@@ -3,8 +3,10 @@
 
 local Mock = require("c4mock")
 local T = require("helpers")
+local Base64 = require("src.core.base64")
 local Json = require("src.core.json")
 local sha1 = require("sha1")
+local sha256 = require("sha256")
 
 local tests = {}
 
@@ -39,6 +41,96 @@ function tests.switching_on_opens_a_tls_connection_to_the_relay()
     T.eq(connection.connects, 1)
     T.eq(mock.properties["Remote Status"], "Connecting...")
     T.eq(mock.persistEncrypted["directorlink_remote_identity"], false, "plain storage survives updates")
+end
+
+-- The certificates of a CA file as OpenSSL (Director's TLS) reads it: line by line, whatever the
+-- line endings (a Windows checkout can have CRLF), with trailing whitespace dropped. Returns the
+-- SHA-256 of each block by the "# label" line above it, and the number of blocks; or nil and why,
+-- for any BEGIN or END line that is not a plain certificate's (OpenSSL also loads TRUSTED
+-- CERTIFICATE blocks) and anything in a block that is not base64.
+local function certificates(text)
+    local lines = {}
+    for line in (text:gsub("\r\n", "\n") .. "\n"):gmatch("([^\n]*)\n") do
+        lines[#lines + 1] = (line:gsub("[%c ]+$", ""))
+    end
+    local found, count, label, body = {}, 0, nil, nil
+    for index, line in ipairs(lines) do
+        local marker = line:upper():find("-----BEGIN", 1, true) or line:upper():find("-----END", 1, true)
+        if body == nil then
+            if line == "-----BEGIN CERTIFICATE-----" then
+                body, label = {}, (lines[index - 1] or ""):match("^# (.+)$") or ""
+            elseif marker then
+                return nil, "not a plain certificate block: " .. line
+            end
+        elseif line == "-----END CERTIFICATE-----" then
+            count = count + 1
+            found[label] = Base64.toHex(sha256(Base64.decode(table.concat(body))))
+            body = nil
+        elseif marker or not line:match("^[%w+/=]+$") then
+            return nil, "not base64 inside a certificate block: " .. line
+        else
+            body[#body + 1] = line
+        end
+    end
+    if body then
+        return nil, "a certificate block does not end"
+    end
+    return found, count
+end
+
+-- The certificate under each label is that root (SHA-256 of its DER bytes, as pinned in
+-- scripts/check_package.py), not only its name: today's chain ends at GTS Root R4.
+local PINNED_ROOTS = {
+    ["ISRG Root X1"] = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+    ["ISRG Root X2"] = "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+    ["GTS Root R1"] = "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+    ["GTS Root R3"] = "34d8a73ee208d9bcdb0d956520934b4e40e69482596e8b6f73c8426b010a6f48",
+    ["GTS Root R4"] = "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+    ["SSL.com TLS RSA Root CA 2022"] = "8faf7d2e2cb4709bb8e0b33666bf75a5dd45b5de480f8ea8d4bfe6bebc17f2ed",
+    ["SSL.com TLS ECC Root CA 2022"] = "c32ffd9f46f936d16c3673990959434b9ad60aafbb9e7cf33654f144cc1ba143",
+    ["SSL.com Root Certification Authority RSA"] = "85666a562ee0be5ce925c1d8890a6f76a87ec16d4d7d5f29ea7419cf20123b69",
+    ["SSL.com Root Certification Authority ECC"] = "3417bb06cc6007da1b961c920b8ab4ce3fad820e4aa30b9acbc4a74ebdcebc65",
+}
+
+local function packagedRoots()
+    local mock = Mock.startDriver()
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    return mock, mock.network[BINDING].caCertificates
+end
+
+-- Without VERIFY_MODE, Director checks no certificate at all.
+function tests.the_relay_certificate_is_checked_against_the_packaged_roots()
+    local mock, roots = packagedRoots()
+    local options = mock.network[BINDING].options
+    T.eq(options.VERIFY_MODE, "peer")
+    T.eq(options.CACERTFILE, "./certs/directorlink-roots.pem")
+    T.truthy(roots, "the CA file is in the driver package")
+    T.notContains(roots, "PRIVATE KEY")
+    local found, count = certificates(roots)
+    T.truthy(found, count)
+    T.eq(count, 9, "Let's Encrypt, Google Trust Services and SSL.com roots, nothing else")
+    for root, fingerprint in pairs(PINNED_ROOTS) do
+        T.eq(found[root], fingerprint, root)
+    end
+end
+
+-- Line endings do not change what is read, and a block OpenSSL would load but a narrower reading
+-- would miss (a TRUSTED CERTIFICATE, a trailing space) is never skipped.
+function tests.the_roots_are_read_as_openssl_reads_them()
+    local _, roots = packagedRoots()
+    local found, count = certificates((roots:gsub("\r?\n", "\r\n")))
+    T.eq(count, 9, "with CRLF")
+    T.eq(found["GTS Root R4"], PINNED_ROOTS["GTS Root R4"])
+    for _, extra in ipairs({
+        "-----BEGIN TRUSTED CERTIFICATE----- \nAAAA\n-----END TRUSTED CERTIFICATE-----\n",
+        "-----BEGIN CERTIFICATE----- \nAAAA\n-----END CERTIFICATE-----\n",
+        -- A key, its label split so that no scanner takes this file for one.
+        "-----BEGIN " .. "PRIVATE KEY-----\nAAAA\n-----END " .. "PRIVATE KEY-----\n",
+    }) do
+        local all, extraCount = certificates(roots .. "\n# Extra\n" .. extra)
+        T.truthy(not all or extraCount ~= 9, "counted: " .. extra:match("^[^\n]+"))
+    end
 end
 
 function tests.handshake_sends_the_home_identity_and_hello_follows()
@@ -151,6 +243,62 @@ function tests.lost_connections_reconnect_with_backoff()
     end
     T.same(delays, { 5, 10, 30, 60, 60 })
     T.eq(connection.connects, 6)
+end
+
+local function logged(mock, key, message)
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=relay", { key = key }).json.items) do
+        if entry.message == message then
+            return true
+        end
+    end
+    return false
+end
+
+-- Control4 does not document how Director reports a certificate that fails VERIFY_MODE, and it may
+-- report nothing: an attempt that has not opened within 30 s is dropped and retried with the backoff.
+function tests.an_attempt_that_never_opens_is_retried()
+    local mock = Mock.startDriver()
+    local key = T.pair(mock)
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    local connection = mock.network[BINDING]
+    T.eq(mock.properties["Remote Status"], "Connecting...")
+    local limit = lastTimer(mock, 30000)
+    T.truthy(limit and not limit.repeating, "a one-shot 30 s limit on the attempt")
+    limit.fired = true
+    limit.callback()
+    T.eq(connection.disconnects, 1, "the attempt is dropped")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (no connection within 30 s)")
+    T.truthy(logged(mock, key, "no TLS connection to the relay within 30 s; the certificate check may have failed"))
+
+    local retry = lastTimer(mock, 5000)
+    retry.fired = true
+    retry.callback()
+    T.eq(connection.connects, 2, "and tried again")
+    T.eq(mock.properties["Remote Status"], "Connecting...")
+
+    -- TLS is up, but the relay never answers the upgrade: the same.
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    limit = lastTimer(mock, 30000)
+    limit.fired = true
+    limit.callback()
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 10 s (no connection within 30 s)")
+    T.truthy(logged(mock, key, "the relay did not answer the upgrade within 30 s"))
+end
+
+function tests.the_attempt_limit_ends_with_the_attempt()
+    local mock = connected()
+    T.eq(lastTimer(mock, 30000), nil, "an open connection has no limit left")
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    T.eq(lastTimer(mock, 30000), nil, "a lost attempt waits for its backoff instead")
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    T.eq(lastTimer(mock, 30000), nil, "switching off ends it")
+    T.eq(mock.properties["Remote Status"], "Off")
 end
 
 function tests.refusals_wait_longer_and_say_why()

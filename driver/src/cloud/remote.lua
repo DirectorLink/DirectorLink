@@ -24,7 +24,9 @@ Remote.MAX_REQUEST_BYTES = 64 * 1024
 -- id, which is not given out without a key, and never valid through the relay.
 Remote.LAN_HOME = "lan"
 
-local METHODS = { GET = true, POST = true, PATCH = true, DELETE = true }
+-- Every method routes.lua uses: the app seals all its requests, at home too, so a method left out
+-- here fails everywhere (PUT /v1/rooms/order did, 1.0.0). scripts/check_package.py checks it.
+local METHODS = { GET = true, POST = true, PUT = true, PATCH = true, DELETE = true }
 local JOIN_PATH = "/v1/auth/join"
 -- Requests dated ahead of this controller's clock could still be inside the window after a restart;
 -- their ids are kept in persistence until the window has passed.
@@ -228,7 +230,7 @@ local function run(request, principal, done, client)
     local method = string.upper(tostring(request.method or "GET"))
     local path, query = tostring(request.path or ""):match("^([^?]*)%??(.*)$")
     if not METHODS[method] or not path or path:sub(1, 4) ~= "/v1/" then
-        done(400, { { "Content-Type", "application/problem+json" } }, problemJson(400, "BAD_REQUEST", "Remote requests are GET, POST, PATCH or DELETE on /v1/..."))
+        done(400, { { "Content-Type", "application/problem+json" } }, problemJson(400, "BAD_REQUEST", "Remote requests are GET, POST, PUT, PATCH or DELETE on /v1/..."))
         return
     end
     -- A sealed request inside a sealed request would run as one from the home network.

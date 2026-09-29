@@ -1,10 +1,13 @@
 // Device commands. Every control updates the screen at once (optimistic), sends the PATCH
 // (answered 202 with the last reported state), then re-reads the device until the controller
 // confirms it. A failed command reverts the change and shows a short error on the device.
+// Blinds follow their move instead, which takes far longer (see the blinds section).
 
 import { t } from "./i18n.js";
-import { api, errorText, handleUnauthorized, noteForbidden } from "./session.js";
-import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, ui } from "./state.js";
+import { api, errorText, handleUnauthorized, noteForbidden, whenForgotten } from "./session.js";
+import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
+import { MOVE_POLL_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
+import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
 
 const CONFIRM_MS = 5000;
 const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -26,22 +29,17 @@ function lightChangeConfirmed(light, change) {
   return light.on === change.on;
 }
 
+const TEMPERATURE_FIELDS = ["target_temperature", "heat_setpoint", "cool_setpoint"];
+
 function thermostatChangeConfirmed(thermostat, change) {
   return Object.entries(change).every(([field, value]) =>
-    field === "target_temperature"
-      ? Number.isFinite(thermostat.target_temperature) && Math.abs(thermostat.target_temperature - value) < 0.3
-      : thermostat[field] === value
+    TEMPERATURE_FIELDS.includes(field) ? sameTemperature(thermostat[field], value) : thermostat[field] === value
   );
-}
-
-function blindChangeConfirmed(blind, change) {
-  return Number.isFinite(blind.position) && Math.abs(blind.position - change.position) <= 3;
 }
 
 const CONFIRMERS = {
   light: lightChangeConfirmed,
   thermostat: thermostatChangeConfirmed,
-  blind: blindChangeConfirmed,
 };
 
 // Re-reads the device until it reports the change (or 5 s pass). Returns the last state read.
@@ -70,7 +68,10 @@ function optimistic(kind, device, change) {
     }
     return { ...device, on: change.on, brightness: change.on ? device.brightness : device.dimmable ? 0 : null };
   }
-  return { ...device, ...change };
+  const next = { ...device, ...change };
+  // With heat and cool setpoints, the target is the setpoint of the mode (a new mode, or new setpoints).
+  if (kind === "thermostat" && isDual(next)) next.target_temperature = activeSetpoint(next);
+  return next;
 }
 
 // before: the device as it was before the first of a series of quick changes (e.g. + + +).
@@ -93,7 +94,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
     const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body: change });
     if (needsConfirmation) {
       const { device, confirmed } = await waitForConfirmation(kind, id, change);
-      if (device && (confirmed || kind === "blind")) {
+      if (device && confirmed) {
         replaceDevice(kind, device);
       } else if (!confirmed) {
         // Sent, but not reported back yet: keep what was sent and say so.
@@ -135,29 +136,45 @@ export function setLight(light, change) {
 // taps stop, so five quick taps send one PATCH.
 const nudges = new Map();
 
-export function nudgeTarget(thermostat, delta) {
+// What one tap on − / + changes: { field: value }, plus the other setpoint when a heat or cool
+// setpoint pushes it to keep the thermostat's gap; null when the tap changes nothing (at a limit).
+// `shown`: the thermostat with the values the taps so far have reached.
+export function nudgedChange(shown, delta, field = "target_temperature") {
+  const from = shown[field];
+  const base = Number.isFinite(from)
+    ? from
+    : Number.isFinite(shown.current_temperature)
+      ? Math.round(shown.current_temperature)
+      : 22;
+  const value = clampTarget(shown, base + delta);
+  if (value === from) return null;
+  if (field === "target_temperature") return { target_temperature: value };
+  const both = withSetpoint(shown, field, value);
+  if (!both) return null;
+  const change = { [field]: value };
+  const other = field === "heat_setpoint" ? "cool_setpoint" : "heat_setpoint";
+  if (Number.isFinite(both[other]) && both[other] !== shown[other]) change[other] = both[other];
+  return change;
+}
+
+// field: "target_temperature", or "heat_setpoint" / "cool_setpoint" on a thermostat with both.
+export function nudgeTarget(thermostat, delta, field = "target_temperature") {
   const id = thermostat.id;
   const current = findDevice("thermostat", id);
   if (!current || !can("member")) return;
   let entry = nudges.get(id);
   const first = !entry;
   if (first) {
-    entry = { before: { ...current }, timer: null, target: null };
+    entry = { before: { ...current }, timer: null, change: {} };
   }
-  // During a series of taps, from the value they have reached: a confirmation of another change
-  // (fan, mode) may have put the controller's older value back on screen meanwhile.
-  const shown = Number.isFinite(entry.target) ? entry.target : current.target_temperature;
-  const base = Number.isFinite(shown)
-    ? shown
-    : Number.isFinite(current.current_temperature)
-      ? Math.round(current.current_temperature)
-      : 22;
-  const target = clampTarget(current, base + delta);
-  if (target === shown) {
+  // During a series of taps, from the values they have reached: a confirmation of another change
+  // (fan, mode) may have put the controller's older values back on screen meanwhile.
+  const change = nudgedChange({ ...current, ...entry.change }, delta, field);
+  if (!change) {
     return;
   }
-  entry.target = target;
-  replaceDevice("thermostat", { ...current, target_temperature: target });
+  entry.change = { ...entry.change, ...change };
+  replaceDevice("thermostat", optimistic("thermostat", current, entry.change));
   if (first) {
     setPending(deviceKey("thermostat", id), true);
   }
@@ -168,7 +185,8 @@ export function nudgeTarget(thermostat, delta) {
     const latest = findDevice("thermostat", id);
     setPending(deviceKey("thermostat", id), false);
     if (latest) {
-      await sendChange("thermostat", id, { target_temperature: entry.target }, { before: entry.before });
+      // One PATCH with everything the taps changed, e.g. { heat_setpoint, cool_setpoint } after a push.
+      await sendChange("thermostat", id, entry.change, { before: entry.before });
     }
   }, 700);
   nudges.set(id, entry);
@@ -184,27 +202,202 @@ export function setThermostat(thermostat, change) {
   return sendChange("thermostat", thermostat.id, change);
 }
 
-export function setBlind(blind, position) {
-  return sendChange("blind", blind.id, { position });
+// ---- blinds -------------------------------------------------------------------------------------
+// A shade takes 10 to 70 seconds to get where it was sent, and the controller may report the
+// position it left until it stops. After a command the app shows where the shade goes (shades.js),
+// reads the blinds every 2 s while one moves (also one someone else set moving, for as long as a
+// move takes), and shows the reported position once it has stopped, reading a few seconds more.
+
+const moves = new Map(); // blind id -> the move the app expects (shades.js startMove)
+const settling = new Map(); // blind id -> the reads after Stop or a move (shades.js startSettle)
+const reportsMotion = new Set(); // blinds seen reporting moving: their stops can be believed
+const movingSince = new Map(); // blind id -> since when it reports moving, without a break
+const lastCommand = new Map(); // blind id -> number of the last command sent to it
+let movePoll = null;
+
+// What the app expects of blind `id`, for shades.js shadeView: its move, or the reads after Stop.
+export function blindMove(id) {
+  return moves.get(Number(id)) || settling.get(Number(id)) || null;
 }
 
-export async function stopBlind(blind) {
-  if (!can("member")) return;
-  const key = deviceKey("blind", blind.id);
-  clearError(key);
+// A move starting or ending changes the screen without new data from the controller: ui.tick
+// makes the next render draw it.
+function setMove(id, move) {
+  const had = moves.has(id);
+  if (move) moves.set(id, move);
+  else moves.delete(id);
+  if (move || had) ui.tick += 1;
+}
+
+function setSettle(id, settle) {
+  const had = settling.has(id);
+  if (settle) settling.set(id, settle);
+  else settling.delete(id);
+  if (settle || had) ui.tick += 1;
+}
+
+// Every read of the blinds takes each move along (or ends it). `readAt`: when the read started, for
+// the reads made here; a report is taken over a command only from a read after its answer. A move
+// of a shade that left the list (removed in Composer) ends.
+function followBlinds(now = Date.now(), readAt = null) {
+  const listed = new Map(state.blinds.map((blind) => [blind.id, blind]));
+  for (const blind of state.blinds) {
+    if (blind.moving !== true) {
+      movingSince.delete(blind.id);
+    } else {
+      reportsMotion.add(blind.id);
+      if (!movingSince.has(blind.id)) movingSince.set(blind.id, now);
+    }
+  }
+  for (const id of movingSince.keys()) {
+    if (!listed.has(id)) movingSince.delete(id);
+  }
+  for (const [id, move] of moves) {
+    const blind = listed.get(id);
+    const next = blind ? followMove(move, blind, now, readAt) : null;
+    if (next === move) continue;
+    setMove(id, next);
+    if (!next && blind) setSettle(id, afterMove(move, now));
+  }
+  for (const [id, settle] of settling) {
+    const next = listed.has(id) ? followSettle(settle, now, readAt) : null;
+    if (next !== settle) setSettle(id, next);
+  }
+}
+
+function blindsMoving(now = Date.now()) {
+  return moves.size > 0 || settling.size > 0 || state.blinds.some((blind) => followsReport(blind, movingSince.get(blind.id), now));
+}
+
+function scheduleMovePoll() {
+  if (movePoll || !state.apiKey || state.status !== "connected" || document.hidden || !blindsMoving()) return;
+  movePoll = window.setTimeout(async () => {
+    // The key may have been forgotten since, or the connection lost.
+    if (!state.apiKey || state.status !== "connected") {
+      movePoll = null;
+      return;
+    }
+    const readAt = Date.now();
+    let read = false;
+    try {
+      const list = await api(KINDS.blind.path);
+      if (Array.isArray(list?.items)) {
+        state.blinds = list.items;
+        read = true;
+      }
+    } catch (error) {
+      if (error?.status === 401) handleUnauthorized(error);
+      // Otherwise the next read, or the refresh every 10 s, catches up.
+    } finally {
+      movePoll = null;
+      followBlinds(Date.now(), read ? readAt : null);
+      notify();
+      scheduleMovePoll();
+    }
+  }, MOVE_POLL_MS);
+}
+
+// Reads made elsewhere (the refresh every 10 s, a page coming back into view) count too: a shade
+// someone else set moving is then read every 2 s until it stops.
+subscribe(() => {
+  followBlinds();
+  scheduleMovePoll();
+});
+
+// This browser's key is forgotten (Settings, or a revoked key): nothing is followed any more.
+whenForgotten(() => {
+  window.clearTimeout(movePoll);
+  movePoll = null;
+  moves.clear();
+  settling.clear();
+  reportsMotion.clear();
+  movingSince.clear();
+  lastCommand.clear();
+});
+
+function blindErrorText(error) {
+  if (error?.code === "POSITION_NOT_SUPPORTED") return t("blinds.positionNotSupported");
+  if (error?.code === "STOP_NOT_SUPPORTED") return t("blinds.stopNotSupported");
+  return errorText(error) || t("errors.commandFailed");
+}
+
+// The command's answer is the shade as last reported, from before it heard of the command.
+function useAnswer(id, answer) {
+  if (answer && typeof answer === "object" && answer.id === id) replaceDevice("blind", answer);
+}
+
+// Sends a command to blind `id`. When it fails, `undo` puts the move back as it was, unless a newer
+// command to the same blind was sent meanwhile; when it is answered, `done(now)` marks the time.
+async function blindCommand(id, path, options, undo, done) {
+  const key = deviceKey("blind", id);
+  const number = (lastCommand.get(id) || 0) + 1;
+  lastCommand.set(id, number);
   try {
-    await api(`/v1/blinds/${blind.id}/stop`, { method: "POST" });
-    await sleep(600);
-    replaceDevice("blind", await api(`/v1/blinds/${blind.id}`));
+    useAnswer(id, await api(path, options));
+    if (lastCommand.get(id) === number) done(Date.now());
   } catch (error) {
+    if (lastCommand.get(id) === number) undo();
     if (error?.status === 401) {
       handleUnauthorized(error);
       return;
     }
     noteForbidden(error);
-    setError(key, errorText(error));
+    setError(key, blindErrorText(error));
+    // The shade's setup changed since the app read it: read it again for the right controls.
+    if (error?.status === 409) {
+      api(`${KINDS.blind.path}/${id}`).then(
+        (fresh) => {
+          useAnswer(id, fresh);
+          notify();
+        },
+        () => {}
+      );
+    }
+  } finally {
+    notify();
+    scheduleMovePoll();
   }
+}
+
+export function setBlind(blind, position) {
+  const current = findDevice("blind", blind.id);
+  if (!current || !can("member")) return Promise.resolve();
+  const id = current.id;
+  const previous = moves.get(id) || null;
+  setMove(id, startMove(current, position, Date.now(), reportsMotion.has(id)));
+  setSettle(id, null);
+  clearError(deviceKey("blind", id));
   notify();
+  return blindCommand(
+    id,
+    `${KINDS.blind.path}/${id}`,
+    { method: "PATCH", body: { position } },
+    () => setMove(id, previous),
+    (now) => moves.has(id) && setMove(id, answered(moves.get(id), now))
+  );
+}
+
+// It stops where it is: the app shows the shade as stopped, then where it reports it stopped, and
+// reads it for a few seconds.
+export function stopBlind(blind) {
+  if (!can("member")) return Promise.resolve();
+  const id = blind.id;
+  const move = moves.get(id) || null;
+  const settle = settling.get(id) || null;
+  setMove(id, null);
+  setSettle(id, startSettle(Date.now(), true));
+  clearError(deviceKey("blind", id));
+  notify();
+  return blindCommand(
+    id,
+    `${KINDS.blind.path}/${id}/stop`,
+    { method: "POST" },
+    () => {
+      setSettle(id, settle);
+      setMove(id, move);
+    },
+    (now) => settling.has(id) && setSettle(id, answered(settling.get(id), now))
+  );
 }
 
 // Room "All off": lights off and air conditioning off.

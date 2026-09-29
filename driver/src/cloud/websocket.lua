@@ -10,6 +10,18 @@ WebSocket.__index = WebSocket
 
 local GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+-- Director checks the server's certificate only when a driver asks: without VERIFY_MODE it
+-- verifies nothing (DriverWorks, NetPortOptions). The relay's traffic is sealed end to end, but
+-- the handshake carries the home's relay secret, so anyone in the network path posing as the relay
+-- could catch it and keep the home offline. With "peer", Director accepts only a chain that ends at
+-- one of the root certificates shipped in the package (Let's Encrypt, Google Trust Services and
+-- SSL.com: the authorities Cloudflare issues the relay's certificate from). The path is relative
+-- to the driver's .c4z. The docs do not say how Director reports a chain that does not verify, nor
+-- whether it also checks the host name. If it reports OFFLINE, the relay retries with its backoff
+-- ("connection lost"); if it reports nothing, relay.lua gives up on the attempt after
+-- Relay.CONNECT_SECONDS and retries the same way ("no connection within 30 s").
+WebSocket.CA_FILE = "./certs/directorlink-roots.pem"
+
 local OPCODE_CONTINUATION = 0
 local OPCODE_TEXT = 1
 local OPCODE_BINARY = 2
@@ -149,6 +161,8 @@ function WebSocket:connect()
             MONITOR_CONNECTION = true,
             KEEP_CONNECTION = false,
             KEEP_ALIVE = true,
+            VERIFY_MODE = "peer",
+            CACERTFILE = WebSocket.CA_FILE,
         })
         C4:NetConnect(self.binding, self.port)
     end)

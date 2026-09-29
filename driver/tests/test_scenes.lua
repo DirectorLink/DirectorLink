@@ -301,6 +301,159 @@ function tests.scenes_that_could_not_be_read_are_not_overwritten()
     T.eq(#T.http(later, "GET", "/v1/scenes", { key = admin }).json.items, 2, "both scenes are still there")
 end
 
+-- Scenes on a thermostat with heat and cool setpoints: 31 (Mock.withDualThermostat, Kitchen, in
+-- auto, heat 68 °F, cool 76 °F, deadband 3 °F) next to the V2 zone 30 (Living Room, in cool).
+local function startDual()
+    local mock = Mock.startDriver(Mock.withDualThermostat(Mock.project()))
+    local admin = T.pair(mock, "Chrome on Windows")
+    return mock, admin
+end
+
+-- Tries one climate step; returns the result and what each thermostat got, as { command, params }.
+local function tryClimate(mock, admin, set, deviceIds)
+    local before = #mock.commands
+    local tried = T.http(mock, "POST", "/v1/scenes/try", { key = admin, body = { steps = {
+        { type = "climate", device_ids = deviceIds, set = set },
+    } } })
+    T.eq(tried.status, 202, tried.body)
+    local by = { [30] = {}, [31] = {} }
+    for _, command in ipairs(commandsSince(mock, before)) do
+        local list = by[command.device]
+        list[#list + 1] = { command.command, command.params }
+    end
+    return tried.json, by
+end
+
+function tests.a_whole_home_target_sets_each_thermostat_its_own_way()
+    local mock, admin = startDual()
+    local result, sent = tryClimate(mock, admin, { mode = "cool", target_temperature = 24 })
+    T.eq(result.ran, 2, result)
+    T.eq(#result.problems, 0, result)
+    T.same(sent[30], { { "SET_MODE_HVAC", { MODE = "Cool" } }, { "SET_SETPOINT_SINGLE", { CELSIUS = 24 } } })
+    T.same(sent[31], { { "SET_MODE_HVAC", { MODE = "Cool" } }, { "SET_SETPOINT_COOL", { FAHRENHEIT = 75 } } },
+        "the cool setpoint: the step's mode, not the auto it reports")
+
+    result, sent = tryClimate(mock, admin, { mode = "heat", target_temperature = 21 }, { 31 })
+    T.eq(result.ran, 1)
+    T.same(sent[31], { { "SET_MODE_HVAC", { MODE = "Heat" } }, { "SET_SETPOINT_HEAT", { FAHRENHEIT = 70 } } })
+end
+
+function tests.a_step_with_heat_and_cool_setpoints_runs_on_dual_thermostats()
+    local mock, admin = startDual()
+    local result, sent = tryClimate(mock, admin, { mode = "auto", heat_setpoint = 20, cool_setpoint = 24 })
+    T.eq(result.ran, 1, result)
+    T.eq(result.skipped, 1)
+    T.eq(result.problems[1].device_id, 30)
+    T.eq(result.problems[1].code, "MODE_NOT_SUPPORTED", "the AC zone has no auto")
+    T.same(sent[31], {
+        { "SET_MODE_HVAC", { MODE = "Auto" } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 68 } },
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 75 } },
+    })
+    T.eq(#sent[30], 0)
+
+    -- One setpoint alone moves the other to keep the deadband, as PATCH does.
+    result, sent = tryClimate(mock, admin, { cool_setpoint = 21 }, { 31 })
+    T.eq(result.ran, 1)
+    T.same(sent[31], { { "SET_SETPOINT_HEAT", { FAHRENHEIT = 67 } }, { "SET_SETPOINT_COOL", { FAHRENHEIT = 70 } } })
+end
+
+function tests.a_single_setpoint_zone_takes_the_setpoint_of_its_mode()
+    local mock, admin = startDual()
+    local result, sent = tryClimate(mock, admin, { mode = "heat", heat_setpoint = 21 }, { 30 })
+    T.eq(result.ran, 1)
+    T.same(sent[30], { { "SET_MODE_HVAC", { MODE = "Heat" } }, { "SET_SETPOINT_SINGLE", { CELSIUS = 21 } } })
+    result, sent = tryClimate(mock, admin, { cool_setpoint = 24 }, { 30 })
+    T.eq(result.ran, 1, "the zone reports cool")
+    T.same(sent[30], { { "SET_SETPOINT_SINGLE", { CELSIUS = 24 } } })
+    result, sent = tryClimate(mock, admin, { mode = "cool", heat_setpoint = 20, cool_setpoint = 24 }, { 30 })
+    T.same(sent[30], { { "SET_MODE_HVAC", { MODE = "Cool" } }, { "SET_SETPOINT_SINGLE", { CELSIUS = 24 } } })
+
+    result, sent = tryClimate(mock, admin, { heat_setpoint = 21 }, { 30 })
+    T.eq(result.skipped, 1, "in cool a heat setpoint does not apply")
+    T.eq(result.problems[1].code, "NOT_SUPPORTED")
+    T.contains(result.problems[1].detail, "one target temperature")
+    T.eq(#sent[30], 0)
+    result, sent = tryClimate(mock, admin, { mode = "heat", fan_speed = "high", cool_setpoint = 24 }, { 30 })
+    T.eq(result.ran, 1)
+    T.eq(result.problems[1].outcome, "partial")
+    T.same(sent[30], { { "SET_MODE_HVAC", { MODE = "Heat" } }, { "SET_MODE_FAN", { MODE = "High" } } })
+end
+
+function tests.a_setpoint_a_dual_thermostat_refuses_is_left_out()
+    local mock, admin = startDual()
+    local result, sent = tryClimate(mock, admin, { mode = "auto", target_temperature = 22 }, { 31 })
+    T.eq(result.ran, 1)
+    T.eq(result.problems[1].outcome, "partial")
+    T.eq(result.problems[1].code, "NOT_SUPPORTED")
+    T.eq(result.problems[1].detail, "In auto this thermostat takes a heat and a cool setpoint")
+    T.same(sent[31], { { "SET_MODE_HVAC", { MODE = "Auto" } } }, "only the mode")
+
+    -- 22 and 22.5 °C are 72 and 73 °F: closer than the 3 °F deadband.
+    local steps = { { type = "climate", device_ids = { 31 }, set = { heat_setpoint = 22, cool_setpoint = 22.5 } } }
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Close", steps = steps } })
+    T.eq(scene.status, 201, "valid as a step: " .. tostring(scene.body))
+    local before = #mock.commands
+    local ran = T.http(mock, "POST", "/v1/scenes/" .. scene.json.id .. "/run", { key = admin }).json
+    T.eq(ran.skipped, 1, "nothing else in the step")
+    T.eq(ran.problems[1].code, "NOT_SUPPORTED")
+    T.contains(ran.problems[1].detail, "at least 1.7")
+    T.eq(#commandsSince(mock, before), 0)
+    result, sent = tryClimate(mock, admin, { mode = "auto", heat_setpoint = 22, cool_setpoint = 22.5 }, { 31 })
+    T.eq(result.ran, 1)
+    T.eq(result.problems[1].outcome, "partial")
+    T.same(sent[31], { { "SET_MODE_HVAC", { MODE = "Auto" } } })
+end
+
+function tests.setpoint_steps_are_checked()
+    local mock, admin = startDual()
+    local before = #mock.commands
+    local step = function(set)
+        local answer = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Test", steps = { { type = "climate", set = set } } } })
+        T.eq(answer.status, 400, answer.body)
+        T.eq(answer.json.code, "INVALID_FIELD")
+        return answer.json
+    end
+    step({ target_temperature = 22, heat_setpoint = 20 })
+    step({ mode = "off", heat_setpoint = 20 })
+    T.eq(step({ heat_setpoint = 4 }).errors[1].field, "steps[0].set.heat_setpoint")
+    step({ cool_setpoint = 41 })
+    T.eq(step({ heat_setpoint = 24, cool_setpoint = 24 }).errors[1].field, "steps[0].set.cool_setpoint", "cool above heat")
+    step({ heat_setpoint = 24, cool_setpoint = 20 })
+    step({ heat_setpoint = "20" })
+    step({ fan_speed = "humidify" })
+    T.eq(#commandsSince(mock, before), 0, "nothing is sent")
+    T.eq(#T.http(mock, "GET", "/v1/scenes", { key = admin }).json.items, 0, "nothing is saved")
+    local fan = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Fan", steps = { { type = "climate", set = { fan_speed = "circulate" } } } } })
+    T.eq(fan.status, 201, fan.body)
+end
+
+function tests.a_setpoint_step_is_kept_across_updates_and_checked_when_loaded()
+    local mock, admin = startDual()
+    local set = { mode = "auto", heat_setpoint = 20, cool_setpoint = 24 }
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Auto", steps = {
+        { type = "climate", device_ids = { 31 }, set = set },
+    } } }).json
+    T.same(scene.steps[1].set, set)
+
+    local raw = mock.persist.directorlink_scenes
+    local data = Json.decode(raw:sub(#"json:" + 1))
+    local steps = data.scenes[1].steps
+    steps[#steps + 1] = { type = "climate", set = { heat_setpoint = 24, cool_setpoint = 20 } }
+    steps[#steps + 1] = { type = "climate", set = { target_temperature = 22, cool_setpoint = 24 } }
+    steps[#steps + 1] = { type = "climate", set = { mode = "off", cool_setpoint = 24 } }
+    steps[#steps + 1] = { type = "climate", set = { heat_setpoint = "warm" } }
+    mock.persist.directorlink_scenes = "json:" .. Json.encode(data)
+
+    local updated = Mock.updateDriver(mock, Mock.withDualThermostat(Mock.project()))
+    local kept = T.http(updated, "GET", "/v1/scenes/" .. scene.id, { key = admin }).json
+    T.eq(#kept.steps, 1, "only the valid step is kept")
+    T.same(kept.steps[1].set, set)
+    local before = #updated.commands
+    T.eq(T.http(updated, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = admin }).json.ran, 1)
+    T.eq(#commandsSince(updated, before), 3, "the mode and both setpoints")
+end
+
 function tests.a_fan_speed_a_unit_does_not_have_is_reported()
     local mock, admin = start()
     local tried = T.http(mock, "POST", "/v1/scenes/try", { key = admin, body = { steps = { { type = "climate", set = { mode = "cool", fan_speed = "auto" } } } } }).json

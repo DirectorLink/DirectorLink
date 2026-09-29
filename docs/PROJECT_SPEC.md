@@ -71,16 +71,16 @@ At home the browser talks to DirectorLink directly. Remote access, when switched
 
 ## V1 device scope
 
-Supported device families (1.0.0):
+Supported device families (1.1.0):
 
-1. Lights (Light V2)
-2. HVAC / thermostat / climate (Thermostat V2)
+1. Lights (Light V2 and the legacy Light proxy)
+2. HVAC / thermostat / climate (Thermostat V2, Control4 thermostat proxy)
 3. Shades / blinds / motorized covers/windows
 4. Cameras (snapshots)
 5. Doors and gates on KNX Contact/Relay devices
 6. DoorBird doorbells (rings, and opening their door)
 
-Proposed in open pull requests, not merged: Light V1, fans, dual-setpoint thermostats, alarm status.
+Proposed in open pull requests, not merged: fans, alarm status.
 
 Policy for everything else:
 
@@ -176,6 +176,79 @@ A plugin architecture may be added later for niche functionality. A Jewish-calen
 ## Licensing
 
 Apache License 2.0.
+
+## Adapters added in 1.1.0
+
+Rebuilt from bkwagner's pull requests #14, #19 and #16 (ADR-033). The IDs and commands were read
+on a live Director (the floor heating in a °F project). The command names below stay inside the
+adapters: the API shows only `on`, `brightness`, `mode`, `target_temperature`, `heat_setpoint`,
+`cool_setpoint` and `fan_speed`.
+
+### Legacy Light proxy (`light.c4i`) — 1.1.0
+
+Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy. It has its
+own adapter (`light_v1.lua`), so the Light V2 path validated on real hardware stays unchanged:
+
+- state variable `1000`, and level variable `1001` on dimmers (a proxy without it is a switch)
+- the light is controllable only when `1000` exists and its listeners register
+- normalized `on` → `ON`, `off` → `OFF`, `set_brightness` → `SET_LEVEL` with `LEVEL`, no ramp
+  time (the dimmer's own rate)
+- no KNX exception like Light V2's `knx_dimmer.c4i`, until a trace from a real device calls for one
+- at Debug level, the start-up log lists each proxy's variables and protocol drivers
+
+No DirectorLink command has moved one of these lights on a real controller yet.
+
+### Thermostat V2: floor heating on its heat setpoint — 1.1.0
+
+A Thermostat V2 zone follows its heat setpoint only when all three hold:
+
+- its mode list (`1120`) has Heat and neither Cool nor Auto
+- its single setpoint reads 0 in both scales: `1149` (always °F) and `1150` (°C; a missing `1150`
+  keeps the single setpoint)
+- its heat setpoint `1133` (°C) has a value other than 0
+
+The rule is checked again on every change to `1120`, `1133`, `1149` and `1150`. Only a heat-only
+zone whose single setpoint reads 0 reads and watches `1133` and `1150`, at start-up and whenever it
+looks again: the mode list or one of these can arrive later, so such a zone looks again on changes
+to `1120`, `1149` and the room temperature (`1131`). A zone in use on its single setpoint starts
+with the reads, listeners and log line of 1.0.0 and reads nothing more; if its single setpoint
+drops to 0, that change looks again. On that path the target is `1133`, the range starts at 5 °C,
+and `set_temperature` sends `SET_SETPOINT_HEAT` with `FAHRENHEIT` (whole degrees) when the project
+scale (`1100`) is °F, or `CELSIUS` otherwise. Every other zone keeps `SET_SETPOINT_SINGLE` and
+16–32 °C, and zones with Cool or Auto never read or watch `1133` and `1150`. The variable list
+(`C4:GetDeviceVariables`) is read only at Debug, for the log. A fan mode of `Undefined` is no fan
+speed, and a zone whose mode list loses Cool after start-up loses its fan control, as a zone
+without Cool never gets it.
+
+### Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) — 1.1.0
+
+Control4 thermostats with separate heat and cool setpoints. The variables (`thermostat_proxy.lua`):
+
+| Id | Name | Id | Name |
+| --- | --- | --- | --- |
+| 1100 | SCALE | 1130 / 1131 | TEMPERATURE_F / TEMPERATURE_C |
+| 1104 | HVAC_MODE | 1132 / 1133 | HEAT_SETPOINT_F / HEAT_SETPOINT_C |
+| 1105 | FAN_MODE | 1134 / 1135 | COOL_SETPOINT_F / COOL_SETPOINT_C |
+| 1107 | HVAC_STATE | 1146 / 1147 | DEADBAND_F / DEADBAND_C |
+| 1112 | IS_CONNECTED | 1120 / 1121 | HVAC_MODES_LIST / FAN_MODES_LIST |
+
+- Required at start: a scale that starts with F or C (never guessed), the mode, a temperature and
+  at least one setpoint pair. Every variable read is watched, the deadband too.
+- Values are read in the project's scale and compared in its units (whole °F, tenths of °C); the
+  API gets °C to 0.1.
+- Commands: `SET_MODE_HVAC { MODE }`, `SET_MODE_FAN { MODE }`, and `SET_SETPOINT_HEAT` /
+  `SET_SETPOINT_COOL` with `FAHRENHEIT` in whole degrees in a °F project, `CELSIUS` otherwise.
+- One setpoint moves the other when needed to keep the deadband; two sent together must already
+  be that far apart. Without a reported deadband, cool stays at least one step (1 °F or 0.1 °C)
+  above heat. Cool is sent first when it goes up, heat first otherwise, so the pair never breaks
+  the deadband in between. The other setpoint and "goes up" are judged against the setpoints
+  DirectorLink last sent until the thermostat reports them (or for 10 s), so a request that comes
+  before the report does not start from old values. Every command is checked before anything is
+  sent.
+- A setpoint that none of the thermostat's modes uses (heat on one with only Off and Cool) is
+  reported as `null`, so clients do not offer or push it.
+- The room temperature is converted as measured, not rounded to whole °F first.
+- Setpoints are kept within 5–35 °C.
 
 ## History: the first milestones (to 0.2.0)
 

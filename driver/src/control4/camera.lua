@@ -96,6 +96,11 @@ function Camera.forget(proxyId)
     end
 end
 
+-- Every camera's setup is read again; snapshots waiting or in flight carry on.
+function Camera.forgetAll()
+    sources = {}
+end
+
 local function url(source)
     local defaultPort = source.scheme == "https" and 443 or 80
     local hostPort = source.host
@@ -288,12 +293,6 @@ function Camera.snapshot(proxyId, source, done)
         end,
     }
     runNext()
-end
-
-function Camera.reset()
-    sources = {}
-    queue = {}
-    inFlight = 0
 end
 
 return Camera

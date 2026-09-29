@@ -758,6 +758,53 @@ select:disabled {
   color: var(--okText);
 }
 
+/* A newer DirectorLink is out (admins; js/views/updates.js). On Home the whole text leads to the
+   steps, and the close button hides it until the next version. */
+.banner-update {
+  padding-block: 2px;
+  padding-inline-end: 2px;
+}
+
+.banner-update-link {
+  flex: 1;
+  min-width: 0;
+  padding-block: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.banner-update-link .banner-action {
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.banner-update .icon-button {
+  color: inherit;
+}
+
+/* Settings → Controller: how to update, under the Updates line. */
+.update-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.update-panel:focus {
+  outline: none;
+}
+
+.update-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-inline-start: 1.4em;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 .inline-error {
   margin-block-start: 8px;
   color: var(--errText);
@@ -959,6 +1006,21 @@ select:disabled {
   margin-block-start: auto;
   padding-block-start: 4px;
   font-weight: 500;
+}
+
+/* A thermostat with heat and cool setpoints ("21.7° · Auto 20°–24.4°"): the parts wrap onto a
+   second line whole, so the range is never cut. */
+.fav-state-parts {
+  white-space: normal;
+}
+
+.fav-state-parts > span {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: top;
 }
 
 .fav-tile.is-on {
@@ -1234,6 +1296,12 @@ select:disabled {
   color: var(--ink);
 }
 
+/* A shade on its way: "Opening… to 53%" stands out from the resting states. */
+.device.blind.is-moving .device-meta {
+  color: var(--primary);
+  font-weight: 500;
+}
+
 .device-text {
   display: flex;
   flex-direction: column;
@@ -1408,6 +1476,26 @@ select:disabled {
   font-size: 12px;
 }
 
+/* Heat and cool setpoints: side by side when the card has room for two steppers of about 220 px
+   (buttons and "24.4°"), one under the other otherwise. This follows the card's width, not the
+   window's: in the two-column layout a card is narrower than on a tablet in one column. */
+.stepper-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 10px 6px;
+}
+
+.stepper-pair .stepper {
+  flex: 1 1 220px;
+  margin-block: 0;
+}
+
+/* View-only keys: both values in one box. */
+.stepper-readonly-pair {
+  justify-content: space-evenly;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;
@@ -1455,6 +1543,11 @@ select:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   margin-block-start: 10px;
+}
+
+/* A shade that cannot stop: Close and Open only. */
+.segments.segments-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .segment {

@@ -39,6 +39,9 @@ jobs:
       - name: Run driver tests
         run: lua5.1 driver/tests/run.lua
 
+      - name: Test the build and check scripts
+        run: python -m unittest discover -s tests/scripts
+
       - name: Check that no local configuration or secrets are committed
         run: python scripts/check_repo.py
 

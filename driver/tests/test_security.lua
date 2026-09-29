@@ -142,6 +142,23 @@ function tests.a_viewer_key_sealed_at_home_keeps_its_role()
     T.eq(answer.status, 403)
 end
 
+-- The app seals the room order at home too (PUT /v1/rooms/order, refused as a method since 1.0.0).
+function tests.the_room_order_is_set_sealed_at_home_by_admins_only()
+    local mock = Mock.startDriver()
+    local admin = sealedPair(mock)
+    local answer = sealed(mock, admin.key, admin.id, { method = "PUT", path = "/v1/rooms/order", body = { room_ids = { 11, 10 } } })
+    T.eq(answer.status, 200, answer.body)
+    local items = Json.decode(answer.body).items
+    T.eq(items[1].id, 11)
+    T.eq(items[2].id, 10)
+
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = admin.key, body = { name = "Phone", role = "member" } }).json
+    local refused = sealed(mock, member.key, member.id, { method = "PUT", path = "/v1/rooms/order", body = { room_ids = { 10, 11 } } })
+    T.eq(refused.status, 403)
+    T.eq(Json.decode(refused.body).code, "FORBIDDEN")
+    T.eq(T.http(mock, "GET", "/v1/rooms", { key = admin.key }).json.items[1].id, 11, "the order stays")
+end
+
 function tests.secrets_differ_even_if_directors_uuids_do_not()
     local mock = Mock.startDriver()
     function C4:UUID()

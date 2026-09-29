@@ -15,6 +15,7 @@ From the repository root:
 ```bash
 find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
 lua5.1 driver/tests/run.lua                                    # driver tests (fake Director)
+python -m unittest discover -s tests/scripts                   # the build and check scripts themselves
 python scripts/check_repo.py                                   # no local tool configuration or secrets tracked
 python scripts/check_api.py                                    # spec is valid and matches the driver routes
 python scripts/build.py                                        # dist/DirectorLink.c4z + dist/openapi.json
@@ -38,19 +39,26 @@ src/
   main.lua
   api/        HTTP server, router, handlers, generated openapi_spec.lua
   auth/       API keys, roles, pairing, profiles, invitations
-  adapters/   Light V2, Thermostat V2, blinds, cameras, KNX Contact/Relay, DoorBird
+  adapters/   Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4 thermostat proxy,
+              blinds, cameras, KNX Contact/Relay, DoorBird
   cloud/      relay connection, WebSocket, the end-to-end lock, sealed requests
   control4/   discovery and normalization
   core/       json, log, store, random, x25519, registry, version, scenes, schedules, sun, weather, …
+certs/
+  directorlink-roots.pem   the roots the relay's certificate is checked against (docs/RELAY.md)
 www/
   icons/      the device's icons in Composer and the Control4 app
 ```
 
-No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. The source manifest `driver/DirectorLink.c4zproj` is kept for Snap One's Driver Packager, but official builds come from `scripts/build.py`.
+No Lua squishing or encryption is used, so package contents and errors stay easy to inspect. Of `driver/certs/`, only the CA file that `src/cloud/websocket.lua` names (`WebSocket.CA_FILE`) is packaged, and any other file there stops the build: Git ignores other `.pem` files, so a key left there would not show in `git status`. `check_package.py` expects exactly that file, and every certificate OpenSSL would load from it must be one of the pinned roots.
+
+The source manifest `driver/DirectorLink.c4zproj` lists the same files and folders for Snap One's Driver Packager, but a Packager build lacks the generated API description (`src/api/openapi_spec.lua`) and the stamped version, and nothing checks it. Official builds, and any package to install, come from `scripts/build.py`.
+
+A test package for the negative check of the relay's certificate (docs/TESTING.md, 0p) comes from `python scripts/build.py --roots-only "ISRG Root X1"`: it writes only `dist/DirectorLink-wrong-roots.c4z`, whose CA file trusts that one root, and leaves `dist/DirectorLink.c4z` alone. It is never the default, its CA file fails `check_package.py`'s roots check, and the release workflow never builds or uploads it.
 
 ## Checksums and reproducible builds
 
-The build is byte-for-byte reproducible on every OS: fixed zip timestamps, a fixed "creating system" in the zip headers, and LF line endings in `openapi.json`. The same commit therefore produces the same SHA-256 on Windows, macOS and Linux, and `check_package.py` fails if a package breaks those rules.
+The build is byte-for-byte reproducible on every OS: fixed zip timestamps, a fixed "creating system" in the zip headers, and LF line endings in `openapi.json` and in the CA file (whatever the checkout has; `.gitattributes` also keeps every text file LF in checkouts, whatever `core.autocrlf` says). The same commit therefore produces the same SHA-256 on Windows, macOS and Linux, and `check_package.py` fails if a package breaks those rules.
 
 To check that a file matches a release, compare it with that release's `SHA256SUMS.txt`:
 
@@ -76,7 +84,7 @@ python scripts/dev_server.py                   # driver + fake Director on http:
 python -m http.server 8080 --directory app     # app on http://localhost:8080
 ```
 
-Use `localhost` as the controller address and the pairing code the dev server prints. The fake project has two rooms, three lights, a thermostat, two blinds, two cameras, a DoorBird and a KNX door relay, and answers the weather itself; commands are recorded but not executed.
+Use `localhost` as the controller address and the pairing code the dev server prints. The fake project (`Mock.demoProject` in `driver/tests/c4mock.lua`) has two rooms; five lights, two of them on the older Light proxy, and one more older light that cannot be read, listed as unsupported; three thermostats: an AC zone and, in °F, a Control4 thermostat with heat and cool setpoints and floor heating on its heat setpoint; four blinds, two of them shades that report their movement (one only opens and closes fully); three cameras, a DoorBird and a KNX door relay. It answers the weather itself; commands are recorded but not executed.
 
 ## Versions
 
@@ -88,7 +96,7 @@ Use `localhost` as the controller address and the pairing code the dev server pr
 
 ## Release policy
 
-Built `.c4z` files are not committed. Every official build is produced by GitHub Actions and attached to an immutable GitHub Release.
+Built `.c4z` files are not committed. Every official build is produced by GitHub Actions and attached to a GitHub Release. Releases are immutable from 1.1.0 on, once the repository's immutable-releases setting is on: after publishing, neither the tag nor the files can change. 1.0.0 and older were published mutable. The app's update notice offers only immutable releases (ADR-035).
 
 1. Work on a `dev/<feature>` branch and merge it to `main` through a pull request.
 2. Changing `VERSION` on `main` triggers the release workflow, which runs the tests and checks, builds, and publishes the `v<version>` release with:
@@ -99,7 +107,7 @@ openapi.json
 SHA256SUMS.txt
 ```
 
-Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release.
+Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release. `gh release create` uploads the files before it publishes the release, so it works with immutable releases.
 
 ## Deploying the sites
 
