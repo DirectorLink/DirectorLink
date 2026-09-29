@@ -79,7 +79,12 @@ Cloudflare issues the relay's certificate from, and Cloudflare may switch betwee
 
 This check is new in 1.1.0 (ADR-034). Control4 does not document two things, which a controller
 has to show: whether Director also checks that the certificate names `api.directorlink.io`, and
-how it reports a certificate that does not verify. Either way the driver retries with the backoff:
+how it reports a certificate that does not verify. `Connected` alone shows neither: 1.0.0 connected
+with no check at all. docs/TESTING.md 0p has the negative test for the check itself: a test package
+(`scripts/build.py --roots-only`) that trusts only a root the relay's chain does not end at must
+never connect. The name is not tested; if Director does not check it, a certificate that one of
+these authorities issued for another name passes too. Either way the driver retries with the
+backoff:
 - If Director reports the connection offline, Remote Status shows
   `Reconnecting in N s (connection lost)`.
 - If Director reports nothing, the 30 s limit ends the attempt. Remote Status shows
@@ -87,8 +92,12 @@ how it reports a certificate that does not verify. Either way the driver retries
   the relay within 30 s; the certificate check may have failed*.
 
 The file lists each root's SHA-256. Rebuild it from a current CA list (such as certifi) before a
-root expires or when Cloudflare adds an authority. `scripts/check_package.py` checks that the
-package holds exactly these roots, each with its pinned SHA-256.
+root expires or when Cloudflare adds an authority. `scripts/build.py` packages only this file of
+`driver/certs/` (any other file there stops the build), with LF line endings.
+`scripts/check_package.py` reads it as OpenSSL does (every `BEGIN` block, trailing whitespace and
+CRLF included) and checks that the certificates in it are exactly these roots, each once, with its
+pinned SHA-256, and nothing else: no key and no other block. `scripts/check_repo.py` checks the
+staged file the same way.
 
 ## Messages
 

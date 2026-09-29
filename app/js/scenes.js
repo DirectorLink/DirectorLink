@@ -14,6 +14,9 @@ export const STEP_TYPES = ["lights", "climate", "blinds", "relays"];
 export const STEP_ICONS = { lights: "bulb", climate: "climate", blinds: "blinds", relays: "door" };
 export const MAX_STEPS = 40;
 export const MAX_DEVICE_IDS = 100;
+// The temperatures a scene step takes (driver/src/core/scenes.lua), in °C.
+export const SCENE_MIN_TEMPERATURE = 5;
+export const SCENE_MAX_TEMPERATURE = 40;
 const LISTS = { lights: "lights", climate: "thermostats", blinds: "blinds", relays: "relays" };
 const RESULT_MS = 4000;
 const CONFIRM_MS = 5000;
@@ -218,11 +221,22 @@ export async function runScene(scene) {
 
 // ---- copying the house ---------------------------------------------------------------------
 
+// A temperature a thermostat reports, as a scene step keeps it: within what scene steps take and
+// the thermostat's own range, as brightness and positions are kept within theirs. A setpoint set on
+// the thermostat itself can be lower (40 °F is 4.4 °C), and one such value made the controller
+// refuse the whole scene.
+function copiedTemperature(thermostat, value) {
+  const min = Number.isFinite(thermostat.target_temperature_min) ? Math.max(SCENE_MIN_TEMPERATURE, thermostat.target_temperature_min) : SCENE_MIN_TEMPERATURE;
+  const max = Number.isFinite(thermostat.target_temperature_max) ? Math.min(SCENE_MAX_TEMPERATURE, thermostat.target_temperature_max) : SCENE_MAX_TEMPERATURE;
+  if (min > max) return Math.max(SCENE_MIN_TEMPERATURE, Math.min(SCENE_MAX_TEMPERATURE, value));
+  return Math.max(min, Math.min(max, value));
+}
+
 // The setpoints a thermostat in auto has now, as a scene step keeps them (the controller takes
-// cool only above heat).
+// cool only above heat, which the values kept in range must still be).
 function autoSetpoints(thermostat) {
-  const heat = Number.isFinite(thermostat.heat_setpoint) ? thermostat.heat_setpoint : null;
-  const cool = Number.isFinite(thermostat.cool_setpoint) ? thermostat.cool_setpoint : null;
+  const heat = Number.isFinite(thermostat.heat_setpoint) ? copiedTemperature(thermostat, thermostat.heat_setpoint) : null;
+  const cool = Number.isFinite(thermostat.cool_setpoint) ? copiedTemperature(thermostat, thermostat.cool_setpoint) : null;
   if (heat !== null && cool !== null) return cool > heat ? { heat_setpoint: heat, cool_setpoint: cool } : {};
   if (heat !== null) return { heat_setpoint: heat };
   if (cool !== null) return { cool_setpoint: cool };
@@ -232,7 +246,7 @@ function autoSetpoints(thermostat) {
 // Steps that put every light, AC and blind back the way they are now. Devices set alike share a
 // step (at most 100 devices each); doors and gates are left out. `left`: steps that did not fit
 // in a scene. A thermostat with heat and cool setpoints keeps both in auto; in heat or cool its
-// target is the setpoint of that mode.
+// target is the setpoint of that mode. Temperatures stay within what a scene step takes.
 export function copyHouse() {
   const groups = new Map();
   const add = (type, set, id) => {
@@ -250,7 +264,7 @@ export function copyHouse() {
     if (thermostat.mode && (thermostat.modes || []).includes(thermostat.mode)) set.mode = thermostat.mode;
     if (set.mode !== "off") {
       if (isDual(thermostat) && thermostat.mode === "auto") Object.assign(set, autoSetpoints(thermostat));
-      else if (Number.isFinite(thermostat.target_temperature)) set.target_temperature = thermostat.target_temperature;
+      else if (Number.isFinite(thermostat.target_temperature)) set.target_temperature = copiedTemperature(thermostat, thermostat.target_temperature);
       if (thermostat.fan_speed && (thermostat.fan_speeds || []).includes(thermostat.fan_speed)) set.fan_speed = thermostat.fan_speed;
     }
     if (Object.keys(set).length) add("climate", set, thermostat.id);

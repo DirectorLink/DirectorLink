@@ -245,7 +245,7 @@ test("offline assets come from the cache; unknown ones fail cleanly", async () =
 
 test("controller requests and non-GET requests are never intercepted", async () => {
   const { request } = await startWorker();
-  assert.equal(await request("/v1/lights", { mode: "cors", origin: "http://192.168.1.201:41999" }), null);
+  assert.equal(await request("/v1/lights", { mode: "cors", origin: "http://192.168.1.10:41999" }), null);
   assert.equal(await request("/v1/lights", { mode: "cors", method: "PATCH" }), null);
 });
 

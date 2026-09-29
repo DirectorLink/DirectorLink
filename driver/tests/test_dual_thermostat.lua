@@ -13,7 +13,8 @@ local function isNull(value)
 end
 
 -- The default project plus the dual thermostat 31 (Mock.withDualThermostat options). The fake
--- Director does not act on commands, so every request starts from the fixture's values.
+-- Director does not act on commands or report them: a request starts from the setpoints the
+-- requests before it sent, for 10 s, and otherwise from the fixture's values.
 local function start(options, change)
     local project = Mock.withDualThermostat(Mock.project(), options)
     if change then
@@ -116,9 +117,90 @@ function tests.both_setpoints_go_in_an_order_that_keeps_the_deadband()
     T.eq(response.status, 202, response.body)
     T.same(list, {
         { "SET_MODE_HVAC", { MODE = "Auto" } },
-        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 68 } },
         { "SET_SETPOINT_COOL", { FAHRENHEIT = 75 } },
-    }, "the mode first, in the proxy's spelling")
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 68 } },
+    }, "the mode first, in the proxy's spelling; cool rises from the 72 °F just sent")
+end
+
+-- The thermostat as the commands leave it, never reported back: each setpoint command applied in
+-- order to `pair` (°F), and the 3 °F deadband kept after every one.
+local function follow(mock, from, pair)
+    for index = from + 1, #mock.commands do
+        local command = mock.commands[index]
+        if command.command == "SET_SETPOINT_HEAT" then
+            pair.heat = command.params.FAHRENHEIT
+        elseif command.command == "SET_SETPOINT_COOL" then
+            pair.cool = command.params.FAHRENHEIT
+        end
+        T.truthy(pair.cool - pair.heat >= 3, "deadband broken at " .. pair.heat .. "/" .. pair.cool .. " °F")
+    end
+end
+
+-- Director reports a setpoint some time after the command. A request that comes before then
+-- starts from what was just sent, not from the old report: the order and the push stay right.
+function tests.a_request_before_the_report_starts_from_the_setpoints_just_sent()
+    -- The app pushes cool, then heat and cool together: cool is at 72 °F, not the reported 76.
+    local mock, _, _, patch = start()
+    local pair = { heat = 68, cool = 76 }
+    local before = #mock.commands
+    T.same(sent(mock, patch, { cool_setpoint = 22 }), { { "SET_SETPOINT_COOL", { FAHRENHEIT = 72 } } })
+    T.same(sent(mock, patch, { heat_setpoint = 21.5, cool_setpoint = 23.5 }), {
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 74 } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 71 } },
+    }, "cool rises from 72 °F: cool first, never 71/72")
+    follow(mock, before, pair)
+
+    -- Lowering cool pushed heat to 67 °F; raising heat then needs cool pushed again, from 70 °F.
+    mock, _, _, patch = start()
+    pair = { heat = 68, cool = 76 }
+    before = #mock.commands
+    T.same(sent(mock, patch, { cool_setpoint = 21 }), {
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 67 } },
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 70 } },
+    })
+    T.same(sent(mock, patch, { heat_setpoint = 20 }), {
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 71 } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 68 } },
+    }, "not HEAT 68 alone, which would end at 68/70")
+    follow(mock, before, pair)
+    T.same(pair, { heat = 68, cool = 71 })
+
+    -- A 1.0.0 client does the same with the mode and target_temperature.
+    mock, _, _, patch = start()
+    pair = { heat = 68, cool = 76 }
+    before = #mock.commands
+    T.same(sent(mock, patch, { mode = "cool", target_temperature = 21 }), {
+        { "SET_MODE_HVAC", { MODE = "Cool" } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 67 } },
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 70 } },
+    })
+    T.same(sent(mock, patch, { mode = "heat", target_temperature = 20 }), {
+        { "SET_MODE_HVAC", { MODE = "Heat" } },
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 71 } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 68 } },
+    })
+    follow(mock, before, pair)
+    T.same(pair, { heat = 68, cool = 71 })
+end
+
+-- What was sent counts until the thermostat reports that value, or for 10 s.
+function tests.the_report_counts_again_once_it_catches_up_or_after_ten_seconds()
+    local mock, _, _, patch = start()
+    sent(mock, patch, { cool_setpoint = 22 })
+    OnWatchedVariableChanged(31, 1134, "72")
+    OnWatchedVariableChanged(31, 1134, "70")
+    T.same(sent(mock, patch, { heat_setpoint = 20.5 }), {
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 72 } },
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 69 } },
+    }, "72 °F was reported, then 70 °F set at the thermostat: 70 counts, so cool is pushed")
+
+    mock, _, _, patch = start()
+    sent(mock, patch, { cool_setpoint = 22 })
+    mock.clock = mock.clock + 10001
+    T.same(sent(mock, patch, { heat_setpoint = 21.5, cool_setpoint = 23.5 }), {
+        { "SET_SETPOINT_HEAT", { FAHRENHEIT = 71 } },
+        { "SET_SETPOINT_COOL", { FAHRENHEIT = 74 } },
+    }, "72 °F never reported in 10 s: the reported 76 °F counts again, and cool falls")
 end
 
 function tests.target_temperature_sets_the_setpoint_of_the_mode()

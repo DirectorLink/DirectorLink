@@ -1,0 +1,5 @@
+# LF in the repository and in every checkout, whatever core.autocrlf says (Git for Windows turns it
+# on by default): the tests and checks read the relay's CA file line by line, and packages must be
+# the same on every OS (docs/BUILD.md).
+* text=auto eol=lf
+*.pem text eol=lf

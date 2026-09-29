@@ -26,7 +26,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 1. Exchange the code for a key:
 
    ```bash
-   curl -X POST http://192.168.1.201:41999/v1/auth/pair \
+   curl -X POST http://<controller-ip>:41999/v1/auth/pair \
      -H "Content-Type: application/json" \
      -d '{"pairing_code": "1234 5678", "name": "My laptop"}'
    ```
@@ -36,8 +36,8 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 
    ```bash
-   curl http://192.168.1.201:41999/v1/lights -H "Authorization: Bearer ak_..."
-   curl -X PATCH http://192.168.1.201:41999/v1/lights/259 \
+   curl http://<controller-ip>:41999/v1/lights -H "Authorization: Bearer ak_..."
+   curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
      -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
      -d '{"brightness": 40}'
    ```
@@ -66,7 +66,7 @@ Most thermostats have one `target_temperature` (`"setpoints": "single"`). Thermo
 (Other fields left out.) Set both in auto:
 
 ```bash
-curl -X PATCH http://192.168.1.201:41999/v1/thermostats/31 \
+curl -X PATCH http://<controller-ip>:41999/v1/thermostats/31 \
   -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
   -d '{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}'
 ```

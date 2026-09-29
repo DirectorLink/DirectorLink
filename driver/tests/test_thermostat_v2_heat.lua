@@ -103,7 +103,8 @@ function tests.an_ac_zone_stays_on_its_single_setpoint()
 
     local logs = T.http(mock, "GET", "/v1/logs?category=climate", { key = key }).json.items
     T.eq(logs[1].message, "initialized thermostat")
-    T.eq(logs[1].data.setpoint_source, "single")
+    T.eq(logs[1].data.setpoint_source, nil, "the line of 1.0.0")
+    T.eq(logs[1].data.target_temperature_c, -18)
 end
 
 -- The owner's floor zones: heat-only, with a real single setpoint. Same state, command and range.
@@ -250,8 +251,8 @@ function tests.a_later_heat_setpoint_is_found_on_a_temperature_change()
     T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { CELSIUS = 21 } })
 end
 
--- A floor zone in use on its single setpoint reads 1133 and 1150 once at start-up, as before, and
--- not again on later changes, even when they are missing.
+-- A floor zone in use on its single setpoint never reads 1133 or 1150: not at start-up, as in
+-- 1.0.0, and not on later changes, even when they are missing.
 function tests.a_zone_on_its_single_setpoint_reads_nothing_more_later()
     local project = Mock.project()
     local variables = project.variables[30]
@@ -267,15 +268,182 @@ function tests.a_zone_on_its_single_setpoint_reads_nothing_more_later()
             return getVariable(self, deviceId, variableId)
         end
     end)
-    T.eq(reads, 2, "read once at start-up")
+    T.eq(reads, 0, "not at start-up")
     OnWatchedVariableChanged(30, 1149, "73.4")
     OnWatchedVariableChanged(30, 1131, "21.5")
     OnWatchedVariableChanged(30, 1120, "Off,Heat")
-    T.eq(reads, 2, "not again")
+    T.eq(reads, 0, "nor later")
     T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150))
     local thermostat = get()
     T.eq(thermostat.target_temperature, 23)
     T.eq(thermostat.target_temperature_min, 16)
+end
+
+-- What 1.0.0 (d7e111f) did for zone 30 when it started, recorded from its adapter on the fake
+-- Director: the reads, then the listeners of the three required variables, then each optional one
+-- read again and watched when it exists. It never read 1133 or 1150, nor listed the variables.
+local START_100 = {
+    "get 1131", "get 1104", "get 1149", "get 1105", "get 1107", "get 1112", "get 1120", "get 1100",
+    "watch 1131", "watch 1104", "watch 1149",
+    "get 1105", "watch 1105", "get 1107", "watch 1107", "get 1112", "watch 1112",
+    "get 1120", "watch 1120", "get 1100", "watch 1100",
+}
+
+local function without(list, left)
+    local result = {}
+    for _, entry in ipairs(list) do
+        if entry ~= left then
+            result[#result + 1] = entry
+        end
+    end
+    return result
+end
+
+-- The test system's zones (14 AC zones, and 8 floor-heating zones on their single setpoint) start
+-- with exactly the reads, listeners and log line of 1.0.0, at Info and at Debug.
+function tests.zones_on_their_single_setpoint_start_exactly_as_in_1_0_0()
+    local floor = { [1100] = "CELSIUS", [1104] = "Heat", [1107] = "Heat", [1120] = "Off,Heat", [1149] = "71.6" }
+    local shapes = {
+        {
+            name = "AC zone in cool", calls = START_100,
+            log = '{"current_temperature_c":26,"device_id":30,"fan_mode":"Low","hvac_modes":["Off","Heat","Cool"],"target_temperature_c":22}',
+        },
+        {
+            name = "AC zone off at 32 °C", variables = { [1104] = "Off", [1107] = "Off", [1149] = "89.6" }, calls = START_100,
+            log = '{"current_temperature_c":26,"device_id":30,"fan_mode":"Low","hvac_modes":["Off","Heat","Cool"],"target_temperature_c":32}',
+        },
+        {
+            name = "AC zone with 1133 and 1150", variables = { [1133] = "22", [1150] = "22" }, calls = START_100,
+            log = '{"current_temperature_c":26,"device_id":30,"fan_mode":"Low","hvac_modes":["Off","Heat","Cool"],"target_temperature_c":22}',
+        },
+        {
+            name = "AC zone without a mode list", variables = { [1120] = false }, calls = without(START_100, "watch 1120"),
+            log = '{"current_temperature_c":26,"device_id":30,"fan_mode":"Low","hvac_modes":["Off","Heat","Cool"],"target_temperature_c":22}',
+        },
+        {
+            name = "floor heating with 1133 and 1150", variables = { [1105] = "Undefined", [1133] = "22", [1150] = "22" }, base = floor,
+            calls = START_100,
+            log = '{"current_temperature_c":26,"device_id":30,"fan_mode":"Undefined","hvac_modes":["Off","Heat"],"target_temperature_c":22}',
+        },
+        {
+            name = "floor heating without 1133, 1150 or a fan", variables = { [1105] = false }, base = floor,
+            calls = without(START_100, "watch 1105"),
+            log = '{"current_temperature_c":26,"device_id":30,"hvac_modes":["Off","Heat"],"target_temperature_c":22}',
+        },
+    }
+    for _, level in ipairs({ "Info", "Debug" }) do
+        for _, shape in ipairs(shapes) do
+            local project = Mock.project()
+            for id, value in pairs(shape.base or {}) do
+                project.variables[30][id] = value
+            end
+            for id, value in pairs(shape.variables or {}) do
+                project.variables[30][id] = value or nil
+            end
+            local calls, lines = {}, {}
+            Mock.startDriver(project, nil, nil, function()
+                Properties["Log Level"] = level
+                local getVariable, register, deviceVariables, debugLog = C4.GetVariable, C4.RegisterVariableListener, C4.GetDeviceVariables, C4.DebugLog
+                C4.GetVariable = function(self, deviceId, variableId)
+                    if deviceId == 30 then
+                        calls[#calls + 1] = "get " .. tostring(variableId)
+                    end
+                    return getVariable(self, deviceId, variableId)
+                end
+                C4.RegisterVariableListener = function(self, deviceId, variableId)
+                    if deviceId == 30 then
+                        calls[#calls + 1] = "watch " .. tostring(variableId)
+                    end
+                    return register(self, deviceId, variableId)
+                end
+                C4.GetDeviceVariables = function(self, deviceId)
+                    if deviceId == 30 then
+                        calls[#calls + 1] = "list variables"
+                    end
+                    return deviceVariables(self, deviceId)
+                end
+                C4.DebugLog = function(self, message)
+                    if message:find("[climate]", 1, true) then
+                        lines[#lines + 1] = message
+                    end
+                    return debugLog(self, message)
+                end
+            end)
+            local label = shape.name .. " at " .. level
+            T.same(calls, shape.calls, label)
+            T.same(lines, { "[DirectorLink][INFO][climate] initialized thermostat " .. shape.log }, label)
+        end
+    end
+end
+
+-- The zone's variable list is read for the Debug log only, once.
+function tests.a_heat_only_zone_lists_its_variables_only_at_debug()
+    for _, level in ipairs({ "Info", "Debug" }) do
+        local lists = 0
+        local mock, key = start(heatOnlyProject("FAHRENHEIT"), function()
+            Properties["Log Level"] = level
+            local deviceVariables = C4.GetDeviceVariables
+            C4.GetDeviceVariables = function(self, deviceId)
+                if deviceId == 30 then
+                    lists = lists + 1
+                end
+                return deviceVariables(self, deviceId)
+            end
+        end)
+        OnWatchedVariableChanged(30, 1131, "20.5")
+        OnWatchedVariableChanged(30, 1149, "0")
+        local debug = level == "Debug"
+        T.eq(lists, debug and 1 or 0, level)
+        local found
+        for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=climate&level=debug", { key = key }).json.items) do
+            if entry.message == "heat-only thermostat variables" then
+                found = entry.data.variables
+            end
+        end
+        if debug then
+            T.contains(found, "1133=1133:21.5")
+        else
+            T.eq(found, nil, level)
+        end
+    end
+end
+
+-- A mode list that arrives after start-up without Cool takes the fan control away, as a zone
+-- without Cool never gets it at start-up. A zone that keeps Cool keeps its fan.
+function tests.a_zone_that_loses_cool_loses_its_fan_control()
+    local project = heatOnlyProject("FAHRENHEIT")
+    project.variables[30][1120] = ""
+    local mock, key, get, patch = start(project)
+    T.same(get().fan_speeds, { "low", "medium", "high" }, "counted as Off,Heat,Cool until its list comes")
+
+    OnWatchedVariableChanged(30, 1120, "Off,Heat")
+    local thermostat = get()
+    T.same(thermostat.modes, { "off", "heat" })
+    T.eq(#thermostat.fan_speeds, 0)
+    T.eq(thermostat.target_temperature, 21.5)
+    local before = #mock.commands
+    local refused = patch({ fan_speed = "low" })
+    T.eq(refused.status, 409, refused.body)
+    T.eq(refused.json.code, "NOT_SUPPORTED")
+    T.eq(#mock.commands, before, "no SET_MODE_FAN to floor heating")
+    local ran = T.http(mock, "POST", "/v1/scenes/try", { key = key, body = { steps = {
+        { type = "climate", device_ids = { 30 }, set = { mode = "heat", target_temperature = 21, fan_speed = "high" } },
+    } } })
+    T.eq(ran.status, 202, ran.body)
+    for index = before + 1, #mock.commands do
+        T.truthy(mock.commands[index].command ~= "SET_MODE_FAN", "a scene sends it no fan speed either")
+    end
+    T.same(mock.commands[#mock.commands], { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 70 } })
+
+    local fresh = heatOnlyProject("FAHRENHEIT")
+    local _, _, getFresh = start(fresh)
+    T.same(getFresh().fan_speeds, thermostat.fan_speeds, "as a fresh start of the same zone")
+
+    local acMock, _, getAc, patchAc = start(Mock.project())
+    OnWatchedVariableChanged(30, 1120, "Off,Heat,Cool,Auto")
+    T.same(getAc().fan_speeds, { "low", "medium", "high" }, "an AC zone keeps its fan")
+    T.eq(patchAc({ fan_speed = "medium" }).status, 202)
+    T.same(lastCommand(acMock), { device = 30, command = "SET_MODE_FAN", params = { MODE = "Medium" } })
 end
 
 function tests.an_undefined_fan_mode_is_no_fan_speed()

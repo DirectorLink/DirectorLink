@@ -1,11 +1,12 @@
+local Clock = require("src.core.clock")
 local Log = require("src.core.log")
 local Units = require("src.adapters.thermostat_units")
 
 -- The Control4 thermostat proxy (control4_thermostat_proxy.c4i), used by Control4-branded
 -- thermostats. It has Thermostat V2's variable IDs (1100-1150) but separate heat and cool
 -- setpoints, reports every value in both scales and takes setpoints in the project's scale. The
--- IDs, values and commands were read from a contributor's Director with five of these
--- thermostats in a °F project (bkwagner, #16); the °C command form has not run on hardware.
+-- IDs, values and commands were read on a live Director with five of these thermostats in a
+-- °F project (bkwagner, #16); the °C command form has not run on hardware.
 --
 -- The API stays in °C. Setpoints are compared in native units (thermostat_units.lua) and sent in
 -- the project's scale: whole °F in a °F project, °C to 0.1 in a °C project.
@@ -65,6 +66,9 @@ end
 -- know of); the thermostat still applies its own on top of these.
 local SETPOINT_MIN_C = 5
 local SETPOINT_MAX_C = 35
+
+-- A setpoint DirectorLink sent counts until the thermostat reports that value, or this long.
+local SENT_MS = 10000
 
 local tracked = {}
 
@@ -181,6 +185,13 @@ local function refresh(device)
     local state = device.state
     local heatNative = read(VARIABLE_HEAT_SETPOINT_F, VARIABLE_HEAT_SETPOINT_C)
     local coolNative = read(VARIABLE_COOL_SETPOINT_F, VARIABLE_COOL_SETPOINT_C)
+    -- A setpoint sent is no longer pending once the thermostat reports that value.
+    if info.lastSent.heat and info.lastSent.heat.value == heatNative then
+        info.lastSent.heat = nil
+    end
+    if info.lastSent.cool and info.lastSent.cool.value == coolNative then
+        info.lastSent.cool = nil
+    end
     state.connected = raw[VARIABLE_IS_CONNECTED] == nil and true or boolValue(raw[VARIABLE_IS_CONNECTED])
     state.scale = raw[VARIABLE_SCALE]
     state.current_temperature_c = Units.measuredCelsius(raw[VARIABLE_TEMPERATURE_F], raw[VARIABLE_TEMPERATURE_C], scale)
@@ -263,6 +274,8 @@ function ThermostatProxy.initialize(device)
         hvacModes = hvacModes,
         -- No fallback: a thermostat that lists no fan speeds gets no fan control.
         fanModes = parseList(raw[VARIABLE_FAN_MODES_LIST]),
+        -- The setpoints sent and not yet reported (native value and when): { heat = , cool = }.
+        lastSent = {},
     }
 
     device.supported = true
@@ -333,6 +346,23 @@ local function unsupported(message)
     return { code = "ACTION_NOT_SUPPORTED", message = message }
 end
 
+-- The heat and cool setpoints the thermostat has as far as DirectorLink knows, in native units.
+-- Director reports a setpoint only some time after the command, so a request that comes before
+-- then starts from what was last sent: judged against the old report, it could skip a push it
+-- needs or send its setpoints in an order that breaks the deadband in between.
+local function currentSetpoints(device)
+    local lastSent, state = tracked[device.id].lastSent, device.state
+    local now = Clock.millis()
+    for _, name in ipairs({ "heat", "cool" }) do
+        if lastSent[name] and now - lastSent[name].at > SENT_MS then
+            lastSent[name] = nil
+        end
+    end
+    local heat = lastSent.heat and lastSent.heat.value or state.heat_native
+    local cool = lastSent.cool and lastSent.cool.value or state.cool_native
+    return heat, cool
+end
+
 -- The setpoint commands for a request of heat and/or cool (°C), in send order, or nil and a
 -- failure. Nothing is sent here: prepare and execute both use it.
 --
@@ -340,7 +370,7 @@ end
 -- scene steps and 1.0.0 clients that only send target_temperature. Both together must already be
 -- that far apart.
 local function plan(device, heat, cool)
-    local capabilities, state = device.capabilities, device.state
+    local capabilities = device.capabilities
     local scale = capabilities.scale
     if heat == nil and cool == nil then
         return nil, { code = "INVALID_TEMPERATURE", message = "Send heat_setpoint, cool_setpoint or both" }
@@ -364,9 +394,10 @@ local function plan(device, heat, cool)
     local reported = capabilities.deadband_native
     local deadband = math.max(reported or 0, 1)
     local gap = (reported and reported > 0) and ("at least " .. degrees(capabilities.deadband_c) .. "° ") or ""
+    local currentHeat, currentCool = currentSetpoints(device)
     -- A setpoint the thermostat does not use (no such mode) is never pushed.
-    local h = heat and Units.toNative(heat, scale) or (capabilities.has_heat and state.heat_native or nil)
-    local c = cool and Units.toNative(cool, scale) or (capabilities.has_cool and state.cool_native or nil)
+    local h = heat and Units.toNative(heat, scale) or (capabilities.has_heat and currentHeat or nil)
+    local c = cool and Units.toNative(cool, scale) or (capabilities.has_cool and currentCool or nil)
     local pushed
 
     if heat and cool then
@@ -386,15 +417,16 @@ local function plan(device, heat, cool)
     end
 
     local heatStep = (heat ~= nil or pushed == "heat")
-        and { field = "heat_setpoint", command = "SET_SETPOINT_HEAT", params = Units.param(h, scale) } or nil
+        and { field = "heat_setpoint", setpoint = "heat", native = h, command = "SET_SETPOINT_HEAT", params = Units.param(h, scale) } or nil
     local coolStep = (cool ~= nil or pushed == "cool")
-        and { field = "cool_setpoint", command = "SET_SETPOINT_COOL", params = Units.param(c, scale) } or nil
+        and { field = "cool_setpoint", setpoint = "cool", native = c, command = "SET_SETPOINT_COOL", params = Units.param(c, scale) } or nil
 
     -- Cool first when the cool setpoint rises (or is unknown), else heat first. From one valid pair
     -- to another, the pair in between then never breaks the deadband either: raising cool first
-    -- only widens the gap, and when cool falls, heat falls at least as far below it.
+    -- only widens the gap, and when cool falls, heat falls at least as far below it. "Rises" is
+    -- judged against currentSetpoints, the last setpoint sent until the thermostat reports it.
     local first, second = heatStep, coolStep
-    if state.cool_native == nil or (c ~= nil and c > state.cool_native) then
+    if currentCool == nil or (c ~= nil and c > currentCool) then
         first, second = coolStep, heatStep
     end
     local steps = {}
@@ -541,6 +573,7 @@ function ThermostatProxy.execute(device, action, params)
             end
             sent[#sent + 1] = { command = step.command, params = step.params }
             applied[#applied + 1] = step.field
+            info.lastSent[step.setpoint] = { value = step.native, at = Clock.millis() }
         end
 
         local result = { device_id = device.id, action = action, requested = requested, sent = sent }

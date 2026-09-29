@@ -138,8 +138,9 @@ References:
 ## Light (legacy) proxy
 
 Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy
-`light.c4i`. bkwagner read its variables and commands over Director REST on his Director
-(`GET /api/v1/items/{id}/variables` and `/commands`, #14); in that house 25 of 38 lights used it:
+`light.c4i`. bkwagner read its variables and commands on a live Director over Director REST
+(`GET /api/v1/items/{id}/variables` and `/commands`, #14); in that installation 25 of 38 lights
+used it:
 
 - Light State `1000` and the level `1001`, as on Light V2; switches have no `1001`
 - the commands `ON`, `OFF` and `SET_LEVEL` with `LEVEL`, instead of `SET_BRIGHTNESS_TARGET`
@@ -152,8 +153,8 @@ rather than `1`.
 ## Thermostat setpoint variables 1100–1150
 
 Thermostat V2 and the Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) share these
-ids. The names were read on bkwagner's Director: five proxy thermostats (#16), and a heat-only
-floor-heating Thermostat V2 in a °F project (#19).
+ids. The names were read by bkwagner on a live Director: five proxy thermostats (#16), and a real
+heat-only floor-heating Thermostat V2 in a °F project (#19).
 
 | Id | Name | Notes |
 | --- | --- | --- |
