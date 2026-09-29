@@ -354,16 +354,26 @@ end
 
 -- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
 function Mock.demoProject()
-    local project = Mock.withLegacyLights(Mock.project())
+    local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
     Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
     Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
     return project
 end
 
+-- Director's C4SystemEvents (names and ids as in Snap One's drivers-common-public handlers.lua).
+Mock.SYSTEM_EVENTS = {
+    OnAll = 1, OnAlive = 2, OnProjectChanged = 3, OnProjectNew = 4, OnProjectLoaded = 5, OnPIP = 6,
+    OnItemAdded = 7, OnItemNameChanged = 8, OnItemDataChanged = 9, OnDeviceDataChanged = 10,
+    OnItemRemoved = 11, OnItemMoved = 12, OnDriverAdded = 13, OnDeviceIdentified = 14,
+    OnBindingAdded = 15, OnBindingRemoved = 16,
+}
+
 -- Installs global C4 and Properties objects backed by `project`.
 function Mock.install(project)
     project = project or Mock.project()
     local mock = {
+        -- The project Director serves: tests change it as an installer would in Composer.
+        project = project,
         persist = {},
         persistEncrypted = {},
         -- Outgoing network connections (the relay): binding -> { host, port, kind, options,
@@ -378,6 +388,8 @@ function Mock.install(project)
         listeners = {},
         urlRequests = {},
         deviceEvents = {},
+        -- System events registered: { eventId, deviceId }.
+        systemEvents = {},
         servers = {},
         timers = {},
         uuidCount = 0,
@@ -472,6 +484,14 @@ function Mock.install(project)
         mock.deviceEvents[#mock.deviceEvents + 1] = { deviceId, eventId }
     end
 
+    function C4:RegisterSystemEvent(eventId, deviceId)
+        mock.systemEvents[#mock.systemEvents + 1] = { eventId, deviceId }
+    end
+
+    function C4:UnregisterAllSystemEvents()
+        mock.systemEvents = {}
+    end
+
     function C4:RegisterVariableListener(deviceId, variableId)
         mock.listeners[#mock.listeners + 1] = { deviceId, variableId }
     end
@@ -488,6 +508,12 @@ function Mock.install(project)
     end
 
     function C4:SendUIRequest(deviceId, request, params)
+        -- Blind proxies of Mock.withShade answer GET_SETUP; the others fail it, like a Director
+        -- that does not know the request.
+        local setup = project.blindSetups and project.blindSetups[deviceId]
+        if setup and request == "GET_SETUP" then
+            return setup
+        end
         local camera = project.cameras and project.cameras[deviceId]
         if camera and request == "GET_PROPERTIES" then
             return string.format(
@@ -711,6 +737,10 @@ function Mock.install(project)
 
     _G.C4 = C4
     _G.Properties = { ["Log Level"] = "Info" }
+    _G.C4SystemEvents = {}
+    for name, id in pairs(Mock.SYSTEM_EVENTS) do
+        C4SystemEvents[name] = id
+    end
     return mock
 end
 
@@ -770,6 +800,210 @@ function Mock.updateDriver(previous, project)
             mock.persistEncrypted[name] = previous.persistEncrypted[name]
         end
     end)
+end
+
+-- ---- Director while the driver runs ----------------------------------------------------------
+
+-- A variable changes: Director tells the driver once per listener registered for it. Returns how
+-- many times it did.
+function Mock.changeVariable(mock, deviceId, variableId, value)
+    mock.project.variables[deviceId] = mock.project.variables[deviceId] or {}
+    mock.project.variables[deviceId][variableId] = value
+    local delivered = 0
+    for _, listener in ipairs(mock.listeners) do
+        if listener[1] == deviceId and listener[2] == variableId then
+            delivered = delivered + 1
+            OnWatchedVariableChanged(deviceId, variableId, value)
+        end
+    end
+    return delivered
+end
+
+-- A device fires an event: delivered once per registration of it. Returns how many times.
+function Mock.fireDeviceEvent(mock, deviceId, eventId)
+    local delivered = 0
+    for _, event in ipairs(mock.deviceEvents) do
+        if event[1] == deviceId and event[2] == eventId then
+            delivered = delivered + 1
+            OnDeviceEvent(deviceId, eventId)
+        end
+    end
+    return delivered
+end
+
+-- A system event, as XML with its name and parameters (e.g. { iditem = 51 }), to a driver that
+-- registered for it on every device (id 0). Returns whether it was delivered.
+function Mock.systemEvent(mock, name, params)
+    local id = Mock.SYSTEM_EVENTS[name]
+    local registered = false
+    for _, event in ipairs(mock.systemEvents) do
+        registered = registered or (event[1] == id and event[2] == 0)
+    end
+    if not registered then
+        return false
+    end
+    local names = {}
+    for param in pairs(params or {}) do
+        names[#names + 1] = param
+    end
+    table.sort(names)
+    local parts = { '<systemevent name="' .. name .. '">' }
+    for _, param in ipairs(names) do
+        parts[#parts + 1] = string.format('<param name="%s" type="ulong">%s</param>', param, tostring(params[param]))
+    end
+    parts[#parts + 1] = "</systemevent>"
+    OnSystemEvent(table.concat(parts))
+    return true
+end
+
+-- ---- Composer changes to the project (read again when the driver refreshes it) ---------------
+
+local function findRoom(node, roomId)
+    if type(node) ~= "table" then
+        return nil
+    end
+    if node.id == roomId then
+        return node
+    end
+    for _, child in ipairs(node) do
+        local found = findRoom(child, roomId)
+        if found then
+            return found
+        end
+    end
+    return nil
+end
+
+-- The floor that holds the rooms (Ground Floor in Mock.project).
+local function roomsFloor(project)
+    return project.hierarchy[1][1]
+end
+
+function Mock.moveDevice(project, id, roomId)
+    local room = assert(findRoom(project.hierarchy, roomId), "no room " .. tostring(roomId))
+    project.devices[id].roomId, project.devices[id].roomName = roomId, room.name
+end
+
+function Mock.renameDevice(project, id, name)
+    project.devices[id].deviceName = name
+    for _, device in pairs(project.devices) do
+        for _, links in ipairs({ device.proxies or {}, device.protocol or {} }) do
+            if links[id] then
+                links[id].deviceName = name
+            end
+        end
+    end
+end
+
+-- Removes the device, its variables and every link to it (its protocol driver's proxy list).
+function Mock.removeDevice(project, id)
+    project.devices[id] = nil
+    project.variables[id] = nil
+    for _, device in pairs(project.devices) do
+        if device.proxies then
+            device.proxies[id] = nil
+        end
+        if device.protocol then
+            device.protocol[id] = nil
+        end
+    end
+end
+
+-- A Light V2 dimmer (proxy `id`, protocol driver `protocol`) in `roomId`, at `level` percent.
+function Mock.addLight(project, id, protocol, roomId, name, level)
+    local room = assert(findRoom(project.hierarchy, roomId), "no room " .. tostring(roomId))
+    project.devices[protocol] = {
+        deviceName = "Dimmer " .. tostring(id), driverFileName = "zigbee_dimmer.c4i", roomId = roomId, roomName = room.name,
+        proxies = { [id] = { deviceName = name, driverFileName = "light_v2.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "light_v2.c4i", roomId = roomId, roomName = room.name,
+        protocol = { [protocol] = { deviceName = "Dimmer " .. tostring(id), driverFileName = "zigbee_dimmer.c4i" } },
+    }
+    project.variables[id] = { [1000] = (level or 0) > 0 and "1" or "0", [1001] = tostring(level or 0) }
+end
+
+function Mock.addRoom(project, id, name)
+    local floor = roomsFloor(project)
+    floor[#floor + 1] = { id = id, name = name, type = 8 }
+end
+
+-- The room goes from the hierarchy; move its devices first, or they bring it back by their room id.
+function Mock.removeRoom(project, id)
+    local floor = roomsFloor(project)
+    for index = #floor, 1, -1 do
+        if floor[index].id == id then
+            table.remove(floor, index)
+        end
+    end
+end
+
+-- ---- Shades as the blind proxy shows KNX blinds on Director 3.4.3 (1.1.0) --------------------
+
+local SHADE_VARIABLES = {
+    [1000] = "Open", [1001] = "Fully Closed", [1002] = "Stopped", [1003] = "Fully Open", [1004] = "Level",
+    [1005] = "Target Level", [1006] = "Type", [1007] = "Movement", [1008] = "Opening", [1009] = "Closing",
+}
+
+-- A shade with the proxy's ten variables, at rest, and the setup GET_SETUP returns. options: id,
+-- protocol, room (11), name, level ("0"), position (level_discrete_control, true), stop (can_stop,
+-- true), setup (the whole GET_SETUP answer instead).
+function Mock.withShade(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    project.devices[protocol] = {
+        deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = options.name, driverFileName = "blind.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = options.name, driverFileName = "blind.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
+    }
+    local level = options.level or "0"
+    local number = tonumber(level) or -255
+    project.variables[id] = {
+        [1000] = number > 0 and "1" or "0",
+        [1001] = number == 0 and "1" or "0",
+        [1002] = "1",
+        [1003] = number == 100 and "1" or "0",
+        [1004] = level,
+        [1005] = level,
+        [1006] = "0",
+        [1007] = "Stopped",
+        [1008] = "0",
+        [1009] = "0",
+    }
+    project.variableNames[id] = {}
+    for variableId, name in pairs(SHADE_VARIABLES) do
+        project.variableNames[id][variableId] = name
+    end
+    project.blindSetups = project.blindSetups or {}
+    project.blindSetups[id] = options.setup or string.format(
+        "<blind_setup><has_level>True</has_level><level_discrete_control>%s</level_discrete_control>"
+            .. "<can_stop>%s</can_stop><open_level>100</open_level><closed_level>0</closed_level></blind_setup>",
+        options.position == false and "False" or "True",
+        options.stop == false and "False" or "True"
+    )
+    return project
+end
+
+-- The demo's shades: 52 goes to any position and stops (a KNX blind with a percent address),
+-- 53 only opens and closes fully and cannot stop.
+function Mock.withShades(project)
+    Mock.withShade(project, { id = 52, protocol = 114, room = 11, name = "Terrace Shade", level = "35" })
+    Mock.withShade(project, { id = 53, protocol = 115, room = 10, name = "Patio Shutter", level = "0", position = false, stop = false })
+    return project
+end
+
+-- A shade reports: variables by name, e.g. { Level = "45", Opening = "1", Stopped = "0" }, each
+-- delivered like any variable change.
+function Mock.setShade(mock, id, values)
+    for variableId, name in pairs(mock.project.variableNames[id] or {}) do
+        if values[name] ~= nil then
+            Mock.changeVariable(mock, id, variableId, values[name])
+        end
+    end
 end
 
 return Mock

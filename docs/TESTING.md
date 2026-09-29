@@ -2,7 +2,28 @@
 
 ## Current release
 
-`v1.1.0` — older Control4 lights, floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints (thanks to bkwagner, #14, #19, #16, ADR-033); the relay's certificate is checked (ADR-034). Update DirectorLink in Composer (no reboot).
+`v1.1.0` — older Control4 lights, floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints (thanks to bkwagner, #14, #19, #16, ADR-033); the relay's certificate is checked (ADR-034); shades, Composer changes without a restart and the room order (0r); admins see new versions in the app (0q, ADR-035). Update DirectorLink in Composer (no reboot).
+
+## 0r. Room order, Composer changes and shades (1.1.0)
+
+Room order (broken since 1.0.0):
+
+1. In the app at home, Settings → Rooms: move a room up, then down. The order changes, stays after reloading the app, and no *Remote requests are GET, POST, PATCH or DELETE* message appears. The same away from home (a phone on mobile data, with remote access).
+
+Composer changes, with **Log Level** Debug:
+
+2. After the update, `GET /v1/logs?category=discovery` shows *watching the project for Composer changes* with the events. If it shows *Director does not announce Composer changes to DirectorLink* instead, steps 3–4 need the action Refresh Project.
+3. In Composer, move a shade (or a light) to another room. About 5 seconds later the log shows *project event* lines and then *project rediscovered* with `moved` 1; the app shows the device in its new room at its next refresh. Keep the *project event* lines: what Director sends with `OnItemMoved` is not documented. Rename a device, add one and remove one: `renamed`, `added` and `removed`, and **Inventory** follows.
+4. Actions → **Refresh Project**: *project rediscovered* with `reason` *Composer action*. Composer's **Refresh Navigators** does the same (`OnPIP`). Status stays `Ready` throughout.
+5. After a refresh, a door relay's last state and a doorbell's last ring are as before; a scene with a removed device runs the others and reports the removed one as skipped.
+
+Shades (KNX blinds on the blind proxy), with **Log Level** Debug and the driver reloaded:
+
+6. `GET /v1/logs?category=blind&level=debug`: *proxy setup* for every shade, with the raw `GET_SETUP` answer (`<blind_setup>…`), and *proxy variables* with their values (`1004=Level:…`, `1005=Target Level:…`, `1007=Movement:…`, `1008=Opening:…`). Keep both: the formats of Movement, Opening and Closing had not been seen before.
+7. `GET /v1/blinds`: a shade with a Percent Set Address has `"capabilities": {"position": true, …}`, one without has `"position": false` (as its setup's `level_discrete_control`). In the app the second has no slider, and a shade with `"stop": false` has no Stop.
+8. Set a shade with a percent address to 50%: the line under its name reads *Opening… to 50%* (or *Closing…*) and the slider stays at 50 until the shade stops, then shows the position it reports. While it moves, `GET /v1/blinds/{id}` has `"moving": true`, `direction` and `target_position`, and the log has *movement changed* lines with the raw values. Open fully and press Stop halfway: the app shows where it stopped.
+9. On a shade without position control, `PATCH {"position": 50}` answers `409 POSITION_NOT_SUPPORTED` and nothing moves; Open and Close work. A shade whose level is unknown (`-155` or `-255` in the log) shows *Position unknown*.
+10. Move a shade from a keypad or the Control4 app: the DirectorLink app shows the movement within about 10 seconds.
 
 ## 0q. Update notice (1.1.0)
 

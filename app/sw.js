@@ -42,6 +42,7 @@ const ASSETS = [
   "/js/rings.js",
   "/js/session.js",
   "/js/setpoints.js",
+  "/js/shades.js",
   "/js/state.js",
   "/js/theme.js",
   "/js/updates.js",

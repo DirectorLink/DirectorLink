@@ -8,6 +8,8 @@ local suites = {
     "test_http",
     "test_router",
     "test_api",
+    "test_discovery",
+    "test_shades",
     "test_relay",
     "test_lock",
     "test_remote",

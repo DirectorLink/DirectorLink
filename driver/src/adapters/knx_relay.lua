@@ -1,4 +1,5 @@
 local Log = require("src.core.log")
+local DeviceEvents = require("src.control4.device_events")
 
 -- KNX Contact/Relay (knx_contact_relay.c4z, a combo driver: the device is its own proxy).
 -- Commands are the driver's own device commands "Open Relay" / "Close Relay" {Relay = n}; a pulse
@@ -20,12 +21,11 @@ function KnxRelay.matches(device)
     return driver == "knx_contact_relay.c4z"
 end
 
-function KnxRelay.initialize(device)
+-- before: this relay as it was before a project refresh, if it was one.
+function KnxRelay.initialize(device, _registry, before)
     local watching = true
     for _, eventId in ipairs({ OPENED_EVENT, CLOSED_EVENT }) do
-        local ok, err = pcall(function()
-            C4:RegisterDeviceEvent(device.id, eventId)
-        end)
+        local ok, err = DeviceEvents.watch(device.id, eventId)
         if not ok then
             watching = false
             Log.warn("relay", "unable to watch relay events", { device_id = device.id, event_id = eventId, error = tostring(err) })
@@ -36,8 +36,9 @@ function KnxRelay.initialize(device)
     device.supported = true
     device.adapter_error = nil
     device.capabilities = { pulse = true, set_state = true, state_reported = watching }
-    -- The driver does not expose its state; it is known after the first change.
-    device.state = { relay = nil }
+    -- The driver does not expose its state; it is known after the first change, and a project
+    -- refresh keeps it.
+    device.state = { relay = before and before.state and before.state.relay or nil }
     device.actions = { "pulse", "open", "close" }
     return true
 end

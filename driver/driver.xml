@@ -33,6 +33,10 @@
         <command>PRINT_AUTOMATION</command>
       </action>
       <action>
+        <name>Refresh Project</name>
+        <command>REFRESH_PROJECT</command>
+      </action>
+      <action>
         <name>Reset Remote Identity</name>
         <command>RESET_REMOTE_IDENTITY</command>
       </action>

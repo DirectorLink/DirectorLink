@@ -1,11 +1,13 @@
 // Device commands. Every control updates the screen at once (optimistic), sends the PATCH
 // (answered 202 with the last reported state), then re-reads the device until the controller
 // confirms it. A failed command reverts the change and shows a short error on the device.
+// Blinds follow their move instead, which takes far longer (see the blinds section).
 
 import { t } from "./i18n.js";
 import { api, errorText, handleUnauthorized, noteForbidden } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
-import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, ui } from "./state.js";
+import { MOVE_POLL_MS, STOP_SETTLE_MS, followMove, startMove } from "./shades.js";
+import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
 
 const CONFIRM_MS = 5000;
 const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -35,14 +37,9 @@ function thermostatChangeConfirmed(thermostat, change) {
   );
 }
 
-function blindChangeConfirmed(blind, change) {
-  return Number.isFinite(blind.position) && Math.abs(blind.position - change.position) <= 3;
-}
-
 const CONFIRMERS = {
   light: lightChangeConfirmed,
   thermostat: thermostatChangeConfirmed,
-  blind: blindChangeConfirmed,
 };
 
 // Re-reads the device until it reports the change (or 5 s pass). Returns the last state read.
@@ -97,7 +94,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
     const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body: change });
     if (needsConfirmation) {
       const { device, confirmed } = await waitForConfirmation(kind, id, change);
-      if (device && (confirmed || kind === "blind")) {
+      if (device && confirmed) {
         replaceDevice(kind, device);
       } else if (!confirmed) {
         // Sent, but not reported back yet: keep what was sent and say so.
@@ -205,27 +202,142 @@ export function setThermostat(thermostat, change) {
   return sendChange("thermostat", thermostat.id, change);
 }
 
-export function setBlind(blind, position) {
-  return sendChange("blind", blind.id, { position });
+// ---- blinds -------------------------------------------------------------------------------------
+// A shade takes 10 to 70 seconds to get where it was sent, and the controller may report the
+// position it left until it stops. After a command the app shows where the shade goes (shades.js),
+// reads the blinds every 2 s while one moves (also one someone else set moving), and shows the
+// reported position once it has stopped.
+
+const moves = new Map(); // blind id -> the move the app expects (shades.js startMove)
+const reportsMotion = new Set(); // blinds seen reporting moving: their stops can be believed
+const settling = new Map(); // blind id -> until when to keep reading after Stop
+const lastCommand = new Map(); // blind id -> number of the last command sent to it
+let movePoll = null;
+
+export function blindMove(id) {
+  return moves.get(Number(id)) || null;
 }
 
-export async function stopBlind(blind) {
-  if (!can("member")) return;
-  const key = deviceKey("blind", blind.id);
-  clearError(key);
+// A move starting or ending changes the screen without new data from the controller: ui.tick
+// makes the next render draw it.
+function setMove(id, move) {
+  const had = moves.has(id);
+  if (move) moves.set(id, move);
+  else moves.delete(id);
+  if (move || had) ui.tick += 1;
+}
+
+// Every read of the blinds takes each move along (or ends it).
+function followBlinds(now = Date.now()) {
+  for (const blind of state.blinds) {
+    if (blind.moving === true) reportsMotion.add(blind.id);
+    const move = moves.get(blind.id);
+    if (!move) continue;
+    const next = followMove(move, blind, now);
+    if (next !== move) setMove(blind.id, next);
+  }
+  for (const [id, until] of settling) {
+    if (until <= now) settling.delete(id);
+  }
+}
+
+function blindsMoving() {
+  return moves.size > 0 || settling.size > 0 || state.blinds.some((blind) => blind.moving === true);
+}
+
+function scheduleMovePoll() {
+  if (movePoll || !state.apiKey || state.status !== "connected" || document.hidden || !blindsMoving()) return;
+  movePoll = window.setTimeout(async () => {
+    try {
+      const list = await api(KINDS.blind.path);
+      if (Array.isArray(list?.items)) state.blinds = list.items;
+    } catch (error) {
+      if (error?.status === 401) handleUnauthorized(error);
+      // Otherwise the next read, or the refresh every 10 s, catches up.
+    } finally {
+      movePoll = null;
+      followBlinds();
+      notify();
+      scheduleMovePoll();
+    }
+  }, MOVE_POLL_MS);
+}
+
+// Reads made elsewhere (the refresh every 10 s, a page coming back into view) count too: a shade
+// someone else set moving is then read every 2 s until it stops.
+subscribe(() => {
+  followBlinds();
+  scheduleMovePoll();
+});
+
+function blindErrorText(error) {
+  if (error?.code === "POSITION_NOT_SUPPORTED") return t("blinds.positionNotSupported");
+  if (error?.code === "STOP_NOT_SUPPORTED") return t("blinds.stopNotSupported");
+  return errorText(error) || t("errors.commandFailed");
+}
+
+// The command's answer is the shade as last reported, from before it heard of the command.
+function useAnswer(id, answer) {
+  if (answer && typeof answer === "object" && answer.id === id) replaceDevice("blind", answer);
+}
+
+// Sends a command to blind `id`. When it fails, `undo` puts the move back as it was, unless a newer
+// command to the same blind was sent meanwhile.
+async function blindCommand(id, path, options, undo) {
+  const key = deviceKey("blind", id);
+  const number = (lastCommand.get(id) || 0) + 1;
+  lastCommand.set(id, number);
   try {
-    await api(`/v1/blinds/${blind.id}/stop`, { method: "POST" });
-    await sleep(600);
-    replaceDevice("blind", await api(`/v1/blinds/${blind.id}`));
+    useAnswer(id, await api(path, options));
   } catch (error) {
+    if (lastCommand.get(id) === number) undo();
     if (error?.status === 401) {
       handleUnauthorized(error);
       return;
     }
     noteForbidden(error);
-    setError(key, errorText(error));
+    setError(key, blindErrorText(error));
+    // The shade's setup changed since the app read it: read it again for the right controls.
+    if (error?.status === 409) {
+      api(`${KINDS.blind.path}/${id}`).then(
+        (fresh) => {
+          useAnswer(id, fresh);
+          notify();
+        },
+        () => {}
+      );
+    }
+  } finally {
+    notify();
+    scheduleMovePoll();
   }
+}
+
+export function setBlind(blind, position) {
+  const current = findDevice("blind", blind.id);
+  if (!current || !can("member")) return Promise.resolve();
+  const id = current.id;
+  const previous = moves.get(id) || null;
+  setMove(id, startMove(current, position, Date.now(), reportsMotion.has(id)));
+  settling.delete(id);
+  clearError(deviceKey("blind", id));
   notify();
+  return blindCommand(id, `${KINDS.blind.path}/${id}`, { method: "PATCH", body: { position } }, () => setMove(id, previous));
+}
+
+// It stops where it is: the app shows what the shade reports, and reads it for a few seconds.
+export function stopBlind(blind) {
+  if (!can("member")) return Promise.resolve();
+  const id = blind.id;
+  const move = moves.get(id) || null;
+  setMove(id, null);
+  settling.set(id, Date.now() + STOP_SETTLE_MS);
+  clearError(deviceKey("blind", id));
+  notify();
+  return blindCommand(id, `${KINDS.blind.path}/${id}/stop`, { method: "POST" }, () => {
+    settling.delete(id);
+    setMove(id, move);
+  });
 }
 
 // Room "All off": lights off and air conditioning off.

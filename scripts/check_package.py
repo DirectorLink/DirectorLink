@@ -36,7 +36,8 @@ REQUIRED_PROPERTIES = (
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "RESET_REMOTE_IDENTITY")
+# Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
@@ -304,6 +305,19 @@ def check_relay_roots(files):
         fail(f"the SHA-256 list at the top of {name} does not match its certificates")
 
 
+def check_remote_methods(files):
+    """Sealed requests (the app's, at home and through the account) may use every method the API
+    routes: one missing from src/cloud/remote.lua fails everywhere, as PUT /v1/rooms/order did in 1.0.0."""
+    routed = set(re.findall(r'\bmethod\s*=\s*"([A-Z]+)"', files.get("src/api/routes.lua", "")))
+    match = re.search(r"^local METHODS = \{([^}]*)\}", files.get("src/cloud/remote.lua", ""), re.M)
+    if not routed or not match:
+        fail("could not read the methods of src/api/routes.lua and src/cloud/remote.lua (local METHODS = { ... })")
+    allowed = set(re.findall(r"\b([A-Z]+)\s*=\s*true\b", match.group(1)))
+    missing = sorted(routed - allowed)
+    if missing:
+        fail(f"src/cloud/remote.lua refuses {', '.join(missing)}, which src/api/routes.lua uses: sealed requests with it would fail")
+
+
 def check_security_contract(files):
     for name, fragments in SECURITY_CONTRACT.items():
         text = files.get(name, "")
@@ -329,6 +343,7 @@ def main():
     check_requires(files)
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
+    check_remote_methods(files)
     check_relay_roots(files)
     print(f"OK: validated {len(files)} packaged files for version {version}")
 

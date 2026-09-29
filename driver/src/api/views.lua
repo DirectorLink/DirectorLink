@@ -114,6 +114,8 @@ function Views.light(registry, device)
     }
 end
 
+-- `capabilities` and the movement fields came in 1.1.0: a shade may only open and close fully
+-- (PATCH takes 0 and 100), or not stop; `moving` is null when the controller does not report it.
 function Views.blind(registry, device)
     local capabilities = device.capabilities or {}
     local state = device.state or {}
@@ -123,6 +125,13 @@ function Views.blind(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         position = nullable(state.position),
         position_reported = capabilities.position_reported == true,
+        capabilities = {
+            position = capabilities.position ~= false,
+            stop = capabilities.stop ~= false,
+        },
+        moving = state.moving == nil and Json.null or state.moving,
+        direction = nullable(state.direction),
+        target_position = nullable(state.target_position),
     }
 end
 

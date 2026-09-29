@@ -75,6 +75,27 @@ curl -X PATCH http://192.168.1.201:41999/v1/thermostats/31 \
 - `target_temperature` sets the setpoint of the mode (the one in the same request, else the current one). In auto and off it is refused with `409 NOT_SUPPORTED`.
 - Temperatures stay in °C, whatever scale the Control4 project uses. `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` are `null` on single-setpoint thermostats. A dual thermostat reports `null` for a setpoint none of its modes uses, such as the heat setpoint of one with only Off and Cool.
 
+## Blinds
+
+Since 1.1.0 a blind says what it can do, and whether it is moving:
+
+```json
+{
+  "id": 52,
+  "name": "Terrace Shade",
+  "position": 40,
+  "position_reported": true,
+  "capabilities": { "position": true, "stop": true },
+  "moving": true,
+  "direction": "opening",
+  "target_position": 80
+}
+```
+
+- `capabilities.position` is false for a blind that only opens and closes fully: `PATCH` then takes only `{"position": 0}` and `{"position": 100}`, and anything else is `409 POSITION_NOT_SUPPORTED`. With `capabilities.stop` false, `POST /v1/blinds/{id}/stop` is `409 STOP_NOT_SUPPORTED`. Both are true where the controller does not say.
+- A move takes seconds to a minute, and `position` may keep the value the blind left until it stops: while `moving` is true, show `target_position`, and read the blind again every few seconds. `moving` is `null` when the controller does not report movement.
+- `position` and `target_position` are `null` when unknown.
+
 ## Debugging
 
 `GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` while investigating. Secrets are never logged.

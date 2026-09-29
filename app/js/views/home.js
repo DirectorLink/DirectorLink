@@ -1,7 +1,7 @@
 // Home: summary chips, the favorites strip and the room cards.
 
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
-import { setLight } from "../controls.js";
+import { blindMove, setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
 import { ringIsActive, ringingDoorbells } from "../doorbells.js";
 import { favoriteDevices, moveFavorite, toggleFavorite } from "../favorites.js";
@@ -239,7 +239,7 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     ];
   } else if (kind === "blind") {
     stateClass = blindIsOpen(device) ? "is-open" : "";
-    content = [h("span", { class: "fav-icon" }, icon("blinds")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, blindStateLabel(device))];
+    content = [h("span", { class: "fav-icon" }, icon("blinds")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, blindStateLabel(device, blindMove(device.id)))];
   } else if (kind === "camera") {
     content = [cameraPicture(device, 320), h("span", { class: "fav-caption" }, name(device.name, "span", "fav-name"))];
     stateClass = "fav-camera";
@@ -351,7 +351,7 @@ function roomStatus(group) {
     const open = group.blinds.filter(blindIsOpen).length;
     parts.push(
       group.blinds.length === 1
-        ? blindStateLabel(group.blinds[0])
+        ? blindStateLabel(group.blinds[0], blindMove(group.blinds[0].id))
         : open
           ? t("rooms.blindsOpen", { count: open })
           : t("rooms.blindsClosed")

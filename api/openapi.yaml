@@ -1315,8 +1315,11 @@ paths:
       x-directorlink-role: member
       summary: Open, close or move a blind to a position
       description: |
-        `{"position": 100}` opens, `{"position": 0}` closes. Blinds that only support open and
-        close (no percentage control on the KNX side) close at 0 and open fully for any other value.
+        `{"position": 100}` opens, `{"position": 0}` closes. A blind that only opens and closes
+        fully (`capabilities.position` false) takes only 0 and 100: any other position is refused
+        with 409 `POSITION_NOT_SUPPORTED` and nothing is sent. Where the controller does not say,
+        a blind without percentage control on the KNX side opens fully for any position above 0.
+        While it moves, `moving`, `direction` and `target_position` say so.
       requestBody:
         required: true
         content:
@@ -1353,7 +1356,9 @@ paths:
       operationId: stopBlind
       x-directorlink-role: member
       summary: Stop a moving blind
-      description: Blinds without a stop command on the KNX side ignore it.
+      description: >-
+        A blind that cannot stop (`capabilities.stop` false) answers 409 `STOP_NOT_SUPPORTED`.
+        Where the controller does not say, blinds without a stop command on the KNX side ignore it.
       responses:
         "202":
           description: Command sent. The body is the last state the controller reported.
@@ -1867,7 +1872,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
       content:
         application/problem+json:
           schema:
@@ -2962,7 +2967,7 @@ components:
 
     Blind:
       type: object
-      required: [id, name, room, position, position_reported]
+      required: [id, name, room, position, position_reported, capabilities, moving, direction, target_position]
       properties:
         id:
           type: integer
@@ -2980,6 +2985,31 @@ components:
         position_reported:
           type: boolean
           description: False when the blind never reports its position.
+        capabilities:
+          type: object
+          required: [position, stop]
+          description: What the blind can do, from its Control4 setup; true where the controller does not say. Since 1.1.0.
+          properties:
+            position:
+              type: boolean
+              description: False when it only opens and closes fully; PATCH then takes only 0 and 100.
+            stop:
+              type: boolean
+              description: False when it cannot be stopped while it moves.
+        moving:
+          type: [boolean, "null"]
+          description: True while the blind moves. Null when the controller does not report its movement. Since 1.1.0.
+        direction:
+          oneOf:
+            - type: string
+              enum: [opening, closing]
+            - type: "null"
+          description: Which way it moves; null when it stands still or the controller does not say. Since 1.1.0.
+        target_position:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: Where the blind was last sent, so while `moving` where it is going. Null when not known. Since 1.1.0.
 
     BlindUpdate:
       type: object

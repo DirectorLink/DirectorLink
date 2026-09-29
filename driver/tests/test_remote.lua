@@ -89,6 +89,42 @@ function tests.requests_with_a_body_and_query_work_and_roles_apply()
     T.eq(e2e(s, { method = "GET", path = "/v1/lights" }, { apiKey = viewer, keyId = viewerId }).status, 200, "but may read")
 end
 
+-- The room order is the only PUT; the app seals it like everything else, so from 1.0.0 it failed
+-- through the account as well as at home.
+function tests.the_room_order_is_set_through_the_account_by_admins_only()
+    local s = session()
+    local answer = e2e(s, { method = "PUT", path = "/v1/rooms/order", body = { room_ids = { 11, 10 } } })
+    T.eq(answer.status, 200, answer.body)
+    local items = Json.decode(answer.body).items
+    T.eq(items[1].id, 11)
+    T.eq(items[2].id, 10)
+    T.eq(T.http(s.mock, "GET", "/v1/rooms", { key = s.key }).json.items[1].id, 11, "the home's order was saved")
+
+    local member, memberId = createKey(s, "member")
+    local refused = e2e(s, { method = "PUT", path = "/v1/rooms/order", body = { room_ids = { 10, 11 } } }, { apiKey = member, keyId = memberId })
+    T.eq(refused.status, 403)
+    T.eq(Json.decode(refused.body).code, "FORBIDDEN")
+    T.eq(T.http(s.mock, "GET", "/v1/rooms", { key = s.key }).json.items[1].id, 11, "unchanged")
+end
+
+-- Whatever method the API routes, a sealed request may carry it: a path nothing answers gives the
+-- router's 404, which a request refused by the remote path never reaches.
+function tests.every_method_the_api_routes_can_come_sealed()
+    local s = session()
+    local methods = {}
+    for _, route in ipairs(require("src.api.routes")) do
+        methods[route.method] = true
+    end
+    T.truthy(methods.PUT, "the routes still have a PUT")
+    for method in pairs(methods) do
+        local answer = e2e(s, { method = method, path = "/v1/nothing-here" })
+        T.eq(answer.status, 404, method .. " reaches the router: " .. tostring(answer.body))
+    end
+    local other = e2e(s, { method = "TRACE", path = "/v1/system" })
+    T.eq(other.status, 400, "other methods are still refused")
+    T.contains(other.body, "GET, POST, PUT, PATCH or DELETE")
+end
+
 function tests.camera_pictures_come_back_as_base64_inside_the_seal()
     local s = session()
     local answer = e2e(s, { method = "GET", path = "/v1/cameras/60/snapshot" })
