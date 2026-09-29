@@ -193,9 +193,11 @@ function tests.movement_is_read_from_whichever_variables_the_proxy_has()
     Mock.setShade(mock, 52, { Level = "10" })
     T.eq(blind(mock, key, 52).moving, false, "at its target it is not moving, even if Stopped stays false")
 
-    -- Opening and Closing both clear but Stopped false: moving, the way the target says.
+    -- Stopped false, then a new Target Level, before Opening or Closing: a move starting, the way the
+    -- target says.
     mock, key = start()
-    Mock.setShade(mock, 52, { Stopped = "0", ["Target Level"] = "90" })
+    Mock.setShade(mock, 52, { Stopped = "0" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "90" })
     shade = blind(mock, key, 52)
     T.eq(shade.moving, true)
     T.eq(shade.direction, "opening")
@@ -246,7 +248,7 @@ function tests.a_stopped_left_false_does_not_keep_a_shade_moving()
         Mock.setShade(mock, 52, { Level = levels[1], ["Target Level"] = levels[2] })
         T.eq(blind(mock, key, 52).moving, false, "Level " .. levels[1] .. ", Target Level " .. levels[2])
     end
-    -- Both known and apart: Stopped false is a move (a proxy that sets no Opening or Closing).
+    -- Both known and apart, with a new Target Level while Stopped is false: a move starting.
     Mock.setShade(mock, 52, { Level = "35", ["Target Level"] = "80" })
     shade = blind(mock, key, 52)
     T.eq(shade.moving, true)
@@ -291,6 +293,142 @@ function tests.a_move_and_a_stop_read_as_the_real_controller_reports_them()
         T.eq(shade.direction, step[4] or Json.null, label)
     end
     T.eq(blind(mock, key, 52).position, 41)
+end
+
+-- More of what the real controller reports, one variable at a time: a move to its end (Level =
+-- Target Level, then Stopped 1, with Opening 0 before or after it), and Stops where Target Level goes
+-- to where the proxy reckons the shade is, the actuator's real position coming later. Once Opening or
+-- Closing is back to 0 the shade stands still, though Stopped is still 0 for a moment.
+function tests.moves_to_their_end_and_stops_read_as_the_real_controller_reports_them()
+    local sequences = {
+        { "to its end, Opening 0 first", {
+            { "Stopped", "0", false },
+            { "Target Level", "67", true, "opening" },
+            { "Opening", "1", true, "opening" },
+            { "Level", "67", true, "opening" },
+            { "Opening", "0", false },
+            { "Stopped", "1", false },
+        } },
+        { "to its end, Stopped 1 first", {
+            { "Stopped", "0", false },
+            { "Target Level", "67", true, "opening" },
+            { "Opening", "1", true, "opening" },
+            { "Level", "67", true, "opening" },
+            -- Opening still says so, until it is 0 a moment later.
+            { "Stopped", "1", true, "opening" },
+            { "Opening", "0", false },
+        } },
+        { "a Stop while it opens", {
+            { "Stopped", "0", false },
+            { "Target Level", "100", true, "opening" },
+            { "Opening", "1", true, "opening" },
+            { "Target Level", "61", true, "opening" },
+            { "Opening", "0", false },
+            { "Stopped", "1", false },
+            { "Level", "61", false },
+        } },
+        { "a Stop while it closes", {
+            { "Stopped", "0", false },
+            { "Target Level", "0", true, "closing" },
+            { "Closing", "1", true, "closing" },
+            { "Target Level", "20", true, "closing" },
+            { "Closing", "0", false },
+            { "Stopped", "1", false },
+            { "Level", "20", false },
+        } },
+    }
+    for _, sequence in ipairs(sequences) do
+        local mock, key = start()
+        for index, step in ipairs(sequence[2]) do
+            Mock.setShade(mock, 52, { [step[1]] = step[2] })
+            local shade = blind(mock, key, 52)
+            local label = sequence[1] .. ", step " .. index .. ": " .. step[1] .. " " .. step[2]
+            T.eq(shade.moving, step[3], label)
+            T.eq(shade.direction, step[4] or Json.null, label)
+        end
+    end
+end
+
+-- After a controller restart Director may leave Stopped 0 while Level and Target Level are both
+-- known and apart: 49 and 50 on a KNX shade with a status address (the actuator's position, and the
+-- target from before). Opening and Closing say it stands still: it is not moving. 1.1.1 said it
+-- moved, for good (the app read the blinds every 2 s, two minutes at a time). A proxy without Opening
+-- and Closing keeps the rule of 1.1.1.
+function tests.a_stopped_left_0_with_level_and_target_apart_is_not_a_move()
+    local function restarted(project)
+        project.variables[52][1002] = "0"
+        project.variables[52][1004] = "49"
+        project.variables[52][1005] = "50"
+        return project
+    end
+    local mock, key = start(restarted(Mock.withShades(Mock.project())))
+    local shade = blind(mock, key, 52)
+    T.eq(shade.moving, false, "at start")
+    T.eq(shade.direction, Json.null)
+    T.eq(shade.position, 49)
+    T.eq(shade.target_position, 50)
+
+    -- The same values coming one by one.
+    mock, key = start()
+    for _, step in ipairs({ { "Opening", "0" }, { "Closing", "0" }, { "Level", "49" }, { "Target Level", "50" }, { "Stopped", "0" } }) do
+        Mock.setShade(mock, 52, { [step[1]] = step[2] })
+        T.eq(blind(mock, key, 52).moving, false, step[1] .. " " .. step[2])
+    end
+    -- A move from there reads as any other.
+    for _, step in ipairs({ { "Target Level", "80", true }, { "Opening", "1", true }, { "Level", "80", true }, { "Opening", "0", false }, { "Stopped", "1", false } }) do
+        Mock.setShade(mock, 52, { [step[1]] = step[2] })
+        T.eq(blind(mock, key, 52).moving, step[3], "then " .. step[1] .. " " .. step[2])
+    end
+
+    mock, key = start(restarted(shadeWith({ Level = true, ["Target Level"] = true, Stopped = true })))
+    shade = blind(mock, key, 52)
+    T.eq(shade.moving, true, "no Opening or Closing")
+    T.eq(shade.direction, "opening")
+end
+
+-- A new Target Level after Stopped 0 that Opening and Closing never follow (the shade did not set off)
+-- is not a move for more than a few seconds: nothing else would end it.
+function tests.a_move_that_opening_and_closing_never_follow_ends()
+    -- Blind 52, and the list, read that much later (the modules of the driver that runs now).
+    local function later(mock, key)
+        local Blind = require("src.adapters.blind")
+        local Clock = require("src.core.clock")
+        local now = Clock.now
+        Clock.now = function()
+            return now() + Blind.MOVE_START_SECONDS
+        end
+        local ok, one, listed = pcall(function()
+            return blind(mock, key, 52), T.http(mock, "GET", "/v1/blinds", { key = key }).json.items
+        end)
+        Clock.now = now
+        assert(ok, one)
+        return one, listed
+    end
+    local mock, key = start()
+    Mock.setShade(mock, 52, { Stopped = "0" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "80" })
+    T.eq(blind(mock, key, 52).moving, true, "starting")
+    local shade, listed = later(mock, key)
+    T.eq(shade.moving, false)
+    T.eq(shade.direction, Json.null)
+    T.eq(shade.target_position, 80)
+    for _, item in ipairs(listed) do
+        if item.id == 52 then
+            T.eq(item.moving, false, "listed")
+        end
+    end
+
+    -- Where Opening and Closing say it moves, it moves as long as they say so.
+    mock, key = start()
+    Mock.setShade(mock, 52, { Stopped = "0" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "80" })
+    Mock.setShade(mock, 52, { Opening = "1" })
+    T.eq(later(mock, key).direction, "opening")
+    -- A proxy without them: Stopped 0 with Level and Target Level apart, as in 1.1.1.
+    mock, key = start(shadeWith({ Level = true, ["Target Level"] = true, Stopped = true }))
+    Mock.setShade(mock, 52, { Stopped = "0" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "80" })
+    T.eq(later(mock, key).moving, true, "no Opening or Closing")
 end
 
 function tests.the_setup_is_read_again_after_ten_minutes_or_on_a_project_refresh()
