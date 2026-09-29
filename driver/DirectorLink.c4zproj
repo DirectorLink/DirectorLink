@@ -2,6 +2,8 @@
   <Items>
     <Item type="file" name="driver.xml" />
     <Item type="file" name="driver.lua" />
-    <Item type="dir" name="src" recurse="true" />
+    <Item type="dir" c4zDir="src" name="src" recurse="true" exclude="false" />
+    <Item type="dir" c4zDir="www" name="www" recurse="true" exclude="false" />
+    <Item type="dir" c4zDir="certs" name="certs" recurse="true" exclude="false" />
   </Items>
 </Driver>

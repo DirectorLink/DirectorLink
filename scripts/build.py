@@ -8,8 +8,13 @@ api/openapi.yaml so the driver can serve it at /v1/openapi.json.
 Outputs:
   dist/DirectorLink.c4z   the driver package
   dist/openapi.json   the API description for this version
+
+With --roots-only ROOT it writes only dist/DirectorLink-wrong-roots.c4z instead: a test package
+whose CA file trusts that one root, for the negative check of the relay's certificate on a
+controller (docs/TESTING.md, 0p). It is never a release and never replaces dist/DirectorLink.c4z.
 """
 
+import argparse
 import json
 import re
 import sys
@@ -23,7 +28,11 @@ DRIVER = ROOT / "driver"
 SPEC = ROOT / "api" / "openapi.yaml"
 DIST = ROOT / "dist"
 PACKAGE = DIST / "DirectorLink.c4z"
+WRONG_ROOTS_PACKAGE = DIST / "DirectorLink-wrong-roots.c4z"
 SPEC_JSON = DIST / "openapi.json"
+
+# Where src/cloud/websocket.lua names the relay's CA file, relative to the package root.
+CA_FILE_PATTERN = re.compile(r'WebSocket\.CA_FILE = "\./([^"]+)"')
 
 VERSION_PATTERN = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 SOURCE_VERSION_LINE = 'Version.BRIDGE_VERSION = "dev"'
@@ -85,6 +94,14 @@ def spec_module(spec):
     )
 
 
+def relay_ca_file():
+    """The package path of the CA file the relay connection trusts (CACERTFILE, WebSocket.CA_FILE)."""
+    match = CA_FILE_PATTERN.search((DRIVER / "src" / "cloud" / "websocket.lua").read_text(encoding="utf-8"))
+    if not match:
+        fail('src/cloud/websocket.lua must set WebSocket.CA_FILE = "./<path in the package>"')
+    return match.group(1)
+
+
 def package_entries(version, driver_version, spec):
     entries = {
         "driver.xml": stamped_driver_xml(driver_version),
@@ -99,17 +116,45 @@ def package_entries(version, driver_version, spec):
     for path in sorted((DRIVER / "www").rglob("*")):
         if path.is_file():
             entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()
-    # The root certificates the relay connection trusts (CACERTFILE in src/cloud/websocket.lua).
-    for path in sorted((DRIVER / "certs").glob("*.pem")):
-        entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()
+    # The root certificates the relay connection trusts: only the file websocket.lua names. Git
+    # ignores other .pem files, so a key or test certificate left in driver/certs would not show
+    # in git status; it stops the build instead of going into the package.
+    ca_file = relay_ca_file()
+    others = sorted(
+        path.relative_to(DRIVER).as_posix()
+        for path in (DRIVER / "certs").rglob("*")
+        if path.is_file() and path.relative_to(DRIVER).as_posix() != ca_file
+    )
+    if others:
+        fail(f"driver/certs may hold only {ca_file}; move {', '.join(others)} out of the driver folder")
+    if not (DRIVER / ca_file).is_file():
+        fail(f"the relay's CA file driver/{ca_file} (WebSocket.CA_FILE) is missing")
+    # LF line endings, as in the repository, whatever the checkout did: the same package everywhere.
+    entries[ca_file] = (DRIVER / ca_file).read_bytes().replace(b"\r\n", b"\n")
     entries["src/core/version.lua"] = stamped_version_lua(version)
     entries[SPEC_MODULE] = spec_module(spec)
     return entries
 
 
-def write_package(entries):
+def roots_only(pem, root):
+    """A CA file that holds only `root` (its "# <name>" label, with _ for spaces) of the relay's roots."""
+    wanted = root.replace("_", " ")
+    text = pem.decode("ascii")
+    blocks = dict(re.findall(r"^# (.+)\n(-----BEGIN CERTIFICATE-----\n[A-Za-z0-9+/=\n]+?\n-----END CERTIFICATE-----)$", text, re.M))
+    if wanted not in blocks:
+        fail(f"--roots-only: no root labelled {wanted!r} in the CA file (there are: {', '.join(blocks)})")
+    return (
+        "# DirectorLink TEST PACKAGE (scripts/build.py --roots-only): it trusts only " + wanted + ",\n"
+        "# so a relay certificate from any other authority must fail the check and remote access must\n"
+        "# never connect (docs/TESTING.md, 0p). Never use it for anything else.\n"
+        "\n"
+        "# " + wanted + "\n" + blocks[wanted] + "\n"
+    ).encode("ascii")
+
+
+def write_package(entries, package=PACKAGE):
     DIST.mkdir(parents=True, exist_ok=True)
-    with ZipFile(PACKAGE, "w", compression=ZIP_DEFLATED) as archive:
+    with ZipFile(package, "w", compression=ZIP_DEFLATED) as archive:
         for name in sorted(entries):
             info = ZipInfo(name, date_time=ZIP_DATE)
             info.compress_type = ZIP_DEFLATED
@@ -120,9 +165,25 @@ def write_package(entries):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build dist/DirectorLink.c4z and dist/openapi.json.")
+    parser.add_argument(
+        "--roots-only",
+        metavar="ROOT",
+        help='test only: write dist/DirectorLink-wrong-roots.c4z, whose CA file trusts only this root (such as "ISRG Root X1" or ISRG_Root_X1)',
+    )
+    args = parser.parse_args()
+
     version, driver_version = read_version()
     spec = load_spec(version)
-    write_package(package_entries(version, driver_version, spec))
+    entries = package_entries(version, driver_version, spec)
+    if args.roots_only:
+        ca_file = relay_ca_file()
+        entries[ca_file] = roots_only(entries[ca_file], args.roots_only)
+        write_package(entries, WRONG_ROOTS_PACKAGE)
+        print(f"Built {WRONG_ROOTS_PACKAGE}: a TEST package that trusts only {args.roots_only.replace('_', ' ')} for the relay")
+        print("Install it only for the negative check in docs/TESTING.md 0p, as DirectorLink.c4z, then the real package again.")
+        return
+    write_package(entries)
     SPEC_JSON.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"Built {PACKAGE} (version {version}, Control4 driver version {driver_version})")
     print(f"Wrote {SPEC_JSON}")

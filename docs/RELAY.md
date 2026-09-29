@@ -87,8 +87,12 @@ how it reports a certificate that does not verify. Either way the driver retries
   the relay within 30 s; the certificate check may have failed*.
 
 The file lists each root's SHA-256. Rebuild it from a current CA list (such as certifi) before a
-root expires or when Cloudflare adds an authority. `scripts/check_package.py` checks that the
-package holds exactly these roots, each with its pinned SHA-256.
+root expires or when Cloudflare adds an authority. `scripts/build.py` packages only this file of
+`driver/certs/` (any other file there stops the build), with LF line endings.
+`scripts/check_package.py` reads it as OpenSSL does (every `BEGIN` block, trailing whitespace and
+CRLF included) and checks that the certificates in it are exactly these roots, each once, with its
+pinned SHA-256, and nothing else: no key and no other block. `scripts/check_repo.py` checks the
+staged file the same way.
 
 ## Messages
 
