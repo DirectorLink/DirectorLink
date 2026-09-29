@@ -15,6 +15,10 @@ local OPENED_EVENT = 1 + 2 * KnxRelay.RELAY
 local CLOSED_EVENT = 2 + 2 * KnxRelay.RELAY
 
 local tracked = {}
+-- The timers that release a pulsed relay, kept until they fire: DriverWorks cancels a timer whose
+-- object is garbage-collected, and a door relay must never stay closed. A project refresh keeps
+-- them (reset() does not clear them).
+local releases = {}
 
 function KnxRelay.matches(device)
     local driver = string.lower(tostring(device and device.proxy and device.proxy.driver or ""))
@@ -80,12 +84,17 @@ function KnxRelay.execute(device, action)
         sent, err = send(device.id, "Close Relay")
         if sent then
             local ok, timerError = pcall(function()
-                C4:SetTimer(KnxRelay.PULSE_MS, function()
+                local timer
+                timer = C4:SetTimer(KnxRelay.PULSE_MS, function()
+                    releases[timer] = nil
                     local released, releaseError = send(device.id, "Open Relay")
                     if not released then
                         Log.error("relay_command", "could not release the relay after a pulse", { device_id = device.id, error = releaseError })
                     end
                 end)
+                if timer then
+                    releases[timer] = true
+                end
             end)
             if not ok then
                 -- Never leave a door relay closed: release it now.

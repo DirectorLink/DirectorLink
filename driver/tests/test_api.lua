@@ -493,6 +493,39 @@ function tests.relay_pulse_closes_then_opens()
     T.same(mock.commands[#mock.commands], { device = 70, command = "Open Relay", params = { Relay = "1" } })
 end
 
+-- DriverWorks cancels a timer whose object is garbage-collected: a pulse keeps its release timer
+-- until it fires, or a door relay could stay closed, which holds the door open.
+function tests.a_pulse_keeps_its_release_timer_until_it_fires()
+    local mock, key = start()
+    Properties["Door Control"] = "Enabled"
+    local realSetTimer = C4.SetTimer
+    local live = setmetatable({}, { __mode = "k" }) -- timer object -> its callback, gone when collected
+    C4.SetTimer = function(_, delay, callback)
+        local timer = { Cancel = function() end }
+        live[timer] = { delay = delay, callback = callback }
+        return timer
+    end
+    local ok, err = pcall(function()
+        T.eq(T.http(mock, "POST", "/v1/relays/70/pulse", { key = key }).status, 202)
+        T.eq(lastCommand(mock).command, "Close Relay")
+        collectgarbage("collect")
+        collectgarbage("collect")
+        local releases = {}
+        for _, entry in pairs(live) do
+            if entry.delay == 500 then
+                releases[#releases + 1] = entry.callback
+            end
+        end
+        T.eq(#releases, 1, "the release timer was collected before it fired")
+        releases[1]()
+        T.same(lastCommand(mock), { device = 70, command = "Open Relay", params = { Relay = "1" } })
+    end)
+    C4.SetTimer = realSetTimer
+    if not ok then
+        error(err, 0)
+    end
+end
+
 function tests.relay_state_can_be_set_and_is_validated()
     local mock, key = start()
     Properties["Door Control"] = "Enabled"
