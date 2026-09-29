@@ -31,7 +31,10 @@ local function log(message)
     Log.info("adapters", tostring(message))
 end
 
-function Manager.initialize(deviceRegistry)
+-- previous: the devices before a project refresh (id -> device). An adapter gets the device it
+-- controlled with the same id and kind, to keep what Director cannot tell it again (a relay's last
+-- state, a doorbell's rings); everything else is read again.
+function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
@@ -50,11 +53,15 @@ function Manager.initialize(deviceRegistry)
     local initialized = 0
 
     for id, device in pairs(registry.devices or {}) do
+        local before = previous and previous[tonumber(id)]
+        if before and (before.kind ~= device.kind or before.supported ~= true) then
+            before = nil
+        end
         for _, adapter in ipairs(adapters) do
             if adapter.matches(device) then
                 attached[tonumber(id)] = adapter
 
-                local ok, success, err = pcall(adapter.initialize, device, registry)
+                local ok, success, err = pcall(adapter.initialize, device, registry, before)
                 if not ok then
                     attached[tonumber(id)] = nil
                     device.supported = false

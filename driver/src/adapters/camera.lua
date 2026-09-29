@@ -27,8 +27,10 @@ function Camera.execute()
     }
 end
 
+-- The adapters are initialized again on a project refresh: only the cached camera setups go (read
+-- again for the next picture). Snapshots already asked for are still fetched and answered.
 function Camera.reset()
-    require("src.control4.camera").reset()
+    require("src.control4.camera").forgetAll()
 end
 
 return Camera

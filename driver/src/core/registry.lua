@@ -188,6 +188,35 @@ function Registry.counts()
     }
 end
 
+-- What a project refresh changed, against the devices and rooms read before (id -> record):
+-- devices moved to another room, renamed, added and removed, and rooms added, removed and renamed.
+function Registry.changes(previousDevices, previousRooms)
+    local changes = { moved = 0, renamed = 0, added = 0, removed = 0, rooms_added = 0, rooms_removed = 0, rooms_renamed = 0 }
+    local function compare(before, now, added, removed, renamed, moved)
+        for id, record in pairs(now) do
+            local old = before[id]
+            if not old then
+                changes[added] = changes[added] + 1
+            else
+                if old.name ~= record.name then
+                    changes[renamed] = changes[renamed] + 1
+                end
+                if moved and old.room_id ~= record.room_id then
+                    changes[moved] = changes[moved] + 1
+                end
+            end
+        end
+        for id in pairs(before) do
+            if not now[id] then
+                changes[removed] = changes[removed] + 1
+            end
+        end
+    end
+    compare(previousDevices or {}, Registry.devices or {}, "added", "removed", "renamed", "moved")
+    compare(previousRooms or {}, Registry.rooms or {}, "rooms_added", "rooms_removed", "rooms_renamed")
+    return changes
+end
+
 function Registry.snapshot()
     return {
         metadata = Registry.metadata,

@@ -3,6 +3,7 @@ local Log = require("src.core.log")
 local Registry = require("src.core.registry")
 local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
+local ProjectEvents = require("src.control4.project_events")
 local AdapterManager = require("src.adapters.manager")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
@@ -213,29 +214,45 @@ local function readControllerVersion()
     return nil
 end
 
-local function fail(message)
+-- A failed read at start is the driver's status. A failed refresh leaves the project read before
+-- in use, and the status as it was.
+local function fail(message, reason)
+    if reason then
+        Log.error("discovery", "project refresh failed; the project read before stays in use", { reason = reason, error = message })
+        return false
+    end
     Log.error("discovery", message)
     setStatus("error", message)
+    return false
 end
 
-local function discover()
-    setStatus("starting", "Discovering project...")
+-- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
+-- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps
+-- answering throughout (Lua runs one thing at a time), and keys, pairing, scenes, schedules, room
+-- names and the room order stay as they are; they refer to devices and rooms by id.
+local function discover(reason)
+    if not reason then
+        setStatus("starting", "Discovering project...")
+    end
 
     local ok, raw = pcall(Discovery.collect)
     if not ok then
-        fail("Discovery failed: " .. tostring(raw))
-        return false
+        return fail("Discovery failed: " .. tostring(raw), reason)
     end
 
     local normalizeOk, normalized = pcall(Normalize.project, raw)
     if not normalizeOk then
-        fail("Normalization failed: " .. tostring(normalized))
-        return false
+        return fail("Normalization failed: " .. tostring(normalized), reason)
+    end
+    -- Director answers with an empty project while it loads one: not a reason to show nothing.
+    if reason and next(normalized.devices or {}) == nil and next(Registry.devices or {}) ~= nil then
+        return fail("Director listed no devices", reason)
     end
 
+    local previousDevices, previousRooms = Registry.devices, Registry.rooms
     Registry.reset()
     Registry.replace(normalized)
-    AdapterManager.initialize(Registry)
+    AdapterManager.initialize(Registry, reason and previousDevices or nil)
 
     local counts = Registry.counts()
     updateProperty("Inventory", string.format(
@@ -249,9 +266,48 @@ local function discover()
         counts.supported_relays,
         counts.supported_doorbells
     ))
-    Log.info("discovery", "project discovered", counts)
+    if reason then
+        local changes = Registry.changes(previousDevices, previousRooms)
+        changes.reason = reason
+        changes.rooms = counts.rooms
+        changes.devices = counts.devices
+        changes.supported = counts.supported
+        Log.info("discovery", "project rediscovered", changes)
+        -- The project's location may have changed with it, and with it the next sunrise or sunset
+        -- a schedule waits for.
+        shownScheduleStatus = nil
+        refreshScheduleStatus()
+    else
+        Log.info("discovery", "project discovered", counts)
+    end
     setStatus("ok")
     return true
+end
+
+-- Composer changes (a device moved to another room, renamed, added or removed) without restarting
+-- the driver: the action Refresh Project, and Director's project events a few seconds after the
+-- last one. The events are watched once a project was read.
+local refreshProject
+
+local function watchProject()
+    ProjectEvents.start({
+        ownIds = { (Registry.metadata or {}).bridgeDeviceId },
+        onChange = function(events)
+            refreshProject("Composer changes (" .. events .. ")")
+        end,
+    })
+end
+
+refreshProject = function(reason)
+    if not STATE.supported then
+        return false
+    end
+    ProjectEvents.cancel()
+    local refreshed = discover(reason)
+    if refreshed then
+        watchProject()
+    end
+    return refreshed
 end
 
 function OnDriverInit(driverInitType)
@@ -322,7 +378,9 @@ function OnDriverLateInit(driverInitType)
     updateProperty("API Status", started and "Starting..." or "Failed to start")
 
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
-    discover()
+    if discover() then
+        watchProject()
+    end
 
     -- Schedules run on the controller (src/core/scheduler.lua); the weather is for the project's
     -- location (Composer project properties).
@@ -385,6 +443,10 @@ function ExecuteCommand(command, params)
         else
             updateProperty("Remote Status", "Identity not reset: " .. tostring(code))
         end
+    elseif params.ACTION == "REFRESH_PROJECT" then
+        -- After moving, renaming, adding or removing devices and rooms in Composer, when Director
+        -- does not announce it (or has not yet): no driver restart needed.
+        refreshProject("Composer action")
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
         local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry)
@@ -433,6 +495,11 @@ function OnDeviceEvent(firingDevice, eventId)
     AdapterManager.onDeviceEvent(firingDevice, eventId)
 end
 
+-- Director's system events DirectorLink registered for: Composer changed the project.
+function OnSystemEvent(data)
+    ProjectEvents.onSystemEvent(data)
+end
+
 -- The relay's outgoing connection (network binding 6001).
 function OnConnectionStatusChanged(idBinding, nPort, strStatus)
     Relay.onConnectionStatus(idBinding, nPort, strStatus)
@@ -456,6 +523,7 @@ end
 
 function OnDriverDestroyed(driverInitType)
     Scheduler.stop()
+    ProjectEvents.stop()
     persistSet(LIFECYCLE_KEYS.last_destroy_type, tostring(driverInitType or "nil"))
     persistSet(LIFECYCLE_KEYS.last_destroy_time, os.date("%Y-%m-%d %H:%M:%S"))
     Log.info("lifecycle", "driver destroyed", { init_type = tostring(driverInitType) })

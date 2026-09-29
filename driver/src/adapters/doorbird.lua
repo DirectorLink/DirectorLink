@@ -1,4 +1,5 @@
 local Clock = require("src.core.clock")
+local DeviceEvents = require("src.control4.device_events")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 
@@ -50,16 +51,15 @@ local function sibling(registry, protocolId, driverName)
     return nil
 end
 
-function DoorBird.initialize(device, registry)
+-- before: this doorbell as it was before a project refresh, if it was one.
+function DoorBird.initialize(device, registry, before)
     local protocolId = doorbirdProtocol(device)
     if not protocolId then
         return false, "no DoorBird driver behind this doorstation"
     end
     local watched = {}
     for eventId in pairs(DoorBird.EVENTS) do
-        local ok, err = pcall(function()
-            C4:RegisterDeviceEvent(protocolId, eventId)
-        end)
+        local ok, err = DeviceEvents.watch(protocolId, eventId)
         if ok then
             watched[#watched + 1] = eventId
         else
@@ -80,7 +80,13 @@ function DoorBird.initialize(device, registry)
     device.event_source_id = protocolId
     device.linked = { camera = info.camera }
     device.capabilities = { open = info.button ~= nil, events = #watched > 0 }
-    device.state = { connected = Json.null, last = {}, events = {} }
+    -- Rings and the rest cannot be read back from the DoorBird: a project refresh keeps them, so
+    -- a ring a moment ago still shows at the door.
+    local kept = before and before.state
+    device.state = { connected = Json.null, last = kept and kept.last or {}, events = kept and kept.events or {} }
+    if kept and kept.connected ~= nil then
+        device.state.connected = kept.connected
+    end
     device.actions = info.button and { "open" } or {}
     return true
 end

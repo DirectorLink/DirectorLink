@@ -36,7 +36,8 @@ REQUIRED_PROPERTIES = (
     "Inventory",
 )
 
-REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "RESET_REMOTE_IDENTITY")
+# Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
+REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
 
 # Source fragments that encode security decisions; removing one should be deliberate.
 SECURITY_CONTRACT = {
