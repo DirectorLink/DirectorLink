@@ -100,6 +100,16 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 
 Doors and gates open with `POST /v1/relays/{id}/pulse` (the relay closes, then opens again after 500 ms), as in the app and scenes. `PATCH` with `{"state": "open"}` releases a relay. `{"state": "closed"}` would hold it closed, and its door or gate open: since 1.1.1 it is `409 HOLD_NOT_ALLOWED` and nothing is sent, unless an installer sets **Relay Hold** to Allowed in Composer.
 
+## Shabbat and holidays (arriving in 1.2.0)
+
+DirectorLink 1.2.0 works out Shabbat and holiday times on the controller from the project's location; nothing is sent to the network. It stays off until an installer sets **Jewish Calendar** to On in Composer. Until then `GET /v1/calendar` answers `{"enabled": false, "status": "off", ...}` with nulls, `GET /v1/system` has `"features": {"jewish_calendar": false}`, and setting anything that uses the calendar is `409 JEWISH_CALENDAR_OFF`.
+
+- `GET /v1/calendar` (any key): the settings, today's Hebrew date and holidays (`today`), this week's Shabbat and reading (`week`), and the holy period now (`current`) and next (`next`), from candle lighting (`starts_at`) to havdalah (`ends_at`), in UTC. Shabbat and holidays that follow each other are one period.
+- `PATCH /v1/calendar/settings` (admin): `{"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1}` (0–90 minutes before sunset and 20–90 after; 20 and 42 by default), or `{"holidays": "abroad"}` (`auto`, `israel` or `abroad`).
+- Schedules: the trigger `{"type": "shabbat", "event": "candle_lighting", "offset": -30}` (or `havdalah`; −360 to 360 minutes) runs once when a period begins or ends; `"during_shabbat": "skip"` or `"only"` keeps a time, sun or weather schedule away from Shabbat and holidays, or to them. `calendar_status` (`ok`, `off`, `no_location`) says whether such a schedule can run.
+
+Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/calendar/api-examples.json).
+
 ## Debugging
 
 `GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` while investigating. Secrets are never logged.

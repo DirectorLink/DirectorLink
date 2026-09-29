@@ -34,12 +34,16 @@ REQUIRED_PROPERTIES = (
     "Schedules",
     "Schedule Status",
     "Last Automation",
+    # Shabbat and holiday times (1.2.0, ADR-037): the switch, and what the calendar works out.
+    "Jewish Calendar",
+    "Calendar Status",
     "Log Level",
     "Inventory",
 )
 
-# The door switches ship off; an installer turns them on in Composer (ADR-025, ADR-036).
-SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed"}
+# The door switches ship off; an installer turns them on in Composer (ADR-025, ADR-036). So does
+# the Jewish calendar: with it off the driver works nothing out and the app shows none of it.
+SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off"}
 
 # Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
 REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")

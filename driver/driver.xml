@@ -134,6 +134,21 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Jewish Calendar</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+      </property>
+      <property>
+        <name>Calendar Status</name>
+        <default>Off</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>Log Level</name>
         <type>LIST</type>
         <items>

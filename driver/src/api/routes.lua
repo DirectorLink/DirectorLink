@@ -50,6 +50,9 @@ return {
     { method = "DELETE", path = "/v1/schedules/{scheduleId}", handler = "schedules.delete", role = "admin" },
     { method = "GET", path = "/v1/weather", handler = "schedules.weather", role = "viewer" },
 
+    { method = "GET", path = "/v1/calendar", handler = "calendar.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/calendar/settings", handler = "calendar.update_settings", role = "admin" },
+
     { method = "GET", path = "/v1/devices", handler = "devices.list", role = "viewer" },
     { method = "GET", path = "/v1/devices/{deviceId}", handler = "devices.get", role = "viewer" },
 

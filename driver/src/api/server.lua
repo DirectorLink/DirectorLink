@@ -28,6 +28,7 @@ local HANDLERS = {
     profiles = require("src.api.handlers.profiles"),
     scenes = require("src.api.handlers.scenes"),
     schedules = require("src.api.handlers.schedules"),
+    calendar = require("src.api.handlers.calendar"),
     sealed = require("src.api.handlers.sealed"),
 }
 
