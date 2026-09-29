@@ -250,6 +250,10 @@ def scenario(client, bridge):
     client.check("GET", "/v1/relays/70", 200)
     client.check("GET", "/v1/relays/20", 404)
     client.check("PATCH", "/v1/relays/70", 202, body={"state": "open"})
+    # Holding a relay closed holds its door open: refused while Relay Hold is Not allowed (1.1.1).
+    held = client.check("PATCH", "/v1/relays/70", 409, body={"state": "closed"})
+    if held["code"] != "HOLD_NOT_ALLOWED":
+        fail(f"PATCH /v1/relays/70 closed should be refused with HOLD_NOT_ALLOWED: {held}")
     client.check("PATCH", "/v1/relays/70", 400, body={"state": "unlocked"})
     client.check("POST", "/v1/relays/70/pulse", 202)
     client.check("POST", "/v1/relays/99/pulse", 404)

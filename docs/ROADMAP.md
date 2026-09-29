@@ -74,7 +74,7 @@
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
 - [x] Shades: a slider and Stop only where the shade can use them, and its movement shown while it moves (1.1.0); real-system validation pending
 - [x] Cameras: snapshots through the camera proxy, near-live grid in the app (0.5.0)
-- [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
+- [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0); held closed only with Relay Hold allowed in Composer (1.1.1, ADR-036)
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 - [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)

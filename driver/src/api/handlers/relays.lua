@@ -24,6 +24,12 @@ local function run(ctx, device, action)
         return Problem.new(403, "DOOR_CONTROL_DISABLED",
             "Door control is off; turn on the Door Control property of DirectorLink in Composer")
     end
+    -- A relay held closed holds its door or gate open until someone opens the relay: only where
+    -- an installer allowed it (1.1.1, ADR-036). Nothing is sent otherwise.
+    if action == "close" and not ctx.services.relayHoldAllowed() then
+        return Problem.new(409, "HOLD_NOT_ALLOWED",
+            "Holding a relay closed is off: use pulse. An installer can allow it in Composer (Relay Hold).")
+    end
     local ok, failure = ctx.services.adapters.execute(device.id, action)
     if not ok then
         return Problem.fromAdapter(failure)

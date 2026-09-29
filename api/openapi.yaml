@@ -1509,7 +1509,12 @@ paths:
       operationId: updateRelay
       x-directorlink-role: doors
       summary: Open or close a relay and leave it so
-      description: For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
+      description: |
+        For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
+        `{"state": "open"}` releases the relay. `{"state": "closed"}` holds it closed, which holds a
+        door or gate open until the relay is opened. Since 1.1.1 that is refused with 409
+        `HOLD_NOT_ALLOWED`, and nothing is sent, unless the **Relay Hold** property of DirectorLink
+        in Composer is set to Allowed (the default is Not allowed).
       requestBody:
         required: true
         content:
@@ -1517,7 +1522,7 @@ paths:
             schema:
               $ref: "#/components/schemas/RelayUpdate"
             example:
-              state: closed
+              state: open
       responses:
         "202":
           description: Command sent. The body is the last state the controller reported.
@@ -1872,7 +1877,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
       content:
         application/problem+json:
           schema:

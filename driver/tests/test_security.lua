@@ -159,6 +159,34 @@ function tests.the_room_order_is_set_sealed_at_home_by_admins_only()
     T.eq(T.http(mock, "GET", "/v1/rooms", { key = admin.key }).json.items[1].id, 11, "the order stays")
 end
 
+-- Sealed at home, a relay is held closed only with Relay Hold allowed, as without the seal (1.1.1).
+function tests.a_sealed_request_at_home_holds_a_relay_closed_only_with_relay_hold()
+    local mock = Mock.startDriver()
+    local admin = sealedPair(mock)
+    Properties["Door Control"] = "Enabled"
+    local function send(method, path, body)
+        return sealed(mock, admin.key, admin.id, { method = method, path = path, body = body })
+    end
+    local before = #mock.commands
+    local refused = send("PATCH", "/v1/relays/70", { state = "closed" })
+    T.eq(refused.status, 409)
+    T.eq(Json.decode(refused.body).code, "HOLD_NOT_ALLOWED")
+    T.eq(#mock.commands, before, "nothing reaches the relay")
+    T.eq(send("PATCH", "/v1/relays/70", { state = "open" }).status, 202)
+    T.eq(mock.commands[#mock.commands].command, "Open Relay")
+    T.eq(send("POST", "/v1/relays/70/pulse").status, 202)
+    T.eq(mock.commands[#mock.commands].command, "Close Relay")
+    local pulse = mock.timers[#mock.timers]
+    T.eq(pulse.delay, 500)
+    pulse.callback()
+    T.eq(mock.commands[#mock.commands].command, "Open Relay", "released after the pulse")
+
+    Properties["Relay Hold"] = "Allowed"
+    OnPropertyChanged("Relay Hold")
+    T.eq(send("PATCH", "/v1/relays/70", { state = "closed" }).status, 202)
+    T.eq(mock.commands[#mock.commands].command, "Close Relay", "held")
+end
+
 function tests.secrets_differ_even_if_directors_uuids_do_not()
     local mock = Mock.startDriver()
     function C4:UUID()

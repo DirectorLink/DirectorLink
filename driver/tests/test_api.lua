@@ -496,6 +496,8 @@ end
 function tests.relay_state_can_be_set_and_is_validated()
     local mock, key = start()
     Properties["Door Control"] = "Enabled"
+    -- Holding a relay closed needs Relay Hold (1.1.1); allowed, it works as before.
+    Properties["Relay Hold"] = "Allowed"
     T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } }).status, 202)
     T.same(mock.commands[#mock.commands], { device = 70, command = "Close Relay", params = { Relay = "1" } })
     T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "open" } })
@@ -589,6 +591,96 @@ function tests.roles_limit_what_a_key_can_do()
     T.eq(status("DELETE", "/v1/api-keys/current", viewer), 204)
     T.eq(status("GET", "/v1/lights", viewer), 401)
     T.eq(status("GET", "/v1/lights", member), 200)
+end
+
+-- A door or gate opens while its relay is closed, so a relay held closed holds it open until
+-- someone sends "open". The app and scenes only pulse; PATCH {"state": "closed"} is refused and
+-- nothing is sent, unless an installer sets Relay Hold to Allowed in Composer (1.1.1, ADR-036).
+function tests.a_relay_is_not_held_closed_unless_relay_hold_is_allowed()
+    local mock, key = start()
+    Properties["Door Control"] = "Enabled"
+    local before = #mock.commands
+    local refused = T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } })
+    T.eq(refused.status, 409)
+    T.eq(refused.headers["content-type"], "application/problem+json")
+    T.eq(refused.json.code, "HOLD_NOT_ALLOWED")
+    T.contains(refused.json.detail, "use pulse")
+    T.contains(refused.json.detail, "Relay Hold")
+    Properties["Relay Hold"] = "Not allowed"
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } }).json.code, "HOLD_NOT_ALLOWED", "Composer's default")
+    T.eq(#mock.commands, before, "nothing reaches the relay")
+end
+
+-- Releasing a relay (the safe state) and pulsing it need no Relay Hold. The key's role and Door
+-- Control still come first, for holding too.
+function tests.without_relay_hold_relays_still_open_and_pulse()
+    local mock, admin = start()
+    local member = keyWithRole(mock, admin, "member")
+    local doors = keyWithRole(mock, admin, "doors")
+    Properties["Relay Hold"] = "Not allowed"
+    local function patch(key, state)
+        return T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = state } })
+    end
+
+    T.eq(patch(doors, "closed").json.code, "DOOR_CONTROL_DISABLED")
+    T.eq(patch(doors, "open").json.code, "DOOR_CONTROL_DISABLED")
+    Properties["Door Control"] = "Enabled"
+    T.eq(patch(member, "closed").json.code, "FORBIDDEN")
+    T.eq(patch(member, "open").json.code, "FORBIDDEN")
+
+    local released = patch(doors, "open")
+    T.eq(released.status, 202)
+    T.eq(released.json.id, 70)
+    T.same(lastCommand(mock), { device = 70, command = "Open Relay", params = { Relay = "1" } })
+    T.eq(T.http(mock, "POST", "/v1/relays/70/pulse", { key = doors }).status, 202)
+    T.same(lastCommand(mock), { device = 70, command = "Close Relay", params = { Relay = "1" } })
+    local pulse = mock.timers[#mock.timers]
+    T.eq(pulse.delay, 500)
+    pulse.callback()
+    T.same(lastCommand(mock), { device = 70, command = "Open Relay", params = { Relay = "1" } }, "released after the pulse")
+
+    local before = #mock.commands
+    T.eq(patch(doors, "closed").json.code, "HOLD_NOT_ALLOWED", "only holding is refused")
+    T.eq(patch(admin, "closed").json.code, "HOLD_NOT_ALLOWED", "for admin keys too")
+    T.eq(#mock.commands, before)
+end
+
+-- Relay Hold is read at each request, like Door Control: a change in Composer applies at once and
+-- is logged. Allowed, a relay is held closed as in 1.1.0, until "open".
+function tests.relay_hold_changed_in_composer_applies_at_once()
+    local mock, key = start()
+    Properties["Door Control"] = "Enabled"
+    Properties["Relay Hold"] = "Not allowed"
+    local function hold()
+        return T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "closed" } })
+    end
+    T.eq(hold().status, 409)
+
+    Properties["Relay Hold"] = "Allowed"
+    OnPropertyChanged("Relay Hold")
+    local timers = #mock.timers
+    local held = hold()
+    T.eq(held.status, 202)
+    T.eq(held.json.id, 70)
+    T.same(lastCommand(mock), { device = 70, command = "Close Relay", params = { Relay = "1" } })
+    T.eq(#mock.timers, timers, "held, not pulsed: nothing releases it")
+    OnDeviceEvent(70, 4)
+    T.eq(T.http(mock, "GET", "/v1/relays/70", { key = key }).json.state, "closed")
+    T.eq(T.http(mock, "PATCH", "/v1/relays/70", { key = key, body = { state = "open" } }).status, 202)
+    T.same(lastCommand(mock), { device = 70, command = "Open Relay", params = { Relay = "1" } })
+
+    Properties["Relay Hold"] = "Not allowed"
+    OnPropertyChanged("Relay Hold")
+    local before = #mock.commands
+    T.eq(hold().json.code, "HOLD_NOT_ALLOWED", "not allowed again")
+    T.eq(#mock.commands, before)
+
+    local messages = {}
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=relay_command", { key = key }).json.items) do
+        messages[#messages + 1] = entry.message
+    end
+    T.contains(table.concat(messages, "\n"), "relay hold allowed in Composer")
+    T.contains(table.concat(messages, "\n"), "relay hold not allowed in Composer")
 end
 
 function tests.admins_change_roles_but_keep_one_admin()
