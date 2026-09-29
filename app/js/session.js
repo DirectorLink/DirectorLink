@@ -776,15 +776,18 @@ export async function refreshDevices() {
   return failedRefreshes === 0;
 }
 
-// Rooms and cameras change rarely (renames, new devices); refreshed now and then.
+// Rooms and cameras change rarely (renames, new devices); refreshed now and then. So is the
+// driver's version: Update Driver in Composer reloads DirectorLink without the app reconnecting.
 export async function refreshRooms() {
   try {
-    const [rooms, cameras, relays, role] = await Promise.all([
+    const [system, rooms, cameras, relays, role] = await Promise.all([
+      api("/v1/system").catch(() => state.system),
       api("/v1/rooms"),
       api("/v1/cameras"),
       optionalList("/v1/relays"),
       loadRole().catch(() => state.role),
     ]);
+    state.system = system || state.system;
     state.rooms = rooms?.items || state.rooms;
     state.cameras = cameras?.items || state.cameras;
     state.relays = relays;

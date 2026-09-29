@@ -32,7 +32,8 @@ While the controller still runs a DirectorLink older than the latest release on 
 1. With an admin key, Settings → Controller shows **Updates**: *DirectorLink 1.1.0 is available* with the release date, **Download DirectorLink.c4z** (the file of that release), **What's new** (the release page, in a new tab) and the steps in Composer.
 2. Home shows *DirectorLink 1.1.0 is available. How to update*; the link opens Settings at the steps. ✕ hides the notice, also after a reload; Settings still shows the update.
 3. With a member key (another browser), neither Home nor Settings mention updates, and developer tools → Network shows no request to `api.github.com`. On the admin's browser a reload does not ask again within 12 hours.
-4. Update the driver with the downloaded file as the steps say, and reload the app: Settings → Controller shows version 1.1.0 and *Up to date*, and Home shows no notice.
+4. Update the driver with the downloaded file as the steps say, with the app left open on Settings: within a minute, without a reload, Settings → Controller shows version 1.1.0 and *Up to date*, Home shows no notice, and Network shows no new request to `api.github.com`.
+5. In developer tools → Application → Local storage, lower `answeredAt` in `directorlink.update` by 300000000 (milliseconds, about 3½ days) and reload: **Updates** says *Could not check for updates (last checked …)* with that day. Remove `directorlink.update` and reload: *Up to date* again.
 
 ## 0p. Legacy lights and more thermostats (1.1.0)
 
@@ -196,7 +197,7 @@ On a Director with these devices (bkwagner's), with **Log Level** Debug:
 
 ## 1. Install
 
-Update the driver in Composer with a local file named exactly `DirectorLink.c4z`. Coming from C4Bridge (0.7 and older), remove C4Bridge from the project first and add DirectorLink as a new driver — see the 0.8.0 release notes.
+Update the driver in Composer with a local file named exactly `DirectorLink.c4z` (delete an older one from the download folder before downloading, or the browser names the new one `DirectorLink (1).c4z`). Coming from C4Bridge (0.7 and older), remove C4Bridge from the project first and add DirectorLink as a new driver — see the 0.8.0 release notes.
 
 Expected in the DirectorLink properties once the new driver is loaded:
 
