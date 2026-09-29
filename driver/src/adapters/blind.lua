@@ -31,6 +31,11 @@ local Blind = {}
 -- change the protocol driver without changing the project.
 Blind.SETUP_TTL_SECONDS = 600
 
+-- A move that starts reads Stopped 0, then the new Target Level, then Opening or Closing 1 within
+-- milliseconds. On a proxy that has Opening and Closing, the new Target Level counts as a move for
+-- at most this long before they say so.
+Blind.MOVE_START_SECONDS = 5
+
 -- Proxy variables by what they tell, as the names they may have. Movement is only logged.
 local VARIABLES = {
     level = { ["level"] = true, ["current level"] = true },
@@ -89,8 +94,12 @@ end
 -- Closing tell both; otherwise Stopped false is moving only while Level and Target Level are both
 -- known and apart (Target Level is where it stops, so it equals Level at rest). Stopped false alone
 -- says nothing: Director may leave it false after a reboot, with Level unknown, some proxies have no
--- Target Level, and a Stopped that was never set again must not keep a shade moving.
-local function motion(values, level, target)
+-- Target Level, and a Stopped that was never set again must not keep a shade moving. On a proxy
+-- that has Opening and Closing (`directions`), the two at 0 mean it stands still, whatever Level and
+-- Target Level are (Director may leave Stopped 0 with Level 49 and Target Level 50 after a reboot),
+-- except while a move starts (`starting`: a new Target Level after Stopped 0, the moment before
+-- Opening or Closing go to 1).
+local function motion(values, level, target, directions, starting)
     local opening, closing = flag(values.opening), flag(values.closing)
     if opening or closing then
         if opening and closing then
@@ -99,7 +108,8 @@ local function motion(values, level, target)
         return true, opening and "opening" or "closing"
     end
     local stopped = flag(values.stopped)
-    if stopped == false and level ~= nil and target ~= nil then
+    local still = directions and opening == false and closing == false and not starting
+    if stopped == false and level ~= nil and target ~= nil and not still then
         return level ~= target
     elseif stopped == true or opening == false or closing == false then
         return false
@@ -108,11 +118,14 @@ local function motion(values, level, target)
 end
 
 -- The state the API shows, from the variables' last values.
-local function update(device, info)
+local function update(device, info, now)
     local state = device.state
     state.position = position(info.values.level, info.range)
     state.target_position = position(info.values.target, info.range)
-    local moving, direction = motion(info.values, state.position, state.target_position)
+    if info.startedAt and math.abs((now or Clock.now()) - info.startedAt) >= Blind.MOVE_START_SECONDS then
+        info.startedAt = nil
+    end
+    local moving, direction = motion(info.values, state.position, state.target_position, info.directions, info.startedAt ~= nil)
     if moving and not direction and state.position and state.target_position and state.position ~= state.target_position then
         direction = state.target_position > state.position and "opening" or "closing"
     end
@@ -222,7 +235,6 @@ function Blind.initialize(device)
     device.capabilities = { position = true, stop = true, position_reported = found.level ~= nil }
     device.state = {}
     readSetup(device, info, Clock.now())
-    update(device, info)
 
     for role, id in pairs(found) do
         local ok, err = pcall(function()
@@ -237,6 +249,9 @@ function Blind.initialize(device)
             Log.warn("blind", "unable to watch a blind variable", { device_id = device.id, variable = role, error = tostring(err) })
         end
     end
+    -- Opening and Closing tell the moves when the proxy has both and they are watched.
+    info.directions = info.roles[found.opening] == "opening" and info.roles[found.closing] == "closing"
+    update(device, info)
     if not found.level then
         Log.warn("blind", "blind proxy has no Level variable; position stays unknown", { device_id = device.id })
     end
@@ -251,6 +266,12 @@ function Blind.onVariableChanged(device, variableId, value)
         return false
     end
     info.values[role] = value
+    -- A new Target Level after Stopped 0 is a move starting, until Opening, Closing or Stopped say more.
+    if role == "target" then
+        info.startedAt = flag(info.values.stopped) == false and Clock.now() or nil
+    elseif role == "opening" or role == "closing" or role == "stopped" then
+        info.startedAt = nil
+    end
     update(device, info)
     local state = device.state
     if role == "level" then
@@ -268,13 +289,19 @@ function Blind.onVariableChanged(device, variableId, value)
     return true
 end
 
--- Reads the setup again when it is older than SETUP_TTL_SECONDS (the blinds are being listed).
+-- Reads the setup again when it is older than SETUP_TTL_SECONDS (the blinds are being listed), and
+-- ends a move that started more than MOVE_START_SECONDS ago without Opening or Closing.
 function Blind.refresh(device, now)
     local info = tracked[device.id]
     now = now or Clock.now()
-    if info and device.capabilities and math.abs(now - info.setupAt) >= Blind.SETUP_TTL_SECONDS then
+    if not info or not device.capabilities then
+        return
+    end
+    if math.abs(now - info.setupAt) >= Blind.SETUP_TTL_SECONDS then
         readSetup(device, info, now)
-        update(device, info)
+        update(device, info, now)
+    elseif info.startedAt then
+        update(device, info, now)
     end
 end
 

@@ -5,7 +5,7 @@
 
 import { fanChangeConfirmed, optimisticFan } from "./fans.js";
 import { t } from "./i18n.js";
-import { api, errorText, handleUnauthorized, keyInUse, noteForbidden, whenForgotten } from "./session.js";
+import { api, errorText, handleUnauthorized, keyGeneration, keyInUse, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
 import { MOVE_POLL_MS, REPORT_GAP_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
@@ -44,13 +44,17 @@ const CONFIRMERS = {
   fan: fanChangeConfirmed,
 };
 
-// Re-reads the device until it reports the change (or 5 s pass). Returns the last state read.
-async function waitForConfirmation(kind, id, change) {
+// Re-reads the device until it reports the change (or 5 s pass). Returns the last state read, or
+// null once the key is forgotten, or being forgotten, since `since` (session.js keyGeneration): then
+// nothing more is read.
+async function waitForConfirmation(kind, id, change, since = keyGeneration()) {
   const deadline = Date.now() + CONFIRM_MS;
   let last = null;
   while (Date.now() < deadline) {
     await sleep(600);
+    if (since !== keyGeneration()) return null;
     last = await api(`${KINDS[kind].path}/${id}`);
+    if (since !== keyGeneration()) return null;
     if (CONFIRMERS[kind](last, change)) {
       return { device: last, confirmed: true };
     }
@@ -93,10 +97,16 @@ export async function sendChange(kind, id, change, { before } = {}) {
   setPending(key, true);
   notify();
 
+  // Once the key is forgotten, or being forgotten, nothing more is read and the device is left as
+  // it is.
+  const since = keyGeneration();
   try {
     const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body: change });
+    if (since !== keyGeneration()) return;
     if (needsConfirmation) {
-      const { device, confirmed } = await waitForConfirmation(kind, id, change);
+      const confirmation = await waitForConfirmation(kind, id, change, since);
+      if (!confirmation) return;
+      const { device, confirmed } = confirmation;
       if (device && confirmed) {
         replaceDevice(kind, device);
       } else if (!confirmed) {
@@ -107,6 +117,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
       replaceDevice(kind, { ...answer, brightness: change.brightness, on: change.brightness > 0 });
     }
   } catch (error) {
+    if (since !== keyGeneration()) return;
     if (error?.status === 401) {
       handleUnauthorized(error);
       return;

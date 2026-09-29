@@ -141,9 +141,10 @@ export class SealRefused extends Error {
   }
 }
 
-function lanDelivery(host, timeoutMs) {
+// `wanted`: as for apiRequest (api-client.js), asked before each send.
+function lanDelivery(host, timeoutMs, wanted) {
   return async (envelope) => {
-    const result = await apiRequest(host, "/v1/sealed", { method: "POST", body: { envelope }, timeoutMs });
+    const result = await apiRequest(host, "/v1/sealed", { method: "POST", body: { envelope }, timeoutMs, wanted });
     if (result.ok && result.data?.envelope) return result.data.envelope;
     throw new SealRefused(result.data?.code || `HTTP_${result.status}`, result.status, Number(result.data?.time));
   };
@@ -155,7 +156,7 @@ function lanDelivery(host, timeoutMs) {
 const READ_RETRY_DELAY_MS = 400;
 
 async function lanExchange(host, apiKey, target, path, options, timeoutMs) {
-  const deliver = lanDelivery(host, timeoutMs);
+  const deliver = lanDelivery(host, timeoutMs, options.wanted);
   try {
     return await sealedExchange(apiKey, target, path, options, deliver);
   } catch (error) {
