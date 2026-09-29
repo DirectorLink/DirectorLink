@@ -2,7 +2,17 @@
 
 ## Current release
 
-`v1.1.1` — four fixes around shades (0s): Forget key while a shade moves, the moment after Stop, a shade moving again after the app was away, and a shade left marked as not stopped after a restart. Update DirectorLink in Composer (no reboot).
+`v1.1.1` — door relays are pulse-only unless Relay Hold allows holding them (0t, ADR-036); four fixes around shades (0s): Forget key while a shade moves, the moment after Stop, a shade moving again after the app was away, and a shade left marked as not stopped after a restart. Update DirectorLink in Composer (no reboot).
+
+## 0t. Door relays are pulse-only (1.1.1)
+
+With **Door Control** Enabled and an admin key in the console or curl. Have someone at the door for steps 2 and 4.
+
+1. After the update, the properties show **Relay Hold** = `Not allowed` right after Door Control. Hovering shows *Allowed lets API clients hold a relay closed…*; note whether Composer shows this tooltip.
+2. `PATCH /v1/relays/{id}` `{"state": "closed"}` on a door answers `409 HOLD_NOT_ALLOWED` (*Holding a relay closed is off: use pulse…*). The door does not open, its `state` does not change, and `GET /v1/logs?category=api` shows `PATCH /v1/relays/{id} -> 409` with the key id.
+3. These all work as before (202; the door opens and the relay releases): the app's Open, at home and on mobile data; a scene with the gate; `POST /v1/relays/{id}/pulse`; `PATCH {"state": "open"}`.
+4. Set Relay Hold to `Allowed` (no restart). `GET /v1/logs?category=relay_command` shows *relay hold allowed in Composer*. `PATCH {"state": "closed"}` answers 202, the door stays open and `state` turns `closed`. `PATCH {"state": "open"}` releases it at once (`open`).
+5. Set it back to `Not allowed`. The log shows *relay hold not allowed in Composer*, and step 2 is refused again at once.
 
 ## 0s. Shades: four fixes (1.1.1)
 
@@ -223,7 +233,7 @@ Expected in the DirectorLink properties once the new driver is loaded:
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - API Keys: how many keys exist
-- Door Control: `Disabled`; Log Level: `Info`
+- Door Control: `Disabled`; Relay Hold: `Not allowed`; Log Level: `Info`
 - Remote Access and Remote Status: `Off` (new driver)
 - Schedules: `On`; Schedule Status: `None` (new driver); Last Automation: empty
 - Inventory: rooms, devices, lights, thermostats, blinds, cameras, relays and doorbells (the test system: 20 rooms, 111 lights, 22 thermostats, 15 blinds, 13 cameras, 3 relays)

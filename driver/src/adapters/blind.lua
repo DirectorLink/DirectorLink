@@ -9,8 +9,10 @@ local Log = require("src.core.log")
 -- 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing; they are found by name. Whether a shade
 -- moves is told by Opening, Closing and Stopped (Snap One's proxy documentation). Movement is the
 -- shade's movement type (Up to Down, Down to Up, ...), not whether it moves: it is only logged.
--- Their values during a move have not been seen on a real controller, so each one is logged at
--- debug level with its raw value. A Level outside the shade's range is unknown: -255 after a
+-- On that controller Stopped, Opening and Closing read "1"/"0", and Movement "Up-Down",
+-- "Left-Right" or "Right-Left"; a move reads Stopped 0, then Target Level, then Opening or Closing
+-- 1, and its end Level = Target Level, then Stopped 1. Each change is still logged at debug level
+-- with its raw value. A Level outside the shade's range is unknown: -255 after a
 -- reboot on a blind without a KNX status address, -155 when the actuator reports 255 ("position
 -- unknown"). The proxy sets Level when a move starts (where it starts from), when it ends (the
 -- driver's timer) and whenever the actuator reports, on KNX about a second after the stop.
