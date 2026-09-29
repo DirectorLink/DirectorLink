@@ -25,6 +25,8 @@ REQUIRED_PROPERTIES = (
     "Pairing Status",
     "API Keys",
     "Door Control",
+    # Holding a relay closed, which holds a door or gate open (1.1.1, ADR-036).
+    "Relay Hold",
     "Remote Access",
     "Remote Status",
     # What DirectorLink automates, visible to the installer (0.15.0): a pause switch, a summary
@@ -35,6 +37,9 @@ REQUIRED_PROPERTIES = (
     "Log Level",
     "Inventory",
 )
+
+# The door switches ship off; an installer turns them on in Composer (ADR-025, ADR-036).
+SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed"}
 
 # Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
 REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
@@ -117,6 +122,10 @@ SECURITY_CONTRACT = {
     ),
     "src/core/scenes.lua": (
         'return set.action == "pulse" and { action = "pulse" } or nil',
+    ),
+    # A relay is held closed (its door or gate held open) only with Relay Hold allowed (ADR-036).
+    "src/api/handlers/relays.lua": (
+        'if action == "close" and not ctx.services.relayHoldAllowed() then',
     ),
     # A schedule runs its scene like a member's key: never doors or gates.
     "src/core/scheduler.lua": (
@@ -299,6 +308,10 @@ def check_driver_xml(text, driver_version):
     properties = [node.findtext("name") for node in root.findall("./config/properties/property")]
     if tuple(properties) != REQUIRED_PROPERTIES:
         fail(f"driver.xml properties must be exactly {', '.join(REQUIRED_PROPERTIES)} (got {', '.join(properties)})")
+    for node in root.findall("./config/properties/property"):
+        name = node.findtext("name")
+        if name in SAFE_DEFAULTS and node.findtext("default") != SAFE_DEFAULTS[name]:
+            fail(f"driver.xml: {name} must default to {SAFE_DEFAULTS[name]} (got {node.findtext('default')!r})")
     # A self-contained device: combo driver whose only proxy is itself; no child proxies, no button.
     if root.findtext("combo") != "true":
         fail("driver.xml must declare <combo>true</combo>")

@@ -107,6 +107,28 @@ function tests.the_room_order_is_set_through_the_account_by_admins_only()
     T.eq(T.http(s.mock, "GET", "/v1/rooms", { key = s.key }).json.items[1].id, 11, "unchanged")
 end
 
+-- Through the account, a relay is held closed only with Relay Hold allowed, as on the home
+-- network (1.1.1).
+function tests.a_remote_request_holds_a_relay_closed_only_with_relay_hold()
+    local s = session()
+    Properties["Door Control"] = "Enabled"
+    local commands = s.mock.commands
+    local before = #commands
+    local refused = e2e(s, { method = "PATCH", path = "/v1/relays/70", body = { state = "closed" } })
+    T.eq(refused.status, 409)
+    T.eq(Json.decode(refused.body).code, "HOLD_NOT_ALLOWED")
+    T.eq(#commands, before, "nothing reaches the relay")
+    T.eq(e2e(s, { method = "POST", path = "/v1/relays/70/pulse" }).status, 202)
+    T.eq(commands[#commands].command, "Close Relay")
+    T.eq(e2e(s, { method = "PATCH", path = "/v1/relays/70", body = { state = "open" } }).status, 202)
+    T.eq(commands[#commands].command, "Open Relay")
+
+    Properties["Relay Hold"] = "Allowed"
+    OnPropertyChanged("Relay Hold")
+    T.eq(e2e(s, { method = "PATCH", path = "/v1/relays/70", body = { state = "closed" } }).status, 202)
+    T.eq(commands[#commands].command, "Close Relay", "held")
+end
+
 -- Whatever method the API routes, a sealed request may carry it: a path nothing answers gives the
 -- router's 404, which a request refused by the remote path never reaches.
 function tests.every_method_the_api_routes_can_come_sealed()

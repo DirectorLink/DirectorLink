@@ -134,7 +134,7 @@ The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer tha
 ## What a relayed request may do
 
 - A sealed request runs as the device's own API key, with that key's role (viewer, member, doors,
-  admin) and the Composer Door Control switch, exactly as on the home network.
+  admin) and the Composer Door Control and Relay Hold switches, exactly as on the home network.
 - The driver logs it like a LAN request, with `client` = `relay` and the key id.
 - Claim tokens (`POST /v1/remote/claim`) are given out only on the home network, to admin keys,
   and pairing (`POST /v1/auth/pair`) works only there too (`PAIRING_ONLY_ON_HOME_NETWORK`).

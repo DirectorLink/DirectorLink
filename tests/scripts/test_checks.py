@@ -1,6 +1,7 @@
 """The release checks themselves (scripts/build.py, check_package.py and check_repo.py): the relay's
 CA file holds exactly the pinned roots however its blocks are written, nothing else in driver/certs
-reaches the package, line endings do not change it, and check_repo vets what is staged.
+reaches the package, line endings do not change it, check_repo vets what is staged, and the door
+switches in driver.xml ship off.
 
     python -m unittest discover -s tests/scripts
 """
@@ -122,6 +123,17 @@ class Build(unittest.TestCase):
         self.assertEqual(check_package.pem_certificates(pem), [("ISRG Root X1", check_package.RELAY_ROOTS["ISRG Root X1"])])
         self.assertIsNotNone(check_package.relay_roots_problem(pem), "check_package would pass it as a release")
         self.assertIsNotNone(refusal(build.roots_only, PEM, "No Such Root"))
+
+
+class DriverXml(unittest.TestCase):
+    def test_the_door_switches_ship_off(self):
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        for name, off, on in (("Door Control", "Disabled", "Enabled"), ("Relay Hold", "Not allowed", "Allowed")):
+            with self.subTest(name=name):
+                self.assertEqual(source.count(f"<default>{off}</default>"), 1)
+                shipped_on = source.replace(f"<default>{off}</default>", f"<default>{on}</default>")
+                printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+                self.assertIn(f"{name} must default to {off}", printed or "", "a door switch that ships on passed")
 
 
 class StagedRoots(unittest.TestCase):

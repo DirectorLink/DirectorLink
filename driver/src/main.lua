@@ -187,6 +187,11 @@ local services = {
     doorControlEnabled = function()
         return Properties ~= nil and Properties["Door Control"] == "Enabled"
     end,
+    -- Holding a relay closed (PATCH state closed) also needs "Relay Hold" = Allowed: a door or gate
+    -- stays open while its relay is held. A pulse and opening the relay do not need it.
+    relayHoldAllowed = function()
+        return Properties ~= nil and Properties["Relay Hold"] == "Allowed"
+    end,
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
@@ -479,6 +484,9 @@ function OnPropertyChanged(name)
     end
     if name == "Door Control" and Properties then
         Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")
+    end
+    if name == "Relay Hold" and Properties then
+        Log.info("relay_command", "relay hold " .. string.lower(tostring(Properties[name])) .. " in Composer")
     end
     if name == "Log Level" and Properties then
         if Log.setLevel(Properties[name]) then
