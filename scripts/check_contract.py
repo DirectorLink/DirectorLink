@@ -227,6 +227,16 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/blinds/99", 404, body={"position": 0})
     client.check("POST", "/v1/blinds/50/stop", 202)
     client.check("POST", "/v1/blinds/99/stop", 404)
+    # Shades that say what they can do (1.1.0, Mock.withShades): 52 goes anywhere and stops, 53
+    # only opens and closes fully and cannot stop. The dev bridge moves them as KNX blinds move.
+    client.check("PATCH", "/v1/blinds/52", 202, body={"position": 60})
+    moving = client.check("GET", "/v1/blinds/52", 200)
+    if (moving["moving"], moving["direction"], moving["target_position"]) != (True, "opening", 60):
+        fail(f"GET /v1/blinds/52 should show the shade opening to 60: {moving}")
+    client.check("POST", "/v1/blinds/52/stop", 202)
+    client.check("PATCH", "/v1/blinds/53", 409, body={"position": 50})
+    client.check("PATCH", "/v1/blinds/53", 202, body={"position": 100})
+    client.check("POST", "/v1/blinds/53/stop", 409)
 
     client.check("GET", "/v1/cameras", 200)
     client.check("GET", "/v1/cameras/60", 200)

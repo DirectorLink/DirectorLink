@@ -200,6 +200,19 @@ function Manager.prepare(deviceId, action, params)
     return success ~= false, failure
 end
 
+-- Lets an adapter read again what it keeps about a device and what may change without a project
+-- refresh (a blind's setup, when it is some minutes old). Cheap when nothing is due.
+function Manager.refresh(deviceId)
+    local adapter = attached[tonumber(deviceId)]
+    local device = adapter and adapter.refresh and registry and registry.getDevice(tonumber(deviceId))
+    if device then
+        local ok, err = pcall(adapter.refresh, device)
+        if not ok then
+            log("refresh failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
+        end
+    end
+end
+
 function Manager.shutdown()
     pcall(function()
         C4:UnregisterAllVariableListeners()

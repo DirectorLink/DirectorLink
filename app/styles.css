@@ -1234,6 +1234,12 @@ select:disabled {
   color: var(--ink);
 }
 
+/* A shade on its way: "Opening… to 53%" stands out from the resting states. */
+.device.blind.is-moving .device-meta {
+  color: var(--primary);
+  font-weight: 500;
+}
+
 .device-text {
   display: flex;
   flex-direction: column;
@@ -1477,6 +1483,11 @@ select:disabled {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   margin-block-start: 10px;
+}
+
+/* A shade that cannot stop: Close and Open only. */
+.segments.segments-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .segment {

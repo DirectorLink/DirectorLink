@@ -180,7 +180,7 @@ test("install saves every page under each path, without redirects", async () => 
     assert.equal(saved.redirected, false, `${path} is stored without the redirect flag`);
     assert.match(await saved.text(), new RegExp(body));
   }
-  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/js/doorbells.js", "/js/rings.js", "/i18n/he.js", "/icons/icon-512.png"]) {
+  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/js/doorbells.js", "/js/rings.js", "/js/shades.js", "/i18n/he.js", "/icons/icon-512.png"]) {
     assert.ok(await cache.match(asset), `${asset} is cached`);
   }
   // The API console moved to its own site (console.directorlink.io).
@@ -190,8 +190,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v23", "directorlink-shell-v24"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v30"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v30"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v31"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {

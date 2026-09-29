@@ -354,7 +354,7 @@ end
 
 -- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
 function Mock.demoProject()
-    local project = Mock.withLegacyLights(Mock.project())
+    local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
     Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
     Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
     return project
@@ -508,6 +508,12 @@ function Mock.install(project)
     end
 
     function C4:SendUIRequest(deviceId, request, params)
+        -- Blind proxies of Mock.withShade answer GET_SETUP; the others fail it, like a Director
+        -- that does not know the request.
+        local setup = project.blindSetups and project.blindSetups[deviceId]
+        if setup and request == "GET_SETUP" then
+            return setup
+        end
         local camera = project.cameras and project.cameras[deviceId]
         if camera and request == "GET_PROPERTIES" then
             return string.format(
@@ -928,6 +934,74 @@ function Mock.removeRoom(project, id)
     for index = #floor, 1, -1 do
         if floor[index].id == id then
             table.remove(floor, index)
+        end
+    end
+end
+
+-- ---- Shades as the blind proxy shows KNX blinds on Director 3.4.3 (1.1.0) --------------------
+
+local SHADE_VARIABLES = {
+    [1000] = "Open", [1001] = "Fully Closed", [1002] = "Stopped", [1003] = "Fully Open", [1004] = "Level",
+    [1005] = "Target Level", [1006] = "Type", [1007] = "Movement", [1008] = "Opening", [1009] = "Closing",
+}
+
+-- A shade with the proxy's ten variables, at rest, and the setup GET_SETUP returns. options: id,
+-- protocol, room (11), name, level ("0"), position (level_discrete_control, true), stop (can_stop,
+-- true), setup (the whole GET_SETUP answer instead).
+function Mock.withShade(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    project.devices[protocol] = {
+        deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = options.name, driverFileName = "blind.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = options.name, driverFileName = "blind.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "KNX Blinds (2.9+)", driverFileName = "knx_blind.c4z" } },
+    }
+    local level = options.level or "0"
+    local number = tonumber(level) or -255
+    project.variables[id] = {
+        [1000] = number > 0 and "1" or "0",
+        [1001] = number == 0 and "1" or "0",
+        [1002] = "1",
+        [1003] = number == 100 and "1" or "0",
+        [1004] = level,
+        [1005] = level,
+        [1006] = "0",
+        [1007] = "Stopped",
+        [1008] = "0",
+        [1009] = "0",
+    }
+    project.variableNames[id] = {}
+    for variableId, name in pairs(SHADE_VARIABLES) do
+        project.variableNames[id][variableId] = name
+    end
+    project.blindSetups = project.blindSetups or {}
+    project.blindSetups[id] = options.setup or string.format(
+        "<blind_setup><has_level>True</has_level><level_discrete_control>%s</level_discrete_control>"
+            .. "<can_stop>%s</can_stop><open_level>100</open_level><closed_level>0</closed_level></blind_setup>",
+        options.position == false and "False" or "True",
+        options.stop == false and "False" or "True"
+    )
+    return project
+end
+
+-- The demo's shades: 52 goes to any position and stops (a KNX blind with a percent address),
+-- 53 only opens and closes fully and cannot stop.
+function Mock.withShades(project)
+    Mock.withShade(project, { id = 52, protocol = 114, room = 11, name = "Terrace Shade", level = "35" })
+    Mock.withShade(project, { id = 53, protocol = 115, room = 10, name = "Patio Shutter", level = "0", position = false, stop = false })
+    return project
+end
+
+-- A shade reports: variables by name, e.g. { Level = "45", Opening = "1", Stopped = "0" }, each
+-- delivered like any variable change.
+function Mock.setShade(mock, id, values)
+    for variableId, name in pairs(mock.project.variableNames[id] or {}) do
+        if values[name] ~= nil then
+            Mock.changeVariable(mock, id, variableId, values[name])
         end
     end
 end

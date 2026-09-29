@@ -2,6 +2,7 @@
 
 import { attachCameraImages } from "./camera-feed.js";
 import {
+  blindMove,
   cancelDoorbell,
   cancelRelay,
   nudgeTarget,
@@ -20,6 +21,7 @@ import { formatRelative, formatTemperature, t } from "./i18n.js";
 import { icon } from "./icons.js";
 import { blindStateLabel, climateIsOn, fanLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
 import { isDual, shownSetpoints } from "./setpoints.js";
+import { canSetPosition, canStop, shadeView } from "./shades.js";
 import { can, deviceKey, notify, state, ui } from "./state.js";
 
 // ---- generic -------------------------------------------------------------------------------
@@ -352,9 +354,14 @@ export function thermostatCard(thermostat, { showRoom = false } = {}) {
 
 // ---- blinds --------------------------------------------------------------------------------
 
+// A shade that only opens and closes fully has no slider, and one that cannot stop no Stop. While
+// it moves, the line under its name says where to and the slider stays on the target.
 export function blindRow(blind, { showRoom = false } = {}) {
   const key = deviceKey("blind", blind.id);
   const known = Number.isFinite(blind.position);
+  const move = blindMove(blind.id);
+  const view = shadeView(blind, move);
+  const stops = canStop(blind);
   const button = (label, iconName, action, keyName) =>
     h(
       "button",
@@ -369,7 +376,7 @@ export function blindRow(blind, { showRoom = false } = {}) {
     );
   return h(
     "div",
-    { class: `device blind ${known && blind.position > 0 ? "is-open" : ""}` },
+    { class: `device blind ${known && blind.position > 0 ? "is-open" : ""} ${view.moving ? "is-moving" : ""}` },
     h(
       "div",
       { class: "device-main" },
@@ -378,23 +385,23 @@ export function blindRow(blind, { showRoom = false } = {}) {
         "div",
         { class: "device-text" },
         name(blind.name, "span", "device-name"),
-        h("span", { class: "device-meta" }, showRoom ? [name(roomName(blind.room)), " · "] : null, blindStateLabel(blind))
+        h("span", { class: "device-meta" }, showRoom ? [name(roomName(blind.room)), " · "] : null, blindStateLabel(blind, move))
       ),
       favoriteStar("blind", blind)
     ),
     can("member")
       ? h(
           "div",
-          { class: "segments", role: "group", "aria-label": blind.name },
+          { class: `segments ${stops ? "" : "segments-two"}`, role: "group", "aria-label": blind.name },
           button(t("blinds.close"), "arrowDown", () => setBlind(blind, 0), "close"),
-          button(t("blinds.stop"), "stop", () => stopBlind(blind), "stop"),
+          stops ? button(t("blinds.stop"), "stop", () => stopBlind(blind), "stop") : null,
           button(t("blinds.openAction"), "arrowUp", () => setBlind(blind, 100), "open")
         )
       : null,
-    can("member")
+    can("member") && canSetPosition(blind)
       ? slider({
           label: t("blinds.position", { name: blind.name }),
-          value: known ? blind.position : 0,
+          value: view.slider,
           key: `blind:${blind.id}:position`,
           format: (value) => t("blinds.percentOpen", { percent: value }),
           onCommit: (value) => setBlind(blind, value),

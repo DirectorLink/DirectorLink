@@ -377,7 +377,8 @@ local function deviceCommands(step, device)
         end
         return commands, leftOut
     elseif step.type == "blinds" then
-        return { { action = "set_position", params = { position = set.position } } }
+        -- Checked first: a shade that only opens and closes fully is skipped for a position between.
+        return { { action = "set_position", params = { position = set.position }, check = true } }
     end
     return { { action = "pulse" } }
 end

@@ -44,6 +44,78 @@ mock.weather = {
     },
 }
 
+-- Blinds move in the fake home as KNX blinds do: SECONDS_PER_PERCENT per percent, reporting their
+-- level every few seconds and when they stop. A shade that only opens and closes fully goes all the
+-- way (its driver sends up for any target above 0). Moves advance whenever a request comes in.
+local SECONDS_PER_PERCENT = 0.3
+local REPORT_SECONDS = 3
+local moves, commandsSeen = {}, #mock.commands
+
+local function shadeVariable(id, name)
+    for variableId, variableName in pairs(mock.project.variableNames[id] or {}) do
+        if variableName == name then
+            return variableId
+        end
+    end
+end
+
+local function report(id, values)
+    for name, value in pairs(values) do
+        local variableId = shadeVariable(id, name)
+        if variableId then
+            Mock.changeVariable(mock, id, variableId, value)
+        end
+    end
+end
+
+local function levelNow(move, now)
+    local share = math.min(1, (now - move.started) / math.max(1, math.abs(move.to - move.from) * SECONDS_PER_PERCENT))
+    return math.floor(move.from + (move.to - move.from) * share + 0.5)
+end
+
+local function stopShade(id, level)
+    moves[id] = nil
+    report(id, { Level = tostring(level), Stopped = "1", Opening = "0", Closing = "0", Movement = "Stopped" })
+end
+
+local function advanceShades()
+    local now = os.time()
+    for index = commandsSeen + 1, #mock.commands do
+        local command = mock.commands[index]
+        local id = command.device
+        local device = mock.project.devices[id]
+        if device and string.lower(device.driverFileName or "") == "blind.c4i" then
+            local level = moves[id] and levelNow(moves[id], now) or tonumber((mock.project.variables[id] or {})[shadeVariable(id, "Level")])
+            if command.command == "STOP" then
+                stopShade(id, level or 0)
+            elseif command.command == "SET_LEVEL_TARGET" then
+                local to = tonumber(command.params.LEVEL_TARGET) or 0
+                local setup = (mock.project.blindSetups or {})[id] or ""
+                if setup:find("<level_discrete_control>False", 1, true) and to > 0 then
+                    to = 100
+                end
+                local from = (level and level >= 0 and level <= 100) and level or (to > 50 and 0 or 100)
+                if from ~= to then
+                    local opening = to > from
+                    moves[id] = { from = from, to = to, started = now, reported = now }
+                    report(id, { ["Target Level"] = tostring(to), Stopped = "0", Opening = opening and "1" or "0",
+                        Closing = opening and "0" or "1", Movement = opening and "Opening" or "Closing" })
+                end
+            end
+        end
+    end
+    commandsSeen = #mock.commands
+    for id, move in pairs(moves) do
+        local level = levelNow(move, now)
+        if level == move.to then
+            stopShade(id, level)
+        elseif now - move.reported >= REPORT_SECONDS then
+            move.reported = now
+            report(id, { Level = tostring(level) })
+        end
+    end
+end
+
 local function fromHex(text)
     return (text:gsub("%x%x", function(pair)
         return string.char(tonumber(pair, 16))
@@ -68,6 +140,7 @@ for line in io.lines() do
     end
     local handle, hex = line:match("^(%d+) ?(%x*)$")
     if handle then
+        advanceShades()
         handle = tonumber(handle)
         if hex == "" then
             OnServerConnectionStatusChanged(handle, 41999, "OFFLINE")

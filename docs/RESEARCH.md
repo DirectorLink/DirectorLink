@@ -21,6 +21,18 @@ Project-wide discovery APIs should not be used during `OnDriverInit`. DirectorLi
 Reference:
 https://control4.github.io/docs-driverworks-api/#safe-usage-of-ondriverinit-and-ondriverlateinit
 
+## Composer changes (1.1.0)
+
+A driver learns about Composer's changes only through Director's system events: `C4:RegisterSystemEvent(C4SystemEvents[name], 0)` for every device, and a global `OnSystemEvent(data)` whose `data` is XML with the event's name first. DirectorLink watches `OnItemAdded`, `OnItemRemoved`, `OnItemNameChanged`, `OnItemMoved`, `OnPIP` (Composer → Refresh Navigators), `OnDriverAdded` and `OnProjectLoaded`, and reads the project again once they stop (`src/control4/project_events.lua`). The documentation deprecates `OnProjectChanged` (OS 2.10) and names the item events for add, remove and rename; the names and ids come from Snap One's drivers-common-public `handlers.lua`. No public source shows the parameters of `OnItemMoved`: DirectorLink treats every event only as a sign of change and logs the payload at debug level.
+
+References:
+snap-one/docs-driverworks-api, `source/includes/7_event/` (RegisterSystemEvent, OnSystemEvent, Registering for System Events)
+https://raw.githubusercontent.com/snap-one/drivers-common-public/master/global/handlers.lua
+
+## Blind proxy (1.1.0)
+
+On Director 3.4.3 with KNX blinds (the "KNX Blinds (2.9+)" driver behind `blind.c4i`) the proxy's variables are 1000 Open, 1001 Fully Closed, 1002 Stopped, 1003 Fully Open, 1004 Level, 1005 Target Level, 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing. Level is set when a move starts (the proxy's estimate), when it ends (the driver's timer) and whenever the actuator reports; values outside 0–100 are unknown (-155 when the actuator reports 255, -255 after a restart). Control4's own UI reads the proxy's setup with a UI request (Director logs `UIRequest returned: <blind_setup><has_level>True</has_level><level_discrete_control>True</level_discrete_control><can_stop>True</can_stop>...`); `level_discrete_control` is False on shades that only open and close fully, whose KNX driver sends up for any target above 0. DirectorLink sends `GET_SETUP` with `C4:SendUIRequest` (the return value is not documented) and logs the answer once per shade at debug level.
+
 ## Project metadata
 
 OS 3.0+ exposes project properties including latitude, longitude, country, city and related settings through `C4:GetProjectProperty()`; timezone is exposed through `C4:GetTimeZone()`.

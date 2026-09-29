@@ -2,6 +2,7 @@
 
 import { currentLanguage, formatTemperature, formatTemperatureRange, t } from "./i18n.js";
 import { isDual } from "./setpoints.js";
+import { movingText, shadeView } from "./shades.js";
 import { state } from "./state.js";
 
 // Devices without a room are collected under this id.
@@ -142,7 +143,14 @@ export function targetText(thermostat) {
   return formatTemperature(thermostat.target_temperature);
 }
 
-export function blindStateLabel(blind) {
+// "Opening… to 53%" while the shade moves (it says so, or `move`: a command the app sent, from
+// controls.js blindMove); otherwise where it is, or that its position is not known.
+export function blindStateLabel(blind, move = null) {
+  const view = shadeView(blind, move);
+  if (view.moving) {
+    const text = movingText(view);
+    return t(text.key, { percent: text.percent });
+  }
   if (!Number.isFinite(blind.position)) {
     return t("blinds.unknown");
   }
