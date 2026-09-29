@@ -128,6 +128,43 @@ local function logVariableNames(deviceId)
     Log.debug("climate", "heat-only thermostat variables", { device_id = deviceId, variables = table.concat(names, ", ") })
 end
 
+-- A heat-only zone reads and watches the single setpoint in °C (1150) and the heat setpoint (1133).
+-- AC zones never get here. Returns true when it read one it did not have.
+local function watchHeatSetpoint(device, info)
+    if not info.heatOnly then
+        return false
+    end
+    local found = false
+    if not info.watching[VARIABLE_SINGLE_SETPOINT_C] then
+        local value = safeGetVariable(device.id, VARIABLE_SINGLE_SETPOINT_C)
+        if value ~= nil then
+            info.singleC = value
+            info.watching[VARIABLE_SINGLE_SETPOINT_C] = registerListener(device.id, VARIABLE_SINGLE_SETPOINT_C)
+            found = true
+        end
+    end
+    if not info.watching[VARIABLE_HEAT_SETPOINT_C] then
+        local value = safeGetVariable(device.id, VARIABLE_HEAT_SETPOINT_C)
+        if value ~= nil then
+            info.heatC = tonumber(value)
+            info.watching[VARIABLE_HEAT_SETPOINT_C] = registerListener(device.id, VARIABLE_HEAT_SETPOINT_C)
+            found = true
+        end
+    end
+    if not info.variablesLogged then
+        info.variablesLogged = true
+        logVariableNames(device.id)
+    end
+    return found
+end
+
+-- After start-up, a zone can turn heat-only (its mode list arrives late), and 1133 or 1150 can
+-- appear. Only a zone whose single setpoint reads 0 can move to its heat setpoint, so only such a
+-- zone looks again; a zone in use on its single setpoint reads nothing more than at start-up.
+local function lookAgain(device, info)
+    return tonumber(info.singleF) == 0 and watchHeatSetpoint(device, info)
+end
+
 local function targetOf(info)
     if info.useHeat then
         return info.heatC
@@ -232,19 +269,13 @@ function Climate.initialize(device)
 
     -- Only heat-only zones read and watch the heat setpoint and the single setpoint in °C; for
     -- AC zones nothing here changes.
-    local heatOnly = isHeatOnly(hvacModes)
-    local singleC, heatC
-    if heatOnly then
-        singleC = safeGetVariable(device.id, VARIABLE_SINGLE_SETPOINT_C)
-        heatC = safeGetVariable(device.id, VARIABLE_HEAT_SETPOINT_C)
-        if singleC ~= nil then
-            registerListener(device.id, VARIABLE_SINGLE_SETPOINT_C)
-        end
-        if heatC ~= nil then
-            registerListener(device.id, VARIABLE_HEAT_SETPOINT_C)
-        end
-        logVariableNames(device.id)
-    end
+    local info = {
+        hvacModes = hvacModes,
+        heatOnly = isHeatOnly(hvacModes),
+        singleF = setpointF,
+        watching = {},
+    }
+    watchHeatSetpoint(device, info)
 
     local hasCool = false
     for _, mode in ipairs(hvacModes) do
@@ -262,15 +293,8 @@ function Climate.initialize(device)
         fanModes = { "Low", "Medium", "High" }
     end
 
-    local info = {
-        hasFanMode = hasFanControl,
-        hvacModes = hvacModes,
-        fanModes = fanModes,
-        heatOnly = heatOnly,
-        singleF = setpointF,
-        singleC = singleC,
-        heatC = tonumber(heatC),
-    }
+    info.hasFanMode = hasFanControl
+    info.fanModes = fanModes
     info.useHeat = usesHeatSetpoint(info)
     tracked[device.id] = info
 
@@ -313,7 +337,7 @@ function Climate.initialize(device)
         target_temperature_c = device.state.target_temperature_c,
         setpoint_source = device.capabilities.setpoint_source,
         single_f = setpointF,
-        single_c = singleC,
+        single_c = info.singleC,
         heat_c = info.heatC,
     })
 
@@ -331,8 +355,13 @@ function Climate.onVariableChanged(device, variableId, value)
     if variableId == VARIABLE_TEMPERATURE_C then
         local n = tonumber(value)
         if n ~= nil then device.state.current_temperature_c = n end
+        -- The room temperature changes often; a heat setpoint that appeared since is found here.
+        if lookAgain(device, info) then
+            applySetpointPath(device)
+        end
     elseif variableId == VARIABLE_SINGLE_SETPOINT_F then
         info.singleF = value
+        lookAgain(device, info)
         local changed = applySetpointPath(device)
         if not info.useHeat then
             device.state.target_temperature_c = fahrenheitToCelsius(value)
@@ -368,6 +397,8 @@ function Climate.onVariableChanged(device, variableId, value)
             device.capabilities.hvac_modes = modes
         end
         info.heatOnly = isHeatOnly(info.hvacModes)
+        -- A zone that just turned heat-only reads its heat setpoint now, before the path is chosen.
+        lookAgain(device, info)
         applySetpointPath(device)
     elseif variableId == VARIABLE_SCALE then
         device.state.scale = tostring(value or "")
@@ -473,8 +504,9 @@ function Climate.execute(device, action, params)
         target = math.floor(target * 10 + 0.5) / 10
         local ok, err
         if info.useHeat then
-            -- The heat setpoint goes in the project's scale. In °F it is whole degrees, the form
-            -- verified on a real zone (#19); the °C form has not run on hardware yet.
+            -- The heat setpoint goes in the project's scale. In °F it is whole degrees, with the
+            -- parameter a real zone lists (#19). Neither form has run from DirectorLink on
+            -- hardware yet.
             local scale = Units.scale(device.state and device.state.scale) == "F" and "F" or "C"
             ok, err = send(device.id, "SET_SETPOINT_HEAT", Units.param(Units.toNative(target, scale), scale))
         else

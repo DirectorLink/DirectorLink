@@ -31,7 +31,7 @@ function Units.toNative(celsius, scale)
 end
 
 -- Command parameters for a native value, with the only key the proxy is known to take in each
--- scale: FAHRENHEIT (whole degrees, the form verified on a °F project) or CELSIUS.
+-- scale: FAHRENHEIT (whole degrees, as listed on a °F project) or CELSIUS.
 function Units.param(native, scale)
     if scale == "F" then
         return { FAHRENHEIT = native }
@@ -64,6 +64,17 @@ function Units.celsius(native, scale)
         return round((native - 32) * 5 / 9 * 10) / 10
     end
     return native / 10
+end
+
+-- A measured temperature (not a setpoint) in °C to 0.1, project-scale variable first. Setpoints
+-- are whole °F in a °F project because that is what the thermostat takes; a room at 71.6 °F is
+-- 22.0 °C, not 72 °F (22.2 °C).
+function Units.measuredCelsius(fahrenheit, celsius, scale)
+    local f, c = tonumber(fahrenheit), tonumber(celsius)
+    if f and (scale == "F" or not c) then
+        return Units.celsius(f, "F")
+    end
+    return c and round(c * 10) / 10 or nil
 end
 
 -- A deadband is a difference, not a temperature: °C = ΔF × 5/9, never (ΔF - 32) × 5/9.

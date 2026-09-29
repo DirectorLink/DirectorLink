@@ -297,16 +297,32 @@ function tests.a_heat_only_proxy_never_pushes_the_cool_setpoint()
     T.eq(failure.field, nil, "a missing setpoint is not a bad value")
 end
 
-function tests.without_a_deadband_only_the_order_is_kept()
+-- Without a reported deadband, cool still stays above heat by one native step, as scene steps and
+-- the app require: never both at the same value.
+function tests.without_a_deadband_cool_stays_above_heat()
     local s = setup({ scale = "FAHRENHEIT", deadband = false })
     T.eq(s.device.capabilities.deadband_native, nil)
     T.eq(s.device.capabilities.deadband_c, nil)
     T.same(run(s, "set_setpoints", { heat = 23.5 }), { { "SET_SETPOINT_HEAT", { FAHRENHEIT = 74 } } })
     T.same(run(s, "set_setpoints", { heat = 25 }),
-        { { "SET_SETPOINT_COOL", { FAHRENHEIT = 77 } }, { "SET_SETPOINT_HEAT", { FAHRENHEIT = 77 } } })
-    local _, failure = run(s, "set_setpoints", { heat = 25, cool = 24 })
-    T.eq(failure.field, "cool_setpoint")
-    T.contains(failure.message, "must not be below heat_setpoint")
+        { { "SET_SETPOINT_COOL", { FAHRENHEIT = 78 } }, { "SET_SETPOINT_HEAT", { FAHRENHEIT = 77 } } }, "cool 1 °F above")
+    T.same(run(s, "set_setpoints", { cool = 20 }),
+        { { "SET_SETPOINT_HEAT", { FAHRENHEIT = 67 } }, { "SET_SETPOINT_COOL", { FAHRENHEIT = 68 } } }, "heat 1 °F below")
+    for _, pair in ipairs({ { 25, 24 }, { 22, 22 }, { 22.5, 23 } }) do
+        -- 22.5 and 23 °C are both 73 °F.
+        local _, failure = run(s, "set_setpoints", { heat = pair[1], cool = pair[2] })
+        T.eq(failure.field, "cool_setpoint", pair[1] .. "/" .. pair[2])
+        T.eq(failure.message, "cool_setpoint must be above heat_setpoint")
+    end
+
+    local celsius = setup({ scale = "CELSIUS", deadband = false })
+    T.same(run(celsius, "set_setpoints", { heat = 23.9 }), { { "SET_SETPOINT_HEAT", { CELSIUS = 23.9 } } }, "below cool (24 °C)")
+    T.same(run(celsius, "set_setpoints", { heat = 25 }),
+        { { "SET_SETPOINT_COOL", { CELSIUS = 25.1 } }, { "SET_SETPOINT_HEAT", { CELSIUS = 25 } } }, "cool 0.1 °C above")
+    T.same(run(celsius, "set_setpoints", { heat = 22, cool = 22.1 }),
+        { { "SET_SETPOINT_HEAT", { CELSIUS = 22 } }, { "SET_SETPOINT_COOL", { CELSIUS = 22.1 } } })
+    local _, failure = run(celsius, "set_setpoints", { heat = 22, cool = 22 })
+    T.eq(failure.message, "cool_setpoint must be above heat_setpoint")
 end
 
 function tests.a_failed_send_says_what_was_already_applied()

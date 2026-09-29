@@ -183,7 +183,7 @@ local function refresh(device)
     local coolNative = read(VARIABLE_COOL_SETPOINT_F, VARIABLE_COOL_SETPOINT_C)
     state.connected = raw[VARIABLE_IS_CONNECTED] == nil and true or boolValue(raw[VARIABLE_IS_CONNECTED])
     state.scale = raw[VARIABLE_SCALE]
-    state.current_temperature_c = Units.celsius(read(VARIABLE_TEMPERATURE_F, VARIABLE_TEMPERATURE_C), scale)
+    state.current_temperature_c = Units.measuredCelsius(raw[VARIABLE_TEMPERATURE_F], raw[VARIABLE_TEMPERATURE_C], scale)
     state.heat_native = heatNative
     state.cool_native = coolNative
     state.heat_setpoint_c = Units.celsius(heatNative, scale)
@@ -359,8 +359,11 @@ local function plan(device, heat, cool)
     end
 
     local low, high = Units.toNative(SETPOINT_MIN_C, scale), Units.toNative(SETPOINT_MAX_C, scale)
-    local deadband = capabilities.deadband_native or 0
-    local gap = degrees(capabilities.deadband_c or 0) .. "°"
+    -- Without a reported deadband cool still stays above heat, by one native step (1 °F or
+    -- 0.1 °C), as scene steps and the app require: a push never leaves both at the same value.
+    local reported = capabilities.deadband_native
+    local deadband = math.max(reported or 0, 1)
+    local gap = (reported and reported > 0) and ("at least " .. degrees(capabilities.deadband_c) .. "° ") or ""
     -- A setpoint the thermostat does not use (no such mode) is never pushed.
     local h = heat and Units.toNative(heat, scale) or (capabilities.has_heat and state.heat_native or nil)
     local c = cool and Units.toNative(cool, scale) or (capabilities.has_cool and state.cool_native or nil)
@@ -368,19 +371,17 @@ local function plan(device, heat, cool)
 
     if heat and cool then
         if c - h < deadband then
-            return nil, invalid("cool_setpoint", deadband > 0
-                and "cool_setpoint must be at least " .. gap .. " above heat_setpoint"
-                or "cool_setpoint must not be below heat_setpoint")
+            return nil, invalid("cool_setpoint", "cool_setpoint must be " .. gap .. "above heat_setpoint")
         end
     elseif heat and c and c - h < deadband then
         c, pushed = h + deadband, "cool"
         if c > high then
-            return nil, invalid("heat_setpoint", "heat_setpoint leaves no room above it for the cool setpoint, which stays at least " .. gap .. " higher")
+            return nil, invalid("heat_setpoint", "heat_setpoint leaves no room above it for the cool setpoint, which stays " .. gap .. "higher")
         end
     elseif cool and h and c - h < deadband then
         h, pushed = c - deadband, "heat"
         if h < low then
-            return nil, invalid("cool_setpoint", "cool_setpoint leaves no room below it for the heat setpoint, which stays at least " .. gap .. " lower")
+            return nil, invalid("cool_setpoint", "cool_setpoint leaves no room below it for the heat setpoint, which stays " .. gap .. "lower")
         end
     end
 

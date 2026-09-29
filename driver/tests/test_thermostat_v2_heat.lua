@@ -96,6 +96,10 @@ function tests.an_ac_zone_stays_on_its_single_setpoint()
     T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_SINGLE", params = { CELSIUS = 23 } })
     T.eq(patch({ target_temperature = 15 }).status, 400)
     T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "nothing new is read or watched")
+    OnWatchedVariableChanged(30, 1149, "0")
+    OnWatchedVariableChanged(30, 1120, "Off,Heat,Cool")
+    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "nor after later changes")
+    T.eq(get().target_temperature_min, 16)
 
     local logs = T.http(mock, "GET", "/v1/logs?category=climate", { key = key }).json.items
     T.eq(logs[1].message, "initialized thermostat")
@@ -165,6 +169,113 @@ function tests.the_setpoint_path_follows_later_values()
     T.eq(thermostat.target_temperature_min, 5)
     patchReal({ target_temperature = 21 })
     T.same(lastCommand(mockReal), { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 70 } })
+end
+
+-- The mode list can arrive after start-up too: until then the zone counts as Off,Heat,Cool and
+-- reads nothing of its heat setpoint. When it turns heat-only, 1133 and 1150 are read and watched.
+function tests.a_mode_list_that_arrives_late_can_move_a_zone_to_its_heat_setpoint()
+    local project = heatOnlyProject("FAHRENHEIT")
+    project.variables[30][1120] = ""
+    local mock, _, get, patch = start(project)
+    local thermostat = get()
+    T.same(thermostat.modes, { "off", "heat", "cool" })
+    T.eq(thermostat.target_temperature_min, 16)
+    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "not heat-only yet")
+
+    project.variables[30][1120] = "Off,Heat"
+    OnWatchedVariableChanged(30, 1120, "Off,Heat")
+    thermostat = get()
+    T.same(thermostat.modes, { "off", "heat" })
+    T.eq(thermostat.target_temperature, 21.5, "the heat setpoint, not 0 °F")
+    T.eq(thermostat.target_temperature_min, 5)
+    T.truthy(listening(mock, 30, 1133) and listening(mock, 30, 1150), "now watched")
+    patch({ target_temperature = 23 })
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 73 } })
+    OnWatchedVariableChanged(30, 1133, "22.8")
+    T.eq(get().target_temperature, 22.8)
+end
+
+-- A heat setpoint that is not there at start-up is looked for again when the single setpoint
+-- changes, so a later value is not missed for want of a listener.
+function tests.a_heat_setpoint_missing_at_start_up_is_looked_for_again()
+    local project = heatOnlyProject("FAHRENHEIT")
+    project.variables[30][1133] = nil
+    local mock, _, get, patch = start(project)
+    T.eq(get().target_temperature_min, 16, "no heat setpoint to follow yet")
+    T.truthy(not listening(mock, 30, 1133))
+
+    project.variables[30][1133] = "21.5"
+    OnWatchedVariableChanged(30, 1149, "0")
+    T.truthy(listening(mock, 30, 1133), "watched once it exists")
+    local thermostat = get()
+    T.eq(thermostat.target_temperature, 21.5)
+    T.eq(thermostat.target_temperature_min, 5)
+    patch({ target_temperature = 21 })
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 70 } })
+    local count = 0
+    for _, entry in ipairs(mock.listeners) do
+        if entry[1] == 30 and entry[2] == 1133 then
+            count = count + 1
+        end
+    end
+    OnWatchedVariableChanged(30, 1149, "0")
+    local again = 0
+    for _, entry in ipairs(mock.listeners) do
+        if entry[1] == 30 and entry[2] == 1133 then
+            again = again + 1
+        end
+    end
+    T.eq(again, count, "registered once")
+end
+
+-- The single setpoint of such a zone stays at 0, so the room temperature is where a heat setpoint
+-- that appears later is found.
+function tests.a_later_heat_setpoint_is_found_on_a_temperature_change()
+    local project = heatOnlyProject("CELSIUS")
+    project.variables[30][1133] = nil
+    local mock, _, get, patch = start(project)
+    T.eq(get().target_temperature_min, 16)
+    OnWatchedVariableChanged(30, 1131, "20.5")
+    T.truthy(not listening(mock, 30, 1133), "still missing")
+    T.eq(get().current_temperature, 20.5)
+
+    project.variables[30][1133] = "22"
+    OnWatchedVariableChanged(30, 1131, "20.6")
+    T.truthy(listening(mock, 30, 1133))
+    local thermostat = get()
+    T.eq(thermostat.current_temperature, 20.6)
+    T.eq(thermostat.target_temperature, 22)
+    T.eq(thermostat.target_temperature_min, 5)
+    patch({ target_temperature = 21 })
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { CELSIUS = 21 } })
+end
+
+-- A floor zone in use on its single setpoint reads 1133 and 1150 once at start-up, as before, and
+-- not again on later changes, even when they are missing.
+function tests.a_zone_on_its_single_setpoint_reads_nothing_more_later()
+    local project = Mock.project()
+    local variables = project.variables[30]
+    variables[1120] = "Off,Heat"
+    variables[1149] = "71.6"
+    local reads = 0
+    local mock, _, get = start(project, function()
+        local getVariable = C4.GetVariable
+        C4.GetVariable = function(self, deviceId, variableId)
+            if deviceId == 30 and (variableId == 1133 or variableId == 1150) then
+                reads = reads + 1
+            end
+            return getVariable(self, deviceId, variableId)
+        end
+    end)
+    T.eq(reads, 2, "read once at start-up")
+    OnWatchedVariableChanged(30, 1149, "73.4")
+    OnWatchedVariableChanged(30, 1131, "21.5")
+    OnWatchedVariableChanged(30, 1120, "Off,Heat")
+    T.eq(reads, 2, "not again")
+    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150))
+    local thermostat = get()
+    T.eq(thermostat.target_temperature, 23)
+    T.eq(thermostat.target_temperature_min, 16)
 end
 
 function tests.an_undefined_fan_mode_is_no_fan_speed()

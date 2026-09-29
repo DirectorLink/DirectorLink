@@ -209,9 +209,11 @@ function setpointSteppers(thermostat, controls) {
   const fields = shownSetpoints(thermostat);
   if (!fields.length) return null;
   if (!controls) {
+    // One value (heat or cool mode) is named for that setpoint, the pair for both.
+    const label = fields.length > 1 ? t("climate.setpoints") : t(SETPOINT_TEXT[fields[0]].target, { name: thermostat.name });
     return h(
       "div",
-      { class: `stepper stepper-readonly ${fields.length > 1 ? "stepper-readonly-pair" : ""}`, role: "group", "aria-label": t("climate.setpoints") },
+      { class: `stepper stepper-readonly ${fields.length > 1 ? "stepper-readonly-pair" : ""}`, role: "group", "aria-label": label },
       fields.map((field) =>
         h(
           "div",

@@ -196,6 +196,57 @@ function tests.reported_changes_update_the_setpoints()
     T.same(sent(mock, patch, { heat_setpoint = 21 }), { { "SET_SETPOINT_HEAT", { CELSIUS = 21 } } })
 end
 
+-- The room temperature is shown as measured. Setpoints are whole °F in a °F project; a measured
+-- 71.6 °F is 22.0 °C, not 72 °F (22.2 °C).
+function tests.the_room_temperature_is_not_rounded_to_whole_fahrenheit()
+    local _, _, get = start({ scale = "FAHRENHEIT" }, function(project)
+        project.variables[31][1130] = "71.6"
+        project.variables[31][1131] = "22"
+    end)
+    T.eq(get().current_temperature, 22)
+    OnWatchedVariableChanged(31, 1130, "70.7")
+    T.eq(get().current_temperature, 21.5)
+    OnWatchedVariableChanged(31, 1100, "CELSIUS")
+    T.eq(get().current_temperature, 22, "1131 in a °C project")
+end
+
+-- A thermostat whose modes use only one setpoint reports only that one, even when the proxy has
+-- the other one's variables: the app shows and pushes every setpoint reported.
+function tests.a_thermostat_with_one_mode_reports_only_its_setpoint()
+    local mock, _, get, patch = start({ scale = "FAHRENHEIT" }, function(project)
+        project.variables[31][1120] = "Off,Cool"
+        project.variables[31][1104] = "Cool"
+    end)
+    local thermostat = get()
+    T.truthy(isNull(thermostat.heat_setpoint), "no heat mode, no heat setpoint")
+    T.eq(thermostat.cool_setpoint, 24.4)
+    T.eq(thermostat.target_temperature, 24.4)
+    T.same(sent(mock, patch, { cool_setpoint = 21.5 }), { { "SET_SETPOINT_COOL", { FAHRENHEIT = 71 } } }, "the heat setpoint is not pushed")
+    OnWatchedVariableChanged(31, 1104, "Off")
+    thermostat = get()
+    T.truthy(isNull(thermostat.heat_setpoint), "in Off too")
+    T.eq(thermostat.cool_setpoint, 24.4)
+
+    mock, _, get, patch = start({ scale = "FAHRENHEIT" }, function(project)
+        project.variables[31][1120] = "Off,Heat"
+        project.variables[31][1104] = "Heat"
+    end)
+    thermostat = get()
+    T.eq(thermostat.heat_setpoint, 20)
+    T.truthy(isNull(thermostat.cool_setpoint))
+    T.same(sent(mock, patch, { heat_setpoint = 25 }), { { "SET_SETPOINT_HEAT", { FAHRENHEIT = 77 } } }, "above the unused cool setpoint")
+end
+
+-- Without a reported deadband cool still stays above heat, as scene steps and the app require.
+function tests.without_a_deadband_cool_stays_above_heat()
+    local mock, _, _, patch = start({ scale = "FAHRENHEIT", deadband = false })
+    T.same(sent(mock, patch, { heat_setpoint = 25 }),
+        { { "SET_SETPOINT_COOL", { FAHRENHEIT = 78 } }, { "SET_SETPOINT_HEAT", { FAHRENHEIT = 77 } } })
+    local answer = refused(mock, patch, { heat_setpoint = 22, cool_setpoint = 22 }, 400, "INVALID_FIELD")
+    T.eq(answer.errors[1].field, "cool_setpoint")
+    refused(mock, patch, { heat_setpoint = 22.5, cool_setpoint = 23 }, 400, "INVALID_FIELD")
+end
+
 function tests.fan_speeds_are_the_ones_the_api_knows()
     local mock, _, get, patch = start()
     T.same(sent(mock, patch, { fan_speed = "on" }), { { "SET_MODE_FAN", { MODE = "On" } } })

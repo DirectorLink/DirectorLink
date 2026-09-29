@@ -226,11 +226,16 @@ function Views.isDual(device)
 end
 
 -- On a dual-setpoint thermostat `target_temperature` is the setpoint of the current mode (null in
--- auto and off); the three setpoint keys are null on single-setpoint ones.
+-- auto and off); the three setpoint keys are null on single-setpoint ones. A setpoint the
+-- thermostat does not use (no mode for it, such as heat on an Off,Cool one) is null too, even when
+-- the proxy has its variables: clients treat a reported setpoint as one they can set.
 function Views.thermostat(registry, device)
     local state = device.state or {}
     local capabilities = device.capabilities or {}
     local options = Views.thermostatOptions(device)
+    local dual = capabilities.setpoints == "dual"
+    local heat = dual and capabilities.has_heat and state.heat_setpoint_c or nil
+    local cool = dual and capabilities.has_cool and state.cool_setpoint_c or nil
     return {
         id = device.id,
         name = device.name,
@@ -245,9 +250,9 @@ function Views.thermostat(registry, device)
         activity = activity(state.hvac_state),
         fan_speed = state.fan_mode and slug(state.fan_mode) or Json.null,
         fan_speeds = options.fan_speeds,
-        setpoints = capabilities.setpoints == "dual" and "dual" or "single",
-        heat_setpoint = nullable(state.heat_setpoint_c),
-        cool_setpoint = nullable(state.cool_setpoint_c),
+        setpoints = dual and "dual" or "single",
+        heat_setpoint = nullable(heat),
+        cool_setpoint = nullable(cool),
         setpoint_deadband = nullable(capabilities.deadband_c),
     }
 end

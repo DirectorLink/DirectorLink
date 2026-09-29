@@ -46,8 +46,20 @@ test("the gap is the deadband rounded up to 0.5, and at least 0.5", () => {
   assert.equal(setpointGap({ setpoint_deadband: 2 }), 2, "°C deadband on the grid already");
   assert.equal(setpointGap({ setpoint_deadband: 0.1 * 20 }), 2, "float noise does not add a step");
   assert.equal(setpointGap({ setpoint_deadband: 0.2 }), 0.5);
-  assert.equal(setpointGap({ setpoint_deadband: null }), 0.5, "not reported");
-  assert.equal(setpointGap({}), 0.5);
+  assert.equal(setpointGap({ setpoint_deadband: null }), 1, "not reported");
+  assert.equal(setpointGap({ setpoint_deadband: 0 }), 1);
+  assert.equal(setpointGap({}), 1);
+});
+
+test("without a deadband the gap keeps cool above heat after whole-°F rounding", () => {
+  // The driver refuses a pair that is not at least 1 °F (or 0.1 °C) apart.
+  const fahrenheit = (celsius) => Math.floor((celsius * 9) / 5 + 32 + 0.5);
+  const gap = setpointGap({ setpoint_deadband: null });
+  for (let heat = 5; heat + gap <= 35; heat += 0.5) {
+    assert.ok(fahrenheit(heat + gap) > fahrenheit(heat), `heat ${heat}`);
+  }
+  assert.equal(fahrenheit(23), fahrenheit(22.5), "0.5 would not be enough");
+  assert.deepEqual(withSetpoint({ ...study, setpoint_deadband: null, cool_setpoint: 24 }, "heat_setpoint", 23.5), { heat_setpoint: 23.5, cool_setpoint: 24.5 });
 });
 
 test("the gap still holds after the controller rounds both setpoints to whole °F", () => {
@@ -76,6 +88,11 @@ test("the card shows the setpoint of heat or cool, and both in auto and off", ()
   // A thermostat that reports only one of them shows that one.
   assert.deepEqual(shownSetpoints({ ...study, heat_setpoint: null }), ["cool_setpoint"]);
   assert.deepEqual(shownSetpoints({ ...study, mode: null }), ["heat_setpoint", "cool_setpoint"]);
+  // A heat-only thermostat (modes off, heat): the driver reports no cool setpoint, so Off shows
+  // only Heat, and raising heat pushes nothing (driver/tests/test_dual_thermostat.lua).
+  const heatOnly = { ...study, mode: "off", modes: ["off", "heat"], cool_setpoint: null };
+  assert.deepEqual(shownSetpoints(heatOnly), ["heat_setpoint"]);
+  assert.deepEqual(withSetpoint(heatOnly, "heat_setpoint", 25), { heat_setpoint: 25, cool_setpoint: null });
 });
 
 test("a setpoint with room to spare changes alone", () => {

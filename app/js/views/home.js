@@ -23,6 +23,7 @@ import {
 } from "../model.js";
 import { installApp } from "../pwa.js";
 import { runScene } from "../scenes.js";
+import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
 import { connectScreen } from "./connect.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
@@ -215,20 +216,23 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     ];
   } else if (kind === "thermostat") {
     stateClass = climateIsOn(device) ? "is-cool" : "";
+    const parts = [
+      Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
+      climateIsOn(device) ? `${modeLabel(device.mode)} ${targetText(device)}` : modeLabel(device.mode),
+    ].filter(Boolean);
     content = [
       h("span", { class: "fav-icon" }, icon("climate")),
       name(device.name, "span", "fav-name"),
       room,
-      h(
-        "span",
-        { class: "fav-state" },
-        [
-          Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
-          climateIsOn(device) ? `${modeLabel(device.mode)} ${targetText(device)}` : modeLabel(device.mode),
-        ]
-          .filter(Boolean)
-          .join(" · ")
-      ),
+      isDual(device)
+        ? // "21.7° · Auto 20°–24.4°" is wider than a phone tile: the parts go on two lines rather
+          // than cut the range off.
+          h(
+            "span",
+            { class: "fav-state fav-state-parts" },
+            parts.map((part, index) => [index ? " " : null, h("span", {}, index < parts.length - 1 ? `${part}\u00a0·` : part)])
+          )
+        : h("span", { class: "fav-state" }, parts.join(" · ")),
     ];
   } else if (kind === "blind") {
     stateClass = blindIsOpen(device) ? "is-open" : "";

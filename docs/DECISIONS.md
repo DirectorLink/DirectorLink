@@ -264,7 +264,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Why:** One rule for PATCH, older clients and scene steps. A 1.0.0 client, or an existing "cool 24" scene, sends only `target_temperature`, and that works in heat and cool; sending both setpoints stays strict.
 
-**Consequence:** The API only gains fields, so 1.0.0 clients keep working; in auto they see no target. Room and whole-home scene steps include the new devices. The IDs and commands come from the contributor's Director; the rebuilt commands are covered by tests against the fake Director and are yet to be re-run on real hardware (docs/TESTING.md 0p).
+**Consequence:** The API only gains fields, so 1.0.0 clients keep working; in auto they see no target. Room and whole-home scene steps include the new devices. The IDs, values and command lists were read on the contributor's Director; no DirectorLink command has run on these devices yet. The rebuilt adapters are covered by tests against the fake Director and have not yet run on real hardware (docs/TESTING.md 0p).
 
 ## ADR-032 — The app's key stays off the home network; security review fixes
 

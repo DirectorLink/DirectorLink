@@ -19,9 +19,11 @@ const finite = (value) => (Number.isFinite(value) ? value : null);
 // The gap the app keeps between heat and cool: the deadband rounded up to the 0.5 steps the app
 // sends, and at least 0.5. Rounded up, it is still at least the deadband after the controller rounds
 // both setpoints to whole °F (a 1.7 °C deadband is 3 °F; a 2 °C gap is 3.6 °F).
+// Without a deadband the controller still wants cool above heat. 0.5 is not enough in a °F
+// project (22.5 and 23 are both 73 °F); 1 always is.
 export function setpointGap(thermostat) {
   const deadband = Number(thermostat?.setpoint_deadband);
-  if (!Number.isFinite(deadband) || deadband <= 0) return 0.5;
+  if (!Number.isFinite(deadband) || deadband <= 0) return 1;
   // The tiny margin keeps 2.0000000001 (float noise) at 2.
   return Math.max(0.5, Math.ceil(deadband * 2 - 1e-9) / 2);
 }

@@ -3209,13 +3209,13 @@ components:
             mode uses (heat or cool) and null in auto and off.
         heat_setpoint:
           type: [number, "null"]
-          description: Degrees Celsius. Dual-setpoint thermostats; null otherwise.
+          description: Degrees Celsius. Dual-setpoint thermostats with a heat or auto mode; null otherwise.
         cool_setpoint:
           type: [number, "null"]
-          description: Degrees Celsius. Dual-setpoint thermostats; null otherwise.
+          description: Degrees Celsius. Dual-setpoint thermostats with a cool or auto mode; null otherwise.
         setpoint_deadband:
           type: [number, "null"]
-          description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats.
+          description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats. When not reported, cool must still be above heat (by 1 °F in a Fahrenheit project, 0.1 °C otherwise).
 
     ThermostatUpdate:
       type: object
