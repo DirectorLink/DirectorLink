@@ -181,7 +181,15 @@ function roomRow(room, index, hidden, { admin, personal }) {
   );
 }
 
-// The home's room order, for everyone (PUT /v1/rooms/order; drivers before 0.12.0 answer 404).
+// Why the room order was not saved. Drivers before 0.12.0 have no room order (404, 405), and 1.0.0
+// refuses PUT in the sealed requests the app sends at home and away (400 BAD_REQUEST, "Remote
+// requests are GET, POST, PATCH or DELETE on /v1/..."): both need a newer DirectorLink.
+export function roomOrderErrorText(error) {
+  const older = error?.status === 404 || error?.status === 405 || (error?.status === 400 && error?.code === "BAD_REQUEST");
+  return older ? t("settings.rooms.updateDriverOrder") : errorText(error);
+}
+
+// The home's room order, for everyone (PUT /v1/rooms/order).
 async function moveRoom(index, offset) {
   const before = state.rooms;
   const target = index + offset;
@@ -196,7 +204,7 @@ async function moveRoom(index, offset) {
     if (Array.isArray(answer?.items)) state.rooms = answer.items;
   } catch (error) {
     state.rooms = before;
-    ui.roomOrderMessage = { kind: "error", text: error?.status === 404 || error?.status === 405 ? t("settings.rooms.updateDriverOrder") : errorText(error) };
+    ui.roomOrderMessage = { kind: "error", text: roomOrderErrorText(error) };
   }
   notify();
 }

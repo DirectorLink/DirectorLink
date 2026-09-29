@@ -286,14 +286,15 @@ end
 
 -- Composer changes (a device moved to another room, renamed, added or removed) without restarting
 -- the driver: the action Refresh Project, and Director's project events a few seconds after the
--- last one. The events are watched once a project was read.
+-- last one (a refresh they started that fails is tried once more). The events are watched once a
+-- project was read.
 local refreshProject
 
 local function watchProject()
     ProjectEvents.start({
         ownIds = { (Registry.metadata or {}).bridgeDeviceId },
         onChange = function(events)
-            refreshProject("Composer changes (" .. events .. ")")
+            return refreshProject("Composer changes (" .. events .. ")")
         end,
     })
 end

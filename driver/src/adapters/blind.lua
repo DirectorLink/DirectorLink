@@ -1,34 +1,42 @@
 local Clock = require("src.core.clock")
 local Log = require("src.core.log")
 
--- Blind proxy (blind.c4i). Commands are the proxy's own: SET_LEVEL_TARGET {LEVEL_TARGET = 0..100}
--- (0 closed, 100 open) and STOP. The protocol driver reports MOVING / STOPPED {LEVEL} to the
--- proxy, which keeps its variables. On Director 3.4.3 with KNX blinds they are 1000 Open,
--- 1001 Fully Closed, 1002 Stopped, 1003 Fully Open, 1004 Level, 1005 Target Level, 1006 Type,
--- 1007 Movement, 1008 Opening and 1009 Closing; they are found by name. A Level outside 0..100 is
--- unknown: -255 after a reboot on a blind without a KNX status address, -155 when the actuator
--- reports 255 ("position unknown"). The proxy sets Level when a move starts (its estimate), when
--- it ends (the driver's timer) and whenever the actuator reports.
+-- Blind proxy (blind.c4i). Commands are the proxy's own: SET_LEVEL_TARGET {LEVEL_TARGET} and STOP.
+-- The protocol driver reports MOVING {LEVEL_TARGET, RAMP_RATE, LEVEL} and STOPPED {LEVEL} to the
+-- proxy, which keeps its variables and tells Control4's apps (<moving><level>100</level>
+-- <level_target>0</level_target>..., then <stopped>...). On Director 3.4.3 with KNX blinds they are
+-- 1000 Open, 1001 Fully Closed, 1002 Stopped, 1003 Fully Open, 1004 Level, 1005 Target Level,
+-- 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing; they are found by name. Whether a shade
+-- moves is told by Opening, Closing and Stopped (Snap One's proxy documentation). Movement is the
+-- shade's movement type (Up to Down, Down to Up, ...), not whether it moves: it is only logged.
+-- Their values during a move have not been seen on a real controller, so each one is logged at
+-- debug level with its raw value. A Level outside the shade's range is unknown: -255 after a
+-- reboot on a blind without a KNX status address, -155 when the actuator reports 255 ("position
+-- unknown"). The proxy sets Level when a move starts (where it starts from), when it ends (the
+-- driver's timer) and whenever the actuator reports, on KNX about a second after the stop.
 --
 -- What a shade can do comes from the proxy's setup, which Control4's own apps read with the UI
 -- request GET_SETUP: <blind_setup><has_level>True</has_level><level_discrete_control>True
--- </level_discrete_control><can_stop>True</can_stop>... level_discrete_control is False on shades
--- that only open and close fully (a KNX blind without a percent address, whose driver sends up for
--- any target above 0). Without a usable answer a shade is taken to do both, as before 1.1.0.
+-- </level_discrete_control><can_stop>True</can_stop>...<levels minimum="0" maximum="100" ...>
+-- <level name="Closed" ... level="0" .../><level name="Open" ... level="100" .../>...
+-- level_discrete_control is False on shades that only open and close fully (a KNX blind without a
+-- percent address, whose driver sends up for any target above 0). The Closed and Open levels are
+-- the shade's range: 0 and 100 on KNX, and the API shows another range (0 closed, 2 open) as 0 to
+-- 100 too. Without a usable answer a shade is taken to do both, from 0 to 100, as before 1.1.0.
 local Blind = {}
 
 -- The setup is read again when the blinds are listed and it is older than this: an installer can
 -- change the protocol driver without changing the project.
 Blind.SETUP_TTL_SECONDS = 600
 
--- Proxy variables by what they tell, as the names they may have.
+-- Proxy variables by what they tell, as the names they may have. Movement is only logged.
 local VARIABLES = {
     level = { ["level"] = true, ["current level"] = true },
     target = { ["target level"] = true, ["level target"] = true },
     stopped = { ["stopped"] = true },
-    movement = { ["movement"] = true },
     opening = { ["opening"] = true },
     closing = { ["closing"] = true },
+    movement = { ["movement"] = true },
 }
 
 local tracked = {}
@@ -36,17 +44,37 @@ local tracked = {}
 -- when it changes.
 local loggedSetups = {}
 
-local function position(value)
+-- A level as a position from 0 (closed) to 100 (open); nil when it is outside the shade's range
+-- (unknown). `range`: { closed, open, unknown } for a shade whose levels are not 0 to 100.
+local function position(value, range)
     local number = tonumber(value)
-    if not number or number < 0 or number > 100 then
+    if not number then
+        return nil
+    end
+    if range then
+        if number < range.closed or number > range.open or number == range.unknown then
+            return nil
+        end
+        number = (number - range.closed) * 100 / (range.open - range.closed)
+    elseif number < 0 or number > 100 then
         return nil
     end
     return math.floor(number + 0.5)
 end
 
--- True or false as a variable or the setup says it ("1", "True", ...); nil when it says neither.
+-- The level to send for a position from 0 to 100.
+local function levelOf(target, range)
+    target = math.floor(target + 0.5)
+    if not range then
+        return target
+    end
+    return range.closed + math.floor((range.open - range.closed) * target / 100 + 0.5)
+end
+
+-- True or false as a variable or the setup says it ("1", "True", " false ", ...); nil when it says
+-- neither.
 local function flag(value)
-    local text = string.lower(tostring(value or ""))
+    local text = string.lower(tostring(value or "")):gsub("^%s+", ""):gsub("%s+$", "")
     if text == "1" or text == "true" or text == "yes" or text == "on" then
         return true
     elseif text == "0" or text == "false" or text == "no" or text == "off" then
@@ -55,40 +83,26 @@ local function flag(value)
     return nil
 end
 
--- Movement in words ("Opening", "Moving Down", "Stopped", ...). Anything else, a number among
--- them, is left unread until a real controller shows its format (it is logged).
-local function movementOf(value)
-    local text = string.lower(tostring(value or "")):gsub("^%s+", ""):gsub("%s+$", "")
-    local function has(word)
-        return text:find(word, 1, true) ~= nil
-    end
-    local function last(word)
-        return text == word or text:sub(-#word - 1) == " " .. word
-    end
-    if has("opening") or has("raising") or last("up") then
-        return "opening"
-    elseif has("closing") or has("lowering") or last("down") then
-        return "closing"
-    elseif has("stop") or text == "idle" or text == "none" then
-        return "stopped"
-    end
-    return nil
-end
-
--- Moving (true/false, nil when the proxy does not tell) and the direction, if known.
-local function motion(values)
+-- Moving (true/false, nil when the proxy does not tell) and the direction, if known. Opening or
+-- Closing tell both; otherwise Stopped false is moving, unless the shade is where it is going
+-- (Target Level is where it stops, so it equals Level at rest, and a Stopped that was never set
+-- again must not keep a shade moving).
+local function motion(values, level, target)
     local opening, closing = flag(values.opening), flag(values.closing)
-    local movement = movementOf(values.movement)
     if opening or closing then
+        if opening and closing then
+            return true
+        end
         return true, opening and "opening" or "closing"
-    elseif movement == "opening" or movement == "closing" then
-        return true, movement
-    elseif opening == false or closing == false or movement == "stopped" then
-        return false
     end
     local stopped = flag(values.stopped)
-    if stopped ~= nil then
-        return not stopped
+    if stopped == false then
+        return not (level ~= nil and level == target)
+    elseif stopped == true then
+        return false
+    end
+    if opening == false or closing == false then
+        return false
     end
     return nil
 end
@@ -96,9 +110,9 @@ end
 -- The state the API shows, from the variables' last values.
 local function update(device, info)
     local state = device.state
-    state.position = position(info.values.level)
-    state.target_position = position(info.values.target)
-    local moving, direction = motion(info.values)
+    state.position = position(info.values.level, info.range)
+    state.target_position = position(info.values.target, info.range)
+    local moving, direction = motion(info.values, state.position, state.target_position)
     if moving and not direction and state.position and state.target_position and state.position ~= state.target_position then
         direction = state.target_position > state.position and "opening" or "closing"
     end
@@ -116,11 +130,37 @@ local function deviceVariables(deviceId)
     return {}
 end
 
+local function setupValue(xml, name)
+    return xml and xml:match("<" .. name .. ">%s*([^<]-)%s*</" .. name .. ">")
+end
+
 local function setupFlag(xml, name)
+    return flag(setupValue(xml, name))
+end
+
+local function attribute(tag, name)
+    return tag and tag:match("%s" .. name .. '%s*=%s*"([^"]*)"')
+end
+
+-- The shade's levels from its setup: the levels named Closed and Open, else level_closed and
+-- level_open (as the proxy's capabilities are named), else the minimum and maximum of <levels>.
+-- nil for 0 to 100, and when the setup does not say (or says something impossible).
+local function levelRange(xml)
     if not xml then
         return nil
     end
-    return flag(xml:match("<" .. name .. ">%s*([^<]-)%s*</" .. name .. ">"))
+    local named = {}
+    for tag in xml:gmatch("<level%s[^>]*>") do
+        local name = string.lower(attribute(tag, "name") or "")
+        named[name] = named[name] or tonumber(attribute(tag, "level"))
+    end
+    local levels = xml:match("<levels%s[^>]*>")
+    local closed = named.closed or tonumber(setupValue(xml, "level_closed")) or tonumber(attribute(levels, "minimum"))
+    local open = named.open or tonumber(setupValue(xml, "level_open")) or tonumber(attribute(levels, "maximum"))
+    if not closed or not open or open <= closed or (closed == 0 and open == 100) then
+        return nil
+    end
+    return { closed = closed, open = open, unknown = tonumber(attribute(levels, "unknown")) }
 end
 
 -- Reads what the shade can do (GET_SETUP on the proxy).
@@ -139,6 +179,7 @@ local function readSetup(device, info, now)
     device.capabilities.position = discrete == true or (discrete == nil and hasLevel ~= false)
     device.capabilities.stop = setupFlag(xml, "can_stop") ~= false
     device.actions = device.capabilities.stop and { "set_position", "stop" } or { "set_position" }
+    info.range = levelRange(xml)
 end
 
 function Blind.matches(device)
@@ -233,6 +274,7 @@ function Blind.refresh(device, now)
     now = now or Clock.now()
     if info and device.capabilities and math.abs(now - info.setupAt) >= Blind.SETUP_TTL_SECONDS then
         readSetup(device, info, now)
+        update(device, info)
     end
 end
 
@@ -278,7 +320,8 @@ local function send(deviceId, command, params)
 end
 
 function Blind.execute(device, action, params)
-    if not tracked[device.id] or not device.supported then
+    local info = tracked[device.id]
+    if not info or not device.supported then
         return false, {
             code = "DEVICE_NOT_SUPPORTED",
             message = "This blind is not initialized",
@@ -298,7 +341,7 @@ function Blind.execute(device, action, params)
         if failure then
             return false, failure
         end
-        sent, sendError = send(device.id, "SET_LEVEL_TARGET", { LEVEL_TARGET = math.floor(target + 0.5) })
+        sent, sendError = send(device.id, "SET_LEVEL_TARGET", { LEVEL_TARGET = levelOf(target, info.range) })
     elseif action == "stop" then
         local failure = refusal(device, action, params)
         if failure then

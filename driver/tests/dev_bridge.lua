@@ -45,11 +45,13 @@ mock.weather = {
 }
 
 -- Blinds move in the fake home as KNX blinds do: SECONDS_PER_PERCENT per percent, reporting their
--- level every few seconds and when they stop. A shade that only opens and closes fully goes all the
--- way (its driver sends up for any target above 0). Moves advance whenever a request comes in.
+-- level every few seconds and when they stop, and the actuator's own report of where it is about a
+-- second after the stop. A shade that only opens and closes fully goes all the way (its driver sends
+-- up for any target above 0). Movement is the shade's movement type and does not change. Moves
+-- advance whenever a request comes in.
 local SECONDS_PER_PERCENT = 0.3
 local REPORT_SECONDS = 3
-local moves, commandsSeen = {}, #mock.commands
+local moves, actuators, commandsSeen = {}, {}, #mock.commands
 
 local function shadeVariable(id, name)
     for variableId, variableName in pairs(mock.project.variableNames[id] or {}) do
@@ -73,13 +75,20 @@ local function levelNow(move, now)
     return math.floor(move.from + (move.to - move.from) * share + 0.5)
 end
 
-local function stopShade(id, level)
+local function stopShade(id, level, now)
     moves[id] = nil
-    report(id, { Level = tostring(level), Stopped = "1", Opening = "0", Closing = "0", Movement = "Stopped" })
+    report(id, { Level = tostring(level), ["Target Level"] = tostring(level), Stopped = "1", Opening = "0", Closing = "0" })
+    actuators[id] = { level = level, at = now + 1 }
 end
 
 local function advanceShades()
     local now = os.time()
+    for id, actuator in pairs(actuators) do
+        if now >= actuator.at then
+            actuators[id] = nil
+            report(id, { Level = tostring(actuator.level) })
+        end
+    end
     for index = commandsSeen + 1, #mock.commands do
         local command = mock.commands[index]
         local id = command.device
@@ -87,7 +96,7 @@ local function advanceShades()
         if device and string.lower(device.driverFileName or "") == "blind.c4i" then
             local level = moves[id] and levelNow(moves[id], now) or tonumber((mock.project.variables[id] or {})[shadeVariable(id, "Level")])
             if command.command == "STOP" then
-                stopShade(id, level or 0)
+                stopShade(id, level or 0, now)
             elseif command.command == "SET_LEVEL_TARGET" then
                 local to = tonumber(command.params.LEVEL_TARGET) or 0
                 local setup = (mock.project.blindSetups or {})[id] or ""
@@ -98,8 +107,9 @@ local function advanceShades()
                 if from ~= to then
                     local opening = to > from
                     moves[id] = { from = from, to = to, started = now, reported = now }
+                    actuators[id] = nil
                     report(id, { ["Target Level"] = tostring(to), Stopped = "0", Opening = opening and "1" or "0",
-                        Closing = opening and "0" or "1", Movement = opening and "Opening" or "Closing" })
+                        Closing = opening and "0" or "1" })
                 end
             end
         end
@@ -108,7 +118,7 @@ local function advanceShades()
     for id, move in pairs(moves) do
         local level = levelNow(move, now)
         if level == move.to then
-            stopShade(id, level)
+            stopShade(id, level, now)
         elseif now - move.reported >= REPORT_SECONDS then
             move.reported = now
             report(id, { Level = tostring(level) })

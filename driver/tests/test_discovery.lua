@@ -54,6 +54,28 @@ local function fire(timer)
     timer.callback()
 end
 
+-- Timers that have neither fired nor been cancelled.
+local function waitingTimers(mock)
+    local count = 0
+    for _, timer in ipairs(mock.timers) do
+        if not timer.fired and not timer.cancelled then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+-- The driver's log entries with this message and level.
+local function loggedAt(message, level)
+    local count = 0
+    for _, entry in ipairs(logged(message)) do
+        if entry.level == level then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 function tests.the_composer_action_picks_up_moved_renamed_added_and_removed_devices()
     local mock, key = start()
     T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 10, "the kitchen shutter starts in the kitchen")
@@ -208,6 +230,130 @@ function tests.events_about_directorlink_itself_are_ignored()
     T.truthy(event(mock, "OnPIP", {}), "Refresh Navigators always counts")
     OnSystemEvent("not an event at all")
     OnSystemEvent(nil)
+    T.eq(mock.properties["Status"], "Ready")
+end
+
+-- Director sends only the events registered, so a payload whose name is not known here is still a
+-- change; it is logged first, whatever it is.
+function tests.an_event_without_a_known_name_still_counts()
+    local mock, key = start(function()
+        Properties["Log Level"] = "Debug"
+    end)
+    Mock.moveDevice(mock.project, 51, 11)
+    for _, payload in ipairs({ '<event><param name="iditem">51</param></event>', "", 12, {} }) do
+        local before = #mock.timers
+        OnSystemEvent(payload)
+        T.eq(#mock.timers, before + 1, "a refresh waits: " .. tostring(payload))
+        T.eq(mock.timers[#mock.timers].delay, 5000)
+    end
+    local raw = logged("project event")
+    T.eq(#raw, 4, "each payload is logged")
+    T.eq(raw[1].data.event, "unnamed event")
+    T.contains(raw[1].data.data, '<param name="iditem">51</param>')
+    fire(mock.timers[#mock.timers])
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 11)
+    T.eq(logged("project rediscovered")[1].data.reason, "Composer changes (unnamed event)")
+
+    local before = #mock.timers
+    OnSystemEvent('<event><param name="iditem">572</param></event>')
+    T.eq(#mock.timers, before, "one about DirectorLink alone is still left out")
+    T.eq(#logged("project event"), 5)
+end
+
+-- A refresh started by events that fails (Director busy, or answering with an empty project while it
+-- loads one) is tried once more a minute later.
+function tests.a_refresh_after_events_that_fails_is_tried_again_once()
+    local mock, key = start()
+    Mock.moveDevice(mock.project, 51, 11)
+    local devices = C4.GetDevices
+    function C4:GetDevices()
+        error("Director is busy")
+    end
+    fire(event(mock, "OnItemMoved", { iditem = 51, idparent = 11 }))
+    T.eq(#logged("project refresh failed; the project read before stays in use"), 1)
+    local retry = mock.timers[#mock.timers]
+    T.truthy(not retry.fired and not retry.cancelled, "a second try waits")
+    T.eq(retry.delay, 60000)
+    T.eq(logged("the project refresh is tried again")[1].data.events, "OnItemMoved")
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 10, "the project read before stays in use")
+
+    -- It fails too: no third try (the next change, or the action, reads the project).
+    local waiting = waitingTimers(mock)
+    fire(retry)
+    T.eq(#logged("project refresh failed; the project read before stays in use"), 2)
+    T.eq(waitingTimers(mock), waiting - 1)
+
+    -- A new change gets a second try of its own; this one works.
+    fire(event(mock, "OnItemNameChanged", { iditem = 20 }))
+    C4.GetDevices = devices
+    fire(mock.timers[#mock.timers])
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 11)
+    T.eq(logged("project rediscovered")[1].data.reason, "Composer changes (OnItemNameChanged)")
+    T.eq(logged("project rediscovered")[1].data.moved, 1)
+
+    -- The action is not tried again: whoever ran it sees what happened.
+    function C4:GetDevices()
+        error("Director is busy")
+    end
+    waiting = waitingTimers(mock)
+    refresh()
+    T.eq(#logged("project refresh failed; the project read before stays in use"), 4)
+    T.eq(waitingTimers(mock), waiting)
+    C4.GetDevices = devices
+end
+
+-- OnPIP alone (Refresh Navigators, and changes to bindings, names or media) reads the project at
+-- most every two minutes, and once more at their end; other events and the action are not held back.
+function tests.refresh_navigators_alone_reads_the_project_at_most_every_two_minutes()
+    local mock = start()
+    local first = event(mock, "OnPIP", {})
+    T.eq(first.delay, 5000)
+    fire(first)
+    T.eq(#logged("project rediscovered"), 1)
+
+    mock.clock = mock.clock + 10000
+    local later = event(mock, "OnPIP", {})
+    T.truthy(later.delay > 105000 and later.delay <= 110000, "at the end of the two minutes: " .. tostring(later.delay))
+    T.eq(event(mock, "OnPIP", {}), nil, "the next ones wait for the same refresh")
+    fire(later)
+    T.eq(#logged("project rediscovered"), 2)
+    T.eq(logged("project rediscovered")[2].data.reason, "Composer changes (OnPIP)")
+
+    mock.clock = mock.clock + 1000
+    local held = event(mock, "OnPIP", {})
+    T.truthy(held.delay > 100000)
+    local moved = event(mock, "OnItemMoved", { iditem = 51 })
+    T.eq(moved.delay, 5000, "an item event is not held back")
+    T.truthy(held.cancelled)
+    fire(moved)
+    T.eq(logged("project rediscovered")[3].data.reason, "Composer changes (OnPIP, OnItemMoved)")
+    refresh()
+    T.eq(#logged("project rediscovered"), 4, "nor the action")
+
+    mock.clock = mock.clock + 120000
+    T.eq(event(mock, "OnPIP", {}).delay, 5000, "two minutes later OnPIP alone reads it as before")
+end
+
+-- A refresh initializes every device again: what the adapters log about each one goes to debug
+-- level then (on the contributor's home, 22 thermostat lines per refresh pushed door openings out
+-- of the log). The first discovery logs it at info level.
+function tests.a_refresh_logs_the_devices_again_at_debug_level_only()
+    local mock = Mock.startDriver(Mock.demoProject(), nil, nil, function()
+        Properties["Log Level"] = "Debug"
+    end)
+    local function thermostats(level)
+        return loggedAt("initialized thermostat", level) + loggedAt("initialized dual-setpoint thermostat", level)
+    end
+    T.eq(thermostats("info"), 3, "the first discovery")
+    T.eq(thermostats("debug"), 0)
+    refresh()
+    T.eq(thermostats("info"), 3, "not again at info level")
+    T.eq(thermostats("debug"), 3, "but at debug level")
+    T.eq(loggedAt("project rediscovered", "info"), 1)
+    T.eq(loggedAt("initialized 17 controllable proxies", "info"), 2, "the count stays at info level")
+    T.eq(loggedAt("unsupported device 27: Light State variable (1000) is unavailable", "info"), 2, "and devices that failed")
+    local Log = require("src.core.log")
+    T.eq(Log.info("test", "after the refresh").level, "info", "and the log is as before")
     T.eq(mock.properties["Status"], "Ready")
 end
 

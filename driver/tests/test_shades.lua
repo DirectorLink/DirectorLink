@@ -1,7 +1,8 @@
 -- Shades on the blind proxy (1.1.0): what a shade can do, from its setup (GET_SETUP), and what it is
--- doing, from the proxy's Target Level and movement variables, as KNX blinds show them on
+-- doing, from the proxy's Target Level, Opening, Closing and Stopped, as KNX blinds show them on
 -- Director 3.4.3 (Mock.withShade). 52 goes anywhere and stops; 53 only opens and closes fully and
--- cannot stop; 50 and 51 are proxies that answer no setup and report only their level.
+-- cannot stop; 50 and 51 are proxies that answer no setup and report only their level. Movement is
+-- the shade's movement type ("Up to Down"), never whether it moves.
 
 local Mock = require("c4mock")
 local T = require("helpers")
@@ -43,14 +44,14 @@ function tests.a_shade_reports_what_it_can_do_and_where_it_is_going()
     T.eq(shade.target_position, 35)
 
     -- The move starts: the proxy says where to, which way, and (its estimate) the level.
-    Mock.setShade(mock, 52, { ["Target Level"] = "80", Stopped = "0", Opening = "1", Movement = "Opening", Level = "40" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "80", Stopped = "0", Opening = "1", Level = "40" })
     shade = blind(mock, key, 52)
     T.eq(shade.moving, true)
     T.eq(shade.direction, "opening")
     T.eq(shade.target_position, 80)
     T.eq(shade.position, 40)
     -- And stops where it was sent.
-    Mock.setShade(mock, 52, { Stopped = "1", Opening = "0", Movement = "Stopped", Level = "80" })
+    Mock.setShade(mock, 52, { Stopped = "1", Opening = "0", Level = "80" })
     shade = blind(mock, key, 52)
     T.eq(shade.moving, false)
     T.eq(shade.direction, Json.null)
@@ -58,8 +59,57 @@ function tests.a_shade_reports_what_it_can_do_and_where_it_is_going()
 
     local closing = T.http(mock, "GET", "/v1/blinds?room_id=11", { key = key }).json.items
     T.eq(#closing, 2)
-    Mock.setShade(mock, 52, { ["Target Level"] = "20", Stopped = "0", Closing = "1", Movement = "Closing" })
+    Mock.setShade(mock, 52, { ["Target Level"] = "20", Stopped = "0", Closing = "1" })
     T.eq(blind(mock, key, 52).direction, "closing")
+end
+
+-- Movement (1007) is the movement type the proxy's setup offers (Snap One: "A string
+-- representation of the enumeration for the movement"). Read as motion, every shade at rest showed
+-- Closing... (Up to Down) or Opening... (Down to Up), and the app read the blinds every 2 s.
+function tests.a_shade_at_rest_is_not_moving_whatever_its_movement_type()
+    local types = { "Up to Down", "Down to Up", "Open/Close", "Out to In", "Left to Right", "Right to Left", "Up-Down", "Down-Up", "1", "2", "0" }
+    for _, movement in ipairs(types) do
+        local project = Mock.withShades(Mock.project())
+        project.variables[52][1007] = movement
+        local mock, key = start(project)
+        local shade = blind(mock, key, 52)
+        T.eq(shade.moving, false, movement)
+        T.eq(shade.direction, Json.null, movement)
+        T.eq(shade.position, 35, movement)
+    end
+
+    -- A move of a shade that goes up to down, and its stop: Movement stays as it is.
+    local mock, key = start()
+    Mock.setShade(mock, 52, { ["Target Level"] = "0", Stopped = "0", Closing = "1", Level = "35" })
+    local shade = blind(mock, key, 52)
+    T.eq(shade.moving, true)
+    T.eq(shade.direction, "closing")
+    Mock.setShade(mock, 52, { Stopped = "1", Closing = "0", Level = "0", ["Target Level"] = "0" })
+    shade = blind(mock, key, 52)
+    T.eq(shade.moving, false)
+    T.eq(shade.direction, Json.null)
+    T.eq(shade.position, 0)
+    -- Movement changing (an installer picks another type) moves nothing.
+    Mock.setShade(mock, 52, { Movement = "Down to Up" })
+    T.eq(blind(mock, key, 52).moving, false)
+end
+
+-- How Director writes the booleans has not been seen: 1/0, true/false, True/False, with spaces.
+function tests.movement_booleans_are_read_however_they_are_written()
+    for _, spelling in ipairs({ { "1", "0" }, { "true", "false" }, { "True", "False" }, { " TRUE ", " FALSE " } }) do
+        local yes, no = spelling[1], spelling[2]
+        local mock, key = start()
+        Mock.setShade(mock, 52, { Stopped = yes, Opening = no, Closing = no })
+        T.eq(blind(mock, key, 52).moving, false, "at rest: " .. yes)
+        Mock.setShade(mock, 52, { ["Target Level"] = "90", Stopped = no, Opening = yes })
+        local shade = blind(mock, key, 52)
+        T.eq(shade.moving, true, "opening: " .. yes)
+        T.eq(shade.direction, "opening", yes)
+        Mock.setShade(mock, 52, { Opening = no, Closing = yes, ["Target Level"] = "10" })
+        T.eq(blind(mock, key, 52).direction, "closing", yes)
+        Mock.setShade(mock, 52, { Stopped = yes, Closing = no })
+        T.eq(blind(mock, key, 52).moving, false, "stopped: " .. yes)
+    end
 end
 
 function tests.a_shade_that_only_opens_and_closes_takes_only_0_and_100()
@@ -140,18 +190,28 @@ function tests.movement_is_read_from_whichever_variables_the_proxy_has()
     local shade = blind(mock, key, 52)
     T.eq(shade.moving, true, "only Stopped: not stopped is moving")
     T.eq(shade.direction, "closing", "towards the target")
+    Mock.setShade(mock, 52, { Level = "10" })
+    T.eq(blind(mock, key, 52).moving, false, "at its target it is not moving, even if Stopped stays false")
 
+    -- Opening and Closing both clear but Stopped false: moving, the way the target says.
+    mock, key = start()
+    Mock.setShade(mock, 52, { Stopped = "0", ["Target Level"] = "90" })
+    shade = blind(mock, key, 52)
+    T.eq(shade.moving, true)
+    T.eq(shade.direction, "opening")
+    Mock.setShade(mock, 52, { ["Target Level"] = "-255" })
+    shade = blind(mock, key, 52)
+    T.eq(shade.moving, true, "where to is not known")
+    T.eq(shade.direction, Json.null)
+
+    -- Only Level and Movement: whether it moves is not known, whatever Movement says.
     mock, key = start(shadeWith({ Level = true, Movement = true }))
-    for value, expected in pairs({ ["Moving Down"] = "closing", ["UP"] = "opening", ["Opening"] = "opening", ["closing"] = "closing" }) do
+    for _, value in ipairs({ "Up to Down", "Down to Up", "Moving Down", "Opening", "Closing", "Stopped", "2" }) do
         Mock.setShade(mock, 52, { Movement = value })
         shade = blind(mock, key, 52)
-        T.eq(shade.moving, true, value)
-        T.eq(shade.direction, expected, value)
+        T.eq(shade.moving, Json.null, value)
+        T.eq(shade.direction, Json.null, value)
     end
-    Mock.setShade(mock, 52, { Movement = "Stopped" })
-    T.eq(blind(mock, key, 52).moving, false)
-    Mock.setShade(mock, 52, { Movement = "2" })
-    T.eq(blind(mock, key, 52).moving, Json.null, "a number is not read until its meaning is known")
 
     mock, key = start(shadeWith({ Level = true, Opening = true, Closing = true }))
     Mock.setShade(mock, 52, { Opening = "True" })
@@ -160,13 +220,13 @@ function tests.movement_is_read_from_whichever_variables_the_proxy_has()
     T.eq(blind(mock, key, 52).moving, false)
 
     -- Spelled as other proxies spell their variables.
-    local project = shadeWith({ Level = true, ["Target Level"] = true, Movement = true })
-    project.variableNames[52] = { [1004] = "LEVEL", [1005] = "TARGET_LEVEL", [1007] = "MOVEMENT" }
+    local project = shadeWith({ Level = true, ["Target Level"] = true, Closing = true, Movement = true })
+    project.variableNames[52] = { [1004] = "LEVEL", [1005] = "TARGET_LEVEL", [1007] = "MOVEMENT", [1009] = "CLOSING" }
     mock, key = start(project)
-    Mock.setShade(mock, 52, { TARGET_LEVEL = "70", MOVEMENT = "Opening", LEVEL = "36" })
+    Mock.setShade(mock, 52, { TARGET_LEVEL = "20", CLOSING = "1", LEVEL = "36" })
     shade = blind(mock, key, 52)
-    T.eq(shade.target_position, 70)
-    T.eq(shade.direction, "opening")
+    T.eq(shade.target_position, 20)
+    T.eq(shade.direction, "closing")
     T.eq(shade.position, 36)
 end
 
@@ -211,18 +271,82 @@ function tests.the_raw_setup_and_variables_are_logged_at_debug_level()
     for _, entry in ipairs(logged("proxy variables")) do
         variables[entry.data.device_id] = entry.data.variables
     end
+    T.contains(variables[52], "1002=Stopped:1")
     T.contains(variables[52], "1005=Target Level:35")
-    T.contains(variables[52], "1007=Movement:Stopped")
+    T.contains(variables[52], "1007=Movement:Up to Down")
     T.contains(variables[52], "1008=Opening:0")
 end
 
 function tests.movement_changes_are_logged_with_their_raw_value()
     local mock = start(nil, debugLevel)
-    Mock.setShade(mock, 52, { Movement = "Opening" })
+    Mock.setShade(mock, 52, { Opening = "True" })
     local entry = logged("movement changed")[1]
-    T.eq(entry.data.variable, "movement")
-    T.eq(entry.data.value, "Opening")
+    T.eq(entry.data.variable, "opening")
+    T.eq(entry.data.value, "True")
     T.eq(entry.data.moving, true)
+    -- Movement too, though it moves nothing.
+    Mock.setShade(mock, 52, { Opening = "False" })
+    Mock.setShade(mock, 52, { Movement = "Down to Up" })
+    entry = logged("movement changed")[3]
+    T.eq(entry.data.variable, "movement")
+    T.eq(entry.data.value, "Down to Up")
+    T.eq(entry.data.moving, false)
+end
+
+-- A shade whose levels are not 0 to 100 (Snap One: level_open defaults to 1; a shade that can stop
+-- uses 0 closed, 1 in between and 2 open). The API shows 0 to 100 as for every shade.
+function tests.a_shade_with_other_levels_shows_them_as_0_to_100()
+    local project = Mock.withShade(Mock.project(), { id = 52, protocol = 114, name = "Terrace Shade", level = "1", open = 2 })
+    local mock, key = start(project)
+    local shade = blind(mock, key, 52)
+    T.eq(shade.position, 50)
+    T.eq(shade.target_position, 50)
+    Mock.setShade(mock, 52, { Level = "2", ["Target Level"] = "2" })
+    T.eq(blind(mock, key, 52).position, 100)
+    Mock.setShade(mock, 52, { Level = "3" })
+    T.eq(blind(mock, key, 52).position, Json.null, "outside its levels: unknown")
+    Mock.setShade(mock, 52, { Level = "0", ["Target Level"] = "2", Stopped = "0", Opening = "1" })
+    shade = blind(mock, key, 52)
+    T.eq(shade.target_position, 100)
+    T.eq(shade.direction, "opening")
+
+    for position, level in pairs({ [100] = 2, [0] = 0, [50] = 1, [80] = 2 }) do
+        T.eq(T.http(mock, "PATCH", "/v1/blinds/52", { key = key, body = { position = position } }).status, 202)
+        T.same(mock.commands[#mock.commands].params, { LEVEL_TARGET = level }, "position " .. position)
+    end
+
+    -- Levels given as the capabilities are named, without the named levels: 0 to 5.
+    project = Mock.withShade(Mock.project(), {
+        id = 52, protocol = 114, name = "Terrace Shade", level = "5",
+        setup = "<blind_setup><has_level>True</has_level><level_closed>0</level_closed><level_open>5</level_open></blind_setup>",
+    })
+    mock, key = start(project)
+    T.eq(blind(mock, key, 52).position, 100)
+    T.http(mock, "PATCH", "/v1/blinds/52", { key = key, body = { position = 60 } })
+    T.same(mock.commands[#mock.commands].params, { LEVEL_TARGET = 3 })
+
+    -- Levels that make no sense are not used: 0 to 100, as before.
+    project = Mock.withShade(Mock.project(), {
+        id = 52, protocol = 114, name = "Terrace Shade", level = "40",
+        setup = '<blind_setup><levels minimum="0" maximum="100"><level name="Closed" level="100"/><level name="Open" level="0"/></levels></blind_setup>',
+    })
+    mock, key = start(project)
+    T.eq(blind(mock, key, 52).position, 40)
+    T.http(mock, "PATCH", "/v1/blinds/52", { key = key, body = { position = 60 } })
+    T.same(mock.commands[#mock.commands].params, { LEVEL_TARGET = 60 })
+end
+
+-- KNX shades (0 closed, 100 open, as their setup says) send and report positions as they are.
+function tests.knx_levels_are_positions_as_they_are()
+    local mock, key = start()
+    for _, value in ipairs({ "0", "1", "35", "99", "100" }) do
+        Mock.setShade(mock, 52, { Level = value })
+        T.eq(blind(mock, key, 52).position, tonumber(value))
+    end
+    for _, position in ipairs({ 0, 1, 53, 99, 100 }) do
+        T.http(mock, "PATCH", "/v1/blinds/52", { key = key, body = { position = position } })
+        T.same(mock.commands[#mock.commands], { device = 52, command = "SET_LEVEL_TARGET", params = { LEVEL_TARGET = position } })
+    end
 end
 
 function tests.scenes_leave_out_positions_a_shade_cannot_take()

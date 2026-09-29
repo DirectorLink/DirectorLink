@@ -50,7 +50,7 @@
 - [ ] The API console seals its requests like the app
 - [ ] Local HTTPS, or a code compared on both sides, against someone who changes traffic during pairing
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
-- [x] Rediscover the project without restarting the driver: Director's project events and the action Refresh Project (1.1.0)
+- [x] Rediscover the project without restarting the driver: Director's project events and the action Refresh Project (1.1.0); real-system validation pending
 
 ## Milestone 3 — PWA
 
@@ -72,7 +72,7 @@
 
 - [x] Climate / thermostat implemented in alpha.9; real-system validation pending
 - [x] Blinds: position, open/close/stop through the blind proxy (0.4.0)
-- [x] Shades: a slider and Stop only where the shade can use them, and its movement shown while it moves (1.1.0)
+- [x] Shades: a slider and Stop only where the shade can use them, and its movement shown while it moves (1.1.0); real-system validation pending
 - [x] Cameras: snapshots through the camera proxy, near-live grid in the app (0.5.0)
 - [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
 - [x] Room names per language (0.6.0)
