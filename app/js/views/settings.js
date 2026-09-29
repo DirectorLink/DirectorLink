@@ -1,21 +1,24 @@
-// Settings: appearance, language, room names, controller, account, app and about.
+// Settings: appearance, language, room names, Shabbat and holidays, controller, account, app and
+// about.
 
 import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
+import { calendarOn, loadCalendar, noteCalendarOff, takeCalendarReveal } from "../calendar.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
 import { approveHomeSecret, claimHome, homeStatus, invitationLink, registerInvitation, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, iconButton, name } from "../dom.js";
-import { LANGUAGES, formatDateTime, formatTime, languagePreference, t } from "../i18n.js";
+import { LANGUAGES, formatDateTime, formatNumber, formatTime, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { hiddenRoomIds, roomName } from "../model.js";
 import { setRoomHidden } from "../profile.js";
 import { installApp } from "../pwa.js";
 import { dropIndex, edgeScroll, keyTarget, moveItem, sameOrder, shiftOf, slotOffset } from "../reorder.js";
-import { api, checkInThroughAccount, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
+import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { chip, stepper } from "./schedules.js";
 import { updateFact, updatePanel } from "./updates.js";
 
 export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
@@ -28,6 +31,7 @@ export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
       appearanceSection(onPalette, onTheme),
       languageSection(onLanguage),
       roomsSection(),
+      calendarSection(),
       controllerSection(navigate),
       accountSection(),
       appSection(),
@@ -68,7 +72,13 @@ function radioGroup({ legend, groupName, options, value, onChange, className = "
             dataset: { key: id },
             onchange: () => onChange(option.value),
           }),
-          h("label", { for: id, lang: option.lang, dir: option.dir }, option.visual || null, h("span", { class: "radio-label" }, option.label))
+          h(
+            "label",
+            { for: id, lang: option.lang, dir: option.dir },
+            option.visual || null,
+            h("span", { class: "radio-label" }, option.label),
+            option.help ? h("span", { class: "radio-help" }, option.help) : null
+          )
         );
       })
     )
@@ -597,6 +607,153 @@ function roomEditor(room) {
       )
     )
   );
+}
+
+// ---- Shabbat and holidays (the Jewish calendar) --------------------------------------------
+
+// Admins, with the Jewish calendar on in Composer: how the controller works out the times
+// (PATCH /v1/calendar/settings). The minutes are the family's custom, not the installer's.
+const CANDLE_PRESETS = [18, 20, 30, 40];
+const HAVDALAH_PRESETS = [42, 50, 72];
+const CALENDAR_MESSAGE_MS = 6000;
+
+// Entering Settings (app.js): the settings as the controller has them.
+export function resetCalendarSettings() {
+  ui.calendarSettings = null;
+}
+
+// What the card shows: the settings being changed, or else the controller's, so that a change made
+// on another device shows up. A message stays either way.
+function calendarDraft(settings) {
+  const draft = ui.calendarSettings;
+  if (draft && (draft.dirty || draft.busy)) return draft;
+  ui.calendarSettings = {
+    holidays: settings.holidays,
+    candles: settings.candle_lighting_minutes,
+    havdalah: settings.havdalah_minutes,
+    version: settings.version,
+    dirty: false,
+    busy: false,
+    message: draft?.message || null,
+  };
+  return ui.calendarSettings;
+}
+
+function calendarMessage(draft, kind, text, extra = {}) {
+  const stamp = Date.now();
+  draft.message = { kind, text, stamp, ...extra };
+  if (kind !== "success") return;
+  window.setTimeout(() => {
+    if (ui.calendarSettings?.message?.stamp === stamp) {
+      ui.calendarSettings.message = null;
+      notify();
+    }
+  }, CALENDAR_MESSAGE_MS);
+}
+
+async function saveCalendarSettings(draft) {
+  draft.busy = true;
+  draft.message = null;
+  notify();
+  try {
+    const settings = await api("/v1/calendar/settings", {
+      method: "PATCH",
+      body: { holidays: draft.holidays, candle_lighting_minutes: draft.candles, havdalah_minutes: draft.havdalah, version: draft.version },
+    });
+    if (settings && typeof settings === "object" && state.calendar) state.calendar = { ...state.calendar, settings };
+    draft.dirty = false;
+    calendarMessage(draft, "success", t("calendar.settings.saved"));
+    // The times move with the minutes, and the holidays with Israel or abroad.
+    loadCalendar();
+  } catch (error) {
+    noteForbidden(error);
+    if (error?.code === "VERSION_CONFLICT") {
+      // Changed on another device meanwhile: shown as it is now, to be changed again.
+      draft.dirty = false;
+      calendarMessage(draft, "error", t("calendar.settings.conflict"));
+      loadCalendar();
+    } else {
+      // Turned off in Composer meanwhile: the card goes, and says so while this screen is open.
+      calendarMessage(draft, "error", errorText(error), { off: noteCalendarOff(error) });
+    }
+  }
+  draft.busy = false;
+  notify();
+}
+
+// Candle lighting or havdalah: minutes before or after sunset, with the customs most kept as chips.
+function minutesField(draft, kind, [min, max], presets, change) {
+  const value = draft[kind];
+  const set = (next) => change(() => { draft[kind] = next; });
+  const minutes = (count) => t("calendar.settings.minutes", { value: count });
+  return h(
+    "div",
+    { class: "calendar-minutes" },
+    h("p", { class: "field-label" }, t(`calendar.settings.${kind}`)),
+    stepper({ value, format: formatNumber, label: t(`calendar.settings.${kind}Label`), key: `calendar-${kind}`, min, max, step: 1, onChange: set }),
+    h("div", { class: "chip-row" }, presets.map((preset) => chip(minutes(preset), value === preset, `calendar-${kind}:${preset}`, () => set(preset))))
+  );
+}
+
+function calendarSection() {
+  if (!state.loaded || !can("admin")) return null;
+  if (!calendarOn()) {
+    const message = ui.calendarSettings?.message;
+    return message?.off ? card("calendar", "candles", t("calendar.settings.title"), h("p", { class: "notice notice-error", role: "alert" }, message.text)) : null;
+  }
+  const settings = state.calendar?.enabled ? state.calendar.settings : null;
+  if (!settings) return null;
+  const draft = calendarDraft(settings);
+  const change = (update) => {
+    update();
+    draft.dirty = true;
+    draft.message = null;
+    notify();
+  };
+  // Automatic says what the home's location gave, when it is what the controller uses now.
+  const autoHelp = settings.holidays === "auto" ? t(`calendar.settings.autoIs.${settings.israel ? "israel" : "abroad"}`) : t("calendar.settings.autoHelp");
+  const section = card(
+    "calendar",
+    "candles",
+    t("calendar.settings.title"),
+    radioGroup({
+      legend: t("calendar.settings.holidays"),
+      groupName: "calendar-holidays",
+      className: "radio-stack",
+      value: draft.holidays,
+      onChange: (value) => change(() => { draft.holidays = value; }),
+      options: [
+        { value: "auto", label: t("calendar.settings.auto"), help: autoHelp },
+        { value: "israel", label: t("calendar.settings.israel"), help: t("calendar.settings.israelHelp") },
+        { value: "abroad", label: t("calendar.settings.abroad"), help: t("calendar.settings.abroadHelp") },
+      ],
+    }),
+    minutesField(draft, "candles", [0, 90], CANDLE_PRESETS, change),
+    minutesField(draft, "havdalah", [20, 90], HAVDALAH_PRESETS, change),
+    draft.message ? h("p", { class: `notice notice-${draft.message.kind}`, role: draft.message.kind === "error" ? "alert" : "status" }, draft.message.text) : null,
+    h(
+      "div",
+      { class: "button-row" },
+      h(
+        "button",
+        { type: "button", class: "button button-primary", disabled: draft.busy || !draft.dirty, dataset: { key: "calendar-save" }, onclick: () => saveCalendarSettings(draft) },
+        icon("check"),
+        draft.busy ? t("common.saving") : t("calendar.settings.save")
+      )
+    ),
+    h("p", { class: "field-help" }, t("calendar.settings.disclaimer"))
+  );
+  // Schedules → Change leads here: the card comes into view once app.js has scrolled to the top.
+  section.setAttribute("tabindex", "-1");
+  section.dataset.key = "settings-calendar";
+  if (takeCalendarReveal()) {
+    window.setTimeout(() => {
+      const element = document.getElementById("settings-calendar");
+      element?.scrollIntoView({ block: "start" });
+      element?.focus({ preventScroll: true });
+    }, 0);
+  }
+  return section;
 }
 
 // ---- controller ----------------------------------------------------------------------------

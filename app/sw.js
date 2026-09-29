@@ -29,6 +29,7 @@ const ASSETS = [
   "/js/scenes.js",
   "/js/views/schedules.js",
   "/js/schedules.js",
+  "/js/calendar.js",
   "/js/profile.js",
   "/js/camera-feed.js",
   "/js/components.js",

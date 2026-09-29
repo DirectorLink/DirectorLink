@@ -1,5 +1,7 @@
-// Home: summary chips, the favorites strip and the room cards.
+// Home: the Hebrew date (with the Jewish calendar on), summary chips, the favorites strip and the
+// room cards.
 
+import { calendarOn, homeLine } from "../calendar.js";
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
 import { blindMove, setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
@@ -59,11 +61,22 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     staleBanner(),
     // Admins: a newer DirectorLink is out, until dismissed for that version.
     updateBanner(),
+    calendarLine(),
     summaryChips(),
     scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),
     roomsSection(),
   ];
+}
+
+// ---- the Hebrew date -----------------------------------------------------------------------
+
+// With the Jewish calendar on in Composer: today's Hebrew date (the next day's from sunset), its
+// holidays and the week's reading.
+function calendarLine() {
+  const text = calendarOn() ? homeLine() : "";
+  if (!text) return null;
+  return h("p", { class: "calendar-line" }, icon("candles"), h("span", {}, text));
 }
 
 // ---- summary -------------------------------------------------------------------------------

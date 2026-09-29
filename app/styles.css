@@ -3181,6 +3181,103 @@ a.scene-name:hover {
   font-size: 15px;
 }
 
+/* ---- Shabbat and holidays (the Jewish calendar) ------------------------------------------- */
+
+/* Home: the Hebrew date and the week's reading. */
+.calendar-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.calendar-line .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--onText);
+}
+
+.schedule-candles {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.calendar-change {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* The schedule editor's four kinds of When: two rows on phones. */
+.segments-four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 560px) {
+  .segments-four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* "Candle lighting (Fri 18:04)", "Havdalah (Sat 19:05)": one under the other on narrow phones; side
+   by side, the time goes to a second line when it has to. */
+.segments-events {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 420px) {
+  .segments-events {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.segments-events .segment {
+  padding: 6px 10px;
+  line-height: 1.3;
+  text-align: center;
+}
+
+/* Run as usual, not on or only on Shabbat and holidays: one under the other until they fit. */
+.segments-stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 760px) {
+  .segments-stack {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Settings: choices with a second line (Automatic / from the home's location). */
+.radio-stack .radio-options {
+  flex-direction: column;
+}
+
+.radio-stack .radio-option label {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding-block: 8px;
+}
+
+.radio-help {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.calendar-minutes .stepper {
+  margin-block: 6px 0;
+}
+
+/* Schedules → Change brings the card into view and focuses it. */
+#settings-calendar:focus {
+  outline: none;
+}
+
 @keyframes shimmer {
   from {
     background-position: 200% 0;
