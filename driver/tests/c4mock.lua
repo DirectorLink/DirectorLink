@@ -945,9 +945,24 @@ local SHADE_VARIABLES = {
     [1005] = "Target Level", [1006] = "Type", [1007] = "Movement", [1008] = "Opening", [1009] = "Closing",
 }
 
+-- What GET_SETUP answered for the KNX blinds of a real Director 3.4.3 (the levels trimmed of their
+-- colours and texts): level_discrete_control, can_stop, the movement type, and the levels.
+local SHADE_SETUP = "<blind_setup><has_level>True</has_level><level_discrete_control>%s</level_discrete_control>"
+    .. "<can_stop>%s</can_stop><type_locked>False</type_locked>"
+    .. "<types>Shade,Group,Blind,Louver,Curtain,Shutter,Blackout,Opaque Glass,Awning,Door,Screen</types><type>4</type>"
+    .. "<movements>Open-Close,Up-Down,Down-Up,Out-In,Left-Right,Right-Left</movements><movement_locked>False</movement_locked>"
+    .. '<movement>1</movement><online>True</online><levels minimum="%d" maximum="%d" resolution="1" unknown="-1">'
+    .. '<level name="Closed" id="2" level_setable="true" level="%d" levelType="1" buttonLinkBindingId="301"/>'
+    .. '<level name="Open" id="1" level_setable="true" level="%d" levelType="1" buttonLinkBindingId="300"/>'
+    .. '<level name="Toggle" buttonLinkBindingId="0" level_setable="false"/>'
+    .. '<level name="Stop" buttonLinkBindingId="0" level_setable="false"/></levels>'
+    .. '<presets><preset name="Closed" id="2" level="%d" levelType="1"/><preset name="Open" id="1" level="%d" levelType="1"/></presets>'
+    .. "</blind_setup>"
+
 -- A shade with the proxy's ten variables, at rest, and the setup GET_SETUP returns. options: id,
 -- protocol, room (11), name, level ("0"), position (level_discrete_control, true), stop (can_stop,
--- true), setup (the whole GET_SETUP answer instead).
+-- true), open (its Open level, 100; Closed is 0), movement (the Movement variable, the movement
+-- type: "Up to Down"), setup (the whole GET_SETUP answer instead).
 function Mock.withShade(project, options)
     local id, protocol = options.id, options.protocol
     local roomId = options.room or 11
@@ -962,15 +977,16 @@ function Mock.withShade(project, options)
     }
     local level = options.level or "0"
     local number = tonumber(level) or -255
+    local open = options.open or 100
     project.variables[id] = {
         [1000] = number > 0 and "1" or "0",
         [1001] = number == 0 and "1" or "0",
         [1002] = "1",
-        [1003] = number == 100 and "1" or "0",
+        [1003] = number == open and "1" or "0",
         [1004] = level,
         [1005] = level,
         [1006] = "0",
-        [1007] = "Stopped",
+        [1007] = options.movement or "Up to Down",
         [1008] = "0",
         [1009] = "0",
     }
@@ -980,10 +996,10 @@ function Mock.withShade(project, options)
     end
     project.blindSetups = project.blindSetups or {}
     project.blindSetups[id] = options.setup or string.format(
-        "<blind_setup><has_level>True</has_level><level_discrete_control>%s</level_discrete_control>"
-            .. "<can_stop>%s</can_stop><open_level>100</open_level><closed_level>0</closed_level></blind_setup>",
+        SHADE_SETUP,
         options.position == false and "False" or "True",
-        options.stop == false and "False" or "True"
+        options.stop == false and "False" or "True",
+        0, open, 0, open, 0, open
     )
     return project
 end
