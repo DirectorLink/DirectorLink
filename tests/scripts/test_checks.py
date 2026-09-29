@@ -1,7 +1,7 @@
 """The release checks themselves (scripts/build.py, check_package.py and check_repo.py): the relay's
 CA file holds exactly the pinned roots however its blocks are written, nothing else in driver/certs
 reaches the package, line endings do not change it, check_repo vets what is staged, and the door
-switches in driver.xml ship off.
+switches and the Jewish calendar in driver.xml ship off.
 
     python -m unittest discover -s tests/scripts
 """
@@ -9,6 +9,7 @@ switches in driver.xml ship off.
 import base64
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -134,6 +135,14 @@ class DriverXml(unittest.TestCase):
                 shipped_on = source.replace(f"<default>{off}</default>", f"<default>{on}</default>")
                 printed = refusal(check_package.check_driver_xml, shipped_on, "0")
                 self.assertIn(f"{name} must default to {off}", printed or "", "a door switch that ships on passed")
+
+    def test_the_jewish_calendar_ships_off(self):
+        # Off: the driver works nothing out and the app shows none of it (1.2.0, ADR-037).
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        shipped_on, count = re.subn(r"(<name>Jewish Calendar</name>.*?<default>)Off(</default>)", r"\1On\2", source, count=1, flags=re.S)
+        self.assertEqual(count, 1, "driver.xml has a Jewish Calendar property that defaults to Off")
+        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+        self.assertIn("Jewish Calendar must default to Off", printed or "", "a Jewish calendar that ships on passed")
 
 
 class StagedRoots(unittest.TestCase):

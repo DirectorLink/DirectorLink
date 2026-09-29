@@ -8,7 +8,7 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, pairing and
@@ -20,7 +20,7 @@ info:
     **Roles.** Every API key has a role, and each role can do everything the ones before it
     can: `viewer` reads everything (including camera pictures), `member` also controls lights,
     thermostats and blinds and runs scenes, `doors` also opens doors and gates, `admin` also
-    manages API keys, rooms, scenes, schedules, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
+    manages API keys, rooms, scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
     property of DirectorLink in Composer set to Enabled.
 
@@ -64,7 +64,9 @@ tags:
   - name: Rooms
     description: Rooms of the Control4 project.
   - name: Schedules
-    description: "Scenes run by the controller at a time, at sunrise or sunset, or when the weather turns (Open-Meteo: heat, wind, rain)."
+    description: "Scenes run by the controller at a time, at sunrise or sunset, when the weather turns (Open-Meteo: heat, wind, rain), or when Shabbat and holidays begin or end."
+  - name: Calendar
+    description: "Shabbat and holiday times, the Hebrew date and the weekly reading, worked out on the controller (Composer: Jewish Calendar)."
   - name: Scenes
     description: "The home's scenes: one tap sets several lights, thermostats, blinds and gates. Admins make them, members run them."
   - name: Devices
@@ -932,6 +934,11 @@ paths:
         turns — hotter than a threshold, wind stronger than one, or rain starting — on the chosen
         days (0 Sunday to 6 Saturday), in the controller's local time. At most 50. A scheduled
         scene runs like one from a member's key: doors and gates in it are skipped.
+
+        With the Jewish calendar on (`/v1/calendar`), a `shabbat` trigger runs it when Shabbat and
+        holidays begin (candle lighting) or end (havdalah), and `during_shabbat` makes other
+        schedules skip holy time or run only then. Setting either while the calendar is off is
+        `409 JEWISH_CALENDAR_OFF`.
       requestBody:
         required: true
         content:
@@ -991,7 +998,10 @@ paths:
       description: |
         The fields sent replace the schedule's (a whole `trigger` or `only_if`); `{"enabled": false}`
         switches it off. With `version`, the change applies only if nobody changed the schedule
-        since (409 `VERSION_CONFLICT`). A changed weather schedule may run again.
+        since (409 `VERSION_CONFLICT`). A changed weather schedule may run again. While the Jewish
+        calendar is off, sending a `shabbat` trigger or `during_shabbat` other than `run` is 409
+        `JEWISH_CALENDAR_OFF`; a schedule that has one can still be switched on or off, change its
+        days or scene, or be deleted.
       requestBody:
         required: true
         content:
@@ -1057,6 +1067,73 @@ paths:
                 $ref: "#/components/schemas/Weather"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/calendar:
+    get:
+      tags: [Calendar]
+      operationId: getCalendar
+      x-directorlink-role: viewer
+      summary: Shabbat and holiday times, the Hebrew date and the week's reading
+      description: |
+        Worked out on the controller from the project's location (Composer project properties);
+        nothing is sent to the network. It needs DirectorLink's **Jewish Calendar** property in
+        Composer set to On. While it is Off (the default) the answer is `enabled: false`,
+        `status: off` and nulls, and schedules cannot use the calendar.
+
+        Candle lighting is sunset (to the minute) minus `candle_lighting_minutes`; havdalah is
+        sunset (to the nearest minute) plus `havdalah_minutes`. Shabbat and holidays that follow
+        each other are one holy period, from the candle lighting before the first day to the
+        havdalah after the last. `status: no_location` still gives the settings, the civil date's
+        Hebrew date and the week's reading, but no times. Check the times against your community's
+        calendar.
+      responses:
+        "200":
+          description: The calendar; `status` says why parts of it are null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Calendar"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/calendar/settings:
+    patch:
+      tags: [Calendar]
+      operationId: updateCalendarSettings
+      x-directorlink-role: admin
+      summary: Change the candle-lighting and havdalah minutes, or Israel or abroad
+      description: |
+        The fields sent replace the settings, which are kept on the controller; send at least one
+        besides `version`. With `version`, the change applies only if nobody changed the settings
+        since (409 `VERSION_CONFLICT`, with the current `version`). While the Jewish Calendar
+        property is Off the answer is 409 `JEWISH_CALENDAR_OFF`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CalendarSettingsUpdate"
+            example:
+              candle_lighting_minutes: 30
+              havdalah_minutes: 50
+              version: 1
+      responses:
+        "200":
+          description: The settings after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CalendarSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/devices:
     get:
@@ -1877,7 +1954,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`), or needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off).
       content:
         application/problem+json:
           schema:
@@ -1986,7 +2063,7 @@ components:
 
     System:
       type: object
-      required: [bridge, controller, location, inventory, lifecycle]
+      required: [bridge, controller, location, inventory, lifecycle, features]
       properties:
         bridge:
           type: object
@@ -2074,6 +2151,17 @@ components:
               type: [string, "null"]
             last_destroy_time:
               type: [string, "null"]
+        features:
+          type: object
+          description: |
+            Optional parts of DirectorLink that an installer switches on in Composer. Clients show
+            none of a feature that is false, and none at all when `features` is missing (drivers
+            before 1.2.0).
+          required: [jewish_calendar]
+          properties:
+            jewish_calendar:
+              type: boolean
+              description: "The Jewish Calendar property is On: `/v1/calendar`, `shabbat` schedule triggers and `during_shabbat`."
 
     PairRequest:
       type: object
@@ -2532,24 +2620,29 @@ components:
         km/h, 10 to 150) or rain (starts raining), optional hours `from`–`to` ("HH:MM", may cross
         midnight), and `once_a_day` (default true). A weather schedule runs again only after it has
         cooled 2° below the threshold, the wind has dropped 10 km/h below it, or an hour without
-        rain.
+        rain. `shabbat` (needs the Jewish calendar, `/v1/calendar`): `event` candle_lighting (when
+        Shabbat or a holiday begins) or havdalah (when it ends), and `offset` in minutes (-360 to
+        360; negative is before). Shabbat and holidays that follow each other are one period, so
+        it runs once when the period begins, or once when it ends.
       type: object
       required: [type]
       additionalProperties: false
       properties:
         type:
           type: string
-          enum: [time, sun, weather]
+          enum: [time, sun, weather, shabbat]
         at:
           type: string
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
         event:
           type: string
-          enum: [sunrise, sunset]
+          enum: [sunrise, sunset, candle_lighting, havdalah]
+          description: sunrise and sunset for `sun`, candle_lighting and havdalah for `shabbat`.
         offset:
           type: integer
-          minimum: -180
-          maximum: 180
+          minimum: -360
+          maximum: 360
+          description: Minutes (default 0); -180 to 180 for `sun`.
         kind:
           type: string
           enum: [heat, wind, rain]
@@ -2595,9 +2688,18 @@ components:
         minimum: 0
         maximum: 6
 
+    DuringShabbat:
+      type: string
+      enum: [run, skip, only]
+      description: |
+        For time, sun and weather schedules, what to do on Shabbat and holidays (from candle
+        lighting to havdalah): `run` as usual (the default), `skip`, or run `only` then. Always
+        `run` for a `shabbat` trigger. While the Jewish calendar is off, or has no location, no
+        moment counts as holy: `only` schedules do not run and `skip` schedules run as usual.
+
     Schedule:
       type: object
-      required: [id, enabled, scene_id, trigger, days, only_if, if_no_weather, next_run, last_run, version, created_at, updated_at]
+      required: [id, enabled, scene_id, trigger, days, only_if, if_no_weather, during_shabbat, calendar_status, next_run, last_run, version, created_at, updated_at]
       properties:
         id:
           type: string
@@ -2617,10 +2719,19 @@ components:
           type: string
           enum: [run, skip]
           description: When `only_if` needs the weather and there is none.
+        during_shabbat:
+          $ref: "#/components/schemas/DuringShabbat"
+        calendar_status:
+          type: [string, "null"]
+          enum: [ok, "off", no_location, null]
+          description: |
+            For a schedule that uses the Jewish calendar (a `shabbat` trigger, or `during_shabbat`
+            other than `run`), the calendar's `status` as in `/v1/calendar`: with `off` or
+            `no_location` its Shabbat trigger or `only` does not run. Null for other schedules.
         next_run:
           type: [string, "null"]
           format: date-time
-          description: For time and sun schedules that are on.
+          description: For time, sun and Shabbat schedules that are on.
         last_run:
           type: [object, "null"]
           properties:
@@ -2635,11 +2746,11 @@ components:
               type: [integer, "null"]
             note:
               type: [string, "null"]
-              description: "`no_weather`: ran without weather data; for weather schedules, the kind that made it run."
+              description: "`no_weather`: ran without weather data; `late`: ran late, after a restart (Shabbat automation, up to 6 hours); for weather schedules, the kind that made it run."
             skipped_by:
               type: [string, "null"]
-              enum: [only_if, no_weather, null]
-              description: It was due but did not run.
+              enum: [only_if, no_weather, shabbat, null]
+              description: "It was due but did not run (`shabbat`: on Shabbat or a holiday, with `during_shabbat: skip`)."
             error:
               type: [string, "null"]
         version:
@@ -2683,6 +2794,8 @@ components:
         if_no_weather:
           type: string
           enum: [run, skip]
+        during_shabbat:
+          $ref: "#/components/schemas/DuringShabbat"
 
     ScheduleUpdate:
       type: object
@@ -2703,6 +2816,8 @@ components:
         if_no_weather:
           type: string
           enum: [run, skip]
+        during_shabbat:
+          $ref: "#/components/schemas/DuringShabbat"
         version:
           type: integer
           minimum: 1
@@ -2764,6 +2879,244 @@ components:
               type: [string, "null"]
         attribution:
           type: string
+
+    Calendar:
+      type: object
+      description: |
+        With the Jewish Calendar property Off: `enabled` false, `status` off and every other field
+        null. Without a location (`no_location`): `settings`, `today` (by the civil date) and
+        `week`, but `current` and `next` are null.
+      required: [enabled, status, settings, today, week, current, next]
+      properties:
+        enabled:
+          type: boolean
+          description: DirectorLink's Jewish Calendar property is On in Composer.
+        status:
+          type: string
+          enum: [ok, "off", no_location]
+          description: "`off`: the Jewish Calendar property is Off. `no_location`: set the latitude and longitude in Composer's project properties for Shabbat and holiday times."
+        settings:
+          oneOf:
+            - $ref: "#/components/schemas/CalendarSettings"
+            - type: "null"
+        today:
+          oneOf:
+            - $ref: "#/components/schemas/CalendarToday"
+            - type: "null"
+        week:
+          oneOf:
+            - $ref: "#/components/schemas/CalendarWeek"
+            - type: "null"
+        current:
+          description: The holy period now (from its candle lighting until its havdalah), or null.
+          oneOf:
+            - $ref: "#/components/schemas/HolyPeriod"
+            - type: "null"
+        next:
+          description: The next holy period that has not begun (the one after `current` during a period), or null.
+          oneOf:
+            - $ref: "#/components/schemas/HolyPeriod"
+            - type: "null"
+
+    CalendarSettings:
+      type: object
+      description: How the times are worked out. Kept on the controller; admins change them with `PATCH /v1/calendar/settings`.
+      required: [holidays, israel, candle_lighting_minutes, havdalah_minutes, version]
+      properties:
+        holidays:
+          type: string
+          enum: [auto, israel, abroad]
+          description: |
+            `israel`: one day of Yom Tov, and Israel's weekly readings. `abroad`: two days of Yom
+            Tov, and the readings abroad. `auto` (the default): Israel's when the home is in
+            Israel (by the project's location, or else its country or time zone), otherwise abroad.
+        israel:
+          type: boolean
+          description: Israel's holidays and readings are in use (worked out when `holidays` is `auto`).
+        candle_lighting_minutes:
+          type: integer
+          minimum: 0
+          maximum: 90
+          description: Candle lighting is this many minutes before sunset (default 20).
+        havdalah_minutes:
+          type: integer
+          minimum: 20
+          maximum: 90
+          description: Havdalah is this many minutes after sunset (default 42).
+        version:
+          type: integer
+          minimum: 1
+          description: 1 until the settings are first changed, then one more with every change. Send it back to detect changes made meanwhile.
+
+    CalendarSettingsUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        holidays:
+          type: string
+          enum: [auto, israel, abroad]
+        candle_lighting_minutes:
+          type: integer
+          minimum: 0
+          maximum: 90
+        havdalah_minutes:
+          type: integer
+          minimum: 20
+          maximum: 90
+        version:
+          type: integer
+          minimum: 1
+
+    CalendarToday:
+      type: object
+      required: [date, hebrew, after_sunset, holidays]
+      properties:
+        date:
+          type: string
+          format: date
+          description: The civil date (local) whose daytime is this Hebrew day, "YYYY-MM-DD"; after sunset, tomorrow's.
+        hebrew:
+          $ref: "#/components/schemas/HebrewDate"
+        after_sunset:
+          type: boolean
+          description: Today's sunset has passed, so the Hebrew date is already tomorrow's (it starts at sunset). Always false without a location.
+        holidays:
+          type: array
+          description: This Hebrew day's holidays, holy or not (fasts, Chanukah, Rosh Chodesh and the national days too).
+          items:
+            $ref: "#/components/schemas/Holiday"
+
+    CalendarWeek:
+      type: object
+      required: [date, parasha, holidays]
+      properties:
+        date:
+          type: string
+          format: date
+          description: This week's Shabbat, the first Saturday on or after today's Hebrew day.
+        parasha:
+          description: The weekly reading that Shabbat, Israel's or abroad's (`settings.israel`); null when a holiday reading replaces it.
+          oneOf:
+            - $ref: "#/components/schemas/Parasha"
+            - type: "null"
+        holidays:
+          type: array
+          description: That Saturday's holidays.
+          items:
+            $ref: "#/components/schemas/Holiday"
+
+    HebrewDate:
+      type: object
+      required: [year, month, day, leap_year]
+      properties:
+        year:
+          type: integer
+          example: 5787
+        month:
+          $ref: "#/components/schemas/HebrewMonth"
+        day:
+          type: integer
+          minimum: 1
+          maximum: 30
+        leap_year:
+          type: boolean
+          description: The year has 13 months (Adar I and Adar II).
+
+    HebrewMonth:
+      type: string
+      description: A Hebrew month by key; `adar` in a common year, `adar_1` and `adar_2` in a leap year. Apps show their own names.
+      enum: [tishrei, cheshvan, kislev, tevet, shvat, adar, adar_1, adar_2, nisan, iyar, sivan, tamuz, av, elul]
+
+    Holiday:
+      type: object
+      required: [key, day, month, yom_tov, name]
+      properties:
+        key:
+          $ref: "#/components/schemas/HolidayKey"
+        day:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 8
+          description: Which day, for a holiday kept on several (such as Rosh Hashana 1–2 or Chanukah 1–8); null for the others.
+        month:
+          description: For `rosh_chodesh`, the month that begins; null for the others.
+          oneOf:
+            - $ref: "#/components/schemas/HebrewMonth"
+            - type: "null"
+        yom_tov:
+          type: boolean
+          description: A holy day, kept like Shabbat (it is part of a holy period); the other days are only shown.
+        name:
+          type: string
+          description: English name, for scripts and logs. Apps show their own names by `key`, `day` and `month`.
+          example: Shmini Atzeret
+
+    HolidayKey:
+      type: string
+      description: The holidays and other special days of the Hebrew calendar, by stable key.
+      enum: [rosh_hashana, tzom_gedaliah, yom_kippur, sukkot, chol_hamoed_sukkot, hoshana_rabba, shmini_atzeret, simchat_torah, chanukah, asara_btevet, tu_bishvat, taanit_esther, purim, shushan_purim, pesach, chol_hamoed_pesach, pesach_7, pesach_8, yom_hashoah, yom_haatzmaut, yom_hazikaron, lag_baomer, yom_yerushalayim, shavuot, shiva_asar_btamuz, tisha_bav, rosh_chodesh]
+
+    Parasha:
+      type: object
+      required: [ids, name]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 2
+          description: The reading by number, 1 (Bereshit) to 54 (Vezot Haberakhah); two for a combined reading, such as 22 and 23 (Vayakhel-Pekudei).
+          items:
+            type: integer
+            minimum: 1
+            maximum: 54
+        name:
+          type: string
+          description: English name (Hebcal's spelling), two joined with "-". Apps show their own names by `ids`.
+          example: Vayakhel-Pekudei
+
+    HolyPeriod:
+      type: object
+      description: Shabbat and holidays that follow each other, from the candle lighting before the first day to the havdalah after the last.
+      required: [starts_at, ends_at, approximate, days]
+      properties:
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+          description: Candle lighting before the first day; null when the sun does not set that day (`approximate`).
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+          description: Havdalah after the last day; null when the sun does not set that day (`approximate`).
+        approximate:
+          type: boolean
+          description: A sunset it needs does not happen at this latitude (polar day or night). Those times are null, and schedules count its civil days as holy, from 00:00 on the first to 24:00 on the last.
+        days:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [date, shabbat, candle_lighting, holidays]
+            properties:
+              date:
+                type: string
+                format: date
+                description: A holy day (the local civil date).
+              shabbat:
+                type: boolean
+                description: It is a Saturday.
+              candle_lighting:
+                type: [string, "null"]
+                format: date-time
+                description: |
+                  When candles are lit for this day, on the evening before it: `starts_at` for the
+                  first day. For a later day that is a Saturday, before the previous day's sunset
+                  (as on any Friday); for another later day, after nightfall, at the previous
+                  day's havdalah time. Null when the sun does not set.
+              holidays:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Holiday"
 
     RoomOrder:
       type: object

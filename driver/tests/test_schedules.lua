@@ -281,6 +281,85 @@ function tests.schedule_input_and_roles_are_checked()
     T.eq(T.http(mock, "DELETE", "/v1/scenes/" .. sceneId, { key = admin }).status, 204, "free once no schedule runs it")
 end
 
+function tests.shabbat_triggers_and_during_shabbat_are_checked()
+    local mock, admin = start(os.time())
+    local sceneId = scene(mock, admin)
+    Properties["Jewish Calendar"] = "On"
+    OnPropertyChanged("Jewish Calendar")
+    local post = function(changes)
+        local body = { scene_id = sceneId, trigger = { type = "shabbat", event = "candle_lighting", offset = -30 }, days = { 0, 1, 2, 3, 4, 5, 6 } }
+        for key, value in pairs(changes) do
+            body[key] = value
+        end
+        return T.http(mock, "POST", "/v1/schedules", { key = admin, body = body })
+    end
+    local refused = function(changes, field)
+        local answer = post(changes)
+        T.eq(answer.status, 400, answer.body)
+        T.eq(answer.json.code, "INVALID_FIELD")
+        T.eq(answer.json.errors[1].field, field, answer.body)
+        return answer.json.detail
+    end
+    T.contains(refused({ trigger = { type = "holiday" } }, "trigger.type"), "time, sun, weather or shabbat")
+    refused({ trigger = { type = "shabbat" } }, "trigger.event")
+    refused({ trigger = { type = "shabbat", event = "sunset" } }, "trigger.event")
+    refused({ trigger = { type = "sun", event = "candle_lighting" } }, "trigger.event")
+    refused({ trigger = { type = "shabbat", event = "havdalah", offset = 361 } }, "trigger.offset")
+    refused({ trigger = { type = "shabbat", event = "havdalah", offset = -361 } }, "trigger.offset")
+    refused({ trigger = { type = "shabbat", event = "havdalah", offset = 2.5 } }, "trigger.offset")
+    refused({ trigger = { type = "shabbat", event = "havdalah", offset = "30" } }, "trigger.offset")
+    refused({ trigger = { type = "shabbat", event = "havdalah", at = "18:00" } }, "trigger.at")
+    refused({ trigger = { type = "sun", event = "sunset", offset = 200 } }, "trigger.offset")
+    T.contains(refused({ during_shabbat = "only" }, "during_shabbat"), "does not apply")
+    refused({ during_shabbat = "skip" }, "during_shabbat")
+    refused({ trigger = { type = "time", at = "07:00" }, during_shabbat = "sometimes" }, "during_shabbat")
+    refused({ trigger = { type = "time", at = "07:00" }, during_shabbat = true }, "during_shabbat")
+
+    -- What is kept: the offset defaults to 0, and a Shabbat trigger may say "only if" like a time.
+    local havdalah = post({ trigger = { type = "shabbat", event = "havdalah" }, only_if = { not_raining = true } })
+    T.eq(havdalah.status, 201, havdalah.body)
+    T.same(havdalah.json.trigger, { event = "havdalah", offset = 0, type = "shabbat" })
+    T.eq(havdalah.json.during_shabbat, "run")
+    T.eq(havdalah.json.only_if.not_raining, true)
+    for _, offset in ipairs({ -360, 360 }) do
+        T.eq(post({ trigger = { type = "shabbat", event = "candle_lighting", offset = offset } }).status, 201)
+    end
+    for _, trigger in ipairs({ { type = "time", at = "07:00" }, { type = "sun", event = "sunrise", offset = 15 }, { type = "weather", kind = "heat", above = 30 } }) do
+        for _, during in ipairs({ "skip", "only" }) do
+            local created = post({ trigger = trigger, during_shabbat = during })
+            T.eq(created.status, 201, created.body)
+            T.eq(created.json.during_shabbat, during)
+        end
+    end
+    -- A change that does not mention it keeps it; a Shabbat trigger over it must clear it.
+    local only = post({ trigger = { type = "time", at = "07:00" }, during_shabbat = "only" }).json
+    local patch = function(body)
+        return T.http(mock, "PATCH", "/v1/schedules/" .. only.id, { key = admin, body = body })
+    end
+    T.eq(patch({ enabled = false }).json.during_shabbat, "only")
+    T.eq(patch({ trigger = { type = "shabbat", event = "havdalah" } }).json.code, "INVALID_FIELD")
+    local changed = patch({ trigger = { type = "shabbat", event = "havdalah" }, during_shabbat = "run" })
+    T.eq(changed.status, 200, changed.body)
+    T.eq(changed.json.trigger.type, "shabbat")
+    T.eq(changed.json.during_shabbat, "run")
+end
+
+function tests.a_schedule_stored_before_1_2_0_runs_as_usual_on_shabbat()
+    local mock = Mock.startDriver(nil, nil, nil, function(fresh)
+        fresh.persist["directorlink_schedules"] = "json:" .. Json.encode({ version = 1, schedules = {
+            { id = "0a1b2c3d", enabled = true, scene_id = "deadbeef", trigger = { type = "time", at = "06:45" }, days = { 0, 1 }, only_if = {}, if_no_weather = "run",
+                version = 3, created_at = "2026-09-01T08:00:00Z", updated_at = "2026-09-02T08:00:00Z", updated_epoch = 0 },
+        } })
+    end)
+    local admin = T.pair(mock)
+    local item = T.http(mock, "GET", "/v1/schedules/0a1b2c3d", { key = admin }).json
+    T.eq(item.during_shabbat, "run")
+    T.eq(item.calendar_status, Json.null)
+    T.eq(item.version, 3)
+    T.eq(T.http(mock, "PATCH", "/v1/schedules/0a1b2c3d", { key = admin, body = { days = { 0, 1, 2 } } }).status, 200)
+    T.contains(mock.persist["directorlink_schedules"], '"during_shabbat":"run"', "and it is stored in full")
+end
+
 function tests.a_weather_outage_is_retried_every_five_minutes_not_every_minute()
     local noon = at(1, 12, 0)
     local mock, admin, clock, Scheduler = start(noon)

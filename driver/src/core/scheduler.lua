@@ -96,9 +96,15 @@ function Scheduler.targetMinute(schedule, info)
     return minute
 end
 
+-- Shabbat triggers and "only on Shabbat and holidays" wait for the Jewish calendar (ADR-037): until
+-- it works out holy times (1.2.0), no moment counts as holy, as while it is off, so they never run.
+local function waitsForCalendar(schedule)
+    return schedule.trigger.type == "shabbat" or schedule.during_shabbat == "only"
+end
+
 -- When a time or sun schedule runs next (seconds from 1970), or nil.
 function Scheduler.nextRun(schedule, now)
-    if schedule.enabled == false or schedule.trigger.type == "weather" then
+    if schedule.enabled == false or schedule.trigger.type == "weather" or waitsForCalendar(schedule) then
         return nil
     end
     local today = Scheduler.localTime(now)
@@ -259,7 +265,7 @@ function Scheduler.tick(now)
     for _, schedule in ipairs(records) do
         local runtime = Schedules.runtime(schedule.id)
         local trigger = schedule.trigger
-        if schedule.enabled == false then
+        if schedule.enabled == false or waitsForCalendar(schedule) then
             -- Nothing.
         elseif trigger.type == "weather" then
             if weather then

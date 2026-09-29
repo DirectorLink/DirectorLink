@@ -5,6 +5,7 @@ local Clock = require("src.core.clock")
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
+local Calendar = require("src.api.handlers.calendar")
 local Scenes = require("src.core.scenes")
 local Scheduler = require("src.core.scheduler")
 local Schedules = require("src.core.schedules")
@@ -12,7 +13,7 @@ local Weather = require("src.core.weather")
 
 local Handlers = {}
 
-local FIELDS = { enabled = true, scene_id = true, trigger = true, days = true, only_if = true, if_no_weather = true }
+local FIELDS = { enabled = true, scene_id = true, trigger = true, days = true, only_if = true, if_no_weather = true, during_shabbat = true }
 
 local function nullable(value)
     if value == nil then
@@ -21,7 +22,17 @@ local function nullable(value)
     return value
 end
 
-local function view(schedule, now)
+-- For a schedule that uses the Jewish calendar, the calendar's status: "ok", "off" or
+-- "no_location". Until the calendar is built (1.2.0) there is no calendar service, and it is off.
+local function calendarStatus(services, schedule)
+    if not Schedules.usesCalendar(schedule) then
+        return Json.null
+    end
+    local calendar = services and services.calendar
+    return calendar and calendar.status() or "off"
+end
+
+local function view(schedule, now, services)
     local runtime = Schedules.runtime(schedule.id)
     local lastRun = runtime.last_run
     local nextRun = Scheduler.nextRun(schedule, now)
@@ -33,6 +44,8 @@ local function view(schedule, now)
         days = Json.array(schedule.days),
         only_if = schedule.only_if or {},
         if_no_weather = schedule.if_no_weather or "run",
+        during_shabbat = schedule.during_shabbat or "run",
+        calendar_status = calendarStatus(services, schedule),
         next_run = nextRun and Clock.iso(nextRun) or Json.null,
         last_run = type(lastRun) == "table" and {
             at = lastRun.at,
@@ -82,11 +95,23 @@ local function checked(input, sceneGiven)
     return record
 end
 
+-- Setting a Jewish calendar feature (a Shabbat trigger, or "during_shabbat" other than "run")
+-- needs the calendar on in Composer. A schedule that has one can still be switched on or off,
+-- change its days or scene, or be deleted while it is off; it does not run meanwhile.
+local function calendarOff(ctx, body)
+    local trigger, during = body.trigger, body.during_shabbat
+    local sets = type(trigger) == "table" and trigger.type == "shabbat" or type(during) == "string" and during ~= "run"
+    if sets and not (ctx.services.calendarEnabled and ctx.services.calendarEnabled()) then
+        return Calendar.offProblem()
+    end
+    return nil
+end
+
 function Handlers.list(ctx)
     local now = Clock.now()
     local items = Json.array()
     for _, schedule in ipairs(Schedules.list()) do
-        items[#items + 1] = view(schedule, now)
+        items[#items + 1] = view(schedule, now, ctx.services)
     end
     -- Paused by the installer in Composer (the Schedules property): nothing runs.
     local paused = ctx.services.schedulesPaused and ctx.services.schedulesPaused() or false
@@ -98,7 +123,7 @@ function Handlers.get(ctx)
     if not schedule then
         return problem
     end
-    return 200, view(schedule, Clock.now())
+    return 200, view(schedule, Clock.now(), ctx.services)
 end
 
 function Handlers.create(ctx)
@@ -112,6 +137,10 @@ function Handlers.create(ctx)
     if not record then
         return problem
     end
+    problem = calendarOff(ctx, body)
+    if problem then
+        return problem
+    end
     local created, failure = Schedules.create(record)
     if not created then
         if failure == "SCHEDULE_LIMIT_REACHED" then
@@ -123,7 +152,7 @@ function Handlers.create(ctx)
         ctx.services.onSchedulesChanged()
     end
     ctx.services.log.info("schedules", "schedule created", { schedule = created.id, scene = created.scene_id, trigger = created.trigger.type, by = ctx.apiKey.id })
-    return 201, view(created, Clock.now())
+    return 201, view(created, Clock.now(), ctx.services)
 end
 
 -- PATCH: the fields sent replace the schedule's (a whole `trigger` or `only_if`); with `version`,
@@ -161,6 +190,10 @@ function Handlers.update(ctx)
     if not record then
         return problem
     end
+    problem = calendarOff(ctx, body)
+    if problem then
+        return problem
+    end
     local updated, failure = Schedules.replace(schedule.id, record, body.version)
     if not updated then
         if failure == "VERSION_CONFLICT" then
@@ -174,7 +207,7 @@ function Handlers.update(ctx)
         ctx.services.onSchedulesChanged()
     end
     ctx.services.log.info("schedules", "schedule changed", { schedule = schedule.id, enabled = updated.enabled, by = ctx.apiKey.id })
-    return 200, view(updated, Clock.now())
+    return 200, view(updated, Clock.now(), ctx.services)
 end
 
 function Handlers.delete(ctx)

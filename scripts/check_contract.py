@@ -5,6 +5,9 @@ with a real HTTP client, and validates each response against api/openapi.yaml.
 Checks per response: the status code is declared for the operation, the Content-Type matches the
 declared media type, and the JSON body validates against the declared schema. Fails if any
 operation in the spec was not exercised.
+
+It also validates the hand-written calendar examples the app's tests read
+(tests/vectors/calendar/api-examples.json): each group is named after the schema its examples match.
 """
 
 import base64
@@ -30,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = yaml.safe_load((ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8"))
 REGISTRY = Registry().with_resource("urn:spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
 METHODS = ("get", "post", "put", "patch", "delete")
+EXAMPLES_FILE = ROOT / "tests" / "vectors" / "calendar" / "api-examples.json"
+EXAMPLES = json.loads(EXAMPLES_FILE.read_text(encoding="utf-8"))
 
 
 def fail(message):
@@ -85,6 +90,28 @@ def absolute(schema):
 
 def template_regex(path):
     return re.compile("^" + re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(path)) + "$")
+
+
+def check_examples():
+    """Every example in api-examples.json matches the schema its group is named after (dates and
+    times included). Returns how many there are."""
+    count = 0
+    for group, examples in EXAMPLES.items():
+        if group == "about":
+            continue
+        if group not in SPEC["components"]["schemas"]:
+            fail(f"{EXAMPLES_FILE.name}: {group} is not a schema in api/openapi.yaml")
+        validator = Draft202012Validator({"$ref": f"urn:spec#/components/schemas/{group}"}, registry=REGISTRY,
+                                         format_checker=Draft202012Validator.FORMAT_CHECKER)
+        for name, example in examples.items():
+            if not isinstance(example, dict) or "value" not in example:
+                fail(f"{EXAMPLES_FILE.name}: {group}.{name} has no value")
+            errors = sorted(validator.iter_errors(example["value"]), key=lambda e: list(e.path))
+            if errors:
+                details = "; ".join(f"{'/'.join(map(str, e.path)) or '(root)'}: {e.message}" for e in errors[:5])
+                fail(f"{EXAMPLES_FILE.name}: {group}.{name} does not match the spec: {details}")
+            count += 1
+    return count
 
 
 OPERATIONS = [
@@ -348,6 +375,31 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 204)
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 404)
 
+    # The Jewish calendar (1.2.0) ships off, and the API says so: nothing is worked out, and
+    # nothing that uses it can be set. Ordinary schedules run as usual on Shabbat.
+    features = client.check("GET", "/v1/system", 200)["features"]
+    if features != {"jewish_calendar": False}:
+        fail(f"GET /v1/system should show the Jewish calendar off: {features}")
+    calendar = client.check("GET", "/v1/calendar", 200)
+    if calendar != EXAMPLES["Calendar"]["off"]["value"]:
+        fail(f"GET /v1/calendar while it is off should answer as Calendar.off in {EXAMPLES_FILE.name}: {calendar}")
+    refused = [
+        client.check("PATCH", "/v1/calendar/settings", 409, body={"candle_lighting_minutes": 30, "version": 1}),
+        client.check("POST", "/v1/schedules", 409, body={
+            "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6],
+        }),
+        client.check("POST", "/v1/schedules", 409, body={
+            "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:30"}, "days": [0, 1, 2, 3, 4], "during_shabbat": "skip",
+        }),
+    ]
+    for answer in refused:
+        if answer["code"] != "JEWISH_CALENDAR_OFF":
+            fail(f"the calendar is off: expected JEWISH_CALENDAR_OFF, got {answer}")
+    client.check("PATCH", "/v1/calendar/settings", 400, body={"havdalah_minutes": 10})
+    ordinary = client.check("PATCH", f"/v1/schedules/{timed['id']}", 200, body={"during_shabbat": "run"})
+    if (timed["during_shabbat"], timed["calendar_status"], ordinary["during_shabbat"]) != ("run", None, "run"):
+        fail(f"an ordinary schedule runs as usual on Shabbat and has no calendar status: {ordinary}")
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
@@ -376,6 +428,8 @@ def scenario(client, bridge):
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
+    client.check("GET", "/v1/calendar", 200)
+    client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key
@@ -407,6 +461,7 @@ def scenario(client, bridge):
 
 
 def main():
+    examples = check_examples()
     lua = shutil.which("lua5.1") or shutil.which("lua")
     if not lua:
         fail("Lua 5.1 is required")
@@ -425,7 +480,7 @@ def main():
     missing = sorted({(op[0], op[1]) for op in OPERATIONS} - client.covered)
     if missing:
         fail("operations never exercised: " + ", ".join(f"{m} {p}" for m, p in missing))
-    print(f"OK: {client.checked} responses match the API spec; all {len(OPERATIONS)} operations covered")
+    print(f"OK: {client.checked} responses match the API spec; all {len(OPERATIONS)} operations covered; {examples} calendar examples match it")
 
 
 if __name__ == "__main__":

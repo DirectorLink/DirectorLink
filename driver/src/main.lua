@@ -192,6 +192,11 @@ local services = {
     relayHoldAllowed = function()
         return Properties ~= nil and Properties["Relay Hold"] == "Allowed"
     end,
+    -- Shabbat and holiday times (the Jewish calendar, ADR-037) need the Composer property "Jewish
+    -- Calendar" = On: /v1/system says so, and schedules may use the calendar only then.
+    calendarEnabled = function()
+        return Properties ~= nil and Properties["Jewish Calendar"] == "On"
+    end,
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
