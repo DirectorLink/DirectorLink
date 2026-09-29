@@ -14,7 +14,7 @@ Composer changes, with **Log Level** Debug:
 
 2. After the update, `GET /v1/logs?category=discovery` shows *watching the project for Composer changes* with the events. If it shows *Director does not announce Composer changes to DirectorLink* instead, steps 3–4 need the action Refresh Project.
 3. In Composer, move a shade (or a light) to another room. About 5 seconds later the log shows *project event* lines and then *project rediscovered* with `moved` 1; the app shows the device in its new room at its next refresh. Keep the *project event* lines: what Director sends with `OnItemMoved` is not documented. Rename a device, add one and remove one: `renamed`, `added` and `removed`, and **Inventory** follows.
-4. Actions → **Refresh Project**: *project rediscovered* with `reason` *Composer action*. Composer's **Refresh Navigators** does the same (`OnPIP`); pressed again within two minutes, it is read once more at the end of the two minutes. Status stays `Ready` throughout, and the *initialized …* lines of a refresh are at debug level.
+4. Actions → **Refresh Project**: *project rediscovered* with `reason` *Composer action*. Composer's **Refresh Navigators** does the same (`OnPIP`); pressed again within two minutes, it is read once more at the end of the two minutes. Status stays `Ready` throughout, and the adapters' per-device lines of a refresh (*initialized thermostat* and the like) are at debug level; *initialized N controllable proxies* stays at info.
 5. After a refresh, a door relay's last state and a doorbell's last ring are as before; a scene with a removed device runs the others and reports the removed one as skipped.
 
 Shades (KNX blinds on the blind proxy), with **Log Level** Debug and the driver reloaded:
