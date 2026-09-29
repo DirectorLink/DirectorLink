@@ -26,6 +26,7 @@ import { runScene } from "../scenes.js";
 import { can, notify, state, ui } from "../state.js";
 import { connectScreen } from "./connect.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
+import { updateBanner } from "./updates.js";
 
 export function homeView({ openCamera, openFavoritesPicker }) {
   const header = pageHeader({
@@ -55,6 +56,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     ringingDoorbells().map((doorbell) => doorbellBanner(doorbell, { openCamera })),
     offlineBanner(),
     staleBanner(),
+    // Admins: a newer DirectorLink is out, until dismissed for that version.
+    updateBanner(),
     summaryChips(),
     scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),

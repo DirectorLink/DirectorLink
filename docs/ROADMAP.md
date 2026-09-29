@@ -98,6 +98,13 @@
 - [x] Recalculate after reboot/timezone/location changes (0.14.0: worked out each minute)
 - [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
 
+## Driver updates (ADR-035)
+
+- [x] Step 1, a guided update: admins see a newer release in the app, with what's new, the download of its `DirectorLink.c4z` and the Composer steps (1.1.0)
+- [ ] Test on the owner's CORE-1 with a throwaway driver whether a driver can install a `.c4z` on OS 3.4.3
+- [ ] If it can: one-tap install from the app, admins only, behind the Composer property **App Updates** (default Not allowed), only to newer versions; going back stays in Composer
+- [ ] Releases signed in GitHub, the signature checked by the driver in plain Lua (minimum OS stays 3.3.0)
+
 ## Deferred
 
 - automatic C4Z update
