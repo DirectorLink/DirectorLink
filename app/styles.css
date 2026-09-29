@@ -1408,6 +1408,28 @@ select:disabled {
   font-size: 12px;
 }
 
+/* Heat and cool setpoints: two steppers need about 380 px side by side, so they stack on phones. */
+.stepper-pair {
+  display: grid;
+  gap: 8px;
+  margin-block: 10px 6px;
+}
+
+.stepper-pair .stepper {
+  margin-block: 0;
+}
+
+@media (min-width: 560px) {
+  .stepper-pair {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* View-only keys: both values in one box. */
+.stepper-readonly-pair {
+  justify-content: space-evenly;
+}
+
 .chip-row {
   display: flex;
   flex-wrap: wrap;

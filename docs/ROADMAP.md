@@ -46,6 +46,7 @@
 - [x] Schedules by time, sunrise/sunset and weather (Open-Meteo: heat, rain, wind), run by the controller (0.14.0; `docs/SCHEDULES.md`)
 - [x] Automation visible to the installer in Composer: pause switch, schedule status, last automation, printout (0.15.0)
 - [x] Security review fixes (issue #43, ADR-032): the app seals its requests at home too and pairs with a key exchange; pairing only at home, locked per device; origin and Host checks; location for admins only; secrets from a random pool; invitations registered by the controller; the owner replaces the home secret; Reset Remote Identity; sign out everywhere (1.0.0)
+- [x] The driver checks the relay's certificate against the roots it carries (1.1.0, ADR-034)
 - [ ] The API console seals its requests like the app
 - [ ] Local HTTPS, or a code compared on both sides, against someone who changes traffic during pairing
 - [ ] Sign in with Apple (built, off until its keys are set up); owner approval of email mismatches
@@ -75,7 +76,8 @@
 - [x] KNX relays (doors and gates): pulse, open/close, state from events (0.6.0)
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
-- [ ] Proposed in pull requests from bkwagner, not merged yet: Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16), fans (#18), alarm status (#15)
+- [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
+- [ ] Proposed in pull requests from bkwagner, not merged yet: fans (#18), alarm status (#15)
 
 ## Milestone 5 — DirectorLink scenes
 

@@ -129,6 +129,8 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Safety:** A device is not marked controllable unless its Light V2 state variable exists and DirectorLink can register the required state listener.
 
+**Extended by ADR-033 (1.1.0):** the legacy Light proxy (`light.c4i`) is controlled the same way, through its proxy, with its own commands.
+
 
 ## ADR-018 — One-owner local pairing
 
@@ -238,6 +240,31 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision (0.9.2):** `src/core/store.lua` writes every stored value as `json:` followed by JSON, which Director returns unchanged, and accepts tables Director has already decoded, so data written by 0.9.1 and older is read and then rewritten. Keys are kept in plain persistence as SHA-256 hashes (SHA-1 on a controller without SHA-256; each key records its algorithm). A presented key is hashed and compared in constant time; the key itself exists only in the response that creates it. Keys in the encrypted store of 0.8.0 and 0.9.0 are moved when Director can read that store, which is then emptied. The remote-access identity is kept in plain persistence as well: its secret has to be sent to the relay, so it cannot be kept as a hash.
 
 **Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way. (Since ADR-029 each key's lock key is stored too; ADR-032 lets the owner replace the home secret and says what such a copy allows.)
+
+## ADR-034 — The driver checks the relay's certificate against roots it carries
+
+**Context:** Up to 1.0.0 the driver opened the relay connection with `NetPortOptions` `SSL` and no `VERIFY_MODE`, and Control4's documentation says Director then checks nothing. Everything through the relay is sealed end to end (ADR-029), but the handshake carries the home secret, so anyone in the network path could pose as the relay, take the secret and keep the home offline.
+
+**Decision (1.1.0):** The connection asks for `VERIFY_MODE = "peer"`, with `CACERTFILE` set to `certs/directorlink-roots.pem` inside the package: the root certificates of the authorities Cloudflare issues the relay's certificate from (Let's Encrypt, Google Trust Services, SSL.com), taken by name from certifi, with each SHA-256 in the file's header. `scripts/check_package.py` checks the options and that the file holds exactly these roots and no key; `scripts/check_repo.py` allows this one `.pem`.
+
+**Consequence:** If Cloudflare moves the relay to an authority that is not in the file, or a root expires (2035–2046), remote access stops until a driver update, so the file is rebuilt from a current CA list first (docs/RELAY.md). Control4 does not document whether Director also checks the host name with `peer`; if not, a certificate one of these authorities issued for another name would pass too.
+
+## ADR-033 — Contributed device families and dual setpoints
+
+**Context:** bkwagner's pull requests #14, #19 and #16 added three device families that DirectorLink listed as unsupported, found in his house and read from his Director: the legacy Light proxy, heat-only Thermostat V2 floor heating whose single setpoint is unused, and the Control4 thermostat proxy with separate heat and cool setpoints. They were rebuilt on 1.0.0 (docs/PROJECT_SPEC.md, *Adapters added in 1.1.0*).
+
+**Decision (1.1.0):**
+- **Legacy Light proxy** (`light.c4i`): its own adapter, so the Light V2 path validated on real hardware does not change. State from `1000` and `1001` as on Light V2; `ON`, `OFF` and `SET_LEVEL {LEVEL}` with no ramp time, to the proxy; no KNX exception without a trace from a real device.
+- **Heat-setpoint rule:** a Thermostat V2 zone follows its heat setpoint only while it is heat-only, its single setpoint reads 0 in both scales and the heat setpoint does not, checked again on every change. On that path it goes down to 5 °C and takes `SET_SETPOINT_HEAT` in the project's scale. Zones with Cool or Auto never take it.
+- **Thermostat proxy scale:** the project's scale is required, never guessed. Setpoints are read and compared in its units (whole °F, tenths of °C) and commands go out in it only, whole degrees in °F; the API stays in °C.
+- **Public shape:** every thermostat has `setpoints` (`single` or `dual`), `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` (null on single-setpoint ones). On a dual thermostat `target_temperature` is the setpoint of the current mode (null in auto and off), PATCH and scene steps take `heat_setpoint` and `cool_setpoint`, and a `target_temperature` sets the setpoint of the request's mode, else the current one.
+- **Push rule:** one setpoint moves the other when needed to keep the deadband; two sent together must already be that far apart. They are sent in the order that never breaks the deadband in between.
+- **Safety, as ADR-017:** a device is controllable only when its state variables exist and its listeners register, and every command of a request is checked by its adapter (`Manager.prepare`) before any is sent, so a refused setpoint does not leave the mode changed.
+- Fan speeds: the API lists only its own values, which gain `on` and `circulate`.
+
+**Why:** One rule for PATCH, older clients and scene steps. A 1.0.0 client, or an existing "cool 24" scene, sends only `target_temperature`, and that works in heat and cool; sending both setpoints stays strict.
+
+**Consequence:** The API only gains fields, so 1.0.0 clients keep working; in auto they see no target. Room and whole-home scene steps include the new devices. The IDs and commands come from the contributor's Director; the rebuilt commands are covered by tests against the fake Director and are yet to be re-run on real hardware (docs/TESTING.md 0p).
 
 ## ADR-032 — The app's key stays off the home network; security review fixes
 

@@ -3,9 +3,10 @@
 // type: the ones it names, or all of them in a room or the whole home. Doors and gates only get
 // a pulse, what their Open button does.
 
-import { formatTemperature, t } from "./i18n.js";
+import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
 import { deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness } from "./model.js";
 import { api, errorText, noteForbidden, refreshDevices } from "./session.js";
+import { isDual } from "./setpoints.js";
 import { can, notify, state, ui } from "./state.js";
 
 export const SCENE_ICONS = ["bulb", "moon", "sun", "leave", "movie", "climate", "blinds", "home"];
@@ -87,6 +88,17 @@ export function stepWhere(step) {
   return t("scenes.severalRooms");
 }
 
+// "20°–24°", "Heat 20°" or "Cool 24°" for a step's heat and cool setpoints (just "20°" when the
+// step's mode already says which); null without them.
+function setpointsText(set) {
+  const heat = Number.isFinite(set.heat_setpoint) ? set.heat_setpoint : null;
+  const cool = Number.isFinite(set.cool_setpoint) ? set.cool_setpoint : null;
+  if (heat !== null && cool !== null) return formatTemperatureRange(heat, cool);
+  if (heat !== null) return set.mode === "heat" ? formatTemperature(heat) : `${t("climate.heatShort")} ${formatTemperature(heat)}`;
+  if (cool !== null) return set.mode === "cool" ? formatTemperature(cool) : `${t("climate.coolShort")} ${formatTemperature(cool)}`;
+  return null;
+}
+
 export function stepAction(step) {
   const set = step.set || {};
   if (step.type === "lights") {
@@ -98,7 +110,7 @@ export function stepAction(step) {
     if (set.mode === "off") return t("scenes.do.off");
     return [
       set.mode ? modeLabel(set.mode) : null,
-      Number.isFinite(set.target_temperature) ? formatTemperature(set.target_temperature) : null,
+      Number.isFinite(set.target_temperature) ? formatTemperature(set.target_temperature) : setpointsText(set),
       set.fan_speed ? t("scenes.do.fan", { speed: fanLabel(set.fan_speed) }) : null,
     ]
       .filter(Boolean)
@@ -206,9 +218,21 @@ export async function runScene(scene) {
 
 // ---- copying the house ---------------------------------------------------------------------
 
+// The setpoints a thermostat in auto has now, as a scene step keeps them (the controller takes
+// cool only above heat).
+function autoSetpoints(thermostat) {
+  const heat = Number.isFinite(thermostat.heat_setpoint) ? thermostat.heat_setpoint : null;
+  const cool = Number.isFinite(thermostat.cool_setpoint) ? thermostat.cool_setpoint : null;
+  if (heat !== null && cool !== null) return cool > heat ? { heat_setpoint: heat, cool_setpoint: cool } : {};
+  if (heat !== null) return { heat_setpoint: heat };
+  if (cool !== null) return { cool_setpoint: cool };
+  return {};
+}
+
 // Steps that put every light, AC and blind back the way they are now. Devices set alike share a
 // step (at most 100 devices each); doors and gates are left out. `left`: steps that did not fit
-// in a scene.
+// in a scene. A thermostat with heat and cool setpoints keeps both in auto; in heat or cool its
+// target is the setpoint of that mode.
 export function copyHouse() {
   const groups = new Map();
   const add = (type, set, id) => {
@@ -225,7 +249,8 @@ export function copyHouse() {
     const set = {};
     if (thermostat.mode && (thermostat.modes || []).includes(thermostat.mode)) set.mode = thermostat.mode;
     if (set.mode !== "off") {
-      if (Number.isFinite(thermostat.target_temperature)) set.target_temperature = thermostat.target_temperature;
+      if (isDual(thermostat) && thermostat.mode === "auto") Object.assign(set, autoSetpoints(thermostat));
+      else if (Number.isFinite(thermostat.target_temperature)) set.target_temperature = thermostat.target_temperature;
       if (thermostat.fan_speed && (thermostat.fan_speeds || []).includes(thermostat.fan_speed)) set.fan_speed = thermostat.fan_speed;
     }
     if (Object.keys(set).length) add("climate", set, thermostat.id);

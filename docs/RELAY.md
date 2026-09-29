@@ -75,10 +75,13 @@ Cloudflare issues the relay's certificate from, and Cloudflare may switch betwee
 - Google Trust Services: GTS Root R1, R3 and R4. Today's chain is WE1 → GTS Root R4.
 - SSL.com: the TLS RSA and ECC roots of 2022, and the older RSA and ECC roots.
 
-A certificate that does not verify fails the connection like any other failure, with the same
-backoff. The file lists each root's SHA-256. Rebuild it from a current CA list (such as certifi)
-before a root expires or when Cloudflare adds an authority. `scripts/check_package.py` checks that
-the package holds exactly these roots.
+This check is new in 1.1.0 (ADR-034). A certificate that does not verify fails the connection like
+any other failure, with the same backoff. Control4 does not document two things, which a
+controller has to show: whether Director also checks that the certificate names
+`api.directorlink.io`, and how a failed check is reported (Remote Status may stay at
+`Connecting...`). The file lists each root's SHA-256. Rebuild it from a current CA list (such as
+certifi) before a root expires or when Cloudflare adds an authority. `scripts/check_package.py`
+checks that the package holds exactly these roots.
 
 ## Messages
 

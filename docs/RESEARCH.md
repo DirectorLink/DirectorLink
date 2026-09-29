@@ -123,6 +123,47 @@ References:
 - https://github.com/snap-one/docs-driverworks/tree/master/driver_development_training/sample_light_driver
 
 
+## Light (legacy) proxy
+
+Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy
+`light.c4i`. bkwagner read its variables and commands over Director REST on his Director
+(`GET /api/v1/items/{id}/variables` and `/commands`, #14); in that house 25 of 38 lights used it:
+
+- Light State `1000` and the level `1001`, as on Light V2; switches have no `1001`
+- the commands `ON`, `OFF` and `SET_LEVEL` with `LEVEL`, instead of `SET_BRIGHTNESS_TARGET`
+
+Not seen yet: a DirectorLink `SET_LEVEL` moving one of these lights (`LEVEL` goes out as XML
+`INT`, the form Control4 documents for `RAMP_TO_LEVEL`), and whether `1000` can read `100`
+rather than `1`.
+
+
+## Thermostat setpoint variables 1100–1150
+
+Thermostat V2 and the Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) share these
+ids. The names were read on bkwagner's Director: five proxy thermostats (#16), and a heat-only
+floor-heating Thermostat V2 in a °F project (#19).
+
+| Id | Name | Notes |
+| --- | --- | --- |
+| 1100 | SCALE | the project's scale, `FAHRENHEIT` or `CELSIUS` |
+| 1104 | HVAC_MODE | |
+| 1105 | FAN_MODE | can read `Undefined` |
+| 1107 | HVAC_STATE | |
+| 1112 | IS_CONNECTED | |
+| 1120 | HVAC_MODES_LIST | comma-separated |
+| 1121 | FAN_MODES_LIST | comma-separated |
+| 1130 / 1131 | TEMPERATURE_F / TEMPERATURE_C | |
+| 1132 / 1133 | HEAT_SETPOINT_F / HEAT_SETPOINT_C | the floor-heating zone's real target |
+| 1134 / 1135 | COOL_SETPOINT_F / COOL_SETPOINT_C | |
+| 1146 / 1147 | DEADBAND_F / DEADBAND_C | the smallest gap between heat and cool |
+| 1149 / 1150 | the single setpoint, °F / °C | 0 in both on that floor-heating zone |
+
+On that zone only `SET_SETPOINT_HEAT {FAHRENHEIT}` was listed, no `SET_SETPOINT_SINGLE`. The proxy
+thermostats list `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL` with `FAHRENHEIT` or `CELSIUS`. Open:
+whether they take `CELSIUS` in a °F project, fractional `FAHRENHEIT`, what they do themselves
+when the deadband is broken, and the real spellings in their mode lists.
+
+
 ## Snapshot findings — 2026-09-25
 
 A real Director snapshot resolved both active alpha issues.

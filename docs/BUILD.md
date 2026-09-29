@@ -38,10 +38,13 @@ src/
   main.lua
   api/        HTTP server, router, handlers, generated openapi_spec.lua
   auth/       API keys, roles, pairing, profiles, invitations
-  adapters/   Light V2, Thermostat V2, blinds, cameras, KNX Contact/Relay, DoorBird
+  adapters/   Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4 thermostat proxy,
+              blinds, cameras, KNX Contact/Relay, DoorBird
   cloud/      relay connection, WebSocket, the end-to-end lock, sealed requests
   control4/   discovery and normalization
   core/       json, log, store, random, x25519, registry, version, scenes, schedules, sun, weather, …
+certs/
+  directorlink-roots.pem   the roots the relay's certificate is checked against (docs/RELAY.md)
 www/
   icons/      the device's icons in Composer and the Control4 app
 ```

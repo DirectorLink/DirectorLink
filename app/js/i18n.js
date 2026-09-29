@@ -117,6 +117,13 @@ export function formatTemperature(value) {
   return `\u2066${formatNumber(value, { maximumFractionDigits: 1 })}°\u2069`;
 }
 
+// "20°–24°": heat and cool setpoints. One isolate around the whole range (not two
+// formatTemperature calls), so Hebrew text shows it low to high as well.
+export function formatTemperatureRange(low, high) {
+  const number = (value) => formatNumber(value, { maximumFractionDigits: 1 });
+  return `\u2066${number(low)}°–${number(high)}°\u2069`;
+}
+
 // "3 minutes ago", "לפני 3 דקות", "now", "yesterday" for a controller time (ISO string), or "".
 export function formatRelative(value, now = Date.now()) {
   const at = typeof value === "string" ? Date.parse(value) : Number(value);

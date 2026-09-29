@@ -15,7 +15,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
-- Device adapters: lights, HVAC/climate, blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations

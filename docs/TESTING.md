@@ -2,6 +2,26 @@
 
 ## Current release
 
+`v1.1.0` — older Control4 lights, floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints (thanks to bkwagner, #14, #19, #16, ADR-033); the relay's certificate is checked (ADR-034). Update DirectorLink in Composer (no reboot).
+
+## 0p. Legacy lights and more thermostats (1.1.0)
+
+On the test system, which has none of the new devices, this is a regression check:
+
+1. Before updating, `GET /v1/thermostats`: note any floor-heating zone whose `target_temperature` is `-18`.
+2. After updating, **Inventory** still shows 111 lights and 22 thermostats. More would mean the project has older lights or Control4 thermostats that now join room and whole-home scenes.
+3. All 22 thermostats show `"setpoints": "single"`, with `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` `null`, and the same targets, modes and ranges as before. A zone noted in step 1 now shows its real target, 5 °C minimum.
+4. Section 4 passes unchanged: an AC zone Off → Cool, 22 °C, fan Low → Medium, and a floor-heating zone without Cool or fan.
+5. `GET /v1/logs?category=climate` shows `setpoint_source` `single` for every zone (`heat` only for a zone noted in step 1).
+6. With **Remote Access** on, **Remote Status** reaches `Connected` again after the update (the relay's certificate was checked), and the app works away from home. If it stays at `Connecting...`, the check failed: save `GET /v1/logs?category=relay` and the DirectorLink lines of the Director driver log.
+
+On a Director with these devices (bkwagner's), with **Log Level** Debug:
+
+7. **Older lights (`light.c4i`):** a dimmer on, off and 40%, and a switch on and off, each confirmed in the app without *waiting for the device to confirm*. `GET /v1/logs?category=light_command` shows `ON`, `OFF` and `SET_LEVEL` with `LEVEL` 40. Keep the `light_state` start-up lines (variable names, protocol drivers).
+8. **Floor heating on its heat setpoint:** the zone shows its real target and − goes down to 5°. Set 21°: the device's heat setpoint changes, the log shows `SET_SETPOINT_HEAT` with `FAHRENHEIT` 70 (in a °F project) and `setpoint_source` `heat`. Keep the start-up values of 1100, 1104, 1105, 1120, 1132, 1133, 1149 and 1150.
+9. **Each thermostat with heat and cool setpoints:** `GET` shows `"setpoints": "dual"`, both setpoints, the deadband, the modes and fan speeds. In Heat the stepper moves the heat setpoint, in Cool the cool setpoint, in Auto both are shown; raising heat into the deadband moves cool, and the device ends with both values. The mode chips Off, Heat, Cool and Auto work, and a scene *Auto 20°–24°* runs. Keep the Debug list of 1100–1150, and note whether the thermostat moves the other setpoint by itself.
+10. Save `GET /v1/lights`, `GET /v1/thermostats` and a scene run's result, and validate them against `api/openapi.yaml`.
+
 `v1.0.0` — the app's key stays off the home network (sealed requests, pairing with a key exchange) and the security review's fixes (issue #43, ADR-032). Update DirectorLink in Composer (no reboot).
 
 ## 0o. Security (1.0.0)
@@ -151,7 +171,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `1.0.0`
+- Version: `1.1.0`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - API Keys: how many keys exist
@@ -178,8 +198,10 @@ Repeat the alpha checks through the new API:
 
 - a KNX switch: on and off, confirmed by the controller
 - a dimmable light: set 40%, confirmed (KNX dimmers report "level not reported")
+- where the project has them, a legacy (`light.c4i`) switch and dimmer: on/off and 40%, confirmed
 - one AC zone: mode Off → Cool, target 22 °C, fan Low → Medium
 - one floor-heating zone: no Cool mode and no fan controls offered
+- a floor-heating zone shows its real target and a change is confirmed
 
 ## 5. API console
 

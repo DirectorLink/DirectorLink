@@ -1,6 +1,7 @@
 // Derived data: room names in the chosen language, devices grouped by room, what is "on".
 
-import { currentLanguage, t } from "./i18n.js";
+import { currentLanguage, formatTemperature, formatTemperatureRange, t } from "./i18n.js";
+import { isDual } from "./setpoints.js";
 import { state } from "./state.js";
 
 // Devices without a room are collected under this id.
@@ -127,6 +128,18 @@ export function modeLabel(mode) {
 
 export function fanLabel(speed) {
   return labelOr(`climate.fans.${speed}`, speed);
+}
+
+// The temperature a thermostat works to, for tiles and summaries: "24°", or "20°–24°" for a
+// thermostat with heat and cool setpoints in auto (or off), which has no single target then.
+export function targetText(thermostat) {
+  if (isDual(thermostat) && thermostat.mode !== "heat" && thermostat.mode !== "cool") {
+    const { heat_setpoint: heat, cool_setpoint: cool } = thermostat;
+    if (Number.isFinite(heat) && Number.isFinite(cool)) return formatTemperatureRange(heat, cool);
+    // Only one of them reported (or the thermostat has only one).
+    if (Number.isFinite(heat) || Number.isFinite(cool)) return formatTemperature(Number.isFinite(heat) ? heat : cool);
+  }
+  return formatTemperature(thermostat.target_temperature);
 }
 
 export function blindStateLabel(blind) {

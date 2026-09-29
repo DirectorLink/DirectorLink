@@ -167,6 +167,12 @@ def main():
     require(app, 'method: "PATCH"', "device changes must use PATCH")
     require(app, "waitForLightConfirmation", "light changes must be confirmed from reported state")
     require(app, "brightness_reported", "the app must handle lights that do not report brightness")
+    # Thermostats with heat and cool setpoints (1.1.0): both are shown and set, kept at least the
+    # thermostat's deadband apart.
+    require(app, "heat_setpoint", "the app must show and set the heat setpoint of dual-setpoint thermostats")
+    require(app, "setpoint_deadband", "the app must keep heat and cool setpoints the thermostat's deadband apart")
+    require(app, 'export const isDual = (thermostat) => thermostat?.setpoints === "dual";',
+            "only thermostats that report setpoints: dual get heat and cool steppers (older drivers send no setpoints)")
     require(app, "handleUnauthorized", "a 401 must clear the saved API key")
     require(app, "snapshot_href", "cameras must load pictures from snapshot_href")
     require(app, 'id: "offline-status"', "settings must show the offline copy status")
@@ -201,6 +207,8 @@ def main():
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing {key}")
         for key in ("atTheDoor", "lastRing", "noRings", "dismiss", "notificationTitle", "communication_failed", "justNow", "inventoryDoorbells"):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the doorbell text {key}")
+        for key in ("heatShort", "coolShort", "heatTarget", "coolTarget", "lowerHeat", "raiseHeat", "lowerCool", "raiseCool", "setpoints", "gap", "circulate"):
+            require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the setpoint text {key}")
     for path in APP.rglob("*"):
         if path.is_file() and path.suffix in (".html", ".js", ".md") and "DirectorLink Access" in path.read_text(encoding="utf-8"):
             fail(f"app/{path.relative_to(APP).as_posix()} still mentions the DirectorLink Access button (removed in 0.8.0)")

@@ -4,6 +4,7 @@
 
 import { t } from "./i18n.js";
 import { api, errorText, handleUnauthorized, noteForbidden } from "./session.js";
+import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, ui } from "./state.js";
 
 const CONFIRM_MS = 5000;
@@ -26,11 +27,11 @@ function lightChangeConfirmed(light, change) {
   return light.on === change.on;
 }
 
+const TEMPERATURE_FIELDS = ["target_temperature", "heat_setpoint", "cool_setpoint"];
+
 function thermostatChangeConfirmed(thermostat, change) {
   return Object.entries(change).every(([field, value]) =>
-    field === "target_temperature"
-      ? Number.isFinite(thermostat.target_temperature) && Math.abs(thermostat.target_temperature - value) < 0.3
-      : thermostat[field] === value
+    TEMPERATURE_FIELDS.includes(field) ? sameTemperature(thermostat[field], value) : thermostat[field] === value
   );
 }
 
@@ -70,7 +71,10 @@ function optimistic(kind, device, change) {
     }
     return { ...device, on: change.on, brightness: change.on ? device.brightness : device.dimmable ? 0 : null };
   }
-  return { ...device, ...change };
+  const next = { ...device, ...change };
+  // With heat and cool setpoints, the target is the setpoint of the mode (a new mode, or new setpoints).
+  if (kind === "thermostat" && isDual(next)) next.target_temperature = activeSetpoint(next);
+  return next;
 }
 
 // before: the device as it was before the first of a series of quick changes (e.g. + + +).
@@ -135,29 +139,45 @@ export function setLight(light, change) {
 // taps stop, so five quick taps send one PATCH.
 const nudges = new Map();
 
-export function nudgeTarget(thermostat, delta) {
+// What one tap on − / + changes: { field: value }, plus the other setpoint when a heat or cool
+// setpoint pushes it to keep the thermostat's gap; null when the tap changes nothing (at a limit).
+// `shown`: the thermostat with the values the taps so far have reached.
+export function nudgedChange(shown, delta, field = "target_temperature") {
+  const from = shown[field];
+  const base = Number.isFinite(from)
+    ? from
+    : Number.isFinite(shown.current_temperature)
+      ? Math.round(shown.current_temperature)
+      : 22;
+  const value = clampTarget(shown, base + delta);
+  if (value === from) return null;
+  if (field === "target_temperature") return { target_temperature: value };
+  const both = withSetpoint(shown, field, value);
+  if (!both) return null;
+  const change = { [field]: value };
+  const other = field === "heat_setpoint" ? "cool_setpoint" : "heat_setpoint";
+  if (Number.isFinite(both[other]) && both[other] !== shown[other]) change[other] = both[other];
+  return change;
+}
+
+// field: "target_temperature", or "heat_setpoint" / "cool_setpoint" on a thermostat with both.
+export function nudgeTarget(thermostat, delta, field = "target_temperature") {
   const id = thermostat.id;
   const current = findDevice("thermostat", id);
   if (!current || !can("member")) return;
   let entry = nudges.get(id);
   const first = !entry;
   if (first) {
-    entry = { before: { ...current }, timer: null, target: null };
+    entry = { before: { ...current }, timer: null, change: {} };
   }
-  // During a series of taps, from the value they have reached: a confirmation of another change
-  // (fan, mode) may have put the controller's older value back on screen meanwhile.
-  const shown = Number.isFinite(entry.target) ? entry.target : current.target_temperature;
-  const base = Number.isFinite(shown)
-    ? shown
-    : Number.isFinite(current.current_temperature)
-      ? Math.round(current.current_temperature)
-      : 22;
-  const target = clampTarget(current, base + delta);
-  if (target === shown) {
+  // During a series of taps, from the values they have reached: a confirmation of another change
+  // (fan, mode) may have put the controller's older values back on screen meanwhile.
+  const change = nudgedChange({ ...current, ...entry.change }, delta, field);
+  if (!change) {
     return;
   }
-  entry.target = target;
-  replaceDevice("thermostat", { ...current, target_temperature: target });
+  entry.change = { ...entry.change, ...change };
+  replaceDevice("thermostat", optimistic("thermostat", current, entry.change));
   if (first) {
     setPending(deviceKey("thermostat", id), true);
   }
@@ -168,7 +188,8 @@ export function nudgeTarget(thermostat, delta) {
     const latest = findDevice("thermostat", id);
     setPending(deviceKey("thermostat", id), false);
     if (latest) {
-      await sendChange("thermostat", id, { target_temperature: entry.target }, { before: entry.before });
+      // One PATCH with everything the taps changed, e.g. { heat_setpoint, cool_setpoint } after a push.
+      await sendChange("thermostat", id, entry.change, { before: entry.before });
     }
   }, 700);
   nudges.set(id, entry);

@@ -18,6 +18,7 @@ import {
   roomName,
   shownBrightness,
   summaryCounts,
+  targetText,
   visibleRooms,
 } from "../model.js";
 import { installApp } from "../pwa.js";
@@ -223,7 +224,7 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
         { class: "fav-state" },
         [
           Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
-          climateIsOn(device) ? `${modeLabel(device.mode)} ${formatTemperature(device.target_temperature)}` : modeLabel(device.mode),
+          climateIsOn(device) ? `${modeLabel(device.mode)} ${targetText(device)}` : modeLabel(device.mode),
         ]
           .filter(Boolean)
           .join(" · ")
@@ -335,7 +336,7 @@ function roomStatus(group) {
   for (const thermostat of group.thermostats) {
     parts.push(
       climateIsOn(thermostat)
-        ? t("rooms.climateOn", { mode: modeLabel(thermostat.mode), temperature: formatTemperature(thermostat.target_temperature) })
+        ? t("rooms.climateOn", { mode: modeLabel(thermostat.mode), temperature: targetText(thermostat) })
         : t("rooms.climateOff")
     );
   }

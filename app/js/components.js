@@ -5,6 +5,7 @@ import {
   cancelDoorbell,
   cancelRelay,
   nudgeTarget,
+  nudgedChange,
   pressDoorbell,
   pressRelay,
   setBlind,
@@ -18,6 +19,7 @@ import { isFavorite, toggleFavorite } from "./favorites.js";
 import { formatRelative, formatTemperature, t } from "./i18n.js";
 import { icon } from "./icons.js";
 import { blindStateLabel, climateIsOn, fanLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
+import { isDual, shownSetpoints } from "./setpoints.js";
 import { can, deviceKey, notify, state, ui } from "./state.js";
 
 // ---- generic -------------------------------------------------------------------------------
@@ -196,6 +198,60 @@ function climateStatus(thermostat) {
   return parts.join(" · ");
 }
 
+// Heat and cool setpoints of a thermostat that has both: one stepper per setpoint the mode uses
+// (both in auto and off, stacked on phones), or their values for view-only keys.
+const SETPOINT_TEXT = {
+  heat_setpoint: { name: "heat", label: "climate.heatShort", target: "climate.heatTarget", lower: "climate.lowerHeat", raise: "climate.raiseHeat" },
+  cool_setpoint: { name: "cool", label: "climate.coolShort", target: "climate.coolTarget", lower: "climate.lowerCool", raise: "climate.raiseCool" },
+};
+
+function setpointSteppers(thermostat, controls) {
+  const fields = shownSetpoints(thermostat);
+  if (!fields.length) return null;
+  if (!controls) {
+    return h(
+      "div",
+      { class: `stepper stepper-readonly ${fields.length > 1 ? "stepper-readonly-pair" : ""}`, role: "group", "aria-label": t("climate.setpoints") },
+      fields.map((field) =>
+        h(
+          "div",
+          { class: "stepper-value" },
+          h("span", { class: "stepper-number" }, formatTemperature(thermostat[field])),
+          h("span", { class: "stepper-label" }, t(SETPOINT_TEXT[field].label))
+        )
+      )
+    );
+  }
+  const steppers = fields.map((field) => {
+    const text = SETPOINT_TEXT[field];
+    const keyFor = (direction) => `thermostat:${thermostat.id}:${text.name}:${direction}`;
+    return h(
+      "div",
+      { class: "stepper", role: "group", "aria-label": t(text.target, { name: thermostat.name }) },
+      iconButton("minus", t(text.lower), {
+        class: "stepper-button",
+        dataset: { key: keyFor("down") },
+        // At the limit, or the other setpoint has no room to move.
+        disabled: !nudgedChange(thermostat, -1, field),
+        onclick: () => nudgeTarget(thermostat, -1, field),
+      }),
+      h(
+        "div",
+        { class: "stepper-value" },
+        h("output", { class: "stepper-number", "aria-live": "polite" }, formatTemperature(thermostat[field])),
+        h("span", { class: "stepper-label" }, t(text.label))
+      ),
+      iconButton("plus", t(text.raise), {
+        class: "stepper-button",
+        dataset: { key: keyFor("up") },
+        disabled: !nudgedChange(thermostat, 1, field),
+        onclick: () => nudgeTarget(thermostat, 1, field),
+      })
+    );
+  });
+  return steppers.length > 1 ? h("div", { class: "stepper-pair", role: "group", "aria-label": t("climate.setpoints") }, steppers) : steppers[0];
+}
+
 export function thermostatCard(thermostat, { showRoom = false } = {}) {
   const key = deviceKey("thermostat", thermostat.id);
   const target = thermostat.target_temperature;
@@ -228,7 +284,9 @@ export function thermostatCard(thermostat, { showRoom = false } = {}) {
       ),
       favoriteStar("thermostat", thermostat)
     ),
-    !controls
+    isDual(thermostat)
+      ? setpointSteppers(thermostat, controls)
+      : !controls
       ? h(
           "div",
           { class: "stepper stepper-readonly" },
