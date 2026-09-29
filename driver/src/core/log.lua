@@ -31,6 +31,7 @@ local state = {
     level = "info",
     seq = 0,
     entries = {},
+    quiet = 0, -- Log.quietly calls running: their info entries are written at debug level
 }
 
 -- Accepts debug/info/warn/error (and Composer's "Warning"); returns nil otherwise.
@@ -81,6 +82,9 @@ local function sanitize(value, depth)
 end
 
 function Log.write(level, category, message, data)
+    if level == "info" and state.quiet > 0 then
+        level = "debug"
+    end
     if not LEVELS[level] or LEVELS[level] < LEVELS[state.level] then
         return nil
     end
@@ -134,6 +138,23 @@ function Log.error(category, message, data)
     return Log.write("error", category, message, data)
 end
 
+local function quietDone(ok, ...)
+    state.quiet = state.quiet - 1
+    if not ok then
+        error((...), 0)
+    end
+    return ...
+end
+
+-- Runs fn(...) and returns what it returns, with the info entries it writes recorded at debug level
+-- (warnings and errors stay as they are). A project refresh initializes every device again, and
+-- what the adapters log about each one would only repeat the first discovery and push older
+-- entries (door openings among them) out of the log.
+function Log.quietly(fn, ...)
+    state.quiet = state.quiet + 1
+    return quietDone(pcall(fn, ...))
+end
+
 -- Returns matching entries (oldest first, at most `limit` of the newest) and the last seq.
 function Log.query(options)
     options = options or {}
@@ -163,6 +184,7 @@ function Log.reset()
     state.level = "info"
     state.seq = 0
     state.entries = {}
+    state.quiet = 0
 end
 
 return Log

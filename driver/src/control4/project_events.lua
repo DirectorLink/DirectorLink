@@ -1,10 +1,15 @@
 -- Composer changes to the project, as Director announces them to drivers (DriverWorks system
 -- events, C4:RegisterSystemEvent): an item (a device, a proxy, a room) added, removed, renamed or
--- moved, a driver added, a project loaded, and Composer's Refresh Navigators (OnPIP). An event is
--- only a sign that the project changed: the project is read again from Director (main.lua), once
--- no event has come for QUIET_MS (Composer sends bursts: a new device brings its proxies) and at
--- the latest MAX_WAIT_MS after the first one. The payloads are not documented, OnItemMoved's least
--- of all; each one is logged at debug level so it can be read on a real controller.
+-- moved, a driver added, a project loaded, and OnPIP (Composer's Refresh Navigators; Director also
+-- sends it when bindings, device names or media change). An event is only a sign that the project
+-- changed: the project is read again from Director (main.lua), once no event has come for QUIET_MS
+-- (Composer sends bursts: a new device brings its proxies) and at the latest MAX_WAIT_MS after the
+-- first one. OnPIP alone does it at most once every PIP_INTERVAL_MS, with one more read at the end
+-- of that time for the OnPIP that came meanwhile: it may come often, and one read of a large
+-- project is over a thousand Director calls. A read that fails (Director busy loading a project)
+-- is tried once more RETRY_MS later. The payloads are not documented, OnItemMoved's least of all;
+-- each one is logged at debug level so it can be read on a real controller, and one without a name
+-- known here still counts: Director sends only the events registered here.
 -- Without system events (no C4SystemEvents, or Director refuses them) the Composer action Refresh
 -- Project does the same by hand.
 
@@ -15,6 +20,8 @@ local ProjectEvents = {}
 
 ProjectEvents.QUIET_MS = 5000
 ProjectEvents.MAX_WAIT_MS = 30000
+ProjectEvents.PIP_INTERVAL_MS = 120000
+ProjectEvents.RETRY_MS = 60000
 -- Not OnProjectChanged (deprecated since OS 2.10), nor OnItemDataChanged or OnDeviceDataChanged,
 -- which may come with any driver's data write.
 ProjectEvents.NAMES = {
@@ -26,6 +33,9 @@ ProjectEvents.NAMES = {
     "OnDriverAdded",
     "OnProjectLoaded",
 }
+
+-- What an event whose name is not known here is called in the log and a refresh's reason.
+local UNNAMED = "unnamed event"
 
 -- Parameters that name the item an event is about (the others name a parent, a position).
 local ITEM_PARAMS = { iditem = true, iddevice = true, id = true, itemid = true, deviceid = true }
@@ -39,6 +49,8 @@ local state = {
     timer = nil,
     firstAt = nil,
     pending = {}, -- names of the events a refresh waits for, first seen first
+    retry = false, -- the refresh that waits is the second try of one that failed
+    pipAt = nil, -- when OnPIP alone last started a refresh
 }
 
 local function cancelTimer()
@@ -51,9 +63,9 @@ local function cancelTimer()
     end
 end
 
--- options: onChange(events) runs the refresh (events: the names, e.g. "OnItemMoved, OnPIP");
--- ownIds: DirectorLink's own device ids. Registers once per driver run; a later call only takes
--- the new options. Returns how many events are watched.
+-- options: onChange(events) runs the refresh (events: the names, e.g. "OnItemMoved, OnPIP") and
+-- returns false when it failed; ownIds: DirectorLink's own device ids. Registers once per driver
+-- run; a later call only takes the new options. Returns how many events are watched.
 function ProjectEvents.start(options)
     state.onChange = options.onChange
     state.ownIds = {}
@@ -95,6 +107,7 @@ function ProjectEvents.cancel()
     cancelTimer()
     state.firstAt = nil
     state.pending = {}
+    state.retry = false
 end
 
 function ProjectEvents.stop()
@@ -107,35 +120,41 @@ function ProjectEvents.stop()
     state.started = false
     state.watched = {}
     state.count = 0
+    state.pipAt = nil
+end
+
+local wait
+
+local function pipOnly()
+    return #state.pending == 1 and state.pending[1] == "OnPIP"
 end
 
 local function refresh()
-    local events = table.concat(state.pending, ", ")
+    local names, retry = state.pending, state.retry
+    local events = table.concat(names, ", ")
+    if pipOnly() then
+        state.pipAt = Clock.millis()
+    end
     ProjectEvents.cancel()
-    if state.onChange then
-        local ok, err = pcall(state.onChange, events)
-        if not ok then
-            Log.error("discovery", "project refresh failed", { events = events, error = tostring(err) })
-        end
+    if not state.onChange then
+        return
+    end
+    local ok, result = pcall(state.onChange, events)
+    if not ok then
+        Log.error("discovery", "project refresh failed", { events = events, error = tostring(result) })
+    end
+    if (not ok or result == false) and not retry then
+        -- Director may be busy (loading a project, say): once more, a minute later.
+        Log.info("discovery", "the project refresh is tried again", { events = events, in_seconds = ProjectEvents.RETRY_MS / 1000 })
+        state.pending = names
+        state.retry = true
+        wait(ProjectEvents.RETRY_MS)
     end
 end
 
-local function schedule(name)
-    local now = Clock.millis()
-    state.firstAt = state.firstAt or now
-    local known = false
-    for _, pending in ipairs(state.pending) do
-        known = known or pending == name
-    end
-    if not known then
-        state.pending[#state.pending + 1] = name
-    end
+-- Refreshes `delay` ms from now (instead of any refresh that waited).
+wait = function(delay)
     cancelTimer()
-    local delay = math.min(ProjectEvents.QUIET_MS, ProjectEvents.MAX_WAIT_MS - (now - state.firstAt))
-    if delay <= 0 then
-        refresh()
-        return
-    end
     local ok, timer = pcall(function()
         return C4:SetTimer(delay, function()
             state.timer = nil
@@ -148,6 +167,34 @@ local function schedule(name)
         -- No timer: at once, rather than never.
         refresh()
     end
+end
+
+local function schedule(name)
+    local now = Clock.millis()
+    local known = false
+    for _, pending in ipairs(state.pending) do
+        known = known or pending == name
+    end
+    if not known then
+        state.pending[#state.pending + 1] = name
+    end
+    -- A new change: should its refresh fail, it is tried again too.
+    state.retry = false
+    -- OnPIP alone, sooner than PIP_INTERVAL_MS after the refresh it last started: one refresh at
+    -- the end of that time, which later ones wait for too.
+    if pipOnly() and state.pipAt and now - state.pipAt < ProjectEvents.PIP_INTERVAL_MS then
+        if not state.timer then
+            wait(state.pipAt + ProjectEvents.PIP_INTERVAL_MS - now)
+        end
+        return
+    end
+    state.firstAt = state.firstAt or now
+    local delay = math.min(ProjectEvents.QUIET_MS, ProjectEvents.MAX_WAIT_MS - (now - state.firstAt))
+    if delay <= 0 then
+        refresh()
+        return
+    end
+    wait(delay)
 end
 
 -- The event's name: the first name attribute of its XML (as Snap One's own drivers read it).
@@ -183,14 +230,11 @@ function ProjectEvents.onSystemEvent(data)
     local ok, err = pcall(function()
         local text = tostring(data or "")
         local name = eventName(text)
-        if not name then
-            return
-        end
-        Log.debug("discovery", "project event", { event = name, data = text:sub(1, 1000) })
+        Log.debug("discovery", "project event", { event = name or UNNAMED, data = text:sub(1, 1000) })
         if name ~= "OnPIP" and onlyDirectorLink(text) then
             return
         end
-        schedule(name)
+        schedule(name or UNNAMED)
     end)
     if not ok then
         Log.warn("discovery", "a project event could not be handled", { error = tostring(err) })

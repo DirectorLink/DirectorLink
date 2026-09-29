@@ -33,12 +33,14 @@ end
 
 -- previous: the devices before a project refresh (id -> device). An adapter gets the device it
 -- controlled with the same id and kind, to keep what Director cannot tell it again (a relay's last
--- state, a doorbell's rings); everything else is read again.
+-- state, a doorbell's rings); everything else is read again. What the adapters log at info level
+-- about each device is written at debug level then: the first discovery logged it already.
 function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
     initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    local refreshing = previous ~= nil and next(previous) ~= nil
 
     pcall(function()
         C4:UnregisterAllVariableListeners()
@@ -61,7 +63,12 @@ function Manager.initialize(deviceRegistry, previous)
             if adapter.matches(device) then
                 attached[tonumber(id)] = adapter
 
-                local ok, success, err = pcall(adapter.initialize, device, registry, before)
+                local ok, success, err
+                if refreshing then
+                    ok, success, err = Log.quietly(pcall, adapter.initialize, device, registry, before)
+                else
+                    ok, success, err = pcall(adapter.initialize, device, registry, before)
+                end
                 if not ok then
                     attached[tonumber(id)] = nil
                     device.supported = false
