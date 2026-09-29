@@ -3,8 +3,10 @@
 
 local Mock = require("c4mock")
 local T = require("helpers")
+local Base64 = require("src.core.base64")
 local Json = require("src.core.json")
 local sha1 = require("sha1")
+local sha256 = require("sha256")
 
 local tests = {}
 
@@ -54,8 +56,22 @@ function tests.the_relay_certificate_is_checked_against_the_packaged_roots()
     local count = select(2, roots:gsub("%-%-%-%-%-BEGIN CERTIFICATE%-%-%-%-%-", ""))
     T.eq(count, 9, "Let's Encrypt, Google Trust Services and SSL.com roots")
     T.notContains(roots, "PRIVATE KEY")
-    for _, root in ipairs({ "ISRG Root X1", "ISRG Root X2", "GTS Root R1", "GTS Root R4", "SSL.com TLS RSA Root CA 2022", "SSL.com TLS ECC Root CA 2022" }) do
-        T.contains(roots, "# " .. root .. "\n", root)
+    -- The certificate under each label is that root (SHA-256 of its DER bytes, as pinned in
+    -- scripts/check_package.py), not only its name: today's chain ends at GTS Root R4.
+    local pinned = {
+        ["ISRG Root X1"] = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+        ["ISRG Root X2"] = "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+        ["GTS Root R1"] = "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+        ["GTS Root R4"] = "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+        ["SSL.com TLS RSA Root CA 2022"] = "8faf7d2e2cb4709bb8e0b33666bf75a5dd45b5de480f8ea8d4bfe6bebc17f2ed",
+        ["SSL.com TLS ECC Root CA 2022"] = "c32ffd9f46f936d16c3673990959434b9ad60aafbb9e7cf33654f144cc1ba143",
+    }
+    local found = {}
+    for label, body in roots:gmatch("\n# ([^\n]+)\n%-%-%-%-%-BEGIN CERTIFICATE%-%-%-%-%-\n([%w+/=\n]-)\n%-%-%-%-%-END CERTIFICATE%-%-%-%-%-") do
+        found[label] = Base64.toHex(sha256(Base64.decode((body:gsub("\n", "")))))
+    end
+    for root, fingerprint in pairs(pinned) do
+        T.eq(found[root], fingerprint, root)
     end
 end
 
@@ -169,6 +185,62 @@ function tests.lost_connections_reconnect_with_backoff()
     end
     T.same(delays, { 5, 10, 30, 60, 60 })
     T.eq(connection.connects, 6)
+end
+
+local function logged(mock, key, message)
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=relay", { key = key }).json.items) do
+        if entry.message == message then
+            return true
+        end
+    end
+    return false
+end
+
+-- Control4 does not document how Director reports a certificate that fails VERIFY_MODE, and it may
+-- report nothing: an attempt that has not opened within 30 s is dropped and retried with the backoff.
+function tests.an_attempt_that_never_opens_is_retried()
+    local mock = Mock.startDriver()
+    local key = T.pair(mock)
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    local connection = mock.network[BINDING]
+    T.eq(mock.properties["Remote Status"], "Connecting...")
+    local limit = lastTimer(mock, 30000)
+    T.truthy(limit and not limit.repeating, "a one-shot 30 s limit on the attempt")
+    limit.fired = true
+    limit.callback()
+    T.eq(connection.disconnects, 1, "the attempt is dropped")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (no connection within 30 s)")
+    T.truthy(logged(mock, key, "no TLS connection to the relay within 30 s; the certificate check may have failed"))
+
+    local retry = lastTimer(mock, 5000)
+    retry.fired = true
+    retry.callback()
+    T.eq(connection.connects, 2, "and tried again")
+    T.eq(mock.properties["Remote Status"], "Connecting...")
+
+    -- TLS is up, but the relay never answers the upgrade: the same.
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    limit = lastTimer(mock, 30000)
+    limit.fired = true
+    limit.callback()
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 10 s (no connection within 30 s)")
+    T.truthy(logged(mock, key, "the relay did not answer the upgrade within 30 s"))
+end
+
+function tests.the_attempt_limit_ends_with_the_attempt()
+    local mock = connected()
+    T.eq(lastTimer(mock, 30000), nil, "an open connection has no limit left")
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    T.eq(lastTimer(mock, 30000), nil, "a lost attempt waits for its backoff instead")
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    T.eq(lastTimer(mock, 30000), nil, "switching off ends it")
+    T.eq(mock.properties["Remote Status"], "Off")
 end
 
 function tests.refusals_wait_longer_and_say_why()

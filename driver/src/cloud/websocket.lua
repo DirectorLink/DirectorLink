@@ -16,8 +16,10 @@ local GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 -- could catch it and keep the home offline. With "peer", Director accepts only a chain that ends at
 -- one of the root certificates shipped in the package (Let's Encrypt, Google Trust Services and
 -- SSL.com: the authorities Cloudflare issues the relay's certificate from). The path is relative
--- to the driver's .c4z. A chain that does not verify fails the connection like any other, and the
--- relay retries with its backoff. The docs do not say whether Director also checks the host name.
+-- to the driver's .c4z. The docs do not say how Director reports a chain that does not verify, nor
+-- whether it also checks the host name. If it reports OFFLINE, the relay retries with its backoff
+-- ("connection lost"); if it reports nothing, relay.lua gives up on the attempt after
+-- Relay.CONNECT_SECONDS and retries the same way ("no connection within 30 s").
 WebSocket.CA_FILE = "./certs/directorlink-roots.pem"
 
 local OPCODE_CONTINUATION = 0

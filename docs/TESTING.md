@@ -13,7 +13,7 @@ On the test system, which has none of the new devices, this is a regression chec
 3. All 22 thermostats show `"setpoints": "single"`, with `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` `null`, and the same targets, modes and ranges as before. A zone noted in step 1 now shows its real target, 5 °C minimum.
 4. Section 4 passes unchanged: an AC zone Off → Cool, 22 °C, fan Low → Medium, and a floor-heating zone without Cool or fan.
 5. `GET /v1/logs?category=climate` shows `setpoint_source` `single` for every zone (`heat` only for a zone noted in step 1).
-6. With **Remote Access** on, **Remote Status** reaches `Connected` again after the update (the relay's certificate was checked), and the app works away from home. If it stays at `Connecting...`, the check failed: save `GET /v1/logs?category=relay` and the DirectorLink lines of the Director driver log.
+6. With **Remote Access** on, **Remote Status** reaches `Connected` again after the update (the relay's certificate was checked), and the app works away from home. If it keeps showing `Reconnecting in N s (connection lost)` or `Reconnecting in N s (no connection within 30 s)` instead, the check may have failed: save `GET /v1/logs?category=relay` and the DirectorLink lines of the Director driver log.
 
 On a Director with these devices (bkwagner's), with **Log Level** Debug:
 

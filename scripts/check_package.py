@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Checks the built dist/DirectorLink.c4z against the source tree and the release contract."""
 
+import base64
+import binascii
+import hashlib
 import json
 import re
 import sys
@@ -142,18 +145,21 @@ SECURITY_CONTRACT = {
     ),
 }
 
-# The roots the relay connection trusts: the authorities Cloudflare issues from (docs/RELAY.md).
-RELAY_ROOTS = (
-    "ISRG Root X1",
-    "ISRG Root X2",
-    "GTS Root R1",
-    "GTS Root R3",
-    "GTS Root R4",
-    "SSL.com TLS RSA Root CA 2022",
-    "SSL.com TLS ECC Root CA 2022",
-    "SSL.com Root Certification Authority RSA",
-    "SSL.com Root Certification Authority ECC",
-)
+# The roots the relay connection trusts: the authorities Cloudflare issues from (docs/RELAY.md),
+# in file order, each with the SHA-256 of its certificate (checked against certifi 2026.07.22). A
+# label alone would let a rebuild put the wrong certificate under the right name; remote access
+# would then fail only on the controller. Today's chain ends at GTS Root R4.
+RELAY_ROOTS = {
+    "ISRG Root X1": "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6",
+    "ISRG Root X2": "69729b8e15a86efc177a57afb7171dfc64add28c2fca8cf1507e34453ccb1470",
+    "GTS Root R1": "d947432abde7b7fa90fc2e6b59101b1280e0e1c7e4e40fa3c6887fff57a7f4cf",
+    "GTS Root R3": "34d8a73ee208d9bcdb0d956520934b4e40e69482596e8b6f73c8426b010a6f48",
+    "GTS Root R4": "349dfa4058c5e263123b398ae795573c4e1313c83fe68f93556cd5e8031b3c7d",
+    "SSL.com TLS RSA Root CA 2022": "8faf7d2e2cb4709bb8e0b33666bf75a5dd45b5de480f8ea8d4bfe6bebc17f2ed",
+    "SSL.com TLS ECC Root CA 2022": "c32ffd9f46f936d16c3673990959434b9ad60aafbb9e7cf33654f144cc1ba143",
+    "SSL.com Root Certification Authority RSA": "85666a562ee0be5ce925c1d8890a6f76a87ec16d4d7d5f29ea7419cf20123b69",
+    "SSL.com Root Certification Authority ECC": "3417bb06cc6007da1b961c920b8ab4ce3fad820e4aa30b9acbc4a74ebdcebc65",
+}
 
 
 def fail(message):
@@ -275,8 +281,27 @@ def check_relay_roots(files):
     if set(blocks) != {"CERTIFICATE"} or "PRIVATE KEY" in text:
         fail(f"{name} must hold certificates only (found {sorted(set(blocks))})")
     labels = re.findall(r"^# (.+)\n-----BEGIN CERTIFICATE-----$", text, re.M)
-    if tuple(labels) != RELAY_ROOTS or len(blocks) != len(RELAY_ROOTS):
+    if tuple(labels) != tuple(RELAY_ROOTS) or len(blocks) != len(RELAY_ROOTS):
         fail(f"{name} must hold exactly the roots {', '.join(RELAY_ROOTS)} (found {', '.join(labels)})")
+    # Each certificate is the one its label names: the SHA-256 of its DER bytes is pinned above.
+    bodies = re.findall(r"^-----BEGIN CERTIFICATE-----\n([A-Za-z0-9+/=\n]+?)\n-----END CERTIFICATE-----$", text, re.M)
+    if len(bodies) != len(labels):
+        fail(f"{name} has a certificate block that is not plain base64")
+    for label, body in zip(labels, bodies):
+        try:
+            der = base64.b64decode("".join(body.split()), validate=True)
+        except binascii.Error:
+            fail(f"{name}: the certificate under '# {label}' is not valid base64")
+        digest = hashlib.sha256(der).hexdigest()
+        if digest != RELAY_ROOTS[label]:
+            fail(f"{name}: the certificate under '# {label}' is not {label} (SHA-256 {digest})")
+    # The header lists every root's SHA-256 for readers; it must list the same ones.
+    header = {
+        subject: fingerprint.replace(":", "").lower()
+        for subject, fingerprint in re.findall(r"^# CN=([^,\n]+),[^\n]*\n#   for: [^\n]*\n#   SHA-256: ([0-9A-F:]+)$", text, re.M)
+    }
+    if header != RELAY_ROOTS:
+        fail(f"the SHA-256 list at the top of {name} does not match its certificates")
 
 
 def check_security_contract(files):
