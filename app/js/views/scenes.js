@@ -30,6 +30,7 @@ import {
 } from "../scenes.js";
 import { api, errorText, noteForbidden, refreshDevices, roleLabel } from "../session.js";
 import { isDual, setpointGap, withSetpoint } from "../setpoints.js";
+import { sceneBlindChoices } from "../shades.js";
 import { can, notify, state, ui } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { scenesNav } from "./schedules.js";
@@ -644,10 +645,11 @@ function setpointChoices(adding, { min, max, gap }) {
   return { heat_setpoint: adding.heat, cool_setpoint: adding.cool, target_temperature_min: min, target_temperature_max: max, setpoint_deadband: gap };
 }
 
-// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights), before
-// the steps are built from them.
+// Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights, no position
+// for shades that only open and close), before the steps are built from them.
 function settle(adding, devices) {
   if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
+  if (adding.type === "blinds" && !sceneBlindChoices(devices).includes(adding.blind)) adding.blind = adding.position >= 50 ? "open" : "close";
   if (adding.type === "climate" && devices.length) {
     const { modes, min, max, fans, dual, gap } = climateChoices(devices);
     if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
@@ -858,8 +860,11 @@ function doControls(adding, devices) {
     return parts;
   }
   if (adding.type === "blinds") {
+    // Set position only when one of these shades can go to a position.
+    const choices = sceneBlindChoices(devices);
+    const options = [["open", t("scenes.do.open")], ["close", t("scenes.do.close")], ["set", t("scenes.add.position")]];
     return [
-      segments([["open", t("scenes.do.open")], ["close", t("scenes.do.close")], ["set", t("scenes.add.position")]], adding.blind, "add-blind", (value) => {
+      segments(options.filter(([value]) => choices.includes(value)), adding.blind, "add-blind", (value) => {
         adding.blind = value;
       }),
       adding.blind === "set"

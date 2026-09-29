@@ -4,9 +4,9 @@
 // Blinds follow their move instead, which takes far longer (see the blinds section).
 
 import { t } from "./i18n.js";
-import { api, errorText, handleUnauthorized, noteForbidden } from "./session.js";
+import { api, errorText, handleUnauthorized, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
-import { MOVE_POLL_MS, STOP_SETTLE_MS, followMove, startMove } from "./shades.js";
+import { MOVE_POLL_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
 
 const CONFIRM_MS = 5000;
@@ -205,17 +205,19 @@ export function setThermostat(thermostat, change) {
 // ---- blinds -------------------------------------------------------------------------------------
 // A shade takes 10 to 70 seconds to get where it was sent, and the controller may report the
 // position it left until it stops. After a command the app shows where the shade goes (shades.js),
-// reads the blinds every 2 s while one moves (also one someone else set moving), and shows the
-// reported position once it has stopped.
+// reads the blinds every 2 s while one moves (also one someone else set moving, for as long as a
+// move takes), and shows the reported position once it has stopped, reading a few seconds more.
 
 const moves = new Map(); // blind id -> the move the app expects (shades.js startMove)
+const settling = new Map(); // blind id -> the reads after Stop or a move (shades.js startSettle)
 const reportsMotion = new Set(); // blinds seen reporting moving: their stops can be believed
-const settling = new Map(); // blind id -> until when to keep reading after Stop
+const movingSince = new Map(); // blind id -> since when it reports moving, without a break
 const lastCommand = new Map(); // blind id -> number of the last command sent to it
 let movePoll = null;
 
+// What the app expects of blind `id`, for shades.js shadeView: its move, or the reads after Stop.
 export function blindMove(id) {
-  return moves.get(Number(id)) || null;
+  return moves.get(Number(id)) || settling.get(Number(id)) || null;
 }
 
 // A move starting or ending changes the screen without new data from the controller: ui.tick
@@ -227,36 +229,68 @@ function setMove(id, move) {
   if (move || had) ui.tick += 1;
 }
 
-// Every read of the blinds takes each move along (or ends it).
-function followBlinds(now = Date.now()) {
+function setSettle(id, settle) {
+  const had = settling.has(id);
+  if (settle) settling.set(id, settle);
+  else settling.delete(id);
+  if (settle || had) ui.tick += 1;
+}
+
+// Every read of the blinds takes each move along (or ends it). `readAt`: when the read started, for
+// the reads made here; a report is taken over a command only from a read after its answer. A move
+// of a shade that left the list (removed in Composer) ends.
+function followBlinds(now = Date.now(), readAt = null) {
+  const listed = new Map(state.blinds.map((blind) => [blind.id, blind]));
   for (const blind of state.blinds) {
-    if (blind.moving === true) reportsMotion.add(blind.id);
-    const move = moves.get(blind.id);
-    if (!move) continue;
-    const next = followMove(move, blind, now);
-    if (next !== move) setMove(blind.id, next);
+    if (blind.moving !== true) {
+      movingSince.delete(blind.id);
+    } else {
+      reportsMotion.add(blind.id);
+      if (!movingSince.has(blind.id)) movingSince.set(blind.id, now);
+    }
   }
-  for (const [id, until] of settling) {
-    if (until <= now) settling.delete(id);
+  for (const id of movingSince.keys()) {
+    if (!listed.has(id)) movingSince.delete(id);
+  }
+  for (const [id, move] of moves) {
+    const blind = listed.get(id);
+    const next = blind ? followMove(move, blind, now, readAt) : null;
+    if (next === move) continue;
+    setMove(id, next);
+    if (!next && blind) setSettle(id, afterMove(move, now));
+  }
+  for (const [id, settle] of settling) {
+    const next = listed.has(id) ? followSettle(settle, now, readAt) : null;
+    if (next !== settle) setSettle(id, next);
   }
 }
 
-function blindsMoving() {
-  return moves.size > 0 || settling.size > 0 || state.blinds.some((blind) => blind.moving === true);
+function blindsMoving(now = Date.now()) {
+  return moves.size > 0 || settling.size > 0 || state.blinds.some((blind) => followsReport(blind, movingSince.get(blind.id), now));
 }
 
 function scheduleMovePoll() {
   if (movePoll || !state.apiKey || state.status !== "connected" || document.hidden || !blindsMoving()) return;
   movePoll = window.setTimeout(async () => {
+    // The key may have been forgotten since, or the connection lost.
+    if (!state.apiKey || state.status !== "connected") {
+      movePoll = null;
+      return;
+    }
+    const readAt = Date.now();
+    let read = false;
     try {
       const list = await api(KINDS.blind.path);
-      if (Array.isArray(list?.items)) state.blinds = list.items;
+      if (Array.isArray(list?.items)) {
+        state.blinds = list.items;
+        read = true;
+      }
     } catch (error) {
       if (error?.status === 401) handleUnauthorized(error);
       // Otherwise the next read, or the refresh every 10 s, catches up.
     } finally {
       movePoll = null;
-      followBlinds();
+      followBlinds(Date.now(), read ? readAt : null);
       notify();
       scheduleMovePoll();
     }
@@ -268,6 +302,17 @@ function scheduleMovePoll() {
 subscribe(() => {
   followBlinds();
   scheduleMovePoll();
+});
+
+// This browser's key is forgotten (Settings, or a revoked key): nothing is followed any more.
+whenForgotten(() => {
+  window.clearTimeout(movePoll);
+  movePoll = null;
+  moves.clear();
+  settling.clear();
+  reportsMotion.clear();
+  movingSince.clear();
+  lastCommand.clear();
 });
 
 function blindErrorText(error) {
@@ -282,13 +327,14 @@ function useAnswer(id, answer) {
 }
 
 // Sends a command to blind `id`. When it fails, `undo` puts the move back as it was, unless a newer
-// command to the same blind was sent meanwhile.
-async function blindCommand(id, path, options, undo) {
+// command to the same blind was sent meanwhile; when it is answered, `done(now)` marks the time.
+async function blindCommand(id, path, options, undo, done) {
   const key = deviceKey("blind", id);
   const number = (lastCommand.get(id) || 0) + 1;
   lastCommand.set(id, number);
   try {
     useAnswer(id, await api(path, options));
+    if (lastCommand.get(id) === number) done(Date.now());
   } catch (error) {
     if (lastCommand.get(id) === number) undo();
     if (error?.status === 401) {
@@ -319,25 +365,39 @@ export function setBlind(blind, position) {
   const id = current.id;
   const previous = moves.get(id) || null;
   setMove(id, startMove(current, position, Date.now(), reportsMotion.has(id)));
-  settling.delete(id);
+  setSettle(id, null);
   clearError(deviceKey("blind", id));
   notify();
-  return blindCommand(id, `${KINDS.blind.path}/${id}`, { method: "PATCH", body: { position } }, () => setMove(id, previous));
+  return blindCommand(
+    id,
+    `${KINDS.blind.path}/${id}`,
+    { method: "PATCH", body: { position } },
+    () => setMove(id, previous),
+    (now) => moves.has(id) && setMove(id, answered(moves.get(id), now))
+  );
 }
 
-// It stops where it is: the app shows what the shade reports, and reads it for a few seconds.
+// It stops where it is: the app shows the shade as stopped, then where it reports it stopped, and
+// reads it for a few seconds.
 export function stopBlind(blind) {
   if (!can("member")) return Promise.resolve();
   const id = blind.id;
   const move = moves.get(id) || null;
+  const settle = settling.get(id) || null;
   setMove(id, null);
-  settling.set(id, Date.now() + STOP_SETTLE_MS);
+  setSettle(id, startSettle(Date.now(), true));
   clearError(deviceKey("blind", id));
   notify();
-  return blindCommand(id, `${KINDS.blind.path}/${id}/stop`, { method: "POST" }, () => {
-    settling.delete(id);
-    setMove(id, move);
-  });
+  return blindCommand(
+    id,
+    `${KINDS.blind.path}/${id}/stop`,
+    { method: "POST" },
+    () => {
+      setSettle(id, settle);
+      setMove(id, move);
+    },
+    (now) => settling.has(id) && setSettle(id, answered(settling.get(id), now))
+  );
 }
 
 // Room "All off": lights off and air conditioning off.

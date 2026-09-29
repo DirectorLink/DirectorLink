@@ -45,6 +45,12 @@ function runConnectedHooks() {
       .catch((error) => console.warn("DirectorLink: after connecting", error));
   }
 }
+// Run when this browser's key is forgotten (controls.js: the shades it follows).
+const forgottenHooks = [];
+
+export function whenForgotten(hook) {
+  forgottenHooks.push(hook);
+}
 let failedRefreshes = 0;
 let connectRun = 0;
 
@@ -396,6 +402,7 @@ export function forgetKey() {
   state.role = null;
   state.status = "setup";
   state.loaded = false;
+  for (const hook of forgottenHooks) hook();
 }
 
 // Pairing failures (POST /v1/auth/pair) as RFC 9457 problem codes.
@@ -633,6 +640,18 @@ export async function refreshDoorbells() {
   }
 }
 
+// Every device of the project, for the devices a room has that the app cannot control: they change
+// with the project in Composer (which the driver picks up by itself), so with the rooms, once a minute.
+async function refreshDeviceList() {
+  try {
+    const devices = await api("/v1/devices");
+    if (Array.isArray(devices?.items)) state.devices = devices.items;
+    notify();
+  } catch {
+    // The next device refresh reports connection problems.
+  }
+}
+
 // Connects with the saved key. Used on start (automatic reconnect) and by Retry.
 export async function connect() {
   if (!reachable()) {
@@ -820,7 +839,7 @@ async function poll() {
     if (pollCount % 6 === 0) await tryHomeNetwork();
     if (ok && pollCount % 6 === 1) checkInThroughAccount();
     if (ok && pollCount % 6 === 0 && state.status === "connected") {
-      await refreshRooms();
+      await Promise.all([refreshRooms(), refreshDeviceList()]);
     }
     // After a failure, try again soon instead of waiting a whole interval.
     if (!ok && state.apiKey) {

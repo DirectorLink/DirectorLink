@@ -7,6 +7,7 @@ import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
 import { deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness } from "./model.js";
 import { api, errorText, noteForbidden, refreshDevices } from "./session.js";
 import { isDual } from "./setpoints.js";
+import { scenePosition } from "./shades.js";
 import { can, notify, state, ui } from "./state.js";
 
 export const SCENE_ICONS = ["bulb", "moon", "sun", "leave", "movie", "climate", "blinds", "home"];
@@ -256,7 +257,9 @@ export function copyHouse() {
     if (Object.keys(set).length) add("climate", set, thermostat.id);
   }
   for (const blind of state.blinds) {
-    if (Number.isFinite(blind.position)) add("blinds", { position: Math.max(0, Math.min(100, Math.round(blind.position))) }, blind.id);
+    // A shade that only opens and closes fully gets 0 or 100, the nearer (shades.js).
+    const position = scenePosition(blind);
+    if (position !== null) add("blinds", { position }, blind.id);
   }
   const steps = [];
   for (const group of groups.values()) {
