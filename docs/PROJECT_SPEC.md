@@ -207,14 +207,18 @@ A Thermostat V2 zone follows its heat setpoint only when all three hold:
   keeps the single setpoint)
 - its heat setpoint `1133` (°C) has a value other than 0
 
-The rule is checked again on every change to `1120`, `1133`, `1149` and `1150`. A heat-only zone
-reads and watches `1133` and `1150` at start-up. The mode list or one of these can arrive later,
-so a zone whose single setpoint reads 0 looks again on changes to `1120`, `1149` and the room
-temperature (`1131`); a zone in use on its single setpoint reads nothing more. On that path the
-target is `1133`, the range starts at 5 °C, and `set_temperature` sends `SET_SETPOINT_HEAT` with
-`FAHRENHEIT` (whole degrees) when the project scale (`1100`) is °F, or `CELSIUS` otherwise. Every
-other zone keeps `SET_SETPOINT_SINGLE` and 16–32 °C, and zones with Cool or Auto never read or
-watch `1133` and `1150`. A fan mode of `Undefined` is no fan speed.
+The rule is checked again on every change to `1120`, `1133`, `1149` and `1150`. Only a heat-only
+zone whose single setpoint reads 0 reads and watches `1133` and `1150`, at start-up and whenever it
+looks again: the mode list or one of these can arrive later, so such a zone looks again on changes
+to `1120`, `1149` and the room temperature (`1131`). A zone in use on its single setpoint starts
+with the reads, listeners and log line of 1.0.0 and reads nothing more; if its single setpoint
+drops to 0, that change looks again. On that path the target is `1133`, the range starts at 5 °C,
+and `set_temperature` sends `SET_SETPOINT_HEAT` with `FAHRENHEIT` (whole degrees) when the project
+scale (`1100`) is °F, or `CELSIUS` otherwise. Every other zone keeps `SET_SETPOINT_SINGLE` and
+16–32 °C, and zones with Cool or Auto never read or watch `1133` and `1150`. The variable list
+(`C4:GetDeviceVariables`) is read only at Debug, for the log. A fan mode of `Undefined` is no fan
+speed, and a zone whose mode list loses Cool after start-up loses its fan control, as a zone
+without Cool never gets it.
 
 ### Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) — 1.1.0
 
@@ -237,7 +241,10 @@ Control4 thermostats with separate heat and cool setpoints. The variables (`ther
 - One setpoint moves the other when needed to keep the deadband; two sent together must already
   be that far apart. Without a reported deadband, cool stays at least one step (1 °F or 0.1 °C)
   above heat. Cool is sent first when it goes up, heat first otherwise, so the pair never breaks
-  the deadband in between. Every command is checked before anything is sent.
+  the deadband in between. The other setpoint and "goes up" are judged against the setpoints
+  DirectorLink last sent until the thermostat reports them (or for 10 s), so a request that comes
+  before the report does not start from old values. Every command is checked before anything is
+  sent.
 - A setpoint that none of the thermostat's modes uses (heat on one with only Off and Cool) is
   reported as `null`, so clients do not offer or push it.
 - The room temperature is converted as measured, not rounded to whole °F first.

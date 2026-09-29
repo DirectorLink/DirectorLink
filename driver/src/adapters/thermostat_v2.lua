@@ -110,8 +110,11 @@ end
 
 -- The Debug log of a heat-only zone lists the proxy's thermostat variables (1100-1150) with their
 -- names and values, so a field log shows what the zone really has. Nothing depends on these
--- names; they are unverified.
+-- names; they are unverified, and read only at Debug. Returns true when it logged them.
 local function logVariableNames(deviceId)
+    if Log.getLevel() ~= "debug" then
+        return false
+    end
     local ok, variables = pcall(function()
         return C4:GetDeviceVariables(deviceId)
     end)
@@ -126,10 +129,12 @@ local function logVariableNames(deviceId)
     end
     table.sort(names)
     Log.debug("climate", "heat-only thermostat variables", { device_id = deviceId, variables = table.concat(names, ", ") })
+    return true
 end
 
 -- A heat-only zone reads and watches the single setpoint in °C (1150) and the heat setpoint (1133).
--- AC zones never get here. Returns true when it read one it did not have.
+-- AC zones never get here, and neither does a zone in use on its single setpoint (lookAgain).
+-- Returns true when it read one it did not have.
 local function watchHeatSetpoint(device, info)
     if not info.heatOnly then
         return false
@@ -152,17 +157,30 @@ local function watchHeatSetpoint(device, info)
         end
     end
     if not info.variablesLogged then
-        info.variablesLogged = true
-        logVariableNames(device.id)
+        info.variablesLogged = logVariableNames(device.id)
     end
     return found
 end
 
--- After start-up, a zone can turn heat-only (its mode list arrives late), and 1133 or 1150 can
--- appear. Only a zone whose single setpoint reads 0 can move to its heat setpoint, so only such a
--- zone looks again; a zone in use on its single setpoint reads nothing more than at start-up.
+-- Only a zone whose single setpoint reads 0 can move to its heat setpoint, so only such a zone
+-- reads 1133 and 1150, at start-up and whenever it looks again: after start-up it can turn
+-- heat-only (its mode list arrives late), and 1133 or 1150 can appear. A zone in use on its single
+-- setpoint starts and runs as in 1.0.0; if its single setpoint drops to 0, the change looks again.
 local function lookAgain(device, info)
     return tonumber(info.singleF) == 0 and watchHeatSetpoint(device, info)
+end
+
+-- A zone whose mode list loses Cool loses its fan control too, as a zone without Cool never gets
+-- it at start-up. A zone that keeps Cool keeps its fan.
+local function dropFanControl(device, info)
+    info.hasFanMode = false
+    info.fanModes = {}
+    device.capabilities.fan_modes = {}
+    for index = #device.actions, 1, -1 do
+        if device.actions[index] == "set_fan_mode" then
+            table.remove(device.actions, index)
+        end
+    end
 end
 
 local function targetOf(info)
@@ -267,15 +285,15 @@ function Climate.initialize(device)
         hvacModes = { "Off", "Heat", "Cool" }
     end
 
-    -- Only heat-only zones read and watch the heat setpoint and the single setpoint in °C; for
-    -- AC zones nothing here changes.
+    -- Only a heat-only zone whose single setpoint reads 0 reads and watches the heat setpoint and
+    -- the single setpoint in °C; every other zone starts with the reads and listeners of 1.0.0.
     local info = {
         hvacModes = hvacModes,
         heatOnly = isHeatOnly(hvacModes),
         singleF = setpointF,
         watching = {},
     }
-    watchHeatSetpoint(device, info)
+    lookAgain(device, info)
 
     local hasCool = false
     for _, mode in ipairs(hvacModes) do
@@ -329,17 +347,22 @@ function Climate.initialize(device)
         fan_mode = fanValue(fanMode),
     }
 
-    Log.info("climate", "initialized thermostat", {
+    local logged = {
         device_id = device.id,
         hvac_modes = hvacModes,
         fan_mode = fanMode,
         current_temperature_c = tempC,
         target_temperature_c = device.state.target_temperature_c,
-        setpoint_source = device.capabilities.setpoint_source,
-        single_f = setpointF,
-        single_c = info.singleC,
-        heat_c = info.heatC,
-    })
+    }
+    -- A zone that looked at its heat setpoint also logs which setpoint it follows and the values
+    -- that decided it; every other zone logs the line of 1.0.0.
+    if info.heatOnly and tonumber(setpointF) == 0 then
+        logged.setpoint_source = device.capabilities.setpoint_source
+        logged.single_f = setpointF
+        logged.single_c = info.singleC
+        logged.heat_c = info.heatC
+    end
+    Log.info("climate", "initialized thermostat", logged)
 
     return true
 end
@@ -397,6 +420,9 @@ function Climate.onVariableChanged(device, variableId, value)
             device.capabilities.hvac_modes = modes
         end
         info.heatOnly = isHeatOnly(info.hvacModes)
+        if info.hasFanMode and not hasMode(info.hvacModes, "cool") then
+            dropFanControl(device, info)
+        end
         -- A zone that just turned heat-only reads its heat setpoint now, before the path is chosen.
         lookAgain(device, info)
         applySetpointPath(device)

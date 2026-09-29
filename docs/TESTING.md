@@ -42,7 +42,7 @@ On the test system, which has none of the new devices, this is a regression chec
 2. After updating, **Inventory** still shows 111 lights and 22 thermostats. More would mean the project has older lights or Control4 thermostats that now join room and whole-home scenes.
 3. All 22 thermostats show `"setpoints": "single"`, with `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` `null`, and the same targets, modes and ranges as before. A zone noted in step 1 now shows its real target, 5 °C minimum.
 4. Section 4 passes unchanged: an AC zone Off → Cool, 22 °C, fan Low → Medium, and a floor-heating zone without Cool or fan.
-5. `GET /v1/logs?category=climate` shows `setpoint_source` `single` for every zone (`heat` only for a zone noted in step 1).
+5. `GET /v1/logs?category=climate`: each zone's *initialized thermostat* line has the fields of 1.0.0 and no `setpoint_source`, except a zone noted in step 1, whose line adds `setpoint_source` `heat` and the values 1149, 1150 and 1133 read.
 6. With **Remote Access** on, **Remote Status** reaches `Connected` again after the update (the relay's certificate was checked), and the app works away from home. If it keeps showing `Reconnecting in N s (connection lost)` or `Reconnecting in N s (no connection within 30 s)` instead, the check may have failed: save `GET /v1/logs?category=relay` and the DirectorLink lines of the Director driver log.
 
 On a Director with these devices (bkwagner's), with **Log Level** Debug:
