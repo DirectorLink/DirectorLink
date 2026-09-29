@@ -217,6 +217,25 @@ def scenario(client, bridge):
     client.check("GET", "/v1/thermostats/32", 200)
     client.check("PATCH", "/v1/thermostats/32", 202, body={"target_temperature": 6})
 
+    # Fans (1.2.0, Mock.withFans): 41 on at Medium in the living room, 42 off in the kitchen. The
+    # dev bridge's fans follow their commands as the fan proxy is documented to.
+    client.check("GET", "/v1/fans", 200)
+    client.check("GET", "/v1/fans?room_id=11", 200)
+    client.check("GET", "/v1/fans/41", 200)
+    client.check("GET", "/v1/fans/20", 404)
+    client.check("GET", "/v1/fans/abc", 400)
+    client.check("GET", "/v1/devices?type=fan", 200)
+    client.check("PATCH", "/v1/fans/42", 202, body={"speed": 3})
+    fan = client.check("GET", "/v1/fans/42", 200)
+    if (fan["on"], fan["speed"]) != (True, 3):
+        fail(f"GET /v1/fans/42 should show the fan on at speed 3: {fan}")
+    client.check("PATCH", "/v1/fans/42", 202, body={"on": False})
+    client.check("PATCH", "/v1/fans/41", 202, body={"on": True})
+    client.check("PATCH", "/v1/fans/41", 400, body={"speed": 5})
+    client.check("PATCH", "/v1/fans/41", 400, body={"on": False, "speed": 2})
+    client.check("PATCH", "/v1/fans/41", 400, body={"on": "yes"})
+    client.check("PATCH", "/v1/fans/99", 404, body={"on": True})
+
     client.check("GET", "/v1/blinds", 200)
     client.check("GET", "/v1/blinds?room_id=11", 200)
     client.check("GET", "/v1/blinds/50", 200)
@@ -299,6 +318,8 @@ def scenario(client, bridge):
             {"type": "blinds", "room_id": None, "set": {"position": 0}},
             {"type": "lights", "room_id": 10, "device_ids": [20], "set": {"brightness": 30}},
             {"type": "relays", "device_ids": [70], "set": {"action": "pulse"}},
+            {"type": "fans", "room_id": 11, "set": {"speed": 1}},
+            {"type": "fans", "device_ids": [42], "set": {"on": False}},
         ],
     }
     scene = client.check("POST", "/v1/scenes", 201, body=night)
@@ -314,7 +335,9 @@ def scenario(client, bridge):
     client.check("POST", f"/v1/scenes/{scene['id']}/run", 202)
     client.check("POST", "/v1/scenes/deadbeef/run", 404)
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
-    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
     auto = {"type": "climate", "device_ids": [31], "set": {"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}}
     dual = client.check("POST", "/v1/scenes", 201, body={"name": "Study auto", "steps": [auto]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [auto]})
@@ -360,6 +383,8 @@ def scenario(client, bridge):
     admin_key, client.key = client.key, created["key"]
     client.check("GET", "/v1/lights", 200)
     client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
+    client.check("GET", "/v1/fans", 200)
+    client.check("PATCH", "/v1/fans/41", 403, body={"on": False})
     client.check("POST", "/v1/relays/70/pulse", 403)
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)

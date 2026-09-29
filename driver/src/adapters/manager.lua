@@ -3,6 +3,7 @@ local LightV2 = require("src.adapters.light_v2")
 local LightV1 = require("src.adapters.light_v1")
 local ThermostatV2 = require("src.adapters.thermostat_v2")
 local ThermostatProxy = require("src.adapters.thermostat_proxy")
+local Fan = require("src.adapters.fan")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
@@ -15,6 +16,7 @@ local adapters = {
     LightV1,
     ThermostatV2,
     ThermostatProxy,
+    Fan,
     Blind,
     Camera,
     KnxRelay,
@@ -25,7 +27,7 @@ local attached = {}
 -- Device whose events belong to another device (a DoorBird driver's events -> its doorbell).
 local eventTargets = {}
 local registry = nil
-local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+local initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
 
 local function log(message)
     Log.info("adapters", tostring(message))
@@ -39,7 +41,7 @@ function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
     local refreshing = previous ~= nil and next(previous) ~= nil
 
     pcall(function()
@@ -104,6 +106,7 @@ function Manager.counts()
         total = initializedCounts.total,
         light = initializedCounts.light,
         climate = initializedCounts.climate,
+        fan = initializedCounts.fan,
         blind = initializedCounts.blind,
         camera = initializedCounts.camera,
         relay = initializedCounts.relay,
@@ -228,7 +231,7 @@ function Manager.shutdown()
     attached = {}
     eventTargets = {}
     registry = nil
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

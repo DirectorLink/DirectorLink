@@ -78,7 +78,8 @@
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 - [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
-- [ ] Proposed in pull requests from bkwagner, not merged yet: fans (#18), alarm status (#15)
+- [x] Fans (#18): on, off and four speeds, in rooms, favorites and scenes (1.2.0, thanks to bkwagner; ADR-033); real-system validation pending
+- [ ] Proposed in pull requests from bkwagner, not merged yet: alarm status (#15)
 
 ## Milestone 5 — DirectorLink scenes
 

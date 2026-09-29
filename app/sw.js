@@ -35,6 +35,7 @@ const ASSETS = [
   "/js/controls.js",
   "/js/dom.js",
   "/js/doorbells.js",
+  "/js/fans.js",
   "/js/favorites.js",
   "/js/i18n.js",
   "/js/icons.js",

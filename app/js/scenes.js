@@ -3,22 +3,23 @@
 // type: the ones it names, or all of them in a room or the whole home. Doors and gates only get
 // a pulse, what their Open button does.
 
+import { sceneSet } from "./fans.js";
 import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
-import { deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness } from "./model.js";
+import { deviceRoomId, fanLabel, fanSpeedLabel, modeLabel, roomById, roomName, shownBrightness } from "./model.js";
 import { api, errorText, noteForbidden, refreshDevices } from "./session.js";
 import { isDual } from "./setpoints.js";
 import { scenePosition } from "./shades.js";
 import { can, notify, state, ui } from "./state.js";
 
 export const SCENE_ICONS = ["bulb", "moon", "sun", "leave", "movie", "climate", "blinds", "home"];
-export const STEP_TYPES = ["lights", "climate", "blinds", "relays"];
-export const STEP_ICONS = { lights: "bulb", climate: "climate", blinds: "blinds", relays: "door" };
+export const STEP_TYPES = ["lights", "climate", "fans", "blinds", "relays"];
+export const STEP_ICONS = { lights: "bulb", climate: "climate", fans: "fan", blinds: "blinds", relays: "door" };
 export const MAX_STEPS = 40;
 export const MAX_DEVICE_IDS = 100;
 // The temperatures a scene step takes (driver/src/core/scenes.lua), in °C.
 export const SCENE_MIN_TEMPERATURE = 5;
 export const SCENE_MAX_TEMPERATURE = 40;
-const LISTS = { lights: "lights", climate: "thermostats", blinds: "blinds", relays: "relays" };
+const LISTS = { lights: "lights", climate: "thermostats", fans: "fans", blinds: "blinds", relays: "relays" };
 const RESULT_MS = 4000;
 const CONFIRM_MS = 5000;
 
@@ -119,6 +120,11 @@ export function stepAction(step) {
     ]
       .filter(Boolean)
       .join(", ");
+  }
+  if (step.type === "fans") {
+    if (set.on === false) return t("scenes.do.off");
+    if (Number.isInteger(set.speed)) return t("scenes.do.speed", { speed: fanSpeedLabel(set.speed) });
+    return t("scenes.do.on");
   }
   if (step.type === "blinds") {
     if (set.position >= 100) return t("scenes.do.open");
@@ -244,10 +250,10 @@ function autoSetpoints(thermostat) {
   return {};
 }
 
-// Steps that put every light, AC and blind back the way they are now. Devices set alike share a
-// step (at most 100 devices each); doors and gates are left out. `left`: steps that did not fit
-// in a scene. A thermostat with heat and cool setpoints keeps both in auto; in heat or cool its
-// target is the setpoint of that mode. Temperatures stay within what a scene step takes.
+// Steps that put every light, AC, fan and blind back the way they are now. Devices set alike
+// share a step (at most 100 devices each); doors and gates are left out. `left`: steps that did
+// not fit in a scene. A thermostat with heat and cool setpoints keeps both in auto; in heat or
+// cool its target is the setpoint of that mode. Temperatures stay within what a scene step takes.
 export function copyHouse() {
   const groups = new Map();
   const add = (type, set, id) => {
@@ -269,6 +275,10 @@ export function copyHouse() {
       if (thermostat.fan_speed && (thermostat.fan_speeds || []).includes(thermostat.fan_speed)) set.fan_speed = thermostat.fan_speed;
     }
     if (Object.keys(set).length) add("climate", set, thermostat.id);
+  }
+  // A fan off, at its speed, or on when it reports no speed (fans.js).
+  for (const fan of state.fans) {
+    add("fans", sceneSet(fan), fan.id);
   }
   for (const blind of state.blinds) {
     // A shade that only opens and closes fully gets 0 or 100, the nearer (shades.js).

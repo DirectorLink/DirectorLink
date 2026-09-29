@@ -226,8 +226,8 @@ function Mock.project()
     }
 end
 
--- Adds the device families of 1.1.0 to a project. Mock.project() itself stays as it is: the
--- inventory and scene tests count its devices.
+-- Adds the device families of 1.1.0 and later to a project. Mock.project() itself stays as it is:
+-- the inventory and scene tests count its devices.
 
 -- Legacy Light proxies (light.c4i): a dimmer (25, Kitchen), a switch (26, Living Room) and one
 -- whose Light State cannot be read (27, its own proxy). The protocol driver names are placeholders.
@@ -352,11 +352,46 @@ function Mock.withDualThermostat(project, options)
     return project
 end
 
--- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
+-- A Fan proxy (fan.c4i) with the variables read on a live Director (#18): IS_ON (1000),
+-- CURRENT_SPEED (1001: 0 off, 1 low to 4 high) and PRESET_SPEED (1003). options: id, protocol,
+-- room (11), name, on (false), speed (0), preset (4), variables (the values instead), names (the
+-- variable names instead). The protocol driver's name is a placeholder.
+function Mock.withFan(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local name = options.name or "Fan"
+    project.devices[protocol] = {
+        deviceName = "Fan Speed Controller", driverFileName = "fan_speed_controller.c4i", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = name, driverFileName = "fan.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "fan.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Fan Speed Controller", driverFileName = "fan_speed_controller.c4i" } },
+    }
+    project.variables[id] = options.variables or {
+        [1000] = options.on and "1" or "0",
+        [1001] = tostring(options.speed or 0),
+        [1003] = tostring(options.preset or 4),
+    }
+    project.variableNames[id] = options.names or { [1000] = "IS_ON", [1001] = "CURRENT_SPEED", [1003] = "PRESET_SPEED" }
+    return project
+end
+
+-- The demo's fans: 41 on at Medium in the living room, 42 off in the kitchen.
+function Mock.withFans(project)
+    Mock.withFan(project, { id = 41, protocol = 116, room = 11, name = "Ceiling Fan", on = true, speed = 2, preset = 3 })
+    Mock.withFan(project, { id = 42, protocol = 117, room = 10, name = "Patio Fan" })
+    return project
+end
+
+-- The project the dev server and the app preview show: the default one plus every family added
+-- since (1.1.0, and the fans of 1.2.0).
 function Mock.demoProject()
     local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
     Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
     Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
+    Mock.withFans(project)
     return project
 end
 

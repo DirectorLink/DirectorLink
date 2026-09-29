@@ -657,7 +657,8 @@ function controllerSection(navigate) {
               devices: system.inventory.devices ?? 0,
               supported: system.inventory.supported_devices ?? 0,
             }),
-            // Drivers with doorbells (0.9.2) count them too.
+            // Drivers with fans (1.2.0) and doorbells (0.9.2) count them too.
+            system.inventory.fans ? t("settings.controller.inventoryFans", { count: system.inventory.fans }) : null,
             system.inventory.doorbells ? t("settings.controller.inventoryDoorbells", { count: system.inventory.doorbells }) : null,
           ]
             .filter(Boolean)

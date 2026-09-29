@@ -21,7 +21,8 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 
 - `name` (1–64 characters), `icon` (`moon`, `sun`, `leave`, `movie`, `bulb`, `climate`, `blinds`,
   `home`), `show_on_home` (a Run button at the top of Home), and up to 40 `steps`, run in order.
-- A step sets devices of one `type`: `lights`, `climate`, `blinds` or `relays` (doors and gates).
+- A step sets devices of one `type`: `lights`, `climate`, `fans` (1.2.0), `blinds` or `relays`
+  (doors and gates).
   - With `device_ids`, those devices (`room_id` is then only the room they were picked in).
   - Without, every device of that type in `room_id`, or in the whole home when `room_id` is null.
     This is worked out each time the scene runs, so a light added to the room later is included.
@@ -37,6 +38,8 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
     mode); in auto and off a target is left out. Setpoints that come closer than the thermostat's
     deadband are left out. Single-setpoint thermostats take `heat_setpoint` in heat and
     `cool_setpoint` in cool, and leave out any other setpoint.
+  - fans (1.2.0): `{"on": true|false}` or `{"speed": 1-4}` (1 low to 4 high; a speed turns a fan
+    on). `"on": true` turns each fan on at the speed it chooses (its preset, or its last one).
   - blinds: `{"position": 0-100}` (0 closed, 100 open).
   - relays: `{"action": "pulse"}` — what the door's or gate's Open button does. A scene never
     holds a relay closed: on door strikes and gate inputs that would leave the door unlocked or
@@ -63,8 +66,8 @@ one is left out (`partial`), and the rest of the step, such as its mode, still g
 
 Steps without `device_ids` take the devices DirectorLink supports when the scene runs. So when an
 update adds a device family (1.1.0: the older Light proxy and thermostats with heat and cool
-setpoints), room and whole-home steps, and the schedules that run them, include those devices
-from then on.
+setpoints; 1.2.0: fans), room and whole-home steps, and the schedules that run them, include
+those devices from then on.
 
 The rest of the scene still runs when a device is skipped or fails. Doors and gates opened by a
 scene are logged like any other relay command, with the key that ran it. In the app, a scene that
@@ -82,11 +85,12 @@ restart reads them, so they are never overwritten by an empty list.
   it, make a **New scene**, or start from an idea (All off, Good night, Good morning, Leaving home,
   Cool the house) that opens the editor filled in.
 - The editor: the name and an icon; **What happens** (the actions, which can be moved and
-  removed); **Add an action** — where (a room or the whole home), what (lights, AC, blinds, doors
-  and gates, with how many there are) and what to do; **Choose** picks single devices ("only the
-  reading lamp of the six"); **Copy the house as it is now** makes the actions from the current
-  state of every light, AC and blind (doors and gates are never copied); **Show on Home**; **Try it
-  now**; **Save scene**.
+  removed); **Add an action** — where (a room or the whole home), what (lights, AC, fans, blinds,
+  doors and gates, with how many there are) and what to do (fans: Off, On or a speed); **Choose**
+  picks single devices ("only the reading lamp of the six"); **Copy the house as it is now** makes
+  the actions from the current state of every light, AC, fan and blind (doors and gates are never
+  copied); **Show on Home**; **Try it now**; **Save scene**. The ideas All off and Leaving home
+  turn fans off too (1.2.0).
 - Auto for thermostats with heat and cool setpoints (1.1.0) offers a Heat and a Cool stepper, kept
   at least the largest deadband of the chosen thermostats apart; copying the house keeps both
   setpoints of such a thermostat in auto. Copied temperatures stay within what an action takes

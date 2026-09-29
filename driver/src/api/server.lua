@@ -18,6 +18,7 @@ local HANDLERS = {
     devices = require("src.api.handlers.devices"),
     lights = require("src.api.handlers.lights"),
     thermostats = require("src.api.handlers.thermostats"),
+    fans = require("src.api.handlers.fans"),
     blinds = require("src.api.handlers.blinds"),
     cameras = require("src.api.handlers.cameras"),
     relays = require("src.api.handlers.relays"),

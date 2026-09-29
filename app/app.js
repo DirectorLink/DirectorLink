@@ -1,7 +1,7 @@
 // DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
-// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
+// "/v1/lights", "/v1/thermostats", "/v1/fans", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
 // "/v1/weather", "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
@@ -182,6 +182,7 @@ function signature() {
     state.rooms,
     state.lights,
     state.thermostats,
+    state.fans,
     state.blinds,
     state.cameras,
     state.relays,

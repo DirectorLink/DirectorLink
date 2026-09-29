@@ -3,6 +3,7 @@
 // confirms it. A failed command reverts the change and shows a short error on the device.
 // Blinds follow their move instead, which takes far longer (see the blinds section).
 
+import { fanChangeConfirmed, optimisticFan } from "./fans.js";
 import { t } from "./i18n.js";
 import { api, errorText, handleUnauthorized, keyInUse, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
@@ -40,6 +41,7 @@ function thermostatChangeConfirmed(thermostat, change) {
 const CONFIRMERS = {
   light: lightChangeConfirmed,
   thermostat: thermostatChangeConfirmed,
+  fan: fanChangeConfirmed,
 };
 
 // Re-reads the device until it reports the change (or 5 s pass). Returns the last state read.
@@ -68,6 +70,7 @@ function optimistic(kind, device, change) {
     }
     return { ...device, on: change.on, brightness: change.on ? device.brightness : device.dimmable ? 0 : null };
   }
+  if (kind === "fan") return optimisticFan(device, change);
   const next = { ...device, ...change };
   // With heat and cool setpoints, the target is the setpoint of the mode (a new mode, or new setpoints).
   if (kind === "thermostat" && isDual(next)) next.target_temperature = activeSetpoint(next);
@@ -130,6 +133,11 @@ export async function sendChange(kind, id, change, { before } = {}) {
 
 export function setLight(light, change) {
   return sendChange("light", light.id, change);
+}
+
+// {"on": true | false} or {"speed": 1-4} (fans.js levelChange).
+export function setFan(fan, change) {
+  return sendChange("fan", fan.id, change);
 }
 
 // Target temperature − / +: the screen follows every tap; the command goes out once the
@@ -409,11 +417,14 @@ export function stopBlind(blind) {
   );
 }
 
-// Room "All off": lights off and air conditioning off.
+// Room "All off": lights, air conditioning and fans off.
 export function allOff(group) {
   const commands = [];
   for (const light of group.lights) {
     if (light.on) commands.push(setLight(light, { on: false }));
+  }
+  for (const fan of group.fans || []) {
+    if (fan.on) commands.push(setFan(fan, { on: false }));
   }
   for (const thermostat of group.thermostats) {
     if (thermostat.mode && thermostat.mode !== "off" && thermostat.modes.includes("off")) {
