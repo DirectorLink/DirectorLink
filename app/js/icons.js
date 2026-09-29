@@ -24,6 +24,8 @@ const PATHS = {
   stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="1.5"/>',
   arrowUp: '<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/>',
   arrowDown: '<path d="M12 5v14"/><path d="m6 13 6 6 6-6"/>',
+  // The handle a room is dragged by (Settings → Rooms).
+  grip: '<circle cx="9" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="6" r="1" fill="currentColor"/><circle cx="9" cy="12" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="9" cy="18" r="1" fill="currentColor"/><circle cx="15" cy="18" r="1" fill="currentColor"/>',
   expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20v-4h-4"/>',
   cloudOff: '<path d="m3 3 18 18"/><path d="M8.5 6.3A6 6 0 0 1 17.7 10H18a4 4 0 0 1 2.4 7.2M17 18H7a5 5 0 0 1-1.4-9.8"/>',

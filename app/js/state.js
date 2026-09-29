@@ -70,6 +70,7 @@ export const ui = {
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture
   dragging: false, // a slider thumb is held: redraws wait
+  reordering: false, // Settings → Rooms: a room is being moved (views/settings.js): redraws wait
   tick: 0, // bumped by timers that need a redraw
 };
 

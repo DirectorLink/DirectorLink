@@ -41,9 +41,9 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
 
 ## Rooms
 
-- **The order is the home's**, one for everyone: admins set it in Settings → Rooms with the arrows
-  (`PUT /v1/rooms/order`); `GET /v1/rooms` answers in that order. Rooms not in the order follow, in
-  Control4's order.
+- **The order is the home's**, one for everyone: admins set it in Settings → Rooms by dragging a room
+  by its handle, with the keyboard, or with the arrows, one `PUT /v1/rooms/order` per move;
+  `GET /v1/rooms` answers in that order. Rooms not in the order follow, in Control4's order.
 - **Hiding is personal**: anyone unticks a room in Settings → Rooms; it goes into their profile's
   `hidden_rooms` and disappears from their Home and Climate, not anyone else's. Favorites in a
   hidden room still show.
