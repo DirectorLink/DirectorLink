@@ -541,6 +541,23 @@ textarea::placeholder {
   gap: 8px;
 }
 
+/* ---- Development-only warning, under the tabs on every screen -------------------------------- */
+
+.dev-warning {
+  margin: 0;
+  padding: 10px 24px;
+  background: var(--onBg);
+  color: var(--onText);
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.dev-warning a {
+  color: inherit;
+  font-weight: 600;
+}
+
 /* ---- Messages ------------------------------------------------------------------------------ */
 
 .message {
@@ -1278,7 +1295,8 @@ button.log-line:hover {
 
 @media (max-width: 640px) {
   .topbar,
-  .tabs {
+  .tabs,
+  .dev-warning {
     padding-inline: 16px;
   }
   .main {
