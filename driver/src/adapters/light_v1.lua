@@ -4,7 +4,7 @@ local Log = require("src.core.log")
 -- (LDZ-101/102, LDZ-5S1) in older projects. It keeps its state in the same variables as Light V2
 -- (1000 Light State, 1001 level, absent on switches) but takes the classic ON / OFF / SET_LEVEL
 -- commands instead of SET_BRIGHTNESS_TARGET. The IDs and the command list were read over Director
--- REST on a contributor's house (bkwagner, #14); no DirectorLink command has moved one of these
+-- REST on a real installation (bkwagner, #14); no DirectorLink command has moved one of these
 -- lights yet, so the init log below lists what each proxy really has.
 --
 -- A separate adapter on purpose: light_v2.lua is the path validated on real hardware and stays

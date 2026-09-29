@@ -180,7 +180,7 @@ Apache License 2.0.
 ## Adapters added in 1.1.0
 
 Rebuilt from bkwagner's pull requests #14, #19 and #16 (ADR-033). The IDs and commands were read
-from his Director (the floor heating in a °F project). The command names below stay inside the
+on a live Director (the floor heating in a °F project). The command names below stay inside the
 adapters: the API shows only `on`, `brightness`, `mode`, `target_temperature`, `heat_setpoint`,
 `cool_setpoint` and `fan_speed`.
 

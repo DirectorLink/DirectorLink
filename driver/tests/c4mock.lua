@@ -257,7 +257,7 @@ function Mock.withLegacyLights(project)
 end
 
 -- A Thermostat V2 floor-heating zone that keeps its target in the heat setpoint (1133) and leaves
--- the single setpoint at 0 in both scales, as on a contributor's °F project (#19).
+-- the single setpoint at 0 in both scales, as seen on a real °F project (#19).
 -- options: id (32), protocol (113), room (11), name, scale ("FAHRENHEIT"), heat ("21.5").
 function Mock.withHeatOnlyZone(project, options)
     options = options or {}

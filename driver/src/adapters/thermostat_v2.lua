@@ -95,7 +95,7 @@ local function isHeatOnly(modes)
     return hasMode(modes, "heat") and not hasMode(modes, "cool") and not hasMode(modes, "auto")
 end
 
--- Some heat-only zones (floor heating seen on a contributor's °F project, #19) leave the single
+-- Some heat-only zones (floor heating seen on a real °F project, #19) leave the single
 -- setpoint at 0 in both scales, keep their real target in the heat setpoint (1133) and accept only
 -- SET_SETPOINT_HEAT. Both 1149 and 1150 reading 0 is never a real target: a real 0 °C reads
 -- 1149 = 32 and a real 0 °F reads 1150 = -17.8. A missing 1150 keeps the single setpoint, and so

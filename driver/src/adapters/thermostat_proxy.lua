@@ -5,8 +5,8 @@ local Units = require("src.adapters.thermostat_units")
 -- The Control4 thermostat proxy (control4_thermostat_proxy.c4i), used by Control4-branded
 -- thermostats. It has Thermostat V2's variable IDs (1100-1150) but separate heat and cool
 -- setpoints, reports every value in both scales and takes setpoints in the project's scale. The
--- IDs, values and commands were read from a contributor's Director with five of these
--- thermostats in a °F project (bkwagner, #16); the °C command form has not run on hardware.
+-- IDs, values and commands were read on a live Director with five of these thermostats in a
+-- °F project (bkwagner, #16); the °C command form has not run on hardware.
 --
 -- The API stays in °C. Setpoints are compared in native units (thermostat_units.lua) and sent in
 -- the project's scale: whole °F in a °F project, °C to 0.1 in a °C project.

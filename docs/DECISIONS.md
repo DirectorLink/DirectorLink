@@ -257,11 +257,11 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Decision (1.1.0):** The connection asks for `VERIFY_MODE = "peer"`, with `CACERTFILE` set to `certs/directorlink-roots.pem` inside the package: the root certificates of the authorities Cloudflare issues the relay's certificate from (Let's Encrypt, Google Trust Services, SSL.com), taken by name from certifi, with each SHA-256 in the file's header. `scripts/check_package.py` checks the options, and that the certificates OpenSSL would load from the file are exactly these roots, each once with its pinned SHA-256, with no key or other block; `scripts/build.py` packages only this file of `driver/certs/`, and `scripts/check_repo.py` allows this one `.pem` and checks its staged content the same way. Control4 does not document how Director reports a certificate that fails the check, so the driver ends any relay connection attempt that has not opened within 30 s and retries with its usual backoff.
 
-**Consequence:** If Cloudflare moves the relay to an authority that is not in the file, or a root expires (2035–2046), remote access stops until a driver update, so the file is rebuilt from a current CA list first (docs/RELAY.md). Control4 does not document whether Director also checks the host name with `peer`; if not, a certificate one of these authorities issued for another name would pass too.
+**Consequence:** If Cloudflare moves the relay to an authority that is not in the file, or a root expires (2035–2046), remote access stops until a driver update, so the file is rebuilt from a current CA list first (docs/RELAY.md). Control4 does not document whether Director also checks the host name with `peer`; if not, a certificate one of these authorities issued for another name would pass too. Reaching `Connected` shows neither that nor the check itself, so docs/TESTING.md 0p tests the check once with a package that trusts only a root the relay's chain does not end at (`scripts/build.py --roots-only`), which must never connect.
 
 ## ADR-033 — Contributed device families and dual setpoints
 
-**Context:** bkwagner's pull requests #14, #19 and #16 added three device families that DirectorLink listed as unsupported, found in his house and read from his Director: the legacy Light proxy, heat-only Thermostat V2 floor heating whose single setpoint is unused, and the Control4 thermostat proxy with separate heat and cool setpoints. They were rebuilt on 1.0.0 (docs/PROJECT_SPEC.md, *Adapters added in 1.1.0*).
+**Context:** bkwagner's pull requests #14, #19 and #16 added three device families that DirectorLink listed as unsupported, found on a real installation and read on a live Director: the legacy Light proxy, heat-only Thermostat V2 floor heating whose single setpoint is unused, and the Control4 thermostat proxy with separate heat and cool setpoints. They were rebuilt on 1.0.0 (docs/PROJECT_SPEC.md, *Adapters added in 1.1.0*).
 
 **Decision (1.1.0):**
 - **Legacy Light proxy** (`light.c4i`): its own adapter, so the Light V2 path validated on real hardware does not change. State from `1000` and `1001` as on Light V2; `ON`, `OFF` and `SET_LEVEL {LEVEL}` with no ramp time, to the proxy; no KNX exception without a trace from a real device.
@@ -274,7 +274,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Why:** One rule for PATCH, older clients and scene steps. A 1.0.0 client, or an existing "cool 24" scene, sends only `target_temperature`, and that works in heat and cool; sending both setpoints stays strict.
 
-**Consequence:** The API only gains fields, so 1.0.0 clients keep working; in auto they see no target. Room and whole-home scene steps include the new devices. The IDs, values and command lists were read on the contributor's Director; no DirectorLink command has run on these devices yet. The rebuilt adapters are covered by tests against the fake Director and have not yet run on real hardware (docs/TESTING.md 0p).
+**Consequence:** The API only gains fields, so 1.0.0 clients keep working; in auto they see no target. Room and whole-home scene steps include the new devices. The IDs, values and command lists were read on a live Director; no DirectorLink command has run on these devices yet. The rebuilt adapters are covered by tests against the fake Director and have not yet run on real hardware (docs/TESTING.md 0p).
 
 ## ADR-032 — The app's key stays off the home network; security review fixes
 
