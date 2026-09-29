@@ -89,6 +89,9 @@ restart reads them, so they are never overwritten by an empty list.
   now**; **Save scene**.
 - Auto for thermostats with heat and cool setpoints (1.1.0) offers a Heat and a Cool stepper, kept
   at least the largest deadband of the chosen thermostats apart; copying the house keeps both
-  setpoints of such a thermostat in auto.
+  setpoints of such a thermostat in auto. Copied temperatures stay within what an action takes
+  (5–40 °C) and the thermostat's own range, as brightness and positions do: a setpoint set on the
+  thermostat itself below that (40 °F is 4.4 °C) is copied as the lowest the thermostat takes, and
+  a pair left with cool not above heat is not copied.
 - **Home** shows the scenes marked Show on Home, with one-tap Run, above the favorites.
 - Saving leaves out devices and rooms that are no longer in the project, and says so.
