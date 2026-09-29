@@ -175,6 +175,23 @@ SECURITY_CONTRACT = {
     ),
 }
 
+# The Jewish calendar is worked out on the controller from the project's location (1.2.0,
+# ADR-037): none of its files reaches the network. The engine's files must be there; the service,
+# jewish_calendar.lua, is guarded by name whether or not it exists yet.
+CALENDAR_ENGINE = (
+    "src/core/hebrew_date.lua",
+    "src/core/holidays.lua",
+    "src/core/parasha.lua",
+    "src/core/sun.lua",
+    "src/core/holy_times.lua",
+)
+CALENDAR_SERVICE = "src/core/jewish_calendar.lua"
+NETWORK_CALLS = (
+    ("C4:url", re.compile(r"C4\s*[:.]\s*url")),
+    ("CreateNetworkConnection", re.compile(r"CreateNetworkConnection")),
+    ("SendToNetwork", re.compile(r"SendToNetwork")),
+)
+
 # The roots the relay connection trusts: the authorities Cloudflare issues from (docs/RELAY.md),
 # in file order, each with the SHA-256 of its certificate (checked against certifi 2026.07.22). A
 # label alone would let a rebuild put the wrong certificate under the right name; remote access
@@ -506,6 +523,18 @@ def check_alarm_read_only(files):
             fail(f"{name}: scene steps must never reach the alarm ({match.group(0).strip()})")
 
 
+def check_calendar_privacy(files):
+    """The Jewish calendar's files make no network calls: they know the home's location."""
+    for name in CALENDAR_ENGINE:
+        if name not in files:
+            fail(f"{name} is missing; if it moved, move it in CALENDAR_ENGINE too")
+    for name in CALENDAR_ENGINE + (CALENDAR_SERVICE,):
+        text = files.get(name, "")
+        for call, pattern in NETWORK_CALLS:
+            if pattern.search(text):
+                fail(f"{name} uses {call}: the Jewish calendar is worked out on the controller and never goes to the network")
+
+
 def main():
     if not PACKAGE.is_file():
         fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
@@ -524,6 +553,7 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_calendar_privacy(files)
     check_remote_methods(files)
     check_relay_roots(files)
     print(f"OK: validated {len(files)} packaged files for version {version}")

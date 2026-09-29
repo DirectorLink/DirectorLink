@@ -1,5 +1,6 @@
 -- Runs the driver test suites under plain Lua 5.1. From the repository root:
---   lua5.1 driver/tests/run.lua
+--   lua5.1 driver/tests/run.lua                             (every suite)
+--   lua5.1 driver/tests/run.lua test_sun test_holy_times    (only these, in this order)
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -17,6 +18,11 @@ local suites = {
     "test_scenes",
     "test_schedules",
     "test_calendar",
+    "test_hebrew_date",
+    "test_holidays",
+    "test_parasha",
+    "test_sun",
+    "test_holy_times",
     "test_x25519",
     "test_security",
     "test_light_v1",
@@ -26,6 +32,20 @@ local suites = {
     "test_fans",
     "test_alarm",
 }
+
+if #arg > 0 then
+    local known = {}
+    for _, suiteName in ipairs(suites) do
+        known[suiteName] = true
+    end
+    for _, suiteName in ipairs(arg) do
+        if not known[suiteName] then
+            print("unknown suite " .. suiteName .. " (driver/tests/run.lua lists them)")
+            os.exit(1)
+        end
+    end
+    suites = arg
+end
 
 local passed, failed = 0, 0
 
