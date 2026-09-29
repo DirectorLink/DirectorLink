@@ -408,7 +408,7 @@ function tests.cameras_are_listed_without_secrets()
     T.eq(T.http(mock, "GET", "/v1/cameras/20", { key = key }).status, 404, "a light is not a camera")
 
     local raw = T.http(mock, "GET", "/v1/cameras", { key = key }).body
-    T.truthy(not raw:find("s3cret", 1, true) and not raw:find("192.168.1.81", 1, true), "no camera login or address in the API")
+    T.truthy(not raw:find("s3cret", 1, true) and not raw:find("192.0.2.21", 1, true), "no camera login or address in the API")
 end
 
 function tests.snapshot_with_digest_login()
@@ -419,7 +419,7 @@ function tests.snapshot_with_digest_login()
     T.eq(response.headers["cache-control"], "no-store")
     T.truthy(response.body:find("^\255\216"), "JPEG bytes passed through")
     T.eq(#mock.urlRequests, 2, "challenge, then the digest answer")
-    T.eq(mock.urlRequests[1].url, "http://192.168.1.81/ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&size=1280x720")
+    T.eq(mock.urlRequests[1].url, "http://192.0.2.21/ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&size=1280x720")
     T.truthy(mock.urlRequests[2].headers.Authorization:find('^Digest username="admin"'))
 
     for _, entry in ipairs(mock.debugLog) do
@@ -432,7 +432,7 @@ function tests.snapshot_with_basic_login_and_port()
     local response = T.http(mock, "GET", "/v1/cameras/61/snapshot", { key = key })
     T.eq(response.status, 200)
     T.eq(#mock.urlRequests, 1)
-    T.eq(mock.urlRequests[1].url, "http://192.168.1.117:8080/bha-api/image.cgi")
+    T.eq(mock.urlRequests[1].url, "http://192.0.2.22:8080/bha-api/image.cgi")
     T.eq(mock.urlRequests[1].headers.Authorization, "Basic dXNlcjpkb29y")
 end
 
@@ -864,7 +864,7 @@ end
 
 function tests.only_the_controllers_address_is_accepted_as_host()
     local mock, key = start()
-    for _, host in ipairs({ "192.168.1.201:41999", "director.local:41999", "core1-000fff9c6a1a:41999", "[fe80::1]:41999", "controller.home.arpa",
+    for _, host in ipairs({ "192.168.1.10:41999", "director.local:41999", "core1-000fff123456:41999", "[fe80::1]:41999", "controller.home.arpa",
         "Director.Local.:41999", "[::ffff:192.168.1.5]:41999", "[fe80::1%25eth0]", "my_controller.lan" }) do
         T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 200, host)
     end

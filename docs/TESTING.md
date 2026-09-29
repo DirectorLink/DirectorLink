@@ -180,7 +180,7 @@ On a Director with these devices (the contributor, @bkwagner, read them on a liv
 
 ## 0c. Relays and room names
 
-1. **Inventory** ends with `3 relays` (דלת מטבח, דלת ראשית, שער חניה).
+1. **Inventory** ends with `3 relays` (the test system's two doors and gate).
 2. `GET /v1/relays` lists them; `state` is `null` until a relay changes. Open one door from the Control4 app: its state turns `closed` and back to `open`.
 3. `POST /v1/relays/{id}/pulse` opens that door exactly like its button in the Control4 app. `GET /v1/logs?category=relay_command` shows who sent it.
 4. `PATCH /v1/rooms/{id}` with `{"names": {"en": "Living room"}}`, then `GET /v1/rooms/{id}` shows the name; it survives a driver update.

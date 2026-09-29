@@ -206,15 +206,15 @@ function Mock.project()
         -- Camera proxies: what GET_PROPERTIES / GET_SNAPSHOT_QUERY_STRING return, and the fake camera.
         cameras = {
             [60] = {
-                address = "192.168.1.81", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
+                address = "192.0.2.21", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
                 query = "ISAPI/Streaming/channels/101/picture?snapShotImageType=JPEG&amp;size=%dx%d",
             },
             [61] = {
-                address = "192.168.1.117", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
+                address = "192.0.2.22", http_port = 8080, auth_type = "BASIC", username = "user", password = "door",
                 query = "/bha-api/image.cgi",
             },
             [92] = {
-                address = "192.168.1.118", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
+                address = "192.0.2.23", http_port = 80, auth_type = "BASIC", username = "bird", password = "gate",
                 query = "/bha-api/image.cgi",
             },
         },
