@@ -84,9 +84,10 @@ local function flag(value)
 end
 
 -- Moving (true/false, nil when the proxy does not tell) and the direction, if known. Opening or
--- Closing tell both; otherwise Stopped false is moving, unless the shade is where it is going
--- (Target Level is where it stops, so it equals Level at rest, and a Stopped that was never set
--- again must not keep a shade moving).
+-- Closing tell both; otherwise Stopped false is moving only while Level and Target Level are both
+-- known and apart (Target Level is where it stops, so it equals Level at rest). Stopped false alone
+-- says nothing: Director may leave it false after a reboot, with Level unknown, some proxies have no
+-- Target Level, and a Stopped that was never set again must not keep a shade moving.
 local function motion(values, level, target)
     local opening, closing = flag(values.opening), flag(values.closing)
     if opening or closing then
@@ -96,12 +97,9 @@ local function motion(values, level, target)
         return true, opening and "opening" or "closing"
     end
     local stopped = flag(values.stopped)
-    if stopped == false then
-        return not (level ~= nil and level == target)
-    elseif stopped == true then
-        return false
-    end
-    if opening == false or closing == false then
+    if stopped == false and level ~= nil and target ~= nil then
+        return level ~= target
+    elseif stopped == true or opening == false or closing == false then
         return false
     end
     return nil

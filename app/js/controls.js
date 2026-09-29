@@ -4,9 +4,9 @@
 // Blinds follow their move instead, which takes far longer (see the blinds section).
 
 import { t } from "./i18n.js";
-import { api, errorText, handleUnauthorized, noteForbidden, whenForgotten } from "./session.js";
+import { api, errorText, handleUnauthorized, keyInUse, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
-import { MOVE_POLL_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
+import { MOVE_POLL_MS, REPORT_GAP_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
 
 const CONFIRM_MS = 5000;
@@ -214,6 +214,8 @@ const reportsMotion = new Set(); // blinds seen reporting moving: their stops ca
 const movingSince = new Map(); // blind id -> since when it reports moving, without a break
 const lastCommand = new Map(); // blind id -> number of the last command sent to it
 let movePoll = null;
+let lastBlinds = null; // the list of blinds last followed (every read brings a new one), and when
+let lastBlindsAt = 0;
 
 // What the app expects of blind `id`, for shades.js shadeView: its move, or the reads after Stop.
 export function blindMove(id) {
@@ -238,8 +240,14 @@ function setSettle(id, settle) {
 
 // Every read of the blinds takes each move along (or ends it). `readAt`: when the read started, for
 // the reads made here; a report is taken over a command only from a read after its answer. A move
-// of a shade that left the list (removed in Composer) ends.
+// of a shade that left the list (removed in Composer) ends. After a gap in the reads, the time the
+// shades have been reported moving starts over (REPORT_GAP_MS).
 function followBlinds(now = Date.now(), readAt = null) {
+  if (state.blinds !== lastBlinds) {
+    if (now - lastBlindsAt >= REPORT_GAP_MS) movingSince.clear();
+    lastBlinds = state.blinds;
+    lastBlindsAt = now;
+  }
   const listed = new Map(state.blinds.map((blind) => [blind.id, blind]));
   for (const blind of state.blinds) {
     if (blind.moving !== true) {
@@ -260,7 +268,8 @@ function followBlinds(now = Date.now(), readAt = null) {
     if (!next && blind) setSettle(id, afterMove(move, now));
   }
   for (const [id, settle] of settling) {
-    const next = listed.has(id) ? followSettle(settle, now, readAt) : null;
+    const blind = listed.get(id);
+    const next = blind ? followSettle(settle, blind, now, readAt) : null;
     if (next !== settle) setSettle(id, next);
   }
 }
@@ -270,10 +279,10 @@ function blindsMoving(now = Date.now()) {
 }
 
 function scheduleMovePoll() {
-  if (movePoll || !state.apiKey || state.status !== "connected" || document.hidden || !blindsMoving()) return;
+  if (movePoll || !keyInUse() || state.status !== "connected" || document.hidden || !blindsMoving()) return;
   movePoll = window.setTimeout(async () => {
-    // The key may have been forgotten since, or the connection lost.
-    if (!state.apiKey || state.status !== "connected") {
+    // The key may have been forgotten since (or is being forgotten), or the connection lost.
+    if (!keyInUse() || state.status !== "connected") {
       movePoll = null;
       return;
     }

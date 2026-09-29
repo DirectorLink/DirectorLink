@@ -51,6 +51,15 @@ const forgottenHooks = [];
 export function whenForgotten(hook) {
   forgottenHooks.push(hook);
 }
+// Settings → Forget key revokes the key before this browser forgets it (revokeAndForget). Nothing
+// more is read with it meanwhile, and a request that reaches the controller after the DELETE is
+// answered 401: that was asked for, not a key that stopped working (handleUnauthorized).
+let forgetting = false;
+
+// The key to read with: "" once it is forgotten, and while it is being forgotten.
+export function keyInUse() {
+  return forgetting ? "" : state.apiKey;
+}
 let failedRefreshes = 0;
 let connectRun = 0;
 
@@ -530,21 +539,25 @@ function forgetRevokedKey() {
 // Any request answered 401: the key was revoked or DirectorLink was re-added. Start over. A 401 on
 // the home network, for a device linked to its home through the account, is checked with the home
 // first: another controller at the same address (another network) must not wipe this home's key.
+// A request that was on its way while the key was forgotten (or is being forgotten) changes nothing.
 let checkingKey = null;
 export function handleUnauthorized(error) {
-  if (error?.sealed || !savedRemote() || !state.apiKey) {
+  const key = keyInUse();
+  if (!key) return Promise.resolve();
+  if (error?.sealed || !savedRemote()) {
     forgetRevokedKey();
     return Promise.resolve();
   }
   if (!checkingKey) {
     checkingKey = (async () => {
       try {
-        await remoteCall(state.apiKey, "/v1/api-keys/current");
+        await remoteCall(key, "/v1/api-keys/current");
+        if (keyInUse() !== key) return;
         // The key works at home: the controller that refused it is another one.
         useTransport("remote");
         connect();
       } catch (failure) {
-        if (failure?.status === 401 || failure?.code === "UNKNOWN_KEY") {
+        if ((failure?.status === 401 || failure?.code === "UNKNOWN_KEY") && keyInUse() === key) {
           forgetRevokedKey();
         }
         // Otherwise the home cannot be asked now: the key is kept.
@@ -827,7 +840,7 @@ function schedulePoll(delay = POLL_MS) {
 
 async function poll() {
   pollTimer = null;
-  if (!state.apiKey) return;
+  if (!keyInUse()) return;
   // In the background only doorbells are polled, and only for their notifications.
   if (document.hidden && state.loaded && notificationsOn()) {
     await refreshDoorbells();
@@ -845,12 +858,12 @@ async function poll() {
       await Promise.all([refreshRooms(), refreshDeviceList()]);
     }
     // After a failure, try again soon instead of waiting a whole interval.
-    if (!ok && state.apiKey) {
+    if (!ok && keyInUse()) {
       schedulePoll(RETRY_MS);
       return;
     }
   }
-  if (state.apiKey) schedulePoll();
+  if (keyInUse()) schedulePoll();
 }
 
 export function startPolling() {
@@ -868,9 +881,9 @@ function scheduleRetry() {
 
 // Back on the page: refresh at once instead of waiting for the next tick.
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && state.apiKey && (state.status === "connected" || state.status === "unreachable")) {
+  if (!document.hidden && keyInUse() && (state.status === "connected" || state.status === "unreachable")) {
     if (state.loaded) {
-      refreshDevices().then(() => state.apiKey && schedulePoll());
+      refreshDevices().then(() => keyInUse() && schedulePoll());
     } else {
       connect();
     }
@@ -878,8 +891,11 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // Settings → Controller → Forget key: revokes this browser's key on the controller when it can
-// be reached (so the key stops working everywhere), then removes it from this browser.
+// be reached (so the key stops working everywhere), then removes it from this browser. The
+// refreshes stop first: what they would read meanwhile is answered 401 once the key is revoked.
 export async function revokeAndForget() {
+  forgetting = true;
+  stopPolling();
   if (reachable()) {
     try {
       // Any key may revoke itself (drivers with API key roles). Without an answer on the home
@@ -904,6 +920,7 @@ export async function revokeAndForget() {
       // Otherwise unreachable or already revoked: forget it here anyway.
     }
   }
+  forgetting = false;
   forgetKey();
   notify();
 }

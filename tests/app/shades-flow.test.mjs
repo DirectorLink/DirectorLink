@@ -15,7 +15,14 @@ window.location = { hostname: "app.directorlink.io", origin: "https://app.direct
 window.addEventListener = () => {};
 window.removeEventListener = () => {};
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
-globalThis.document = { hidden: false, addEventListener() {}, documentElement: {}, querySelector: () => null };
+// What the app does when the page goes into the background or comes back (showPage).
+const pageListeners = [];
+globalThis.document = {
+  hidden: false,
+  addEventListener: (type, listener) => type === "visibilitychange" && pageListeners.push(listener),
+  documentElement: {},
+  querySelector: () => null,
+};
 Object.defineProperty(globalThis, "navigator", {
   value: { userAgent: "Node", maxTouchPoints: 0, languages: ["en"], language: "en", onLine: true },
   configurable: true,
@@ -33,31 +40,57 @@ mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: Date.pars
 globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 16);
 
 // The fake controller: a DirectorLink that cannot seal (so requests carry the key), with these
-// blinds. `patch` and `stop` may answer instead of the default (202 with the blind as it was).
-const controller = { blinds: [], devices: [], calls: [], patch: null };
+// blinds. `patch` may answer instead of the default (202 with the blind as it was). `rtt`: how long
+// a request takes there and back; the controller handles it halfway. `revokes`: DELETE
+// /v1/api-keys/current revokes the key, and every request after it is answered 401. `stopLag`:
+// how long after answering a Stop the shade reports that it stopped (the proxy hears it from the
+// actuator), where it was. `down`: nothing answers.
+const controller = { blinds: [], devices: [], calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false };
 
 function answer(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+const later = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
 globalThis.fetch = async (url, init = {}) => {
   const { hostname, pathname: path } = new URL(url);
-  if (hostname !== HOST) throw new TypeError(`blocked: ${url}`);
+  if (hostname !== HOST || controller.down) throw new TypeError(`blocked: ${url}`);
   const method = init.method || "GET";
   const keyed = Boolean(init.headers?.Authorization);
   controller.calls.push({ at: Date.now(), method, path, keyed });
+  if (controller.rtt) await later(controller.rtt / 2);
+  const response = handle(method, path, keyed, init.body);
+  if (controller.rtt) await later(controller.rtt / 2);
+  return response;
+};
+
+// What the controller answers, when the request gets there.
+function handle(method, path, keyed, body) {
   if (path === "/v1/sealed") return answer(404, { status: 404, code: "NOT_FOUND" });
-  if (!keyed) return answer(401, { status: 401, code: "UNAUTHORIZED", detail: "Missing or invalid API key" });
+  if (!keyed || controller.revoked) return answer(401, { status: 401, code: "UNAUTHORIZED", detail: "Missing or invalid API key" });
   const copy = (blind) => ({ ...blind });
   if (path === "/v1/blinds" && method === "GET") return answer(200, { items: controller.blinds.map(copy) });
   const one = path.match(/^\/v1\/blinds\/(\d+)(\/stop)?$/);
   if (one) {
     const blind = controller.blinds.find((item) => item.id === Number(one[1]));
     if (!blind) return answer(404, { status: 404, code: "NOT_FOUND", detail: "Blind not found" });
-    const custom = method === "PATCH" && controller.patch?.(blind, JSON.parse(init.body));
-    return custom ? answer(custom.status, custom.body) : answer(method === "GET" ? 200 : 202, copy(blind));
+    const custom = method === "PATCH" && controller.patch?.(blind, JSON.parse(body));
+    if (custom) return answer(custom.status, custom.body);
+    if (one[2] && Number.isFinite(controller.stopLag)) {
+      // As the proxy reports it: stopped, with Target Level where the shade is.
+      setTimeout(() => {
+        const stopped = (item) => (item.id === blind.id ? { ...item, moving: false, direction: null, target_position: item.position } : item);
+        controller.blinds = controller.blinds.map(stopped);
+      }, controller.stopLag);
+    }
+    return answer(method === "GET" ? 200 : 202, copy(blind));
   }
   if (path === "/v1/devices") return answer(200, { items: controller.devices });
+  if (path === "/v1/api-keys/current" && method === "DELETE" && controller.revokes) {
+    controller.revoked = true;
+    return new Response(null, { status: 204 });
+  }
   if (path === "/v1/api-keys/current") return answer(200, { id: "0a1b2c3d", role: "admin" });
   if (path === "/v1/rooms/order" && method === "PUT") {
     // As DirectorLink 1.0.0 answered it in a sealed request.
@@ -65,13 +98,13 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (method === "GET") return answer(200, { items: [] });
   return answer(404, { status: 404, code: "NOT_FOUND", detail: `no ${method} ${path}` });
-};
+}
 
 const { state, notify } = await import("../../app/js/state.js");
 const controls = await import("../../app/js/controls.js");
 const session = await import("../../app/js/session.js");
 const { blindStateLabel } = await import("../../app/js/model.js");
-const { shadeView } = await import("../../app/js/shades.js");
+const { MOVE_POLL_MS, shadeView } = await import("../../app/js/shades.js");
 const { copyHouse } = await import("../../app/js/scenes.js");
 const { roomOrderErrorText } = await import("../../app/js/views/settings.js");
 const { setLanguage, t } = await import("../../app/js/i18n.js");
@@ -107,10 +140,11 @@ const shade = (fields = {}) => ({
 // Connected to the fake controller with these blinds, as after loading the home.
 async function connect(blinds) {
   session.forgetKey();
-  await advance(100);
+  // Requests still on their way get their answers first.
+  await advance(100 + controller.rtt);
+  Object.assign(controller, { calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false });
   controller.blinds = blinds.map((blind) => ({ ...blind }));
-  controller.calls = [];
-  controller.patch = null;
+  document.hidden = false;
   state.host = HOST;
   state.apiKey = KEY;
   state.role = "admin";
@@ -123,6 +157,12 @@ async function connect(blinds) {
 }
 
 const blindReads = (since) => controller.calls.filter((call) => call.at >= since && call.method === "GET" && call.path === "/v1/blinds").length;
+
+// The page goes into the background, or comes back into view.
+function showPage(visible) {
+  document.hidden = !visible;
+  for (const listener of pageListeners) listener();
+}
 
 // What the row of blind `id` says, and where its slider is.
 function shown(id) {
@@ -153,6 +193,37 @@ test("a shade that keeps reporting it moves is read every 2 s for two minutes at
   assert.equal(shown(52), "Opening… to 80% | 80", "it still shows what the controller says");
 });
 
+// Seen moving, then out of sight for minutes (the page in the background, or the controller out of
+// reach): the shade stopped meanwhile, and someone moves it again from a keypad as the app looks
+// again. That is a new move, read every 2 s, not the old one past its two minutes.
+test("a shade moving again after a while out of sight is read every 2 s", async () => {
+  await connect([shade({ moving: true, direction: "opening", target_position: 100 })]);
+  session.startPolling();
+  await advance(4000);
+  showPage(false);
+  await advance(5 * 60 * 1000, 1000);
+  controller.blinds = [shade({ moving: true, direction: "closing", target_position: 0 })];
+  let from = Date.now();
+  showPage(true);
+  await advance(20000, 250);
+  assert.ok(blindReads(from) >= 8, `${blindReads(from)} reads in the 20 s after the page came back`);
+
+  controller.blinds = [shade({ moving: true, direction: "opening", target_position: 100 })];
+  await advance(4000);
+  const failures = mock.method(console, "warn", () => {});
+  controller.down = true;
+  await advance(3 * 60 * 1000, 1000);
+  assert.equal(state.status, "unreachable");
+  controller.blinds = [shade({ moving: true, direction: "closing", target_position: 0 })];
+  controller.down = false;
+  from = Date.now();
+  await advance(20000, 250);
+  session.stopPolling();
+  failures.mock.restore();
+  assert.equal(state.status, "connected");
+  assert.ok(blindReads(from) >= 8, `${blindReads(from)} reads in the 20 s after the controller came back`);
+});
+
 test("forgetting the key while a shade moves sends nothing without it", async () => {
   await connect([shade({ moving: null })]);
   controls.setBlind(state.blinds[0], 53);
@@ -162,6 +233,33 @@ test("forgetting the key while a shade moves sends nothing without it", async ()
   const unkeyed = controller.calls.filter((call) => !call.keyed && call.path !== "/v1/sealed").map((call) => `${call.method} ${call.path}`);
   assert.deepEqual(unkeyed, []);
   assert.equal(state.notice, null, "no \"key no longer works\"");
+  assert.equal(controls.blindMove(52), null);
+});
+
+// Forget key revokes the key on the controller, which answers 401 from then on: a read that gets
+// there after the DELETE (the 2 s reads of a moving shade, the refresh every 10 s) is what was asked
+// for, not a key that stopped working. Wherever the reads fall, and however long the answers take.
+test("forgetting the key while a shade moves never says it no longer works", async () => {
+  const said = [];
+  const sent = [];
+  for (const [rtt, every] of [[150, 50], [400, 100], [3000, 1000]]) {
+    for (let phase = 0; phase < MOVE_POLL_MS + rtt; phase += every) {
+      await connect([shade({ moving: true, direction: "opening", target_position: 100 })]);
+      Object.assign(controller, { rtt, revokes: true });
+      session.startPolling();
+      await advance(1000 + phase, 10);
+      const forgotten = session.revokeAndForget();
+      await advance(2 * rtt + 3000, 10);
+      await forgotten;
+      assert.equal(state.apiKey, "");
+      if (state.notice) said.push(`${rtt} ms, phase ${phase}: ${state.notice.text}`);
+      const after = controller.calls.slice(controller.calls.findIndex((call) => call.method === "DELETE") + 1);
+      if (after.length) sent.push(`${rtt} ms, phase ${phase}: ${after.map((call) => `${call.method} ${call.path}`).join(", ")}`);
+    }
+  }
+  session.stopPolling();
+  assert.deepEqual(said, []);
+  assert.deepEqual(sent, [], "nothing is read once the key is being revoked");
   assert.equal(controls.blindMove(52), null);
 });
 
@@ -195,6 +293,27 @@ test("after Stop the shade shows as stopped, then where it stopped", async () =>
   assert.ok(!timeline.some((line) => line.startsWith("Opening…")), timeline.join(" / "));
   assert.equal(timeline[0], "35% open | 35");
   assert.equal(timeline.at(-1), "61% open | 61");
+});
+
+// The owner's KNX shades report the stop when the actuator confirms it, 110 to 180 ms after the
+// Stop's answer (Director 3.4.3): a read that gets there in between still says the shade opens.
+// Wherever the 2 s reads fall, the row does not go back to "Opening…".
+test("after Stop the shade does not show as opening again before it reports the stop", async () => {
+  const relapses = [];
+  for (let phase = 0; phase < MOVE_POLL_MS + 20; phase += 20) {
+    await connect([shade({ moving: true, direction: "opening", target_position: 100 })]);
+    Object.assign(controller, { rtt: 20, stopLag: 150 });
+    await advance(1000 + phase, 10);
+    controls.stopBlind(state.blinds[0]);
+    const timeline = [];
+    for (let index = 0; index < 250; index += 1) {
+      await advance(10, 10);
+      timeline.push(shown(52));
+    }
+    if (timeline.some((line) => line.startsWith("Opening…"))) relapses.push(`phase ${phase}: ${[...new Set(timeline)].join(" / ")}`);
+    assert.equal(timeline.at(-1), "35% open | 35");
+  }
+  assert.deepEqual(relapses, []);
 });
 
 // The owner's KNX shades: the proxy's stop first, the actuator's real position a second later.
