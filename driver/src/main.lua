@@ -13,6 +13,7 @@ local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local Scheduler = require("src.core.scheduler")
 local Weather = require("src.core.weather")
+local JewishCalendar = require("src.core.jewish_calendar")
 local SceneHandlers = require("src.api.handlers.scenes")
 local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
@@ -128,11 +129,29 @@ local function schedulesPaused()
 end
 
 local function refreshScheduleStatus(now)
-    local ok, text = pcall(InstallerView.scheduleStatus, now or Clock.now(), schedulesPaused())
+    local ok, text = pcall(InstallerView.scheduleStatus, now or Clock.now(), schedulesPaused(), JewishCalendar)
     if ok and text ~= shownScheduleStatus then
         shownScheduleStatus = text
         updateProperty("Schedule Status", text)
     end
+end
+
+-- Calendar Status: what the Jewish calendar works out (src/core/jewish_calendar.lua), or Off.
+local shownCalendarStatus = nil
+
+local function refreshCalendarStatus(now)
+    local ok, text = pcall(JewishCalendar.statusText, now or Clock.now())
+    if ok and text ~= shownCalendarStatus then
+        shownCalendarStatus = text
+        updateProperty("Calendar Status", text)
+    end
+end
+
+-- The calendar's settings, location or switch changed: the times, and what runs next, with them.
+local function calendarChanged()
+    JewishCalendar.invalidate()
+    refreshCalendarStatus()
+    refreshScheduleStatus()
 end
 
 local function automationRan(event)
@@ -198,6 +217,8 @@ local services = {
     calendarEnabled = function()
         return Properties ~= nil and Properties["Jewish Calendar"] == "On"
     end,
+    calendar = JewishCalendar,
+    onCalendarChanged = calendarChanged,
     -- The alarm's partitions are watched, and shown to members and admins (read-only), only with
     -- "Alarm Status" = On (ADR-038). Read at every request, like the door switches.
     alarmStatusEnabled = Alarm.enabled,
@@ -300,9 +321,9 @@ local function discover(reason)
         changes.supported = counts.supported
         Log.info("discovery", "project rediscovered", changes)
         -- The project's location may have changed with it, and with it the next sunrise or sunset
-        -- a schedule waits for.
-        shownScheduleStatus = nil
-        refreshScheduleStatus()
+        -- a schedule waits for, and Shabbat and holiday times.
+        shownScheduleStatus, shownCalendarStatus = nil, nil
+        calendarChanged()
     else
         Log.info("discovery", "project discovered", counts)
     end
@@ -416,16 +437,32 @@ function OnDriverLateInit(driverInitType)
         local properties = (Registry.metadata or {}).properties or {}
         return tonumber(properties.Latitude), tonumber(properties.Longitude)
     end)
+    -- Shabbat and holiday times, for the same location; Israel or abroad from it, or else from the
+    -- project's country and time zone (src/core/jewish_calendar.lua).
+    JewishCalendar.configure({
+        enabled = services.calendarEnabled,
+        location = Weather.location,
+        region = function()
+            local metadata = Registry.metadata or {}
+            return { country_code = (metadata.properties or {}).CountryCode, timezone = metadata.timezone }
+        end,
+    })
+    JewishCalendar.load()
     Scheduler.start({
         runScene = function(sceneId, caller)
             return SceneHandlers.runSaved(services, sceneId, caller)
         end,
         paused = schedulesPaused,
+        calendar = JewishCalendar,
         onRun = automationRan,
-        onTick = refreshScheduleStatus,
+        onTick = function(now)
+            refreshScheduleStatus(now)
+            refreshCalendarStatus(now)
+        end,
     })
-    shownScheduleStatus = nil
+    shownScheduleStatus, shownCalendarStatus = nil, nil
     refreshScheduleStatus()
+    refreshCalendarStatus()
     local last = Store.read(LAST_AUTOMATION_KEY, false)
     if type(last) == "table" and type(last.text) == "string" then
         updateProperty("Last Automation", last.text)
@@ -476,7 +513,7 @@ function ExecuteCommand(command, params)
         refreshProject("Composer action")
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
-        local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry)
+        local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry, JewishCalendar)
         for _, line in ipairs(ok and lines or { "DirectorLink could not list its schedules: " .. tostring(lines) }) do
             print(line)
         end
@@ -502,6 +539,12 @@ function OnPropertyChanged(name)
     if name == "Schedules" and Properties then
         Log.info("schedules", schedulesPaused() and "schedules paused in Composer" or "schedules resumed in Composer")
         refreshScheduleStatus()
+    end
+    -- No restart needed: the scheduler asks the calendar every minute. Turned on again, it catches
+    -- nothing up.
+    if name == "Jewish Calendar" and Properties then
+        Log.info("calendar", services.calendarEnabled() and "jewish calendar on in Composer" or "jewish calendar off in Composer")
+        calendarChanged()
     end
     if name == "Door Control" and Properties then
         Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")

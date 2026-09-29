@@ -8,6 +8,7 @@ operation in the spec was not exercised.
 
 It also validates the hand-written calendar examples the app's tests read
 (tests/vectors/calendar/api-examples.json): each group is named after the schema its examples match.
+The Jewish calendar is called while it is off (as it ships) and then on, as the installer sets it.
 """
 
 import base64
@@ -519,6 +520,40 @@ def scenario(client, bridge):
     client.check("GET", "/v1/logs?level=loud", 400)
     client.check("PATCH", "/v1/logs/settings", 400, body={"level": "verbose"})
     client.check("GET", "/v1/logs", 401, auth=False)
+
+    # The installer turns the Jewish calendar on in Composer. The fake project is in Tel Aviv, so
+    # the answer has Shabbat and holiday times, worked out on the controller; settings change with
+    # a version, and schedules may use the calendar.
+    bridge.set_property("Jewish Calendar", "On")
+    features = client.check("GET", "/v1/system", 200)["features"]
+    if features.get("jewish_calendar") is not True:
+        fail(f"GET /v1/system should show the Jewish calendar on: {features}")
+    calendar = client.check("GET", "/v1/calendar", 200)
+    if (calendar["enabled"], calendar["status"], calendar["settings"]["israel"]) != (True, "ok", True) or not calendar["next"]:
+        fail(f"GET /v1/calendar in Tel Aviv with the calendar on should have Israel's times: {calendar}")
+    settings = client.check("PATCH", "/v1/calendar/settings", 200, body={"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1})
+    stale = client.check("PATCH", "/v1/calendar/settings", 409, body={"holidays": "abroad", "version": 1})
+    if (stale["code"], stale.get("version")) != ("VERSION_CONFLICT", settings["version"]):
+        fail(f"a settings change with an old version should be VERSION_CONFLICT with the current one: {stale}")
+    client.check("PATCH", "/v1/calendar/settings", 400, body={"holidays": "mars"})
+    shabbat = client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6],
+    })
+    client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:30"}, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "skip",
+    })
+    client.check("POST", "/v1/schedules", 400, body={
+        "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "havdalah"}, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "only",
+    })
+    if (shabbat["calendar_status"], shabbat["next_run"] is not None) != ("ok", True):
+        fail(f"a Shabbat schedule with the calendar on should run next at candle lighting: {shabbat}")
+    client.check("GET", "/v1/schedules", 200)
+    viewer = client.check("POST", "/v1/api-keys", 201, body={"name": "calendar viewer", "role": "viewer"})
+    admin_key, client.key = client.key, viewer["key"]
+    client.check("GET", "/v1/calendar", 200)
+    client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
+    client.key = admin_key
+    client.check("DELETE", f"/v1/api-keys/{viewer['id']}", 204)
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.

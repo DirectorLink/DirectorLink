@@ -23,7 +23,8 @@ local function nullable(value)
 end
 
 -- For a schedule that uses the Jewish calendar, the calendar's status: "ok", "off" or
--- "no_location". Until the calendar is built (1.2.0) there is no calendar service, and it is off.
+-- "no_location" (src/core/jewish_calendar.lua); with "off" or "no_location" it does not run as it
+-- would (Shabbat triggers and "only" wait, "skip" runs as usual).
 local function calendarStatus(services, schedule)
     if not Schedules.usesCalendar(schedule) then
         return Json.null

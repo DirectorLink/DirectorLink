@@ -47,7 +47,9 @@ driver/     the DriverWorks driver
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
                   again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
-                  scenes, schedules, scheduler, sun, weather, installer view; room names and layout
+                  scenes, schedules, scheduler, sun, weather, installer view; room names and layout;
+                  the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,
+                  holidays, parasha, holy_times; docs/CALENDAR.md)
   tests/          driver tests against a fake Director
 app/        the app (PWA), deployed to app.directorlink.io
 console/    API console, debugging and logs, deployed to console.directorlink.io

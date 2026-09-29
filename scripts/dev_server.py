@@ -21,6 +21,9 @@ as in Composer, and "var <device id> <variable id> <value>" for a partition to r
 (e.g. "var 80 1007 ENTRY_DELAY"; the variables are listed in driver/tests/c4mock.lua).
 The pairing code is printed at start (valid 15 minutes, works once); type "code" and Enter for a new
 one, as the Composer action New Pairing Code would.
+The Jewish calendar is Off, as it ships; --jewish-calendar starts with it On (the fake project is in
+Tel Aviv, so there are Shabbat and holiday times for the app's screens), and "calendar on" or
+"calendar off" switches it as in Composer.
 """
 
 import argparse
@@ -129,18 +132,23 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", type=int, default=41999)
     parser.add_argument("--lua", default=shutil.which("lua5.1") or shutil.which("lua"))
+    parser.add_argument("--jewish-calendar", action="store_true", help="start with the Composer property Jewish Calendar = On")
     args = parser.parse_args()
     if not args.lua:
         sys.exit("Lua 5.1 not found; install it or pass --lua")
 
     spec = ROOT / "dist" / "openapi.json"
     bridge = Bridge(args.lua, spec if spec.is_file() else None)
+    if args.jewish_calendar:
+        bridge.set_property("Jewish Calendar", "On")
     with Server(("127.0.0.1", args.port), make_handler(bridge)) as server:
         print(f"DirectorLink dev server on http://localhost:{args.port} (fake Director)")
         print(f"Pairing code: {bridge.pairing_code}")
+        if args.jewish_calendar:
+            print("Jewish Calendar: On")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "var <device> <variable> <value>".')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "var <device> <variable> <value>".')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
@@ -150,6 +158,9 @@ def main():
                 elif len(words) == 2 and words[0] == "alarm" and words[1] in ("on", "off"):
                     bridge.set_property("Alarm Status", words[1].capitalize())
                     print(f"Alarm Status: {words[1].capitalize()}")
+                elif len(words) == 2 and words[0] == "calendar" and words[1] in ("on", "off"):
+                    bridge.set_property("Jewish Calendar", words[1].capitalize())
+                    print(f"Jewish Calendar: {words[1].capitalize()}")
                 elif len(words) >= 3 and words[0] == "var" and words[1].isdigit() and words[2].isdigit():
                     value = line.split(None, 3)[3].strip() if len(words) > 3 else ""
                     print(f"Reported to {bridge.report_variable(words[1], words[2], value)} listener(s)")

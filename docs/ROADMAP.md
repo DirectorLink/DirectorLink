@@ -99,7 +99,7 @@
 - [x] Run DirectorLink scenes (0.14.0)
 - [x] Weather triggers and conditions from Open-Meteo: heat, wind, rain (0.14.0)
 - [x] Recalculate after reboot/timezone/location changes (0.14.0: worked out each minute)
-- [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
+- [x] Jewish calendar: Shabbat and holiday times as schedule triggers and conditions, off until an installer turns it on (1.2.0, ADR-037)
 
 ## Driver updates (ADR-035)
 

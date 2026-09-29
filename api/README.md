@@ -9,7 +9,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
-| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
 | Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, fans, blinds, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
@@ -131,13 +131,61 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 
 Doors and gates open with `POST /v1/relays/{id}/pulse` (the relay closes, then opens again after 500 ms), as in the app and scenes. `PATCH` with `{"state": "open"}` releases a relay. `{"state": "closed"}` would hold it closed, and its door or gate open: since 1.1.1 it is `409 HOLD_NOT_ALLOWED` and nothing is sent, unless an installer sets **Relay Hold** to Allowed in Composer.
 
-## Shabbat and holidays (arriving in 1.2.0)
+## Shabbat and holidays
 
-DirectorLink 1.2.0 works out Shabbat and holiday times on the controller from the project's location; nothing is sent to the network. It stays off until an installer sets **Jewish Calendar** to On in Composer. Until then `GET /v1/calendar` answers `{"enabled": false, "status": "off", ...}` with nulls, `GET /v1/system` has `"features": {"jewish_calendar": false}`, and setting anything that uses the calendar is `409 JEWISH_CALENDAR_OFF`.
+Since 1.2.0 DirectorLink works out Shabbat and holiday times on the controller from the project's location (Composer's project properties); nothing is sent to the network. It stays off until an installer sets **Jewish Calendar** to On in Composer. Until then `GET /v1/calendar` answers `{"enabled": false, "status": "off", ...}` with nulls, `GET /v1/system` has `"features": {"jewish_calendar": false}`, and setting anything that uses the calendar is `409 JEWISH_CALENDAR_OFF`.
 
-- `GET /v1/calendar` (any key): the settings, today's Hebrew date and holidays (`today`), this week's Shabbat and reading (`week`), and the holy period now (`current`) and next (`next`), from candle lighting (`starts_at`) to havdalah (`ends_at`), in UTC. Shabbat and holidays that follow each other are one period.
-- `PATCH /v1/calendar/settings` (admin): `{"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1}` (0–90 minutes before sunset and 20–90 after; 20 and 42 by default), or `{"holidays": "abroad"}` (`auto`, `israel` or `abroad`).
-- Schedules: the trigger `{"type": "shabbat", "event": "candle_lighting", "offset": -30}` (or `havdalah`; −360 to 360 minutes) runs once when a period begins or ends; `"during_shabbat": "skip"` or `"only"` keeps a time, sun or weather schedule away from Shabbat and holidays, or to them. `calendar_status` (`ok`, `off`, `no_location`) says whether such a schedule can run.
+`GET /v1/calendar` (any key), in Tel Aviv on the Tuesday of Chol HaMoed Sukkot 5787:
+
+```json
+{
+  "enabled": true,
+  "status": "ok",
+  "settings": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+  "today": {
+    "date": "2026-09-29",
+    "hebrew": { "year": 5787, "month": "tishrei", "day": 18, "leap_year": true },
+    "after_sunset": false,
+    "holidays": [{ "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }]
+  },
+  "week": { "date": "2026-10-03", "parasha": null, "holidays": ["…Shmini Atzeret and Simchat Torah"] },
+  "current": null,
+  "next": {
+    "starts_at": "2026-10-02T15:04:00Z",
+    "ends_at": "2026-10-03T16:05:00Z",
+    "approximate": false,
+    "days": [{ "date": "2026-10-03", "shabbat": true, "candle_lighting": "2026-10-02T15:04:00Z", "holidays": ["…as in week"] }]
+  }
+}
+```
+
+- `today` is the Hebrew day now, which begins at sunset: after sunset (`after_sunset`) it is tomorrow's, and `date` is the civil date whose daytime it is. `holidays` lists the day's holidays, holy (`yom_tov`) or only shown (fasts, Chanukah, Rosh Chodesh, the national days).
+- `week` is this week's Shabbat and its reading: `parasha.ids` from 1 (Bereshit) to 54, two for a combined reading, and `null` when a holiday reading replaces it.
+- `current` is the holy period now and `next` the next one. Shabbat and holy days that follow each other are one period, from candle lighting (`starts_at`) to havdalah (`ends_at`), in UTC, with each day's candle lighting (a later day's is lit from an existing flame: before sunset for Shabbat, after nightfall otherwise). Candle lighting is sunset, to the minute, less `candle_lighting_minutes`; havdalah is sunset, to the nearest minute, plus `havdalah_minutes`.
+- `status: "no_location"`: the Hebrew date and the reading by the civil date, but no times (`current` and `next` are `null`). `approximate: true`: a sunset the period needs does not happen at this latitude, and those times are `null`.
+- The API carries stable keys (`key`, `month`, `ids`); `name` is English, in Hebcal's spelling, for scripts and logs. Apps show their own names.
+
+Admins change how the times are worked out; the answer is the settings (`version` goes up by one), and with an old `version` it is `409 VERSION_CONFLICT` with the current one:
+
+```bash
+curl -X PATCH http://<controller-ip>:41999/v1/calendar/settings \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1}'
+```
+
+`candle_lighting_minutes` is 0–90 (20 by default), `havdalah_minutes` 20–90 (42), and `holidays` is `auto` (the default: Israel's when the home is in Israel), `israel` (one day of Yom Tov) or `abroad` (two).
+
+Schedules run at these times (`docs/SCHEDULES.md`, *Shabbat and holidays*):
+
+```bash
+curl -X POST http://<controller-ip>:41999/v1/schedules \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"scene_id": "0a1b2c3d", "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6]}'
+```
+
+- A `shabbat` trigger runs once when a period begins (`candle_lighting`) or ends (`havdalah`), plus `offset` minutes (−360 to 360); `days` filter by the local weekday of that moment.
+- `"during_shabbat": "skip"` keeps a time, sun or weather schedule away from Shabbat and holidays, and `"only"` to them; `"run"` (the default) runs as on any day.
+- Every schedule has `during_shabbat` and `calendar_status`: `ok`, `off` or `no_location` for one that uses the calendar (with `off` or `no_location`, Shabbat triggers and `only` do not run and `skip` runs as usual), `null` for the others. `last_run.skipped_by` may be `shabbat`, and `last_run.note` `late`: after a restart, Shabbat automation missed in the last 6 hours runs late.
 
 Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/calendar/api-examples.json).
 

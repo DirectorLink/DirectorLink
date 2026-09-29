@@ -45,7 +45,10 @@ local function number(value)
     return string.format("%.1f", value)
 end
 
--- "Sun-Thu 06:45", "every day 30 min before sunset", "heat above 30C 12:00-20:00, once a day".
+local SHABBAT_EVENTS = { candle_lighting = "candle lighting", havdalah = "havdalah" }
+
+-- "Sun-Thu 06:45", "every day 30 min before sunset", "heat above 30C 12:00-20:00, once a day",
+-- "30 min before candle lighting", "Sat: at havdalah".
 function View.whenText(schedule)
     local trigger = schedule.trigger
     local days = View.daysText(schedule.days)
@@ -57,6 +60,11 @@ function View.whenText(schedule)
             return days .. " at " .. trigger.event
         end
         return string.format("%s %d min %s %s", days, math.abs(offset), offset < 0 and "before" or "after", trigger.event)
+    elseif trigger.type == "shabbat" then
+        -- When Shabbat and holidays begin or end; the days only when not every day.
+        local offset, event = trigger.offset or 0, SHABBAT_EVENTS[trigger.event] or tostring(trigger.event)
+        local text = offset == 0 and ("at " .. event) or string.format("%d min %s %s", math.abs(offset), offset < 0 and "before" or "after", event)
+        return days == "every day" and text or (days .. ": " .. text)
     end
     local text
     if trigger.kind == "heat" then
@@ -78,6 +86,9 @@ function View.whenText(schedule)
     return text
 end
 
+local DURING_SHABBAT = { skip = "not on Shabbat and holidays", only = "only on Shabbat and holidays" }
+
+-- "only if not raining and hotter than 28C", "not on Shabbat and holidays", or nil.
 function View.conditionsText(schedule)
     local onlyIf = schedule.only_if or {}
     local parts = {}
@@ -93,10 +104,21 @@ function View.conditionsText(schedule)
     if onlyIf.rain_expected then
         parts[#parts + 1] = "rain expected today"
     end
-    if #parts == 0 then
+    local texts = {}
+    if #parts > 0 then
+        texts[1] = "only if " .. table.concat(parts, " and ") .. (schedule.if_no_weather == "skip" and " (skipped without weather data)" or "")
+    end
+    texts[#texts + 1] = DURING_SHABBAT[schedule.during_shabbat or "run"]
+    if #texts == 0 then
         return nil
     end
-    return "only if " .. table.concat(parts, " and ") .. (schedule.if_no_weather == "skip" and " (skipped without weather data)" or "")
+    return table.concat(texts, ", ")
+end
+
+-- Shabbat automation (ADR-037): Shabbat schedules, and those that run only on Shabbat and holidays.
+-- They do not run while the Jewish calendar is off or has no location.
+local function shabbatAutomation(schedule)
+    return schedule.trigger.type == "shabbat" or schedule.during_shabbat == "only"
 end
 
 local function sceneName(sceneId)
@@ -117,9 +139,12 @@ local function when(at, now)
     return os.date("%a %d %b ", at) .. clock
 end
 
--- The Schedule Status property: "3 on · next tomorrow 06:45 Good morning · 1 weather rule".
-function View.scheduleStatus(now, paused)
-    local total, on, weather = 0, 0, 0
+local CALENDAR_MISSING = { off = "Jewish Calendar is Off", no_location = "no location" }
+
+-- The Schedule Status property: "3 on · next tomorrow 06:45 Good morning · 1 weather rule ·
+-- 2 Shabbat schedules". `calendar`: the Jewish calendar (src/core/jewish_calendar.lua), or nil.
+function View.scheduleStatus(now, paused, calendar)
+    local total, on, weather, shabbat = 0, 0, 0, 0
     local nextAt, nextScene
     for _, schedule in ipairs(Schedules.records()) do
         total = total + 1
@@ -127,6 +152,9 @@ function View.scheduleStatus(now, paused)
             on = on + 1
             if schedule.trigger.type == "weather" then
                 weather = weather + 1
+            end
+            if shabbatAutomation(schedule) then
+                shabbat = shabbat + 1
             end
             local at = Scheduler.nextRun(schedule, now)
             if at and (not nextAt or at < nextAt) then
@@ -150,11 +178,16 @@ function View.scheduleStatus(now, paused)
     if weather > 0 then
         parts[#parts + 1] = weather .. " weather rule" .. (weather == 1 and "" or "s")
     end
+    if shabbat > 0 then
+        local missing = CALENDAR_MISSING[calendar and calendar.status() or "off"]
+        parts[#parts + 1] = shabbat .. " Shabbat schedule" .. (shabbat == 1 and "" or "s") .. (missing and (" not running (" .. missing .. ")") or "")
+    end
     return table.concat(parts, " · ")
 end
 
 -- The Last Automation property: what DirectorLink ran, when, why and with what result.
--- `event`: { at, scene_id, schedule (or nil), key_name (or nil), weather (or nil), result, error }.
+-- `event`: { at, scene_id, schedule (or nil), key_name (or nil), weather (or nil), note (or nil:
+-- "late" when it ran late after a restart), result, error }.
 function View.lastAutomation(event)
     local why
     if event.schedule then
@@ -168,7 +201,7 @@ function View.lastAutomation(event)
                 why = "rain rule, rain started"
             end
         else
-            why = "schedule " .. View.whenText(event.schedule)
+            why = "schedule " .. View.whenText(event.schedule) .. (event.note == "late" and ", late after a restart" or "")
         end
     else
         why = "run from " .. tostring(event.key_name or "the app")
@@ -233,11 +266,12 @@ local function stepText(step, registry)
     return target .. " -> " .. action
 end
 
--- Every schedule and scene, for the Lua output.
-function View.printout(now, paused, registry)
+-- Every schedule and scene, for the Lua output. `calendar`: the Jewish calendar, or nil.
+function View.printout(now, paused, registry, calendar)
     local lines = {}
     local schedules = Schedules.records()
     lines[#lines + 1] = string.format("DirectorLink schedules: %d%s (controller time %s)", #schedules, paused and ", PAUSED in Composer (Schedules property)" or "", os.date("%Y-%m-%d %H:%M", now))
+    lines[#lines + 1] = "Jewish calendar: " .. (calendar and calendar.statusText(now) or "Off")
     for _, schedule in ipairs(schedules) do
         local runtime = Schedules.runtime(schedule.id)
         local parts = { string.format("  [%s] %s -> %s", schedule.enabled == false and "off" or "on", View.whenText(schedule), sceneName(schedule.scene_id)) }
@@ -252,6 +286,9 @@ function View.printout(now, paused, registry)
         local last = runtime.last_run
         if type(last) == "table" and last.at then
             local outcome = last.skipped_by and ("not run: " .. last.skipped_by) or last.error and ("failed: " .. last.error) or string.format("%d ran, %d skipped, %d failed", last.ran or 0, last.skipped or 0, last.failed or 0)
+            if last.note == "late" then
+                outcome = outcome .. ", late after a restart"
+            end
             parts[#parts + 1] = "last " .. last.at .. " UTC (" .. outcome .. ")"
         end
         parts[#parts + 1] = "id " .. schedule.id
