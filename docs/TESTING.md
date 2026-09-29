@@ -2,6 +2,18 @@
 
 ## Current release
 
+`v1.1.1` — four fixes around shades (0s): Forget key while a shade moves, the moment after Stop, a shade moving again after the app was away, and a shade left marked as not stopped after a restart. Update DirectorLink in Composer (no reboot).
+
+## 0s. Shades: four fixes (1.1.1)
+
+With **Log Level** Debug, on a shade with a Percent Set Address, with the app at home:
+
+1. **Stop:** open the shade from closed and press **Stop** halfway, five or six times: the app checks on the shade every 2 seconds, and only a check in the moment right after the Stop showed the problem. Each time the line under its name shows the shade stopped at once, never *Opening…* again, and then where it stopped (the actuator's own position about a second later). Each `STOP` in `GET /v1/logs?category=blind_command` is followed a fraction of a second later by the *movement changed* lines of the stop in `GET /v1/logs?category=blind&level=debug` (Target Level, Opening 0, Stopped 1).
+2. **A move after a while away:** open the shade from the app, then put the app in the background (another tab, or the phone locked) for three minutes. Close the shade from a keypad or the Control4 app and bring the app back while it moves: within a few seconds it shows *Closing…*, and `GET /v1/logs?category=api&level=debug` shows `GET /v1/blinds` every 2 seconds until the shade stops, then every 10. The same on a computer without remote access that goes offline (Wi-Fi off) for three minutes while the shade moves: close the shade from a keypad, and turn Wi-Fi back on while it moves.
+3. **Forget key:** on a second browser paired for this, set a shade moving and, while it moves, Settings → Controller → **Forget access key**: the app ends on *The access key was removed from this device.*, never *This device’s access key no longer works*, and **API Keys** in Composer goes down by one. Pair it again and do the same with **Pair again**, within two minutes of a command to a shade: the pairing screen does not say the key no longer works.
+4. **After a restart:** reboot the controller. In `GET /v1/blinds` every shade at rest has `"moving": false`, also one whose level is unknown (`-255` or `-155` in *proxy variables*, *Position unknown* in the app), and once nothing moves the app reads the blinds every 10 seconds, not every 2. A shade that says `"moving": true` while it stands still: save `GET /v1/logs?category=blind&level=debug` (its *proxy variables* with Stopped, Level and Target Level).
+5. Section 0r steps 8 and 10 pass unchanged: a move to 50% shows *Opening… to 50%* until the shade stops, and a move from a keypad shows within about 10 seconds.
+
 `v1.1.0` — older Control4 lights, floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints (thanks to bkwagner, #14, #19, #16, ADR-033); the relay's certificate is checked (ADR-034); shades, Composer changes without a restart and the room order (0r); admins see new versions in the app (0q, ADR-035). Update DirectorLink in Composer (no reboot).
 
 ## 0r. Room order, Composer changes and shades (1.1.0)
@@ -207,7 +219,7 @@ Update the driver in Composer with a local file named exactly `DirectorLink.c4z`
 Expected in the DirectorLink properties once the new driver is loaded:
 
 - Status: `Ready`
-- Version: `1.1.0`
+- Version: `1.1.1`
 - API Status: `Online - port 41999`
 - Pairing Code: `1234 5678` (new driver) or `-`; Pairing Status: `Ready until HH:MM - works once`, or how to get a code
 - API Keys: how many keys exist
