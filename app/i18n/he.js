@@ -575,6 +575,24 @@ export default {
       notRecorded: "הבית קיבל את המכשיר, אבל לא ניתן היה להוסיף אליו את החשבון שלך. בקשו הזמנה חדשה.",
     },
   },
+  updates: {
+    label: "עדכונים",
+    upToDate: "הגרסה עדכנית",
+    available: "גרסה {version} של DirectorLink זמינה ({date})",
+    availableUndated: "גרסה {version} של DirectorLink זמינה",
+    howTo: "איך מעדכנים",
+    download: "הורדת DirectorLink.c4z",
+    whatsNew: "מה חדש",
+    checksums: "סכומי ביקורת SHA-256",
+    steps: {
+      download: "במחשב שבו מותקן Composer, הורידו את DirectorLink.c4z. שם הקובץ צריך להיות בדיוק DirectorLink.c4z, ולא „DirectorLink\u00a0(1).c4z”: אם צריך, שנו את השם.",
+      composer: "ב-Composer, סמנו את המכשיר DirectorLink, לחצו עליו לחיצה ימנית ובחרו Update Driver, ואחר כך את הקובץ שהורדתם.",
+      after: "הדרייבר נטען בלי אתחול, ומפתחות הגישה, הסצנות והתזמונים נשמרים. האפליקציה מתעדכנת מעצמה.",
+    },
+    notice: "גרסה {version} של DirectorLink זמינה.",
+    noticeAction: "איך מעדכנים",
+    dismiss: "הסתרה עד הגרסה הבאה",
+  },
   settings: {
     title: "הגדרות",
     appearance: {

@@ -84,7 +84,7 @@ A code is valid for 15 minutes and works once, and only on the home network. Fiv
 
 Automatic self-update is intentionally **not** part of V1.
 
-Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release.
+Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release. Admins see in the app when a newer release is out (Settings → Controller, and a notice on Home), with a download of its `DirectorLink.c4z` and the steps in Composer.
 
 **Important:** before updating, make sure the local file is named exactly `DirectorLink.c4z`. Do not select `DirectorLink (1).c4z`, `DirectorLink (2).c4z`, etc. A real Director snapshot showed those suffixed filenames can be installed as separate driver files instead of replacing the canonical package.
 

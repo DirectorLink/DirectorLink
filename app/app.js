@@ -29,6 +29,7 @@ import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { settingsView } from "./js/views/settings.js";
+import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 
 const view = document.querySelector("#view");
 const tabbar = document.querySelector("#tabbar");
@@ -176,6 +177,8 @@ function signature() {
     state.notice,
     state.loaded,
     state.system,
+    // A newer DirectorLink release, and the one dismissed on Home (kept in localStorage).
+    updatesSignature(),
     state.rooms,
     state.lights,
     state.thermostats,
@@ -371,6 +374,8 @@ whenConnected(() => syncProfile(applyLanguage));
 // The home's scenes, for the Scenes tab and the ones shown on Home.
 whenConnected(loadScenes);
 whenConnected(loadSchedules);
+// Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
+whenConnected(checkUpdates);
 // Opened on Schedules (a reload): the weather once connected.
 whenConnected(() => {
   if (route.name === "schedules" || route.name === "schedule") keepWeatherFresh();

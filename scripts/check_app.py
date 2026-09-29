@@ -219,6 +219,16 @@ def main():
             if retired in text:
                 fail(f"app/{path.relative_to(APP).as_posix()} still uses the retired API: {retired}")
 
+    # The update notice (1.1.0, ADR-035): only admin keys ask GitHub's releases API, and the release
+    # notes (Markdown written on GitHub) never reach the page.
+    updates = (APP / "js" / "updates.js").read_text(encoding="utf-8")
+    require(updates, '"https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest"', "the update notice must ask GitHub's releases API")
+    require(updates, 'role !== "admin"', "only admin keys may ask GitHub whether DirectorLink has a newer release")
+    require(updates, "CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000", "the app must ask GitHub at most every 12 hours (the privacy page says twice a day)")
+    for path in (APP / "js" / "updates.js", APP / "js" / "views" / "updates.js"):
+        if re.search(r"\.body\b|innerHTML", path.read_text(encoding="utf-8")):
+            fail(f"app/{path.relative_to(APP).as_posix()} must not use a release's body: its text is not the app's to show")
+
     service_worker = (APP / "sw.js").read_text(encoding="utf-8")
     require(service_worker, "requestUrl.origin !== self.location.origin",
             "the service worker must ignore cross-origin/LAN requests")

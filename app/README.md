@@ -57,6 +57,10 @@ DoorBird doorstations come from `GET /v1/doorbells`, polled with the other devic
 
 Controls change the screen at once, send the command, then re-read the device until the controller confirms it; a failed command reverts and shows a short error on the device. Device state refreshes every 10 s while the page is visible.
 
+## Updates
+
+For admin keys, the app says when a newer DirectorLink is out (`js/updates.js`, `js/views/updates.js`, ADR-035). At most every 12 hours it asks GitHub's releases API (`https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest`, without cookies; the CSP's `connect-src https:` allows it) and keeps the answer in `localStorage`. Settings → Controller shows **Updates**: *Up to date*, or the newer version and its date with **Download DirectorLink.c4z** (that release's file), **What's new** (the release page, in a new tab) and the steps in Composer; Home shows a notice until it is dismissed for that version. Other roles never ask, nor does a driver whose version is not MAJOR.MINOR.PATCH (`dev`); a failed request keeps the last answer until the next try. Only the version, the date and links into the project's releases are used, never the text of the release notes. `tests/app/updates.test.mjs` covers the comparison, the 12 hours, the admin-only rule and the answers that are refused.
+
 ## Palettes and themes
 
 Five palettes — graphite (default), ocean, forest, plum, midnight — each with a light and a dark variant, as CSS custom properties on `:root[data-palette=…][data-theme=…]` in `styles.css` (tokens `--bg`, `--card`, `--nav`, `--ink`, `--muted`, `--line`, `--onBg`/`--onText`, `--coolBg`/`--coolText`, `--primary`/`--primaryText`, `--okBg`/`--okText`/`--okDot`). The theme is Light, Dark or Auto (follows `prefers-color-scheme`); `data-theme` always holds the resolved value. The choice is stored in `localStorage` (`directorlink.palette`, `directorlink.theme`) and `meta[name=theme-color]` follows the page background. Adding a palette: a light and a dark token block and a swatch rule in `styles.css`, its name in `PALETTES` (`js/theme.js`) and `theme-boot.js`, and a label under `palettes` in each language file.

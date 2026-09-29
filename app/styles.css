@@ -758,6 +758,53 @@ select:disabled {
   color: var(--okText);
 }
 
+/* A newer DirectorLink is out (admins; js/views/updates.js). On Home the whole text leads to the
+   steps, and the close button hides it until the next version. */
+.banner-update {
+  padding-block: 2px;
+  padding-inline-end: 2px;
+}
+
+.banner-update-link {
+  flex: 1;
+  min-width: 0;
+  padding-block: 10px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.banner-update-link .banner-action {
+  font-weight: 600;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.banner-update .icon-button {
+  color: inherit;
+}
+
+/* Settings → Controller: how to update, under the Updates line. */
+.update-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.update-panel:focus {
+  outline: none;
+}
+
+.update-steps {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-inline-start: 1.4em;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 .inline-error {
   margin-block-start: 8px;
   color: var(--errText);

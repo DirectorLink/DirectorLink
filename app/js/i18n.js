@@ -152,3 +152,8 @@ export function formatClock(date, timeZone) {
 export function formatDateTime(date) {
   return new Intl.DateTimeFormat(current, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
+
+// "28 Sept 2026": the day a DirectorLink release came out.
+export function formatDate(date) {
+  return new Intl.DateTimeFormat(current, { dateStyle: "medium" }).format(date);
+}

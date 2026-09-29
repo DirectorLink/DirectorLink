@@ -4,6 +4,15 @@
 
 `v1.1.0` — older Control4 lights, floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints (thanks to bkwagner, #14, #19, #16, ADR-033); the relay's certificate is checked (ADR-034). Update DirectorLink in Composer (no reboot).
 
+## 0q. Update notice (1.1.0)
+
+While the controller still runs a DirectorLink older than the latest release on GitHub (1.0.0, once 1.1.0 is published), before updating it. The app asks GitHub at most every 12 hours: if it asked just before the release was published, remove `directorlink.update` from the site's local storage (developer tools → Application) and reload.
+
+1. With an admin key, Settings → Controller shows **Updates**: *DirectorLink 1.1.0 is available* with the release date, **Download DirectorLink.c4z** (the file of that release), **What's new** (the release page, in a new tab) and the steps in Composer.
+2. Home shows *DirectorLink 1.1.0 is available. How to update*; the link opens Settings at the steps. ✕ hides the notice, also after a reload; Settings still shows the update.
+3. With a member key (another browser), neither Home nor Settings mention updates, and developer tools → Network shows no request to `api.github.com`. On the admin's browser a reload does not ask again within 12 hours.
+4. Update the driver with the downloaded file as the steps say, and reload the app: Settings → Controller shows version 1.1.0 and *Up to date*, and Home shows no notice.
+
 ## 0p. Legacy lights and more thermostats (1.1.0)
 
 On the test system, which has none of the new devices, this is a regression check:

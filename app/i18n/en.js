@@ -573,6 +573,25 @@ export default {
       notRecorded: "Your home accepted this device, but your account could not be added to it. Ask for a new invitation.",
     },
   },
+  // Admins only: a newer DirectorLink release. Composer's menu names stay as Composer shows them.
+  updates: {
+    label: "Updates",
+    upToDate: "Up to date",
+    available: "DirectorLink {version} is available ({date})",
+    availableUndated: "DirectorLink {version} is available",
+    howTo: "How to update",
+    download: "Download DirectorLink.c4z",
+    whatsNew: "What’s new",
+    checksums: "SHA-256 checksums",
+    steps: {
+      download: "On the computer with Composer, download DirectorLink.c4z. Its name must be exactly DirectorLink.c4z, not “DirectorLink\u00a0(1).c4z”: rename it if needed.",
+      composer: "In Composer, select the DirectorLink device, right-click it and choose Update Driver, then choose the downloaded file.",
+      after: "It loads without a reboot; keys, scenes and schedules stay. The app updates by itself.",
+    },
+    notice: "DirectorLink {version} is available.",
+    noticeAction: "How to update",
+    dismiss: "Hide until the next version",
+  },
   settings: {
     title: "Settings",
     appearance: {

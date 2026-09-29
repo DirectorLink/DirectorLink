@@ -56,6 +56,8 @@ This file records decisions that should not be silently changed.
 
 **Decision:** Updates are manual through Composer initially.
 
+**Extended by ADR-035 (1.1.0):** admins see in the app when a newer release is out, with its download and the Composer steps; installing stays in Composer.
+
 ## ADR-011 — Discovery source
 
 **Decision:** Prefer structured DriverWorks tables:
@@ -240,6 +242,14 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 **Decision (0.9.2):** `src/core/store.lua` writes every stored value as `json:` followed by JSON, which Director returns unchanged, and accepts tables Director has already decoded, so data written by 0.9.1 and older is read and then rewritten. Keys are kept in plain persistence as SHA-256 hashes (SHA-1 on a controller without SHA-256; each key records its algorithm). A presented key is hashed and compared in constant time; the key itself exists only in the response that creates it. Keys in the encrypted store of 0.8.0 and 0.9.0 are moved when Director can read that store, which is then emptied. The remote-access identity is kept in plain persistence as well: its secret has to be sent to the relay, so it cannot be kept as a hash.
 
 **Consequence:** Keys, room names and the home identity survive driver updates and restarts, and each load logs how the keys came back (`keys loaded`, `stored_as`). Whoever can read the driver's stored data (root on the controller, possibly a project backup) finds only hashes of long random keys, which cannot be turned back into keys. The home secret is readable there; that is acceptable while remote access is a read-only test, and is revisited when claiming a home with a pairing code replaces trust on first use. The fake Director in the driver tests decodes stored JSON the same way. (Since ADR-029 each key's lock key is stored too; ADR-032 lets the owner replace the home secret and says what such a copy allows.)
+
+## ADR-035 — Driver updates: a guided notice first, one-tap install only after a test on a real controller
+
+**Context:** Updating DirectorLink means Composer: download `DirectorLink.c4z` from the release, keep exactly that name, and run Update Driver on the device (ADR-010, ADR-014). Admins learned about a release only by watching GitHub. No documented DriverWorks API installs a `.c4z`. The only known method — the unlock key of `C4:FileSetDir`, writing the package into `C4Z_ROOT` and `UpdateProjectC4i` on `127.0.0.1:5020`, used by some open-source drivers — is undocumented and unproven on OS 3.4.3.
+
+**Decision (1.1.0):** The app shows admins that a newer release is out, with What's new, a download of that release's `DirectorLink.c4z` and the Composer steps. The admin's device asks GitHub's releases API (`releases/latest`) at most every 12 hours; other roles never ask, and a driver whose version is not MAJOR.MINOR.PATCH is never compared. Only the version, the date and links into the project's releases are used, never the text of the release notes. Later, and only after a test with a throwaway driver on the owner's CORE-1 succeeds: installing from the app, for admins only, behind a Composer property **App Updates** (default Not allowed), with packages signed in GitHub and checked by the driver, and only to newer versions. Going back stays in Composer. The minimum OS stays 3.3.0 (ADR-001), so the signature is checked in plain Lua.
+
+**Consequence:** Nothing new runs on the controller. GitHub sees admins' IP addresses about twice a day; the privacy page says so. An admin whose app asked just before a release was published hears of it up to 12 hours later.
 
 ## ADR-034 — The driver checks the relay's certificate against roots it carries
 
