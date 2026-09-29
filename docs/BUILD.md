@@ -91,7 +91,7 @@ Use `localhost` as the controller address and the pairing code the dev server pr
 
 ## Release policy
 
-Built `.c4z` files are not committed. Every official build is produced by GitHub Actions and attached to an immutable GitHub Release.
+Built `.c4z` files are not committed. Every official build is produced by GitHub Actions and attached to a GitHub Release. Releases are immutable from 1.1.0 on, once the repository's immutable-releases setting is on: after publishing, neither the tag nor the files can change. 1.0.0 and older were published mutable. The app's update notice offers only immutable releases (ADR-035).
 
 1. Work on a `dev/<feature>` branch and merge it to `main` through a pull request.
 2. Changing `VERSION` on `main` triggers the release workflow, which runs the tests and checks, builds, and publishes the `v<version>` release with:
@@ -102,7 +102,7 @@ openapi.json
 SHA256SUMS.txt
 ```
 
-Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release.
+Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release. `gh release create` uploads the files before it publishes the release, so it works with immutable releases.
 
 ## Deploying the sites
 

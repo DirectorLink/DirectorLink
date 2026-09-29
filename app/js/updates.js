@@ -12,13 +12,16 @@ export const LATEST_RELEASE_URL = "https://api.github.com/repos/IsraelCIL/Direct
 // About twice a day: GitHub allows 60 requests an hour per address without a token, and the privacy
 // page (site/privacy.html) says how often the app asks.
 export const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+// "Up to date" is said only this long after GitHub's last answer. After that Settings says the
+// check did not work; a newer release already known is still offered.
+export const ANSWER_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 export const PACKAGE_NAME = "DirectorLink.c4z";
 const CHECKSUMS_NAME = "SHA256SUMS.txt";
 // Every link taken from an answer must lead into this project's releases, and nowhere else.
 const RELEASES = "https://github.com/IsraelCIL/DirectorLink/releases/";
 const TIMEOUT_MS = 10000;
-// In this browser only, for this viewer: the last check { checkedAt, release }, and the version
-// whose notice on Home was dismissed.
+// In this browser only, for this viewer: the last check { checkedAt, answeredAt, release }, and
+// the version whose notice on Home was dismissed.
 const CHECK_KEY = "directorlink.update";
 const DISMISSED_KEY = "directorlink.updateDismissed";
 
@@ -80,8 +83,11 @@ function usable(release) {
 // GitHub's answer for the latest release -> { version, name, publishedAt, url, download, checksums },
 // or null when it is not a complete, published DirectorLink release: another shape (an error, a
 // 404's message), a tag that is not vX.Y.Z, or no DirectorLink.c4z yet. SHA256SUMS.txt is optional.
+// Only an immutable release counts: once published, its tag and files cannot be replaced (GitHub's
+// immutable releases, on from 1.1.0; 1.0.0 and older are mutable). With the repository's setting
+// off there is no notice, rather than one for files that could change.
 export function readRelease(answer) {
-  if (!answer || typeof answer !== "object" || answer.draft || answer.prerelease) return null;
+  if (!answer || typeof answer !== "object" || answer.draft || answer.prerelease || answer.immutable !== true) return null;
   const match = /^v(\d+\.\d+\.\d+)$/.exec(typeof answer.tag_name === "string" ? answer.tag_name : "");
   if (!match) return null;
   const assets = Array.isArray(answer.assets) ? answer.assets : [];
@@ -122,19 +128,24 @@ function save(storage, key, value) {
   }
 }
 
-// The last check: { checkedAt, release } (release null until GitHub has answered once), or null.
+// The last check: { checkedAt, answeredAt, release }, or null. checkedAt is the last try,
+// answeredAt the last time GitHub answered with a complete release, and release that answer (both
+// null until GitHub has answered once). A record without answeredAt, kept before there was one,
+// may hold an answer of any age: it counts as none, so GitHub is asked again.
 export function savedCheck(storage = browserStorage()) {
   try {
     const saved = JSON.parse(load(storage, CHECK_KEY) || "null");
     const checkedAt = Number(saved?.checkedAt);
-    return Number.isFinite(checkedAt) ? { checkedAt, release: usable(saved.release) } : null;
+    const answeredAt = saved?.answeredAt === null ? null : Number(saved?.answeredAt);
+    if (!Number.isFinite(checkedAt) || (answeredAt !== null && !Number.isFinite(answeredAt))) return null;
+    return { checkedAt, answeredAt, release: usable(saved.release) };
   } catch {
     return null;
   }
 }
 
-function saveCheck(storage, checkedAt, release) {
-  save(storage, CHECK_KEY, JSON.stringify({ checkedAt, release }));
+function saveCheck(storage, check) {
+  save(storage, CHECK_KEY, JSON.stringify(check));
 }
 
 export function dismissedVersion(storage = browserStorage()) {
@@ -172,13 +183,20 @@ async function latestRelease(fetchRelease) {
   }
 }
 
+// GitHub's last answer is less than 3 days old (one dated after this clock's now is of unknown age).
+function recentAnswer(check, now) {
+  if (!Number.isFinite(check?.answeredAt)) return false;
+  const age = now - check.answeredAt;
+  return age >= 0 && age < ANSWER_FRESH_MS;
+}
+
 let running = null;
 
 // Asks GitHub when it is time (checkDue) and saves the answer. Resolves true when what the screens
 // show may have changed. Failures are silent: a 404, a rate limit, an answer that is not a complete
-// release or no connection keep the last answer, and the next try is 12 hours later, so a device
-// without internet does not ask every minute. The try is saved before asking, so another tab
-// does not ask as well.
+// release or no connection keep the last answer and its time, and the next try is 12 hours later,
+// so a device without internet does not ask every minute. The try is saved before asking, so
+// another tab does not ask as well.
 export function checkForUpdate({
   role,
   driverVersion,
@@ -192,15 +210,28 @@ export function checkForUpdate({
   if (!online || typeof fetchRelease !== "function" || !checkDue({ role, driverVersion, check: before, now })) {
     return Promise.resolve(false);
   }
-  saveCheck(storage, now, before?.release ?? null);
+  saveCheck(storage, { checkedAt: now, answeredAt: before?.answeredAt ?? null, release: before?.release ?? null });
   running = latestRelease(fetchRelease)
     .then((release) => {
-      if (!release) return false;
-      saveCheck(storage, now, release);
-      return JSON.stringify(release) !== JSON.stringify(before?.release ?? null);
+      // Without an earlier answer, Settings now says that the check did not work.
+      if (!release) return !Number.isFinite(before?.answeredAt);
+      saveCheck(storage, { checkedAt: now, answeredAt: now, release });
+      return !recentAnswer(before, now) || JSON.stringify(release) !== JSON.stringify(before.release);
     })
     .finally(() => {
       running = null;
     });
   return running;
+}
+
+// What Settings says, from the last check: { release } when it is newer than the driver, also when
+// later checks failed (the notice on Home too); { upToDate: true } while GitHub's last answer is
+// less than 3 days old; otherwise { answeredAt } (null: GitHub never answered), the check did not
+// work. null for other keys, a driver of unknown version, before the first try, and while GitHub
+// is asked for a first answer.
+export function updateStatus({ role, driverVersion, check, now = Date.now() }) {
+  if (role !== "admin" || !parseVersion(driverVersion) || !check || (running && check.answeredAt === null)) return null;
+  const release = newerRelease(driverVersion, check.release);
+  if (release) return { release };
+  return recentAnswer(check, now) ? { upToDate: true } : { answeredAt: check.answeredAt };
 }

@@ -6,7 +6,7 @@
 import { h, iconButton } from "../dom.js";
 import { formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { PACKAGE_NAME, checkForUpdate, dismissUpdate, dismissedVersion, newerRelease, parseVersion, savedCheck } from "../updates.js";
+import { PACKAGE_NAME, checkForUpdate, dismissUpdate, dismissedVersion, savedCheck, updateStatus } from "../updates.js";
 import { notify, state } from "../state.js";
 
 // Set when the notice on Home is followed: Settings then brings the steps into view.
@@ -16,12 +16,10 @@ function driverVersion() {
   return state.system?.bridge?.version;
 }
 
-// { release } for an admin key with a driver of a known version once GitHub has answered: the
-// newer release, or null when the driver is up to date. null otherwise: nothing is said at all.
+// For an admin key with a driver of a known version: { release } (a newer one), { upToDate } or
+// { answeredAt } (the check did not work), from js/updates.js. null: nothing is said at all.
 function knownUpdate() {
-  if (state.role !== "admin" || !parseVersion(driverVersion())) return null;
-  const latest = savedCheck()?.release;
-  return latest ? { release: newerRelease(driverVersion(), latest) } : null;
+  return updateStatus({ role: state.role, driverVersion: driverVersion(), check: savedCheck() });
 }
 
 // After connecting and with each rooms refresh (app.js); js/updates.js decides whether it is time.
@@ -29,23 +27,33 @@ export async function checkUpdates() {
   if (await checkForUpdate({ role: state.role, driverVersion: driverVersion() })) notify();
 }
 
-// What these screens show, for the renderer's signature (app.js): they are kept in localStorage.
+// What these screens show, for the renderer's signature (app.js): the last check is kept in
+// localStorage, and "Up to date" ends 3 days after GitHub's last answer.
 export function updatesSignature() {
-  return [savedCheck()?.release || null, dismissedVersion()];
+  return [knownUpdate(), dismissedVersion()];
+}
+
+// A day, kept on one line when the text wraps.
+function dayText(time) {
+  return formatDate(new Date(time)).replace(/ /g, "\u00a0");
 }
 
 function availableText(release) {
   if (!release.publishedAt) return t("updates.availableUndated", { version: release.version });
-  // The date stays on one line when the text wraps.
-  const date = formatDate(new Date(release.publishedAt)).replace(/ /g, "\u00a0");
-  return t("updates.available", { version: release.version, date });
+  return t("updates.available", { version: release.version, date: dayText(release.publishedAt) });
+}
+
+function statusText(known) {
+  if (known.release) return availableText(known.release);
+  if (known.upToDate) return t("updates.upToDate");
+  // GitHub has not answered for 3 days (a rate limit, no connection), or never has.
+  return known.answeredAt ? t("updates.checkFailed", { date: dayText(known.answeredAt) }) : t("updates.checkFailedUndated");
 }
 
 // Settings → Controller: the "Updates" line as [label, value], or null.
 export function updateFact() {
   const known = knownUpdate();
-  if (!known) return null;
-  return [t("updates.label"), known.release ? availableText(known.release) : t("updates.upToDate")];
+  return known ? [t("updates.label"), statusText(known)] : null;
 }
 
 // Settings → Controller, under that line: the download, What's new and the steps in Composer.
@@ -64,7 +72,8 @@ export function updatePanel() {
   }
   return h(
     "section",
-    { class: "update-panel", id: "settings-update", tabindex: "-1", "aria-labelledby": "settings-update-title" },
+    // The data-key keeps focus here when the next poll redraws Settings (app.js restoreUi).
+    { class: "update-panel", id: "settings-update", tabindex: "-1", "aria-labelledby": "settings-update-title", dataset: { key: "settings-update" } },
     h("h3", { class: "settings-subtitle", id: "settings-update-title" }, t("updates.howTo")),
     h(
       "div",
