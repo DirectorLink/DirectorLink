@@ -162,7 +162,7 @@ Use project location/time-zone data exposed by Director. Solar calculations shou
 
 ## Optional/deferred extensions
 
-A plugin architecture may be added later for niche functionality. A Jewish-calendar module — Shabbat and holiday times as schedule triggers — is planned for later as an optional module inside the driver; it is not part of the first scheduler release.
+A plugin architecture may be added later for niche functionality. The Jewish-calendar module — Shabbat and holiday times as schedule triggers and conditions, the Hebrew date and the weekly reading — is built in 1.2.0 as an optional module inside the driver, off until an installer turns it on in Composer (ADR-037, docs/SCHEDULES.md, docs/CALENDAR.md).
 
 ## Distribution and versioning
 

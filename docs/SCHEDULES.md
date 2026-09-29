@@ -1,11 +1,12 @@
 # Schedules and the weather
 
-**Status: built in DirectorLink 0.14.0.**
+**Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0.**
 
-A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, or when
-the weather turns. The controller keeps and runs them (`src/core/schedules.lua`,
-`src/core/scheduler.lua`), in its own local time, whether or not any app is open, and they
-survive driver updates. They are DirectorLink's own: Composer's scheduler is never read or changed.
+A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, when the
+weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
+(`src/core/schedules.lua`, `src/core/scheduler.lua`), in its own local time, whether or not any app
+is open, and they survive driver updates. They are DirectorLink's own: Composer's scheduler is never
+read or changed.
 
 ## Who does what
 
@@ -35,13 +36,19 @@ skipped. Opening a door or gate needs a person.
     - rain: when it starts to rain; again only after an hour without rain;
     - `from`/`to` (optional) limit it to those hours (they may cross midnight); `once_a_day`
       (default on) at most once per day.
-- `only_if` (time and sun schedules): `not_raining`, `hotter_than` (°C), `wind_below` (km/h),
+  - **shabbat** (1.2.0, with the Jewish calendar on): `{"type": "shabbat", "event":
+    "candle_lighting"|"havdalah", "offset": -30}` — when Shabbat or a holiday begins or ends, plus
+    minutes before (negative) or after, up to six hours (see [Shabbat and holidays](#shabbat-and-holidays)).
+- `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C), `wind_below` (km/h),
   `rain_expected` (today's forecast: a 50% chance or more). They are checked when the schedule is
   due, with the latest weather.
-- `if_no_weather`: what a time or sun schedule with `only_if` does when there is no weather data
-  (no internet, no location): `run` (the default) or `skip`.
-- Read back with `next_run` (time and sun) and `last_run` (`ran`, `skipped`, `failed`; or
-  `skipped_by`: `only_if`, `no_weather`).
+- `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no internet,
+  no location): `run` (the default) or `skip`.
+- `during_shabbat` (1.2.0; time, sun and weather schedules): `run` (the default: as on any day),
+  `skip` (not on Shabbat and holidays) or `only` (only then).
+- Read back with `next_run` (time, sun and Shabbat) and `last_run` (`ran`, `skipped`, `failed`, and
+  `note`: `no_weather`, `late`; or `skipped_by`: `only_if`, `no_weather`, `shabbat`), and, for a
+  schedule that uses the calendar, `calendar_status` (`ok`, `off`, `no_location`; otherwise `null`).
 - At most 50. `version` works as for scenes (409 `VERSION_CONFLICT`).
 
 ## Running
@@ -49,7 +56,8 @@ skipped. Opening a door or gate needs a person.
 - Every minute the controller checks the schedules. A time or sun schedule runs at its minute —
   up to 5 minutes late after a restart, also across midnight — and once; a schedule changed after
   its time starts with the next one. On the day clocks go forward, a time in the skipped hour runs
-  when it would have (e.g. 02:30 at 03:30).
+  when it would have (e.g. 02:30 at 03:30). Shabbat schedules, and those only on Shabbat and
+  holidays, are caught up for 6 hours after a restart (below).
 - Switching a schedule off and on, or changing it, does not make it run again the same day.
 - Weather schedules run when the reading crosses the threshold (or rain starts), on their days,
   within their hours; hours across midnight (22:00–06:00) belong to the day they start.
@@ -75,6 +83,68 @@ skipped. Opening a door or gate needs a person.
 - `GET /v1/weather` also gives today's sunrise and sunset. Its `location` is given to admin keys
   only, rounded to two decimals; other roles get `null` (1.0.0).
 
+## Shabbat and holidays
+
+**Status: built in DirectorLink 1.2.0 (ADR-037).** It needs the Composer property **Jewish
+Calendar** set to On; it ships Off, and then the driver works nothing out and the app shows none of
+it.
+
+- **Where the times come from.** The controller works them out itself from the project's latitude
+  and longitude (Composer project properties); nothing goes to the network. Candle lighting is
+  sunset (to the minute) less 20 minutes and havdalah sunset (to the nearest minute) plus 42, as
+  Hebcal prints them; admins change the minutes (0–90 before, 20–90 after) and Israel (one day of
+  Yom Tov) or abroad (two) in the app (`PATCH /v1/calendar/settings`, `api/README.md`). Israel or
+  abroad is automatic by default: from the location, or else the project's country or time zone.
+  Check the times against your community's calendar. The algorithms are in `docs/CALENDAR.md`.
+- **One period per run of holy days.** Shabbat and holy days (Yom Tov) that follow each other are
+  one period, from the candle lighting before the first day to the havdalah after the last: Rosh
+  Hashana on Thursday and Friday with Shabbat is one period of three days. A Shabbat schedule runs
+  once when a period begins (`candle_lighting`) or once when it ends (`havdalah`); the candles of
+  its later evenings are not a trigger.
+- **Moments, not minutes.** Each moment is worked out as a point in time, so an offset may cross
+  midnight (havdalah plus 300 minutes runs after midnight, on the next day) and a clock change
+  never moves or repeats one (Israel's clocks go forward on a Friday). `days` filter by the local
+  weekday of the moment it runs; the app sends all seven.
+- **The condition.** Holy time is from candle lighting to havdalah: the start counts, the end does
+  not. A time or sun schedule is judged at its minute (one due at 17:59 but checked at 18:01 is
+  judged at 17:59); a weather rule when the reading comes. A weather rule held back on Shabbat
+  stays armed, and runs after havdalah if the weather still passes. `skip` leaves
+  `last_run.skipped_by: "shabbat"`; `only` outside holy time leaves nothing, like a day not in its
+  days.
+- **Never twice.** A Shabbat schedule runs once a period, whatever changes: an edit (another
+  offset), switching it off and on, other minutes, or a restart. Time and sun schedules keep their
+  once a day.
+- **After a restart.** In the first minute after the driver starts, Shabbat schedules and those
+  only on Shabbat and holidays whose moment passed in the last 6 hours, and did not run, run late:
+  oldest first, each once, with `last_run.note: "late"`, "late after a restart" in Last Automation,
+  and a log line. A family keeping Shabbat cannot make up for them by hand. Everything else keeps
+  its 5 minutes. What was due while the schedules were paused, or while the calendar was off, is
+  never caught up.
+- **Calendar off, or no location.** No moment counts as holy: Shabbat schedules and `only`
+  schedules are kept but do not run (`calendar_status` says `off` or `no_location`, and so does
+  Schedule Status), and `skip` schedules run as usual. While the calendar is off, setting a Shabbat
+  trigger or `during_shabbat` other than `run` is 409 `JEWISH_CALENDAR_OFF`; switching a schedule
+  off or on, its days, its scene, `during_shabbat: "run"` and deleting still work. Turned on again,
+  they run from their next moment, and nothing is caught up (a moment in the last 5 minutes still
+  runs, as after a pause). Without a location there are still the Hebrew date and the weekly reading,
+  but no times.
+- **Where the sun does not set** (above about 66°, around midsummer and midwinter) there are no
+  times: Shabbat schedules wait for the first period that has them again, and the condition takes
+  the civil days, from 00:00 on the first day to 24:00 on the last.
+
+For example:
+
+```json
+{ "trigger": { "type": "shabbat", "event": "candle_lighting", "offset": -30 }, "days": [0, 1, 2, 3, 4, 5, 6] }
+{ "trigger": { "type": "shabbat", "event": "havdalah", "offset": 0 }, "days": [0, 1, 2, 3, 4, 5, 6] }
+{ "trigger": { "type": "time", "at": "06:30" }, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "skip" }
+{ "trigger": { "type": "time", "at": "08:00" }, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "only" }
+```
+
+Shabbat lights half an hour before candle lighting, the blinds at havdalah, the boiler every
+morning but not on Shabbat and holidays, and the living-room air conditioning on Shabbat and
+holiday mornings only (each with its `scene_id`).
+
 ## For installers (Composer)
 
 Automation that nobody can see is the hardest thing to troubleshoot, so DirectorLink shows its own
@@ -90,6 +160,20 @@ in Composer, on the DirectorLink device (0.15.0):
   `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
 - **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
   and last run) and every scene with its steps and device names and ids to the Lua output.
+- **Jewish Calendar** (Off / On, 1.2.0): Shabbat and holiday times for schedules and the app. Off by
+  default; no restart is needed either way.
+- **Calendar Status** (read-only): what the calendar works out, e.g. `Israel (from the location) ·
+  candles 20 min before sunset, havdalah 42 min after · next Fri 02 Oct 18:04 to Sat 03 Oct 19:05
+  Shabbat, Shmini Atzeret, Simchat Torah`, during a period `Now Shabbat, Shmini Atzeret, Simchat
+  Torah until Sat 03 Oct 19:05 · Israel · candles 20, havdalah 42`, `No location - set latitude and
+  longitude in the project properties`, or `Off`. Where the sun does not set: `next Fri 19 Jun: no
+  sunset at this latitude, no times`.
+- With Shabbat schedules, Schedule Status adds `· 2 Shabbat schedules` (Shabbat triggers and those
+  only on Shabbat and holidays), or `· 2 Shabbat schedules not running (Jewish Calendar is Off)` /
+  `(no location)`. Last Automation says `02 Oct 17:34 Shabbat lights · schedule 30 min before candle
+  lighting · 12 devices`, and `, late after a restart` when it ran late. The printout's second line
+  is `Jewish calendar: ` and Calendar Status; its schedules read `30 min before candle lighting`,
+  `Sat: at havdalah`, and `not on Shabbat and holidays` or `only on Shabbat and holidays`.
 
 Scenes and schedules are DirectorLink's own: they are not in Composer programming, and DirectorLink
 does not read that programming. A Composer schedule and a DirectorLink schedule acting on the same
@@ -104,3 +188,10 @@ device will both run; these properties are how to find the DirectorLink side.
   hour before or after), or Weather (heat, rain, wind, with the reading now, the threshold, the
   hours and at most once a day); 3 · the days (with Every day, Sun–Thu and Fri–Sat); 4 · only if;
   then the whole schedule in one sentence, and Save.
+- With the Jewish calendar on (1.2.0, `features.jewish_calendar` in `GET /v1/system`): a fourth
+  "when", Shabbat and holidays (candle lighting or havdalah, and how long before or after; no days
+  to pick), a row "On Shabbat and holidays: Run as usual / Not on Shabbat and holidays / Only on
+  Shabbat and holidays" for the others, the next candle lighting and havdalah under the weather,
+  today's Hebrew date and the week's reading on Home, and for admins the minutes and Israel or
+  abroad in Settings. With it off none of this shows; a Shabbat schedule says it is not running and
+  can still be switched off or deleted.

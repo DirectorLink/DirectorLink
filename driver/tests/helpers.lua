@@ -45,6 +45,17 @@ function T.same(actual, expected, message)
     T.eq(Json.encode(actual), Json.encode(expected), message)
 end
 
+-- Ends a test that cannot run here (run.lua counts it as skipped and says why).
+local SKIP = {}
+
+function T.skip(reason)
+    error(setmetatable({ reason = reason }, SKIP), 0)
+end
+
+function T.skipped(err)
+    return type(err) == "table" and getmetatable(err) == SKIP and err.reason or nil
+end
+
 local handles = 0
 
 -- Sends one request as raw bytes (optionally in small chunks) and parses the response.

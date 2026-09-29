@@ -4,6 +4,7 @@
 local Mock = require("c4mock")
 local T = require("helpers")
 local Json = require("src.core.json")
+local Helpers = require("calendar_helpers")
 
 local tests = {}
 
@@ -514,6 +515,135 @@ function tests.the_composer_action_prints_every_schedule_and_scene()
     T.contains(text, "all climate in Living Room (11) -> cool 24C")
     T.contains(text, "Main Door (70) -> pulse (skipped when a schedule runs it)")
     T.contains(text, "made in the DirectorLink app")
+end
+
+-- ---- Shabbat and holidays (the Jewish calendar, ADR-037) --------------------------------------
+-- Shabbat and Shmini Atzeret 5787 in Tel Aviv (Mock.project), from candle lighting on Friday
+-- 2 October 2026 at 15:04 UTC to havdalah on Saturday at 16:05 UTC.
+
+local CANDLES = Helpers.epoch("2026-10-02T15:04:00Z")
+local HAVDALAH = Helpers.epoch("2026-10-03T16:05:00Z")
+local FRIDAY, SATURDAY = 739891, 739892
+local localAt = Helpers.localAt
+
+-- Starts (or updates, with `previous`) the driver with the calendar on from the start and the
+-- clock at `now`; `properties` are set in Composer before it starts.
+local function startCalendar(now, previous, properties)
+    local clock = { now = now }
+    function clock.set(value)
+        clock.now = value
+    end
+    local mock = Mock.startDriver(previous and previous.project, nil, previous and "DIT_UPDATING" or nil, function(fresh)
+        if previous then
+            fresh.uuidCount = previous.uuidCount
+            for name, value in pairs(previous.persist) do
+                fresh.persist[name] = value
+            end
+        end
+        Properties["Jewish Calendar"] = "On"
+        for name, value in pairs(properties or {}) do
+            Properties[name] = value
+        end
+        require("src.core.clock").now = function()
+            return clock.now
+        end
+    end)
+    return mock, clock, require("src.core.scheduler")
+end
+
+local function get(mock, admin, id)
+    return T.http(mock, "GET", "/v1/schedules/" .. id, { key = admin }).json
+end
+
+function tests.a_shabbat_schedule_runs_once_a_period_whatever_is_changed()
+    local mock, clock, Scheduler = startCalendar(CANDLES - 3600)
+    local admin = T.pair(mock)
+    local created = schedule(mock, admin, { scene_id = scene(mock, admin), trigger = { type = "shabbat", event = "candle_lighting", offset = -30 }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    clock.set(CANDLES - 30 * 60 + 10)
+    T.eq(Scheduler.tick(), 1)
+    local function patch(path, body)
+        local answer = T.http(mock, "PATCH", path, { key = admin, body = body })
+        T.eq(answer.status, 200, answer.body)
+        return answer.json
+    end
+    -- A later offset, off and on again, other minutes: this period's moment has passed.
+    local later = patch("/v1/schedules/" .. created.id, { trigger = { type = "shabbat", event = "candle_lighting", offset = -10 } })
+    T.eq(later.next_run, "2026-10-09T14:45:00Z", "next week's, 10 minutes before 14:55")
+    patch("/v1/schedules/" .. created.id, { enabled = false })
+    patch("/v1/schedules/" .. created.id, { enabled = true })
+    patch("/v1/calendar/settings", { candle_lighting_minutes = 30, havdalah_minutes = 50 })
+    local ran = 0
+    for moment = CANDLES - 25 * 60, CANDLES + 3600, 60 do
+        clock.set(moment)
+        ran = ran + Scheduler.tick()
+    end
+    T.eq(ran, 0, "once a period")
+    T.eq(get(mock, admin, created.id).next_run, "2026-10-09T14:35:00Z", "candles at 14:45 with 30 minutes, less 10")
+    clock.set(Helpers.epoch("2026-10-09T14:35:10Z"))
+    T.eq(Scheduler.tick(), 1, "next week")
+end
+
+function tests.holy_time_is_judged_when_a_schedule_is_due_not_when_it_is_checked()
+    -- Due 2 minutes before candle lighting and 2 minutes before havdalah; each checked 3 minutes
+    -- later (within its 5 minutes), when holy time has begun or ended.
+    local beforeCandles, beforeHavdalah = CANDLES - 2 * 60, HAVDALAH - 2 * 60
+    local mock, clock, Scheduler = startCalendar(beforeCandles - 3600)
+    local admin = T.pair(mock)
+    local sceneId = scene(mock, admin)
+    local function add(due, mode)
+        return schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = os.date("%H:%M", due) }, days = { os.date("*t", due).wday - 1 }, during_shabbat = mode }).id
+    end
+    local skipBefore, onlyBefore = add(beforeCandles, "skip"), add(beforeCandles, "only")
+    local skipInside, onlyInside = add(beforeHavdalah, "skip"), add(beforeHavdalah, "only")
+    clock.set(beforeCandles + 3 * 60)
+    T.eq(Scheduler.tick(), 1, "not yet holy at its time: skip runs")
+    T.eq(get(mock, admin, skipBefore).last_run.ran, 1)
+    T.truthy(get(mock, admin, onlyBefore).last_run == Json.null, "only: nothing to say, as on a day not in its days")
+    clock.set(beforeHavdalah + 3 * 60)
+    T.eq(Scheduler.tick(), 1, "still holy at its time: only runs")
+    T.eq(get(mock, admin, onlyInside).last_run.ran, 1)
+    T.eq(get(mock, admin, skipInside).last_run.skipped_by, "shabbat")
+end
+
+function tests.after_a_restart_only_shabbat_automation_is_caught_up()
+    local mock, clock, Scheduler = startCalendar(localAt(FRIDAY, 12, 0))
+    local admin = T.pair(mock)
+    local sceneId = scene(mock, admin)
+    local plain = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "08:00" }, days = { 6 } })
+    local only = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "08:00" }, days = { 6 }, during_shabbat = "only" })
+    local paused = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "10:00" }, days = { 6 }, during_shabbat = "only" })
+    T.eq(Scheduler.tick(), 0)
+    -- Off from Friday until 09:40 on Saturday (local time): the Shabbat-only one runs, late.
+    local restarted, _, Again = startCalendar(localAt(SATURDAY, 9, 40), mock)
+    T.eq(Again.tick(), 1)
+    T.eq(get(restarted, admin, only.id).last_run.note, "late")
+    T.truthy(get(restarted, admin, plain.id).last_run == Json.null, "an ordinary schedule keeps its 5 minutes")
+    -- Started again at 10:40 with the schedules paused: that first minute catches up nothing, and
+    -- resuming does not either.
+    local third, later, Third = startCalendar(localAt(SATURDAY, 10, 40), restarted, { Schedules = "Paused" })
+    T.eq(Third.tick(), 0)
+    Properties["Schedules"] = "On"
+    OnPropertyChanged("Schedules")
+    later.set(later.now + 60)
+    T.eq(Third.tick(), 0)
+    T.truthy(get(third, admin, paused.id).last_run == Json.null)
+end
+
+function tests.a_shabbat_schedule_leaves_doors_alone_and_keeps_to_only_if()
+    local mock, clock, Scheduler = startCalendar(HAVDALAH - 3600, nil, { ["Door Control"] = "Enabled" })
+    local admin = T.pair(mock)
+    local doors = scene(mock, admin, { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } }, { type = "lights", device_ids = { 21 }, set = { on = false } } })
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    local open = schedule(mock, admin, { scene_id = doors, trigger = { type = "shabbat", event = "havdalah" }, days = every })
+    local dry = schedule(mock, admin, { scene_id = scene(mock, admin), trigger = { type = "shabbat", event = "havdalah" }, days = every, only_if = { not_raining = true } })
+    mock.weather = weather(18, { rain = 1.2 })
+    local before = #mock.commands
+    clock.set(HAVDALAH + 30)
+    T.eq(Scheduler.tick(), 1)
+    T.eq(commandsTo(mock, 70, before), 0, "no door opened by a schedule")
+    T.eq(commandsTo(mock, 21, before), 1)
+    T.eq(get(mock, admin, open.id).last_run.skipped, 1)
+    T.eq(get(mock, admin, dry.id).last_run.skipped_by, "only_if")
 end
 
 function tests.the_printout_shows_heat_and_cool_setpoints()

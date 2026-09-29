@@ -39,6 +39,13 @@ jobs:
       - name: Run driver tests
         run: lua5.1 driver/tests/run.lua
 
+      # Shabbat times are moments, schedules minutes of the local day: again where the clocks
+      # change on a Friday (Israel) and where they change on another day (the US).
+      - name: Run the calendar and schedule tests in Israel's and New York's time zones
+        run: |
+          TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+          TZ=America/New_York lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+
       - name: Test the build and check scripts
         run: python -m unittest discover -s tests/scripts
 
