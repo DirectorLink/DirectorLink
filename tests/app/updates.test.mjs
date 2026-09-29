@@ -1,7 +1,7 @@
 // The update notice (app/js/updates.js): which release counts as newer, when GitHub is asked (admin
 // keys only, with a known driver version, at most every 12 hours), answers that never replace the
-// last one (a 404, a malformed answer, a release without DirectorLink.c4z, a mutable release), and
-// "Up to date" only while GitHub's last answer is recent.
+// last one (a 404, a malformed answer, a release without DirectorLink.c4z), only immutable releases
+// offered, and "Up to date" only while GitHub's last answer is recent.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -99,6 +99,7 @@ test("GitHub's answer is read into the version, the date and links into the proj
     url: `${RELEASES}/tag/v1.2.0`,
     download: `${RELEASES}/download/v1.2.0/DirectorLink.c4z`,
     checksums: `${RELEASES}/download/v1.2.0/SHA256SUMS.txt`,
+    locked: true,
   });
   // The release notes' text is never kept.
   assert.equal(JSON.stringify(readRelease(answer("1.2.0"))).includes("onerror"), false);
@@ -149,13 +150,32 @@ test("malformed answers, drafts and links out of the project's releases are refu
 });
 
 test("only an immutable release is offered: its files cannot be replaced once published", () => {
-  assert.equal(readRelease(answer("1.2.0")).version, "1.2.0");
+  assert.equal(readRelease(answer("1.2.0")).locked, true);
+  assert.equal(newerRelease("1.0.0", readRelease(answer("1.2.0"))).version, "1.2.0");
   // Releases up to 1.0.0 were published mutable; so would be one published with the setting off.
-  assert.equal(readRelease(answer("1.2.0", { immutable: false })), null, "mutable");
-  assert.equal(readRelease(answer("1.2.0", { immutable: "true" })), null, "only true itself");
   const unknown = answer("1.2.0");
   delete unknown.immutable;
-  assert.equal(readRelease(unknown), null, "not said");
+  for (const [what, mutable] of [["mutable", answer("1.2.0", { immutable: false })], ["only true itself", answer("1.2.0", { immutable: "true" })], ["not said", unknown]]) {
+    const release = readRelease(mutable);
+    assert.equal(release.locked, false, what);
+    assert.equal(newerRelease("1.0.0", release), null, `${what}: never offered`);
+    // Newer but not offered: Settings says the check did not work, never Up to date.
+    assert.deepEqual(updateStatus({ role: "admin", driverVersion: "1.0.0", check: { checkedAt: NOW, answeredAt: NOW, release }, now: NOW }), { answeredAt: NOW }, what);
+  }
+  // A saved release is read back as immutable only when it said so.
+  const storage = memoryStorage();
+  const { locked, ...unmarked } = readRelease(answer("1.2.0"));
+  storage.setItem("directorlink.update", JSON.stringify({ checkedAt: NOW, answeredAt: NOW, release: unmarked }));
+  assert.equal(savedCheck(storage).release.locked, false);
+});
+
+test("a mutable latest release that is not newer still says Up to date", async () => {
+  // Today's latest release, 1.0.0, was published mutable: an admin on 1.0.0 is up to date.
+  const storage = memoryStorage();
+  const { fetch } = github(200, answer("1.0.0", { immutable: false }));
+  assert.equal(await checkForUpdate(admin({ storage, fetch })), true);
+  assert.deepEqual(updateStatus({ role: "admin", driverVersion: "1.0.0", check: savedCheck(storage), now: NOW }), { upToDate: true });
+  assert.deepEqual(updateStatus({ role: "admin", driverVersion: "1.1.0", check: savedCheck(storage), now: NOW }), { upToDate: true }, "a newer driver");
 });
 
 test("only admin keys ask GitHub, and only with a driver of a known version", async () => {
@@ -206,7 +226,6 @@ test("a 404, a rate limit, a malformed answer or no connection keep the last ans
     ["not JSON", github(200, "<html>unicorn</html>").fetch],
     ["not a release", github(200, { message: "hello" }).fetch],
     ["no DirectorLink.c4z yet", github(200, answer("1.2.0", { assets: ["openapi.json"] })).fetch],
-    ["a mutable release", github(200, answer("1.2.0", { immutable: false })).fetch],
     ["no connection", async () => { throw new TypeError("Failed to fetch"); }],
   ];
   for (const [what, fetch] of failures) {

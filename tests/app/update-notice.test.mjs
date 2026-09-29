@@ -66,6 +66,7 @@ const release = (version) => ({
   url: `${RELEASES}/tag/v${version}`,
   download: `${RELEASES}/download/v${version}/DirectorLink.c4z`,
   checksums: `${RELEASES}/download/v${version}/SHA256SUMS.txt`,
+  locked: true,
 });
 
 // An admin key, with a driver of this version (GET /v1/system).

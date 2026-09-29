@@ -225,7 +225,8 @@ def main():
     require(updates, '"https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest"', "the update notice must ask GitHub's releases API")
     require(updates, 'role !== "admin"', "only admin keys may ask GitHub whether DirectorLink has a newer release")
     require(updates, "CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000", "the app must ask GitHub at most every 12 hours (the privacy page says twice a day)")
-    require(updates, "answer.immutable !== true", "the update notice must offer only immutable releases, whose files cannot be replaced")
+    require(updates, "locked: answer.immutable === true", "the update notice must know which releases are immutable, whose files cannot be replaced")
+    require(updates, "release.locked === true && compareVersions", "the update notice must offer only immutable releases")
     for path in (APP / "js" / "updates.js", APP / "js" / "views" / "updates.js"):
         if re.search(r"\.body\b|innerHTML", path.read_text(encoding="utf-8")):
             fail(f"app/{path.relative_to(APP).as_posix()} must not use a release's body: its text is not the app's to show")

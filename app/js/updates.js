@@ -42,10 +42,11 @@ export function compareVersions(a, b) {
   return part < 0 ? 0 : Math.sign(left[part] - right[part]);
 }
 
-// The release, when it is newer than the driver's version; null when the driver is as new (or
-// newer: a test build), or its version is unknown.
+// The release, when it is newer than the driver's version and immutable; null when the driver is
+// as new (or newer: a test build), its version is unknown, or the release's files could still be
+// replaced (it is then never offered).
 export function newerRelease(driverVersion, release) {
-  return release && compareVersions(release.version, driverVersion) > 0 ? release : null;
+  return release && release.locked === true && compareVersions(release.version, driverVersion) > 0 ? release : null;
 }
 
 // A link from an answer, as the browser would read it, when it points into the project's releases
@@ -77,17 +78,19 @@ function usable(release) {
     url,
     download,
     checksums: releaseLink(release.checksums),
+    // Immutable: once published, its tag and files cannot be replaced.
+    locked: release.locked === true,
   };
 }
 
-// GitHub's answer for the latest release -> { version, name, publishedAt, url, download, checksums },
-// or null when it is not a complete, published DirectorLink release: another shape (an error, a
-// 404's message), a tag that is not vX.Y.Z, or no DirectorLink.c4z yet. SHA256SUMS.txt is optional.
-// Only an immutable release counts: once published, its tag and files cannot be replaced (GitHub's
-// immutable releases, on from 1.1.0; 1.0.0 and older are mutable). With the repository's setting
-// off there is no notice, rather than one for files that could change.
+// GitHub's answer for the latest release -> { version, name, publishedAt, url, download, checksums,
+// locked }, or null when it is not a complete, published DirectorLink release: another shape (an
+// error, a 404's message), a tag that is not vX.Y.Z, or no DirectorLink.c4z yet. SHA256SUMS.txt is
+// optional. Only an immutable release (locked) is ever offered: once published, its tag and files
+// cannot be replaced (GitHub's immutable releases, on from 1.1.0; 1.0.0 and older are mutable). A
+// mutable one can still say that the driver is up to date, but its files are never offered.
 export function readRelease(answer) {
-  if (!answer || typeof answer !== "object" || answer.draft || answer.prerelease || answer.immutable !== true) return null;
+  if (!answer || typeof answer !== "object" || answer.draft || answer.prerelease) return null;
   const match = /^v(\d+\.\d+\.\d+)$/.exec(typeof answer.tag_name === "string" ? answer.tag_name : "");
   if (!match) return null;
   const assets = Array.isArray(answer.assets) ? answer.assets : [];
@@ -99,6 +102,7 @@ export function readRelease(answer) {
     url: answer.html_url,
     download: link(PACKAGE_NAME),
     checksums: link(CHECKSUMS_NAME),
+    locked: answer.immutable === true,
   });
 }
 
@@ -224,14 +228,16 @@ export function checkForUpdate({
   return running;
 }
 
-// What Settings says, from the last check: { release } when it is newer than the driver, also when
-// later checks failed (the notice on Home too); { upToDate: true } while GitHub's last answer is
-// less than 3 days old; otherwise { answeredAt } (null: GitHub never answered), the check did not
-// work. null for other keys, a driver of unknown version, before the first try, and while GitHub
-// is asked for a first answer.
+// What Settings says, from the last check: { release } when it is newer than the driver and
+// immutable, also when later checks failed (the notice on Home too); { upToDate: true } while
+// GitHub's last answer is less than 3 days old and its release is not newer than the driver;
+// otherwise { answeredAt } (null: GitHub never answered), the check did not work (also for a newer
+// release that is not immutable: it is not offered). null for other keys, a driver of unknown
+// version, before the first try, and while GitHub is asked for a first answer.
 export function updateStatus({ role, driverVersion, check, now = Date.now() }) {
   if (role !== "admin" || !parseVersion(driverVersion) || !check || (running && check.answeredAt === null)) return null;
   const release = newerRelease(driverVersion, check.release);
   if (release) return { release };
-  return recentAnswer(check, now) ? { upToDate: true } : { answeredAt: check.answeredAt };
+  const current = compareVersions(check.release?.version, driverVersion) <= 0;
+  return current && recentAnswer(check, now) ? { upToDate: true } : { answeredAt: check.answeredAt };
 }
