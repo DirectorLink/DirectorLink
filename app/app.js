@@ -319,7 +319,7 @@ function restoreUi({ key, selection, open }) {
 }
 
 function render(force = false) {
-  if (ui.dragging) return; // redrawn when the slider is let go
+  if (ui.dragging || ui.reordering) return; // redrawn when the slider or the room is let go
   const current = signature();
   if (!force && current === lastSignature) return;
   lastSignature = current;

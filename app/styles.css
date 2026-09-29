@@ -486,8 +486,10 @@ img {
   border-color: var(--line);
 }
 
-/* Settings → Rooms: shown or hidden (personal), and the home's order (admins). */
+/* Settings → Rooms: shown or hidden (personal), and the home's order (admins): a room is dragged
+   by its handle (views/settings.js), the others make room, and it glides into its place. */
 .room-order-list {
+  position: relative;
   list-style: none;
   margin: 0;
   padding: 0;
@@ -498,10 +500,37 @@ img {
 .room-order-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-height: 52px;
-  padding: 4px 8px 4px 14px;
+  padding-block: 4px;
+  padding-inline: 12px 0;
   border-top: 1px solid var(--line);
+}
+
+.room-order-list.is-sorting {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.room-order-list.is-sorting .room-order-row {
+  transition: transform 0.15s ease;
+}
+
+.room-order-list.is-sorting .room-order-row.is-following {
+  transition: none;
+}
+
+.room-order-row.is-moving {
+  position: relative;
+  z-index: 1;
+  border-top-color: transparent;
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgb(0 0 0 / 0.16);
+}
+
+:root[data-theme="dark"] .room-order-row.is-moving {
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgb(0 0 0 / 0.55);
 }
 
 .room-order-row:first-child {
@@ -530,7 +559,47 @@ img {
 
 .room-order-moves {
   display: flex;
-  gap: 4px;
+  align-items: center;
+}
+
+/* The arrows, for moving without dragging: smaller than the handle. (Two classes: .icon-button
+   comes later.) */
+.room-order-moves .room-order-step {
+  width: 32px;
+  border-radius: var(--radius-sm);
+  color: color-mix(in srgb, var(--muted) 75%, var(--card));
+}
+
+.room-order-moves .room-order-step .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.room-order-moves .room-order-step[aria-disabled="true"],
+.room-order-list.is-sorting .room-order-step {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The handle: a swipe that starts on it still scrolls the page; held (touch) or pressed (mouse),
+   it lifts the room. */
+.room-order-moves .room-order-handle {
+  width: 40px;
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  cursor: grab;
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.room-order-list.is-sorting .room-order-row.is-moving .room-order-handle {
+  color: var(--primary);
+}
+
+.room-order-row.is-following .room-order-handle {
+  cursor: grabbing;
 }
 
 /* People and devices (#/access). */
@@ -681,7 +750,7 @@ select:disabled {
 }
 
 @media (hover: hover) {
-  .icon-button:not(:disabled):hover {
+  .icon-button:not(:disabled):not([aria-disabled="true"]):hover {
     background: color-mix(in srgb, var(--ink) 7%, transparent);
     color: var(--ink);
   }
