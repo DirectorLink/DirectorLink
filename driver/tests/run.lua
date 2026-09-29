@@ -24,6 +24,7 @@ local suites = {
     "test_thermostat_proxy",
     "test_dual_thermostat",
     "test_fans",
+    "test_alarm",
 }
 
 local passed, failed = 0, 0

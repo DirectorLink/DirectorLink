@@ -3,6 +3,11 @@
 --   in:  "<handle> <hex bytes>\n"   (empty hex = the client disconnected)
 --   out: "<closed 0|1> <hex response bytes>\n"
 --   in:  "code\n" runs the Composer action New Pairing Code; out: "CODE <code>\n"
+--   in:  "property <hex name> <hex value>\n" sets a Composer property; out: "PROPERTY\n"
+--   in:  "variable <device id> <variable id> <hex value>\n" a device reports; out: "VARIABLE <times>\n"
+--   in:  "seal <hex JSON { key, key_id, request }>\n" seals a request at home, as the app does;
+--        out: "SEALED <hex JSON envelope>\n"
+--   in:  "open <hex JSON { key, envelope }>\n" opens a sealed answer; out: "OPENED <hex JSON>\n"
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -19,9 +24,11 @@ if specPath and specPath ~= "" then
 end
 
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
--- cool setpoints, floor heating on its heat setpoint) and the fans of 1.2.0, so the app preview
--- shows them all.
-local mock = Mock.startDriver(Mock.demoProject(), specText)
+-- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
+-- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On.
+local mock = Mock.startDriver(Mock.demoProject(), specText, nil, function()
+    Properties["Alarm Status"] = "On"
+end)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
 -- The app and console served from this PC (python -m http.server) may call this test bridge. The
@@ -167,6 +174,41 @@ local function toHex(text)
     end))
 end
 
+-- What the contract test and the dev server ask for besides HTTP (see the protocol at the top).
+local Lock = require("src.cloud.lock")
+local Remote = require("src.cloud.remote")
+local Clock = require("src.core.clock")
+local sealCount = 0
+
+local function command(line)
+    local name, value = line:match("^property (%x*) (%x*)$")
+    if name then
+        Properties[fromHex(name)] = fromHex(value)
+        OnPropertyChanged(fromHex(name))
+        return "PROPERTY"
+    end
+    local device, variable, reported = line:match("^variable (%d+) (%d+) (%x*)$")
+    if device then
+        return "VARIABLE " .. Mock.changeVariable(mock, tonumber(device), tonumber(variable), fromHex(reported))
+    end
+    local sealing = line:match("^seal (%x+)$")
+    if sealing then
+        local asked = Json.decode(fromHex(sealing))
+        sealCount = sealCount + 1
+        local request = asked.request
+        request.id = request.id or ("dev-" .. sealCount)
+        request.ts = request.ts or Clock.now()
+        local envelope = Lock.seal(Lock.deviceKey(asked.key), Remote.LAN_HOME, asked.key_id, "req", Json.encode(request))
+        return "SEALED " .. toHex(Json.encode(envelope))
+    end
+    local opening = line:match("^open (%x+)$")
+    if opening then
+        local asked = Json.decode(fromHex(opening))
+        return "OPENED " .. toHex(Lock.open(Lock.deviceKey(asked.key), asked.envelope, "res") or "null")
+    end
+    return nil
+end
+
 io.write("READY " .. tostring(mock.properties["Pairing Code"]) .. "\n")
 io.flush()
 
@@ -175,6 +217,11 @@ for line in io.lines() do
     if line:match("^code") then
         ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
         io.write("CODE " .. tostring(mock.properties["Pairing Code"]) .. "\n")
+        io.flush()
+    end
+    local answer = command(line)
+    if answer then
+        io.write(answer .. "\n")
         io.flush()
     end
     local handle, hex = line:match("^(%d+) ?(%x*)$")

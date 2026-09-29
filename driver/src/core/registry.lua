@@ -147,6 +147,24 @@ function Registry.lightList()
     return sortedList(lights)
 end
 
+-- The alarm's partitions DirectorLink watches (Alarm Status On in Composer, ADR-038), without the
+-- ones the panel does not use (IS_ACTIVE = 0).
+local function alarmPartition(device)
+    return device.kind == "alarm" and device.supported == true and not (device.state and device.state.active == false)
+end
+
+function Registry.alarmList()
+    local partitions = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if alarmPartition(device) then
+            partitions[id] = device
+        end
+    end
+
+    return sortedList(partitions)
+end
+
 function Registry.counts()
     local recognized = 0
     local unsupported = 0
@@ -158,15 +176,23 @@ function Registry.counts()
     local supportedCameras = 0
     local supportedRelays = 0
     local supportedDoorbells = 0
+    local alarmPartitions = 0
 
     for _, device in pairs(Registry.devices) do
-        if device.recognized then
+        -- A partition is not watched while Alarm Status is Off: unsupported, as before 1.2.0.
+        if device.recognized and not (device.kind == "alarm" and device.supported ~= true) then
             recognized = recognized + 1
         else
             unsupported = unsupported + 1
         end
 
-        if device.supported then
+        if device.kind == "alarm" then
+            -- Read-only and for members and admins only: counted apart from the devices the API
+            -- controls.
+            if alarmPartition(device) then
+                alarmPartitions = alarmPartitions + 1
+            end
+        elseif device.supported then
             supported = supported + 1
             if device.kind == "light" then
                 supportedLights = supportedLights + 1
@@ -201,6 +227,7 @@ function Registry.counts()
         supported_cameras = supportedCameras,
         supported_relays = supportedRelays,
         supported_doorbells = supportedDoorbells,
+        alarm_partitions = alarmPartitions,
     }
 end
 

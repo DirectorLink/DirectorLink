@@ -2026,6 +2026,77 @@ select:disabled {
   color: var(--onText);
 }
 
+/* ---- Alarm (read-only; js/views/alarm.js) ------------------------------------------------- */
+
+.alarm-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alarm-read-only {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The state goes under the name when the row is too narrow for both. */
+.alarm-partition .device-main {
+  flex-wrap: wrap;
+}
+
+.alarm-state {
+  flex: none;
+  margin-inline-start: auto;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.alarm-partition.is-ready .device-icon,
+.alarm-partition.is-ready .alarm-state {
+  background: var(--okBg);
+  color: var(--okText);
+}
+
+.alarm-partition.is-armed .device-icon,
+.alarm-partition.is-armed .alarm-state {
+  background: var(--coolBg);
+  color: var(--coolText);
+}
+
+.alarm-partition.is-delay .device-icon,
+.alarm-partition.is-delay .alarm-state,
+.alarm-partition.is-not-ready .device-icon,
+.alarm-partition.is-not-ready .alarm-state {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.alarm-partition.is-alarm {
+  border-color: var(--errDot);
+}
+
+.alarm-partition.is-alarm .device-icon,
+.alarm-partition.is-alarm .alarm-state {
+  background: var(--errBg);
+  color: var(--errText);
+}
+
+/* Open zones, the delay's seconds and trouble, under the name (40 px icon + 10 px gap). */
+.alarm-details {
+  margin: 6px 0 0;
+  padding-inline-start: 50px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.alarm-partition.is-alarm .alarm-details {
+  color: var(--errText);
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {

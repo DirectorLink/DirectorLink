@@ -35,6 +35,12 @@ function Classifier.classify(driverFileName)
         return { kind = "doorbell", recognized = true }
     end
 
+    -- A partition of the home's alarm: read-only, and watched only while Alarm Status is On in
+    -- Composer (src/adapters/alarm.lua); unsupported otherwise, as before 1.2.0.
+    if name == "security.c4i" then
+        return { kind = "alarm", recognized = true }
+    end
+
     return { kind = "unsupported", recognized = false }
 end
 

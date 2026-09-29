@@ -8,7 +8,7 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, pairing and
@@ -18,8 +18,8 @@ info:
     more keys under `/v1/api-keys`.
 
     **Roles.** Every API key has a role, and each role can do everything the ones before it
-    can: `viewer` reads everything (including camera pictures), `member` also controls lights,
-    thermostats, fans and blinds and runs scenes, `doors` also opens doors and gates, `admin` also
+    can: `viewer` reads everything (including camera pictures) but the alarm, `member` also controls
+    lights, thermostats, fans and blinds, runs scenes and reads the alarm's status, `doors` also opens doors and gates, `admin` also
     manages API keys, rooms, scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
     property of DirectorLink in Composer set to Enabled.
@@ -85,6 +85,11 @@ tags:
     description: Relays that open doors and gates (KNX Contact/Relay).
   - name: Doorbells
     description: Video doorbells (DoorBird) — rings, motion, access, and opening the gate or door wired to them.
+  - name: Alarm
+    description: |
+      Whether the home's alarm is armed, read-only (ADR-038). Off until an installer turns on
+      **Alarm Status** in Composer; then for members and admins, in sealed requests only. Nothing
+      in this API arms or disarms.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -1802,6 +1807,37 @@ paths:
         "502":
           $ref: "#/components/responses/CommandFailed"
 
+  /v1/alarm:
+    get:
+      tags: [Alarm]
+      operationId: getAlarm
+      x-directorlink-role: member
+      summary: Whether the alarm is armed (read-only)
+      description: |
+        Each partition of the home's alarm (an area the alarm arms on its own): armed home or away,
+        in alarm, open zones, an entry or exit delay, trouble. Read-only: nothing in this API arms or
+        disarms, which takes the user's alarm code (ADR-038).
+
+        Off by default: until an installer sets the **Alarm Status** property of DirectorLink in
+        Composer to On, the answer is `{"enabled": false, "partitions": []}` and DirectorLink does
+        not watch the alarm. While it is on, the partitions are sent only in sealed answers: to
+        `POST /v1/sealed` on the home network (the app seals every request) and through remote
+        access. A request sent with `Authorization: Bearer` is refused with 403
+        `SEALED_REQUEST_REQUIRED`, so whether a home is armed never crosses a network in the clear.
+        Viewers get 403 `FORBIDDEN`. Partitions the alarm does not use are left out. The property
+        is read at every request, and `GET /v1/system` says it in `features.alarm_status`.
+      responses:
+        "200":
+          description: The partitions, sorted by name; none while Alarm Status is Off.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -2071,7 +2107,8 @@ components:
       description: |
         The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
         door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or a claim token was
-        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`).
+        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status was
+        asked for without sealing the request (`SEALED_REQUEST_REQUIRED`).
       content:
         application/problem+json:
           schema:
@@ -2243,11 +2280,14 @@ components:
             Optional parts of DirectorLink that an installer switches on in Composer. Clients show
             none of a feature that is false, and none at all when `features` is missing (drivers
             before 1.2.0).
-          required: [jewish_calendar]
+          required: [jewish_calendar, alarm_status]
           properties:
             jewish_calendar:
               type: boolean
               description: "The Jewish Calendar property is On: `/v1/calendar`, `shabbat` schedule triggers and `during_shabbat`."
+            alarm_status:
+              type: boolean
+              description: The **Alarm Status** property is On; members and admins can read `GET /v1/alarm` in sealed requests.
 
     PairRequest:
       type: object
@@ -3592,6 +3632,87 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Doorbell"
+
+    AlarmStatus:
+      type: object
+      required: [enabled, partitions]
+      properties:
+        enabled:
+          type: boolean
+          description: The **Alarm Status** property of DirectorLink is On in Composer.
+        partitions:
+          type: array
+          description: Sorted by name. Empty while Alarm Status is Off.
+          items:
+            $ref: "#/components/schemas/AlarmPartition"
+
+    AlarmPartition:
+      type: object
+      description: One partition of the alarm, as its panel last reported it. Read-only.
+      required: [id, name, room, state, armed, armed_mode, armed_type, alarm, alarm_type, open_zones, delay, trouble]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        state:
+          type: [string, "null"]
+          description: |
+            What the partition is doing, in the panel's words in lower case: `disarmed_ready`,
+            `disarmed_not_ready` (a zone is open), `armed`, `exit_delay`, `entry_delay`, `alarm`,
+            `confirmation_required` or `offline`; a panel may report others. Null until it reports.
+          example: disarmed_ready
+        armed:
+          type: boolean
+          description: Armed, home or away (also during an entry delay).
+        armed_mode:
+          oneOf:
+            - type: string
+              enum: [home, away]
+            - type: "null"
+          description: Armed while people are home (stay) or away; null when not armed or not said.
+        armed_type:
+          type: [string, "null"]
+          description: The panel's own name for how it is armed (e.g. `Stay`, `Night`), as the panel writes it; null when not armed.
+          example: Away
+        alarm:
+          type: boolean
+          description: The alarm is going off.
+        alarm_type:
+          type: [string, "null"]
+          description: What kind of alarm (e.g. `Fire`, `Burglary`), as the panel writes it; null when not in alarm.
+          example: Burglary
+        open_zones:
+          type: [integer, "null"]
+          minimum: 0
+          description: Zones (doors, windows, sensors) open now.
+        delay:
+          oneOf:
+            - type: object
+              description: An entry or exit delay is counting down.
+              required: [type, remaining, total]
+              properties:
+                type:
+                  oneOf:
+                    - type: string
+                      enum: [entry, exit]
+                    - type: "null"
+                remaining:
+                  type: [integer, "null"]
+                  minimum: 0
+                  description: Seconds left, as the panel last reported.
+                total:
+                  type: [integer, "null"]
+                  minimum: 0
+                  description: The delay's length in seconds.
+            - type: "null"
+        trouble:
+          type: [string, "null"]
+          description: The panel's trouble text (e.g. a lost power supply or a low battery), as it writes it; null when there is none.
 
     CameraList:
       type: object

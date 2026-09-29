@@ -27,6 +27,8 @@ REQUIRED_PROPERTIES = (
     "Door Control",
     # Holding a relay closed, which holds a door or gate open (1.1.1, ADR-036).
     "Relay Hold",
+    # Whether the alarm is armed, shown read-only to members and admins (1.2.0, ADR-038).
+    "Alarm Status",
     "Remote Access",
     "Remote Status",
     # What DirectorLink automates, visible to the installer (0.15.0): a pause switch, a summary
@@ -42,8 +44,9 @@ REQUIRED_PROPERTIES = (
 )
 
 # The door switches ship off; an installer turns them on in Composer (ADR-025, ADR-036). So does
-# the Jewish calendar: with it off the driver works nothing out and the app shows none of it.
-SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off"}
+# the Jewish calendar: with it off the driver works nothing out and the app shows none of it. And
+# the alarm's status: with it off the driver does not watch the alarm (ADR-038).
+SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off", "Alarm Status": "Off"}
 
 # Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
 REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
@@ -137,6 +140,19 @@ SECURITY_CONTRACT = {
     ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
+    ),
+    # The alarm's status (ADR-038): nothing while Alarm Status is Off, then only for members and
+    # admins, and only in sealed answers. Read-only: check_alarm_read_only.
+    "src/api/handlers/alarm.lua": (
+        "if not services.alarmStatusEnabled() then\n        return 200, { enabled = false, partitions = Json.array() }",
+        "if not (ctx.request and ctx.request.principal) then",
+    ),
+    "src/api/routes.lua": (
+        '{ method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },',
+    ),
+    "src/adapters/alarm.lua": (
+        'return driver == "security.c4i" and Alarm.enabled()',
+        'return Properties ~= nil and Properties[Alarm.PROPERTY] == "On"',
     ),
     "src/auth/invitations.lua": (
         "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by, profile = item.profile }",
@@ -409,6 +425,87 @@ def check_security_contract(files):
                 fail(f"{name} is missing security contract: {fragment}")
 
 
+LUA_LONG_BRACKET = re.compile(r"\[(=*)\[")
+
+
+def lua_code(text):
+    """Lua source without its comments (each replaced by a space, newlines kept), so that a check
+    reads only what runs. Strings, long strings included, are kept."""
+    out, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("--", i):
+            long = LUA_LONG_BRACKET.match(text, i + 2)
+            if long:
+                end = text.find("]" + long.group(1) + "]", long.end())
+                end = n if end < 0 else end + len(long.group(1)) + 2
+            else:
+                end = text.find("\n", i)
+                end = n if end < 0 else end
+            out.append(" " + "\n" * text.count("\n", i, end))
+            i = end
+        elif text[i] in "\"'":
+            quote, j = text[i], i + 1
+            while j < n and text[j] != quote and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:j + 1])
+            i = j + 1
+        elif text[i] == "[" and LUA_LONG_BRACKET.match(text, i):
+            level = LUA_LONG_BRACKET.match(text, i).group(1)
+            end = text.find("]" + level + "]", i + len(level) + 2)
+            end = n if end < 0 else end + len(level) + 2
+            out.append(text[i:end])
+            i = end
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+# The alarm is read-only (ADR-038): arming and disarming take the user's alarm code, which needs a
+# stronger design than an API key. The adapter may only read and watch its partitions' variables,
+# with nothing else loaded or logged; no Lua in the package names a partition command; the API
+# only reads the alarm, and no scene or schedule step can reach it.
+ALARM_ADAPTER = "src/adapters/alarm.lua"
+ALARM_DIRECTOR_CALLS = ("GetVariable", "RegisterVariableListener", "UnregisterVariableListener")
+PARTITION_COMMANDS = re.compile(r"\bPARTITION_(?:ARM|DISARM)\b")
+ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
+
+
+def check_alarm_read_only(files):
+    adapter = files.get(ALARM_ADAPTER)
+    if adapter is None:
+        fail(f"{ALARM_ADAPTER} is missing")
+    code = lua_code(adapter)
+    for match in re.finditer(r"\bC4\b", code):
+        call = re.match(r"C4:(\w+)\s*\(", code[match.start():])
+        if not call or call.group(1) not in ALARM_DIRECTOR_CALLS:
+            found = code[match.start():match.start() + 40].split("\n", 1)[0]
+            fail(f"{ALARM_ADAPTER} may only read and watch variables ({', '.join(ALARM_DIRECTOR_CALLS)}); found {found!r}")
+    for pattern, what in (
+        (r"\brequire\b", "load other modules"),
+        (r"\bprint\s*\(", "print (the alarm's state is never logged)"),
+        (r"\b(?:_G|_ENV|getfenv|setfenv|rawget|loadstring|load|dofile)\b", "reach Director or the log another way"),
+    ):
+        if re.search(pattern, code):
+            fail(f"{ALARM_ADAPTER} must not {what}")
+    for name, text in sorted(files.items()):
+        if name.endswith(".lua") and PARTITION_COMMANDS.search(lua_code(text)):
+            fail(f"{name} names a partition command (PARTITION_ARM / PARTITION_DISARM): the alarm is read-only")
+    for method, path in re.findall(r'\bmethod\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)"', files.get("src/api/routes.lua", "")):
+        if path.startswith("/v1/alarm") and method != "GET":
+            fail(f"{method} {path} in src/api/routes.lua: the alarm is only read")
+    for name, pattern in (
+        ("src/core/scenes.lua", r"^Scenes\.TYPES = \{([^}]*)\}"),
+        ("src/api/handlers/scenes.lua", r"^local KINDS = \{([^}]*)\}"),
+        ("src/api/handlers/scenes.lua", r"^local LISTS = \{([^}]*)\}"),
+    ):
+        match = re.search(pattern, files.get(name, ""), re.M)
+        if not match:
+            fail(f"could not read the scene step types in {name}")
+        if ALARM_WORDS.search(match.group(1)):
+            fail(f"{name}: scene steps must never reach the alarm ({match.group(0).strip()})")
+
+
 def main():
     if not PACKAGE.is_file():
         fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
@@ -426,6 +523,7 @@ def main():
     check_requires(files)
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
+    check_alarm_read_only(files)
     check_remote_methods(files)
     check_relay_roots(files)
     print(f"OK: validated {len(files)} packaged files for version {version}")

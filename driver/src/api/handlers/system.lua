@@ -100,8 +100,10 @@ function System.info(ctx)
         -- What the installer switched on in Composer; clients show none of what is false.
         -- jewish_calendar is the Jewish Calendar property as it is, so it is already true when On
         -- while the calendar itself is not built yet (1.2.0) and /v1/calendar still answers as Off.
+        -- alarm_status: the alarm's partitions, read-only, for members and admins (ADR-038).
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
+            alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
         },
     }
 end

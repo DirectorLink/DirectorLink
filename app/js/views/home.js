@@ -28,6 +28,7 @@ import { runScene } from "../scenes.js";
 import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
 import { connectScreen } from "./connect.js";
+import { alarmSection } from "./alarm.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
 import { updateBanner } from "./updates.js";
 
@@ -61,6 +62,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     staleBanner(),
     // Admins: a newer DirectorLink is out, until dismissed for that version.
     updateBanner(),
+    // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
+    alarmSection(),
     summaryChips(),
     scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),

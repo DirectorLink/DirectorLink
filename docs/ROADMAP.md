@@ -79,7 +79,8 @@
 - [ ] Expand unsupported-device diagnostics
 - [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
 - [x] Fans (#18): on, off and four speeds, in rooms, favorites and scenes (1.2.0, thanks to bkwagner; ADR-033); real-system validation pending
-- [ ] Proposed in pull requests from bkwagner, not merged yet: alarm status (#15)
+- [x] Alarm status (#15): security partitions, read-only, off by default (Composer **Alarm Status**), for members and admins in sealed answers only (1.2.0, thanks to bkwagner; ADR-038); real-system validation pending
+- [ ] Arming and disarming the alarm: only with a design for the user's alarm code (ADR-038)
 
 ## Milestone 5 — DirectorLink scenes
 
