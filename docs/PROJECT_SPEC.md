@@ -71,7 +71,7 @@ At home the browser talks to DirectorLink directly. Remote access, when switched
 
 ## V1 device scope
 
-Supported device families (1.1.0):
+Supported device families (1.2.0):
 
 1. Lights (Light V2 and the legacy Light proxy)
 2. HVAC / thermostat / climate (Thermostat V2, Control4 thermostat proxy)
@@ -79,8 +79,9 @@ Supported device families (1.1.0):
 4. Cameras (snapshots)
 5. Doors and gates on KNX Contact/Relay devices
 6. DoorBird doorbells (rings, and opening their door)
+7. Fans (the Control4 fan proxy: on, off and four speeds; 1.2.0)
 
-Proposed in open pull requests, not merged: fans, alarm status.
+Proposed in an open pull request, not merged: alarm status.
 
 Policy for everything else:
 
@@ -249,6 +250,36 @@ Control4 thermostats with separate heat and cool setpoints. The variables (`ther
   reported as `null`, so clients do not offer or push it.
 - The room temperature is converted as measured, not rounded to whole °F first.
 - Setpoints are kept within 5–35 °C.
+
+## Adapter added in 1.2.0
+
+### Fan proxy (`fan.c4i`) — 1.2.0
+
+Rebuilt from bkwagner's pull request #18 (ADR-033). Control4's fan speed controllers, and other fan
+drivers, sit behind the Fan proxy. What the contributor read on a live Director, as `fan.lua` uses
+it:
+
+| Id | Name | Use |
+| --- | --- | --- |
+| 1000 | IS_ON | whether the fan runs |
+| 1001 | CURRENT_SPEED | 0 off, 1 low to 4 high |
+| 1003 | PRESET_SPEED | the speed `ON` turns it on at; only logged |
+
+- The variables are found by name (`IS_ON` and `CURRENT_SPEED`, or Snap One's *Is On* and *Current
+  Selected Speed*), else by the ids above. A fan is controllable only when both exist and their
+  listeners register.
+- `on` follows IS_ON; when it reads neither on nor off, a speed above 0 is on. `speed` is
+  CURRENT_SPEED while the fan runs, and null while it is off or for a value other than 0–4.
+- Commands, to the proxy: `on` → `ON` (the fan picks its speed: its preset, or its last one, as
+  its driver chooses), `off` → `OFF`, a speed → `SET_SPEED` with `SPEED` 1–4. Speed 0, other
+  values and other actions are refused before anything is sent: off is `{"on": false}`.
+- The API shows `on`, `speed` and `speeds` (`GET /v1/fans`, `GET` and `PATCH /v1/fans/{id}` with
+  `{"on": …}` or `{"speed": 1-4}`); scene steps take `{"on": …}` or `{"speed": 1-4}`.
+- At Debug, the start-up log lists each proxy's variables with their values, and its `GET_SETUP`
+  answer (Snap One documents the number of speeds and their names there), which nothing depends
+  on yet.
+
+No DirectorLink command has run on a real fan yet.
 
 ## History: the first milestones (to 0.2.0)
 

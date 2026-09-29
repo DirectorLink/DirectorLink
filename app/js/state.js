@@ -29,6 +29,7 @@ export const state = {
   devices: [],
   lights: [],
   thermostats: [],
+  fans: [], // [] on drivers without /v1/fans (before 1.2.0)
   blinds: [],
   cameras: [],
   relays: [], // doors and gates; [] on drivers without /v1/relays
@@ -98,6 +99,7 @@ export function notify() {
 export const KINDS = {
   light: { list: "lights", path: "/v1/lights" },
   thermostat: { list: "thermostats", path: "/v1/thermostats" },
+  fan: { list: "fans", path: "/v1/fans" },
   blind: { list: "blinds", path: "/v1/blinds" },
   camera: { list: "cameras", path: "/v1/cameras" },
   relay: { list: "relays", path: "/v1/relays" },

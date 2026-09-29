@@ -223,6 +223,8 @@ local function stepText(step, registry)
             parts[#parts + 1] = "fan " .. set.fan_speed
         end
         action = table.concat(parts, " ")
+    elseif step.type == "fans" then
+        action = set.on == false and "off" or set.speed and ("speed " .. set.speed .. " of " .. Scenes.MAX_FAN_SPEED) or "on"
     elseif step.type == "blinds" then
         action = set.position .. "% open"
     else

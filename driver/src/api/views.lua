@@ -9,6 +9,7 @@ local Views = {}
 local TYPE_BY_KIND = {
     light = "light",
     climate = "thermostat",
+    fan = "fan",
     blind = "blind",
     camera = "camera",
     relay = "relay",
@@ -18,6 +19,7 @@ local TYPE_BY_KIND = {
 local RESOURCE_PATH = {
     light = "/v1/lights/",
     thermostat = "/v1/thermostats/",
+    fan = "/v1/fans/",
     blind = "/v1/blinds/",
     camera = "/v1/cameras/",
     relay = "/v1/relays/",
@@ -111,6 +113,25 @@ function Views.light(registry, device)
         brightness = nullable(state.brightness),
         dimmable = capabilities.brightness == true,
         brightness_reported = capabilities.brightness_feedback == true,
+    }
+end
+
+-- Fans (1.2.0). `speed` is how fast the fan runs, from 1 (low) to 4 (high): null while it is off,
+-- and when the controller reports no speed. `speeds` lists the ones PATCH takes.
+function Views.fan(registry, device)
+    local capabilities = device.capabilities or {}
+    local state = device.state or {}
+    local speeds = Json.array()
+    for speed = 1, tonumber(capabilities.speeds) or 0 do
+        speeds[#speeds + 1] = speed
+    end
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        on = state.power == true,
+        speed = nullable(state.speed),
+        speeds = speeds,
     }
 end
 

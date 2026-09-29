@@ -608,7 +608,7 @@ export function noteForbidden(error) {
 }
 
 async function loadAll() {
-  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, doorbells, role] = await Promise.all([
+  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, doorbells, role, fans] = await Promise.all([
     api("/v1/system"),
     api("/v1/rooms"),
     api("/v1/lights"),
@@ -619,11 +619,13 @@ async function loadAll() {
     optionalList("/v1/relays"),
     optionalList("/v1/doorbells"),
     loadRole(),
+    optionalList("/v1/fans"),
   ]);
   state.system = system;
   state.rooms = rooms?.items || [];
   state.lights = lights?.items || [];
   state.thermostats = thermostats?.items || [];
+  state.fans = fans;
   state.blinds = blinds?.items || [];
   state.cameras = cameras?.items || [];
   state.devices = devices?.items || [];
@@ -770,10 +772,12 @@ export async function pairWithCode(hostValue, pairingCode) {
 export async function refreshDevices() {
   if (!reachable()) return false;
   try {
-    const kinds = ["light", "thermostat", "blind"];
+    // Fans (1.2.0) only in a home that has some: drivers before 1.2.0 have none to read.
+    const fans = state.fans.length > 0 || state.system?.inventory?.fans > 0;
+    const kinds = ["light", "thermostat", "blind", ...(fans ? ["fan"] : [])];
     const [doorbells, ...results] = await Promise.all([
       optionalList("/v1/doorbells", state.doorbells),
-      ...kinds.map((kind) => api(KINDS[kind].path)),
+      ...kinds.map((kind) => (kind === "fan" ? optionalList(KINDS.fan.path, state.fans).then((items) => ({ items })) : api(KINDS[kind].path))),
     ]);
     useDoorbells(doorbells);
     kinds.forEach((kind, index) => {

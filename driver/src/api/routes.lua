@@ -64,6 +64,10 @@ return {
     { method = "GET", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.get", role = "viewer" },
     { method = "PATCH", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.update", role = "member" },
 
+    { method = "GET", path = "/v1/fans", handler = "fans.list", role = "viewer" },
+    { method = "GET", path = "/v1/fans/{fanId}", handler = "fans.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/fans/{fanId}", handler = "fans.update", role = "member" },
+
     { method = "GET", path = "/v1/blinds", handler = "blinds.list", role = "viewer" },
     { method = "GET", path = "/v1/blinds/{blindId}", handler = "blinds.get", role = "viewer" },
     { method = "PATCH", path = "/v1/blinds/{blindId}", handler = "blinds.update", role = "member" },

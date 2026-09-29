@@ -8,7 +8,7 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, pairing and
@@ -19,7 +19,7 @@ info:
 
     **Roles.** Every API key has a role, and each role can do everything the ones before it
     can: `viewer` reads everything (including camera pictures), `member` also controls lights,
-    thermostats and blinds and runs scenes, `doors` also opens doors and gates, `admin` also
+    thermostats, fans and blinds and runs scenes, `doors` also opens doors and gates, `admin` also
     manages API keys, rooms, scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
     property of DirectorLink in Composer set to Enabled.
@@ -68,13 +68,15 @@ tags:
   - name: Calendar
     description: "Shabbat and holiday times, the Hebrew date and the weekly reading, worked out on the controller (Composer: Jewish Calendar)."
   - name: Scenes
-    description: "The home's scenes: one tap sets several lights, thermostats, blinds and gates. Admins make them, members run them."
+    description: "The home's scenes: one tap sets several lights, thermostats, fans, blinds and gates. Admins make them, members run them."
   - name: Devices
     description: Every device in the project, including ones DirectorLink cannot control yet.
   - name: Lights
     description: Lights DirectorLink can read and control.
   - name: Thermostats
     description: Heating and cooling zones DirectorLink can read and control.
+  - name: Fans
+    description: Fans DirectorLink can read and control, on and off and at four speeds (since 1.2.0).
   - name: Blinds
     description: Blinds, shades and shutters DirectorLink can read and control.
   - name: Cameras
@@ -1345,6 +1347,80 @@ paths:
         "502":
           $ref: "#/components/responses/CommandFailed"
 
+  /v1/fans:
+    get:
+      tags: [Fans]
+      operationId: listFans
+      x-directorlink-role: viewer
+      summary: List fans
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: Fans with their current state, sorted by name.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FanList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/fans/{fanId}:
+    parameters:
+      - $ref: "#/components/parameters/FanId"
+    get:
+      tags: [Fans]
+      operationId: getFan
+      x-directorlink-role: viewer
+      summary: Get a fan
+      responses:
+        "200":
+          description: The fan and its current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Fans]
+      operationId: updateFan
+      x-directorlink-role: member
+      summary: Turn a fan on or off, or set its speed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FanUpdate"
+            example:
+              speed: 2
+      responses:
+        "202":
+          description: Command sent. The body is the last state the controller reported.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Fan"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
   /v1/blinds:
     get:
       tags: [Blinds]
@@ -1913,6 +1989,13 @@ components:
       schema:
         type: integer
         minimum: 1
+    FanId:
+      name: fanId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
     KeyId:
       name: keyId
       in: path
@@ -2116,7 +2199,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
-          required: [rooms, devices, supported_devices, lights, thermostats, blinds, cameras, relays, doorbells]
+          required: [rooms, devices, supported_devices, lights, thermostats, fans, blinds, cameras, relays, doorbells]
           properties:
             rooms:
               type: integer
@@ -2128,6 +2211,9 @@ components:
               type: integer
             thermostats:
               type: integer
+            fans:
+              type: integer
+              description: Since 1.2.0.
             blinds:
               type: integer
             cameras:
@@ -2422,7 +2508,7 @@ components:
       properties:
         type:
           type: string
-          enum: [lights, climate, blinds, relays]
+          enum: [lights, climate, fans, blinds, relays]
         room_id:
           type: [integer, "null"]
           minimum: 1
@@ -2438,7 +2524,8 @@ components:
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
             each thermostat's range) and `fan_speed` (low, medium, high, auto, on, circulate; left
-            out where a unit does not have it), and with `mode: off` nothing else; blinds
+            out where a unit does not have it), and with `mode: off` nothing else; fans (1.2.0)
+            `{"on": true|false}` or `{"speed": 1-4}` (1 low to 4 high); blinds
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
             door or gate relay is never held closed by a scene).
             climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
@@ -2456,6 +2543,10 @@ components:
               type: integer
               minimum: 0
               maximum: 100
+            speed:
+              type: integer
+              minimum: 1
+              maximum: 4
             mode:
               type: string
               enum: ["off", heat, cool, auto]
@@ -3241,7 +3332,7 @@ components:
 
     DeviceType:
       type: string
-      enum: [light, thermostat, blind, camera, relay, doorbell, other]
+      enum: [light, thermostat, fan, blind, camera, relay, doorbell, other]
 
     Device:
       type: object
@@ -3632,6 +3723,59 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Thermostat"
+
+    Fan:
+      type: object
+      required: [id, name, room, "on", speed, speeds]
+      description: A fan on the Control4 fan proxy (since 1.2.0).
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        room:
+          oneOf:
+            - $ref: "#/components/schemas/RoomRef"
+            - type: "null"
+        "on":
+          type: boolean
+        speed:
+          type: [integer, "null"]
+          minimum: 1
+          maximum: 4
+          description: How fast the fan runs, from 1 (low) to 4 (high). Null while it is off, and when the controller reports no speed.
+        speeds:
+          type: array
+          description: The speeds PATCH takes, lowest first (1 low, 2 medium, 3 medium high, 4 high).
+          items:
+            type: integer
+            minimum: 1
+            maximum: 4
+
+    FanUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      description: |
+        `{"on": true}` turns the fan on at the speed it chooses (its preset speed, or the last
+        one), `{"on": false}` turns it off, and `{"speed": 3}` sets the speed, turning the fan on
+        if it is off. `"on": false` cannot be combined with `speed`.
+      properties:
+        "on":
+          type: boolean
+        speed:
+          type: integer
+          minimum: 1
+          maximum: 4
+
+    FanList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Fan"
 
     RemoteAccess:
       type: object

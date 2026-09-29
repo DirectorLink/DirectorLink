@@ -1,7 +1,7 @@
 // Home: summary chips, the favorites strip and the room cards.
 
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
-import { blindMove, setLight } from "../controls.js";
+import { blindMove, setFan, setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
 import { ringIsActive, ringingDoorbells } from "../doorbells.js";
 import { favoriteDevices, moveFavorite, toggleFavorite } from "../favorites.js";
@@ -12,6 +12,8 @@ import {
   blindStateLabel,
   climateIsOn,
   deviceRoomId,
+  fanIsOn,
+  fanStateLabel,
   lightIsOn,
   matchesFilter,
   modeLabel,
@@ -149,7 +151,7 @@ function favoritesSection({ openCamera, openFavoritesPicker }) {
   const items = favoriteDevices();
   const editing = ui.editFavorites;
   const hasDevices =
-    state.lights.length + state.thermostats.length + state.blinds.length + state.cameras.length + state.relays.length + state.doorbells.length > 0;
+    state.lights.length + state.thermostats.length + state.fans.length + state.blinds.length + state.cameras.length + state.relays.length + state.doorbells.length > 0;
   if (!hasDevices) return null;
 
   const toggleEdit = h(
@@ -237,6 +239,9 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
           )
         : h("span", { class: "fav-state" }, parts.join(" · ")),
     ];
+  } else if (kind === "fan") {
+    stateClass = device.on ? "is-on" : "";
+    content = [h("span", { class: "fav-icon" }, icon("fan")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, fanStateLabel(device))];
   } else if (kind === "blind") {
     stateClass = blindIsOpen(device) ? "is-open" : "";
     content = [h("span", { class: "fav-icon" }, icon("blinds")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, blindStateLabel(device, blindMove(device.id)))];
@@ -299,7 +304,8 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     );
   }
 
-  if (kind === "light" && can("member")) {
+  // Lights and fans switch on and off with a tap on their tile.
+  if ((kind === "light" || kind === "fan") && can("member")) {
     return h(
       "button",
       {
@@ -307,7 +313,7 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
         class: `fav-tile ${stateClass}`,
         "aria-pressed": String(Boolean(device.on)),
         dataset: { key: `${entry}:tile` },
-        onclick: () => setLight(device, { on: !device.on }),
+        onclick: () => (kind === "fan" ? setFan : setLight)(device, { on: !device.on }),
       },
       content,
       state.errors[entry] ? h("span", { class: "fav-error", role: "alert" }, state.errors[entry].text) : null
@@ -347,6 +353,10 @@ function roomStatus(group) {
         : t("rooms.climateOff")
     );
   }
+  if (group.fans.length) {
+    const on = group.fans.filter(fanIsOn).length;
+    parts.push(on ? t("rooms.fansOnOf", { on, count: group.fans.length }) : t("rooms.fansOff", { count: group.fans.length }));
+  }
   if (group.blinds.length) {
     const open = group.blinds.filter(blindIsOpen).length;
     parts.push(
@@ -366,10 +376,12 @@ function roomStatus(group) {
 function roomCard({ room, group }) {
   const lightsOn = group.lights.some(lightIsOn);
   const climateOn = group.thermostats.some(climateIsOn);
+  const fansOn = group.fans.some(fanIsOn);
   const blindsOpen = group.blinds.some(blindIsOpen);
   const badges = [
     group.lights.length ? h("span", { class: `badge ${lightsOn ? "badge-on" : ""}` }, icon("bulb")) : null,
     group.thermostats.length ? h("span", { class: `badge ${climateOn ? "badge-cool" : ""}` }, icon("climate")) : null,
+    group.fans.length ? h("span", { class: `badge ${fansOn ? "badge-on" : ""}` }, icon("fan")) : null,
     group.blinds.length ? h("span", { class: `badge ${blindsOpen ? "badge-open" : ""}` }, icon("blinds")) : null,
     group.cameras.length ? h("span", { class: "badge" }, icon("camera")) : null,
     group.relays.length ? h("span", { class: "badge" }, icon("door")) : null,
@@ -417,6 +429,7 @@ export function favoritesPicker() {
   const groups = [
     ["lights", "light", "bulb"],
     ["climate", "thermostat", "climate"],
+    ["fans", "fan", "fan"],
     ["blinds", "blind", "blinds"],
     ["relays", "relay", "door"],
     ["doorbells", "doorbell", "bell"],
@@ -425,6 +438,7 @@ export function favoritesPicker() {
   const lists = {
     light: state.lights,
     thermostat: state.thermostats,
+    fan: state.fans,
     blind: state.blinds,
     relay: state.relays,
     doorbell: state.doorbells,

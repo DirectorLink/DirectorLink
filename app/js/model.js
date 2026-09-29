@@ -1,5 +1,6 @@
 // Derived data: room names in the chosen language, devices grouped by room, what is "on".
 
+import { SPEED_NAMES } from "./fans.js";
 import { currentLanguage, formatTemperature, formatTemperatureRange, t } from "./i18n.js";
 import { isDual } from "./setpoints.js";
 import { movingText, shadeView } from "./shades.js";
@@ -34,6 +35,22 @@ export function climateIsOn(thermostat) {
   return Boolean(thermostat.mode) && thermostat.mode !== "off";
 }
 
+export function fanIsOn(fan) {
+  return Boolean(fan.on);
+}
+
+// "Medium High": a fan speed's name (1 low to 4 high).
+export function fanSpeedLabel(speed) {
+  const key = SPEED_NAMES[speed - 1];
+  return key ? t(`fans.speeds.${key}`) : t("fans.speedNumber", { speed });
+}
+
+// "Off", "On · Medium", or "On" while the fan reports no speed.
+export function fanStateLabel(fan) {
+  if (!fan.on) return t("fans.off");
+  return Number.isInteger(fan.speed) ? t("fans.onAt", { speed: fanSpeedLabel(fan.speed) }) : t("fans.on");
+}
+
 export function blindIsOpen(blind) {
   return Number.isFinite(blind.position) && blind.position > 0;
 }
@@ -44,6 +61,7 @@ export function devicesInRoom(roomId) {
   return {
     lights: pick(state.lights),
     thermostats: pick(state.thermostats),
+    fans: pick(state.fans),
     blinds: pick(state.blinds),
     cameras: pick(state.cameras),
     relays: pick(state.relays),
@@ -57,6 +75,7 @@ function controllableCount(group) {
   return (
     group.lights.length +
     group.thermostats.length +
+    group.fans.length +
     group.blinds.length +
     group.cameras.length +
     group.relays.length +
@@ -82,6 +101,7 @@ export function visibleRooms() {
   const orphans = {
     lights: state.lights.filter(orphan),
     thermostats: state.thermostats.filter(orphan),
+    fans: state.fans.filter(orphan),
     blinds: state.blinds.filter(orphan),
     cameras: state.cameras.filter(orphan),
     relays: state.relays.filter(orphan),

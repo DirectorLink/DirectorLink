@@ -84,6 +84,7 @@ function System.info(ctx)
             supported_devices = counts.supported,
             lights = counts.supported_lights,
             thermostats = counts.supported_climate,
+            fans = counts.supported_fans,
             blinds = counts.supported_blinds,
             cameras = counts.supported_cameras,
             relays = counts.supported_relays,

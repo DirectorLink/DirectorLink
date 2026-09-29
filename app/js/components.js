@@ -10,16 +10,18 @@ import {
   pressDoorbell,
   pressRelay,
   setBlind,
+  setFan,
   setLight,
   setThermostat,
   stopBlind,
 } from "./controls.js";
 import { dismissRing, doorbellCamera, ringTime } from "./doorbells.js";
 import { h, iconButton, name } from "./dom.js";
+import { fanLevel, fanSpeeds, levelChange } from "./fans.js";
 import { isFavorite, toggleFavorite } from "./favorites.js";
 import { formatRelative, formatTemperature, t } from "./i18n.js";
 import { icon } from "./icons.js";
-import { blindStateLabel, climateIsOn, fanLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
+import { blindStateLabel, climateIsOn, fanLabel, fanSpeedLabel, fanStateLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
 import { isDual, shownSetpoints } from "./setpoints.js";
 import { canSetPosition, canStop, shadeView } from "./shades.js";
 import { can, deviceKey, notify, state, ui } from "./state.js";
@@ -346,6 +348,63 @@ export function thermostatCard(thermostat, { showRoom = false } = {}) {
               pressed: thermostat.fan_speed === speed,
               key: `thermostat:${thermostat.id}:fan:${speed}`,
               onclick: () => thermostat.fan_speed !== speed && setThermostat(thermostat, { fan_speed: speed }),
+            })
+          )
+        )
+      : null,
+    inlineError(key)
+  );
+}
+
+// ---- fans ----------------------------------------------------------------------------------
+
+export function fanSwitch(fan) {
+  return h(
+    "button",
+    {
+      type: "button",
+      role: "switch",
+      class: "switch",
+      "aria-checked": String(Boolean(fan.on)),
+      "aria-label": t("fans.toggle", { name: fan.name }),
+      dataset: { key: `fan:${fan.id}:switch` },
+      onclick: () => setFan(fan, { on: !fan.on }),
+    },
+    h("span", { class: "switch-thumb" })
+  );
+}
+
+// On and off, and the speed: Off, Low, Medium, Medium High, High. View-only keys see the state.
+export function fanRow(fan, { showRoom = false } = {}) {
+  const key = deviceKey("fan", fan.id);
+  const level = fanLevel(fan);
+  const controls = can("member");
+  return h(
+    "div",
+    { class: `device fan ${fan.on ? "is-on" : ""}` },
+    h(
+      "div",
+      { class: "device-main" },
+      h("span", { class: "device-icon" }, icon("fan")),
+      h(
+        "div",
+        { class: "device-text" },
+        name(fan.name, "span", "device-name"),
+        h("span", { class: "device-meta" }, showRoom ? [name(roomName(fan.room)), " · "] : null, fanStateLabel(fan))
+      ),
+      favoriteStar("fan", fan),
+      controls ? fanSwitch(fan) : null
+    ),
+    controls
+      ? h(
+          "div",
+          { class: "chip-row chip-row-speed", role: "group", "aria-label": t("fans.speedOf", { name: fan.name }) },
+          h("span", { class: "chip-row-label" }, t("fans.speed")),
+          [0, ...fanSpeeds(fan)].map((speed) =>
+            chip(speed === 0 ? t("fans.off") : fanSpeedLabel(speed), {
+              pressed: level === speed,
+              key: `fan:${fan.id}:speed:${speed}`,
+              onclick: () => level !== speed && setFan(fan, levelChange(speed)),
             })
           )
         )

@@ -9,9 +9,9 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds, running scenes), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, fans, blinds, running scenes), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -74,6 +74,37 @@ curl -X PATCH http://<controller-ip>:41999/v1/thermostats/31 \
 - Sending one setpoint moves the other when needed to keep `setpoint_deadband`. Two setpoints sent together must already be that far apart, or the answer is `400 INVALID_FIELD`. When `setpoint_deadband` is `null`, cool must still be above heat.
 - `target_temperature` sets the setpoint of the mode (the one in the same request, else the current one). In auto and off it is refused with `409 NOT_SUPPORTED`.
 - Temperatures stay in °C, whatever scale the Control4 project uses. `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` are `null` on single-setpoint thermostats. A dual thermostat reports `null` for a setpoint none of its modes uses, such as the heat setpoint of one with only Off and Cool.
+
+## Fans
+
+Since 1.2.0 fans on the Control4 fan proxy are resources too. A fan is on or off, and runs at a
+speed from 1 (low) to 4 (high); `speed` is `null` while it is off:
+
+```json
+{
+  "id": 41,
+  "name": "Ceiling Fan",
+  "on": true,
+  "speed": 2,
+  "speeds": [1, 2, 3, 4]
+}
+```
+
+(`room` left out.) `speeds` lists the speeds `PATCH` takes.
+
+```bash
+curl -X PATCH http://<controller-ip>:41999/v1/fans/41 \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"speed": 3}'
+```
+
+- `{"speed": 3}` sets the speed and turns the fan on if it is off. `{"on": true}` turns it on at the
+  speed the fan chooses (its preset speed, or the last one); `{"on": false}` turns it off. There is
+  no speed 0: `{"speed": 0}`, like any other value outside `speeds`, is `400 INVALID_FIELD`, and
+  `"on": false` with a speed is `400 INVALID_REQUEST`. Nothing is sent when a request is refused.
+- Viewers read fans; members and above change them. In scenes a `fans` step sets
+  `{"on": true|false}` or `{"speed": 1-4}` on the fans it names, or on all of them in a room or the
+  whole home.
 
 ## Blinds
 

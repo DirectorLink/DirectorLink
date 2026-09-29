@@ -266,11 +266,12 @@ local function discover(reason)
 
     local counts = Registry.counts()
     updateProperty("Inventory", string.format(
-        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays, %d doorbells",
+        "%d rooms, %d devices, %d lights, %d thermostats, %d fans, %d blinds, %d cameras, %d relays, %d doorbells",
         counts.rooms,
         counts.devices,
         counts.supported_lights,
         counts.supported_climate,
+        counts.supported_fans,
         counts.supported_blinds,
         counts.supported_cameras,
         counts.supported_relays,

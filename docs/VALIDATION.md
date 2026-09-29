@@ -192,11 +192,12 @@ Same test system (Director `3.4.3.727848-res`, `XDT_CORE1`), captured live from 
 
 ## 2026-09-26 — contributor evidence (bkwagner)
 
-Read by the contributor, bkwagner, on a live Director (a real installation; over Director REST for #14), for pull requests #14, #16 and #19 (rebuilt in 1.1.0). No DirectorLink command was sent in these reads.
+Read by the contributor, bkwagner, on a live Director (a real installation; over Director REST for #14), for pull requests #14, #16 and #19 (rebuilt in 1.1.0) and #18 (rebuilt in 1.2.0). No DirectorLink command was sent in these reads.
 
 - **Legacy Light proxy:** 25 of the installation's 38 lights use `light.c4i`. Variables `1000` and `1001` (none on switches) and the commands `ON`, `OFF` and `SET_LEVEL {LEVEL}`.
 - **Control4 thermostat proxy:** five `control4_thermostat_proxy.c4i` thermostats. Variables 1100–1150, including separate heat and cool setpoints and the deadband; commands `SET_MODE_HVAC`, `SET_MODE_FAN`, `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL` with `FAHRENHEIT` or `CELSIUS`.
 - **Heat-only floor heating (Thermostat V2), in a °F project:** 1149 and 1150 read 0, the target is in 1133, and only `SET_SETPOINT_HEAT {FAHRENHEIT}` is listed.
+- **Fan proxy:** `fan.c4i` keeps the state in `1000` IS_ON, `1001` CURRENT_SPEED (0–4) and `1003` PRESET_SPEED; its `SET_SPEED` command lists 0–4 (Off, Low, Medium, Medium High, High).
 
 A run of the rebuilt driver on such an installation is to be recorded here (docs/TESTING.md 0p).
 
