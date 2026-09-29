@@ -1,6 +1,6 @@
 # DirectorLink Console
 
-The API console, debugging and log viewer for DirectorLink, on **https://console.directorlink.io**. Plain HTML, CSS and ES modules — no build step, no service worker (it is not a PWA). Like the app, it talks to the driver directly over the LAN at `http://<controller>:41999`; nothing goes through Cloudflare. Unlike the app, it sends its key in the `Authorization` header and pairs without a key exchange, so its (admin) key travels in the clear on the home network: use it on a network you trust, and revoke its key (Forget key) when done.
+The API console, debugging and log viewer for DirectorLink, on **https://console.directorlink.io**. Plain HTML, CSS and ES modules — no build step, no service worker (it is not a PWA). Like the app, it talks to the driver directly over the LAN at `http://<controller>:41999`; nothing goes through Cloudflare. Unlike the app, it sends its key in the `Authorization` header and pairs without a key exchange, so its (admin) key travels in the clear on the home network: it is for debugging and development only, and says so on every screen (a warning under the tabs). Use it on a network you trust, and revoke its key (Forget key) when done.
 
 ## Structure
 
