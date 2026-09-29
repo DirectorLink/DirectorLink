@@ -10,6 +10,9 @@ local sha256 = require("sha256")
 local aes = require("aes")
 local Base64 = require("src.core.base64")
 
+-- The driver folder, which build.py packages as the .c4z root (this file is driver/tests/c4mock.lua).
+local DRIVER_ROOT = debug.getinfo(1, "S").source:match("^@(.-)[/\\]tests[/\\][^/\\]+$") or "./driver"
+
 -- Byte XOR without bit operators (HMAC pads are short).
 local function xorByte(a, b)
     local result, bit = 0, 1
@@ -559,6 +562,15 @@ function Mock.install(project)
     function C4:NetPortOptions(binding, port, kind, options)
         local connection = assert(mock.network[binding], "NetPortOptions before CreateNetworkConnection")
         connection.port, connection.kind, connection.options = port, kind, options
+        -- Like Director, a CA file is read from the driver package (its path is relative to it);
+        -- nil when the package has no such file.
+        if options and options.CACERTFILE then
+            local file = io.open(DRIVER_ROOT .. "/" .. tostring(options.CACERTFILE):gsub("^%./", ""), "rb")
+            connection.caCertificates = file and file:read("*a") or nil
+            if file then
+                file:close()
+            end
+        end
     end
 
     function C4:NetConnect(binding, port)

@@ -134,7 +134,26 @@ SECURITY_CONTRACT = {
         "pairing_code = true",
         "authorization = true",
     ),
+    # Director checks the relay's certificate only when asked (NetPortOptions VERIFY_MODE); the CA
+    # file is checked in check_relay_roots.
+    "src/cloud/websocket.lua": (
+        'VERIFY_MODE = "peer",',
+        "CACERTFILE = WebSocket.CA_FILE,",
+    ),
 }
+
+# The roots the relay connection trusts: the authorities Cloudflare issues from (docs/RELAY.md).
+RELAY_ROOTS = (
+    "ISRG Root X1",
+    "ISRG Root X2",
+    "GTS Root R1",
+    "GTS Root R3",
+    "GTS Root R4",
+    "SSL.com TLS RSA Root CA 2022",
+    "SSL.com TLS ECC Root CA 2022",
+    "SSL.com Root Certification Authority RSA",
+    "SSL.com Root Certification Authority ECC",
+)
 
 
 def fail(message):
@@ -164,6 +183,7 @@ def check_contents(names):
     expected = {"driver.xml", "driver.lua", SPEC_MODULE}
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "src").rglob("*.lua"))
     expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "www").rglob("*") if path.is_file())
+    expected.update(path.relative_to(DRIVER).as_posix() for path in (DRIVER / "certs").glob("*.pem"))
     missing = expected - names
     if missing:
         fail(f"package is missing files: {sorted(missing)}")
@@ -242,6 +262,23 @@ def check_embedded_spec(text, version):
         fail("embedded API description version does not match VERSION")
 
 
+def check_relay_roots(files):
+    """The CA file websocket.lua names is in the package and holds exactly the relay's roots."""
+    match = re.search(r'WebSocket\.CA_FILE = "\./([^"]+)"', files.get("src/cloud/websocket.lua", ""))
+    if not match:
+        fail('src/cloud/websocket.lua must set WebSocket.CA_FILE = "./<path in the package>"')
+    name = match.group(1)
+    if name not in files:
+        fail(f"the relay's CA file {name} is not in the package; with VERIFY_MODE peer no connection would verify")
+    text = files[name]
+    blocks = re.findall(r"^-----BEGIN ([A-Z0-9 ]+)-----$", text, re.M)
+    if set(blocks) != {"CERTIFICATE"} or "PRIVATE KEY" in text:
+        fail(f"{name} must hold certificates only (found {sorted(set(blocks))})")
+    labels = re.findall(r"^# (.+)\n-----BEGIN CERTIFICATE-----$", text, re.M)
+    if tuple(labels) != RELAY_ROOTS or len(blocks) != len(RELAY_ROOTS):
+        fail(f"{name} must hold exactly the roots {', '.join(RELAY_ROOTS)} (found {', '.join(labels)})")
+
+
 def check_security_contract(files):
     for name, fragments in SECURITY_CONTRACT.items():
         text = files.get(name, "")
@@ -267,6 +304,7 @@ def main():
     check_requires(files)
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
+    check_relay_roots(files)
     print(f"OK: validated {len(files)} packaged files for version {version}")
 
 

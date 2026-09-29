@@ -66,6 +66,20 @@ User-Agent: DirectorLink/<driver version>
 
 The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, then every 60 s.
 
+The driver asks Director to check the relay's certificate (`VERIFY_MODE = "peer"` in
+`driver/src/cloud/websocket.lua`). Without it, Director checks nothing, and anyone in the network
+path could pose as the relay and catch the home secret. The chain must end at one of the root
+certificates in the driver package, `certs/directorlink-roots.pem`. These are the authorities
+Cloudflare issues the relay's certificate from, and Cloudflare may switch between them at any renewal:
+- Let's Encrypt: ISRG Root X1 and X2.
+- Google Trust Services: GTS Root R1, R3 and R4. Today's chain is WE1 → GTS Root R4.
+- SSL.com: the TLS RSA and ECC roots of 2022, and the older RSA and ECC roots.
+
+A certificate that does not verify fails the connection like any other failure, with the same
+backoff. The file lists each root's SHA-256. Rebuild it from a current CA list (such as certifi)
+before a root expires or when Cloudflare adds an authority. `scripts/check_package.py` checks that
+the package holds exactly these roots.
+
 ## Messages
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a

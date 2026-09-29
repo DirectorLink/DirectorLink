@@ -99,6 +99,9 @@ def package_entries(version, driver_version, spec):
     for path in sorted((DRIVER / "www").rglob("*")):
         if path.is_file():
             entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()
+    # The root certificates the relay connection trusts (CACERTFILE in src/cloud/websocket.lua).
+    for path in sorted((DRIVER / "certs").glob("*.pem")):
+        entries[path.relative_to(DRIVER).as_posix()] = path.read_bytes()
     entries["src/core/version.lua"] = stamped_version_lua(version)
     entries[SPEC_MODULE] = spec_module(spec)
     return entries

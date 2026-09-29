@@ -16,3 +16,5 @@ __pycache__/
 *.p8
 *.pem
 *.key
+# The one exception: public root certificates the driver trusts for the relay (no secret).
+!driver/certs/directorlink-roots.pem

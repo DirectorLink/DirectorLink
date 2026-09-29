@@ -41,6 +41,24 @@ function tests.switching_on_opens_a_tls_connection_to_the_relay()
     T.eq(mock.persistEncrypted["directorlink_remote_identity"], false, "plain storage survives updates")
 end
 
+-- Without VERIFY_MODE, Director checks no certificate at all.
+function tests.the_relay_certificate_is_checked_against_the_packaged_roots()
+    local mock = Mock.startDriver()
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    local options = mock.network[BINDING].options
+    T.eq(options.VERIFY_MODE, "peer")
+    T.eq(options.CACERTFILE, "./certs/directorlink-roots.pem")
+    local roots = mock.network[BINDING].caCertificates
+    T.truthy(roots, "the CA file is in the driver package")
+    local count = select(2, roots:gsub("%-%-%-%-%-BEGIN CERTIFICATE%-%-%-%-%-", ""))
+    T.eq(count, 9, "Let's Encrypt, Google Trust Services and SSL.com roots")
+    T.notContains(roots, "PRIVATE KEY")
+    for _, root in ipairs({ "ISRG Root X1", "ISRG Root X2", "GTS Root R1", "GTS Root R4", "SSL.com TLS RSA Root CA 2022", "SSL.com TLS ECC Root CA 2022" }) do
+        T.contains(roots, "# " .. root .. "\n", root)
+    end
+end
+
 function tests.handshake_sends_the_home_identity_and_hello_follows()
     local mock, _, request, hello = connected()
     T.truthy(request:match("^GET /relay/connect HTTP/1%.1\r\n"), "request line")
