@@ -15,6 +15,7 @@ import { dropIndex, edgeScroll, keyTarget, moveItem, sameOrder, shiftOf, slotOff
 import { api, checkInThroughAccount, connect, errorText, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
+import { alarmFact } from "./alarm.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { updateFact, updatePanel } from "./updates.js";
 
@@ -664,6 +665,8 @@ function controllerSection(navigate) {
             .join(" · "),
         ]
       : null,
+    // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
+    alarmFact(),
   ].filter(Boolean);
 
   return card(

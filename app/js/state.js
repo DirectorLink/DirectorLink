@@ -33,6 +33,7 @@ export const state = {
   cameras: [],
   relays: [], // doors and gates; [] on drivers without /v1/relays
   doorbells: [], // DoorBird doorstations; [] on drivers without /v1/doorbells
+  alarm: null, // GET /v1/alarm (alarm.js): { enabled, partitions }, read-only; null when not shown
   // This key's role (GET /v1/api-keys/current): viewer < member < doors < admin.
   // Drivers without roles answer 404 there; their keys can do everything, so "admin".
   role: null,

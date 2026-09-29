@@ -185,6 +185,45 @@ function Views.doorbell(registry, device)
     }
 end
 
+-- A partition of the home's alarm, read-only (GET /v1/alarm, ADR-038). `state` is the panel's own
+-- word in lower case (disarmed_ready, armed, exit_delay, ...). The type of arming and of alarm are
+-- the panel's words too, and only while armed or in alarm; the delay only while one counts. In
+-- /v1/devices a partition stays a device of type "other": nothing there tells viewers more.
+local ALARM_DELAYS = { entry_delay = "entry", exit_delay = "exit" }
+
+function Views.alarmPartition(registry, device)
+    local state = device.state or {}
+    local partitionState = state.partition_state and slug(state.partition_state) or nil
+    if partitionState == "" then
+        partitionState = nil
+    end
+    local armed = state.home == true or state.away == true or partitionState == "armed"
+    local alarm = state.alarm == true or partitionState == "alarm"
+    local delayType = partitionState and ALARM_DELAYS[partitionState] or nil
+    local delay = Json.null
+    if delayType or (state.delay_remaining or 0) > 0 then
+        delay = {
+            type = delayType or Json.null,
+            remaining = nullable(state.delay_remaining),
+            total = nullable(state.delay_total),
+        }
+    end
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        state = nullable(partitionState),
+        armed = armed,
+        armed_mode = (state.away and "away") or (state.home and "home") or Json.null,
+        armed_type = armed and nullable(state.armed_type) or Json.null,
+        alarm = alarm,
+        alarm_type = alarm and nullable(state.alarm_type) or Json.null,
+        open_zones = nullable(state.open_zones),
+        delay = delay,
+        trouble = nullable(state.trouble),
+    }
+end
+
 -- What the zone is doing now, from the thermostat's reported HVAC state.
 local function activity(value)
     local text = string.lower(tostring(value or ""))

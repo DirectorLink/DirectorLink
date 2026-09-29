@@ -209,6 +209,18 @@ def main():
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the doorbell text {key}")
         for key in ("heatShort", "coolShort", "heatTarget", "coolTarget", "lowerHeat", "raiseHeat", "lowerCool", "raiseCool", "setpoints", "gap", "circulate"):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the setpoint text {key}")
+        for key in ("readOnly", "alarmOf", "entryDelay", "exitDelay", "armedAway", "armedHome", "notReady", "openZones", "delayLeft", "trouble"):
+            require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the alarm text {key}")
+
+    # The alarm's status (1.2.0, ADR-038): read-only, asked for and shown only for members and
+    # admins once the installer turned it on; nothing in the app sends the alarm anything.
+    alarm = (APP / "js" / "alarm.js").read_text(encoding="utf-8")
+    require(alarm, 'state.system?.features?.alarm_status === true && Boolean(state.role) && can("member")',
+            "the alarm must be asked for and shown only with Alarm Status on, and only for members and admins")
+    require(alarm, 'api("/v1/alarm")', "the alarm's status must come from GET /v1/alarm")
+    for path in (APP / "js" / "alarm.js", APP / "js" / "views" / "alarm.js"):
+        if re.search(r"method:|onclick", path.read_text(encoding="utf-8")):
+            fail(f"app/{path.relative_to(APP).as_posix()} must only read the alarm: it has nothing to send or press")
     for path in APP.rglob("*"):
         if path.is_file() and path.suffix in (".html", ".js", ".md") and "DirectorLink Access" in path.read_text(encoding="utf-8"):
             fail(f"app/{path.relative_to(APP).as_posix()} still mentions the DirectorLink Access button (removed in 0.8.0)")

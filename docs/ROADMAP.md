@@ -78,7 +78,9 @@
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 - [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
-- [ ] Proposed in pull requests from bkwagner, not merged yet: fans (#18), alarm status (#15)
+- [x] Alarm status (#15): security partitions, read-only, off by default (Composer **Alarm Status**), for members and admins in sealed answers only (1.2.0, thanks to bkwagner; ADR-038); real-system validation pending
+- [ ] Proposed in a pull request from bkwagner, not merged yet: fans (#18)
+- [ ] Arming and disarming the alarm: only with a design for the user's alarm code (ADR-038)
 
 ## Milestone 5 — DirectorLink scenes
 

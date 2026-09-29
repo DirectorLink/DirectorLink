@@ -98,6 +98,16 @@
         <tooltip>Allowed lets API clients hold a relay closed with PATCH state closed; the app and scenes always pulse. Leave Not allowed for doors and gates: a held contact keeps them open.</tooltip>
       </property>
       <property>
+        <name>Alarm Status</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+        <tooltip>On shows members and admins in the app whether the alarm is armed, in alarm or has trouble; viewers never see it. Read only: DirectorLink never arms or disarms. Off: DirectorLink does not watch the alarm.</tooltip>
+      </property>
+      <property>
         <name>Remote Access</name>
         <type>LIST</type>
         <items>

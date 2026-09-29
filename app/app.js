@@ -2,10 +2,11 @@
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
 // "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
-// "/v1/weather", "/v1/auth/pair" —
+// "/v1/weather", "/v1/alarm" (read-only), "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { startAccount } from "./js/account.js";
+import { alarmSignature, startAlarm } from "./js/alarm.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
 import { h, iconButton } from "./js/dom.js";
@@ -186,6 +187,8 @@ function signature() {
     state.cameras,
     state.relays,
     state.doorbells,
+    // The alarm (read-only), and the seconds an entry or exit delay has left.
+    alarmSignature(),
     // Rings stop being recent, and "3 minutes ago" moves on, without new data.
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
@@ -374,6 +377,8 @@ whenConnected(() => syncProfile(applyLanguage));
 // The home's scenes, for the Scenes tab and the ones shown on Home.
 whenConnected(loadScenes);
 whenConnected(loadSchedules);
+// Members and admins: the alarm, read-only, when the installer turned it on; then every 10 s.
+whenConnected(startAlarm);
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
 // Opened on Schedules (a reload): the weather once connected.

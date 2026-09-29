@@ -122,19 +122,24 @@ OPERATIONS = [
 ]
 
 
+def operation_for(method, target):
+    path = target.split("?", 1)[0]
+    operation = next((op for op in OPERATIONS if op[0] == method and op[2].match(path)), None)
+    if not operation:
+        fail(f"{method} {path} is not an operation in the spec")
+    return operation[1], operation[3]
+
+
 class Client:
     def __init__(self, port):
         self.base = f"http://127.0.0.1:{port}"
         self.key = None
+        self.key_id = None
         self.covered = set()
         self.checked = 0
 
     def check(self, method, target, expected, body=None, auth=True, headers=None):
-        path = target.split("?", 1)[0]
-        operation = next((op for op in OPERATIONS if op[0] == method and op[2].match(path)), None)
-        if not operation:
-            fail(f"{method} {path} is not an operation in the spec")
-        _, template, _, definition = operation
+        template, definition = operation_for(method, target)
 
         request = urllib.request.Request(self.base + target, method=method, headers=dict(headers or {}))
         if body is not None:
@@ -149,8 +154,26 @@ class Client:
         except urllib.error.HTTPError as error:
             status, content_type, raw = error.code, error.headers.get("Content-Type", ""), error.read()
             response_headers = error.headers
+        return self.validate(f"{method} {target} -> {status}", method, template, definition, expected, status, content_type, raw, response_headers)
 
-        label = f"{method} {target} -> {status}"
+    def check_sealed(self, bridge, method, target, expected, body=None):
+        """The request sealed as the app seals it at home (POST /v1/sealed, no Authorization
+        header), and the answer inside the sealed envelope checked against the operation."""
+        template, definition = operation_for(method, target)
+        request = {"method": method, "path": target}
+        if body is not None:
+            request["body"] = body
+        envelope = bridge.seal(self.key, self.key_id, request)
+        sealed = self.check("POST", "/v1/sealed", 200, body={"envelope": envelope}, auth=False)
+        answer = bridge.unseal(self.key, sealed["envelope"])
+        if not isinstance(answer, dict):
+            fail(f"sealed {method} {target}: the answer does not open with the key's lock key")
+        raw = answer.get("body", "").encode()
+        content_type = answer.get("content_type", "")
+        return self.validate(f"sealed {method} {target} -> {answer.get('status')}", method, template, definition, expected,
+                             answer.get("status"), content_type, raw, {})
+
+    def validate(self, label, method, template, definition, expected, status, content_type, raw, response_headers):
         if status != expected:
             fail(f"{label}, expected {expected}: {raw[:300]!r}")
         declared = resolve(definition["responses"].get(str(status)))
@@ -194,7 +217,7 @@ def scenario(client, bridge):
     client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": "00000000"})
     client.check("POST", "/v1/auth/pair", 400, body={"pairing_code": "12"})
     paired = client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "contract test"})
-    client.key = paired["key"]
+    client.key, client.key_id = paired["key"], paired["id"]
     client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": bridge.pairing_code})  # used: works once
 
     client.check("GET", "/v1/system", 200)
@@ -291,6 +314,33 @@ def scenario(client, bridge):
     client.check("POST", "/v1/doorbells/93/open", 202)
     client.check("POST", "/v1/doorbells/99/open", 404)
 
+    # The alarm's status (1.2.0, ADR-038): read-only, off by default (the dev bridge's fake home
+    # has it on), and while it is on only in sealed answers (Mock.withPartitions: 80 House, 81
+    # Garage, 82 unused).
+    bridge.set_property("Alarm Status", "Off")
+    off = client.check("GET", "/v1/alarm", 200)
+    if off != {"enabled": False, "partitions": []}:
+        fail(f"GET /v1/alarm with Alarm Status Off should say only that: {off}")
+    if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not False:
+        fail("GET /v1/system should say that the alarm status is off")
+    if client.check_sealed(bridge, "GET", "/v1/alarm", 200) != off:
+        fail("a sealed GET /v1/alarm should say only that it is off")
+    bridge.set_property("Alarm Status", "On")
+    clear = client.check("GET", "/v1/alarm", 403)
+    if clear["code"] != "SEALED_REQUEST_REQUIRED":
+        fail(f"GET /v1/alarm in the clear should be refused with SEALED_REQUEST_REQUIRED: {clear}")
+    alarm = client.check_sealed(bridge, "GET", "/v1/alarm", 200)
+    if [partition["id"] for partition in alarm["partitions"]] != [81, 80]:
+        fail(f"GET /v1/alarm should list Garage and House, and not the partition the panel does not use: {alarm}")
+    for variable, value in ((1007, "ENTRY_DELAY"), (1008, "30"), (1009, "12"), (1003, "1"), (1011, "Fire"), (1005, "Low battery")):
+        if bridge.report_variable(80, variable, value) != 1:
+            fail(f"partition 80 should watch variable {variable}")
+    house = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][1]
+    if (house["delay"], house["alarm_type"], house["trouble"]) != ({"type": "entry", "remaining": 12, "total": 30}, "Fire", "Low battery"):
+        fail(f"GET /v1/alarm should show House's entry delay, fire alarm and trouble: {house}")
+    if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not True:
+        fail("GET /v1/system should say that the alarm status is on")
+
     # Remote access is off on the dev bridge: status, and the refusals that follow from it.
     client.check("GET", "/v1/remote", 200)
     client.check("POST", "/v1/remote/claim", 409)
@@ -378,7 +428,7 @@ def scenario(client, bridge):
     # The Jewish calendar (1.2.0) ships off, and the API says so: nothing is worked out, and
     # nothing that uses it can be set. Ordinary schedules run as usual on Shabbat.
     features = client.check("GET", "/v1/system", 200)["features"]
-    if features != {"jewish_calendar": False}:
+    if features.get("jewish_calendar") is not False:
         fail(f"GET /v1/system should show the Jewish calendar off: {features}")
     calendar = client.check("GET", "/v1/calendar", 200)
     if calendar != EXAMPLES["Calendar"]["off"]["value"]:
@@ -413,6 +463,8 @@ def scenario(client, bridge):
     client.check("GET", "/v1/lights", 200)
     client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
     client.check("POST", "/v1/relays/70/pulse", 403)
+    if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
+        fail("a viewer key must not read the alarm")
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})

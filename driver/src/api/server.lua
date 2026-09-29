@@ -22,6 +22,7 @@ local HANDLERS = {
     cameras = require("src.api.handlers.cameras"),
     relays = require("src.api.handlers.relays"),
     doorbells = require("src.api.handlers.doorbells"),
+    alarm = require("src.api.handlers.alarm"),
     logs = require("src.api.handlers.logs"),
     remote = require("src.api.handlers.remote"),
     invitations = require("src.api.handlers.invitations"),

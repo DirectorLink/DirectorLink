@@ -14,11 +14,16 @@ in °F: a Control4 thermostat with heat and cool setpoints, and floor heating se
 setpoint); two blinds, two cameras and a door relay.
 Two more shades report their movement as KNX blinds do (one of them only opens and closes fully),
 and every blind moves over some seconds, reported while the requests come in.
+An alarm panel has two partitions (House, disarmed with a zone open; Garage, armed away) and a third
+it does not use; Alarm Status is On in this fake home. Type "alarm off" or "alarm on" to switch it
+as in Composer, and "var <device id> <variable id> <value>" for a partition to report a change
+(e.g. "var 80 1007 ENTRY_DELAY"; the variables are listed in driver/tests/c4mock.lua).
 The pairing code is printed at start (valid 15 minutes, works once); type "code" and Enter for a new
 one, as the Composer action New Pairing Code would.
 """
 
 import argparse
+import json
 import shutil
 import socketserver
 import subprocess
@@ -68,6 +73,33 @@ class Bridge:
             closed, _, payload = self.process.stdout.readline().strip().partition(" ")
             return closed == "1", bytes.fromhex(payload)
 
+    def _ask(self, line, expected):
+        with self.lock:
+            self.process.stdin.write(line + "\n")
+            self.process.stdin.flush()
+            word, _, payload = self.process.stdout.readline().strip().partition(" ")
+        if word != expected:
+            raise RuntimeError(f"the bridge answered {word!r} to {line.split(' ', 1)[0]!r}")
+        return payload
+
+    def set_property(self, name, value):
+        """Sets a Composer property of DirectorLink, as an installer would (OnPropertyChanged)."""
+        self._ask(f"property {name.encode().hex()} {value.encode().hex()}", "PROPERTY")
+
+    def report_variable(self, device_id, variable_id, value):
+        """A device of the fake project reports a variable; returns how many listeners heard it."""
+        return int(self._ask(f"variable {int(device_id)} {int(variable_id)} {str(value).encode().hex()}", "VARIABLE"))
+
+    def seal(self, key, key_id, request):
+        """The envelope the app would send to POST /v1/sealed for `request` ({method, path, body})."""
+        asked = json.dumps({"key": key, "key_id": key_id, "request": request})
+        return json.loads(bytes.fromhex(self._ask(f"seal {asked.encode().hex()}", "SEALED")))
+
+    def unseal(self, key, envelope):
+        """The answer inside a sealed envelope: {id, ts, status, content_type, body}, or None."""
+        asked = json.dumps({"key": key, "envelope": envelope})
+        return json.loads(bytes.fromhex(self._ask(f"open {asked.encode().hex()}", "OPENED")))
+
 
 def make_handler(bridge):
     class Handler(socketserver.BaseRequestHandler):
@@ -107,12 +139,19 @@ def main():
         print(f"Pairing code: {bridge.pairing_code}")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code.')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "var <device> <variable> <value>".')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
-                if line.strip() == "code":
+                words = line.split()
+                if words == ["code"]:
                     print(f"Pairing code: {bridge.new_pairing_code()}")
+                elif len(words) == 2 and words[0] == "alarm" and words[1] in ("on", "off"):
+                    bridge.set_property("Alarm Status", words[1].capitalize())
+                    print(f"Alarm Status: {words[1].capitalize()}")
+                elif len(words) >= 3 and words[0] == "var" and words[1].isdigit() and words[2].isdigit():
+                    value = line.split(None, 3)[3].strip() if len(words) > 3 else ""
+                    print(f"Reported to {bridge.report_variable(words[1], words[2], value)} listener(s)")
         except KeyboardInterrupt:
             pass
         server.shutdown()

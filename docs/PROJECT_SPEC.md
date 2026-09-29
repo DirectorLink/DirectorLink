@@ -79,8 +79,9 @@ Supported device families (1.1.0):
 4. Cameras (snapshots)
 5. Doors and gates on KNX Contact/Relay devices
 6. DoorBird doorbells (rings, and opening their door)
+7. The alarm's status (security partitions), read-only and off by default (1.2.0, ADR-038)
 
-Proposed in open pull requests, not merged: fans, alarm status.
+Proposed in an open pull request, not merged: fans.
 
 Policy for everything else:
 
@@ -249,6 +250,41 @@ Control4 thermostats with separate heat and cool setpoints. The variables (`ther
   reported as `null`, so clients do not offer or push it.
 - The room temperature is converted as measured, not rounded to whole °F first.
 - Setpoints are kept within 5–35 °C.
+
+## Adapters added in 1.2.0
+
+### Security partitions (`security.c4i`), read-only — 1.2.0
+
+Rebuilt from bkwagner's pull request #15 (ADR-038); the variables were read on a live Director.
+A partition is one area of the home's alarm that is armed on its own. `alarm.lua` watches a
+partition only while the Composer property **Alarm Status** is On (default Off: not watched, and
+unsupported as before):
+
+| Id | Name | Id | Name |
+| --- | --- | --- | --- |
+| 1000 | HOME_STATE (armed home) | 1007 | PARTITION_STATE |
+| 1001 | AWAY_STATE (armed away) | 1008 | DELAY_TIME_TOTAL (seconds) |
+| 1002 | DISARMED_STATE | 1009 | DELAY_TIME_REMAINING (seconds) |
+| 1003 | ALARM_STATE | 1010 | OPEN_ZONE_COUNT |
+| 1005 | TROUBLE_TEXT | 1011 | ALARM_TYPE |
+| 1006 | IS_ACTIVE | 1012 | ARMED_TYPE |
+
+- 1004 is not read, as in #15. A partition is supported only when `1007` can be read and every
+  variable read registers a listener; everything read is watched.
+- `IS_ACTIVE = 0`: a partition the panel does not use, left out of `GET /v1/alarm` and of the
+  count in Composer's Inventory. It is followed as it changes: the panel may connect after Director
+  starts.
+- The API shows `state` (`PARTITION_STATE` in lower case: `disarmed_ready`, `disarmed_not_ready`,
+  `armed`, `exit_delay`, `entry_delay`, `alarm`, `confirmation_required`, `offline`, or what else a
+  panel reports), `armed`, `armed_mode` (`home`/`away`), `armed_type` and `alarm_type` (the panel's
+  words, only while armed or in alarm), `open_zones`, `delay` (`entry`/`exit`, seconds left and in
+  all) and `trouble`.
+- Nothing is sent to a partition, and its state is never logged; `scripts/check_package.py` keeps
+  the adapter to `C4:GetVariable`, `C4:RegisterVariableListener` and `C4:UnregisterVariableListener`.
+- Members and admins read it, only in sealed answers (`403 SEALED_REQUEST_REQUIRED` in the clear);
+  viewers get `403`.
+
+No DirectorLink build has run against a real alarm yet.
 
 ## History: the first milestones (to 0.2.0)
 

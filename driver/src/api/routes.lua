@@ -82,6 +82,10 @@ return {
     { method = "GET", path = "/v1/doorbells/{doorbellId}", handler = "doorbells.get", role = "viewer" },
     { method = "POST", path = "/v1/doorbells/{doorbellId}/open", handler = "doorbells.open", role = "doors" },
 
+    -- Read-only, and never for viewers (ADR-038): no route arms, disarms or sends anything to the
+    -- alarm; scripts/check_package.py fails the build if one does.
+    { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings", role = "admin" },

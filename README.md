@@ -15,7 +15,7 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
-- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, and the alarm's status (security partitions: read-only, off by default)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
@@ -65,6 +65,7 @@ A successful install shows:
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app
 - **Relay Hold:** `Not allowed`, so doors and gates are only pulsed (a short press, like their Open button). `Allowed` also lets API clients hold any relay closed, which holds a door or gate open
+- **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows members and admins in the app (never viewers) whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
 - **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
 - **Log Level** and **Inventory** (rooms and devices found)
@@ -104,7 +105,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
   -d '{"brightness": 40}'
 ```
 
-Resources: system, rooms, devices, lights, thermostats, blinds, cameras, relays (doors and gates), doorbells, scenes, schedules and the weather, profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
+Resources: system, rooms, devices, lights, thermostats, blinds, cameras, relays (doors and gates), doorbells, the alarm (read-only, sealed requests only), scenes, schedules and the weather, profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
 A script's key travels in the clear on the home network (plain HTTP); give each script its own key with the least role it needs. The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
 

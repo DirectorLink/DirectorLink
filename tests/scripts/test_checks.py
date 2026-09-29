@@ -1,7 +1,8 @@
 """The release checks themselves (scripts/build.py, check_package.py and check_repo.py): the relay's
 CA file holds exactly the pinned roots however its blocks are written, nothing else in driver/certs
-reaches the package, line endings do not change it, check_repo vets what is staged, and the door
-switches and the Jewish calendar in driver.xml ship off.
+reaches the package, line endings do not change it, check_repo vets what is staged, the door
+switches, the Jewish calendar and the alarm's status in driver.xml ship off, and the alarm stays
+read-only.
 
     python -m unittest discover -s tests/scripts
 """
@@ -143,6 +144,79 @@ class DriverXml(unittest.TestCase):
         self.assertEqual(count, 1, "driver.xml has a Jewish Calendar property that defaults to Off")
         printed = refusal(check_package.check_driver_xml, shipped_on, "0")
         self.assertIn("Jewish Calendar must default to Off", printed or "", "a Jewish calendar that ships on passed")
+
+    def test_the_alarm_status_ships_off(self):
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        start = source.index("<name>Alarm Status</name>")
+        end = source.index("</property>", start)
+        block = source[start:end]
+        self.assertEqual(block.count("<default>Off</default>"), 1)
+        shipped_on = source[:start] + block.replace("<default>Off</default>", "<default>On</default>") + source[end:]
+        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+        self.assertIn("Alarm Status must default to Off", printed or "", "an alarm status that ships on passed")
+
+
+def driver_sources():
+    """The driver's Lua files as the package names them (src/...)."""
+    base = ROOT / "driver"
+    return {path.relative_to(base).as_posix(): path.read_text(encoding="utf-8") for path in (base / "src").rglob("*.lua")}
+
+
+class AlarmReadOnly(unittest.TestCase):
+    ADAPTER = "src/adapters/alarm.lua"
+
+    def refused(self, files):
+        return refusal(check_package.check_alarm_read_only, files)
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(driver_sources()))
+
+    def test_the_adapter_may_only_read_and_watch(self):
+        files = driver_sources()
+        adapter = files[self.ADAPTER]
+        send = "function Alarm.execute()\n    C4:SendToDevice(81, \"DISARM\", {})\n"
+        for number, changed in enumerate((
+            adapter.replace("function Alarm.execute()\n", send),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    C4:SendToProxy(5001, \"ARM\", {})\n"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    local send = C4.SendToDevice\n"),
+            adapter.replace("local Alarm = {}", "local Alarm = {}\nlocal Log = require(\"src.core.log\")"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    print(\"state\")\n"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    _G.C4:SendToDevice(81, \"ARM\", {})\n"),
+        )):
+            with self.subTest(change=number):
+                self.assertNotEqual(changed, adapter, "the test did not change the adapter")
+                self.assertIsNotNone(self.refused({**files, self.ADAPTER: changed}))
+
+    def test_comments_and_strings_do_not_count_but_code_does(self):
+        files = driver_sources()
+        # The adapter's own comment names the commands it never sends.
+        self.assertIn("PARTITION_ARM", files[self.ADAPTER])
+        relays = files["src/api/handlers/relays.lua"]
+        commented = relays + "\n-- never PARTITION_DISARM here\n--[[ nor C4:SendToDevice(81, \"PARTITION_ARM\") ]]\n"
+        self.assertIsNone(self.refused({**files, "src/api/handlers/relays.lua": commented}))
+        sending = relays + '\nlocal function disarm(id) C4:SendToDevice(id, "PARTITION_DISARM", {}) end\n'
+        printed = self.refused({**files, "src/api/handlers/relays.lua": sending})
+        self.assertIn("partition command", printed or "")
+
+    def test_the_api_only_reads_the_alarm(self):
+        files = driver_sources()
+        routes = files["src/api/routes.lua"]
+        read = '    { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },\n'
+        write = '    { method = "POST", path = "/v1/alarm/{partitionId}/disarm", handler = "alarm.status", role = "admin" },\n'
+        self.assertIn(read, routes)
+        printed = self.refused({**files, "src/api/routes.lua": routes.replace(read, read + write)})
+        self.assertIn("the alarm is only read", printed or "")
+
+    def test_no_scene_step_reaches_the_alarm(self):
+        files = driver_sources()
+        for name, old, new in (
+            ("src/core/scenes.lua", "relays = true }", "relays = true, alarm = true }"),
+            ("src/api/handlers/scenes.lua", 'relays = "relay" }', 'relays = "relay", partitions = "alarm" }'),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(old, files[name])
+                printed = self.refused({**files, name: files[name].replace(old, new, 1)})
+                self.assertIn("scene steps must never reach the alarm", printed or "")
 
 
 class StagedRoots(unittest.TestCase):

@@ -9,9 +9,9 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds, running scenes), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, blinds, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -109,6 +109,37 @@ DirectorLink 1.2.0 works out Shabbat and holiday times on the controller from th
 - Schedules: the trigger `{"type": "shabbat", "event": "candle_lighting", "offset": -30}` (or `havdalah`; −360 to 360 minutes) runs once when a period begins or ends; `"during_shabbat": "skip"` or `"only"` keeps a time, sun or weather schedule away from Shabbat and holidays, or to them. `calendar_status` (`ok`, `off`, `no_location`) says whether such a schedule can run.
 
 Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/calendar/api-examples.json).
+
+## Alarm
+
+`GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed. It is read-only: nothing in the API arms or disarms, which takes the user's alarm code (ADR-038).
+
+- Off by default. Until an installer sets **Alarm Status** to On in Composer, the answer is `{"enabled": false, "partitions": []}`, and DirectorLink does not watch the alarm. `GET /v1/system` says which in `features.alarm_status`.
+- For `member`, `doors` and `admin` keys; viewers get `403 FORBIDDEN`.
+- Only in sealed requests: on the home network through `POST /v1/sealed`, as the app sends every request, and through remote access. With `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`, so whether the home is armed never crosses a network in the clear. Scripts and the API console, which do not seal, cannot read it.
+
+```json
+{
+  "enabled": true,
+  "partitions": [
+    {
+      "id": 81,
+      "name": "Garage",
+      "state": "entry_delay",
+      "armed": true,
+      "armed_mode": "away",
+      "armed_type": "Away",
+      "alarm": false,
+      "alarm_type": null,
+      "open_zones": 1,
+      "delay": { "type": "entry", "remaining": 12, "total": 30 },
+      "trouble": null
+    }
+  ]
+}
+```
+
+(`room` left out.) `state` is the panel's word in lower case: `disarmed_ready`, `disarmed_not_ready`, `armed`, `exit_delay`, `entry_delay`, `alarm`, `confirmation_required`, `offline`, or another a panel reports. `armed_type` and `alarm_type` are the panel's own words (e.g. `Stay`, `Fire`), `null` unless armed or in alarm. `delay` is `null` unless an entry or exit delay is counting down, in seconds as the panel last reported. Partitions the alarm does not use are left out. In `/v1/devices` a partition stays a device of type `other`.
 
 ## Debugging
 

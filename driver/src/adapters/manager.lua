@@ -7,6 +7,7 @@ local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
 local DoorBird = require("src.adapters.doorbird")
+local Alarm = require("src.adapters.alarm")
 
 local Manager = {}
 
@@ -19,16 +20,54 @@ local adapters = {
     Camera,
     KnxRelay,
     DoorBird,
+    Alarm,
 }
 
 local attached = {}
 -- Device whose events belong to another device (a DoorBird driver's events -> its doorbell).
 local eventTargets = {}
 local registry = nil
-local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+local initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
 
 local function log(message)
     Log.info("adapters", tostring(message))
+end
+
+local function countKind(device, step)
+    initializedCounts.total = initializedCounts.total + step
+    local kind = tostring(device.kind or "")
+    if initializedCounts[kind] ~= nil then
+        initializedCounts[kind] = initializedCounts[kind] + step
+    end
+end
+
+-- Starts `adapter` on the device; true when it controls (or watches) it from now on.
+local function attach(id, device, adapter, before, quietly)
+    attached[id] = adapter
+    local ok, success, err
+    if quietly then
+        ok, success, err = Log.quietly(pcall, adapter.initialize, device, registry, before)
+    else
+        ok, success, err = pcall(adapter.initialize, device, registry, before)
+    end
+    if not ok then
+        attached[id] = nil
+        device.supported = false
+        device.adapter_error = tostring(success)
+        log("failed to initialize device " .. tostring(id) .. ": " .. tostring(success))
+        return false
+    elseif not success then
+        attached[id] = nil
+        device.supported = false
+        device.adapter_error = tostring(err or "adapter initialization failed")
+        log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
+        return false
+    end
+    if device.event_source_id then
+        eventTargets[tonumber(device.event_source_id)] = id
+    end
+    countKind(device, 1)
+    return true
 end
 
 -- previous: the devices before a project refresh (id -> device). An adapter gets the device it
@@ -39,7 +78,7 @@ function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
     local refreshing = previous ~= nil and next(previous) ~= nil
 
     pcall(function()
@@ -61,34 +100,8 @@ function Manager.initialize(deviceRegistry, previous)
         end
         for _, adapter in ipairs(adapters) do
             if adapter.matches(device) then
-                attached[tonumber(id)] = adapter
-
-                local ok, success, err
-                if refreshing then
-                    ok, success, err = Log.quietly(pcall, adapter.initialize, device, registry, before)
-                else
-                    ok, success, err = pcall(adapter.initialize, device, registry, before)
-                end
-                if not ok then
-                    attached[tonumber(id)] = nil
-                    device.supported = false
-                    device.adapter_error = tostring(success)
-                    log("failed to initialize device " .. tostring(id) .. ": " .. tostring(success))
-                elseif not success then
-                    attached[tonumber(id)] = nil
-                    device.supported = false
-                    device.adapter_error = tostring(err or "adapter initialization failed")
-                    log("unsupported device " .. tostring(id) .. ": " .. tostring(device.adapter_error))
-                else
-                    if device.event_source_id then
-                        eventTargets[tonumber(device.event_source_id)] = tonumber(id)
-                    end
+                if attach(tonumber(id), device, adapter, before, refreshing) then
                     initialized = initialized + 1
-                    initializedCounts.total = initializedCounts.total + 1
-                    local kind = tostring(device.kind or "")
-                    if initializedCounts[kind] ~= nil then
-                        initializedCounts[kind] = initializedCounts[kind] + 1
-                    end
                 end
                 break
             end
@@ -97,6 +110,38 @@ function Manager.initialize(deviceRegistry, previous)
 
     log("initialized " .. tostring(initialized) .. " controllable proxies")
     return initialized
+end
+
+-- A Composer property that decides which devices an adapter takes changed (Alarm Status: the
+-- alarm's partitions, ADR-038). The devices it takes now start; the ones it no longer takes are
+-- let go, their variables no longer watched. Nothing else is read again. Returns how many
+-- devices started and how many were let go.
+function Manager.onPropertyChanged(name)
+    local started, released = 0, 0
+    if not registry then
+        return started, released
+    end
+    for _, adapter in ipairs(adapters) do
+        if adapter.PROPERTY ~= nil and adapter.PROPERTY == name then
+            for rawId, device in pairs(registry.devices or {}) do
+                local id = tonumber(rawId)
+                if attached[id] == adapter and not adapter.matches(device) then
+                    if adapter.release then
+                        pcall(adapter.release, device)
+                    end
+                    attached[id] = nil
+                    device.supported = false
+                    countKind(device, -1)
+                    released = released + 1
+                elseif attached[id] == nil and adapter.matches(device) then
+                    if attach(id, device, adapter, nil, false) then
+                        started = started + 1
+                    end
+                end
+            end
+        end
+    end
+    return started, released
 end
 
 function Manager.counts()
@@ -108,6 +153,7 @@ function Manager.counts()
         camera = initializedCounts.camera,
         relay = initializedCounts.relay,
         doorbell = initializedCounts.doorbell,
+        alarm = initializedCounts.alarm,
     }
 end
 
@@ -228,7 +274,7 @@ function Manager.shutdown()
     attached = {}
     eventTargets = {}
     registry = nil
-    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

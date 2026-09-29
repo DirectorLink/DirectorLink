@@ -1,6 +1,6 @@
 # Security
 
-DirectorLink controls homes: lights, climate, cameras, and doors and gates. Security reports are welcome and are handled first.
+DirectorLink controls homes: lights, climate, cameras, and doors and gates, and can show whether the alarm is armed. Security reports are welcome and are handled first.
 
 ## Reporting a problem
 
@@ -16,5 +16,5 @@ Fixes go into the latest release. The Composer driver, the app (app.directorlink
 
 - `docs/ACCOUNTS.md`: the end-to-end lock, pairing, claiming a home, invitations, and **what the lock does not protect**.
 - `docs/RELAY.md`: the controller's connection to the cloud.
-- `docs/DECISIONS.md`: ADR-025 (roles and Door Control), ADR-028 (stored keys), ADR-029 (accounts and the lock), ADR-032 (the 1.0.0 security fixes), ADR-036 (door relays pulse-only).
+- `docs/DECISIONS.md`: ADR-025 (roles and Door Control), ADR-028 (stored keys), ADR-029 (accounts and the lock), ADR-032 (the 1.0.0 security fixes), ADR-036 (door relays pulse-only), ADR-038 (the alarm's status: off by default, read-only, never for viewers, sealed only).
 - `directorlink.io/privacy`: what the cloud stores.

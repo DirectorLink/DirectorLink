@@ -5,6 +5,7 @@ local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
 local ProjectEvents = require("src.control4.project_events")
 local AdapterManager = require("src.adapters.manager")
+local Alarm = require("src.adapters.alarm")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
@@ -197,6 +198,9 @@ local services = {
     calendarEnabled = function()
         return Properties ~= nil and Properties["Jewish Calendar"] == "On"
     end,
+    -- The alarm's partitions are watched, and shown to members and admins (read-only), only with
+    -- "Alarm Status" = On (ADR-038). Read at every request, like the door switches.
+    alarmStatusEnabled = Alarm.enabled,
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
@@ -236,6 +240,28 @@ local function fail(message, reason)
     return false
 end
 
+-- Composer's Inventory: what DirectorLink found. Alarm partitions are counted only while Alarm
+-- Status is On (ADR-038).
+local function publishInventory()
+    local counts = Registry.counts()
+    local text = string.format(
+        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays, %d doorbells",
+        counts.rooms,
+        counts.devices,
+        counts.supported_lights,
+        counts.supported_climate,
+        counts.supported_blinds,
+        counts.supported_cameras,
+        counts.supported_relays,
+        counts.supported_doorbells
+    )
+    if Alarm.enabled() then
+        text = text .. string.format(", %d alarm partitions", counts.alarm_partitions)
+    end
+    updateProperty("Inventory", text)
+    return counts
+end
+
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
 -- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps
 -- answering throughout (Lua runs one thing at a time), and keys, pairing, scenes, schedules, room
@@ -264,18 +290,7 @@ local function discover(reason)
     Registry.replace(normalized)
     AdapterManager.initialize(Registry, reason and previousDevices or nil)
 
-    local counts = Registry.counts()
-    updateProperty("Inventory", string.format(
-        "%d rooms, %d devices, %d lights, %d thermostats, %d blinds, %d cameras, %d relays, %d doorbells",
-        counts.rooms,
-        counts.devices,
-        counts.supported_lights,
-        counts.supported_climate,
-        counts.supported_blinds,
-        counts.supported_cameras,
-        counts.supported_relays,
-        counts.supported_doorbells
-    ))
+    local counts = publishInventory()
     if reason then
         local changes = Registry.changes(previousDevices, previousRooms)
         changes.reason = reason
@@ -492,6 +507,15 @@ function OnPropertyChanged(name)
     end
     if name == "Relay Hold" and Properties then
         Log.info("relay_command", "relay hold " .. string.lower(tostring(Properties[name])) .. " in Composer")
+    end
+    if name == Alarm.PROPERTY and Properties and STATE.supported then
+        -- The partitions are watched from now on, or no longer; nothing about their state is logged.
+        local started, released = AdapterManager.onPropertyChanged(name)
+        Log.info("alarm", Alarm.enabled() and "alarm status on in Composer" or "alarm status off in Composer", {
+            partitions_watched = started,
+            partitions_released = released,
+        })
+        publishInventory()
     end
     if name == "Log Level" and Properties then
         if Log.setLevel(Properties[name]) then
