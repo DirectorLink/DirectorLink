@@ -19,7 +19,7 @@ Scenes.MAX_DEVICES = 100
 Scenes.ICONS = { moon = true, sun = true, leave = true, movie = true, bulb = true, climate = true, blinds = true, home = true }
 Scenes.TYPES = { lights = true, climate = true, blinds = true, relays = true }
 Scenes.MODES = { off = true, heat = true, cool = true, auto = true }
-Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true }
+Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = true, circulate = true }
 Scenes.MIN_TEMPERATURE = 5
 Scenes.MAX_TEMPERATURE = 40
 
@@ -32,6 +32,10 @@ end
 
 local function isWhole(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value) and value >= minimum and value <= maximum
+end
+
+local function isTemperature(value)
+    return type(value) == "number" and value == value and value >= Scenes.MIN_TEMPERATURE and value <= Scenes.MAX_TEMPERATURE
 end
 
 -- What a step sets, when it is valid for the step's type: the fields kept, or nil. The API checks
@@ -63,13 +67,29 @@ function Scenes.cleanSet(stepType, set)
             result.fan_speed = set.fan_speed
         end
         if set.target_temperature ~= nil then
-            local target = set.target_temperature
-            if type(target) ~= "number" or target ~= target or target < Scenes.MIN_TEMPERATURE or target > Scenes.MAX_TEMPERATURE then
+            if not isTemperature(set.target_temperature) then
                 return nil
             end
-            result.target_temperature = target
+            result.target_temperature = set.target_temperature
         end
-        if next(result) == nil or (result.mode == "off" and (result.fan_speed or result.target_temperature)) then
+        -- Heat and cool setpoints (1.1.0), for thermostats that have both: instead of a target,
+        -- and cool above heat.
+        for _, field in ipairs({ "heat_setpoint", "cool_setpoint" }) do
+            if set[field] ~= nil then
+                if not isTemperature(set[field]) then
+                    return nil
+                end
+                result[field] = set[field]
+            end
+        end
+        local heat, cool = result.heat_setpoint, result.cool_setpoint
+        if (heat or cool) and result.target_temperature then
+            return nil
+        end
+        if heat and cool and cool <= heat then
+            return nil
+        end
+        if next(result) == nil or (result.mode == "off" and (result.fan_speed or result.target_temperature or heat or cool)) then
             return nil
         end
         return result

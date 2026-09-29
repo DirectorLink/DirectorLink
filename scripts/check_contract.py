@@ -201,6 +201,22 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/thermostats/30", 409, body={"mode": "auto"})
     client.check("PATCH", "/v1/thermostats/30", 400, body={"target_temperature": 99})
 
+    # The 1.1.0 device families (Mock.demoProject): older lights (25 dimmer, 26 switch), a
+    # thermostat with heat and cool setpoints (31, in auto) and floor heating on its heat setpoint (32).
+    client.check("GET", "/v1/lights/25", 200)
+    client.check("PATCH", "/v1/lights/25", 202, body={"brightness": 40})
+    client.check("PATCH", "/v1/lights/26", 409, body={"brightness": 40})
+    client.check("GET", "/v1/thermostats/31", 200)
+    client.check("PATCH", "/v1/thermostats/31", 202, body={"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24})
+    client.check("PATCH", "/v1/thermostats/31", 202, body={"mode": "cool", "target_temperature": 24})
+    client.check("PATCH", "/v1/thermostats/31", 202, body={"fan_speed": "on"})
+    client.check("PATCH", "/v1/thermostats/31", 400, body={"heat_setpoint": 22, "cool_setpoint": 23})
+    client.check("PATCH", "/v1/thermostats/31", 400, body={"target_temperature": 22, "heat_setpoint": 20})
+    client.check("PATCH", "/v1/thermostats/31", 409, body={"target_temperature": 22})
+    client.check("PATCH", "/v1/thermostats/30", 409, body={"heat_setpoint": 20})
+    client.check("GET", "/v1/thermostats/32", 200)
+    client.check("PATCH", "/v1/thermostats/32", 202, body={"target_temperature": 6})
+
     client.check("GET", "/v1/blinds", 200)
     client.check("GET", "/v1/blinds?room_id=11", 200)
     client.check("GET", "/v1/blinds/50", 200)
@@ -285,6 +301,12 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/deadbeef/run", 404)
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {}}]})
+    auto = {"type": "climate", "device_ids": [31], "set": {"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}}
+    dual = client.check("POST", "/v1/scenes", 201, body={"name": "Study auto", "steps": [auto]})
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [auto]})
+    client.check("POST", f"/v1/scenes/{dual['id']}/run", 202)
+    client.check("POST", "/v1/scenes", 400, body={"name": "Bad", "steps": [{"type": "climate", "set": {"heat_setpoint": 24, "cool_setpoint": 20}}]})
+    client.check("DELETE", f"/v1/scenes/{dual['id']}", 204)
     spare = client.check("POST", "/v1/scenes", 201, body={"name": "Spare"})
     client.check("DELETE", f"/v1/scenes/{spare['id']}", 204)
     client.check("DELETE", f"/v1/scenes/{spare['id']}", 404)

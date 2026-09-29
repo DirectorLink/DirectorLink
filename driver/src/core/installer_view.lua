@@ -213,6 +213,12 @@ local function stepText(step, registry)
         if set.target_temperature then
             parts[#parts + 1] = number(set.target_temperature) .. "C"
         end
+        if set.heat_setpoint then
+            parts[#parts + 1] = "heat " .. number(set.heat_setpoint) .. "C"
+        end
+        if set.cool_setpoint then
+            parts[#parts + 1] = "cool " .. number(set.cool_setpoint) .. "C"
+        end
         if set.fan_speed then
             parts[#parts + 1] = "fan " .. set.fan_speed
         end

@@ -31,6 +31,17 @@ local SETTABLE_MODES = {
     auto = true,
 }
 
+-- The FanSpeed values of the API. A thermostat may list others (e.g. "Humidify"); they are not
+-- offered, so every fan speed shown can be sent back with PATCH.
+local SETTABLE_FAN_SPEEDS = {
+    low = true,
+    medium = true,
+    high = true,
+    auto = true,
+    on = true,
+    circulate = true,
+}
+
 local function nullable(value)
     if value == nil or value == "" then
         return Json.null
@@ -196,7 +207,10 @@ function Views.thermostatOptions(device)
     end
     local fanSpeeds = Json.array()
     for _, speed in ipairs(capabilities.fan_modes or {}) do
-        fanSpeeds[#fanSpeeds + 1] = string.lower(tostring(speed))
+        local name = string.lower(tostring(speed))
+        if SETTABLE_FAN_SPEEDS[name] then
+            fanSpeeds[#fanSpeeds + 1] = name
+        end
     end
     return {
         modes = modes,
@@ -206,8 +220,16 @@ function Views.thermostatOptions(device)
     }
 end
 
+-- True for thermostats with separate heat and cool setpoints (the Control4 thermostat proxy).
+function Views.isDual(device)
+    return (device.capabilities or {}).setpoints == "dual"
+end
+
+-- On a dual-setpoint thermostat `target_temperature` is the setpoint of the current mode (null in
+-- auto and off); the three setpoint keys are null on single-setpoint ones.
 function Views.thermostat(registry, device)
     local state = device.state or {}
+    local capabilities = device.capabilities or {}
     local options = Views.thermostatOptions(device)
     return {
         id = device.id,
@@ -223,6 +245,10 @@ function Views.thermostat(registry, device)
         activity = activity(state.hvac_state),
         fan_speed = state.fan_mode and slug(state.fan_mode) or Json.null,
         fan_speeds = options.fan_speeds,
+        setpoints = capabilities.setpoints == "dual" and "dual" or "single",
+        heat_setpoint = nullable(state.heat_setpoint_c),
+        cool_setpoint = nullable(state.cool_setpoint_c),
+        setpoint_deadband = nullable(capabilities.deadband_c),
     }
 end
 

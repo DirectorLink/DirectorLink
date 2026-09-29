@@ -1229,8 +1229,16 @@ paths:
       tags: [Thermostats]
       operationId: updateThermostat
       x-directorlink-role: member
-      summary: Change mode, target temperature or fan speed
-      description: Fields are applied in the order mode, fan speed, target temperature.
+      summary: Change mode, target temperature, heat/cool setpoints or fan speed
+      description: >-
+        Fields are applied in the order mode, fan speed, then the temperature: `target_temperature`,
+        or `heat_setpoint` and `cool_setpoint` on dual-setpoint thermostats (`setpoints: dual`).
+        There, `target_temperature` sets the setpoint of the mode (the one in this request, else
+        the current one) and is refused in auto and off (409 `NOT_SUPPORTED`). One setpoint moves
+        the other when needed to keep `setpoint_deadband`; both together must already be that far
+        apart (400 `INVALID_FIELD`); `target_temperature` with a setpoint is 400 `INVALID_REQUEST`.
+        Nothing is sent when a request is refused. Auto example:
+        `{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}`.
       requestBody:
         required: true
         content:
@@ -2331,10 +2339,16 @@ components:
           description: |
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
-            each thermostat's range) and `fan_speed` (low, medium, high, auto; left out where a
-            unit does not have it), and with `mode: off` nothing else; blinds `{"position": 0-100}`;
-            relays `{"action": "pulse"}`, what their Open button does (a door or gate relay is
-            never held closed by a scene).
+            each thermostat's range) and `fan_speed` (low, medium, high, auto, on, circulate; left
+            out where a unit does not have it), and with `mode: off` nothing else; blinds
+            `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
+            door or gate relay is never held closed by a scene).
+            climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
+            `target_temperature` (cool above heat): dual-setpoint thermostats take them as their
+            setpoints (left out where they come closer than the thermostat's deadband);
+            single-setpoint thermostats take `heat_setpoint` in heat and `cool_setpoint` in cool.
+            On dual-setpoint thermostats `target_temperature` sets the setpoint of the step's mode
+            (or of the current mode), and is left out in auto and off.
           type: object
           additionalProperties: false
           properties:
@@ -2351,9 +2365,17 @@ components:
               type: number
               minimum: 5
               maximum: 40
+            heat_setpoint:
+              type: number
+              minimum: 5
+              maximum: 40
+            cool_setpoint:
+              type: number
+              minimum: 5
+              maximum: 40
             fan_speed:
               type: string
-              enum: [low, medium, high, auto]
+              enum: [low, medium, high, auto, "on", circulate]
             position:
               type: integer
               minimum: 0
@@ -3116,7 +3138,7 @@ components:
 
     FanSpeed:
       type: string
-      enum: [low, medium, high, auto]
+      enum: [low, medium, high, auto, "on", circulate]
 
     Thermostat:
       type: object
@@ -3134,6 +3156,10 @@ components:
         - activity
         - fan_speed
         - fan_speeds
+        - setpoints
+        - heat_setpoint
+        - cool_setpoint
+        - setpoint_deadband
       properties:
         id:
           type: integer
@@ -3149,10 +3175,13 @@ components:
           type: [number, "null"]
         target_temperature:
           type: [number, "null"]
+          description: Degrees Celsius. On dual-setpoint thermostats, the setpoint of the current mode (null in auto and off).
         target_temperature_min:
           type: number
+          description: Applies to `target_temperature`, `heat_setpoint` and `cool_setpoint`. 5 on floor heating set through its heat setpoint.
         target_temperature_max:
           type: number
+          description: Applies to `target_temperature`, `heat_setpoint` and `cool_setpoint`.
         mode:
           type: [string, "null"]
           description: Current mode as reported, e.g. `off`, `heat`, `cool`, `auto`.
@@ -3171,6 +3200,22 @@ components:
           description: Fan speeds that can be set with PATCH. Empty when the zone has no fan control.
           items:
             $ref: "#/components/schemas/FanSpeed"
+        setpoints:
+          type: string
+          enum: [single, dual]
+          description: |
+            `single`: one target temperature. `dual`: separate heat and cool setpoints
+            (`heat_setpoint`, `cool_setpoint`); `target_temperature` is then the setpoint the current
+            mode uses (heat or cool) and null in auto and off.
+        heat_setpoint:
+          type: [number, "null"]
+          description: Degrees Celsius. Dual-setpoint thermostats; null otherwise.
+        cool_setpoint:
+          type: [number, "null"]
+          description: Degrees Celsius. Dual-setpoint thermostats; null otherwise.
+        setpoint_deadband:
+          type: [number, "null"]
+          description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats.
 
     ThermostatUpdate:
       type: object
@@ -3184,6 +3229,12 @@ components:
           description: Degrees Celsius, between `target_temperature_min` and `target_temperature_max`.
         fan_speed:
           $ref: "#/components/schemas/FanSpeed"
+        heat_setpoint:
+          type: number
+          description: Degrees Celsius, between `target_temperature_min` and `target_temperature_max`. Dual-setpoint thermostats only (409 `NOT_SUPPORTED` otherwise). The cool setpoint moves up with it when needed to keep `setpoint_deadband`.
+        cool_setpoint:
+          type: number
+          description: Degrees Celsius, as `heat_setpoint`; the heat setpoint moves down with it when needed.
 
     ThermostatList:
       type: object

@@ -18,7 +18,9 @@ if specPath and specPath ~= "" then
     end
 end
 
-local mock = Mock.startDriver(nil, specText)
+-- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
+-- cool setpoints, floor heating on its heat setpoint), so the app preview shows them all.
+local mock = Mock.startDriver(Mock.demoProject(), specText)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
 -- The app and console served from this PC (python -m http.server) may call this test bridge. The

@@ -44,6 +44,37 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 
 The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. It also keeps each key's lock key, for sealed requests: if a copy of the controller's data is lost, use **Revoke All API Keys** in Composer (which also removes every key if one is lost) and the owner's **Replace the remote secret** in the app (`docs/ACCOUNTS.md`).
 
+## Thermostats
+
+Most thermostats have one `target_temperature` (`"setpoints": "single"`). Thermostats with separate heat and cool setpoints (`"setpoints": "dual"`, the Control4 thermostat) also report both, and the smallest gap they keep between them:
+
+```json
+{
+  "id": 31,
+  "name": "Study",
+  "mode": "auto",
+  "target_temperature": null,
+  "target_temperature_min": 5,
+  "target_temperature_max": 35,
+  "setpoints": "dual",
+  "heat_setpoint": 20,
+  "cool_setpoint": 24.4,
+  "setpoint_deadband": 1.7
+}
+```
+
+(Other fields left out.) Set both in auto:
+
+```bash
+curl -X PATCH http://192.168.1.201:41999/v1/thermostats/31 \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}'
+```
+
+- Sending one setpoint moves the other when needed to keep `setpoint_deadband`. Two setpoints sent together must already be that far apart, or the answer is `400 INVALID_FIELD`.
+- `target_temperature` sets the setpoint of the mode (the one in the same request, else the current one). In auto and off it is refused with `409 NOT_SUPPORTED`.
+- Temperatures stay in °C, whatever scale the Control4 project uses. `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` are `null` on single-setpoint thermostats.
+
 ## Debugging
 
 `GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` while investigating. Secrets are never logged.

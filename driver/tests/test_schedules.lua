@@ -437,4 +437,23 @@ function tests.the_composer_action_prints_every_schedule_and_scene()
     T.contains(text, "made in the DirectorLink app")
 end
 
+function tests.the_printout_shows_heat_and_cool_setpoints()
+    local mock, admin = start(os.time())
+    scene(mock, admin, {
+        { type = "climate", room_id = 10, set = { mode = "auto", heat_setpoint = 20, cool_setpoint = 24 } },
+        { type = "climate", room_id = 11, set = { cool_setpoint = 23.5, fan_speed = "circulate" } },
+    })
+    local lines = {}
+    local realPrint = print
+    _G.print = function(line)
+        lines[#lines + 1] = line
+    end
+    local ok, err = pcall(ExecuteCommand, "LUA_ACTION", { ACTION = "PRINT_AUTOMATION" })
+    _G.print = realPrint
+    T.truthy(ok, err)
+    local text = table.concat(lines, " | ")
+    T.contains(text, "all climate in Kitchen (10) -> auto heat 20C cool 24C")
+    T.contains(text, "all climate in Living Room (11) -> cool 23.5C fan circulate")
+end
+
 return tests
