@@ -3,8 +3,9 @@
 **Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google. Sign in with
 Apple is built in the cloud and the app (`cloud/src/apple.js`), and is switched on in the app once
 its keys are set up (cloud/README.md). 1.0.0 seals the app's requests on the home network too,
-pairs with a key exchange, and lets the controller register its own invitations (ADR-032).** The
-driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
+pairs with a key exchange, and lets the controller register its own invitations (ADR-032). 1.3.0
+pairs with CPace, so the pairing code never crosses the network (ADR-039), and the API console's
+own key lasts a day (ADR-040).** The driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
 `docs/RELAY.md`, version 1. Known issues are listed at the end.
@@ -104,24 +105,46 @@ either:
   before 1.0.0, one whose lock failed its self-test (`LOCK_UNAVAILABLE`), or a key whose `K` it
   does not have yet (the plain request stores it). Away from home, the app goes back to the home
   network only after a sealed request there works.
-- **Pairing with a key exchange.** The app sends its X25519 public key with the pairing code; the
-  driver answers with its own public key and the new key sealed with
-  `HMAC-SHA256(shared secret, "DirectorLink pair v1|" + code + "|" + app key + "|" + driver key)`
-  (the public keys in base64), then the usual `K_enc` and `K_mac` from it. Someone who only listens
-  on the network cannot read the key. Public keys of small order are refused before the code is
-  used. Browsers without X25519 in WebCrypto, drivers from before 1.0.0, and controllers whose lock
-  failed its self-test (they refuse the field `exchange` before using the code) pair as before,
-  with the key in the answer.
+- **Pairing without sending the code (CPace, 1.3.0, ADR-039).** The app and the API console prove
+  that they know the pairing code without sending it, with CPace (draft-irtf-cfrg-cpace, cipher
+  suite CPACE-X25519-SHA512; `driver/src/auth/cpace_pairing.lua`, `app/js/cpace.js`). The code is
+  the password. Two requests to `POST /v1/auth/pair`:
+  1. The app sends a random nonce, its name (and, for the console, `expires_in`). The controller
+     (CPace's initiator) answers with its nonce and its share `Ya`, made from a generator that
+     depends on the code, on the channel `CI = lv_cat("DirectorLink pair v2", name, expires_in)`
+     and on `sid` (the app's nonce, then the controller's).
+  2. The app sends its share `Yb` and a tag that only a device that knew the code can make
+     (the draft's key confirmation: HMAC-SHA512 with a key from the exchange's session key `ISK`).
+     Only then does the controller make the key. It answers with its own tag, which tells the app
+     it spoke with a controller that knows the code, and the key sealed with
+     `HMAC-SHA256(ISK, "DirectorLink pair v2")`, then the usual `K_enc` and `K_mac` from it.
+
+  Someone who listens learns nothing, and someone in the middle cannot test codes offline: each
+  guess needs a whole exchange with the controller, which counts it as a wrong code. Changing the
+  name or `expires_in` on the way makes the exchange fail. Shares of low order are refused. An
+  exchange lasts 60 seconds and works once, from the device that began it.
+- **Older controllers get the code only when asked.** DirectorLink before 1.3.0 refuses the field
+  `cpace` (so does a controller whose lock failed its self-test), and nothing about the code has
+  been sent. The app then warns that the code would travel over the network unprotected and that
+  DirectorLink should be updated in Composer; only **Pair anyway** sends it, the old way: with the
+  app's X25519 public key, the driver answering with its own public key and the new key sealed
+  with `HMAC-SHA256(shared secret, "DirectorLink pair v1|" + code + "|" + app key + "|" + driver
+  key)`. Someone who only listens cannot read that key, but someone in the middle can take the
+  code. Scripts pair by sending the code and get the key in the answer, as before.
 - **Pairing is local and slow to guess.** Pairing is refused as a sealed or remote request
   (`PAIRING_ONLY_ON_HOME_NETWORK`). Five wrong codes lock pairing for that device's address for a
-  minute, and twenty wrong codes in all close the code, so Composer has to make a new one.
+  minute, and twenty wrong codes in all close the code, so Composer has to make a new one. A CPace
+  attempt counts as a wrong code from its first request until it succeeds, so attempts that are
+  begun and never finished run into the same limits.
 - **Only DirectorLink's sites, only local names.** Browsers may call the controller only from
   app.directorlink.io and console.directorlink.io; any other origin, `localhost` included, is
   refused. A request whose `Host` is not an IP address or a local name (`director.local`, a name
   without dots, `.lan`, `.home.arpa`, …) is refused with `421 MISDIRECTED_REQUEST`, so a web page
   cannot reach the controller through a DNS name it controls (DNS rebinding).
 - Scripts and the API console may keep using `Authorization: Bearer`; the key then travels in the
-  clear on the home network, as the README says.
+  clear on the home network, as the README says. So the key the console pairs for itself lasts a
+  day (ADR-040): after that the controller answers `401 KEY_EXPIRED`, removes the key, and the
+  console asks for a new pairing code. Keys made in its Keys tab for scripts do not expire.
 
 ## Flows
 
@@ -201,8 +224,8 @@ membership.
 
 ### 5. The home network without an account
 
-Pair with a code (with the key exchange) and use the LAN API; the app seals its requests there too
-(*On the home network*). No cloud is involved.
+Pair with a code (CPace: the code is never sent) and use the LAN API; the app seals its requests
+there too (*On the home network*). No cloud is involved.
 
 ## Google and Apple
 
@@ -292,11 +315,11 @@ device's key.
   changing anything (a stolen owner session could already delete the home). Sign out everywhere,
   then replace the secret again at home.
 - **Someone who can change traffic on the home network.** Sealed requests cannot be read, changed
-  or replayed on the Wi-Fi, but the pairing code travels with the pairing request: someone who
-  intercepts and changes traffic during pairing (not only listens) could put themselves between
-  the app and the controller and take that key. Local HTTPS, or a code compared on both sides,
-  would close this; until then pair on a network you trust. Plain pairing (browsers without
-  X25519) and scripts using `Authorization: Bearer` send their key in the clear, and a key paired
+  or replayed on the Wi-Fi, and since 1.3.0 pairing does not send the code (CPace): someone in
+  the middle gets one guess per exchange, counted like a wrong code. They can still stop pairing
+  (drop the requests, or use up the code's twenty attempts), and with a controller before 1.3.0,
+  **Pair anyway** sends the code, which they could take. The API console and scripts send their
+  key in the clear with every request (the console's own key lasts a day), and a key paired
   before 1.0.0 was sent in the clear then: revoke it and pair again if that matters.
 - **Someone in the network path with a certificate for another name.** The controller asks
   Director to check the relay's certificate against the authorities Cloudflare issues it from
@@ -361,3 +384,6 @@ of directorlink.io.
    exchange, and never falls back to sending its key once a controller sealed; pairing works only
    on the home network; the controller registers its own invitations; the home's owner replaces
    the home secret, from the home network; an account can sign out everywhere.
+10. (1.3.0, ADR-039, ADR-040) The app and the console pair with CPace and never send the code;
+    with an older DirectorLink only after a warning and **Pair anyway**. The console's own key
+    lasts a day.
