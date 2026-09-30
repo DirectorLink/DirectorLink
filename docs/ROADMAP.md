@@ -7,6 +7,7 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 - **The pairing code is never sent.** The app and the controller use the code to lock their key exchange (CPace), so someone who changes traffic during pairing can only make it fail (ADR-039).
 - **The API console's key expires after 24 hours.** It travels unprotected on the home network; an old console key stops working 24 hours after the update (ADR-040).
 - **Find my controller:** the app's pairing screen looks for the controller in the address ranges homes use, instead of typing its address.
+- **Turn off all from Home:** tap "7 lights on", "3 AC on" or "4 blinds open", then *Turn off all* / *Close all* in the list, with a confirm tap.
 - **Sign in with Apple**, with the owner's approval for a join whose email does not match the invitation (Apple can hide the email), and Apple's account notifications (ADR-041).
 
 ## Later
