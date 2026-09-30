@@ -33,6 +33,8 @@ local ALGORITHMS = {
 -- the first start of 1.3.0 (store version 4), like the ones it pairs now.
 local CONSOLE_NAME = "DirectorLink Console"
 local CONSOLE_SECONDS = 24 * 60 * 60
+local STORE_VERSION = 4
+Keys.STORE_VERSION = STORE_VERSION
 
 local state = {
     keys = {},
@@ -120,8 +122,8 @@ local function lockFor(secret)
     return ok and lock or nil
 end
 
-local function addLoaded(key, hash, alg, lock)
-    state.keys[#state.keys + 1] = {
+local function loaded(key, hash, alg, lock)
+    return {
         id = key.id,
         name = tostring(key.name or "API key"),
         -- Keys from before roles existed (0.6 and older) keep full access.
@@ -135,6 +137,10 @@ local function addLoaded(key, hash, alg, lock)
         -- When it stops working (os.time), or nil for never (ADR-040).
         expires = tonumber(key.expires),
     }
+end
+
+local function addLoaded(key, hash, alg, lock)
+    state.keys[#state.keys + 1] = loaded(key, hash, alg, lock)
 end
 
 -- Removes the keys whose expiry has passed and tells the driver (Keys.onExpired): their
@@ -166,8 +172,8 @@ function Keys.onExpired(callback)
 end
 
 -- The console's keys from before 1.3.0 (a store before version 4) expire a day from now.
-local function expireOldConsoleKeys(now)
-    for _, key in ipairs(state.keys) do
+local function expireOldConsoleKeys(now, keys)
+    for _, key in ipairs(keys or state.keys) do
         if key.name == CONSOLE_NAME and not key.expires then
             key.expires = now + CONSOLE_SECONDS
         end
@@ -198,7 +204,7 @@ function Keys.load()
     state.keys = {}
     state.lastUsed = {}
 
-    local stored, form = Store.read(STORE_KEY, false)
+    local data, form = Store.read(STORE_KEY, false)
     -- A store Director could not read this time may still hold keys: until one is saved again,
     -- the list is not known to be complete (Keys.complete).
     state.complete = form ~= "unreadable"
@@ -211,12 +217,8 @@ function Keys.load()
         end
         return #state.keys, form, oldForm
     end
-    for _, key in ipairs(Store.items(stored and stored.keys)) do
-        if type(key) == "table" and type(key.id) == "string" and type(key.hash) == "string" and algorithmNamed(key.alg) then
-            addLoaded(key, key.hash, key.alg, key.lock)
-        end
-    end
-    local version = type(stored) == "table" and tonumber(stored.version) or 0
+    state.keys = Keys.read(data)
+    local version = type(data) == "table" and tonumber(data.version) or 0
     if form ~= "unreadable" and version < 4 then
         -- Once, when 1.3.0 first starts: the store is version 4 from then on.
         expireOldConsoleKeys(now)
@@ -227,6 +229,56 @@ function Keys.load()
     end
     -- Keys that expired meanwhile go at the first look at the keys (Keys.onExpired is set by then).
     return #state.keys, form
+end
+
+-- The keys of a stored record ({ version, keys }, as the store or a backup holds them), each read
+-- as the store's are; the ones that cannot be used are left out. From a store before version 4,
+-- the console's keys expire a day from now. Returns them and how many were left out.
+function Keys.read(data)
+    local keys, dropped = {}, 0
+    for _, key in ipairs(Store.items(type(data) == "table" and data.keys or nil)) do
+        if type(key) == "table" and type(key.id) == "string" and type(key.hash) == "string" and algorithmNamed(key.alg) then
+            keys[#keys + 1] = loaded(key, key.hash, key.alg, key.lock)
+        else
+            dropped = dropped + 1
+        end
+    end
+    if (type(data) == "table" and tonumber(data.version) or 0) < STORE_VERSION then
+        expireOldConsoleKeys(os.time(), keys)
+    end
+    return keys, dropped
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the keys as save() stores them: each key's hash and
+-- lock key, never a key itself.
+function Keys.backup()
+    local records = Json.array()
+    for _, key in ipairs(state.keys) do
+        records[#records + 1] = {
+            id = key.id,
+            name = key.name,
+            role = key.role,
+            alg = key.alg,
+            hash = key.hash,
+            lock = key.lock,
+            created_at = key.created_at,
+            profile = key.profile,
+            expires = key.expires,
+        }
+    end
+    return { version = STORE_VERSION, keys = records }
+end
+
+-- Replaces every key with the ones of `data`, read as Keys.read reads them. Returns true once
+-- saved; the keys are the new ones either way (a restore that fails puts the old ones back so).
+function Keys.restore(data)
+    local keys = Keys.read(data)
+    local used = {}
+    for _, key in ipairs(keys) do
+        used[key.id] = state.lastUsed[key.id]
+    end
+    state.keys, state.lastUsed = keys, used
+    return save()
 end
 
 function Keys.count()

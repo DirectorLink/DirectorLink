@@ -603,6 +603,39 @@ def scenario(client, bridge):
     client.key = admin_key
     client.check("DELETE", f"/v1/api-keys/{viewer['id']}", 204)
 
+    # Backups (1.4.0, ADR-042): for admins, only in sealed requests. The document goes back in parts,
+    # is checked (nothing changes) and restored: here the one just made, so the fake home stays as it is.
+    clear = client.check("GET", "/v1/backup", 403)
+    if clear["code"] != "SEALED_REQUEST_REQUIRED":
+        fail(f"GET /v1/backup in the clear should be refused with SEALED_REQUEST_REQUIRED: {clear}")
+    document = client.check_sealed(bridge, "GET", "/v1/backup", 200)
+    if not document["sections"]["scenes"]["scenes"] or document["sections"]["keys"]["keys"][0].get("hash") is None:
+        fail(f"GET /v1/backup should hold the scenes and the keys' hashes: {sorted(document['sections'])}")
+    text = json.dumps(document)
+    half = len(text) // 2
+    client.check("POST", "/v1/restore/parts", 403, body={"index": 0, "count": 1, "text": text})
+    first = client.check_sealed(bridge, "POST", "/v1/restore/parts", 200, body={"index": 0, "count": 2, "text": text[:half]})
+    upload = first["upload"]
+    client.check_sealed(bridge, "POST", "/v1/restore/parts", 400, body={"upload": upload, "index": 2, "count": 2, "text": "x"})
+    client.check_sealed(bridge, "POST", "/v1/restore/parts", 404, body={"upload": "0" * 16, "index": 1, "count": 2, "text": "x"})
+    if client.check_sealed(bridge, "POST", "/v1/restore", 409, body={"upload": upload})["code"] != "UPLOAD_INCOMPLETE":
+        fail("POST /v1/restore with a part still to come should be UPLOAD_INCOMPLETE")
+    client.check_sealed(bridge, "POST", "/v1/restore/parts", 200, body={"upload": upload, "index": 1, "count": 2, "text": text[half:]})
+    check = client.check_sealed(bridge, "POST", "/v1/restore", 200, body={"upload": upload})
+    counts = check["restore"]["counts"]
+    if (check["dry_run"], counts["scenes"], check["restore"]["keys"]["yours"], check["restore"]["references"]["unmatched_count"]) != (
+            True, len(document["sections"]["scenes"]["scenes"]), "in_backup", 0):
+        fail(f"POST /v1/restore should check the backup just made without a change: {check}")
+    client.check_sealed(bridge, "POST", "/v1/restore", 422, body={"document": {"format": "something else"}})
+    client.check_sealed(bridge, "POST", "/v1/restore", 409, body={"document": dict(document, format_version=99)})
+    client.check_sealed(bridge, "POST", "/v1/restore", 404, body={"upload": "0" * 16})
+    client.check_sealed(bridge, "POST", "/v1/restore", 400, body={"upload": upload, "dry_run": "yes"})
+    client.check("POST", "/v1/restore", 403, body={"upload": upload})
+    restored = client.check_sealed(bridge, "POST", "/v1/restore", 200, body={"upload": upload, "dry_run": False})
+    if restored["dry_run"] is not False or not restored.get("restored_at"):
+        fail(f"POST /v1/restore with dry_run false should restore: {restored}")
+    client.check("GET", "/v1/scenes", 200)
+
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
     info = client.check("GET", "/v1/sealed", 200, auth=False)

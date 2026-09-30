@@ -199,12 +199,10 @@ local function loadStep(item)
     return { type = item.type, room_id = roomId, device_ids = ids, set = set }
 end
 
--- Returns how many scenes there are and how the store came back ("json", "missing", "unreadable").
-function Scenes.load()
-    state.scenes = {}
-    local data, form = Store.read(STORE_KEY, false)
-    state.complete = form ~= "unreadable"
-    local dropped = 0
+-- The scenes of a stored record ({ version, scenes }, as the store or a backup holds them), each
+-- checked again. Returns them, how many of their steps were left out and how many scenes.
+function Scenes.read(data)
+    local scenes, dropped, droppedScenes = {}, 0, 0
     for _, item in ipairs(Store.items(type(data) == "table" and data.scenes or nil)) do
         if type(item) == "table" and type(item.id) == "string" and item.id:match("^[%da-f]+$") and #item.id == 8 and type(item.name) == "string" then
             local steps = {}
@@ -216,8 +214,10 @@ function Scenes.load()
                     dropped = dropped + 1
                 end
             end
-            if #state.scenes < Scenes.MAX_SCENES then
-                state.scenes[#state.scenes + 1] = {
+            if #scenes >= Scenes.MAX_SCENES then
+                droppedScenes = droppedScenes + 1
+            else
+                scenes[#scenes + 1] = {
                     id = item.id,
                     name = item.name,
                     icon = Scenes.ICONS[item.icon] and item.icon or "bulb",
@@ -228,12 +228,43 @@ function Scenes.load()
                     version = isWhole(tonumber(item.version), 1, math.huge) and tonumber(item.version) or 1,
                 }
             end
+        else
+            droppedScenes = droppedScenes + 1
         end
     end
+    return scenes, dropped, droppedScenes
+end
+
+-- Returns how many scenes there are and how the store came back ("json", "missing", "unreadable").
+function Scenes.load()
+    local data, form = Store.read(STORE_KEY, false)
+    state.complete = form ~= "unreadable"
+    local dropped
+    state.scenes, dropped = Scenes.read(data)
     if dropped > 0 then
         Log.warn("scenes", "stored scene steps that are not valid were left out", { steps = dropped })
     end
     return #state.scenes, form
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the scenes as the store keeps them.
+function Scenes.backup()
+    local records = Json.array()
+    for _, scene in ipairs(state.scenes) do
+        records[#records + 1] = copy(scene)
+    end
+    return { version = 1, scenes = records }
+end
+
+-- Replaces every scene with the ones of `data`, read as the store's are (a store that could not be
+-- read at start is overwritten: a restore replaces everything). Returns true once saved.
+function Scenes.restore(data)
+    state.scenes = Scenes.read(data)
+    local ok = save()
+    if ok then
+        state.complete = true
+    end
+    return ok
 end
 
 -- False after the stored scenes could not be read at start (they may come back at the next one).
