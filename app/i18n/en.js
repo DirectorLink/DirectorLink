@@ -93,6 +93,15 @@ export default {
       keyLimit:
         "DirectorLink already has as many access keys as it can hold. Remove a device you no longer use (API console → Keys), then pair again.",
       unavailable: "Pairing isn’t available right now — DirectorLink may still be starting. Try again in a minute.",
+      sessionExpired: "Pairing took too long. Try again.",
+      notConfirmed:
+        "The controller at this address didn’t prove it knows the code, so nothing was paired. Check the address and try again. If it happens again, someone on your network may be in the way.",
+    },
+    // DirectorLink before 1.3.0 would get the code unprotected (ADR-039).
+    unprotected: {
+      text: "This controller runs an older DirectorLink. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. Update DirectorLink in Composer to pair safely.",
+      pairAnyway: "Pair anyway",
+      cancel: "Cancel",
     },
     lanNote:
       "The app talks to your controller directly over your home network. If the browser asks to access devices on your local network, allow it.",
@@ -812,6 +821,8 @@ export default {
     noAccount: "No account seen",
     lastUsed: "used {time}",
     neverUsed: "not used yet",
+    keyExpires: "expires {time}",
+    keyExpired: "expired",
     roleFor: "Access of {name}",
     roleConfirm: "Change “{name}” to {role}?",
     roleConfirmAdmin: "Change “{name}” to {role}? It is no longer an admin, and the invitations it made are revoked.",

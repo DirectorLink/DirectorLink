@@ -8,6 +8,7 @@
 --   in:  "seal <hex JSON { key, key_id, request }>\n" seals a request at home, as the app does;
 --        out: "SEALED <hex JSON envelope>\n"
 --   in:  "open <hex JSON { key, envelope }>\n" opens a sealed answer; out: "OPENED <hex JSON>\n"
+--        (with "isk" in hex instead of "key": the answer of a pairing with CPace)
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -204,7 +205,8 @@ local function command(line)
     local opening = line:match("^open (%x+)$")
     if opening then
         local asked = Json.decode(fromHex(opening))
-        return "OPENED " .. toHex(Lock.open(Lock.deviceKey(asked.key), asked.envelope, "res") or "null")
+        local lockKey = asked.isk and Lock.cpaceKey(asked.isk) or Lock.deviceKey(asked.key)
+        return "OPENED " .. toHex(Lock.open(lockKey, asked.envelope, "res") or "null")
     end
     return nil
 end

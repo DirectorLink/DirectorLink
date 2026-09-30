@@ -104,6 +104,11 @@ class Bridge:
         asked = json.dumps({"key": key, "envelope": envelope})
         return json.loads(bytes.fromhex(self._ask(f"open {asked.encode().hex()}", "OPENED")))
 
+    def open_pairing(self, isk, envelope):
+        """The new key inside the sealed answer of a pairing with CPace (the ISK, bytes), or None."""
+        asked = json.dumps({"isk": isk.hex(), "envelope": envelope})
+        return json.loads(bytes.fromhex(self._ask(f"open {asked.encode().hex()}", "OPENED")))
+
 
 def make_handler(bridge):
     class Handler(socketserver.BaseRequestHandler):

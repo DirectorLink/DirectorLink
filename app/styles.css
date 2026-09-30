@@ -2426,6 +2426,19 @@ input[type="text"].code-input {
   margin-block-start: 4px;
 }
 
+/* DirectorLink before 1.3.0 would get the code unprotected: Pair anyway or Cancel (connect.js). */
+.connect-unprotected p {
+  margin: 0 0 8px;
+}
+
+.connect-unprotected .button {
+  margin-block-start: 0;
+}
+
+.connect-unprotected .button-danger {
+  background: var(--card);
+}
+
 /* ---- Forms --------------------------------------------------------------------------------- */
 
 .field-label {
