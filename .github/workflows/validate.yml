@@ -78,3 +78,13 @@ jobs:
 
       - name: Run app tests (offline service worker)
         run: node --test tests/app/*.test.mjs
+
+      # The cloud Worker end to end under `wrangler dev --local` (tests/cloud/worker.mjs), with fake
+      # Google, Apple and controllers, all on this machine; no secrets. npx fetches the pinned
+      # wrangler once, before the test files start their Workers side by side.
+      - name: Fetch wrangler for the cloud tests
+        run: npx --yes wrangler@4.143.0 --version
+
+      - name: Run cloud tests
+        timeout-minutes: 20
+        run: node --test tests/cloud/*.test.mjs
