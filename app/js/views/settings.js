@@ -18,6 +18,7 @@ import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAn
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
+import { backupPanel } from "./backup.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { chip, stepper } from "./schedules.js";
 import { updateFact, updatePanel } from "./updates.js";
@@ -900,7 +901,9 @@ function controllerSection(navigate) {
             t("settings.controller.forget")
           )
         : null
-    )
+    ),
+    // Admins: everything DirectorLink keeps, as a file locked with a password (ADR-042).
+    backupPanel()
   );
 }
 

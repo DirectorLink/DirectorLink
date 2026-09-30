@@ -2514,6 +2514,7 @@ input[type="text"].code-input {
 
 input[type="text"],
 input[type="email"],
+input[type="password"],
 select {
   width: 100%;
   min-height: 48px;
@@ -2527,6 +2528,7 @@ select {
 
 input[type="text"]:focus-visible,
 input[type="email"]:focus-visible,
+input[type="password"]:focus-visible,
 select:focus-visible {
   outline-offset: 0;
   border-color: var(--primary);
@@ -2553,6 +2555,64 @@ input::placeholder {
 }
 
 /* ---- Settings ------------------------------------------------------------------------------ */
+
+/* Settings → Controller → Backup (js/views/backup.js). */
+.backup,
+.backup-form,
+.backup-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.backup {
+  padding-block-start: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.backup input[type="file"] {
+  max-width: 100%;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.backup-heading {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.backup-notes,
+.backup-references ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-inline-start: 20px;
+  font-size: 14px;
+}
+
+.backup-references,
+.backup-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.backup-references li,
+.backup-composer dd {
+  overflow-wrap: anywhere;
+}
+
+/* A property's name, then how the backup and Composer have it, each on its own line. */
+.backup-composer .fact {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.backup-composer .fact dd {
+  text-align: start;
+}
 
 .settings {
   display: grid;
