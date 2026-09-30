@@ -1,9 +1,10 @@
 # Accounts and end-to-end encrypted remote access
 
-**Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google. Sign in with
-Apple is built in the cloud and the app (`cloud/src/apple.js`), and is switched on in the app once
-its keys are set up (cloud/README.md). 1.0.0 seals the app's requests on the home network too,
-pairs with a key exchange, and lets the controller register its own invitations (ADR-032).** The
+**Status: approved on 2026-09-27 (ADR-029); built in DirectorLink 0.10.0 with Google. 1.0.0 seals
+the app's requests on the home network too, pairs with a key exchange, and lets the controller
+register its own invitations (ADR-032). 1.3.0 switches Sign in with Apple on, lets the home's owner
+approve an invitation accepted with another email, and follows Apple's notifications about its
+accounts (ADR-041).** The
 driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
@@ -167,16 +168,53 @@ key's role), locks the answer and sends it back.
    before 1.0.0 the home's owner registers it from the app; other members are refused
    (`OWNER_ONLY`).
 4. The invited person opens the link and signs in. The cloud checks their email against the
-   invitation and refuses another one (`EMAIL_MISMATCH`). Then it passes on the person's first
-   envelope, which is locked with keys derived from `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
+   invitation; another email needs the owner's approval (*Another email: the owner approves*,
+   below). Then it passes on the person's first envelope, which is locked with keys derived from
+   `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
 5. The controller checks the invitation (unused, not expired), creates a new API key with the
    invitation's role and returns it inside the locked answer. The invitation is used up.
 
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
-still has to sign in as the invited email. Revoking or demoting an admin's key revokes the
+still has to sign in as the invited email, or be approved by the home's owner, who compares a code
+with the person they invited. Revoking or demoting an admin's key revokes the
 invitations it made, and Composer's **Revoke All API Keys** revokes every invitation and claim token
 too. The controller keeps at most 20 invitations waiting (409 `INVITATION_LIMIT_REACHED`); for
 drivers before 1.0.0, which the owner registers, the cloud allows 20 waiting per account and home.
+
+### Another email: the owner approves (1.3.0, ADR-041)
+
+Apple's Hide My Email gives DirectorLink an address nobody invited, and people have more than one
+account. So when the signed-in account's emails (its own and those of its sign-ins) do not match
+the invitation's, the app asks the home's owner instead of stopping:
+
+1. The app sends the join as always, with `ask_owner`. The cloud sends nothing to the home: it
+   records a request for that account and invitation (`join_requests`), with a random 6-digit code,
+   and answers `202`. The invited person's page shows the code and says to read it out to the owner.
+2. The owner's **People and devices** screen lists it under *Asking to join*: the name the account
+   gave (nobody checks it), its email or *hidden by Apple*, how it signs in, how old the account is,
+   when it asked, and the invitation (its email and expiry from the cloud; its role and who made it
+   from the controller, which also says whether it is still waiting there), with the code.
+3. The owner approves only when the person they invited reads out the same code, in person or on a
+   call. Anyone who got hold of the link could ask too, under any name, and would see another code.
+4. The invited person's page asks every 5 seconds (`GET /v1/join/{home_id}/{invitation_id}`). Once
+   approved, it seals a new join request with `I`, because the controller accepts a sealed request
+   only within 2 minutes, and the cloud passes it on like any other join. A refusal is final for
+   that account and invitation; the invitation's expiry ends its requests; the person may withdraw
+   a request that is still open.
+
+Only the owner decides: the cloud knows who owns a home, not the members' roles, which only the
+controller knows; letting admins approve would need the controller to vouch for them. An admin who
+is not the owner can make an invitation for the right address instead.
+
+The approval changes nothing else. `I` never leaves the device (asking needs only the ids); the
+controller still checks the envelope with `I` and uses the invitation up (so an approved account
+without the secret gets `BAD_MAC` and nothing else); the key still travels sealed, and the cloud
+keeps no envelope; the invitation stays bound to its email and works once; membership and the new
+key id are written as for any join, only while the invitation is still pending and the approval
+still stands, after the home's Durable Object has handled the controller's key messages in order.
+Revoking the invitation, or the admin key that made it, still refuses the join. An invitation takes
+at most 5 requests and a home 20 waiting ones; a request goes with its invitation, its account or a
+change of owner.
 
 ### 4. Removing someone, or a lost phone
 
@@ -226,12 +264,31 @@ ID token checks in `jwt.js`); no provider script runs in the app's pages.
 - **Separate accounts still work together:** an invitation checks the signed-in account's email,
   so a person who signs in with Apple with the same address as their Google account can accept
   one, as a second account.
+- **Only the sign-ins set up are shown:** the app shows a provider's button only when
+  `api.directorlink.io` says it is set up (`GET /auth/providers`, and `sign_in_providers` in
+  `/v1/me`), so a missing key never shows a button that fails. A device that never signed in asks
+  only when someone taps **Sign in** (or opens an invitation link); the buttons then appear, and
+  the answer is remembered. Apple's button follows Apple's Human Interface Guidelines: black, or
+  white on the dark theme, the Apple logo and *Sign in with Apple* (*Continue with Apple* to add it
+  to an account) in the system font, as large as Google's and next to it.
 - **Hide My Email:** Apple may give a relay address instead of the person's own, and keeps giving
-  it for DirectorLink. Invitations for the real address are refused there (`EMAIL_MISMATCH`); the
-  join page says to sign in with Google, to stop using Sign in with Apple for DirectorLink in the
-  Apple ID settings and sign in again choosing Share My Email (Apple asks only on the first
-  sign-in), or to ask for an invitation to the hidden address. Adding Apple to a Google account
-  avoids it.
+  it for DirectorLink. An invitation for the real address then waits for the owner's approval
+  (*Another email: the owner approves*); adding Apple to a Google account avoids it.
+- **Apple's notifications** (`POST /auth/apple/notifications`, registered on the primary App ID):
+  Apple posts a JWT signed with the keys of its ID tokens, issued by `https://appleid.apple.com` for
+  the primary App ID (`io.directorlink.app`; an ID token, which is for the Services ID, is refused).
+  *consent-revoked* (the person stopped using Sign in with Apple for DirectorLink) and
+  *account-delete* (they deleted their Apple Account) remove that Apple sign-in; an account left
+  without any is signed out everywhere. A notice never removes a home, a membership or a key. An
+  owner whose only sign-in was Apple keeps the home, its members and its invitations, and the family
+  keeps its access: after *consent-revoked* the same Apple ID signing in again gets the same account
+  back (Apple keeps the same id for the person, and the account still records it); after
+  *account-delete* nobody can sign in to it, and the owner takes the home over by claiming it again
+  at home, from a new account (which, as for any new owner, removes the old members and
+  invitations). *email-disabled* and *email-enabled* (Hide My Email forwarding off or on) only
+  update the stored address when Apple gives one. A notice dated before the person last signed in
+  with that Apple ID changes nothing (a late or replayed one), each can arrive twice, and Apple's
+  signing keys are cached (an hour; again early at most once a minute).
 - **A returning Apple ID without an email** (Apple may leave it out, e.g. after Hide My Email
   forwarding is turned off) is still found by its `sub`; a new account needs a verified email.
 - **Apple's form:** Apple posts its answer (`response_mode=form_post`, the only way it sends the name
@@ -256,13 +313,16 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   it is accepted; an expired one a day after its expiry (daily cron). When its email's account, its
   creator or the home's owner goes, a pending invitation keeps only its id until then, so that it
   cannot be registered again for another email.
+- `join_requests`: home, invitation id, the account asking, its code, pending, approved or refused,
+  when (`migrations/0005`). They go with their invitation, their account or a change of owner.
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 
 After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie for
 `api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days and can be ended from the
 app, on this device or on every device. Expired sessions and unfinished sign-ins are deleted every
-day. Deleting the account deletes its sessions, memberships, owned homes and invitations.
+day. Deleting the account deletes its sessions, memberships, owned homes, invitations and requests
+to join.
 
 ## Relay protocol, version 1
 
@@ -318,7 +378,7 @@ from a computer or an Android phone; the owner's iPhone then joins as *my other 
 1. **Driver** (0.10.0): lock keys, envelopes over the relay, claim and invitations, with tests
    against the fake Director, and a self-test of `C4:Encrypt` and `C4:HMAC` at every start.
 2. **Cloud** (0.10.0): Google sign-in, sessions, homes, members, invitations and routing. Apple
-   is built since (`cloud/src/apple.js`), off in the app until its keys are set up.
+   was built since (`cloud/src/apple.js`) and is on from 1.3.0.
 3. **App** (0.10.0): sign-in, linking the home, automatic choice between home and remote
    connection, Add my other device and Invite (link and QR), iPhone and iPad. People and devices
    (members and their keys) followed in 0.11.0.
@@ -335,14 +395,18 @@ Sign-in details:
   `SameSite=Strict`, 30 days); D1 keeps only its SHA-256. Sign-out and account deletion are
   accepted only from the app's own origins.
 
-Needed later, for Apple: the Services ID, Team ID, Key ID and `.p8` key, plus domain verification
-of directorlink.io.
+Apple (1.3.0): the Services ID `io.directorlink.signin`, Team ID `VA4Q88T4RC`, Key ID
+`Q3WXX95K83` and the primary App ID `io.directorlink.app` are public settings; the `.p8` key is the
+Worker secret `APPLE_PRIVATE_KEY`. The return URL is `https://api.directorlink.io/auth/apple/callback`
+and the notification endpoint `https://api.directorlink.io/auth/apple/notifications`.
 
 ## Known issues
 
-- An invitation must be accepted with the email it was made for; owner approval of another address
-  comes later.
-- Sign in with Apple is off in the app until its keys are set up.
+- An owner's approval is only as good as their check of the code: the name an account gives is not
+  checked by anyone. Like the email check before it, the approval is enforced by the cloud; the
+  controller still checks the invitation's secret.
+- The invited person's page must stay open (or be opened again from the link) to finish joining
+  once the owner has approved.
 
 ## Decisions
 
@@ -353,7 +417,8 @@ of directorlink.io.
 4. Everyone else joins by an invitation link or QR code that the admin shares. The secret sits
    after `#`, and the invitation is bound to an email, works once and lasts 7 days (10 minutes for
    *my other device*). Owner approval of email mismatches comes later.
-5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works.
+5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works
+   (on since 1.3.0).
 6. The cloud stores only accounts, homes, members and pending invitations.
 7. Home-network use without an account stays.
 8. The version 0 relayed requests, the test endpoints and the viewer-only rule are gone.
@@ -361,3 +426,7 @@ of directorlink.io.
    exchange, and never falls back to sending its key once a controller sealed; pairing works only
    on the home network; the controller registers its own invitations; the home's owner replaces
    the home secret, from the home network; an account can sign out everywhere.
+10. (1.3.0, ADR-041) Sign in with Apple is on, and the app shows only the sign-ins the cloud has set
+    up. An invitation accepted with another email waits for the home's owner, who compares a code
+    with the person they invited. Apple's notifications remove an Apple sign-in and end the
+    sessions of an account left without one, but never touch a home or a membership.

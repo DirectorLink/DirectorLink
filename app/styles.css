@@ -661,6 +661,18 @@ img {
   margin-top: 6px;
 }
 
+/* A request to join (ADR-041): the code the owner compares with the person they invited. */
+.access-code {
+  margin-top: 4px;
+  font-size: 0.875rem;
+}
+
+.access-code strong {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  unicode-bidi: isolate;
+}
+
 .access-actions {
   display: flex;
   align-items: center;
@@ -679,12 +691,31 @@ select:disabled {
   opacity: 0.6;
 }
 
-/* Sign in with Apple: black, or white on a dark theme (Apple's button styles), in banners too. */
+/* Sign in with Apple, as Apple's Human Interface Guidelines ask: black, or white on a dark theme,
+   in banners too; the Apple logo and the title in the same color, the system font, at least as
+   large as the other sign-in buttons (44 px high, at least 140 px wide). */
 .button-apple,
 .banner .button-apple {
   background: #000;
   color: #fff;
   border-color: #000;
+  min-width: 140px;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 500;
+}
+
+.button-apple .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Settings → Account: the sign-in buttons share one width, side by side or one under the other. */
+.sign-in-buttons {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+  flex: 1 1 100%;
+  max-width: 440px;
 }
 
 :root[data-theme="dark"] .button-apple,
@@ -2249,6 +2280,17 @@ select:disabled {
 .connect-footnote {
   font-size: 13px;
   padding-inline: 4px;
+}
+
+/* The code read out to the home's owner while an invitation waits for their approval. */
+.join-code {
+  margin: 4px 0;
+  font-family: var(--font-head);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .connect-account {

@@ -259,13 +259,19 @@ export function registerInvitation(homeId, invitation, email) {
 }
 
 // Accepts an invitation (link: #/join/<home>.<invitation>.<secret>); returns the new key, with
-// `member`: whether the account now belongs to the home.
+// `member`: whether the account now belongs to the home. When the invitation is for another email,
+// the home's owner is asked to approve this account (ADR-041): then { waiting } (the request:
+// status, code, expires_at), and the app asks again once the owner has approved it. The secret
+// never leaves this device; each attempt seals a new request with it.
 export async function acceptInvitation({ home, invitation, secret }, name) {
   const lock = await invitationLock(secret);
   const id = requestId();
   const plaintext = JSON.stringify({ id, ts: Math.floor(Date.now() / 1000), method: "POST", path: "/v1/auth/join", body: { name } });
   const envelope = await seal(lock, { home, key: invitation }, "req", plaintext);
-  const reply = await post("/v1/join", { home_id: home, invitation_id: invitation, envelope });
+  const reply = await post("/v1/join", { home_id: home, invitation_id: invitation, envelope, ask_owner: true });
+  if (!reply?.envelope && typeof reply?.status === "string") {
+    return { waiting: reply };
+  }
   const answer = await openAnswer(lock, reply.envelope, id);
   if (answer.status !== 201) {
     let problem = null;
@@ -277,6 +283,42 @@ export async function acceptInvitation({ home, invitation, secret }, name) {
     throw new RemoteError(problem?.code || "JOIN_REFUSED", problem?.detail || `The home refused the invitation (${answer.status})`);
   }
   return { ...JSON.parse(answer.text), member: reply.member !== false };
+}
+
+// This account's request to join with an invitation for another email, while the owner decides:
+// { outcome, request }. `outcome`: "wait" (pending), "finish" (approved: accept it again),
+// "refused", "expired" (the invitation ran out first), "gone" (used, revoked or expired) or "none"
+// (no request, e.g. withdrawn). A network failure throws: the app asks again later.
+export async function checkJoinRequest({ home, invitation }) {
+  let request;
+  try {
+    request = await send("GET", `/v1/join/${home}/${invitation}`);
+  } catch (error) {
+    if (error instanceof RemoteError && error.code === "INVITATION_NOT_FOUND") return { outcome: "gone", request: null };
+    if (error instanceof RemoteError && error.code === "NOT_FOUND") return { outcome: "none", request: null };
+    throw error;
+  }
+  const outcome = { pending: "wait", approved: "finish", refused: "refused", expired: "expired" }[request?.status] || "wait";
+  return { outcome, request };
+}
+
+// A request's code as it is shown, "123 456" (left to right in both languages).
+export function joinCodeText(code) {
+  return /^[0-9]{6}$/.test(code || "") ? `${code.slice(0, 3)} ${code.slice(3)}` : "";
+}
+
+export function withdrawJoinRequest({ home, invitation }) {
+  return send("DELETE", `/v1/join/${home}/${invitation}`);
+}
+
+// The owner's view: accounts asking to join the home with an invitation for another email.
+export function listJoinRequests(homeId) {
+  return send("GET", `/v1/homes/${homeId}/join-requests`);
+}
+
+// `decision`: "approve" or "refuse".
+export function decideJoinRequest(homeId, requestId, decision) {
+  return post(`/v1/homes/${homeId}/join-requests/${requestId}`, { decision });
 }
 
 // The invitation link a person or device opens. Everything after "#" stays in the browser.

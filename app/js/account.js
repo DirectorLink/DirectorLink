@@ -1,7 +1,8 @@
-// The DirectorLink account (docs/ACCOUNTS.md): signing in with Google through api.directorlink.io.
-// The session is a cookie of api.directorlink.io that this page cannot read; the app only asks
-// who is signed in. A device that never signed in never contacts the account server: using the
-// app on the home network stays between this device and the controller.
+// The DirectorLink account (docs/ACCOUNTS.md): signing in with Google or Apple through
+// api.directorlink.io. The session is a cookie of api.directorlink.io that this page cannot read;
+// the app only asks who is signed in. A device that never signed in contacts the account server
+// only once someone chooses to sign in: using the app on the home network stays between this
+// device and the controller.
 
 import { notify, state } from "./state.js";
 
@@ -9,6 +10,8 @@ export const ACCOUNTS_API = /^(localhost|127\.0\.0\.1)$/.test(window.location.ho
 
 // Set after a sign-in on this device, so the app knows to ask for the account on the next start.
 const SIGNED_IN_KEY = "directorlink.account";
+// The sign-ins the account server has set up, as it last said (a JSON list).
+const PROVIDERS_KEY = "directorlink.providers";
 const TIMEOUT_MS = 8000;
 
 function remember(on) {
@@ -50,7 +53,10 @@ export async function loadAccount() {
     const response = await call("/v1/me");
     if (response.status === 200) {
       remember(true);
-      set({ status: "signed-in", user: await response.json(), notice: state.account.notice });
+      const user = await response.json();
+      // Servers before 1.3.0 do not say; they had only Google.
+      learnProviders(Array.isArray(user?.sign_in_providers) ? user.sign_in_providers : ["google"]);
+      set({ status: "signed-in", user, notice: state.account.notice });
     } else if (response.status === 401) {
       remember(false);
       set({ status: "signed-out", notice: state.account.notice });
@@ -79,9 +85,71 @@ export function startAccount() {
   }
 }
 
-// The sign-in providers the app offers; each must be set up on api.directorlink.io
-// (cloud/README.md). Apple is added once its keys are there.
-export const SIGN_IN_PROVIDERS = ["google"];
+// The sign-in providers the app can offer. Each shows only while api.directorlink.io says it is set
+// up (cloud/README.md), so a sign-in whose key is missing there never shows a button that fails.
+export const SIGN_IN_PROVIDERS = ["google", "apple"];
+
+let providers = storedProviders(); // what the account server said, or null: not asked yet
+let providersState = "idle"; // idle · loading · failed
+let providersRefreshed = false;
+
+function storedProviders() {
+  try {
+    const value = JSON.parse(localStorage.getItem(PROVIDERS_KEY) || "null");
+    return Array.isArray(value) ? value.filter((provider) => SIGN_IN_PROVIDERS.includes(provider)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function learnProviders(list) {
+  providers = SIGN_IN_PROVIDERS.filter((provider) => list.includes(provider));
+  providersRefreshed = true;
+  try {
+    localStorage.setItem(PROVIDERS_KEY, JSON.stringify(providers));
+  } catch {
+    // Blocked storage: asked again next time.
+  }
+}
+
+// The sign-in buttons to show, in order; null until the account server has said which it has set
+// up.
+export function signInProviders() {
+  return providers;
+}
+
+// "loading" while the account server is asked, "failed" when it could not be reached, else "idle".
+export function providersStatus() {
+  return providersState;
+}
+
+// Asks the account server which sign-ins it has set up (no cookie is sent). Called when someone
+// chooses to sign in; a device that has asked before gets fresh answers once per start.
+export async function loadProviders() {
+  if (providersState === "loading") return;
+  providersState = "loading";
+  providersRefreshed = true;
+  notify();
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const response = await fetch(`${ACCOUNTS_API}/auth/providers`, { credentials: "omit", cache: "no-store", signal: controller.signal });
+    const data = response.ok ? await response.json() : null;
+    if (!Array.isArray(data?.providers)) throw new Error(`HTTP ${response.status}`);
+    learnProviders(data.providers);
+    providersState = "idle";
+  } catch {
+    providersState = "failed";
+  } finally {
+    window.clearTimeout(timer);
+  }
+  notify();
+}
+
+// While sign-in buttons are shown from what the server said before, it is asked again once.
+export function refreshProviders() {
+  if (providers && !providersRefreshed) loadProviders();
+}
 
 // `hash`: the screen to come back to (Settings, or Home when signing in from the connect screen).
 // `link`: add this provider to the signed-in account instead (Settings → Account).

@@ -16,7 +16,7 @@ globalThis.localStorage = {
   removeItem: (key) => stored.delete(key),
 };
 
-const { RemoteError, acceptInvitation, invitationLink, lanCall, parseInvitation, remoteCall, saveRemote } = await import("../../app/js/remote.js");
+const { RemoteError, acceptInvitation, checkJoinRequest, invitationLink, joinCodeText, lanCall, parseInvitation, remoteCall, saveRemote } = await import("../../app/js/remote.js");
 
 const HOME = "0123456789abcdef0123456789abcdef";
 const INVITATION = "89abcdef";
@@ -71,4 +71,59 @@ test("invitation links carry the home, the invitation and its secret after #", (
   assert.equal(link, `https://app.directorlink.io/#/join/${HOME}.${INVITATION}.${SECRET}`);
   assert.deepEqual(parseInvitation(link.split("#/join/")[1]), { home: HOME, invitation: INVITATION, secret: SECRET });
   assert.equal(parseInvitation(`${HOME}.${INVITATION}`), null);
+});
+
+// An invitation for another email (ADR-041): the home's owner approves the account first.
+test("accepting an invitation for another email asks the home's owner, and waits", async () => {
+  let sent = null;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return answer(202, { status: "pending", code: "042917", requested_at: "2026-09-30T10:00:00.000Z", decided_at: null, expires_at: "2026-10-07T10:00:00.000Z" });
+  };
+  const result = await acceptInvitation({ home: HOME, invitation: INVITATION, secret: SECRET }, "Test");
+  assert.equal(sent.ask_owner, true, "the app asks instead of stopping at EMAIL_MISMATCH");
+  assert.equal(sent.invitation_id, INVITATION);
+  assert.ok(sent.envelope?.mac, "sealed as always; the secret itself is never sent");
+  assert.doesNotMatch(JSON.stringify(sent), new RegExp(SECRET));
+  assert.deepEqual(result, { waiting: { status: "pending", code: "042917", requested_at: "2026-09-30T10:00:00.000Z", decided_at: null, expires_at: "2026-10-07T10:00:00.000Z" } });
+  assert.equal(joinCodeText("042917"), "042 917");
+  assert.equal(joinCodeText("12345"), "");
+});
+
+test("while it waits, the app reads the owner's answer from its request", async () => {
+  const invitation = { home: HOME, invitation: INVITATION };
+  const reply = (status, body) => {
+    globalThis.fetch = async (url, init) => {
+      assert.equal(new URL(url).pathname, `/v1/join/${HOME}/${INVITATION}`);
+      assert.equal(init.method, "GET");
+      return answer(status, body);
+    };
+  };
+  for (const [status, outcome] of [
+    ["pending", "wait"],
+    ["approved", "finish"],
+    ["refused", "refused"],
+    ["expired", "expired"],
+  ]) {
+    reply(200, { status, code: "042917", expires_at: "2026-10-07T10:00:00.000Z" });
+    const result = await checkJoinRequest(invitation);
+    assert.equal(result.outcome, outcome, status);
+    assert.equal(result.request.code, "042917");
+  }
+  reply(404, { code: "INVITATION_NOT_FOUND" });
+  assert.equal((await checkJoinRequest(invitation)).outcome, "gone", "used by someone else, revoked, or expired long ago");
+  reply(404, { code: "NOT_FOUND" });
+  assert.equal((await checkJoinRequest(invitation)).outcome, "none", "withdrawn");
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  assert.ok((await checkJoinRequest(invitation).catch((error) => error)) instanceof RemoteError, "offline: asked again later");
+});
+
+test("a refusal by the home's owner keeps its code", async () => {
+  globalThis.fetch = async () => answer(403, { code: "REFUSED_BY_OWNER", detail: "The home's owner did not let this account join with this invitation" });
+  const error = await acceptInvitation({ home: HOME, invitation: INVITATION, secret: SECRET }, "Test").catch((failure) => failure);
+  assert.ok(error instanceof RemoteError);
+  assert.equal(error.code, "REFUSED_BY_OWNER");
+  assert.equal(error.httpStatus, 403);
 });
