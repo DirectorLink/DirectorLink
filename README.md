@@ -106,7 +106,7 @@ If the status shows an error, open `GET /v1/logs` (see below) or capture the Dir
 
 ### 4. Pair the owner's device
 
-Open **https://app.directorlink.io**, enter the controller IP and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
+Open **https://app.directorlink.io**, enter the controller IP (or tap **Find my controller**, in Chromium browsers on computers and Android) and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
 
 > **Pair from a computer or an Android phone, not from an iPhone or iPad.** On iPhone and iPad every browser (Safari, Chrome, Edge, …) uses Apple's WebKit, which blocks a secure page such as app.directorlink.io from reaching the controller's plain `http://` address on the home network, and offers no permission to allow it. Pairing cannot work there. iPhones and iPads join through the account instead: on a paired computer at home, sign in and use Settings → Account → **Link this home**, then **Add my other device**, and scan the QR code with the iPhone.
 

@@ -125,9 +125,12 @@ either:
   name or `expires_in` on the way makes the exchange fail. Shares of low order are refused. An
   exchange lasts 60 seconds and works once, from the device that began it.
 - **Older controllers get the code only when asked.** DirectorLink before 1.3.0 refuses the field
-  `cpace` (so does a controller whose lock failed its self-test), and nothing about the code has
-  been sent. The app then warns that the code would travel over the network unprotected and that
-  DirectorLink should be updated in Composer; only **Pair anyway** sends it, the old way: with the
+  `cpace`, and a controller whose lock failed its self-test answers `503 LOCK_UNAVAILABLE`; either
+  way nothing about the code has been sent. The app then warns that the code would travel over the
+  network unprotected, and says why: DirectorLink should be updated in Composer, or (the lock) there
+  is nothing to update and the installer should look at DirectorLink's log. The warning belongs to
+  the controller it was about: another address typed or found clears it. Only **Pair anyway** sends
+  the code, to that controller, the old way: with the
   app's X25519 public key, the driver answering with its own public key and the new key sealed
   with `HMAC-SHA256(shared secret, "DirectorLink pair v1|" + code + "|" + app key + "|" + driver
   key)`. Someone who only listens cannot read that key, but someone in the middle can take the
@@ -235,9 +238,11 @@ without the secret gets `BAD_MAC` and nothing else); the key still travels seale
 keeps no envelope; the invitation stays bound to its email and works once; membership and the new
 key id are written as for any join, only while the invitation is still pending and the approval
 still stands, after the home's Durable Object has handled the controller's key messages in order.
-Revoking the invitation, or the admin key that made it, still refuses the join. An invitation takes
-at most 5 requests and a home 20 waiting ones; a request goes with its invitation, its account or a
-change of owner.
+Revoking the invitation, or the admin key that made it, still refuses the join. An account the
+owner refuses while the home is already making its key never gets that key (the owner sees it in
+People and devices and can remove it). An invitation takes at most 5 open requests (waiting or
+approved; a refused one still stops its own account) and a home 20 waiting ones on invitations
+that can still be accepted; a request goes with its invitation, its account or a change of owner.
 
 ### 4. Removing someone, or a lost phone
 
@@ -301,17 +306,23 @@ ID token checks in `jwt.js`); no provider script runs in the app's pages.
   Apple posts a JWT signed with the keys of its ID tokens, issued by `https://appleid.apple.com` for
   the primary App ID (`io.directorlink.app`; an ID token, which is for the Services ID, is refused).
   *consent-revoked* (the person stopped using Sign in with Apple for DirectorLink) and
-  *account-delete* (they deleted their Apple Account) remove that Apple sign-in; an account left
-  without any is signed out everywhere. A notice never removes a home, a membership or a key. An
-  owner whose only sign-in was Apple keeps the home, its members and its invitations, and the family
-  keeps its access: after *consent-revoked* the same Apple ID signing in again gets the same account
-  back (Apple keeps the same id for the person, and the account still records it); after
-  *account-delete* nobody can sign in to it, and the owner takes the home over by claiming it again
-  at home, from a new account (which, as for any new owner, removes the old members and
-  invitations). *email-disabled* and *email-enabled* (Hide My Email forwarding off or on) only
-  update the stored address when Apple gives one. A notice dated before the person last signed in
-  with that Apple ID changes nothing (a late or replayed one), each can arrive twice, and Apple's
-  signing keys are cached (an hour; again early at most once a minute).
+  *account-deleted* (they deleted their Apple Account; older documents say *account-delete*, also
+  accepted) remove that Apple sign-in; an account left without any is signed out everywhere. A
+  notice never removes a home, its members or its keys. After *consent-revoked* the account stays
+  as it was, and the same Apple ID signing in again gets it back (Apple keeps the same id for the
+  person, and the account still records it; that Apple ID cannot be added to another account
+  meanwhile, `taken`). After *account-deleted* nobody can sign in to it again, so it keeps nothing
+  of the person: an account that owns no home is deleted, as *Delete account* does; one that owns a
+  home stays so the home and its family keep working, without the person's name and email and
+  outside other homes, and the owner takes the home over by claiming it again at home, from a new
+  account (which, as for any new owner, removes the old members and invitations). An account
+  nobody can sign in to and nobody signed in to for 90 days goes the same way (the daily clean-up).
+  *email-disabled* and *email-enabled* (Hide My Email forwarding off or on) only update the stored
+  address when Apple gives one. A notice dated before the person last signed in with that Apple ID
+  changes nothing (a late or replayed one), and each can arrive twice. Apple's signing keys are
+  cached for an hour and read again early, for an unknown key id, at most once a minute; tokens that
+  arrive meanwhile share one read, and a read that fails keeps the keys it had. A refused notice is
+  logged with the audience it named (an app's public id), to see which one Apple uses.
 - **A returning Apple ID without an email** (Apple may leave it out, e.g. after Hide My Email
   forwarding is turned off) is still found by its `sub`; a new account needs a verified email.
 - **Apple's form:** Apple posts its answer (`response_mode=form_post`, the only way it sends the name
@@ -439,7 +450,7 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
    A later claim from the home network moves the home to a new owner.
 4. Everyone else joins by an invitation link or QR code that the admin shares. The secret sits
    after `#`, and the invitation is bound to an email, works once and lasts 7 days (10 minutes for
-   *my other device*). Owner approval of email mismatches comes later.
+   *my other device*); since 1.3.0 the owner approves another email (ADR-041).
 5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works
    (on since 1.3.0).
 6. The cloud stores only accounts, homes, members and pending invitations.

@@ -68,6 +68,7 @@ At home the browser talks to DirectorLink directly. Remote access, when switched
 - Keys are random; Director keeps only a SHA-256 hash of each (SHA-1 where SHA-256 is missing) and, for sealed requests, each key's lock key; keys survive driver updates and restarts; listed without secrets and revocable (through the API, or all at once with a Composer action)
 - First key (0.2.0): exchange the 8-digit Composer pairing code — valid 15 minutes, rotated after use, rate-limited
 - Since 0.8.0: the owner pairs once with a pairing code created in Composer (**New Pairing Code**, valid 15 minutes, works once, only on the home network); it is the only way to a first key. Further keys are created by an admin, and family members and the owner's other devices join by invitation (0.10.0). (0.3.0–0.7.0 approved clients with a **C4Bridge Access** button instead.)
+- Since 1.3.0: the app and the API console pair with CPace, so the code never crosses the network (ADR-039); a key may expire (`expires_in`), and the console's own key lasts a day (ADR-040)
 
 ## V1 device scope
 
