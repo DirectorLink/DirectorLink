@@ -32,6 +32,7 @@ local HANDLERS = {
     schedules = require("src.api.handlers.schedules"),
     calendar = require("src.api.handlers.calendar"),
     sealed = require("src.api.handlers.sealed"),
+    backup = require("src.api.handlers.backup"),
 }
 
 local Server = {}

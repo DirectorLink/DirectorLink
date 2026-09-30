@@ -173,6 +173,26 @@ local function automationRan(event)
     end
 end
 
+-- After a restore from a backup (ADR-042): invitations and a claim token made before it go (they
+-- were for the keys and the home there were), keys get their profiles, and the calendar and what
+-- runs next are worked out again. With another home's identity, the relay connection is made again
+-- once the answer has gone out; it announces the keys then.
+local function restored(restore)
+    Invitations.revokeAll()
+    Remote.clearClaim()
+    if Keys.complete() then
+        assignProfiles()
+    end
+    publishKeyCount()
+    if restore.switching then
+        Relay.reconnect(2, "remote identity restored from a backup")
+    else
+        Relay.announceKeys()
+    end
+    shownScheduleStatus, shownCalendarStatus = nil, nil
+    calendarChanged()
+end
+
 local services = {
     registry = Registry,
     adapters = AdapterManager,
@@ -237,6 +257,10 @@ local services = {
         return { state = STATE.status, detail = STATE.detail }
     end,
     onKeysChanged = keysChanged,
+    -- A restore from a backup replaced every store (ADR-042, src/core/backup.lua).
+    onRestored = function(restore)
+        restored(restore)
+    end,
     schedulesPaused = schedulesPaused,
     onAutomation = automationRan,
     onSchedulesChanged = function()

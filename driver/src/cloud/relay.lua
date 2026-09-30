@@ -70,8 +70,9 @@ local function validSecret(value)
     return type(value) == "string" and #value == 64 and value:match("^%x+$") ~= nil
 end
 
-local function readIdentity(name, encrypted)
-    local stored, form = Store.read(name, encrypted)
+-- An identity as stored: { home_id, home_secret, next_secrets } or nil. `previous` (an identity
+-- restored from a backup, until the relay accepts it: ADR-042) is read with it, once.
+local function identityFrom(stored, nested)
     if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
         local candidates = {}
         for _, item in ipairs(type(stored.next_secrets) == "table" and stored.next_secrets or {}) do
@@ -79,9 +80,19 @@ local function readIdentity(name, encrypted)
                 candidates[#candidates + 1] = { secret = item.secret, at = tonumber(item.at) }
             end
         end
-        return { home_id = stored.home_id, home_secret = stored.home_secret, next_secrets = #candidates > 0 and candidates or nil }, form
+        return {
+            home_id = stored.home_id,
+            home_secret = stored.home_secret,
+            next_secrets = #candidates > 0 and candidates or nil,
+            previous = not nested and identityFrom(stored.previous, true) or nil,
+        }
     end
-    return nil, form
+    return nil
+end
+
+local function readIdentity(name, encrypted)
+    local stored, form = Store.read(name, encrypted)
+    return identityFrom(stored), form
 end
 
 -- The waiting replacement a connection attempt uses, if any.
@@ -277,6 +288,12 @@ local function onOpen()
     -- for approval stay for a day.
     local current = Relay.identity()
     local candidate = candidateInUse(current)
+    -- The relay knows an identity restored from a backup: it is the home's from now on (ADR-042).
+    if current.previous then
+        log("info", "the relay accepted the remote identity restored from a backup", { home_id = current.home_id, previous = current.previous.home_id })
+        current.previous = nil
+        saveIdentity(current)
+    end
     if candidate then
         current.home_secret, current.next_secrets = candidate.secret, nil
         saveIdentity(current)
@@ -324,6 +341,17 @@ local function onClose(reason, status, body)
             return
         end
         state.trying = nil
+        -- An identity restored from a backup that the relay does not know (its secret was replaced
+        -- after the backup was made): the one this controller had comes back (ADR-042).
+        if status == 401 and identity.previous then
+            local previous = identity.previous
+            state.identity = { home_id = previous.home_id, home_secret = previous.home_secret, next_secrets = previous.next_secrets }
+            saveIdentity(state.identity)
+            log("warn", "the relay refused the remote identity restored from a backup; this controller's own is back",
+                { refused = identity.home_id, home_id = previous.home_id, detail = tostring(detail) })
+            scheduleReconnect("the backup's identity was refused; using this controller's", 1)
+            return
+        end
         log("warn", "the relay refused the connection", { status = status, detail = tostring(detail) })
         scheduleReconnect("refused: " .. tostring(detail), status == 401 and Relay.REFUSED_RETRY_SECONDS or nil)
         return
@@ -457,6 +485,55 @@ function Relay.resetIdentity()
         scheduleReconnect("new remote identity", 1)
     end
     return true
+end
+
+-- The identity in use or stored, without making one when there is none yet (nil then).
+function Relay.storedIdentity()
+    return state.identity or (readIdentity(IDENTITY_KEY, false))
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the home id and its secrets, the one in use and the
+-- replacements waiting for the owner's approval (one of them may be approved later).
+function Relay.backupIdentity()
+    local identity = Relay.identity()
+    local candidates = nil
+    for _, item in ipairs(identity.next_secrets or {}) do
+        candidates = candidates or Json.array()
+        candidates[#candidates + 1] = { secret = item.secret, at = item.at }
+    end
+    return { version = 1, home_id = identity.home_id, home_secret = identity.home_secret, next_secrets = candidates }
+end
+
+-- Uses `identity` ({ home_id, home_secret, next_secrets, previous }) from now on and saves it.
+-- `previous`: the identity it replaces, used again if the relay refuses this one. Nothing happens
+-- to the connection until Relay.reconnect. Returns true once saved. nil (there was none before a
+-- restore that failed): the next use reads the store again.
+function Relay.restoreIdentity(identity)
+    state.trying = nil
+    if identity == nil then
+        state.identity = nil
+        return true
+    end
+    state.identity = identityFrom(identity)
+    return saveIdentity(state.identity)
+end
+
+-- Connects again with the identity in use then, `seconds` from now: after the answer that changed
+-- it has gone out on the connection there is now.
+function Relay.reconnect(seconds, reason)
+    if not state.enabled then
+        return
+    end
+    stopTimers()
+    pcall(function()
+        state.retry = C4:SetTimer((seconds or 1) * 1000, function()
+            state.retry = nil
+            if state.socket then
+                state.socket:close()
+            end
+            scheduleReconnect(reason or "new remote identity", 1)
+        end, false)
+    end)
 end
 
 -- options: { services, onStatus = function(text), remote = Remote.handle }

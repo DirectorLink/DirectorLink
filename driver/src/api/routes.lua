@@ -92,6 +92,11 @@ return {
     -- alarm; scripts/check_package.py fails the build if one does.
     { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
 
+    -- Everything DirectorLink keeps, for admins, only in sealed requests (ADR-042).
+    { method = "GET", path = "/v1/backup", handler = "backup.export", role = "admin" },
+    { method = "POST", path = "/v1/restore/parts", handler = "backup.part", role = "admin" },
+    { method = "POST", path = "/v1/restore", handler = "backup.restore", role = "admin" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings", role = "admin" },
