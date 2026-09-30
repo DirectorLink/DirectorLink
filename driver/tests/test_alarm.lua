@@ -223,6 +223,65 @@ function tests.through_the_account_the_alarm_comes_sealed_end_to_end()
     T.eq(refused.status, 403, "not for viewers through the account either")
 end
 
+-- Whether a home is armed must not show in the size of the sealed answer either, which the home
+-- network and the relay see (the app reads the alarm every 10 s; AES only rounds to 16 bytes): for
+-- the same partitions it is the same in every state, whatever their names, with the panel's words
+-- up to their caps and past them (then cut: whole characters, control characters made spaces).
+function tests.the_sealed_answer_has_the_same_size_in_every_state()
+    local ESCAPED = string.rep('"\\', 40)
+    local states = {
+        { PARTITION_STATE = "DISARMED_READY", AWAY_STATE = "0", HOME_STATE = "0", DISARMED_STATE = "1", ARMED_TYPE = "", ALARM_STATE = "0", ALARM_TYPE = "",
+            DELAY_TIME_REMAINING = "0", DELAY_TIME_TOTAL = "0", OPEN_ZONE_COUNT = "0", TROUBLE_TEXT = "" },
+        { PARTITION_STATE = "DISARMED_NOT_READY", OPEN_ZONE_COUNT = "1" },
+        { PARTITION_STATE = "EXIT_DELAY", DISARMED_STATE = "0", OPEN_ZONE_COUNT = "0", DELAY_TIME_TOTAL = "30", DELAY_TIME_REMAINING = "30" },
+        { PARTITION_STATE = "ARMED", AWAY_STATE = "1", ARMED_TYPE = "Away", DELAY_TIME_TOTAL = "0", DELAY_TIME_REMAINING = "0" },
+        { PARTITION_STATE = "ARMED", AWAY_STATE = "0", HOME_STATE = "1", ARMED_TYPE = "Stay" },
+        { PARTITION_STATE = "ENTRY_DELAY", DELAY_TIME_TOTAL = "20", DELAY_TIME_REMAINING = "20" },
+        { PARTITION_STATE = "ALARM", ALARM_STATE = "1", ALARM_TYPE = "Burglary", DELAY_TIME_REMAINING = "0", DELAY_TIME_TOTAL = "0" },
+        { ALARM_TYPE = "Fire", TROUBLE_TEXT = "Low battery" },
+        -- Past every cap, with what JSON escapes: quotes, backslashes, control characters.
+        { PARTITION_STATE = string.rep("VERY_LONG_", 8), HOME_STATE = "1", ARMED_TYPE = ESCAPED, ALARM_TYPE = "x" .. string.rep("שריפה", 10),
+            TROUBLE_TEXT = ESCAPED .. "\1\2\t" .. string.rep("ב", 60), OPEN_ZONE_COUNT = "123456", DELAY_TIME_REMAINING = "1e300", DELAY_TIME_TOTAL = "4000000" },
+        { PARTITION_STATE = "DISARMED_READY", AWAY_STATE = "0", HOME_STATE = "0", DISARMED_STATE = "1", ARMED_TYPE = "", ALARM_STATE = "0", ALARM_TYPE = "",
+            DELAY_TIME_REMAINING = "0", DELAY_TIME_TOTAL = "0", OPEN_ZONE_COUNT = "0", TROUBLE_TEXT = "" },
+    }
+    local Lock = require("src.cloud.lock")
+    for _, name in ipairs({ "G", "Garage 1234567", string.rep("x", 13), "מחסן" }) do
+        local mock, key, keyId = start(true, function(m)
+            m.project.devices[81].deviceName = name
+            m.project.devices[130].proxies[81].deviceName = name
+        end)
+        local _, connection = Harness.connected({ mock = mock })
+        local home = T.http(mock, "GET", "/v1/remote", { key = key }).json.home_id
+        local lock = Lock.deviceKey(key)
+        local sizes = {}
+        for index, values in ipairs(states) do
+            Mock.setPartition(mock, 81, values)
+            -- At home: the envelope in the answer to POST /v1/sealed.
+            local answer, response = sealed(mock, key, keyId, { id = string.format("size-%06d", index), method = "GET", path = "/v1/alarm" })
+            T.eq(answer.status, 200)
+            T.eq(#answer.json.partitions, 2, "the same partitions")
+            T.truthy(answer.body:match("^{.*}( *)$"), "JSON, then spaces")
+            -- Through the account: what the driver sends the relay.
+            local envelope = Lock.seal(lock, home, keyId, "req", Json.encode({ id = string.format("rsize-%06d", index), ts = os.time(), method = "GET", path = "/v1/alarm" }))
+            local reply, frame = Harness.relayRequest(mock, connection, { type = "e2e", id = string.format("relay-%06d", index), envelope = envelope })
+            T.eq(Json.decode(Json.decode(Lock.open(lock, reply.envelope, "res")).body).partitions[1].name, answer.json.partitions[1].name)
+            sizes[index] = string.format("%d/%d", #response.body, #frame.payload)
+            T.eq(sizes[index], sizes[1], name .. ", state " .. index .. ": the sizes on the home network and to the relay")
+            if values.TROUBLE_TEXT and #values.TROUBLE_TEXT > 100 then
+                -- The longest words were cut, never inside a character.
+                local garage = answer.json.partitions[answer.json.partitions[1].id == 81 and 1 or 2]
+                T.eq(garage.state, string.lower(string.rep("VERY_LONG_", 8)):sub(1, 32))
+                T.eq(garage.armed_type, ESCAPED:sub(1, 32))
+                T.eq(garage.alarm_type, "x" .. string.rep("שריפה", 10):sub(1, 30), "31 bytes: the 32nd starts a letter")
+                T.eq(garage.trouble, (ESCAPED .. "   " .. string.rep("ב", 60)):sub(1, 99), "99 bytes: the 100th starts a letter")
+                T.eq(garage.open_zones, 99999)
+                T.same(garage.delay, { type = Json.null, remaining = 99999, total = 99999 })
+            end
+        end
+    end
+end
+
 function tests.the_status_follows_what_the_partitions_report()
     local mock, key, keyId = start(true)
     local commands = #mock.commands

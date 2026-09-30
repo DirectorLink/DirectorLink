@@ -17,6 +17,7 @@
           "date": "2026-09-29",
           "hebrew": { "year": 5787, "month": "tishrei", "day": 18, "leap_year": true },
           "after_sunset": false,
+          "changes_at": "2026-09-29T15:28:37Z",
           "holidays": [
             { "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }
           ]
@@ -60,6 +61,7 @@
           "date": "2024-10-04",
           "hebrew": { "year": 5785, "month": "tishrei", "day": 2, "leap_year": false },
           "after_sunset": false,
+          "changes_at": "2024-10-04T15:21:33Z",
           "holidays": [
             { "key": "rosh_hashana", "day": 2, "month": null, "yom_tov": true, "name": "Rosh Hashana" }
           ]
@@ -127,6 +129,7 @@
           "date": "2026-10-05",
           "hebrew": { "year": 5787, "month": "tishrei", "day": 24, "leap_year": true },
           "after_sunset": false,
+          "changes_at": "2026-10-05T21:00:00Z",
           "holidays": []
         },
         "week": {
@@ -150,6 +153,7 @@
           "date": "2026-06-25",
           "hebrew": { "year": 5786, "month": "tamuz", "day": 10, "leap_year": false },
           "after_sunset": false,
+          "changes_at": "2026-06-25T22:00:00Z",
           "holidays": []
         },
         "week": {

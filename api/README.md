@@ -92,6 +92,11 @@ speed from 1 (low) to 4 (high); `speed` is `null` while it is off:
 
 (`room` left out.) `speeds` lists the speeds `PATCH` takes.
 
+In 1.2.0 every fan is taken to have these four speeds. The fan proxy allows other numbers, set up
+in the fan's driver: a fan with three shows its top speed as 3 (*Medium High* in the app), and
+`{"speed": 4}` sends it a speed it does not have; on a fan with five or more, the speeds above 4
+show only as on (`speed` is `null`).
+
 ```bash
 curl -X PATCH http://<controller-ip>:41999/v1/fans/41 \
   -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
@@ -146,7 +151,8 @@ Since 1.2.0 DirectorLink works out Shabbat and holiday times on the controller f
     "date": "2026-09-29",
     "hebrew": { "year": 5787, "month": "tishrei", "day": 18, "leap_year": true },
     "after_sunset": false,
-    "holidays": [{ "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }]
+    "holidays": [{ "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }],
+    "changes_at": "2026-09-29T15:28:37Z"
   },
   "week": { "date": "2026-10-03", "parasha": null, "holidays": ["…Shmini Atzeret and Simchat Torah"] },
   "current": null,
@@ -159,7 +165,7 @@ Since 1.2.0 DirectorLink works out Shabbat and holiday times on the controller f
 }
 ```
 
-- `today` is the Hebrew day now, which begins at sunset: after sunset (`after_sunset`) it is tomorrow's, and `date` is the civil date whose daytime it is. `holidays` lists the day's holidays, holy (`yom_tov`) or only shown (fasts, Chanukah, Rosh Chodesh, the national days).
+- `today` is the Hebrew day now, which begins at sunset: after sunset (`after_sunset`) it is tomorrow's, and `date` is the civil date whose daytime it is. `holidays` lists the day's holidays, holy (`yom_tov`) or only shown (fasts, Chanukah, Rosh Chodesh, the national days). `changes_at` is when it changes next, to the second: the controller's sunset, or local midnight without a location or where the sun does not set; read the calendar again then.
 - `week` is this week's Shabbat and its reading: `parasha.ids` from 1 (Bereshit) to 54, two for a combined reading, and `null` when a holiday reading replaces it.
 - `current` is the holy period now and `next` the next one. Shabbat and holy days that follow each other are one period, from candle lighting (`starts_at`) to havdalah (`ends_at`), in UTC, with each day's candle lighting (a later day's is lit from an existing flame: before sunset for Shabbat, after nightfall otherwise). Candle lighting is sunset, to the minute, less `candle_lighting_minutes`; havdalah is sunset, to the nearest minute, plus `havdalah_minutes`.
 - `status: "no_location"`: the Hebrew date and the reading by the civil date, but no times (`current` and `next` are `null`). `approximate: true`: a sunset the period needs does not happen at this latitude, and those times are `null`.
@@ -196,6 +202,7 @@ Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/c
 - Off by default. Until an installer sets **Alarm Status** to On in Composer, the answer is `{"enabled": false, "partitions": []}`, and DirectorLink does not watch the alarm. `GET /v1/system` says which in `features.alarm_status`.
 - For `member`, `doors` and `admin` keys; viewers get `403 FORBIDDEN`.
 - Only in sealed requests: on the home network through `POST /v1/sealed`, as the app sends every request, and through remote access. With `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`, so whether the home is armed never crosses a network in the clear. Scripts and the API console, which do not seal, cannot read it.
+- Nor does the size of the sealed answer tell it: the JSON is followed by spaces up to the size it would have with every partition at its longest, so that its size depends only on the partitions there are (their names and rooms), never on their state. For that the panel's words are cut, at a character, to 32 bytes (`state`, `armed_type`, `alarm_type`) and 100 (`trouble`), with control characters made spaces, and `open_zones` and the delay's seconds stop at 99999.
 
 ```json
 {

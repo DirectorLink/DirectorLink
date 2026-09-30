@@ -13,7 +13,9 @@
 --   not run, and "skip" runs as usual.
 -- - After a restart, the first minute also runs Shabbat schedules and "only" schedules whose moment
 --   passed in the last 6 hours and did not run, late (a family keeping Shabbat cannot make up for
---   them by hand); the others keep their 5 minutes.
+--   them by hand); the others keep their 5 minutes. What was due while the schedules were paused,
+--   or while the calendar was off or had no location, is not caught up, not even by a later
+--   restart; nor is anything when what the schedules ran could not be read.
 -- A scheduled scene runs like one from a member's key: doors and gates in it are skipped.
 -- The installer can pause them all in Composer (the Schedules property); each run is shown in the
 -- Last Automation property (src/core/installer_view.lua).
@@ -34,12 +36,35 @@ Scheduler.WIND_REARM = 10
 Scheduler.DRY_SECONDS = 3600
 Scheduler.RAIN_EXPECTED_CHANCE = 50
 
--- `firstTick`: the first minute after start, which catches up (CATCH_UP_SECONDS).
-local state = { services = nil, timer = nil, firstTick = false }
+-- `firstTick`: the first minute after start, which catches up (CATCH_UP_SECONDS). `stopped`: Shabbat
+-- automation could not run when last looked at (Scheduler.switchesChanged).
+local state = { services = nil, timer = nil, firstTick = false, stopped = false }
 
 -- The Jewish calendar service (src/core/jewish_calendar.lua), or nil.
 local function calendarService()
     return state.services and state.services.calendar or nil
+end
+
+-- Whether Shabbat automation can run: the schedules are not paused, and the calendar is on and has
+-- a location.
+local function canRun()
+    local services = state.services
+    if not services or (services.paused and services.paused()) then
+        return false
+    end
+    local calendar = calendarService()
+    return calendar ~= nil and calendar.status() == "ok"
+end
+
+-- After a change of a Composer switch or of the location (main.lua), and every minute: once Shabbat
+-- automation can run again after it could not (the schedules resumed, the calendar turned on or
+-- given a location), what was due meanwhile stays missed, also after a restart.
+function Scheduler.switchesChanged(now)
+    local running = canRun()
+    if running and state.stopped then
+        Schedules.setCatchUpAfter(now or Clock.now())
+    end
+    state.stopped = not running
 end
 
 -- Seconds from 1970 for a date and time read as UTC (no time zone involved).
@@ -136,11 +161,13 @@ local function localDate(calendar, rd)
 end
 
 -- A Shabbat schedule's moment in a period: its begin (candle lighting) or end (havdalah) plus the
--- offset, and the key it runs under, once per period. nil when that time does not happen here.
+-- offset, and the key it runs under, once per period. nil in a period that lacks a sunset
+-- (`approximate`), even when this one time happens: a begin whose end never comes would leave the
+-- home in Shabbat mode until the sun sets again, weeks later.
 local function shabbatMoment(schedule, calendar, period)
     local trigger = schedule.trigger
     local base = trigger.event == "candle_lighting" and period.starts_at or period.ends_at
-    if not base then
+    if not base or period.approximate then
         return nil
     end
     return base + (trigger.offset or 0) * 60, "shabbat:" .. calendar.dateKey(period.first) .. ":" .. trigger.event
@@ -166,8 +193,9 @@ function Scheduler.nextRun(schedule, now)
                     return at
                 end
             else
-                -- Each civil day of the period and the evening before it, at the schedule's minute.
-                for rd = period.first - 1, period.last do
+                -- Each civil day of the period, the evening before it, and the night after it (far
+                -- north in summer, havdalah may come after midnight), at the schedule's minute.
+                for rd = period.first - 1, period.last + 1 do
                     local info = localDate(calendar, rd)
                     if hasDay(schedule, info.weekday) then
                         local minute = Scheduler.targetMinute(schedule, info)
@@ -298,37 +326,53 @@ local function dayBefore(info)
     return Scheduler.localTime(os.time({ year = info.year, month = info.month, day = info.day - 1, hour = 12, min = 0, sec = 0 }))
 end
 
--- A time or sun schedule due at `now`: its run today, or yesterday's just before midnight, when
--- `now` is at most GRACE_MINUTES after it (or `catchUp` seconds, after a restart). Returns the key
--- of that run, its moment, and whether it is late (past the grace time).
+-- Whether a run whose moment is `at` is due at `now`, and whether it is late: at most GRACE_MINUTES
+-- after it, or, in the first minute after a restart, CATCH_UP_SECONDS for a moment not before
+-- `catchUp` (Schedules.catchUpAfter; nil: no catch-up now).
+local function dueAt(at, now, catchUp)
+    if now < at then
+        return false, false
+    end
+    if now < at + Scheduler.GRACE_MINUTES * 60 then
+        return true, false
+    end
+    return catchUp ~= nil and at >= catchUp and now < at + Scheduler.CATCH_UP_SECONDS, true
+end
+
+-- A time or sun schedule due at `now`: its run today, or yesterday's just before midnight (dueAt).
+-- Returns the key of that run, its moment, and whether it is late (past the grace time).
 local function dueRun(schedule, info, now, catchUp)
-    local grace = Scheduler.GRACE_MINUTES * 60
     for _, day in ipairs({ info, dayBefore(info) }) do
         if hasDay(schedule, day.weekday) then
             local minute = Scheduler.targetMinute(schedule, day)
             -- On the day clocks go forward, a time that does not exist runs when it would have.
             local at = minute and epochAt(day, minute)
-            if at and now >= at and now < at + (catchUp or grace) then
-                return day.date .. "@" .. minute, at, now >= at + grace
+            if at then
+                local due, late = dueAt(at, now, catchUp)
+                if due then
+                    return day.date .. "@" .. minute, at, late
+                end
             end
         end
     end
     return nil
 end
 
--- A Shabbat schedule due at `now`: when a holy period began or ended (plus the offset) at most
--- GRACE_MINUTES ago (or `catchUp` seconds, after a restart), on one of its days (the local weekday
--- of that moment). Returns the key of that run (the period's first holy date and the event, so it
--- runs once per period whatever changes), its moment, and whether it is late.
+-- A Shabbat schedule due at `now` (dueAt): when a holy period began or ended, plus the offset, on
+-- one of its days (the local weekday of that moment). Returns the key of that run (the period's
+-- first holy date and the event, so it runs once per period whatever changes), its moment, and
+-- whether it is late.
 local function dueShabbat(schedule, calendar, now, catchUp)
     if not calendar or calendar.status() ~= "ok" then
         return nil
     end
-    local grace = Scheduler.GRACE_MINUTES * 60
     for _, period in ipairs(calendar.periodsBetween(now - 2 * 86400, now + 86400)) do
         local at, key = shabbatMoment(schedule, calendar, period)
-        if at and now >= at and now < at + (catchUp or grace) and hasDay(schedule, os.date("*t", at).wday - 1) then
-            return key, at, now >= at + grace
+        if at and hasDay(schedule, os.date("*t", at).wday - 1) then
+            local due, late = dueAt(at, now, catchUp)
+            if due then
+                return key, at, late
+            end
         end
     end
     return nil
@@ -338,13 +382,16 @@ end
 -- Composer nothing runs and nothing is remembered as done.
 function Scheduler.tick(now)
     now = now or Clock.now()
-    -- Only the first minute after start catches up, also when it finds the schedules paused: what
-    -- was due while paused, or while the calendar was off, never runs afterwards.
-    local catchUp = state.firstTick and Scheduler.CATCH_UP_SECONDS or nil
+    local firstTick = state.firstTick
     state.firstTick = false
     if state.services and state.services.onTick then
         pcall(state.services.onTick, now)
     end
+    Scheduler.switchesChanged(now)
+    -- Only the first minute after start catches up, also when it finds the schedules paused, and
+    -- only what came due after they could last run: what was due while paused, or while the
+    -- calendar was off or had no location, never runs afterwards.
+    local catchUp = firstTick and (Schedules.catchUpAfter() or 0) or nil
     if state.services and state.services.paused and state.services.paused() then
         return 0
     end
@@ -472,6 +519,10 @@ end
 function Scheduler.start(services)
     state.services = services
     state.firstTick = true
+    -- As the Composer switches are now (not the location, in case it is read a moment late): only
+    -- a change from here on stops the catch-up.
+    local calendar = calendarService()
+    state.stopped = (services.paused ~= nil and services.paused()) or calendar == nil or calendar.status() == "off"
     Scheduler.stop()
     local now = Clock.now()
     local info = Scheduler.localTime(now)

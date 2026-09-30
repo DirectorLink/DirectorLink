@@ -76,7 +76,11 @@ tags:
   - name: Thermostats
     description: Heating and cooling zones DirectorLink can read and control.
   - name: Fans
-    description: Fans DirectorLink can read and control, on and off and at four speeds (since 1.2.0).
+    description: |
+      Fans DirectorLink can read and control, on and off and at four speeds (since 1.2.0). Every fan
+      is taken to have four: the fan proxy allows other numbers, set up in the fan's driver, and a fan
+      with three shows its top speed as 3 and is sent 4 for high, one with five or more shows the
+      speeds above 4 as on without a speed.
   - name: Blinds
     description: Blinds, shades and shutters DirectorLink can read and control.
   - name: Cameras
@@ -1824,6 +1828,11 @@ paths:
         `POST /v1/sealed` on the home network (the app seals every request) and through remote
         access. A request sent with `Authorization: Bearer` is refused with 403
         `SEALED_REQUEST_REQUIRED`, so whether a home is armed never crosses a network in the clear.
+        Nor does the sealed answer's size tell it: the JSON is followed by spaces up to the size it
+        would have with every partition at its longest, so that it depends only on the partitions
+        there are (their names and rooms), never on their state. For that the panel's words are cut,
+        at a character, to 32 bytes (`state`, `armed_type`, `alarm_type`) and 100 (`trouble`), with
+        control characters made spaces, and `open_zones` and the delay's seconds stop at 99999.
         Viewers get 403 `FORBIDDEN`. Partitions the alarm does not use are left out. The property
         is read at every request, and `GET /v1/system` says it in `features.alarm_status`.
       responses:
@@ -3101,7 +3110,7 @@ components:
 
     CalendarToday:
       type: object
-      required: [date, hebrew, after_sunset, holidays]
+      required: [date, hebrew, after_sunset, holidays, changes_at]
       properties:
         date:
           type: string
@@ -3112,6 +3121,14 @@ components:
         after_sunset:
           type: boolean
           description: Today's sunset has passed, so the Hebrew date is already tomorrow's (it starts at sunset). Always false without a location.
+        changes_at:
+          type: string
+          format: date-time
+          description: |
+            When this Hebrew day ends and the next begins, to the second (UTC): the controller's sunset,
+            or local midnight without a location or where the sun does not set that day. Read the
+            calendar again then (1.2.0).
+          example: "2026-09-29T15:28:37Z"
         holidays:
           type: array
           description: This Hebrew day's holidays, holy or not (fasts, Chanukah, Rosh Chodesh and the national days too).

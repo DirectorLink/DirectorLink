@@ -148,8 +148,10 @@ local function refreshCalendarStatus(now)
 end
 
 -- The calendar's settings, location or switch changed: the times, and what runs next, with them.
+-- Turned on again, or given a location, it catches up nothing that was due meanwhile.
 local function calendarChanged()
     JewishCalendar.invalidate()
+    Scheduler.switchesChanged()
     refreshCalendarStatus()
     refreshScheduleStatus()
 end
@@ -538,10 +540,12 @@ function OnPropertyChanged(name)
     end
     if name == "Schedules" and Properties then
         Log.info("schedules", schedulesPaused() and "schedules paused in Composer" or "schedules resumed in Composer")
+        -- Resumed: what was due while paused is never caught up, not even after a restart.
+        Scheduler.switchesChanged()
         refreshScheduleStatus()
     end
     -- No restart needed: the scheduler asks the calendar every minute. Turned on again, it catches
-    -- nothing up.
+    -- nothing up (calendarChanged).
     if name == "Jewish Calendar" and Properties then
         Log.info("calendar", services.calendarEnabled() and "jewish calendar on in Composer" or "jewish calendar off in Composer")
         calendarChanged()

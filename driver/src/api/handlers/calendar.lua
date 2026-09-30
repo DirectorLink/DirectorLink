@@ -102,6 +102,7 @@ function Calendar.get(ctx)
             hebrew = { year = today.hebrew.year, month = today.hebrew.key, day = today.hebrew.day, leap_year = today.hebrew.leap_year },
             after_sunset = today.after_sunset,
             holidays = holidaysView(calendar, today.holidays),
+            changes_at = iso(today.changes_at),
         },
         week = { date = week.date, parasha = parasha, holidays = holidaysView(calendar, week.holidays) },
         current = status == "ok" and periodView(calendar, calendar.periodAt(now)) or Json.null,

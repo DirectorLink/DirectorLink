@@ -25,6 +25,7 @@ local FRIDAY, SATURDAY = 739891, 739892
 local NO_LOCATION = { CityName = "Tel Aviv", CountryCode = "IL", CountryName = "Israel" }
 local TROMSO = { CityName = "Tromso", CountryCode = "NO", CountryName = "Norway", Latitude = "69.6496", Longitude = "18.956" }
 local NEW_YORK = { CityName = "New York", CountryCode = "US", CountryName = "United States", Latitude = "40.71427", Longitude = "-74.00597" }
+local REYKJAVIK = { CityName = "Reykjavik", CountryCode = "IS", CountryName = "Iceland", Latitude = "64.13548", Longitude = "-21.89541" }
 
 local function isNull(value)
     return value == Json.null
@@ -48,6 +49,22 @@ local function shown(epoch)
 end
 
 local localAt = Helpers.localAt
+
+-- An answer of api-examples.json as the driver gives it in this process's time zone: without a
+-- location, and in the midnight sun, the Hebrew date changes at local midnight (today.changes_at),
+-- which the example has in its own time zone.
+local AT_MIDNIGHT = { no_location = true, approximate = true }
+
+local function example(name)
+    local item = EXAMPLES.Calendar[name]
+    if not AT_MIDNIGHT[name] or Helpers.zone() == item.timezone then
+        return item.value
+    end
+    local value = Json.decode(Json.encode(item.value))
+    local today = os.date("*t", Helpers.epoch(item.now))
+    value.today.changes_at = iso(os.time({ year = today.year, month = today.month, day = today.day + 1, hour = 0, min = 0, sec = 0 }))
+    return value
+end
 
 local function project(properties)
     local fresh = Mock.project()
@@ -323,9 +340,8 @@ function tests.the_answers_are_the_api_examples()
         { name = "no_location", properties = NO_LOCATION },
         { name = "approximate", properties = TROMSO, zone = "Europe/Oslo" },
     }) do
-        local example = EXAMPLES.Calendar[case.name]
-        local mock = start(Helpers.epoch(example.now), { calendar = true, zone = case.zone, project = case.properties and project(case.properties) })
-        T.same(calendarAnswer(mock, T.pair(mock)), example.value, case.name)
+        local mock = start(Helpers.epoch(EXAMPLES.Calendar[case.name].now), { calendar = true, zone = case.zone, project = case.properties and project(case.properties) })
+        T.same(calendarAnswer(mock, T.pair(mock)), example(case.name), case.name)
     end
     -- And a Shabbat schedule runs at that time: 30 minutes before candle lighting on Friday
     -- 2 October 2026 is 14:34 UTC (api-examples.json, ScheduleList.calendar_on).
@@ -699,13 +715,115 @@ function tests.turned_on_again_the_calendar_catches_nothing_up()
     T.eq(get(mock, admin, candles.id).next_run, "2026-10-09T14:55:00Z")
 end
 
+-- From before candle lighting until after an "only" schedule's evening the schedules are paused,
+-- the calendar is off, or the project has no location; then all is back, the controller is off for
+-- a while, and an hour later the driver restarts, within the 6 hours of both moments: neither is
+-- caught up, then or later; what came due while the controller was off is.
+function tests.what_was_due_while_paused_off_or_without_a_location_is_never_caught_up()
+    local modes = {
+        { "paused", function(on)
+            Properties["Schedules"] = on and "On" or "Paused"
+            OnPropertyChanged("Schedules")
+        end },
+        { "calendar off", function(on)
+            setCalendar(on and "On" or "Off")
+        end },
+        { "no location", function(on, mock)
+            mock.project.projectProperties = on and Mock.project().projectProperties or NO_LOCATION
+            ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+        end },
+    }
+    for _, mode in ipairs(modes) do
+        local label, switch = mode[1], mode[2]
+        local mock, clock, Scheduler = start(CANDLES - 3 * 3600, { calendar = true })
+        local admin = T.pair(mock)
+        local candles = schedule(mock, admin, { scene_id = scene(mock, admin, "Candles", 20), trigger = { type = "shabbat", event = "candle_lighting" } })
+        local evening = CANDLES + 3600
+        local only = schedule(mock, admin, { scene_id = scene(mock, admin, "Evening", 21), trigger = { type = "time", at = hhmm(evening) }, days = { weekday(evening) }, during_shabbat = "only" })
+        local night = evening + 50 * 60
+        local offline = schedule(mock, admin, { scene_id = scene(mock, admin, "Night", 22), trigger = { type = "time", at = hhmm(night) }, days = { weekday(night) }, during_shabbat = "only" })
+        T.eq(Scheduler.tick(), 0)
+        clock.set(CANDLES - 10 * 60)
+        switch(false, mock)
+        for moment = CANDLES + 30, evening + 5 * 60, 60 do
+            clock.set(moment)
+            T.eq(Scheduler.tick(), 0, label)
+        end
+        clock.set(evening + 20 * 60)
+        switch(true, mock)
+        clock.set(evening + 21 * 60 + 1)
+        T.eq(Scheduler.tick(), 0, label .. ": back, nothing is caught up")
+        -- The controller is off from then until an hour later, over the night schedule's minute.
+        local restarted, _, Again = start(evening + 80 * 60, { previous = mock, calendar = true })
+        local before = #restarted.commands
+        T.eq(Again.tick(), 1, label .. ": after the restart, only what came due while the controller was off")
+        T.same(devicesSince(restarted, before), { 22 }, label)
+        T.eq(get(restarted, admin, offline.id).last_run.note, "late", label)
+        for _, id in ipairs({ candles.id, only.id }) do
+            T.truthy(isNull(get(restarted, admin, id).last_run), label)
+        end
+    end
+end
+
+-- Director or Composer saying again what the switches already are (a refresh, the same value)
+-- does not keep a real restart from catching up.
+function tests.switches_said_again_leave_the_catch_up_after_a_restart()
+    local mock, _, Scheduler = start(CANDLES - 3600, { calendar = true })
+    local admin = T.pair(mock)
+    schedule(mock, admin, { scene_id = scene(mock, admin, "Candles", 20), trigger = { type = "shabbat", event = "candle_lighting" } })
+    T.eq(Scheduler.tick(), 0)
+    -- The controller is off from before candle lighting until two hours after it.
+    local restarted, _, Again = start(CANDLES + 2 * 3600, { previous = mock, calendar = true })
+    OnPropertyChanged("Schedules")
+    OnPropertyChanged("Jewish Calendar")
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    local before = #restarted.commands
+    T.eq(Again.tick(), 1, "candle lighting, late")
+    T.eq(commandsTo(restarted, 20, before), 1)
+end
+
+-- What the schedules ran cannot be read after a restart: nothing is caught up, which could run a
+-- Shabbat schedule a second time (1.1.x could repeat one only within its 5 minutes). A save that
+-- fails is logged.
+function tests.when_what_ran_cannot_be_read_nothing_is_caught_up()
+    local mock, clock, Scheduler = start(CANDLES - 3600, { calendar = true })
+    local admin = T.pair(mock)
+    schedule(mock, admin, { scene_id = scene(mock, admin, "Candles", 20), trigger = { type = "shabbat", event = "candle_lighting" } })
+    T.eq(Scheduler.tick(), 0)
+    clock.set(CANDLES + 20)
+    T.eq(Scheduler.tick(), 1, "at candle lighting")
+    mock.persist["directorlink_schedule_state"] = "json:{not json"
+    local restarted, later, Again = start(CANDLES + 2 * 3600, { previous = mock, calendar = true })
+    local before = #restarted.commands
+    T.eq(Again.tick(), 0, "not again two hours later")
+    T.eq(commandsTo(restarted, 20, before), 0)
+    local warned = logged(restarted, admin, "what the schedules ran could not be read; nothing is caught up after this start")
+    T.truthy(warned and warned.level == "warn", "logged")
+
+    local plain = schedule(restarted, admin, { scene_id = scene(restarted, admin, "Plain", 21), trigger = { type = "time", at = hhmm(later.now + 120) }, days = { weekday(later.now + 120) } })
+    local realSet = C4.PersistSetValue
+    C4.PersistSetValue = function(self, name, value, encrypted)
+        if name == "directorlink_schedule_state" then
+            error("the disk is full")
+        end
+        return realSet(self, name, value, encrypted)
+    end
+    later.set(Helpers.epoch(plain.next_run) + 20)
+    local ok, ran = pcall(Again.tick)
+    C4.PersistSetValue = realSet
+    T.truthy(ok, ran)
+    T.eq(ran, 1)
+    local failed = logged(restarted, admin, "could not save what the schedules ran")
+    T.truthy(failed and failed.level == "error", "a failed save is logged")
+end
+
 -- 10 ----------------------------------------------------------------------------------------
 
 function tests.without_a_location_there_are_dates_and_the_reading_but_no_times()
     local now = Helpers.epoch(EXAMPLES.Calendar.no_location.now)
     local mock, clock, Scheduler = start(now, { calendar = true, project = project(NO_LOCATION) })
     local admin = T.pair(mock)
-    T.same(calendarAnswer(mock, admin), EXAMPLES.Calendar.no_location.value)
+    T.same(calendarAnswer(mock, admin), example("no_location"))
     T.eq(mock.properties["Calendar Status"], "No location - set latitude and longitude in the project properties")
     local sceneId = scene(mock, admin)
     -- The next 08:00, local time.
@@ -779,7 +897,7 @@ function tests.in_the_midnight_sun_triggers_idle_and_the_condition_takes_the_civ
     local now = Helpers.epoch(EXAMPLES.Calendar.approximate.now)
     local mock, clock, Scheduler = start(now, { calendar = true, zone = "Europe/Oslo", project = project(TROMSO) })
     local admin = T.pair(mock)
-    T.same(calendarAnswer(mock, admin), EXAMPLES.Calendar.approximate.value)
+    T.same(calendarAnswer(mock, admin), example("approximate"))
     T.eq(mock.properties["Calendar Status"], "Abroad (from the location) · candles 20 min before sunset, havdalah 42 min after · next Fri 26 Jun: no sunset at this latitude, no times")
     -- From Thursday 11:00 (local time), every half hour until Sunday noon.
     local thursday, saturday = 739792, 739794
@@ -816,6 +934,54 @@ function tests.in_the_midnight_sun_triggers_idle_and_the_condition_takes_the_civ
     T.truthy(isNull(get(mock, admin, candles.id).last_run) and isNull(get(mock, admin, havdalah.id).last_run))
 end
 
+-- As the polar night starts (Tromsø, Shabbat 28 November 2026) Friday's sun still sets, so candle
+-- lighting is at 10:22 UTC, but Saturday's does not: no havdalah. Neither trigger runs that
+-- weekend (a begin whose end never comes would keep the home in Shabbat mode for seven weeks), and
+-- holy time starts at candle lighting.
+function tests.at_the_start_of_the_polar_night_neither_trigger_runs_and_holy_time_starts_at_candle_lighting()
+    local candlesAt = Helpers.epoch("2026-11-27T10:22:00Z")
+    local mock, clock, Scheduler = start(Helpers.epoch("2026-11-26T09:00:00Z"), { calendar = true, zone = "Europe/Oslo", project = project(TROMSO) })
+    local admin = T.pair(mock)
+    local period = calendarAnswer(mock, admin).next
+    T.eq(period.starts_at, iso(candlesAt))
+    T.truthy(isNull(period.ends_at), "no havdalah")
+    T.eq(period.approximate, true)
+    local on = schedule(mock, admin, { scene_id = scene(mock, admin, "Shabbat on", 20), trigger = { type = "shabbat", event = "candle_lighting" } })
+    local off = schedule(mock, admin, { scene_id = scene(mock, admin, "Shabbat off", 21), trigger = { type = "shabbat", event = "havdalah" } })
+    local afterCandles = candlesAt + 3600
+    local only = schedule(mock, admin, { scene_id = scene(mock, admin, "Afternoon", 22), trigger = { type = "time", at = hhmm(afterCandles) }, days = { weekday(afterCandles) }, during_shabbat = "only" })
+    T.eq(on.next_run, "2027-01-15T10:52:00Z", "the first Shabbat whose sun sets on both evenings")
+    T.eq(off.next_run, "2027-01-16T12:14:00Z")
+    T.eq(only.next_run, iso(afterCandles))
+    local Calendar = require("src.core.jewish_calendar")
+    T.eq(Calendar.holyAt(candlesAt - 1), false)
+    T.eq(Calendar.holyAt(candlesAt), true)
+    local before = #mock.commands
+    for moment = candlesAt - 3600 + 20, Helpers.epoch("2026-11-29T12:00:20Z"), 600 do
+        clock.set(moment)
+        Scheduler.tick()
+    end
+    T.eq(commandsTo(mock, 20, before), 0, "not at candle lighting")
+    T.eq(commandsTo(mock, 21, before), 0)
+    T.eq(commandsTo(mock, 22, before), 1, "only on Shabbat: an hour after candle lighting is holy")
+end
+
+-- Far north in summer havdalah may come after midnight (Reykjavik, Shabbat 19 to 21 June 2026, from
+-- 23:43 on Friday to 00:45 on Sunday, UTC): a schedule only on Shabbat between midnight and
+-- havdalah says when it runs, and runs then.
+function tests.an_only_schedule_between_midnight_and_havdalah_knows_its_next_run()
+    local sunday = Helpers.epoch("2026-06-21T00:30:00Z")
+    local mock, clock, Scheduler = start(Helpers.epoch("2026-06-20T01:00:00Z"), { calendar = true, zone = "Atlantic/Reykjavik", project = project(REYKJAVIK) })
+    local admin = T.pair(mock)
+    local current = calendarAnswer(mock, admin).current
+    T.eq(current.starts_at, "2026-06-19T23:43:00Z")
+    T.eq(current.ends_at, "2026-06-21T00:45:00Z")
+    local only = schedule(mock, admin, { scene_id = scene(mock, admin), trigger = { type = "time", at = hhmm(sunday) }, days = { weekday(sunday) }, during_shabbat = "only" })
+    T.eq(only.next_run, iso(sunday))
+    clock.set(sunday + 20)
+    T.eq(Scheduler.tick(), 1)
+end
+
 -- 12 ----------------------------------------------------------------------------------------
 
 function tests.the_hebrew_date_changes_at_sunset_and_the_week_after_shabbat()
@@ -850,6 +1016,34 @@ function tests.the_hebrew_date_changes_at_sunset_and_the_week_after_shabbat()
     T.eq(night.week.date, "2026-10-10")
     T.same(night.week.parasha, { ids = { 1 }, name = "Bereshit" })
     T.truthy(isNull(night.current), "after havdalah")
+end
+
+-- today.changes_at is when the Hebrew date changes next, at a sunset (to the second) or at a local
+-- midnight (no location, no sunset, or far north a sunset after midnight): the second before, it is
+-- still the same day; from then on, the next. Apps read the calendar again then.
+function tests.today_says_when_the_hebrew_date_changes_next()
+    for _, place in ipairs({
+        { "Tel Aviv", nil, { "2026-10-02T09:00:00Z", "2026-10-02T15:30:00Z", "2026-10-03T21:30:00Z" } },
+        { "no location", NO_LOCATION, { "2026-10-05T07:00:00Z", "2026-10-05T22:30:00Z" } },
+        { "the midnight sun", TROMSO, { "2026-06-25T10:00:00Z" } },
+        { "Reykjavik in June", REYKJAVIK, { "2026-06-19T22:00:00Z", "2026-06-19T23:59:30Z", "2026-06-20T00:10:00Z" } },
+    }) do
+        local mock, clock = start(Helpers.epoch(place[3][1]), { calendar = true, project = place[2] and project(place[2]) })
+        local admin = T.pair(mock)
+        local function today(at)
+            clock.set(at)
+            return calendarAnswer(mock, admin).today
+        end
+        for _, when in ipairs(place[3]) do
+            local label = place[1] .. " at " .. when
+            local now = Helpers.epoch(when)
+            local seen = today(now)
+            local changes = Helpers.epoch(seen.changes_at)
+            T.truthy(changes > now and changes - now <= 2 * 86400, label)
+            T.eq(today(changes - 1).date, seen.date, label .. ": the second before")
+            T.truthy(today(changes).date ~= seen.date, label .. ": from then")
+        end
+    end
 end
 
 -- 13 ----------------------------------------------------------------------------------------

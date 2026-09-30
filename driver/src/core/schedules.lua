@@ -26,7 +26,8 @@ Schedules.LIMITS = {
 Schedules.DURING_SHABBAT = { run = true, skip = true, only = true }
 
 -- `complete` is false after the stored schedules could not be read: saving would overwrite them.
-local state = { schedules = {}, runtime = {}, complete = true }
+-- `catchUpAfter`: after a restart, nothing due before this moment is caught up (src/core/scheduler.lua).
+local state = { schedules = {}, runtime = {}, complete = true, catchUpAfter = nil }
 
 local function randomHex(length)
     return Random.hex(length)
@@ -246,7 +247,12 @@ local function save()
 end
 
 local function saveRuntime()
-    Store.write(STATE_KEY, { version = 1, schedules = state.runtime }, false)
+    local ok = Store.write(STATE_KEY, { version = 1, schedules = state.runtime, catch_up_after = state.catchUpAfter }, false)
+    if not ok then
+        -- A restart could then run a Shabbat schedule again (the catch-up), or miss one.
+        Log.error("schedules", "could not save what the schedules ran")
+    end
+    return ok
 end
 
 function Schedules.load()
@@ -271,7 +277,8 @@ function Schedules.load()
     if dropped > 0 then
         Log.warn("schedules", "stored schedules that are not valid were left out", { schedules = dropped })
     end
-    local runtime = Store.read(STATE_KEY, false)
+    local runtime, runtimeForm = Store.read(STATE_KEY, false)
+    state.catchUpAfter = nil
     if type(runtime) == "table" and type(runtime.schedules) == "table" then
         for _, schedule in ipairs(state.schedules) do
             local item = runtime.schedules[schedule.id]
@@ -279,6 +286,14 @@ function Schedules.load()
                 state.runtime[schedule.id] = item
             end
         end
+        if isWhole(runtime.catch_up_after, 0, math.huge) then
+            state.catchUpAfter = runtime.catch_up_after
+        end
+    elseif runtimeForm ~= "missing" then
+        -- What ran before is not known, so nothing is caught up now: that could run a Shabbat
+        -- schedule a second time.
+        state.catchUpAfter = Clock.now()
+        Log.warn("schedules", "what the schedules ran could not be read; nothing is caught up after this start", { stored_as = runtimeForm })
     end
     return #state.schedules, form
 end
@@ -408,6 +423,17 @@ function Schedules.runtime(id)
 end
 
 Schedules.saveRuntime = saveRuntime
+
+-- After a restart nothing due before this moment (seconds from 1970) is caught up, or nil
+-- (src/core/scheduler.lua); kept with the runtime.
+function Schedules.catchUpAfter()
+    return state.catchUpAfter
+end
+
+function Schedules.setCatchUpAfter(epoch)
+    state.catchUpAfter = epoch
+    saveRuntime()
+end
 
 -- The live records, for the scheduler (not copied: it only reads them).
 function Schedules.records()

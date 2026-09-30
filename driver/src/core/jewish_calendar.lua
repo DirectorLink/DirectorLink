@@ -275,14 +275,12 @@ end
 -- ---- Holy periods ------------------------------------------------------------------------
 
 -- When a period's holy time begins and ends: from candle lighting to havdalah, or, for a period
--- whose sunsets do not happen at this latitude (`approximate`), its civil days, from local 00:00 on
--- the first to 24:00 on the last.
+-- one of whose sunsets does not happen at this latitude (`approximate`), its civil days, from local
+-- 00:00 on the first to 24:00 on the last, and also from its candle lighting or to its havdalah
+-- when that one happens.
 local function span(period)
-    local from, to
-    if period.starts_at and period.ends_at then
-        from, to = period.starts_at, period.ends_at
-    end
-    if period.approximate or not from then
+    local from, to = period.starts_at, period.ends_at
+    if period.approximate or not from or not to then
         local civilFrom, civilTo = JewishCalendar.localMidnight(period.first), JewishCalendar.localMidnight(period.last + 1)
         from = from and math.min(from, civilFrom) or civilFrom
         to = to and math.max(to, civilTo) or civilTo
@@ -392,29 +390,50 @@ end
 -- ---- Today and this week -----------------------------------------------------------------
 
 -- The Hebrew day now: { rd (the civil date whose daytime it is), date, hebrew = { year, month,
--- day, key, leap_year }, after_sunset, holidays }. The Hebrew day starts at sunset, so after
--- today's sunset it is tomorrow's; without a location the civil date's.
+-- day, key, leap_year }, after_sunset, holidays, changes_at }. The Hebrew day starts at sunset, so
+-- after today's sunset it is tomorrow's; without a location, or on a day the sun does not set, the
+-- civil date's. `changes_at`: when it changes next (seconds from 1970), at a sunset or a local
+-- midnight.
 function JewishCalendar.today(now)
     now = now or Clock.now()
     local modules = engine()
-    local fields = os.date("*t", now)
-    local rd = JewishCalendar.fixedDay(fields.year, fields.month, fields.day)
-    local afterSunset = false
     local latitude, longitude = location()
-    if latitude then
-        local sunset = modules.Sun.sunsetEpoch(fields.year, fields.month, fields.day, latitude, longitude)
-        afterSunset = sunset ~= nil and now >= sunset
+    local function sunsetOf(rd)
+        local year, month, day = JewishCalendar.civilDate(rd)
+        return latitude and modules.Sun.sunsetEpoch(year, month, day, latitude, longitude) or nil
     end
-    if afterSunset then
-        rd = rd + 1
+    -- The civil date whose daytime the Hebrew day at `epoch` is, and the civil date of `epoch`.
+    local function hebrewDay(epoch)
+        local civil = JewishCalendar.localDay(epoch)
+        local sunset = sunsetOf(civil)
+        return (sunset and epoch >= sunset) and civil + 1 or civil, civil
+    end
+    local rd, civil = hebrewDay(now)
+    -- The first sunset or midnight after now at which it is another day: at the latest the second
+    -- midnight. A sunset counts from its whole second, as `now` does.
+    local moments = { JewishCalendar.localMidnight(civil + 1), JewishCalendar.localMidnight(civil + 2) }
+    for _, day in ipairs({ civil, civil + 1 }) do
+        local sunset = sunsetOf(day)
+        if sunset then
+            moments[#moments + 1] = math.ceil(sunset)
+        end
+    end
+    table.sort(moments)
+    local changesAt = moments[#moments]
+    for _, at in ipairs(moments) do
+        if at > now and hebrewDay(at) ~= rd then
+            changesAt = at
+            break
+        end
     end
     local year, month, day = modules.HebrewDate.fromFixed(rd)
     return {
         rd = rd,
         date = JewishCalendar.dateKey(rd),
         hebrew = { year = year, month = month, day = day, key = modules.HebrewDate.monthKey(year, month), leap_year = modules.HebrewDate.isLeapYear(year) == true },
-        after_sunset = afterSunset,
+        after_sunset = rd ~= civil,
         holidays = modules.Holidays.onDate(rd, (reckoning())) or {},
+        changes_at = changesAt,
     }
 end
 
