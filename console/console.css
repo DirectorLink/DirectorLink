@@ -447,6 +447,11 @@ code {
   color: var(--errText);
 }
 
+/* Pair anyway, inside the warning about an older DirectorLink. */
+.message-error .button-danger {
+  background: var(--card);
+}
+
 .button-small {
   min-height: 34px;
   padding-inline: 10px;

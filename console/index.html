@@ -45,7 +45,7 @@
     <p class="dev-warning" role="note">
       <strong>For debugging and development only.</strong> Unlike the app, the console sends its
       API key openly on your home network. Use it on a network you trust, and when you are done
-      press <em>Forget key</em> (Connection). For everyday use, open
+      press <em>Forget key</em> (Connection); the key it pairs for itself expires after a day. For everyday use, open
       <a href="https://app.directorlink.io">the DirectorLink app</a>.
     </p>
 
@@ -85,6 +85,10 @@
             <div id="current-panel" class="current" hidden>
               <h3>This console's key</h3>
               <dl id="current-facts" class="facts"></dl>
+              <p class="message message-warn" role="note">
+                This key travels unprotected on your network: use the console only on a network you trust.
+                It lasts a day; then pair again.
+              </p>
               <div class="button-row">
                 <button id="reconnect-button" class="button button-secondary" type="button">Reconnect</button>
                 <button id="forget-button" class="button button-danger" type="button">Forget key</button>
@@ -119,6 +123,17 @@
                 installer. A code lasts 15 minutes, works once and always gives an admin key.
               </p>
               <p id="pair-note" class="help" hidden></p>
+              <div id="pair-unprotected" class="message message-error stack" role="alert" hidden>
+                <p>
+                  This controller runs an older DirectorLink. To pair with it, the code would travel over your
+                  network unprotected: anyone on the network could read it and pair instead of you. Update
+                  DirectorLink in Composer to pair safely.
+                </p>
+                <div class="button-row">
+                  <button id="pair-anyway-button" class="button button-danger" type="button">Pair anyway</button>
+                  <button id="pair-cancel-button" class="button button-secondary" type="button">Cancel</button>
+                </div>
+              </div>
             </form>
 
             <form id="key-form" class="option stack" novalidate>

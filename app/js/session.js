@@ -22,6 +22,7 @@ import { notificationsOn, notifyRings, trackRings } from "./doorbells.js";
 import { IS_IOS } from "./platform.js";
 import { RemoteError, SealRefused, forgetRemote, lanCall, lanImage, remoteCall, remoteImage, savedRemote } from "./remote.js";
 import { keyExchange, open, pairingLock } from "./lock.js";
+import { pairWithCpace } from "./cpace.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
 
@@ -457,6 +458,12 @@ function pairingError(error, pairing) {
       return t("connect.errors.keyLimit");
     case "PAIRING_UNAVAILABLE":
       return t("connect.errors.unavailable");
+    // Pairing with CPace (cpace.js): the exchange was left open too long, or the answers did not
+    // come from a controller that knows the code.
+    case "PAIRING_SESSION_EXPIRED":
+      return t("connect.errors.sessionExpired");
+    case "PAIRING_NOT_CONFIRMED":
+      return t("connect.errors.notConfirmed");
     default:
       return null;
   }
@@ -739,10 +746,10 @@ export async function connect() {
   }
 }
 
-// Pairs with a key exchange (X25519), so the new key is never readable on the network: the answer
-// is sealed for this exchange and this code. Browsers without X25519, drivers before 1.0.0 (which
-// refuse the field) and controllers that cannot seal (they refuse it too) pair as before.
-// Returns { created, sealed }.
+// The old way, only after the warning (pairWithCode): the code is sent, with a key exchange
+// (X25519) so that at least the new key is not readable on the network. Browsers without X25519,
+// drivers before 1.0.0 (which refuse the field) and controllers that cannot seal (they refuse it
+// too) pair without it. Returns { created, sealed }.
 async function pairSealed(host, code) {
   const exchange = await keyExchange();
   const request = (body) => apiCall(host, "/v1/auth/pair", { method: "POST", body });
@@ -765,8 +772,12 @@ async function pairSealed(host, code) {
 
 // The only way to get a first key: the pairing code created in Composer (DirectorLink →
 // Actions → New Pairing Code). It lasts 15 minutes, works once and gives an admin key.
-export async function pairWithCode(hostValue, pairingCode) {
+// The code is never sent (CPace, cpace.js, ADR-039). A controller that cannot pair that way
+// (DirectorLink before 1.3.0) learns nothing about the code: the connect screen warns that it would
+// travel unprotected, and only `anyway` (its "Pair anyway") sends it the old way.
+export async function pairWithCode(hostValue, pairingCode, { anyway = false } = {}) {
   const code = normalizePairingCode(pairingCode);
+  state.pairingUnprotected = false;
   if (!code) {
     state.notice = { kind: "error", text: t("connect.errors.invalidCode") };
     notify();
@@ -777,7 +788,19 @@ export async function pairWithCode(hostValue, pairingCode) {
     state.status = "connecting";
     state.notice = null;
     notify();
-    const { created, sealed } = await pairSealed(host, code);
+    let paired;
+    try {
+      paired = anyway
+        ? await pairSealed(host, code)
+        : { created: await pairWithCpace((body) => apiCall(host, "/v1/auth/pair", { method: "POST", body }), { code, name: clientName() }), sealed: true };
+    } catch (error) {
+      if (error?.code !== "CPACE_UNSUPPORTED") throw error;
+      state.status = "setup";
+      state.pairingUnprotected = true;
+      notify();
+      return false;
+    }
+    const { created, sealed } = paired;
     if (!created?.key) {
       throw new ApiError(t("errors.noKey"), { code: "PAIRING_NO_KEY" });
     }

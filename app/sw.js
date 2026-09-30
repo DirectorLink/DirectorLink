@@ -19,6 +19,7 @@ const ASSETS = [
   "/js/account.js",
   "/js/alarm.js",
   "/js/lock.js",
+  "/js/cpace.js",
   "/js/platform.js",
   "/js/qr.js",
   "/js/remote.js",

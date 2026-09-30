@@ -41,6 +41,8 @@ PAIRING_PROBLEMS = {
     "PAIRING_RATE_LIMITED": "rateLimited",
     "KEY_LIMIT_REACHED": "keyLimit",
     "PAIRING_UNAVAILABLE": "unavailable",
+    "PAIRING_CODE_EXPIRED": "expired",
+    "PAIRING_SESSION_EXPIRED": "sessionExpired",
 }
 
 
@@ -268,7 +270,13 @@ def main():
     app = "\n".join(path.read_text(encoding="utf-8") for path in modules)
     # Onboarding (0.8.0): the pairing code from Composer is the only way to get the first key.
     require(app, '"/v1/auth/pair"', "the app must pair with POST /v1/auth/pair")
-    require(app, "pairing_code: code", "pairing must send the (normalized) code in the JSON body")
+    require(app, "pairing_code: code", "pairing the old way must send the (normalized) code in the JSON body")
+    # 1.3.0 (ADR-039): the code is never sent (CPace); an older DirectorLink gets it only after the
+    # warning, with Pair anyway.
+    require(app, "await pairWithCpace((body) => apiCall(host, \"/v1/auth/pair\"", "the app must pair without sending the code (CPace)")
+    require(app, 'if (error?.code !== "CPACE_UNSUPPORTED") throw error;', "an older DirectorLink must get no code until Pair anyway")
+    require(app, "paired = anyway\n        ? await pairSealed(host, code)", "only Pair anyway may send the code")
+    require(app, 't("connect.unprotected.pairAnyway")', "the warning about an older DirectorLink needs Pair anyway")
     require(app, "normalizePairingCode(", "the app must accept the code with or without its space")
     require(app, "saveApiKey(created.key)", "the app must store the API key it was issued")
     connect_view = (APP / "js" / "views" / "connect.js").read_text(encoding="utf-8")
@@ -352,7 +360,7 @@ def main():
         if not dictionary_path.is_file():
             fail(f"language {code} is listed in js/i18n.js but app/i18n/{code}.js is missing")
         dictionary = dictionary_path.read_text(encoding="utf-8")
-        for key in ("codeLabel", "codeHelp", "pairNew", "pairAgain", "pairAgainConfirm", "rateLimitedMinute", *PAIRING_PROBLEMS.values()):
+        for key in ("codeLabel", "codeHelp", "pairNew", "pairAgain", "pairAgainConfirm", "rateLimitedMinute", "notConfirmed", "pairAnyway", *PAIRING_PROBLEMS.values()):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing {key}")
         for key in ("atTheDoor", "lastRing", "noRings", "dismiss", "notificationTitle", "communication_failed", "justNow", "inventoryDoorbells"):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the doorbell text {key}")

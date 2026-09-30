@@ -4,7 +4,7 @@
 // from the account service, which never sees the keys, only their ids.
 
 import { h } from "../dom.js";
-import { formatDateTime, formatRelative, t } from "../i18n.js";
+import { formatDateTime, formatRelative, formatUntil, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { listMembers, removeMember, savedRemote } from "../remote.js";
 import { api, errorText, roleLabel } from "../session.js";
@@ -173,6 +173,12 @@ function lastUsed(device) {
   return device.last_used_at ? t("access.lastUsed", { time: formatRelative(device.last_used_at) }) : t("access.neverUsed");
 }
 
+// A key that expires (ADR-040: the API console's lasts a day).
+export function expiry(device, now = Date.now()) {
+  if (!device.expires_at) return null;
+  return Date.parse(device.expires_at) > now ? t("access.keyExpires", { time: formatUntil(device.expires_at, now) }) : t("access.keyExpired");
+}
+
 // The person (profile) a device belongs to, and a way to move it to another one.
 function personPicker(device, profiles) {
   if (!profiles?.length) return null;
@@ -215,7 +221,7 @@ function deviceRow(device, owners, profiles) {
       "div",
       { class: "access-main" },
       h("span", { class: "access-name", dir: "auto" }, device.name, device.current ? h("span", { class: "access-badge" }, t("access.thisDevice")) : null),
-      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device)].filter(Boolean).join(" · ")),
+      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device), expiry(device)].filter(Boolean).join(" · ")),
       personPicker(device, profiles)
     ),
     h(

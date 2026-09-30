@@ -9,7 +9,7 @@ import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { pairWithCode } from "../session.js";
 import { signInButtons } from "./common.js";
-import { state, ui } from "../state.js";
+import { notify, state, ui } from "../state.js";
 
 function draftInput(key, fallback, props) {
   const input = h("input", { ...props, value: ui.drafts[key] ?? fallback, dataset: { key } });
@@ -25,6 +25,47 @@ function notice() {
     "p",
     { class: `notice notice-${state.notice.kind}`, role: state.notice.kind === "error" ? "alert" : "status" },
     state.notice.text
+  );
+}
+
+// The controller cannot pair without the code crossing the network (DirectorLink before 1.3.0,
+// ADR-039): nothing was sent. Only Pair anyway sends it, the old way.
+function unprotectedWarning(host, code) {
+  if (!state.pairingUnprotected) return null;
+  return h(
+    "div",
+    { class: "notice notice-error connect-unprotected", role: "alert", id: "pairing-unprotected" },
+    h("p", {}, t("connect.unprotected.text")),
+    h(
+      "div",
+      { class: "button-row" },
+      h(
+        "button",
+        {
+          type: "button",
+          class: "button button-danger button-small",
+          dataset: { key: "pair-anyway" },
+          onclick: async () => {
+            await pairWithCode(host.value, code.value, { anyway: true });
+            if (state.apiKey) ui.drafts.pairingCode = "";
+          },
+        },
+        t("connect.unprotected.pairAnyway")
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "button button-secondary button-small",
+          dataset: { key: "pair-cancel" },
+          onclick: () => {
+            state.pairingUnprotected = false;
+            notify();
+          },
+        },
+        t("connect.unprotected.cancel")
+      )
+    )
   );
 }
 
@@ -142,6 +183,7 @@ export function connectScreen() {
     code,
     h("p", { id: "pairing-code-help", class: "field-help" }, t("connect.codeHelp")),
     notice(),
+    unprotectedWarning(host, code),
     h(
       "button",
       { type: "submit", class: "button button-primary button-wide", disabled: busy, dataset: { key: "pair" } },

@@ -3,7 +3,7 @@
 
 import { formatPairingCode } from "../api-client.js";
 import { byId, h, setMessage } from "./dom.js";
-import { can, connect, connectWithKey, forgetKey, notify, pairWithCode, state, useHost } from "./session.js";
+import { can, connect, connectWithKey, forgetKey, notify, pairWithCode, state, timeLeft, useHost } from "./session.js";
 
 const hostForm = byId("host-form");
 const hostInput = byId("host-input");
@@ -13,6 +13,7 @@ const currentFacts = byId("current-facts");
 const pairForm = byId("pair-form");
 const pairCode = byId("pair-code");
 const pairNote = byId("pair-note");
+const pairUnprotected = byId("pair-unprotected");
 const keyForm = byId("key-form");
 const keyInput = byId("key-input");
 
@@ -52,6 +53,8 @@ export function renderConnection() {
   } else {
     pairNote.hidden = true;
   }
+  // DirectorLink before 1.3.0 would get the code unprotected (ADR-039): nothing was sent yet.
+  pairUnprotected.hidden = !state.pairingUnprotected;
 
   currentPanel.hidden = !state.apiKey;
   if (state.apiKey) {
@@ -60,6 +63,7 @@ export function renderConnection() {
       ["Name", state.key?.name || "—"],
       ["Key ID", state.key?.id || "—"],
       ["Role", state.role || "—"],
+      ["Expires", state.key ? timeLeft(state.key.expires_at) : "—"],
     ];
     currentFacts.replaceChildren(...rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", {}, value))));
   }
@@ -105,6 +109,21 @@ pairForm.addEventListener("submit", async (event) => {
   // A wrong code stays in the field so a typo can be fixed.
   await afterConnect(await pairWithCode(hostInput.value, pairCode.value));
 });
+
+byId("pair-anyway-button").addEventListener("click", async () => {
+  delete hostInput.dataset.dirty;
+  await afterConnect(await pairWithCode(hostInput.value, pairCode.value, { anyway: true }));
+});
+
+byId("pair-cancel-button").addEventListener("click", () => {
+  state.pairingUnprotected = false;
+  notify();
+});
+
+// The time left on the key, kept up to date while it is shown.
+window.setInterval(() => {
+  if (!currentPanel.hidden && state.key?.expires_at) renderConnection();
+}, 30000);
 
 keyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
