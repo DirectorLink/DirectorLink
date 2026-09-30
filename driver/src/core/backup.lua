@@ -524,7 +524,10 @@ local function matchScenes(m, scenes, counts)
             for _, step in ipairs(scene.steps) do
                 local keep = true
                 local roomId = step.room_id
-                if roomId then
+                if roomId and step.device_ids then
+                    -- Only the room its devices were picked in (docs/SCENES.md): kept if it is found.
+                    roomId = findRoom(m, roomId)
+                elseif roomId then
                     roomId = resolve(m, "room", roomId, where)
                     keep = roomId ~= nil
                 end
@@ -574,7 +577,8 @@ local function matchProfiles(m, profiles, counts)
             local favorites, listed = Json.array(), {}
             for _, entry in ipairs(profile.prefs.favorites or {}) do
                 local kind, id = tostring(entry):match("^(%l+):(%d+)$")
-                local newId = kind and FAVORITE_KINDS[kind] and resolve(m, FAVORITE_KINDS[kind], tonumber(id), where) or nil
+                -- A kind this driver does not know matches no device: it is listed like one gone.
+                local newId = kind and resolve(m, FAVORITE_KINDS[kind] or kind, tonumber(id), where) or nil
                 local value = newId and (kind .. ":" .. newId) or nil
                 if value and not listed[value] and #favorites < Profiles.MAX_FAVORITES then
                     listed[value] = true

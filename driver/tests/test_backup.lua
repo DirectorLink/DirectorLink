@@ -470,6 +470,7 @@ local function rebuilt()
     Mock.removeDevice(project, 20)
     Mock.addLight(project, 120, 220, 10, "Kitchen Island", 0)
     Mock.removeDevice(project, 21)
+    Mock.renameDevice(project, 30, "Parents AC")
     return project
 end
 
@@ -480,6 +481,12 @@ function tests.devices_are_matched_by_id_else_by_name_in_the_same_room_and_the_r
         name = "Hall", steps = { { type = "lights", device_ids = { 21 }, set = { on = true } } },
     } }).status, 201)
     local document = export(old)
+    -- A favorite of a kind this DirectorLink does not know (a later one's).
+    for _, profile in ipairs(document.sections.profiles.profiles) do
+        if profile.name == "Owner phone" then
+            profile.prefs.favorites[#profile.prefs.favorites + 1] = "sprinkler:77"
+        end
+    end
 
     local s = start(rebuilt())
     local done, preview = replace(s, document)
@@ -488,8 +495,12 @@ function tests.devices_are_matched_by_id_else_by_name_in_the_same_room_and_the_r
     T.eq(references.by_name[1].name, "Kitchen Island")
     T.eq(references.by_name[1].from, 20)
     T.eq(references.by_name[1].to, 120)
-    T.eq(references.unmatched_count, 1)
-    local missing = references.unmatched[1]
+    T.eq(#references.renamed, 1, "found by id, with another name now")
+    T.same(references.renamed[1], { id = 30, kind = "climate", name = "Parents", now = "Parents AC" })
+    T.eq(references.unmatched_count, 2)
+    T.eq(references.unmatched[1].kind, "sprinkler", "never dropped without a word")
+    T.eq(references.unmatched[1].used_in[1].name, "Owner phone")
+    local missing = references.unmatched[2]
     T.eq(missing.id, 21)
     T.eq(missing.name, "Hall Light")
     T.eq(missing.room, "Living Room")
@@ -517,6 +528,10 @@ end
 function tests.a_room_that_is_gone_never_becomes_the_whole_home()
     local old = start()
     furnish(old)
+    -- Devices picked in a room: the room is only where they were picked.
+    T.eq(T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = {
+        name = "Hall", steps = { { type = "lights", room_id = 11, device_ids = { 21 }, set = { on = true } } },
+    } }).status, 201)
     local document = export(old)
     local project = Mock.project()
     -- The living room is gone (its devices moved to the kitchen); the kitchen has a new id.
@@ -547,6 +562,9 @@ function tests.a_room_that_is_gone_never_becomes_the_whole_home()
     end
     local morning = list(s.mock, s.key, "/v1/scenes").items[2]
     T.eq(morning.steps[1].room_id, 12, "the kitchen step in the kitchen's new id")
+    local hall = list(s.mock, s.key, "/v1/scenes").items[3]
+    T.same(hall.steps[1].device_ids, { 21 }, "the hall light, now in the kitchen, stays")
+    T.eq(tostring(hall.steps[1].room_id), "null", "without the room that is gone")
     local rooms = list(s.mock, s.key, "/v1/rooms").items
     T.eq(#rooms, 1)
     T.same(list(s.mock, old.key, "/v1/profile").prefs.hidden_rooms, { 12 })
