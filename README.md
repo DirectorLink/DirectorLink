@@ -6,6 +6,35 @@ DirectorLink is an open-source, local-first management layer for Control4 homeow
 
 The goal is to provide simple device control, scenes, schedules, and everyday automation without requiring homeowners to use Composer Pro for routine changes.
 
+## Screenshots
+
+The app on a demo home: made-up rooms and devices, and drawn camera pictures.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
+    <td><img src="docs/screenshots/room.png" width="260" alt="Living Room: dimmable lights with switches and brightness sliders, and the AC"></td>
+    <td><img src="docs/screenshots/climate.png" width="260" alt="Climate: the living room AC cooling to 23 degrees and the bedroom floor heating at 24, by room"></td>
+  </tr>
+  <tr>
+    <td align="center">Home</td>
+    <td align="center">A room</td>
+    <td align="center">Climate</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/scenes.png" width="260" alt="Scenes: Good Morning, Movie Night, Leaving Home and Good Night, each one tap to run"></td>
+    <td><img src="docs/screenshots/schedules.png" width="260" alt="Schedules: the weather at home, and scenes run on weekday mornings, at sunset and when it gets hot"></td>
+    <td><img src="docs/screenshots/home-dark.png" width="260" alt="Home in dark mode"></td>
+  </tr>
+  <tr>
+    <td align="center">Scenes</td>
+    <td align="center">Schedules</td>
+    <td align="center">Dark mode</td>
+  </tr>
+</table>
+
+<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side">
+
 ## V1 scope
 
 - Control4 Director OS **3.3.0+**
