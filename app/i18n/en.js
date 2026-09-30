@@ -1001,6 +1001,7 @@ export default {
       leftOutSchedules: { one: "{count} schedule runs a scene that is not in the backup and is left out.", other: "{count} schedules run a scene that is not in the backup and are left out." },
       leftOutOther: { one: "{count} item is not valid and is left out.", other: "{count} items are not valid and are left out." },
       byName: "Found in this project by name, in the same room",
+      renamed: "Found by their id, with another name now",
       unmatched: "Not in this project, left out",
       more: { one: "and {count} more", other: "and {count} more" },
       composerTitle: "Set in Composer, not restored",

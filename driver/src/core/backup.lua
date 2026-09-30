@@ -569,7 +569,7 @@ local function matchProfiles(m, profiles, counts)
     local seen = {}
     local result = Json.array()
     for _, profile in ipairs(profiles) do
-        if seen[profile.id] then
+        if seen[profile.id] or #result >= Profiles.MAX_PROFILES then
             counts.profiles = counts.profiles + 1
         else
             seen[profile.id] = true
@@ -661,10 +661,12 @@ local function mergeKeys(section, restorerId, now)
     end
     local result, seen = Json.array(), {}
     local info = { expired = 0, left_out = dropped, conflict = false, yours = "added", limit = Keys.MAX_KEYS }
+    local kept = 0
     for _, key in ipairs(backupKeys) do
         if key.expires and key.expires <= now then
             info.expired = info.expired + 1
-        elseif seen[key.id] then
+        elseif seen[key.id] or (kept >= Keys.MAX_KEYS and not (current and key.id == current.id)) then
+            -- The backup's own keys stay within the limit (a DirectorLink never has more).
             info.left_out = info.left_out + 1
         elseif current and key.id == current.id then
             seen[key.id] = true
@@ -677,6 +679,7 @@ local function mergeKeys(section, restorerId, now)
             result[#result + 1] = current
         else
             seen[key.id] = true
+            kept = kept + 1
             result[#result + 1] = key
         end
     end
