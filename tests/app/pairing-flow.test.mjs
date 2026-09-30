@@ -55,7 +55,7 @@ const { setLanguage } = await import("../../app/js/i18n.js");
 function fresh(options) {
   session.forgetKey();
   controller = fakeController(options);
-  Object.assign(state, { notice: null, pairingUnprotected: false });
+  Object.assign(state, { notice: null, pairingUnprotected: null });
 }
 
 const sentTheCode = (requests) => requests.some((body) => "pairing_code" in body || JSON.stringify(body).includes("12345678"));
@@ -68,7 +68,7 @@ test("with DirectorLink 1.3.0 the code is never sent, and the key comes back sea
   assert.ok(controller.requests[0].cpace.nonce && controller.requests[0].name, "the first request: a nonce and the name");
   assert.ok(state.apiKey.startsWith("ak_"), "the key was opened and saved");
   assert.equal(localStorage.getItem("directorlink.apiKey"), state.apiKey);
-  assert.equal(state.pairingUnprotected, false);
+  assert.equal(state.pairingUnprotected, null);
 });
 
 test("a wrong code is explained as before", async () => {
@@ -82,7 +82,7 @@ test("a wrong code is explained as before", async () => {
 test("an older DirectorLink gets no code: a warning first, and only Pair anyway sends it", async () => {
   fresh({ version: "1.2.0" });
   assert.equal(await session.pairWithCode(HOST, "1234 5678"), false);
-  assert.equal(state.pairingUnprotected, true, "the connect screen warns");
+  assert.deepEqual(state.pairingUnprotected, { host: HOST, reason: "older" }, "the connect screen warns, about this controller");
   assert.equal(state.status, "setup");
   assert.equal(state.apiKey, "");
   assert.equal(controller.requests.length, 1);
@@ -93,8 +93,19 @@ test("an older DirectorLink gets no code: a warning first, and only Pair anyway 
   assert.ok(!sentTheCode(controller.requests));
 
   await session.pairWithCode(HOST, "1234 5678", { anyway: true });
-  assert.equal(state.pairingUnprotected, false);
+  assert.equal(state.pairingUnprotected, null);
   assert.ok(sentTheCode(controller.requests), "Pair anyway sends the code, the old way");
+  assert.equal(controller.requests.at(-1).pairing_code, "12345678");
+  assert.ok(state.apiKey.startsWith("ak_"));
+});
+
+test("a 1.3.0 controller whose lock failed gets its own warning, and nothing about the code", async () => {
+  fresh({ lock: false });
+  assert.equal(await session.pairWithCode(HOST, "1234 5678"), false);
+  assert.deepEqual(state.pairingUnprotected, { host: HOST, reason: "lock" }, "updating would not help: said so");
+  assert.ok(!sentTheCode(controller.requests));
+  // Pair anyway: the exchange is refused too, then the code the old way.
+  await session.pairWithCode(HOST, "1234 5678", { anyway: true });
   assert.equal(controller.requests.at(-1).pairing_code, "12345678");
   assert.ok(state.apiKey.startsWith("ak_"));
 });

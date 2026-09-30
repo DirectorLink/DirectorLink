@@ -25,9 +25,11 @@ export const state = {
   // GET /v1/calendar (calendar.js): null until read, and while the Jewish calendar is off.
   calendar: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
-  // The controller cannot pair without the code crossing the network (DirectorLink before 1.3.0):
-  // the connect screen warns, and only "Pair anyway" sends it (session.js, ADR-039).
-  pairingUnprotected: false,
+  // The controller cannot pair without the code crossing the network (DirectorLink before 1.3.0,
+  // or its lock failed its self-test): { host, reason: "older" | "lock" }, or null. The connect
+  // screen warns while its address field holds that host, and only "Pair anyway" sends the code,
+  // to that host (session.js, ADR-039).
+  pairingUnprotected: null,
   loaded: false,
   system: null,
   rooms: [],

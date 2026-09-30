@@ -5,6 +5,7 @@
 // asks every few seconds, and finishes by itself once they have.
 
 import { clearHost, saveApiKey } from "../../api-client.js";
+import { loadAccount } from "../account.js";
 import { h } from "../dom.js";
 import { formatDateTime, t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -17,8 +18,11 @@ const JOIN_KEY = "directorlink.join";
 // The invitation this tab asked the home's owner about, so a reload carries on waiting.
 const ASKED_KEY = "directorlink.joinAsked";
 const POLL_MS = 5000;
+// After failed asks (offline, or the server failing), the next one waits twice as long, up to this.
+const LONGEST_POLL_MS = 60000;
 let pollTimer = null;
 let pollNavigate = null;
+let pollFailures = 0;
 
 export function storeInvitation(text) {
   try {
@@ -155,6 +159,7 @@ async function accept(invitation, navigate, { confirmed = false } = {}) {
 function schedulePoll(navigate) {
   pollNavigate = navigate;
   if (pollTimer) return;
+  const wait = Math.min(POLL_MS * 2 ** pollFailures, LONGEST_POLL_MS);
   pollTimer = window.setTimeout(async () => {
     pollTimer = null;
     const invitation = storedInvitation();
@@ -164,7 +169,7 @@ function schedulePoll(navigate) {
       return;
     }
     await followRequest(invitation, pollNavigate);
-  }, POLL_MS);
+  }, wait);
 }
 
 // Asks the account server about this account's request, and does what its answer says.
@@ -172,11 +177,27 @@ async function followRequest(invitation, navigate) {
   let result;
   try {
     result = await checkJoinRequest(invitation);
-  } catch {
-    // Offline for a moment: ask again later.
+  } catch (error) {
+    // The account's session ended meanwhile (signed out everywhere, the account deleted, or Apple
+    // said so): nothing is asked any more; the page offers to sign in again.
+    if (error instanceof RemoteError && error.code === "NOT_SIGNED_IN") {
+      await loadAccount();
+      // Still signed in after all: asked again, later.
+      if (state.account.status === "signed-in" && ui.joinWait?.status === "pending") {
+        pollFailures += 1;
+        schedulePoll(navigate);
+      } else {
+        pollFailures = 0;
+      }
+      notify();
+      return;
+    }
+    // Offline for a moment, or the server failing: ask again later, less often each time.
+    pollFailures += 1;
     if (ui.joinWait?.status === "pending") schedulePoll(navigate);
     return;
   }
+  pollFailures = 0;
   const key = invitationKey(invitation);
   switch (result.outcome) {
     case "wait":

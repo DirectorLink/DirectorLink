@@ -22,7 +22,7 @@ import { notificationsOn, notifyRings, trackRings } from "./doorbells.js";
 import { IS_IOS } from "./platform.js";
 import { RemoteError, SealRefused, forgetRemote, lanCall, lanImage, remoteCall, remoteImage, savedRemote } from "./remote.js";
 import { keyExchange, open, pairingLock } from "./lock.js";
-import { pairWithCpace } from "./cpace.js";
+import { pairWithCpace, unprotectedReason } from "./cpace.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
 
@@ -773,11 +773,12 @@ async function pairSealed(host, code) {
 // The only way to get a first key: the pairing code created in Composer (DirectorLink →
 // Actions → New Pairing Code). It lasts 15 minutes, works once and gives an admin key.
 // The code is never sent (CPace, cpace.js, ADR-039). A controller that cannot pair that way
-// (DirectorLink before 1.3.0) learns nothing about the code: the connect screen warns that it would
-// travel unprotected, and only `anyway` (its "Pair anyway") sends it the old way.
+// (DirectorLink before 1.3.0, or its lock failed its self-test) learns nothing about the code: the
+// connect screen warns that it would travel unprotected, and only `anyway` (its "Pair anyway")
+// sends it the old way.
 export async function pairWithCode(hostValue, pairingCode, { anyway = false } = {}) {
   const code = normalizePairingCode(pairingCode);
-  state.pairingUnprotected = false;
+  state.pairingUnprotected = null;
   if (!code) {
     state.notice = { kind: "error", text: t("connect.errors.invalidCode") };
     notify();
@@ -796,7 +797,7 @@ export async function pairWithCode(hostValue, pairingCode, { anyway = false } = 
     } catch (error) {
       if (error?.code !== "CPACE_UNSUPPORTED") throw error;
       state.status = "setup";
-      state.pairingUnprotected = true;
+      state.pairingUnprotected = { host, reason: unprotectedReason(error) };
       notify();
       return false;
     }

@@ -37,7 +37,7 @@ const { state } = session;
 function fresh(options) {
   session.forgetLocally();
   controller = fakeController(options);
-  Object.assign(state, { notice: null, pairingUnprotected: false });
+  Object.assign(state, { notice: null, pairingUnprotected: null });
 }
 
 const sentTheCode = (requests) => requests.some((body) => "pairing_code" in body || JSON.stringify(body).includes("12345678"));
@@ -56,14 +56,14 @@ test("the console pairs without sending the code, for a key that lasts a day", a
 test("an older DirectorLink gets the code only after Pair anyway, without expires_in", async () => {
   fresh({ version: "1.2.0" });
   assert.equal(await session.pairWithCode(HOST, "1234 5678"), false);
-  assert.equal(state.pairingUnprotected, true);
+  assert.deepEqual(state.pairingUnprotected, { host: HOST, reason: "older" });
   assert.ok(!sentTheCode(controller.requests), "nothing about the code was sent");
   assert.equal(await session.pairWithCode(HOST, "1234 5678", { anyway: true }), true);
   const [withExpiry, without] = controller.requests.slice(-2);
   assert.equal(withExpiry.expires_in, 86400, "asked for a day first");
   assert.equal(without.pairing_code, "12345678");
   assert.ok(!("expires_in" in without), "then as DirectorLink 1.2.0 understands it");
-  assert.equal(state.pairingUnprotected, false);
+  assert.equal(state.pairingUnprotected, null);
 });
 
 test("an expired key sends the console back to pairing, and says why", async () => {
@@ -92,6 +92,73 @@ test("at the end of the day the console asks the controller by itself", async ()
   } finally {
     Date.now = realNow;
   }
+});
+
+test("the warning belongs to the controller it was about; another address clears it", async () => {
+  fresh({ version: "1.2.0" });
+  await session.pairWithCode(HOST, "1234 5678");
+  assert.deepEqual(session.unprotectedFor(` ${HOST} `), { host: HOST, reason: "older" }, "shown while the field holds that controller");
+  assert.equal(session.unprotectedFor("192.168.1.11"), null, "not for another one");
+  session.addressChanged(HOST);
+  assert.ok(state.pairingUnprotected, "the same address keeps it");
+  session.addressChanged("192.168.1.11");
+  assert.equal(state.pairingUnprotected, null, "another address clears it");
+});
+
+test("a 1.3.0 controller whose lock failed is not called older", async () => {
+  fresh({ lock: false });
+  assert.equal(await session.pairWithCode(HOST, "1234 5678"), false);
+  assert.deepEqual(state.pairingUnprotected, { host: HOST, reason: "lock" });
+  assert.ok(!sentTheCode(controller.requests));
+});
+
+test("a key refused after its expiry is called expired, even once the controller removed it", async () => {
+  const realNow = Date.now;
+  try {
+    fresh();
+    await session.pairWithCode(HOST, "1234 5678");
+    const expiresAt = Date.parse(state.key.expires_at);
+    // The app, polling the controller, made it remove the key: now it is just unknown.
+    controller.removeKeys();
+    Date.now = () => expiresAt + 3600 * 1000;
+    await session.connect();
+    assert.equal(state.apiKey, "");
+    assert.equal(state.notice.text, session.EXPIRED_TEXT);
+
+    // Refused before its time: revoked, as before.
+    Date.now = realNow;
+    fresh();
+    await session.pairWithCode(HOST, "1234 5678");
+    controller.removeKeys();
+    await session.connect();
+    assert.equal(state.apiKey, "");
+    assert.match(state.notice.text, /no longer accepts this API key/);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("a key that lasts weeks is asked about every few hours, not all the time", async () => {
+  fresh();
+  const paired = await controller.fetch(`http://${HOST}:41999/v1/auth/pair`, {
+    method: "POST",
+    body: JSON.stringify({ pairing_code: "12345678", name: "Script", expires_in: 30 * 86400 }),
+  });
+  const { key } = await paired.json();
+  const delays = [];
+  const setTimer = window.setTimeout;
+  window.setTimeout = (callback, ms) => {
+    delays.push(ms);
+    return setTimer(callback, ms);
+  };
+  try {
+    assert.equal(await session.connectWithKey(HOST, key), true);
+  } finally {
+    window.setTimeout = setTimer;
+  }
+  const longest = Math.max(...delays);
+  assert.ok(longest <= 6 * 3600 * 1000, `waits at most 6 hours, not ${longest} ms (a timer overflows after 2^31 - 1 ms)`);
+  assert.ok(longest >= 3600 * 1000, "but does not ask all the time");
 });
 
 test("the time left, as the Connection screen shows it", () => {

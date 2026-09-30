@@ -1,14 +1,17 @@
 // A controller for the pairing tests: POST /v1/auth/pair as DirectorLink 1.3.0 answers it (CPace,
 // ADR-039, with app/js/cpace.js playing the controller's part), or as 1.2.0 did (the code itself;
-// unknown fields refused). Every request body is kept in `requests`.
+// unknown fields refused). `lock: false`: a 1.3.0 controller whose lock failed its self-test (no
+// CPace, no sealed answer). Every request body is kept in `requests`, and the host it went to in
+// `hosts`.
 
 import * as Cpace from "../../app/js/cpace.js";
 import { cpaceLock, fromBase64, seal, toBase64 } from "../../app/js/lock.js";
 
 const EMPTY = new Uint8Array(0);
 
-export function fakeController({ code = "12345678", version = "1.3.0", now = () => Date.now() } = {}) {
+export function fakeController({ code = "12345678", version = "1.3.0", lock = true, now = () => Date.now() } = {}) {
   const requests = [];
+  const hosts = [];
   const sessions = new Map();
   const issued = new Map(); // key -> its view
   const expired = new Set();
@@ -37,6 +40,10 @@ export function fakeController({ code = "12345678", version = "1.3.0", now = () 
     const known = version === "1.3.0" ? ["pairing_code", "name", "exchange", "expires_in", "cpace"] : ["pairing_code", "name", "exchange"];
     const unknown = Object.keys(body).find((field) => !known.includes(field));
     if (unknown) return invalidField(unknown);
+    if (!lock && body.cpace) {
+      return [503, { status: 503, code: "LOCK_UNAVAILABLE", detail: "This controller cannot seal the answer (the lock self-test failed; see the log); pair with pairing_code" }];
+    }
+    if (!lock && body.exchange) return invalidField("exchange");
     if (body.cpace && !body.cpace.session) {
       const scalar = await Cpace.newScalar();
       const nonce = crypto.getRandomValues(new Uint8Array(16));
@@ -65,13 +72,14 @@ export function fakeController({ code = "12345678", version = "1.3.0", now = () 
 
   // A fetch for the controller at `host` (http://host:41999).
   async function fetch(url, init = {}) {
-    const { pathname } = new URL(url);
+    const { hostname, pathname } = new URL(url);
     const method = init.method || "GET";
     let status = 404;
     let answer = { status: 404, code: "NOT_FOUND" };
     if (method === "POST" && pathname === "/v1/auth/pair") {
       const body = JSON.parse(init.body);
       requests.push(body);
+      hosts.push(hostname);
       [status, answer] = await pair(body);
     } else if (pathname === "/v1/api-keys/current") {
       // The console sends its key openly (Bearer); an expired one is refused and removed (ADR-040).
@@ -97,6 +105,8 @@ export function fakeController({ code = "12345678", version = "1.3.0", now = () 
   const expireKeys = () => {
     for (const key of issued.keys()) expired.add(key);
   };
+  // ...and something else looked at the keys first, which removed them: then they are just unknown.
+  const removeKeys = () => issued.clear();
 
-  return { fetch, requests, expireKeys };
+  return { fetch, requests, hosts, expireKeys, removeKeys };
 }

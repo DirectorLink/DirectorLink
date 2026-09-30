@@ -709,13 +709,23 @@ select:disabled {
   height: 18px;
 }
 
-/* Settings → Account: the sign-in buttons share one width, side by side or one under the other. */
+/* Settings → Account: the sign-in buttons share one width, side by side or one under the other.
+   A wrapping row, not an auto-fit grid: such a grid counts its columns from its max-width, and the
+   page could not get narrower than two of them on a phone. */
 .sign-in-buttons {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   flex: 1 1 100%;
   max-width: 440px;
+}
+
+.sign-in-buttons > * {
+  flex: 1 1 210px;
+}
+
+.sign-in-buttons > p {
+  flex-basis: 100%;
 }
 
 :root[data-theme="dark"] .button-apple,

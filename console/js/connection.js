@@ -3,7 +3,19 @@
 
 import { formatPairingCode } from "../api-client.js";
 import { byId, h, setMessage } from "./dom.js";
-import { can, connect, connectWithKey, forgetKey, notify, pairWithCode, state, timeLeft, useHost } from "./session.js";
+import {
+  addressChanged,
+  can,
+  connect,
+  connectWithKey,
+  forgetKey,
+  notify,
+  pairWithCode,
+  state,
+  timeLeft,
+  unprotectedFor,
+  useHost,
+} from "./session.js";
 
 const hostForm = byId("host-form");
 const hostInput = byId("host-input");
@@ -14,6 +26,9 @@ const pairForm = byId("pair-form");
 const pairCode = byId("pair-code");
 const pairNote = byId("pair-note");
 const pairUnprotected = byId("pair-unprotected");
+const pairOlder = byId("pair-unprotected-older");
+const pairLock = byId("pair-unprotected-lock");
+const keyLifetime = byId("key-lifetime");
 const keyForm = byId("key-form");
 const keyInput = byId("key-input");
 
@@ -53,8 +68,12 @@ export function renderConnection() {
   } else {
     pairNote.hidden = true;
   }
-  // DirectorLink before 1.3.0 would get the code unprotected (ADR-039): nothing was sent yet.
-  pairUnprotected.hidden = !state.pairingUnprotected;
+  // The code would travel unprotected (ADR-039): nothing was sent yet. DirectorLink before 1.3.0
+  // (updating helps), or a controller whose lock failed its self-test (it does not).
+  const warned = unprotectedFor(hostInput.value);
+  pairUnprotected.hidden = !warned;
+  pairOlder.hidden = warned?.reason === "lock";
+  pairLock.hidden = warned?.reason !== "lock";
 
   currentPanel.hidden = !state.apiKey;
   if (state.apiKey) {
@@ -66,11 +85,19 @@ export function renderConnection() {
       ["Expires", state.key ? timeLeft(state.key.expires_at) : "—"],
     ];
     currentFacts.replaceChildren(...rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", {}, value))));
+    // The console's key lasts a day (ADR-040); one from DirectorLink before 1.3.0, or a pasted one,
+    // may never expire.
+    keyLifetime.textContent = state.key?.expires_at
+      ? "It stops working when it expires (above); then pair again."
+      : state.status === "connected"
+        ? "This key does not expire: press Forget key when you are done."
+        : "";
   }
 }
 
 hostInput.addEventListener("input", () => {
   hostInput.dataset.dirty = "1";
+  addressChanged(hostInput.value);
 });
 
 hostForm.addEventListener("submit", async (event) => {
@@ -110,13 +137,16 @@ pairForm.addEventListener("submit", async (event) => {
   await afterConnect(await pairWithCode(hostInput.value, pairCode.value));
 });
 
+// Only to the controller the warning is about.
 byId("pair-anyway-button").addEventListener("click", async () => {
+  const warned = unprotectedFor(hostInput.value);
+  if (!warned) return;
   delete hostInput.dataset.dirty;
-  await afterConnect(await pairWithCode(hostInput.value, pairCode.value, { anyway: true }));
+  await afterConnect(await pairWithCode(warned.host, pairCode.value, { anyway: true }));
 });
 
 byId("pair-cancel-button").addEventListener("click", () => {
-  state.pairingUnprotected = false;
+  state.pairingUnprotected = null;
   notify();
 });
 

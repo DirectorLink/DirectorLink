@@ -2,6 +2,7 @@
 // DirectorLink at the addresses homes use most and puts the one it finds in the field. The person
 // still types the pairing code and taps Connect. Not shown where pairing at home cannot work.
 
+import { normalizeHost } from "../../api-client.js";
 import { findControllers, findSupported, scanSettings } from "../find.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
@@ -30,10 +31,21 @@ function focusCode() {
   });
 }
 
+// Another address in the field (typed, or found): what was said about the one before (an error,
+// or the warning that it cannot pair safely, views/connect.js) is not about this one.
+export function addressChanged(value) {
+  const stale = Boolean(state.pairingUnprotected) && state.pairingUnprotected.host !== normalizeHost(value);
+  if (!state.notice && !stale) return;
+  state.notice = null;
+  if (stale) state.pairingUnprotected = null;
+  notify();
+}
+
 function use(controller) {
   ui.drafts.host = controller.host;
   // Drafts are not part of what a redraw compares (app.js): this is.
   ui.find = { ...ui.find, chosen: controller.host };
+  addressChanged(controller.host);
   notify();
   focusCode();
 }

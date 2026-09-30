@@ -287,6 +287,13 @@ def main():
         ('placeholder: "1234 5678"', "the pairing code field must show the Composer format"),
     ):
         require(connect_view, fragment, message)
+    # A grid that fits as many columns as it can counts them from its width or max-width, and a
+    # page cannot get narrower than those columns: with wide ones, a phone scrolls sideways (1.3.0:
+    # Settings -> Account's sign-in buttons). Wide items wrap in a flex row instead.
+    styles = (APP / "styles.css").read_text(encoding="utf-8")
+    for columns in re.findall(r"repeat\(auto-(?:fit|fill),\s*minmax\((?:min\()?(\d+)px", styles):
+        if int(columns) >= 160:
+            fail(f"app/styles.css: an auto-fit or auto-fill grid of {columns}px columns overflows a phone; wrap the items in a flex row")
     session = (APP / "js" / "session.js").read_text(encoding="utf-8")
     for code in PAIRING_PROBLEMS:
         require(session, f'"{code}"', f"the app must explain the pairing problem {code}")

@@ -45,7 +45,7 @@
     <p class="dev-warning" role="note">
       <strong>For debugging and development only.</strong> Unlike the app, the console sends its
       API key openly on your home network. Use it on a network you trust, and when you are done
-      press <em>Forget key</em> (Connection); the key it pairs for itself expires after a day. For everyday use, open
+      press <em>Forget key</em> (Connection); with DirectorLink 1.3.0 or newer, the key it pairs for itself expires after a day. For everyday use, open
       <a href="https://app.directorlink.io">the DirectorLink app</a>.
     </p>
 
@@ -87,7 +87,7 @@
               <dl id="current-facts" class="facts"></dl>
               <p class="message message-warn" role="note">
                 This key travels unprotected on your network: use the console only on a network you trust.
-                It lasts a day; then pair again.
+                <span id="key-lifetime">It stops working when it expires (above); then pair again.</span>
               </p>
               <div class="button-row">
                 <button id="reconnect-button" class="button button-secondary" type="button">Reconnect</button>
@@ -124,10 +124,16 @@
               </p>
               <p id="pair-note" class="help" hidden></p>
               <div id="pair-unprotected" class="message message-error stack" role="alert" hidden>
-                <p>
+                <p id="pair-unprotected-older">
                   This controller runs an older DirectorLink. To pair with it, the code would travel over your
                   network unprotected: anyone on the network could read it and pair instead of you. Update
                   DirectorLink in Composer to pair safely.
+                </p>
+                <p id="pair-unprotected-lock" hidden>
+                  This controller can't protect pairing: its DirectorLink failed a security self-test when it
+                  started. To pair with it, the code would travel over your network unprotected: anyone on the
+                  network could read it and pair instead of you. There is nothing to update: ask your installer
+                  to check DirectorLink's log.
                 </p>
                 <div class="button-row">
                   <button id="pair-anyway-button" class="button button-danger" type="button">Pair anyway</button>

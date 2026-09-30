@@ -180,6 +180,8 @@ function signature() {
     themePreference(),
     state.status,
     state.notice,
+    // The pairing screen's warning (Cancel only clears it).
+    state.pairingUnprotected,
     state.loaded,
     state.system,
     // A newer DirectorLink release, and the one dismissed on Home (kept in localStorage).

@@ -218,12 +218,16 @@ function sameBytes(left, right) {
 }
 
 // True for the answer of a controller that cannot pair this way: DirectorLink before 1.3.0 refuses
-// the field (or expires_in, which it does not know either), and so does a controller whose lock
-// failed its self-test.
+// the field (or expires_in, which it does not know either), and a controller whose lock failed its
+// self-test answers LOCK_UNAVAILABLE.
 export function refusesCpace(error) {
   const field = error?.problem?.errors?.[0]?.field;
-  return error?.code === "INVALID_FIELD" && (field === "cpace" || field === "expires_in");
+  return (error?.code === "INVALID_FIELD" && (field === "cpace" || field === "expires_in")) || error?.code === "LOCK_UNAVAILABLE";
 }
+
+// Why a controller cannot pair without sending the code (CPACE_UNSUPPORTED): "lock" when its lock
+// failed its self-test (updating DirectorLink does not help), else "older" (DirectorLink before 1.3.0).
+export const unprotectedReason = (error) => (error?.problem?.code === "LOCK_UNAVAILABLE" ? "lock" : "older");
 
 const notConfirmed = () =>
   new ApiError("The controller did not prove that it knows the pairing code: pairing stopped.", { code: "PAIRING_NOT_CONFIRMED" });

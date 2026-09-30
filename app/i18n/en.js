@@ -97,9 +97,11 @@ export default {
       notConfirmed:
         "The controller at this address didn’t prove it knows the code, so nothing was paired. Check the address and try again. If it happens again, someone on your network may be in the way.",
     },
-    // DirectorLink before 1.3.0 would get the code unprotected (ADR-039).
+    // The code would travel unprotected (ADR-039): DirectorLink before 1.3.0, or a controller whose
+    // lock failed its self-test (updating does not help there).
     unprotected: {
-      text: "This controller runs an older DirectorLink. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. Update DirectorLink in Composer to pair safely.",
+      older: "This controller runs an older DirectorLink. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. Update DirectorLink in Composer to pair safely.",
+      lock: "This controller can’t protect pairing: its DirectorLink failed a security self-test when it started. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. There is nothing to update: ask your installer to check DirectorLink’s log.",
       pairAnyway: "Pair anyway",
       cancel: "Cancel",
     },
@@ -1062,7 +1064,7 @@ export default {
         failed: "Sign-in didn’t work. Try again.",
         unverified: "This account has no verified email address.",
         linked: "Added. This account now also signs in with it.",
-        taken: "That sign-in already belongs to another DirectorLink account. Delete that account first, or keep them separate.",
+        taken: "That sign-in already belongs to another DirectorLink account: sign out and sign in with it to reach that one. To add it here, delete that account first.",
         duplicate: "This account already has a sign-in with that provider.",
         removed: "Done. This account no longer signs in that way.",
         removeFailed: "That could not be changed. Try again.",
