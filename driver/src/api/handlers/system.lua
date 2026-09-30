@@ -23,6 +23,8 @@ end
 function System.health(ctx)
     local status = ctx.services.status()
     return 200, {
+        -- What answers on this port: the app's Find my controller tells DirectorLink from other devices.
+        product = "directorlink",
         status = status.state,
         version = Version.BRIDGE_VERSION,
         api_version = Version.API_VERSION,

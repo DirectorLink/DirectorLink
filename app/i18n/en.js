@@ -42,6 +42,22 @@ export default {
     hostLabel: "Controller address",
     hostHelp: "The IP address or local name, e.g. 192.168.1.50 or director.local.",
     invalidHost: "Enter an IP address or local hostname, without a port.",
+    find: {
+      button: "Find my controller",
+      cancel: "Cancel",
+      asking: "Allow access to devices on your local network when the browser asks.",
+      network: "Looking for your home network…",
+      range: "Looking in {range}…",
+      product: "DirectorLink {version}",
+      found: "Found {name} at {host}. Now enter the pairing code.",
+      several: {
+        one: "Found 1 controller. Choose yours:",
+        other: "Found {count} controllers. Choose yours:",
+      },
+      none: "No controller found on this network. Type the controller’s address. Your installer can tell you, or find it in Composer.",
+      blocked:
+        "The browser doesn’t let this site look for devices on your home network. Allow local network access in the site’s settings, then try again.",
+    },
     codeLabel: "Pairing code",
     codeHelp:
       "In Composer, select DirectorLink, then Actions → New Pairing Code — or ask your installer for one. A code lasts 15 minutes and works once.",

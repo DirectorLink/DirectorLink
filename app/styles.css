@@ -2330,8 +2330,47 @@ select:disabled {
   margin-block-start: 4px;
 }
 
-.connect-form .field-help + .field-label {
+.connect-form .field-help + .field-label,
+.connect-find + .field-label {
   margin-block-start: 8px;
+}
+
+/* Find my controller, under the address (views/find.js). */
+.connect-find {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.connect-find > .notice,
+.connect-find-results {
+  align-self: stretch;
+}
+
+.connect-find-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connect-find-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connect-find-choice {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.connect-find-version {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 /* The pairing code, shown as "1234 5678". */

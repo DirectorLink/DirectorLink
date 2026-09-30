@@ -108,6 +108,7 @@ paths:
       tags: [System]
       operationId: getHealth
       summary: Check that the bridge is running
+      description: Needs no key, so a client can also use it to find DirectorLink on the home network.
       security: []
       responses:
         "200":
@@ -2171,8 +2172,14 @@ components:
 
     Health:
       type: object
-      required: [status, version, api_version, detail]
+      required: [product, status, version, api_version, detail]
       properties:
+        product:
+          type: string
+          const: directorlink
+          description: |
+            Always `directorlink`: tells DirectorLink from other devices on the home network (the
+            app's Find my controller asks this route at the addresses homes use most). Since 1.3.0.
         status:
           $ref: "#/components/schemas/BridgeStatus"
         version:
