@@ -3,8 +3,9 @@
 // confirms it. A failed command reverts the change and shows a short error on the device.
 // Blinds follow their move instead, which takes far longer (see the blinds section).
 
+import { fanChangeConfirmed, optimisticFan } from "./fans.js";
 import { t } from "./i18n.js";
-import { api, errorText, handleUnauthorized, keyInUse, noteForbidden, whenForgotten } from "./session.js";
+import { api, errorText, handleUnauthorized, keyGeneration, keyInUse, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
 import { MOVE_POLL_MS, REPORT_GAP_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
@@ -40,15 +41,20 @@ function thermostatChangeConfirmed(thermostat, change) {
 const CONFIRMERS = {
   light: lightChangeConfirmed,
   thermostat: thermostatChangeConfirmed,
+  fan: fanChangeConfirmed,
 };
 
-// Re-reads the device until it reports the change (or 5 s pass). Returns the last state read.
-async function waitForConfirmation(kind, id, change) {
+// Re-reads the device until it reports the change (or 5 s pass). Returns the last state read, or
+// null once the key is forgotten, or being forgotten, since `since` (session.js keyGeneration): then
+// nothing more is read.
+async function waitForConfirmation(kind, id, change, since = keyGeneration()) {
   const deadline = Date.now() + CONFIRM_MS;
   let last = null;
   while (Date.now() < deadline) {
     await sleep(600);
+    if (since !== keyGeneration()) return null;
     last = await api(`${KINDS[kind].path}/${id}`);
+    if (since !== keyGeneration()) return null;
     if (CONFIRMERS[kind](last, change)) {
       return { device: last, confirmed: true };
     }
@@ -68,6 +74,7 @@ function optimistic(kind, device, change) {
     }
     return { ...device, on: change.on, brightness: change.on ? device.brightness : device.dimmable ? 0 : null };
   }
+  if (kind === "fan") return optimisticFan(device, change);
   const next = { ...device, ...change };
   // With heat and cool setpoints, the target is the setpoint of the mode (a new mode, or new setpoints).
   if (kind === "thermostat" && isDual(next)) next.target_temperature = activeSetpoint(next);
@@ -90,10 +97,16 @@ export async function sendChange(kind, id, change, { before } = {}) {
   setPending(key, true);
   notify();
 
+  // Once the key is forgotten, or being forgotten, nothing more is read and the device is left as
+  // it is.
+  const since = keyGeneration();
   try {
     const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body: change });
+    if (since !== keyGeneration()) return;
     if (needsConfirmation) {
-      const { device, confirmed } = await waitForConfirmation(kind, id, change);
+      const confirmation = await waitForConfirmation(kind, id, change, since);
+      if (!confirmation) return;
+      const { device, confirmed } = confirmation;
       if (device && confirmed) {
         replaceDevice(kind, device);
       } else if (!confirmed) {
@@ -104,6 +117,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
       replaceDevice(kind, { ...answer, brightness: change.brightness, on: change.brightness > 0 });
     }
   } catch (error) {
+    if (since !== keyGeneration()) return;
     if (error?.status === 401) {
       handleUnauthorized(error);
       return;
@@ -130,6 +144,11 @@ export async function sendChange(kind, id, change, { before } = {}) {
 
 export function setLight(light, change) {
   return sendChange("light", light.id, change);
+}
+
+// {"on": true | false} or {"speed": 1-4} (fans.js levelChange).
+export function setFan(fan, change) {
+  return sendChange("fan", fan.id, change);
 }
 
 // Target temperature − / +: the screen follows every tap; the command goes out once the
@@ -409,11 +428,14 @@ export function stopBlind(blind) {
   );
 }
 
-// Room "All off": lights off and air conditioning off.
+// Room "All off": lights, air conditioning and fans off.
 export function allOff(group) {
   const commands = [];
   for (const light of group.lights) {
     if (light.on) commands.push(setLight(light, { on: false }));
+  }
+  for (const fan of group.fans || []) {
+    if (fan.on) commands.push(setFan(fan, { on: false }));
   }
   for (const thermostat of group.thermostats) {
     if (thermostat.mode && thermostat.mode !== "off" && thermostat.modes.includes("off")) {

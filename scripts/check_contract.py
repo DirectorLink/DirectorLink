@@ -5,6 +5,10 @@ with a real HTTP client, and validates each response against api/openapi.yaml.
 Checks per response: the status code is declared for the operation, the Content-Type matches the
 declared media type, and the JSON body validates against the declared schema. Fails if any
 operation in the spec was not exercised.
+
+It also validates the hand-written calendar examples the app's tests read
+(tests/vectors/calendar/api-examples.json): each group is named after the schema its examples match.
+The Jewish calendar is called while it is off (as it ships) and then on, as the installer sets it.
 """
 
 import base64
@@ -30,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = yaml.safe_load((ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8"))
 REGISTRY = Registry().with_resource("urn:spec", Resource.from_contents(SPEC, default_specification=DRAFT202012))
 METHODS = ("get", "post", "put", "patch", "delete")
+EXAMPLES_FILE = ROOT / "tests" / "vectors" / "calendar" / "api-examples.json"
+EXAMPLES = json.loads(EXAMPLES_FILE.read_text(encoding="utf-8"))
 
 
 def fail(message):
@@ -87,6 +93,28 @@ def template_regex(path):
     return re.compile("^" + re.sub(r"\\\{[^}]+\\\}", "[^/]+", re.escape(path)) + "$")
 
 
+def check_examples():
+    """Every example in api-examples.json matches the schema its group is named after (dates and
+    times included). Returns how many there are."""
+    count = 0
+    for group, examples in EXAMPLES.items():
+        if group == "about":
+            continue
+        if group not in SPEC["components"]["schemas"]:
+            fail(f"{EXAMPLES_FILE.name}: {group} is not a schema in api/openapi.yaml")
+        validator = Draft202012Validator({"$ref": f"urn:spec#/components/schemas/{group}"}, registry=REGISTRY,
+                                         format_checker=Draft202012Validator.FORMAT_CHECKER)
+        for name, example in examples.items():
+            if not isinstance(example, dict) or "value" not in example:
+                fail(f"{EXAMPLES_FILE.name}: {group}.{name} has no value")
+            errors = sorted(validator.iter_errors(example["value"]), key=lambda e: list(e.path))
+            if errors:
+                details = "; ".join(f"{'/'.join(map(str, e.path)) or '(root)'}: {e.message}" for e in errors[:5])
+                fail(f"{EXAMPLES_FILE.name}: {group}.{name} does not match the spec: {details}")
+            count += 1
+    return count
+
+
 OPERATIONS = [
     (method.upper(), path, template_regex(path), item[method])
     for path, item in SPEC["paths"].items()
@@ -95,19 +123,24 @@ OPERATIONS = [
 ]
 
 
+def operation_for(method, target):
+    path = target.split("?", 1)[0]
+    operation = next((op for op in OPERATIONS if op[0] == method and op[2].match(path)), None)
+    if not operation:
+        fail(f"{method} {path} is not an operation in the spec")
+    return operation[1], operation[3]
+
+
 class Client:
     def __init__(self, port):
         self.base = f"http://127.0.0.1:{port}"
         self.key = None
+        self.key_id = None
         self.covered = set()
         self.checked = 0
 
     def check(self, method, target, expected, body=None, auth=True, headers=None):
-        path = target.split("?", 1)[0]
-        operation = next((op for op in OPERATIONS if op[0] == method and op[2].match(path)), None)
-        if not operation:
-            fail(f"{method} {path} is not an operation in the spec")
-        _, template, _, definition = operation
+        template, definition = operation_for(method, target)
 
         request = urllib.request.Request(self.base + target, method=method, headers=dict(headers or {}))
         if body is not None:
@@ -122,8 +155,26 @@ class Client:
         except urllib.error.HTTPError as error:
             status, content_type, raw = error.code, error.headers.get("Content-Type", ""), error.read()
             response_headers = error.headers
+        return self.validate(f"{method} {target} -> {status}", method, template, definition, expected, status, content_type, raw, response_headers)
 
-        label = f"{method} {target} -> {status}"
+    def check_sealed(self, bridge, method, target, expected, body=None):
+        """The request sealed as the app seals it at home (POST /v1/sealed, no Authorization
+        header), and the answer inside the sealed envelope checked against the operation."""
+        template, definition = operation_for(method, target)
+        request = {"method": method, "path": target}
+        if body is not None:
+            request["body"] = body
+        envelope = bridge.seal(self.key, self.key_id, request)
+        sealed = self.check("POST", "/v1/sealed", 200, body={"envelope": envelope}, auth=False)
+        answer = bridge.unseal(self.key, sealed["envelope"])
+        if not isinstance(answer, dict):
+            fail(f"sealed {method} {target}: the answer does not open with the key's lock key")
+        raw = answer.get("body", "").encode()
+        content_type = answer.get("content_type", "")
+        return self.validate(f"sealed {method} {target} -> {answer.get('status')}", method, template, definition, expected,
+                             answer.get("status"), content_type, raw, {})
+
+    def validate(self, label, method, template, definition, expected, status, content_type, raw, response_headers):
         if status != expected:
             fail(f"{label}, expected {expected}: {raw[:300]!r}")
         declared = resolve(definition["responses"].get(str(status)))
@@ -167,7 +218,7 @@ def scenario(client, bridge):
     client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": "00000000"})
     client.check("POST", "/v1/auth/pair", 400, body={"pairing_code": "12"})
     paired = client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "contract test"})
-    client.key = paired["key"]
+    client.key, client.key_id = paired["key"], paired["id"]
     client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": bridge.pairing_code})  # used: works once
 
     client.check("GET", "/v1/system", 200)
@@ -217,6 +268,25 @@ def scenario(client, bridge):
     client.check("GET", "/v1/thermostats/32", 200)
     client.check("PATCH", "/v1/thermostats/32", 202, body={"target_temperature": 6})
 
+    # Fans (1.2.0, Mock.withFans): 41 on at Medium in the living room, 42 off in the kitchen. The
+    # dev bridge's fans follow their commands as the fan proxy is documented to.
+    client.check("GET", "/v1/fans", 200)
+    client.check("GET", "/v1/fans?room_id=11", 200)
+    client.check("GET", "/v1/fans/41", 200)
+    client.check("GET", "/v1/fans/20", 404)
+    client.check("GET", "/v1/fans/abc", 400)
+    client.check("GET", "/v1/devices?type=fan", 200)
+    client.check("PATCH", "/v1/fans/42", 202, body={"speed": 3})
+    fan = client.check("GET", "/v1/fans/42", 200)
+    if (fan["on"], fan["speed"]) != (True, 3):
+        fail(f"GET /v1/fans/42 should show the fan on at speed 3: {fan}")
+    client.check("PATCH", "/v1/fans/42", 202, body={"on": False})
+    client.check("PATCH", "/v1/fans/41", 202, body={"on": True})
+    client.check("PATCH", "/v1/fans/41", 400, body={"speed": 5})
+    client.check("PATCH", "/v1/fans/41", 400, body={"on": False, "speed": 2})
+    client.check("PATCH", "/v1/fans/41", 400, body={"on": "yes"})
+    client.check("PATCH", "/v1/fans/99", 404, body={"on": True})
+
     client.check("GET", "/v1/blinds", 200)
     client.check("GET", "/v1/blinds?room_id=11", 200)
     client.check("GET", "/v1/blinds/50", 200)
@@ -264,6 +334,33 @@ def scenario(client, bridge):
     client.check("POST", "/v1/doorbells/93/open", 202)
     client.check("POST", "/v1/doorbells/99/open", 404)
 
+    # The alarm's status (1.2.0, ADR-038): read-only, off by default (the dev bridge's fake home
+    # has it on), and while it is on only in sealed answers (Mock.withPartitions: 80 House, 81
+    # Garage, 82 unused).
+    bridge.set_property("Alarm Status", "Off")
+    off = client.check("GET", "/v1/alarm", 200)
+    if off != {"enabled": False, "partitions": []}:
+        fail(f"GET /v1/alarm with Alarm Status Off should say only that: {off}")
+    if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not False:
+        fail("GET /v1/system should say that the alarm status is off")
+    if client.check_sealed(bridge, "GET", "/v1/alarm", 200) != off:
+        fail("a sealed GET /v1/alarm should say only that it is off")
+    bridge.set_property("Alarm Status", "On")
+    clear = client.check("GET", "/v1/alarm", 403)
+    if clear["code"] != "SEALED_REQUEST_REQUIRED":
+        fail(f"GET /v1/alarm in the clear should be refused with SEALED_REQUEST_REQUIRED: {clear}")
+    alarm = client.check_sealed(bridge, "GET", "/v1/alarm", 200)
+    if [partition["id"] for partition in alarm["partitions"]] != [81, 80]:
+        fail(f"GET /v1/alarm should list Garage and House, and not the partition the panel does not use: {alarm}")
+    for variable, value in ((1007, "ENTRY_DELAY"), (1008, "30"), (1009, "12"), (1003, "1"), (1011, "Fire"), (1005, "Low battery")):
+        if bridge.report_variable(80, variable, value) != 1:
+            fail(f"partition 80 should watch variable {variable}")
+    house = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][1]
+    if (house["delay"], house["alarm_type"], house["trouble"]) != ({"type": "entry", "remaining": 12, "total": 30}, "Fire", "Low battery"):
+        fail(f"GET /v1/alarm should show House's entry delay, fire alarm and trouble: {house}")
+    if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not True:
+        fail("GET /v1/system should say that the alarm status is on")
+
     # Remote access is off on the dev bridge: status, and the refusals that follow from it.
     client.check("GET", "/v1/remote", 200)
     client.check("POST", "/v1/remote/claim", 409)
@@ -299,6 +396,8 @@ def scenario(client, bridge):
             {"type": "blinds", "room_id": None, "set": {"position": 0}},
             {"type": "lights", "room_id": 10, "device_ids": [20], "set": {"brightness": 30}},
             {"type": "relays", "device_ids": [70], "set": {"action": "pulse"}},
+            {"type": "fans", "room_id": 11, "set": {"speed": 1}},
+            {"type": "fans", "device_ids": [42], "set": {"on": False}},
         ],
     }
     scene = client.check("POST", "/v1/scenes", 201, body=night)
@@ -314,7 +413,9 @@ def scenario(client, bridge):
     client.check("POST", f"/v1/scenes/{scene['id']}/run", 202)
     client.check("POST", "/v1/scenes/deadbeef/run", 404)
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
-    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
     auto = {"type": "climate", "device_ids": [31], "set": {"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}}
     dual = client.check("POST", "/v1/scenes", 201, body={"name": "Study auto", "steps": [auto]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [auto]})
@@ -348,6 +449,31 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 204)
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 404)
 
+    # The Jewish calendar (1.2.0) ships off, and the API says so: nothing is worked out, and
+    # nothing that uses it can be set. Ordinary schedules run as usual on Shabbat.
+    features = client.check("GET", "/v1/system", 200)["features"]
+    if features.get("jewish_calendar") is not False:
+        fail(f"GET /v1/system should show the Jewish calendar off: {features}")
+    calendar = client.check("GET", "/v1/calendar", 200)
+    if calendar != EXAMPLES["Calendar"]["off"]["value"]:
+        fail(f"GET /v1/calendar while it is off should answer as Calendar.off in {EXAMPLES_FILE.name}: {calendar}")
+    refused = [
+        client.check("PATCH", "/v1/calendar/settings", 409, body={"candle_lighting_minutes": 30, "version": 1}),
+        client.check("POST", "/v1/schedules", 409, body={
+            "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6],
+        }),
+        client.check("POST", "/v1/schedules", 409, body={
+            "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:30"}, "days": [0, 1, 2, 3, 4], "during_shabbat": "skip",
+        }),
+    ]
+    for answer in refused:
+        if answer["code"] != "JEWISH_CALENDAR_OFF":
+            fail(f"the calendar is off: expected JEWISH_CALENDAR_OFF, got {answer}")
+    client.check("PATCH", "/v1/calendar/settings", 400, body={"havdalah_minutes": 10})
+    ordinary = client.check("PATCH", f"/v1/schedules/{timed['id']}", 200, body={"during_shabbat": "run"})
+    if (timed["during_shabbat"], timed["calendar_status"], ordinary["during_shabbat"]) != ("run", None, "run"):
+        fail(f"an ordinary schedule runs as usual on Shabbat and has no calendar status: {ordinary}")
+
     created = client.check("POST", "/v1/api-keys", 201, body={"name": "second key"})
     client.check("POST", "/v1/api-keys", 400, body={"name": ""})
     client.check("GET", "/v1/api-keys", 200)
@@ -360,7 +486,11 @@ def scenario(client, bridge):
     admin_key, client.key = client.key, created["key"]
     client.check("GET", "/v1/lights", 200)
     client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
+    client.check("GET", "/v1/fans", 200)
+    client.check("PATCH", "/v1/fans/41", 403, body={"on": False})
     client.check("POST", "/v1/relays/70/pulse", 403)
+    if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
+        fail("a viewer key must not read the alarm")
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
@@ -376,6 +506,8 @@ def scenario(client, bridge):
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
+    client.check("GET", "/v1/calendar", 200)
+    client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key
@@ -388,6 +520,40 @@ def scenario(client, bridge):
     client.check("GET", "/v1/logs?level=loud", 400)
     client.check("PATCH", "/v1/logs/settings", 400, body={"level": "verbose"})
     client.check("GET", "/v1/logs", 401, auth=False)
+
+    # The installer turns the Jewish calendar on in Composer. The fake project is in Tel Aviv, so
+    # the answer has Shabbat and holiday times, worked out on the controller; settings change with
+    # a version, and schedules may use the calendar.
+    bridge.set_property("Jewish Calendar", "On")
+    features = client.check("GET", "/v1/system", 200)["features"]
+    if features.get("jewish_calendar") is not True:
+        fail(f"GET /v1/system should show the Jewish calendar on: {features}")
+    calendar = client.check("GET", "/v1/calendar", 200)
+    if (calendar["enabled"], calendar["status"], calendar["settings"]["israel"]) != (True, "ok", True) or not calendar["next"]:
+        fail(f"GET /v1/calendar in Tel Aviv with the calendar on should have Israel's times: {calendar}")
+    settings = client.check("PATCH", "/v1/calendar/settings", 200, body={"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1})
+    stale = client.check("PATCH", "/v1/calendar/settings", 409, body={"holidays": "abroad", "version": 1})
+    if (stale["code"], stale.get("version")) != ("VERSION_CONFLICT", settings["version"]):
+        fail(f"a settings change with an old version should be VERSION_CONFLICT with the current one: {stale}")
+    client.check("PATCH", "/v1/calendar/settings", 400, body={"holidays": "mars"})
+    shabbat = client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6],
+    })
+    client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:30"}, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "skip",
+    })
+    client.check("POST", "/v1/schedules", 400, body={
+        "scene_id": scene["id"], "trigger": {"type": "shabbat", "event": "havdalah"}, "days": [0, 1, 2, 3, 4, 5, 6], "during_shabbat": "only",
+    })
+    if (shabbat["calendar_status"], shabbat["next_run"] is not None) != ("ok", True):
+        fail(f"a Shabbat schedule with the calendar on should run next at candle lighting: {shabbat}")
+    client.check("GET", "/v1/schedules", 200)
+    viewer = client.check("POST", "/v1/api-keys", 201, body={"name": "calendar viewer", "role": "viewer"})
+    admin_key, client.key = client.key, viewer["key"]
+    client.check("GET", "/v1/calendar", 200)
+    client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
+    client.key = admin_key
+    client.check("DELETE", f"/v1/api-keys/{viewer['id']}", 204)
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
@@ -407,6 +573,7 @@ def scenario(client, bridge):
 
 
 def main():
+    examples = check_examples()
     lua = shutil.which("lua5.1") or shutil.which("lua")
     if not lua:
         fail("Lua 5.1 is required")
@@ -425,7 +592,7 @@ def main():
     missing = sorted({(op[0], op[1]) for op in OPERATIONS} - client.covered)
     if missing:
         fail("operations never exercised: " + ", ".join(f"{m} {p}" for m, p in missing))
-    print(f"OK: {client.checked} responses match the API spec; all {len(OPERATIONS)} operations covered")
+    print(f"OK: {client.checked} responses match the API spec; all {len(OPERATIONS)} operations covered; {examples} calendar examples match it")
 
 
 if __name__ == "__main__":

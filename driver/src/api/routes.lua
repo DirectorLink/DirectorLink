@@ -50,6 +50,9 @@ return {
     { method = "DELETE", path = "/v1/schedules/{scheduleId}", handler = "schedules.delete", role = "admin" },
     { method = "GET", path = "/v1/weather", handler = "schedules.weather", role = "viewer" },
 
+    { method = "GET", path = "/v1/calendar", handler = "calendar.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/calendar/settings", handler = "calendar.update_settings", role = "admin" },
+
     { method = "GET", path = "/v1/devices", handler = "devices.list", role = "viewer" },
     { method = "GET", path = "/v1/devices/{deviceId}", handler = "devices.get", role = "viewer" },
 
@@ -60,6 +63,10 @@ return {
     { method = "GET", path = "/v1/thermostats", handler = "thermostats.list", role = "viewer" },
     { method = "GET", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.get", role = "viewer" },
     { method = "PATCH", path = "/v1/thermostats/{thermostatId}", handler = "thermostats.update", role = "member" },
+
+    { method = "GET", path = "/v1/fans", handler = "fans.list", role = "viewer" },
+    { method = "GET", path = "/v1/fans/{fanId}", handler = "fans.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/fans/{fanId}", handler = "fans.update", role = "member" },
 
     { method = "GET", path = "/v1/blinds", handler = "blinds.list", role = "viewer" },
     { method = "GET", path = "/v1/blinds/{blindId}", handler = "blinds.get", role = "viewer" },
@@ -78,6 +85,10 @@ return {
     { method = "GET", path = "/v1/doorbells", handler = "doorbells.list", role = "viewer" },
     { method = "GET", path = "/v1/doorbells/{doorbellId}", handler = "doorbells.get", role = "viewer" },
     { method = "POST", path = "/v1/doorbells/{doorbellId}/open", handler = "doorbells.open", role = "doors" },
+
+    -- Read-only, and never for viewers (ADR-038): no route arms, disarms or sends anything to the
+    -- alarm; scripts/check_package.py fails the build if one does.
+    { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
 
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },

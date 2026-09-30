@@ -41,6 +41,27 @@ test("writes are never repeated", async () => {
   }
 });
 
+// session.js: once the key is forgotten, a read that was on its way is not sent again, and a request
+// not sent yet is not sent at all.
+test("a read no longer wanted is not sent again", async () => {
+  let wanted = true;
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(init.method);
+    wanted = false;
+    throw new TypeError("Failed to fetch");
+  };
+  const error = await apiRequest("192.168.1.10", "/v1/lights", { apiKey: "ak_test", wanted: () => wanted }).catch((failure) => failure);
+  assert.equal(error.code, "NOT_SENT");
+  assert.deepEqual(calls, ["GET"]);
+  for (const method of ["GET", "DELETE"]) {
+    const none = fakeFetch(0);
+    const refused = await apiRequest("192.168.1.10", "/v1/api-keys/current", { method, apiKey: "ak_test", wanted: () => false }).catch((failure) => failure);
+    assert.equal(refused.code, "NOT_SENT", method);
+    assert.deepEqual(none, [], method);
+  }
+});
+
 test("an HTTP error is an answer: it is not sent again", async () => {
   const calls = [];
   globalThis.fetch = async (_url, init) => {

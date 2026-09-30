@@ -51,14 +51,25 @@ const forgottenHooks = [];
 export function whenForgotten(hook) {
   forgottenHooks.push(hook);
 }
-// Settings → Forget key revokes the key before this browser forgets it (revokeAndForget). Nothing
-// more is read with it meanwhile, and a request that reaches the controller after the DELETE is
-// answered 401: that was asked for, not a key that stopped working (handleUnauthorized).
+// Settings → Forget key and Pair again revoke the key before this browser forgets it
+// (revokeAndForget). The refreshes stop at once, and what was on its way (a refresh, a connect, a
+// light's confirmation) stops at its next step without changing anything (`forgets`); a request
+// asked for before is not sent if it has not been yet, nor sent once more (api). A request sent
+// before that reaches the controller after the DELETE is answered 401: that was asked for, not a key
+// that stopped working (handleUnauthorized).
 let forgetting = false;
+// Changes when forgetting the key starts and when it is forgotten (forgetKey).
+let forgets = 0;
 
 // The key to read with: "" once it is forgotten, and while it is being forgotten.
 export function keyInUse() {
   return forgetting ? "" : state.apiKey;
+}
+
+// Work started with the key in use records this, and after each wait goes on only while it is the
+// same: once the key is forgotten, or being forgotten, it stops there (controls.js).
+export function keyGeneration() {
+  return forgets;
 }
 let failedRefreshes = 0;
 let connectRun = 0;
@@ -270,13 +281,17 @@ export async function api(path, options = {}) {
   if (state.transport === "remote") {
     return remoteCall(state.apiKey, path, options);
   }
+  // Once the key is forgotten, or being forgotten, nothing of this request is sent any more: not
+  // after the look at sealing, not once more (api-client.js), not through the account.
+  const since = forgets;
+  const request = { ...options, wanted: () => since === forgets };
   try {
     return await homeRequest(
-      (seal) => lanCall(state.host, state.apiKey, seal, path, options),
-      () => apiCall(state.host, path, { apiKey: state.apiKey, ...options })
+      (seal) => lanCall(state.host, state.apiKey, seal, path, request),
+      () => apiCall(state.host, path, { apiKey: state.apiKey, ...request })
     );
   } catch (error) {
-    if (!viaRemote(error)) throw error;
+    if (!viaRemote(error) || since !== forgets) throw error;
     useTransport("remote");
     // Only reads are sent again: a command may have reached the home before its answer was lost,
     // and must not run twice. Pressing again sends it through the account.
@@ -335,11 +350,14 @@ async function tryHomeNetwork() {
   const remote = savedRemote();
   if (state.transport !== "remote" || IS_IOS || !state.host || !remote || !state.apiKey) return;
   const generation = sealGeneration;
+  const since = forgets;
+  const wanted = () => since === forgets;
   try {
-    const result = await apiRequest(state.host, "/v1/sealed", { timeoutMs: 2500 });
-    if (!result.ok) return;
+    const result = await apiRequest(state.host, "/v1/sealed", { timeoutMs: 2500, wanted });
+    if (!result.ok || since !== forgets) return;
     const seal = { home: LAN_HOME, keyId: sealHere()?.keyId || remote.keyId, offset: clockOffset(result.data?.time) };
-    await lanCall(state.host, state.apiKey, seal, "/v1/api-keys/current", { timeoutMs: 2500 });
+    // A read without an answer is sent once more (remote.js), but not once the key is forgotten.
+    await lanCall(state.host, state.apiKey, seal, "/v1/api-keys/current", { timeoutMs: 2500, wanted });
     if (generation !== sealGeneration || state.transport !== "remote") return;
     rememberSeal(state.host, seal.keyId, true);
     lanSeal = seal;
@@ -401,6 +419,8 @@ export function useHost(value) {
 }
 
 export function forgetKey() {
+  forgets += 1;
+  connectRun += 1;
   clearApiKey();
   forgetSealing();
   forgetRemote();
@@ -491,6 +511,10 @@ function describeError(error, pairing = false) {
   // 403 FORBIDDEN: this key's role is too low; DOOR_CONTROL_DISABLED: the Composer switch is off.
   if (error?.code === "DOOR_CONTROL_DISABLED") {
     return t("errors.doorsDisabled");
+  }
+  // 409 JEWISH_CALENDAR_OFF: the installer turned the Jewish calendar off in Composer (calendar.js).
+  if (error?.code === "JEWISH_CALENDAR_OFF") {
+    return t("errors.calendarOff");
   }
   if (error?.code === "FORBIDDEN") {
     return t("errors.forbidden", { role: roleLabel(error.problem?.role || state.role) });
@@ -608,7 +632,7 @@ export function noteForbidden(error) {
 }
 
 async function loadAll() {
-  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, doorbells, role] = await Promise.all([
+  const [system, rooms, lights, thermostats, blinds, cameras, devices, relays, doorbells, role, fans] = await Promise.all([
     api("/v1/system"),
     api("/v1/rooms"),
     api("/v1/lights"),
@@ -619,11 +643,13 @@ async function loadAll() {
     optionalList("/v1/relays"),
     optionalList("/v1/doorbells"),
     loadRole(),
+    optionalList("/v1/fans"),
   ]);
   state.system = system;
   state.rooms = rooms?.items || [];
   state.lights = lights?.items || [];
   state.thermostats = thermostats?.items || [];
+  state.fans = fans;
   state.blinds = blinds?.items || [];
   state.cameras = cameras?.items || [];
   state.devices = devices?.items || [];
@@ -643,12 +669,15 @@ function useDoorbells(doorbells) {
 // Doorbells only: what a page in the background still polls when doorbell notifications are on.
 export async function refreshDoorbells() {
   if (!reachable()) return false;
+  const since = forgets;
   try {
-    useDoorbells(await optionalList("/v1/doorbells", state.doorbells));
+    const doorbells = await optionalList("/v1/doorbells", state.doorbells);
+    if (since !== forgets) return false;
+    useDoorbells(doorbells);
     notify();
     return true;
   } catch (error) {
-    if (error?.status === 401) handleUnauthorized(error);
+    if (error?.status === 401 && since === forgets) handleUnauthorized(error);
     return false;
   }
 }
@@ -656,8 +685,10 @@ export async function refreshDoorbells() {
 // Every device of the project, for the devices a room has that the app cannot control: they change
 // with the project in Composer (which the driver picks up by itself), so with the rooms, once a minute.
 async function refreshDeviceList() {
+  const since = forgets;
   try {
     const devices = await api("/v1/devices");
+    if (since !== forgets) return;
     if (Array.isArray(devices?.items)) state.devices = devices.items;
     notify();
   } catch {
@@ -665,28 +696,31 @@ async function refreshDeviceList() {
   }
 }
 
-// Connects with the saved key. Used on start (automatic reconnect) and by Retry.
+// Connects with the saved key. Used on start (automatic reconnect) and by Retry. A connect that
+// another one replaced, or whose key was forgotten meanwhile, ends without changing anything.
 export async function connect() {
+  if (forgetting) return false;
   if (!reachable()) {
     state.status = "setup";
     notify();
     return false;
   }
   const run = ++connectRun;
+  const since = forgets;
   state.status = "connecting";
   // Sealing is looked at again: the driver may have been updated.
   resetSeal();
   notify();
   try {
     await loadAll();
-    if (run !== connectRun) return false;
+    if (run !== connectRun || since !== forgets) return false;
     state.status = "connected";
     state.notice = null;
     startPolling();
     runConnectedHooks();
     return true;
   } catch (error) {
-    if (run !== connectRun) return false;
+    if (run !== connectRun || since !== forgets) return false;
     if (error?.status === 401) {
       handleUnauthorized(error);
       return false;
@@ -766,15 +800,20 @@ export async function pairWithCode(hostValue, pairingCode) {
 }
 
 // Device state, every 10 s while the page is visible. Devices with a command in flight keep
-// their optimistic state until the command is confirmed.
+// their optimistic state until the command is confirmed. Once the key is forgotten, or being
+// forgotten, a refresh on its way changes nothing.
 export async function refreshDevices() {
-  if (!reachable()) return false;
+  if (!keyInUse() || !reachable()) return false;
+  const since = forgets;
   try {
-    const kinds = ["light", "thermostat", "blind"];
+    // Fans (1.2.0) only in a home that has some: drivers before 1.2.0 have none to read.
+    const fans = state.fans.length > 0 || state.system?.inventory?.fans > 0;
+    const kinds = ["light", "thermostat", "blind", ...(fans ? ["fan"] : [])];
     const [doorbells, ...results] = await Promise.all([
       optionalList("/v1/doorbells", state.doorbells),
-      ...kinds.map((kind) => api(KINDS[kind].path)),
+      ...kinds.map((kind) => (kind === "fan" ? optionalList(KINDS.fan.path, state.fans).then((items) => ({ items })) : api(KINDS[kind].path))),
     ]);
+    if (since !== forgets) return false;
     useDoorbells(doorbells);
     kinds.forEach((kind, index) => {
       const listName = KINDS[kind].list;
@@ -791,6 +830,7 @@ export async function refreshDevices() {
       state.notice = null;
     }
   } catch (error) {
+    if (since !== forgets) return false;
     if (error?.status === 401) {
       handleUnauthorized(error);
       return false;
@@ -811,6 +851,7 @@ export async function refreshDevices() {
 // Rooms and cameras change rarely (renames, new devices); refreshed now and then. So is the
 // driver's version: Update Driver in Composer reloads DirectorLink without the app reconnecting.
 export async function refreshRooms() {
+  const since = forgets;
   try {
     const [system, rooms, cameras, relays, role] = await Promise.all([
       api("/v1/system").catch(() => state.system),
@@ -819,6 +860,7 @@ export async function refreshRooms() {
       optionalList("/v1/relays"),
       loadRole().catch(() => state.role),
     ]);
+    if (since !== forgets) return;
     state.system = system || state.system;
     state.rooms = rooms?.items || state.rooms;
     state.cameras = cameras?.items || state.cameras;
@@ -841,9 +883,12 @@ function schedulePoll(delay = POLL_MS) {
 async function poll() {
   pollTimer = null;
   if (!keyInUse()) return;
+  // Once the key is forgotten, or being forgotten, this poll stops where it waits.
+  const since = forgets;
   // In the background only doorbells are polled, and only for their notifications.
   if (document.hidden && state.loaded && notificationsOn()) {
     await refreshDoorbells();
+    if (since !== forgets) return;
   }
   if (!document.hidden) {
     if (!state.loaded) {
@@ -851,11 +896,14 @@ async function poll() {
       return;
     }
     const ok = await refreshDevices();
+    if (since !== forgets) return;
     pollCount += 1;
     if (pollCount % 6 === 0) await tryHomeNetwork();
+    if (since !== forgets) return;
     if (ok && pollCount % 6 === 1) checkInThroughAccount();
     if (ok && pollCount % 6 === 0 && state.status === "connected") {
       await Promise.all([refreshRooms(), refreshDeviceList()]);
+      if (since !== forgets) return;
     }
     // After a failure, try again soon instead of waiting a whole interval.
     if (!ok && keyInUse()) {
@@ -892,9 +940,10 @@ document.addEventListener("visibilitychange", () => {
 
 // Settings → Controller → Forget key: revokes this browser's key on the controller when it can
 // be reached (so the key stops working everywhere), then removes it from this browser. The
-// refreshes stop first: what they would read meanwhile is answered 401 once the key is revoked.
+// refreshes stop first, and what was on its way stops at its next step (`forgets`).
 export async function revokeAndForget() {
   forgetting = true;
+  forgets += 1;
   stopPolling();
   if (reachable()) {
     try {

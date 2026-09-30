@@ -41,7 +41,7 @@
 - [x] Remote access: relay connection proof (0.9.2, test)
 - [x] Remote access with Google accounts, end-to-end encryption, claiming a home on the LAN, invitations, iPhone and iPad (0.10.0; `docs/ACCOUNTS.md`)
 - [x] People and devices: keys, invitations and the home's accounts in the app; cloud membership follows the device keys (0.11.0)
-- [x] Profiles: each person's language, theme, favorites and hidden rooms on the controller, shared by their devices; the home's room order (0.12.0; `docs/PREFERENCES.md`)
+- [x] Profiles: each person's language, theme, favorites and hidden rooms on the controller, shared by their devices; the home's room order (0.12.0; `docs/PREFERENCES.md`), set by dragging rooms (1.2.0)
 - [x] DirectorLink scenes: made in the app, run with one tap, shown on Home (0.13.0; `docs/SCENES.md`)
 - [x] Schedules by time, sunrise/sunset and weather (Open-Meteo: heat, rain, wind), run by the controller (0.14.0; `docs/SCHEDULES.md`)
 - [x] Automation visible to the installer in Composer: pause switch, schedule status, last automation, printout (0.15.0)
@@ -78,7 +78,9 @@
 - [x] Room names per language (0.6.0)
 - [ ] Expand unsupported-device diagnostics
 - [x] Light V1 (#14), heat-only setpoint (#19), dual-setpoint thermostats (#16) (1.1.0, thanks to bkwagner; ADR-033)
-- [ ] Proposed in pull requests from bkwagner, not merged yet: fans (#18), alarm status (#15)
+- [x] Fans (#18): on, off and four speeds, in rooms, favorites and scenes (1.2.0, thanks to bkwagner; ADR-033); real-system validation pending
+- [x] Alarm status (#15): security partitions, read-only, off by default (Composer **Alarm Status**), for members and admins in sealed answers only (1.2.0, thanks to bkwagner; ADR-038); real-system validation pending
+- [ ] Arming and disarming the alarm: only with a design for the user's alarm code (ADR-038)
 
 ## Milestone 5 — DirectorLink scenes
 
@@ -97,7 +99,7 @@
 - [x] Run DirectorLink scenes (0.14.0)
 - [x] Weather triggers and conditions from Open-Meteo: heat, wind, rain (0.14.0)
 - [x] Recalculate after reboot/timezone/location changes (0.14.0: worked out each minute)
-- [ ] Optional Jewish-calendar module: Shabbat and holiday times as schedule triggers (later)
+- [x] Jewish calendar: Shabbat and holiday times as schedule triggers and conditions, the Hebrew date and the weekly reading, off until an installer turns it on (1.2.0, ADR-037); real-system validation pending
 
 ## Driver updates (ADR-035)
 

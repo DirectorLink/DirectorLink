@@ -1,0 +1,394 @@
+{
+  "about": "Hand-written example answers of DirectorLink's Jewish calendar API (1.2.0, ADR-037) for the app's tests and the documentation; not data from Hebcal. Each group is named after the api/openapi.yaml schema its examples' value must match, which scripts/check_contract.py checks, and it compares Calendar.off with what the driver answers while the Jewish Calendar property is Off. 'now' and 'timezone' say when and where an answer was given. Times are for candle lighting 20 minutes before sunset and havdalah 42 minutes after, worked out as the calendar will (NOAA sunsets, Hebcal's rounding): Tel Aviv (32.08, 34.78), Tromso in the midnight sun (69.65, 18.96), and a home without a location.",
+  "Calendar": {
+    "off": {
+      "note": "The Jewish Calendar property is Off in Composer (the default).",
+      "value": { "enabled": false, "status": "off", "settings": null, "today": null, "week": null, "current": null, "next": null }
+    },
+    "ok": {
+      "note": "Tel Aviv on Tuesday of Chol HaMoed Sukkot 5787; the next period is one day, Shabbat and Shmini Atzeret (Israel).",
+      "now": "2026-09-29T11:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "enabled": true,
+        "status": "ok",
+        "settings": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+        "today": {
+          "date": "2026-09-29",
+          "hebrew": { "year": 5787, "month": "tishrei", "day": 18, "leap_year": true },
+          "after_sunset": false,
+          "changes_at": "2026-09-29T15:28:37Z",
+          "holidays": [
+            { "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }
+          ]
+        },
+        "week": {
+          "date": "2026-10-03",
+          "parasha": null,
+          "holidays": [
+            { "key": "shmini_atzeret", "day": null, "month": null, "yom_tov": true, "name": "Shmini Atzeret" },
+            { "key": "simchat_torah", "day": null, "month": null, "yom_tov": true, "name": "Simchat Torah" }
+          ]
+        },
+        "current": null,
+        "next": {
+          "starts_at": "2026-10-02T15:04:00Z",
+          "ends_at": "2026-10-03T16:05:00Z",
+          "approximate": false,
+          "days": [
+            {
+              "date": "2026-10-03",
+              "shabbat": true,
+              "candle_lighting": "2026-10-02T15:04:00Z",
+              "holidays": [
+                { "key": "shmini_atzeret", "day": null, "month": null, "yom_tov": true, "name": "Shmini Atzeret" },
+                { "key": "simchat_torah", "day": null, "month": null, "yom_tov": true, "name": "Simchat Torah" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "three_day_period": {
+      "note": "Tel Aviv on the second day of Rosh Hashana 5785, inside one period of three days (Thursday, Friday and Shabbat); the next is Yom Kippur on Shabbat.",
+      "now": "2024-10-04T09:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "enabled": true,
+        "status": "ok",
+        "settings": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+        "today": {
+          "date": "2024-10-04",
+          "hebrew": { "year": 5785, "month": "tishrei", "day": 2, "leap_year": false },
+          "after_sunset": false,
+          "changes_at": "2024-10-04T15:21:33Z",
+          "holidays": [
+            { "key": "rosh_hashana", "day": 2, "month": null, "yom_tov": true, "name": "Rosh Hashana" }
+          ]
+        },
+        "week": {
+          "date": "2024-10-05",
+          "parasha": { "ids": [53], "name": "Ha'azinu" },
+          "holidays": []
+        },
+        "current": {
+          "starts_at": "2024-10-02T15:04:00Z",
+          "ends_at": "2024-10-05T16:02:00Z",
+          "approximate": false,
+          "days": [
+            {
+              "date": "2024-10-03",
+              "shabbat": false,
+              "candle_lighting": "2024-10-02T15:04:00Z",
+              "holidays": [
+                { "key": "rosh_hashana", "day": 1, "month": null, "yom_tov": true, "name": "Rosh Hashana" }
+              ]
+            },
+            {
+              "date": "2024-10-04",
+              "shabbat": false,
+              "candle_lighting": "2024-10-03T16:05:00Z",
+              "holidays": [
+                { "key": "rosh_hashana", "day": 2, "month": null, "yom_tov": true, "name": "Rosh Hashana" }
+              ]
+            },
+            {
+              "date": "2024-10-05",
+              "shabbat": true,
+              "candle_lighting": "2024-10-04T15:01:00Z",
+              "holidays": []
+            }
+          ]
+        },
+        "next": {
+          "starts_at": "2024-10-11T14:52:00Z",
+          "ends_at": "2024-10-12T15:54:00Z",
+          "approximate": false,
+          "days": [
+            {
+              "date": "2024-10-12",
+              "shabbat": true,
+              "candle_lighting": "2024-10-11T14:52:00Z",
+              "holidays": [
+                { "key": "yom_kippur", "day": null, "month": null, "yom_tov": true, "name": "Yom Kippur" }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "no_location": {
+      "note": "The calendar is on, but the project has no latitude and longitude: dates and the reading by the civil date (Israel, from the country code IL), no times.",
+      "now": "2026-10-05T07:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "enabled": true,
+        "status": "no_location",
+        "settings": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+        "today": {
+          "date": "2026-10-05",
+          "hebrew": { "year": 5787, "month": "tishrei", "day": 24, "leap_year": true },
+          "after_sunset": false,
+          "changes_at": "2026-10-05T21:00:00Z",
+          "holidays": []
+        },
+        "week": {
+          "date": "2026-10-10",
+          "parasha": { "ids": [1], "name": "Bereshit" },
+          "holidays": []
+        },
+        "current": null,
+        "next": null
+      }
+    },
+    "approximate": {
+      "note": "Tromso in the midnight sun, abroad (automatic): the next Shabbat has no sunset, so no times, and its civil day counts as holy. The reading abroad is combined that week (Chukat-Balak; in Israel it is Balak).",
+      "now": "2026-06-25T10:00:00Z",
+      "timezone": "Europe/Oslo",
+      "value": {
+        "enabled": true,
+        "status": "ok",
+        "settings": { "holidays": "auto", "israel": false, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+        "today": {
+          "date": "2026-06-25",
+          "hebrew": { "year": 5786, "month": "tamuz", "day": 10, "leap_year": false },
+          "after_sunset": false,
+          "changes_at": "2026-06-25T22:00:00Z",
+          "holidays": []
+        },
+        "week": {
+          "date": "2026-06-27",
+          "parasha": { "ids": [39, 40], "name": "Chukat-Balak" },
+          "holidays": []
+        },
+        "current": null,
+        "next": {
+          "starts_at": null,
+          "ends_at": null,
+          "approximate": true,
+          "days": [
+            { "date": "2026-06-27", "shabbat": true, "candle_lighting": null, "holidays": [] }
+          ]
+        }
+      }
+    }
+  },
+  "CalendarSettingsUpdate": {
+    "minutes": {
+      "note": "An admin's change of the minutes, sent with the version read.",
+      "value": { "candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1 }
+    },
+    "abroad": {
+      "note": "Two days of Yom Tov, whatever the location says.",
+      "value": { "holidays": "abroad" }
+    }
+  },
+  "CalendarSettings": {
+    "after_minutes": {
+      "note": "The answer to CalendarSettingsUpdate.minutes.",
+      "value": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 2 }
+    }
+  },
+  "Problem": {
+    "calendar_off": {
+      "note": "Setting the calendar or a calendar feature of a schedule while the Jewish Calendar property is Off.",
+      "value": { "type": "about:blank", "title": "Conflict", "status": 409, "code": "JEWISH_CALENDAR_OFF", "detail": "The Jewish calendar is off: an installer turns it on with DirectorLink's Jewish Calendar property in Composer" }
+    },
+    "settings_version_conflict": {
+      "note": "PATCH /v1/calendar/settings with a version another device already changed; version is the current one.",
+      "value": { "type": "about:blank", "title": "Conflict", "status": 409, "code": "VERSION_CONFLICT", "detail": "The settings were changed on another device; read them again", "version": 2 }
+    }
+  },
+  "ScheduleList": {
+    "calendar_on": {
+      "note": "Tel Aviv on Shabbat morning, the first day of Sukkot 5787 (Israel). Candle lighting was Friday 18:13, havdalah is 19:15. The boiler schedule skipped 06:30; the controller restarted at 09:10, so the 08:00 Shabbat-only schedule ran late; the sunset schedule has no calendar condition.",
+      "now": "2026-09-26T07:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "items": [
+          {
+            "id": "1a2b3c4d",
+            "enabled": true,
+            "scene_id": "0a1b2c3d",
+            "trigger": { "type": "shabbat", "event": "candle_lighting", "offset": -30 },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "run",
+            "calendar_status": "ok",
+            "next_run": "2026-10-02T14:34:00Z",
+            "last_run": { "at": "2026-09-25T14:43:01Z", "ran": 12, "skipped": 1, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-09-10T18:20:00Z",
+            "updated_at": "2026-09-10T18:20:00Z"
+          },
+          {
+            "id": "2b3c4d5e",
+            "enabled": true,
+            "scene_id": "1b2c3d4e",
+            "trigger": { "type": "shabbat", "event": "havdalah", "offset": 0 },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "run",
+            "calendar_status": "ok",
+            "next_run": "2026-09-26T16:15:00Z",
+            "last_run": { "at": "2026-09-21T16:21:01Z", "ran": 8, "skipped": 0, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-09-10T18:22:00Z",
+            "updated_at": "2026-09-10T18:22:00Z"
+          },
+          {
+            "id": "3c4d5e6f",
+            "enabled": true,
+            "scene_id": "2c3d4e5f",
+            "trigger": { "type": "time", "at": "06:30" },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "skip",
+            "calendar_status": "ok",
+            "next_run": "2026-09-27T03:30:00Z",
+            "last_run": { "at": "2026-09-26T03:30:01Z", "ran": null, "skipped": null, "failed": null, "note": null, "skipped_by": "shabbat", "error": null },
+            "version": 2,
+            "created_at": "2026-09-01T05:00:00Z",
+            "updated_at": "2026-09-10T18:25:00Z"
+          },
+          {
+            "id": "4d5e6f70",
+            "enabled": true,
+            "scene_id": "3d4e5f60",
+            "trigger": { "type": "time", "at": "08:00" },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "only",
+            "calendar_status": "ok",
+            "next_run": "2026-10-03T05:00:00Z",
+            "last_run": { "at": "2026-09-26T06:10:01Z", "ran": 3, "skipped": 0, "failed": 0, "note": "late", "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-09-10T18:27:00Z",
+            "updated_at": "2026-09-10T18:27:00Z"
+          },
+          {
+            "id": "5e6f7081",
+            "enabled": true,
+            "scene_id": "4e5f6071",
+            "trigger": { "type": "sun", "event": "sunset", "offset": -15 },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": { "not_raining": true },
+            "if_no_weather": "run",
+            "during_shabbat": "run",
+            "calendar_status": null,
+            "next_run": "2026-09-26T15:18:00Z",
+            "last_run": { "at": "2026-09-25T15:19:01Z", "ran": 4, "skipped": 0, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-08-20T16:00:00Z",
+            "updated_at": "2026-08-20T16:00:00Z"
+          }
+        ],
+        "paused": false
+      }
+    },
+    "calendar_off": {
+      "note": "The same home after the installer set Jewish Calendar to Off: the Shabbat trigger and the Shabbat-only schedule are kept but do not run, and the skip schedule runs every day.",
+      "now": "2026-09-26T07:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "items": [
+          {
+            "id": "1a2b3c4d",
+            "enabled": true,
+            "scene_id": "0a1b2c3d",
+            "trigger": { "type": "shabbat", "event": "candle_lighting", "offset": -30 },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "run",
+            "calendar_status": "off",
+            "next_run": null,
+            "last_run": { "at": "2026-09-18T14:53:01Z", "ran": 12, "skipped": 1, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-09-10T18:20:00Z",
+            "updated_at": "2026-09-10T18:20:00Z"
+          },
+          {
+            "id": "3c4d5e6f",
+            "enabled": true,
+            "scene_id": "2c3d4e5f",
+            "trigger": { "type": "time", "at": "06:30" },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "skip",
+            "calendar_status": "off",
+            "next_run": "2026-09-27T03:30:00Z",
+            "last_run": { "at": "2026-09-26T03:30:01Z", "ran": 1, "skipped": 0, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 2,
+            "created_at": "2026-09-01T05:00:00Z",
+            "updated_at": "2026-09-10T18:25:00Z"
+          },
+          {
+            "id": "4d5e6f70",
+            "enabled": true,
+            "scene_id": "3d4e5f60",
+            "trigger": { "type": "time", "at": "08:00" },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "only",
+            "calendar_status": "off",
+            "next_run": null,
+            "last_run": { "at": "2026-09-19T05:00:01Z", "ran": 3, "skipped": 0, "failed": 0, "note": null, "skipped_by": null, "error": null },
+            "version": 1,
+            "created_at": "2026-09-10T18:27:00Z",
+            "updated_at": "2026-09-10T18:27:00Z"
+          }
+        ],
+        "paused": false
+      }
+    },
+    "no_location": {
+      "note": "The calendar is on but the project has no location: no times, so the Shabbat trigger and the Shabbat-only schedule do not run.",
+      "now": "2026-09-26T07:00:00Z",
+      "timezone": "Asia/Jerusalem",
+      "value": {
+        "items": [
+          {
+            "id": "1a2b3c4d",
+            "enabled": true,
+            "scene_id": "0a1b2c3d",
+            "trigger": { "type": "shabbat", "event": "havdalah", "offset": 20 },
+            "days": [0, 1, 2, 3, 4, 5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "run",
+            "calendar_status": "no_location",
+            "next_run": null,
+            "last_run": null,
+            "version": 1,
+            "created_at": "2026-09-10T18:20:00Z",
+            "updated_at": "2026-09-10T18:20:00Z"
+          },
+          {
+            "id": "4d5e6f70",
+            "enabled": false,
+            "scene_id": "3d4e5f60",
+            "trigger": { "type": "sun", "event": "sunset", "offset": 30 },
+            "days": [5, 6],
+            "only_if": {},
+            "if_no_weather": "run",
+            "during_shabbat": "only",
+            "calendar_status": "no_location",
+            "next_run": null,
+            "last_run": null,
+            "version": 3,
+            "created_at": "2026-09-10T18:27:00Z",
+            "updated_at": "2026-09-12T08:00:00Z"
+          }
+        ],
+        "paused": false
+      }
+    }
+  }
+}

@@ -75,6 +75,18 @@ function Registry.climateList()
     return sortedList(climates)
 end
 
+function Registry.fanList()
+    local fans = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if device.kind == "fan" and device.supported == true then
+            fans[id] = device
+        end
+    end
+
+    return sortedList(fans)
+end
+
 function Registry.blindList()
     local blinds = {}
 
@@ -135,30 +147,59 @@ function Registry.lightList()
     return sortedList(lights)
 end
 
+-- The alarm's partitions DirectorLink watches (Alarm Status On in Composer, ADR-038), without the
+-- ones the panel does not use (IS_ACTIVE = 0).
+local function alarmPartition(device)
+    return device.kind == "alarm" and device.supported == true and not (device.state and device.state.active == false)
+end
+
+function Registry.alarmList()
+    local partitions = {}
+
+    for id, device in pairs(Registry.devices or {}) do
+        if alarmPartition(device) then
+            partitions[id] = device
+        end
+    end
+
+    return sortedList(partitions)
+end
+
 function Registry.counts()
     local recognized = 0
     local unsupported = 0
     local supported = 0
     local supportedLights = 0
     local supportedClimate = 0
+    local supportedFans = 0
     local supportedBlinds = 0
     local supportedCameras = 0
     local supportedRelays = 0
     local supportedDoorbells = 0
+    local alarmPartitions = 0
 
     for _, device in pairs(Registry.devices) do
-        if device.recognized then
+        -- A partition is not watched while Alarm Status is Off: unsupported, as before 1.2.0.
+        if device.recognized and not (device.kind == "alarm" and device.supported ~= true) then
             recognized = recognized + 1
         else
             unsupported = unsupported + 1
         end
 
-        if device.supported then
+        if device.kind == "alarm" then
+            -- Read-only and for members and admins only: counted apart from the devices the API
+            -- controls.
+            if alarmPartition(device) then
+                alarmPartitions = alarmPartitions + 1
+            end
+        elseif device.supported then
             supported = supported + 1
             if device.kind == "light" then
                 supportedLights = supportedLights + 1
             elseif device.kind == "climate" then
                 supportedClimate = supportedClimate + 1
+            elseif device.kind == "fan" then
+                supportedFans = supportedFans + 1
             elseif device.kind == "blind" then
                 supportedBlinds = supportedBlinds + 1
             elseif device.kind == "camera" then
@@ -181,10 +222,12 @@ function Registry.counts()
         supported = supported,
         supported_lights = supportedLights,
         supported_climate = supportedClimate,
+        supported_fans = supportedFans,
         supported_blinds = supportedBlinds,
         supported_cameras = supportedCameras,
         supported_relays = supportedRelays,
         supported_doorbells = supportedDoorbells,
+        alarm_partitions = alarmPartitions,
     }
 end
 

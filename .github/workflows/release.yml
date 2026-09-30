@@ -46,6 +46,11 @@ jobs:
       - name: Run driver tests
         run: lua5.1 driver/tests/run.lua
 
+      - name: Run the calendar and schedule tests in Israel's and New York's time zones
+        run: |
+          TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+          TZ=America/New_York lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+
       - name: Check API spec against the driver
         run: python scripts/check_api.py
 

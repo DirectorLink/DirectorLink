@@ -1,14 +1,15 @@
 // Scenes (#/scenes) and the scene editor (#/scene/new, #/scene/<id>; admins). The list runs a
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
-// what (lights, AC, blinds, doors and gates; all of them or chosen ones) and what to do; "Add an
-// action" has its own address (#/scene/<id>/add), so Back returns to the editor. "Copy the house
-// as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
+// what (lights, AC, fans, blinds, doors and gates; all of them or chosen ones) and what to do;
+// "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor. "Copy the
+// house as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
 
 import { emptyState, skeletonCards, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
 import { formatNumber, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { blindStateLabel, deviceRoomId, fanLabel, modeLabel, roomById, roomName, shownBrightness, targetText } from "../model.js";
+import { fanSpeeds } from "../fans.js";
+import { blindStateLabel, deviceRoomId, fanLabel, fanSpeedLabel, fanStateLabel, modeLabel, roomById, roomName, shownBrightness, targetText } from "../model.js";
 import {
   MAX_DEVICE_IDS,
   MAX_STEPS,
@@ -153,13 +154,13 @@ function sceneCard(scene, admin) {
 
 // Ready-made starting points: they open the editor filled in, nothing is saved until Save.
 function sceneIdeas() {
-  const has = { lights: state.lights.length > 0, climate: state.thermostats.length > 0, blinds: state.blinds.length > 0 };
+  const has = { lights: state.lights.length > 0, climate: state.thermostats.length > 0, fans: state.fans.length > 0, blinds: state.blinds.length > 0 };
   const step = (type, set) => has[type] && { type, room_id: null, device_ids: null, set };
   return [
-    { id: "allOff", icon: "home", steps: [step("lights", { on: false }), step("climate", { mode: "off" })] },
+    { id: "allOff", icon: "home", steps: [step("lights", { on: false }), step("climate", { mode: "off" }), step("fans", { on: false })] },
     { id: "goodNight", icon: "moon", steps: [step("lights", { on: false }), step("blinds", { position: 0 })] },
     { id: "goodMorning", icon: "sun", steps: [step("blinds", { position: 100 })] },
-    { id: "leaving", icon: "leave", steps: [step("lights", { on: false }), step("climate", { mode: "off" }), step("blinds", { position: 0 })] },
+    { id: "leaving", icon: "leave", steps: [step("lights", { on: false }), step("climate", { mode: "off" }), step("fans", { on: false }), step("blinds", { position: 0 })] },
     { id: "cool", icon: "climate", steps: [step("climate", { mode: "cool", target_temperature: 24 })] },
   ]
     .map((idea) => ({ ...idea, steps: idea.steps.filter(Boolean) }))
@@ -576,7 +577,8 @@ async function deleteDraft(draft) {
 // ---- adding an action ----------------------------------------------------------------------
 
 function newAdding() {
-  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, blind: "close", position: 50 };
+  // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
+  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50 };
 }
 
 // Devices of `type` in `room` (null: the whole home).
@@ -683,7 +685,8 @@ function buildSteps(adding, devices) {
     else if (adding.mode === "auto" && dual) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
     else set = { mode: adding.mode, target_temperature: adding.temperature };
     if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
-  } else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
+  } else if (adding.type === "fans") set = adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
+  else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
   else set = { action: "pulse" };
   if (!adding.choose || picked.length === devices.length) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
   const steps = [];
@@ -700,6 +703,7 @@ function nowText(type, device) {
     const target = device.mode === "off" ? null : targetText(device);
     return [modeLabel(device.mode), target !== formatTemperature(null) ? target : null].filter(Boolean).join(" ");
   }
+  if (type === "fans") return fanStateLabel(device);
   if (type === "blinds") return blindStateLabel(device);
   return "";
 }
@@ -858,6 +862,27 @@ function doControls(adding, devices) {
       }
     }
     return parts;
+  }
+  if (adding.type === "fans") {
+    // On goes to the speed each fan chooses; Speed sets them all to one.
+    const speeds = unique(devices.flatMap(fanSpeeds)).sort((a, b) => a - b);
+    return [
+      segments([["off", t("scenes.do.off")], ["on", t("scenes.do.on")], ["speed", t("scenes.add.speed")]], adding.fanDo, "add-fan-do", (value) => {
+        adding.fanDo = value;
+      }),
+      adding.fanDo === "speed"
+        ? h(
+            "div",
+            { class: "chip-row", role: "group", "aria-label": t("scenes.add.speed") },
+            speeds.map((speed) =>
+              choiceChip(fanSpeedLabel(speed), adding.fanSpeed === speed, `add-fan-speed:${speed}`, () => {
+                adding.fanSpeed = speed;
+                notify();
+              })
+            )
+          )
+        : null,
+    ];
   }
   if (adding.type === "blinds") {
     // Set position only when one of these shades can go to a position.

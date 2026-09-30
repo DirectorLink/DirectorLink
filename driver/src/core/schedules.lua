@@ -1,7 +1,9 @@
 -- DirectorLink schedules (docs/SCHEDULES.md): run a scene at a time of day, at sunrise or sunset,
--- or when the weather turns (heat, wind, rain), on chosen days. Time and sun schedules may also
--- say "only if" about the weather. They are the home's, kept in the driver's persistent data, and
--- run by the controller (src/core/scheduler.lua) whether or not an app is open.
+-- when the weather turns (heat, wind, rain), or when Shabbat and holidays begin or end (the Jewish
+-- calendar, ADR-037), on chosen days. Time and sun schedules may also say "only if" about the
+-- weather, and time, sun and weather schedules what to do on Shabbat and holidays
+-- ("during_shabbat"). They are the home's, kept in the driver's persistent data, and run by the
+-- controller (src/core/scheduler.lua) whether or not an app is open.
 -- The same rules check what the API receives and what is loaded from the store.
 
 local Clock = require("src.core.clock")
@@ -19,10 +21,13 @@ Schedules.LIMITS = {
     heat = { 15, 45 }, -- °C outside
     wind = { 10, 150 }, -- km/h
     offset = { -180, 180 }, -- minutes before or after sunrise and sunset
+    shabbat_offset = { -360, 360 }, -- minutes before or after candle lighting and havdalah
 }
+Schedules.DURING_SHABBAT = { run = true, skip = true, only = true }
 
 -- `complete` is false after the stored schedules could not be read: saving would overwrite them.
-local state = { schedules = {}, runtime = {}, complete = true }
+-- `catchUpAfter`: after a restart, nothing due before this moment is caught up (src/core/scheduler.lua).
+local state = { schedules = {}, runtime = {}, complete = true, catchUpAfter = nil }
 
 local function randomHex(length)
     return Random.hex(length)
@@ -78,6 +83,7 @@ function Schedules.check(input)
         time = { type = true, at = true },
         sun = { type = true, event = true, offset = true },
         weather = { type = true, kind = true, above = true, from = true, to = true, once_a_day = true },
+        shabbat = { type = true, event = true, offset = true },
     })[kind]
     if known then
         for key in pairs(trigger) do
@@ -125,8 +131,19 @@ function Schedules.check(input)
             end
             record.trigger.from, record.trigger.to = trigger.from, trigger.to
         end
+    elseif kind == "shabbat" then
+        -- When Shabbat or a holiday begins (candle lighting) or ends (havdalah); days that follow
+        -- each other are one period, which begins and ends once.
+        if trigger.event ~= "candle_lighting" and trigger.event ~= "havdalah" then
+            return nil, "trigger.event", "event must be candle_lighting or havdalah"
+        end
+        local offset = present(trigger.offset) and trigger.offset or 0
+        if not isWhole(offset, Schedules.LIMITS.shabbat_offset[1], Schedules.LIMITS.shabbat_offset[2]) then
+            return nil, "trigger.offset", "offset is minutes from -360 (before) to 360 (after)"
+        end
+        record.trigger = { type = "shabbat", event = trigger.event, offset = offset }
     else
-        return nil, "trigger.type", "type must be time, sun or weather"
+        return nil, "trigger.type", "type must be time, sun, weather or shabbat"
     end
 
     local days = input.days
@@ -187,12 +204,28 @@ function Schedules.check(input)
         return nil, "if_no_weather", 'if_no_weather must be "run" or "skip"'
     end
     record.if_no_weather = noWeather
+    -- On Shabbat and holidays, from candle lighting to havdalah: run as usual, skip, or run only
+    -- then. Stored in full; records from before 1.2.0 have none and run as usual.
+    local during = present(input.during_shabbat) and input.during_shabbat or "run"
+    if type(during) ~= "string" or not Schedules.DURING_SHABBAT[during] then
+        return nil, "during_shabbat", 'during_shabbat must be "run", "skip" or "only"'
+    end
+    if kind == "shabbat" and during ~= "run" then
+        return nil, "during_shabbat", "A Shabbat schedule runs at Shabbat times; during_shabbat does not apply"
+    end
+    record.during_shabbat = during
     return record
 end
 
 -- True when the schedule needs Open-Meteo: a weather trigger or an "only if".
 function Schedules.usesWeather(schedule)
     return schedule.trigger.type == "weather" or next(schedule.only_if or {}) ~= nil
+end
+
+-- True when the schedule needs the Jewish calendar: a Shabbat trigger, or "during_shabbat" other
+-- than "run".
+function Schedules.usesCalendar(schedule)
+    return schedule.trigger.type == "shabbat" or (schedule.during_shabbat or "run") ~= "run"
 end
 
 local function copy(schedule)
@@ -214,7 +247,12 @@ local function save()
 end
 
 local function saveRuntime()
-    Store.write(STATE_KEY, { version = 1, schedules = state.runtime }, false)
+    local ok = Store.write(STATE_KEY, { version = 1, schedules = state.runtime, catch_up_after = state.catchUpAfter }, false)
+    if not ok then
+        -- A restart could then run a Shabbat schedule again (the catch-up), or miss one.
+        Log.error("schedules", "could not save what the schedules ran")
+    end
+    return ok
 end
 
 function Schedules.load()
@@ -239,7 +277,8 @@ function Schedules.load()
     if dropped > 0 then
         Log.warn("schedules", "stored schedules that are not valid were left out", { schedules = dropped })
     end
-    local runtime = Store.read(STATE_KEY, false)
+    local runtime, runtimeForm = Store.read(STATE_KEY, false)
+    state.catchUpAfter = nil
     if type(runtime) == "table" and type(runtime.schedules) == "table" then
         for _, schedule in ipairs(state.schedules) do
             local item = runtime.schedules[schedule.id]
@@ -247,6 +286,14 @@ function Schedules.load()
                 state.runtime[schedule.id] = item
             end
         end
+        if isWhole(runtime.catch_up_after, 0, math.huge) then
+            state.catchUpAfter = runtime.catch_up_after
+        end
+    elseif runtimeForm ~= "missing" then
+        -- What ran before is not known, so nothing is caught up now: that could run a Shabbat
+        -- schedule a second time.
+        state.catchUpAfter = Clock.now()
+        Log.warn("schedules", "what the schedules ran could not be read; nothing is caught up after this start", { stored_as = runtimeForm })
     end
     return #state.schedules, form
 end
@@ -376,6 +423,17 @@ function Schedules.runtime(id)
 end
 
 Schedules.saveRuntime = saveRuntime
+
+-- After a restart nothing due before this moment (seconds from 1970) is caught up, or nil
+-- (src/core/scheduler.lua); kept with the runtime.
+function Schedules.catchUpAfter()
+    return state.catchUpAfter
+end
+
+function Schedules.setCatchUpAfter(epoch)
+    state.catchUpAfter = epoch
+    saveRuntime()
+end
 
 -- The live records, for the scheduler (not copied: it only reads them).
 function Schedules.records()

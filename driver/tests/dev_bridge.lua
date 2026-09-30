@@ -3,6 +3,11 @@
 --   in:  "<handle> <hex bytes>\n"   (empty hex = the client disconnected)
 --   out: "<closed 0|1> <hex response bytes>\n"
 --   in:  "code\n" runs the Composer action New Pairing Code; out: "CODE <code>\n"
+--   in:  "property <hex name> <hex value>\n" sets a Composer property; out: "PROPERTY\n"
+--   in:  "variable <device id> <variable id> <hex value>\n" a device reports; out: "VARIABLE <times>\n"
+--   in:  "seal <hex JSON { key, key_id, request }>\n" seals a request at home, as the app does;
+--        out: "SEALED <hex JSON envelope>\n"
+--   in:  "open <hex JSON { key, envelope }>\n" opens a sealed answer; out: "OPENED <hex JSON>\n"
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -19,8 +24,11 @@ if specPath and specPath ~= "" then
 end
 
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
--- cool setpoints, floor heating on its heat setpoint), so the app preview shows them all.
-local mock = Mock.startDriver(Mock.demoProject(), specText)
+-- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
+-- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On.
+local mock = Mock.startDriver(Mock.demoProject(), specText, nil, function()
+    Properties["Alarm Status"] = "On"
+end)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
 -- The app and console served from this PC (python -m http.server) may call this test bridge. The
@@ -126,6 +134,34 @@ local function advanceShades()
     end
 end
 
+-- Fans follow their commands as Snap One documents the Fan proxy: ON goes to the preset speed, OFF
+-- to 0, SET_SPEED to its speed (0 is off); the speed is reported first, then whether it is on.
+-- No real fan has been seen doing this. Like the shades, they move when a request comes in.
+local FAN_IS_ON, FAN_SPEED, FAN_PRESET = 1000, 1001, 1003
+local fanCommandsSeen = #mock.commands
+
+local function advanceFans()
+    for index = fanCommandsSeen + 1, #mock.commands do
+        local command = mock.commands[index]
+        local device = mock.project.devices[command.device]
+        if device and string.lower(device.driverFileName or "") == "fan.c4i" then
+            local speed
+            if command.command == "ON" then
+                speed = tonumber((mock.project.variables[command.device] or {})[FAN_PRESET]) or 4
+            elseif command.command == "OFF" then
+                speed = 0
+            elseif command.command == "SET_SPEED" then
+                speed = tonumber(command.params and command.params.SPEED) or 0
+            end
+            if speed then
+                Mock.changeVariable(mock, command.device, FAN_SPEED, tostring(speed))
+                Mock.changeVariable(mock, command.device, FAN_IS_ON, speed > 0 and "1" or "0")
+            end
+        end
+    end
+    fanCommandsSeen = #mock.commands
+end
+
 local function fromHex(text)
     return (text:gsub("%x%x", function(pair)
         return string.char(tonumber(pair, 16))
@@ -138,6 +174,41 @@ local function toHex(text)
     end))
 end
 
+-- What the contract test and the dev server ask for besides HTTP (see the protocol at the top).
+local Lock = require("src.cloud.lock")
+local Remote = require("src.cloud.remote")
+local Clock = require("src.core.clock")
+local sealCount = 0
+
+local function command(line)
+    local name, value = line:match("^property (%x*) (%x*)$")
+    if name then
+        Properties[fromHex(name)] = fromHex(value)
+        OnPropertyChanged(fromHex(name))
+        return "PROPERTY"
+    end
+    local device, variable, reported = line:match("^variable (%d+) (%d+) (%x*)$")
+    if device then
+        return "VARIABLE " .. Mock.changeVariable(mock, tonumber(device), tonumber(variable), fromHex(reported))
+    end
+    local sealing = line:match("^seal (%x+)$")
+    if sealing then
+        local asked = Json.decode(fromHex(sealing))
+        sealCount = sealCount + 1
+        local request = asked.request
+        request.id = request.id or ("dev-" .. sealCount)
+        request.ts = request.ts or Clock.now()
+        local envelope = Lock.seal(Lock.deviceKey(asked.key), Remote.LAN_HOME, asked.key_id, "req", Json.encode(request))
+        return "SEALED " .. toHex(Json.encode(envelope))
+    end
+    local opening = line:match("^open (%x+)$")
+    if opening then
+        local asked = Json.decode(fromHex(opening))
+        return "OPENED " .. toHex(Lock.open(Lock.deviceKey(asked.key), asked.envelope, "res") or "null")
+    end
+    return nil
+end
+
 io.write("READY " .. tostring(mock.properties["Pairing Code"]) .. "\n")
 io.flush()
 
@@ -148,9 +219,15 @@ for line in io.lines() do
         io.write("CODE " .. tostring(mock.properties["Pairing Code"]) .. "\n")
         io.flush()
     end
+    local answer = command(line)
+    if answer then
+        io.write(answer .. "\n")
+        io.flush()
+    end
     local handle, hex = line:match("^(%d+) ?(%x*)$")
     if handle then
         advanceShades()
+        advanceFans()
         handle = tonumber(handle)
         if hex == "" then
             OnServerConnectionStatusChanged(handle, 41999, "OFFLINE")

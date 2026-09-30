@@ -1,8 +1,11 @@
 // Schedules (#/schedules) and the schedule editor (#/schedule/new, #/schedule/<id>; admins), under
-// the Scenes tab. A schedule runs a scene: at a time, at sunrise or sunset, or when the weather
-// turns (heat, wind, rain), on chosen days; time and sun schedules may add "only if" weather
-// conditions. The controller runs them; the weather comes from Open-Meteo through it.
+// the Scenes tab. A schedule runs a scene: at a time, at sunrise or sunset, when the weather turns
+// (heat, wind, rain), or when Shabbat and holidays begin or end (with the Jewish calendar on in
+// Composer), on chosen days; time, sun and Shabbat schedules may add "only if" weather conditions,
+// and time, sun and weather schedules what to do on Shabbat and holidays. The controller runs them;
+// the weather comes from Open-Meteo through it.
 
+import { calendarOn, holyTimes, loadCalendar, noteCalendarOff, onOneLine, showCalendarSettings, upcomingTimes } from "../calendar.js";
 import { emptyState, skeletonCards } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
 import { formatTemperature, t } from "../i18n.js";
@@ -12,9 +15,11 @@ import {
   WEEKEND,
   WORK_DAYS,
   conditionText,
+  dayAndTime,
   dayName,
   daysText,
   findSchedule,
+  formatOffset,
   loadSchedules,
   loadWeather,
   sceneNameOf,
@@ -32,6 +37,8 @@ const MAX_SCHEDULES = 50;
 const MESSAGE_MS = 6000;
 const WEATHER_MS = 5 * 60 * 1000;
 const OFFSETS = [-60, -30, 0, 30, 60];
+// Minutes before (negative) or after candle lighting and havdalah; the API takes -360 to 360.
+const SHABBAT_OFFSETS = [-120, -60, -30, -15, 0, 15, 30, 60, 120];
 const LIMITS = { heat: [15, 45, 1], wind: [10, 150, 5] };
 let weatherTimer = null;
 
@@ -57,12 +64,13 @@ function leave(hash, from) {
   else window.location.replace(hash);
 }
 
-// Entering Schedules or the editor: the scenes to pick from and the weather now, and the weather
-// every 5 minutes while it is open.
+// Entering Schedules or the editor: the scenes to pick from, the weather now and the Shabbat times,
+// and the weather every 5 minutes while it is open.
 export function enterSchedules() {
   loadScenes();
   loadSchedules();
   loadWeather();
+  loadCalendar();
   window.clearInterval(weatherTimer);
   weatherTimer = window.setInterval(() => {
     const hash = window.location.hash;
@@ -156,6 +164,31 @@ function weatherCard() {
   );
 }
 
+// ---- Shabbat and holiday times (the Jewish calendar) --------------------------------------------
+
+// Under the weather, for everyone: the next Shabbat or holiday, or the one now, with its times.
+// Admins can change how they are worked out (Settings).
+function calendarCard(admin) {
+  const times = calendarOn() ? holyTimes() : null;
+  if (!times) return null;
+  const change = admin
+    ? h("a", { class: "calendar-change", href: "#/settings", dataset: { key: "calendar-change" }, onclick: showCalendarSettings }, t("calendar.times.change"))
+    : null;
+  return h(
+    "section",
+    { class: "card weather-card calendar-card", "aria-label": t("calendar.times.title") },
+    h("span", { class: "scene-icon schedule-candles", "aria-hidden": "true" }, icon("candles")),
+    h(
+      "div",
+      { class: "scene-text" },
+      h("span", { class: "weather-now" }, times.title || t("calendar.times.title")),
+      times.times ? h("span", { class: "weather-more calendar-times" }, times.times) : null,
+      times.later ? h("span", { class: "weather-more calendar-later" }, times.later) : null,
+      times.footnote || change ? h("span", { class: "weather-credit" }, times.footnote, times.footnote && change ? " · " : "", change) : null
+    )
+  );
+}
+
 // ---- the list ------------------------------------------------------------------------------
 
 export function schedulesView() {
@@ -176,6 +209,7 @@ export function schedulesView() {
     state.schedulesPaused ? h("p", { class: "notice notice-info", role: "status" }, t("schedules.paused")) : null,
     h("p", { class: "muted-note scene-intro" }, admin ? t("schedules.helpAdmin") : t("schedules.help")),
     weatherCard(),
+    calendarCard(admin),
     schedules.length
       ? h("ul", { class: "scene-list" }, schedules.map((schedule) => h("li", {}, scheduleCard(schedule, admin))))
       : emptyState("clock", t("schedules.emptyTitle"), admin ? t("schedules.emptyText") : t("schedules.emptyTextMember")),
@@ -243,12 +277,13 @@ export function resetScheduleEditor() {
 }
 
 // Every kind of trigger keeps its own choices, so switching between them loses nothing.
-function draftFor(key) {
+export function draftFor(key) {
   if (ui.scheduleEditor?.key === key) return ui.scheduleEditor;
   const existing = key === "new" ? null : findSchedule(key);
   if (key !== "new" && !existing) return null;
   const trigger = existing?.trigger || {};
   const onlyIf = existing?.only_if || {};
+  const shabbat = trigger.type === "shabbat";
   ui.scheduleEditor = {
     key,
     id: existing?.id || null,
@@ -266,6 +301,12 @@ function draftFor(key) {
     from: trigger.from || "08:00",
     to: trigger.to || "20:00",
     once: trigger.once_a_day !== false,
+    shabbatEvent: shabbat && trigger.event === "havdalah" ? "havdalah" : "candle_lighting",
+    shabbatOffset: shabbat ? trigger.offset || 0 : -30,
+    // A Shabbat trigger's days are not shown: it keeps the ones it has, and a new one (or one made
+    // from another kind) gets all seven. The other kinds keep theirs meanwhile.
+    shabbatDays: shabbat ? [...existing.days] : [...ALL_DAYS],
+    during: ["skip", "only"].includes(existing?.during_shabbat) ? existing.during_shabbat : "run",
     days: existing ? [...existing.days] : [...ALL_DAYS],
     notRaining: Boolean(onlyIf.not_raining),
     hot: Number.isFinite(onlyIf.hotter_than),
@@ -282,11 +323,16 @@ function draftFor(key) {
   return ui.scheduleEditor;
 }
 
-// The schedule the choices describe, as the API takes it.
-function scheduleBody(draft) {
+const draftDays = (draft) => (draft.type === "shabbat" ? draft.shabbatDays : draft.days);
+
+// The schedule the choices describe, as the API takes it. during_shabbat goes only with the Jewish
+// calendar on: drivers before 1.2.0 refuse fields they do not know. A Shabbat trigger sends "run",
+// which clears the condition of the kind it was made from.
+export function scheduleBody(draft) {
   let trigger;
   if (draft.type === "time") trigger = { type: "time", at: draft.at };
   else if (draft.type === "sun") trigger = { type: "sun", event: draft.event, offset: draft.offset };
+  else if (draft.type === "shabbat") trigger = { type: "shabbat", event: draft.shabbatEvent, offset: draft.shabbatOffset };
   else {
     trigger = { type: "weather", kind: draft.kind, once_a_day: draft.once };
     if (draft.kind !== "rain") trigger.above = draft[draft.kind];
@@ -299,7 +345,9 @@ function scheduleBody(draft) {
     if (draft.calm) onlyIf.wind_below = draft.windBelow;
     if (draft.rainExpected) onlyIf.rain_expected = true;
   }
-  return { enabled: draft.enabled, scene_id: draft.scene_id, trigger, days: [...draft.days].sort((a, b) => a - b), only_if: onlyIf, if_no_weather: draft.ifNoWeather };
+  const body = { enabled: draft.enabled, scene_id: draft.scene_id, trigger, days: [...draftDays(draft)].sort((a, b) => a - b), only_if: onlyIf, if_no_weather: draft.ifNoWeather };
+  if (calendarOn()) body.during_shabbat = draft.type === "shabbat" ? "run" : draft.during;
+  return body;
 }
 
 function change(draft, update) {
@@ -309,14 +357,15 @@ function change(draft, update) {
   notify();
 }
 
-function chip(label, active, key, onclick) {
+export function chip(label, active, key, onclick) {
   return h("button", { type: "button", class: `chip ${active ? "is-active" : ""}`, "aria-pressed": String(active), dataset: { key }, onclick }, name(label, "span"));
 }
 
-function segments(options, value, key, onPick) {
+// `className` lays the options out (styles.css); without it they share one row.
+function segments(options, value, key, onPick, className = "") {
   return h(
     "div",
-    { class: "segments", role: "group", style: { "grid-template-columns": `repeat(${options.length}, minmax(0, 1fr))` } },
+    { class: `segments ${className}`.trim(), role: "group", style: className ? undefined : { "grid-template-columns": `repeat(${options.length}, minmax(0, 1fr))` } },
     options.map(([option, label, iconName]) =>
       h(
         "button",
@@ -332,7 +381,7 @@ function section(title, ...content) {
   return h("section", { class: "card scene-section" }, h("h2", { class: "add-title" }, title), ...content);
 }
 
-function stepper({ value, format, label, key, min, max, step, onChange }) {
+export function stepper({ value, format, label, key, min, max, step, onChange }) {
   return h(
     "div",
     { class: "stepper", role: "group", "aria-label": label },
@@ -384,21 +433,52 @@ function sceneSection(draft) {
   );
 }
 
-function whenSection(draft) {
-  const weather = state.weather;
-  const parts = [
+function offsetLabel(offset) {
+  if (!offset) return t("schedules.editor.exactly");
+  return t(offset < 0 ? "schedules.editor.offsetBefore" : "schedules.editor.offsetAfter", { offset: formatOffset(offset) });
+}
+
+// When Shabbat and holidays begin (candle lighting) or end (havdalah), with the next times, and
+// minutes before or after. An offset set through the API is one more chip.
+function shabbatChoices(draft) {
+  const next = upcomingTimes();
+  const offsets = SHABBAT_OFFSETS.includes(draft.shabbatOffset) ? SHABBAT_OFFSETS : [...SHABBAT_OFFSETS, draft.shabbatOffset].sort((a, b) => a - b);
+  return [
+    state.calendar?.status === "no_location" ? h("p", { class: "notice notice-info" }, t("calendar.times.noLocation")) : null,
     segments(
       [
-        ["time", t("schedules.editor.atTime"), "clock"],
-        ["sun", t("schedules.editor.sun"), "sun"],
-        ["weather", t("schedules.editor.weather"), "climate"],
+        ["candle_lighting", next.candle_lighting ? t("schedules.editor.candleLightingAt", { time: onOneLine(dayAndTime(next.candle_lighting)) }) : t("schedules.editor.candleLighting")],
+        ["havdalah", next.havdalah ? t("schedules.editor.havdalahAt", { time: onOneLine(dayAndTime(next.havdalah)) }) : t("schedules.editor.havdalah")],
       ],
-      draft.type,
-      "schedule-type",
-      (value) => change(draft, () => { draft.type = value; })
+      draft.shabbatEvent,
+      "schedule-shabbat-event",
+      (value) => change(draft, () => { draft.shabbatEvent = value; }),
+      "segments-events"
     ),
+    h(
+      "div",
+      { class: "chip-row" },
+      offsets.map((offset) => chip(offsetLabel(offset), draft.shabbatOffset === offset, `schedule-shabbat-offset:${offset}`, () => change(draft, () => { draft.shabbatOffset = offset; })))
+    ),
+    h("p", { class: "field-help" }, t("schedules.editor.shabbatHelp")),
   ];
-  if (draft.type === "time") {
+}
+
+function whenSection(draft) {
+  const weather = state.weather;
+  const kinds = [
+    ["time", t("schedules.editor.atTime"), "clock"],
+    ["sun", t("schedules.editor.sun"), "sun"],
+    ["weather", t("schedules.editor.weather"), "climate"],
+  ];
+  // Shabbat and holidays, with the Jewish calendar on in Composer.
+  if (calendarOn()) kinds.push(["shabbat", t("schedules.editor.shabbat"), "candles"]);
+  const parts = [
+    segments(kinds, draft.type, "schedule-type", (value) => change(draft, () => { draft.type = value; }), kinds.length > 3 ? "segments-four" : ""),
+  ];
+  if (draft.type === "shabbat") {
+    parts.push(...shabbatChoices(draft));
+  } else if (draft.type === "time") {
     parts.push(h("label", { class: "field schedule-field" }, h("span", { class: "field-label" }, t("schedules.editor.time")), timeInput(draft, draft.at, "schedule-at", t("schedules.editor.time"), (value) => { draft.at = value; })));
   } else if (draft.type === "sun") {
     const today = weather?.today || {};
@@ -508,15 +588,41 @@ function daysSection(draft) {
       chip(t("schedules.days.every"), draft.days.length === 7, "schedule-days:all", () => setDays(ALL_DAYS)),
       chip(t("schedules.days.range", { from: dayName(0), to: dayName(4) }), daysText(draft.days) === daysText(WORK_DAYS) && draft.days.length === 5, "schedule-days:work", () => setDays(WORK_DAYS)),
       chip(t("schedules.days.range", { from: dayName(5), to: dayName(6) }), daysText(draft.days) === daysText(WEEKEND) && draft.days.length === 2, "schedule-days:weekend", () => setDays(WEEKEND))
-    )
+    ),
+    duringChoices(draft)
   );
+}
+
+// Time, sun and weather schedules on Shabbat and holidays, from candle lighting to havdalah: with
+// the Jewish calendar on in Composer. Set while it was on, the choice is kept, and said what it
+// does while it is off.
+function duringChoices(draft) {
+  if (!calendarOn()) {
+    return draft.during === "run" ? null : h("p", { class: "notice notice-info" }, t(`schedules.editor.duringOff.${draft.during}`));
+  }
+  return [
+    h("p", { class: "field-label" }, t("schedules.editor.duringShabbat")),
+    segments(
+      [
+        ["run", t("schedules.editor.duringRun")],
+        ["skip", t("schedules.editor.duringSkip")],
+        ["only", t("schedules.editor.duringOnly")],
+      ],
+      draft.during,
+      "schedule-during",
+      (value) => change(draft, () => { draft.during = value; }),
+      "segments-stack"
+    ),
+    h("p", { class: "field-help" }, t("schedules.editor.duringHelp")),
+  ];
 }
 
 function onlyIfSection(draft) {
   if (draft.type === "weather") return null;
   const any = draft.notRaining || draft.hot || draft.calm || draft.rainExpected;
   return section(
-    t("schedules.editor.onlyIf"),
+    // A Shabbat trigger has no days to choose: this is the third section then.
+    t(draft.type === "shabbat" ? "schedules.editor.onlyIfShabbat" : "schedules.editor.onlyIf"),
     toggle(t("schedules.editor.notRaining"), draft.notRaining, "schedule-if-dry", (on) => change(draft, () => { draft.notRaining = on; })),
     toggle(t("schedules.editor.hotterThan"), draft.hot, "schedule-if-hot", (on) => change(draft, () => { draft.hot = on; })),
     draft.hot
@@ -546,7 +652,7 @@ function onlyIfSection(draft) {
 
 // The whole schedule in one sentence, as it will run.
 function sentence(draft) {
-  if (!draft.days.length) return t("schedules.editor.pickDay");
+  if (!draftDays(draft).length) return t("schedules.editor.pickDay");
   const body = scheduleBody(draft);
   const scene = (state.scenes || []).find((item) => item.id === draft.scene_id);
   if (!scene) return t("schedules.needScene");
@@ -574,6 +680,13 @@ export function scheduleEditorView(key) {
   if (!can("admin")) return [header, h("p", { class: "notice notice-info" }, t("schedules.editor.adminOnly", { role: roleLabel(state.role) }))];
   const draft = draftFor(key);
   if (!draft) return [header, emptyState("clock", t("schedules.editor.notFound"), "", h("a", { class: "button button-primary", href: "#/schedules" }, t("schedules.title")))];
+  if (!calendarOn()) {
+    const existing = draft.id ? findSchedule(draft.id) : null;
+    if (existing?.trigger?.type === "shabbat") return [header, offlineBanner(), staleBanner(), calendarOffEditor(existing, draft)];
+    // Made a Shabbat schedule here, and the calendar was turned off meanwhile: back to its own kind
+    // (a time, for a new one).
+    if (draft.type === "shabbat") draft.type = existing?.trigger?.type || "time";
+  }
   return [
     header,
     offlineBanner(),
@@ -583,7 +696,8 @@ export function scheduleEditorView(key) {
       { class: "scene-editor" },
       sceneSection(draft),
       whenSection(draft),
-      daysSection(draft),
+      // A Shabbat trigger runs when the period begins or ends, whatever the weekday.
+      draft.type === "shabbat" ? null : daysSection(draft),
       onlyIfSection(draft),
       h(
         "section",
@@ -597,20 +711,41 @@ export function scheduleEditorView(key) {
         { class: "scene-actions" },
         h(
           "button",
-          { type: "button", class: "button button-primary", disabled: draft.busy || !draft.days.length || !draft.scene_id, dataset: { key: "schedule-save" }, onclick: () => saveDraft(draft) },
+          { type: "button", class: "button button-primary", disabled: draft.busy || !draftDays(draft).length || !draft.scene_id, dataset: { key: "schedule-save" }, onclick: () => saveDraft(draft) },
           icon("check"),
           draft.busy ? t("common.saving") : t("schedules.editor.save")
         ),
-        draft.id
-          ? h("button", { type: "button", class: "button button-danger", disabled: draft.busy, dataset: { key: "schedule-delete" }, onclick: () => deleteDraft(draft) }, t("schedules.editor.delete"))
-          : null
+        draft.id ? deleteButton(draft) : null
       )
     ),
   ];
 }
 
+function deleteButton(draft) {
+  return h("button", { type: "button", class: "button button-danger", disabled: draft.busy, dataset: { key: "schedule-delete" }, onclick: () => deleteDraft(draft) }, t("schedules.editor.delete"));
+}
+
+// A Shabbat schedule while the Jewish calendar is off in Composer: it is kept but does not run, and
+// it can only be switched on or off (at once, as in the list) or deleted.
+function calendarOffEditor(schedule, draft) {
+  return h(
+    "div",
+    { class: "scene-editor" },
+    notice(ui.schedulesMessage),
+    h(
+      "section",
+      { class: "card scene-section schedule-summary" },
+      h("p", { class: "add-summary" }, [whenText(schedule), t("schedules.runs", { scene: `⁨${sceneNameOf(schedule)}⁩` })].join(" · ")),
+      h("p", { class: "notice notice-info" }, t("schedules.editor.calendarOff")),
+      toggle(t("schedules.editor.on"), schedule.enabled !== false, "schedule-enabled", (on) => setEnabled(schedule, on))
+    ),
+    notice(draft.message),
+    h("div", { class: "scene-actions" }, deleteButton(draft))
+  );
+}
+
 async function saveDraft(draft) {
-  if (draft.type !== "time" && draft.type !== "sun" && draft.hours && draft.from === draft.to) {
+  if (draft.type === "weather" && draft.hours && draft.from === draft.to) {
     draft.message = { kind: "error", text: t("schedules.editor.sameHours") };
     notify();
     return;
@@ -630,6 +765,8 @@ async function saveDraft(draft) {
     return;
   } catch (error) {
     noteForbidden(error);
+    // The calendar was turned off in Composer meanwhile: its choices go (errorText says why).
+    noteCalendarOff(error);
     const codes = { VERSION_CONFLICT: "conflict", SCHEDULE_LIMIT_REACHED: "limit" };
     draft.message = { kind: "error", text: codes[error?.code] ? t(`schedules.editor.${codes[error.code]}`) : errorText(error) };
   }

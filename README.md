@@ -6,6 +6,35 @@ DirectorLink is an open-source, local-first management layer for Control4 homeow
 
 The goal is to provide simple device control, scenes, schedules, and everyday automation without requiring homeowners to use Composer Pro for routine changes.
 
+## Screenshots
+
+The app on a demo home: made-up rooms and devices, and drawn camera pictures.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
+    <td><img src="docs/screenshots/room.png" width="260" alt="Living Room: dimmable lights with switches and brightness sliders, and the AC"></td>
+    <td><img src="docs/screenshots/climate.png" width="260" alt="Climate: the living room AC cooling to 23 degrees and the bedroom floor heating at 24, by room"></td>
+  </tr>
+  <tr>
+    <td align="center">Home</td>
+    <td align="center">A room</td>
+    <td align="center">Climate</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/scenes.png" width="260" alt="Scenes: Good Morning, Movie Night, Leaving Home and Good Night, each one tap to run"></td>
+    <td><img src="docs/screenshots/schedules.png" width="260" alt="Schedules: the weather at home, and scenes run on weekday mornings, at sunset and when it gets hot"></td>
+    <td><img src="docs/screenshots/home-dark.png" width="260" alt="Home in dark mode"></td>
+  </tr>
+  <tr>
+    <td align="center">Scenes</td>
+    <td align="center">Schedules</td>
+    <td align="center">Dark mode</td>
+  </tr>
+</table>
+
+<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side">
+
 ## V1 scope
 
 - Control4 Director OS **3.3.0+**
@@ -15,12 +44,12 @@ The goal is to provide simple device control, scenes, schedules, and everyday au
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
-- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, and the alarm's status (security partitions: read-only, off by default)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
 - No import of Composer programming, scenes, or schedules
-- Schedules by time and weekday, at sunrise or sunset with offsets, and by the weather (heat, wind and rain from Open-Meteo), with "only if" weather conditions
+- Schedules by time and weekday, at sunrise or sunset with offsets, and by the weather (heat, wind and rain from Open-Meteo), with "only if" weather conditions; with the Jewish calendar on, also at candle lighting and havdalah, or never or only on Shabbat and holidays (worked out on the controller)
 - Director location/timezone used for solar scheduling
 - No automatic `.c4z` self-update in V1
 
@@ -30,7 +59,7 @@ DirectorLink itself does not depend on Composer Pro during normal operation. Com
 
 ### 1. Download DirectorLink
 
-Download DirectorLink from **[GitHub Releases](https://github.com/IsraelCIL/DirectorLink/releases)**.
+Download DirectorLink from **[GitHub Releases](https://github.directorlink.io/releases)**.
 
 Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
@@ -65,8 +94,10 @@ A successful install shows:
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app
 - **Relay Hold:** `Not allowed`, so doors and gates are only pulsed (a short press, like their Open button). `Allowed` also lets API clients hold any relay closed, which holds a door or gate open
+- **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows members and admins in the app (never viewers) whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
 - **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
+- **Jewish Calendar:** `Off`, so DirectorLink works out no Shabbat or holiday times. `On` gives schedules and the app Shabbat and holiday times, the Hebrew date and the weekly reading, from the project's location; **Calendar Status** shows what it works out
 - **Log Level** and **Inventory** (rooms and devices found)
 
 Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home).
@@ -104,7 +135,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
   -d '{"brightness": 40}'
 ```
 
-Resources: system, rooms, devices, lights, thermostats, blinds, cameras, relays (doors and gates), doorbells, scenes, schedules and the weather, profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
+Resources: system, rooms, devices, lights, thermostats, fans, blinds, cameras, relays (doors and gates), doorbells, the alarm (read-only, sealed requests only), scenes, schedules and the weather, the calendar (Shabbat and holiday times), profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
 A script's key travels in the clear on the home network (plain HTTP); give each script its own key with the least role it needs. The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
 
@@ -139,6 +170,7 @@ driver/    DriverWorks driver (Lua 5.1) and its tests
 app/       the app (PWA)                       → https://app.directorlink.io
 console/   API console, debugging and logs      → https://console.directorlink.io
 site/      landing page                         → https://directorlink.io
+github-link/ short link to this repository      → https://github.directorlink.io
 cloud/     accounts and the relay (Worker)      → https://api.directorlink.io
 tests/     app and cloud tests, shared vectors
 scripts/   build and validation
@@ -152,6 +184,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 - **App:** https://app.directorlink.io
 - **API console, debugging and logs:** https://console.directorlink.io
 - **Website:** https://directorlink.io
+- **Source code:** https://github.directorlink.io
 
 ## Status
 

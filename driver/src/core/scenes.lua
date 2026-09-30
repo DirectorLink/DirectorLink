@@ -17,9 +17,11 @@ Scenes.MAX_SCENES = 50
 Scenes.MAX_STEPS = 40
 Scenes.MAX_DEVICES = 100
 Scenes.ICONS = { moon = true, sun = true, leave = true, movie = true, bulb = true, climate = true, blinds = true, home = true }
-Scenes.TYPES = { lights = true, climate = true, blinds = true, relays = true }
+Scenes.TYPES = { lights = true, climate = true, fans = true, blinds = true, relays = true }
 Scenes.MODES = { off = true, heat = true, cool = true, auto = true }
 Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = true, circulate = true }
+-- Fans (1.2.0) take a speed from 1 (low) to 4 (high), as the Fan proxy lists them.
+Scenes.MAX_FAN_SPEED = 4
 Scenes.MIN_TEMPERATURE = 5
 Scenes.MAX_TEMPERATURE = 40
 
@@ -93,6 +95,14 @@ function Scenes.cleanSet(stepType, set)
             return nil
         end
         return result
+    elseif stepType == "fans" then
+        if set.on ~= nil and set.speed ~= nil then
+            return nil
+        end
+        if set.speed ~= nil then
+            return isWhole(set.speed, 1, Scenes.MAX_FAN_SPEED) and { speed = set.speed } or nil
+        end
+        return type(set.on) == "boolean" and { on = set.on } or nil
     elseif stepType == "blinds" then
         return isWhole(set.position, 0, 100) and { position = set.position } or nil
     elseif stepType == "relays" then

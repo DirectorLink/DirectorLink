@@ -40,13 +40,16 @@ driver/     the DriverWorks driver
   src/api/        HTTP server, router, handlers, views (API ↔ internal model)
   src/auth/       API keys, roles, pairing, profiles, invitations
   src/adapters/   Control4 proxy adapters (Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4
-                  thermostat proxy, Blind, Camera, KNX Contact/Relay, DoorBird)
+                  thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, DoorBird, security
+                  partitions: read-only, ADR-038)
   src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end
                   lock (lock.lua) and sealed requests, claims and joins (remote.lua)
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
                   again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
-                  scenes, schedules, scheduler, sun, weather, installer view; room names and layout
+                  scenes, schedules, scheduler, sun, weather, installer view; room names and layout;
+                  the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,
+                  holidays, parasha, holy_times; docs/CALENDAR.md)
   tests/          driver tests against a fake Director
 app/        the app (PWA), deployed to app.directorlink.io
 console/    API console, debugging and logs, deployed to console.directorlink.io

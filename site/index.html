@@ -26,26 +26,91 @@
         <ul class="nav">
           <li><a href="https://app.directorlink.io">App</a></li>
           <li><a href="https://console.directorlink.io">API console</a></li>
-          <li><a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">GitHub</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
         </ul>
       </nav>
     </header>
 
     <main id="main" tabindex="-1">
       <section class="hero" aria-labelledby="hero-title">
-        <h1 id="hero-title">Direct to Director. <span>End-to-end integration.</span> <span>Open source.</span></h1>
-        <p class="intro">
-          DirectorLink is a free, open-source driver for Control4 and an app for phones and computers.
-          Control lights, AC, blinds, cameras and gates at home and away, make one-tap scenes, and
-          schedule them by the clock, the sun or the weather. You make the changes yourself, and your
-          installer still sees everything in Composer. In English and Hebrew.
-        </p>
-        <div class="actions">
-          <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
-          <a class="button button-secondary" href="https://github.com/IsraelCIL/DirectorLink/releases/latest" rel="noreferrer">Download the driver</a>
-          <a class="button button-secondary" href="https://console.directorlink.io">API console</a>
-          <a class="button button-secondary" href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">Source on GitHub</a>
+        <div class="hero-text">
+          <h1 id="hero-title">Direct to Director. <span>End-to-end integration.</span> <span>Open source.</span></h1>
+          <p class="intro">
+            DirectorLink is a free, open-source driver for Control4 and an app for phones and computers.
+            Control lights, AC, blinds, cameras and gates at home and away, make one-tap scenes, and
+            schedule them by the clock, the sun or the weather. You make the changes yourself, and your
+            installer still sees everything in Composer. In English and Hebrew.
+          </p>
+          <div class="actions">
+            <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
+            <a class="button button-secondary" href="https://github.directorlink.io/releases/latest" rel="noreferrer">Download the driver</a>
+            <a class="button button-secondary" href="https://console.directorlink.io">API console</a>
+            <a class="button button-secondary" href="https://github.directorlink.io" rel="noreferrer">Source on GitHub</a>
+          </div>
         </div>
+        <picture class="hero-shot">
+          <source srcset="/shots/home-dark.webp" media="(prefers-color-scheme: dark)" />
+          <img src="/shots/home.webp" width="600" height="1298" alt="The app's Home screen: the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms" />
+        </picture>
+      </section>
+
+      <section class="shots" aria-labelledby="shots-title">
+        <h2 id="shots-title">See it</h2>
+        <p class="shots-lead">Screens from a demo home. The same app runs on phones, tablets and computers, in light or dark.</p>
+        <ul class="shot-list">
+          <li>
+            <figure>
+              <img src="/shots/room.webp" width="540" height="1169" loading="lazy" alt="Living Room: dimmable lights with switches and brightness sliders, and the AC" />
+              <figcaption><strong>Every room</strong> Lights with switches and dimmers, the AC, fans and blinds.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/blinds.webp" width="540" height="1169" loading="lazy" alt="A ceiling fan's speeds, and a shutter opening to 60 percent" />
+              <figcaption><strong>Blinds</strong> They show where they’re going, with Stop at hand.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/climate.webp" width="540" height="1169" loading="lazy" alt="Climate: the living room AC cooling to 23 degrees and the bedroom floor heating at 24, by room" />
+              <figcaption><strong>Climate</strong> AC and floor heating, room by room.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/scenes.webp" width="540" height="1169" loading="lazy" alt="Scenes: Good Morning, Movie Night, Leaving Home and Good Night, each with a Run button" />
+              <figcaption><strong>Scenes</strong> One tap for lights, AC and blinds.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/schedules.webp" width="540" height="1169" loading="lazy" alt="Schedules: the weather at home, weekday mornings at 07:00, lights at sunset, and shutters closed in the heat" />
+              <figcaption><strong>Schedules</strong> By the clock, the sun or the weather. The controller runs them on its own.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/cameras.webp" width="540" height="1169" loading="lazy" alt="Cameras: the front door large and three more in a grid, with drawn demo pictures" />
+              <figcaption><strong>Cameras</strong> Every camera at a glance, full screen with a tap.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/doors.webp" width="540" height="1169" loading="lazy" alt="Entrance: the gate asks Tap again to open, with Cancel" />
+              <figcaption><strong>Doors and gates</strong> A second tap to open, so nothing opens by accident.</figcaption>
+            </figure>
+          </li>
+          <li>
+            <figure>
+              <img src="/shots/home-dark.webp" width="600" height="1298" loading="lazy" alt="Home in dark mode" />
+              <figcaption><strong>Light or dark</strong> Each person picks their own theme and favorites.</figcaption>
+            </figure>
+          </li>
+        </ul>
+        <figure class="shot-desktop">
+          <img src="/shots/desktop.webp" width="1600" height="1000" loading="lazy" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side" />
+          <figcaption><strong>On a computer</strong> The same app in any modern browser. Add it to the home screen, no app store needed.</figcaption>
+        </figure>
       </section>
 
       <section class="how" aria-labelledby="how-title">
@@ -67,7 +132,7 @@
             <p>Turn on Remote Access in Composer, sign in with Google and link the home. Add your phone with Add my other device and invite the family by email.</p>
           </li>
         </ol>
-        <p class="note">Needs a Control4 controller with OS 3.3.0 or newer. DirectorLink 1.0 is used every day in one home so far: tell us what works on <a href="https://github.com/IsraelCIL/DirectorLink/issues" rel="noreferrer">GitHub</a>.</p>
+        <p class="note">Needs a Control4 controller with OS 3.3.0 or newer. DirectorLink 1.0 is used every day in one home so far: tell us what works on <a href="https://github.directorlink.io/issues" rel="noreferrer">GitHub</a>.</p>
       </section>
 
       <section class="features" aria-labelledby="features-title">
@@ -105,7 +170,7 @@
       <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
       <p>
         Licensed under Apache-2.0 ·
-        <a href="https://github.com/IsraelCIL/DirectorLink" rel="noreferrer">github.com/IsraelCIL/DirectorLink</a> ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
         <a href="/privacy">Privacy</a>
       </p>
     </footer>

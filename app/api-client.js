@@ -87,7 +87,8 @@ export function apiUrl(host, path) {
 const READ_RETRY_DELAY_MS = 400;
 
 // Sends a request and returns { status, ok, data, text, durationMs, retryAfter } without throwing
-// on HTTP errors.
+// on HTTP errors. `wanted`, when given, is asked before each send: once it says no (session.js: the
+// key was forgotten meanwhile), nothing more is sent.
 export async function apiRequest(host, path, options = {}) {
   if ((options.method || "GET") !== "GET") {
     return sendRequest(host, path, options);
@@ -100,7 +101,10 @@ export async function apiRequest(host, path, options = {}) {
   }
 }
 
-async function sendRequest(host, path, { method = "GET", apiKey, body, timeoutMs = 8000 } = {}) {
+async function sendRequest(host, path, { method = "GET", apiKey, body, timeoutMs = 8000, wanted } = {}) {
+  if (wanted && !wanted()) {
+    throw new ApiError("Not sent: no longer wanted", { code: "NOT_SENT" });
+  }
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
   const headers = {};

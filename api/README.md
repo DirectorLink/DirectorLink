@@ -9,9 +9,9 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
-| Names | Logical resources — rooms, devices, lights, thermostats, blinds, cameras, relays, doorbells, scenes, schedules, the weather, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Every key has a role: `viewer` (read), `member` (also lights, climate, blinds, running scenes), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, fans, blinds, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -75,6 +75,42 @@ curl -X PATCH http://<controller-ip>:41999/v1/thermostats/31 \
 - `target_temperature` sets the setpoint of the mode (the one in the same request, else the current one). In auto and off it is refused with `409 NOT_SUPPORTED`.
 - Temperatures stay in °C, whatever scale the Control4 project uses. `heat_setpoint`, `cool_setpoint` and `setpoint_deadband` are `null` on single-setpoint thermostats. A dual thermostat reports `null` for a setpoint none of its modes uses, such as the heat setpoint of one with only Off and Cool.
 
+## Fans
+
+Since 1.2.0 fans on the Control4 fan proxy are resources too. A fan is on or off, and runs at a
+speed from 1 (low) to 4 (high); `speed` is `null` while it is off:
+
+```json
+{
+  "id": 41,
+  "name": "Ceiling Fan",
+  "on": true,
+  "speed": 2,
+  "speeds": [1, 2, 3, 4]
+}
+```
+
+(`room` left out.) `speeds` lists the speeds `PATCH` takes.
+
+In 1.2.0 every fan is taken to have these four speeds. The fan proxy allows other numbers, set up
+in the fan's driver: a fan with three shows its top speed as 3 (*Medium High* in the app), and
+`{"speed": 4}` sends it a speed it does not have; on a fan with five or more, the speeds above 4
+show only as on (`speed` is `null`).
+
+```bash
+curl -X PATCH http://<controller-ip>:41999/v1/fans/41 \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"speed": 3}'
+```
+
+- `{"speed": 3}` sets the speed and turns the fan on if it is off. `{"on": true}` turns it on at the
+  speed the fan chooses (its preset speed, or the last one); `{"on": false}` turns it off. There is
+  no speed 0: `{"speed": 0}`, like any other value outside `speeds`, is `400 INVALID_FIELD`, and
+  `"on": false` with a speed is `400 INVALID_REQUEST`. Nothing is sent when a request is refused.
+- Viewers read fans; members and above change them. In scenes a `fans` step sets
+  `{"on": true|false}` or `{"speed": 1-4}` on the fans it names, or on all of them in a room or the
+  whole home.
+
 ## Blinds
 
 Since 1.1.0 a blind says what it can do, and whether it is moving:
@@ -99,6 +135,97 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 ## Relays
 
 Doors and gates open with `POST /v1/relays/{id}/pulse` (the relay closes, then opens again after 500 ms), as in the app and scenes. `PATCH` with `{"state": "open"}` releases a relay. `{"state": "closed"}` would hold it closed, and its door or gate open: since 1.1.1 it is `409 HOLD_NOT_ALLOWED` and nothing is sent, unless an installer sets **Relay Hold** to Allowed in Composer.
+
+## Shabbat and holidays
+
+Since 1.2.0 DirectorLink works out Shabbat and holiday times on the controller from the project's location (Composer's project properties); nothing is sent to the network. It stays off until an installer sets **Jewish Calendar** to On in Composer. Until then `GET /v1/calendar` answers `{"enabled": false, "status": "off", ...}` with nulls, `GET /v1/system` has `"features": {"jewish_calendar": false}`, and setting anything that uses the calendar is `409 JEWISH_CALENDAR_OFF`.
+
+`GET /v1/calendar` (any key), in Tel Aviv on the Tuesday of Chol HaMoed Sukkot 5787:
+
+```json
+{
+  "enabled": true,
+  "status": "ok",
+  "settings": { "holidays": "auto", "israel": true, "candle_lighting_minutes": 20, "havdalah_minutes": 42, "version": 1 },
+  "today": {
+    "date": "2026-09-29",
+    "hebrew": { "year": 5787, "month": "tishrei", "day": 18, "leap_year": true },
+    "after_sunset": false,
+    "holidays": [{ "key": "chol_hamoed_sukkot", "day": null, "month": null, "yom_tov": false, "name": "Chol HaMoed Sukkot" }],
+    "changes_at": "2026-09-29T15:28:37Z"
+  },
+  "week": { "date": "2026-10-03", "parasha": null, "holidays": ["…Shmini Atzeret and Simchat Torah"] },
+  "current": null,
+  "next": {
+    "starts_at": "2026-10-02T15:04:00Z",
+    "ends_at": "2026-10-03T16:05:00Z",
+    "approximate": false,
+    "days": [{ "date": "2026-10-03", "shabbat": true, "candle_lighting": "2026-10-02T15:04:00Z", "holidays": ["…as in week"] }]
+  }
+}
+```
+
+- `today` is the Hebrew day now, which begins at sunset: after sunset (`after_sunset`) it is tomorrow's, and `date` is the civil date whose daytime it is. `holidays` lists the day's holidays, holy (`yom_tov`) or only shown (fasts, Chanukah, Rosh Chodesh, the national days). `changes_at` is when it changes next, to the second: the controller's sunset, or local midnight without a location or where the sun does not set; read the calendar again then.
+- `week` is this week's Shabbat and its reading: `parasha.ids` from 1 (Bereshit) to 54, two for a combined reading, and `null` when a holiday reading replaces it.
+- `current` is the holy period now and `next` the next one. Shabbat and holy days that follow each other are one period, from candle lighting (`starts_at`) to havdalah (`ends_at`), in UTC, with each day's candle lighting (a later day's is lit from an existing flame: before sunset for Shabbat, after nightfall otherwise). Candle lighting is sunset, to the minute, less `candle_lighting_minutes`; havdalah is sunset, to the nearest minute, plus `havdalah_minutes`.
+- `status: "no_location"`: the Hebrew date and the reading by the civil date, but no times (`current` and `next` are `null`). `approximate: true`: a sunset the period needs does not happen at this latitude, and those times are `null`.
+- The API carries stable keys (`key`, `month`, `ids`); `name` is English, in Hebcal's spelling, for scripts and logs. Apps show their own names.
+
+Admins change how the times are worked out; the answer is the settings (`version` goes up by one), and with an old `version` it is `409 VERSION_CONFLICT` with the current one:
+
+```bash
+curl -X PATCH http://<controller-ip>:41999/v1/calendar/settings \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"candle_lighting_minutes": 30, "havdalah_minutes": 50, "version": 1}'
+```
+
+`candle_lighting_minutes` is 0–90 (20 by default), `havdalah_minutes` 20–90 (42), and `holidays` is `auto` (the default: Israel's when the home is in Israel), `israel` (one day of Yom Tov) or `abroad` (two).
+
+Schedules run at these times (`docs/SCHEDULES.md`, *Shabbat and holidays*):
+
+```bash
+curl -X POST http://<controller-ip>:41999/v1/schedules \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"scene_id": "0a1b2c3d", "trigger": {"type": "shabbat", "event": "candle_lighting", "offset": -30}, "days": [0, 1, 2, 3, 4, 5, 6]}'
+```
+
+- A `shabbat` trigger runs once when a period begins (`candle_lighting`) or ends (`havdalah`), plus `offset` minutes (−360 to 360); `days` filter by the local weekday of that moment.
+- `"during_shabbat": "skip"` keeps a time, sun or weather schedule away from Shabbat and holidays, and `"only"` to them; `"run"` (the default) runs as on any day.
+- Every schedule has `during_shabbat` and `calendar_status`: `ok`, `off` or `no_location` for one that uses the calendar (with `off` or `no_location`, Shabbat triggers and `only` do not run and `skip` runs as usual), `null` for the others. `last_run.skipped_by` may be `shabbat`, and `last_run.note` `late`: after a restart, Shabbat automation missed in the last 6 hours runs late.
+
+Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/calendar/api-examples.json).
+
+## Alarm
+
+`GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed. It is read-only: nothing in the API arms or disarms, which takes the user's alarm code (ADR-038).
+
+- Off by default. Until an installer sets **Alarm Status** to On in Composer, the answer is `{"enabled": false, "partitions": []}`, and DirectorLink does not watch the alarm. `GET /v1/system` says which in `features.alarm_status`.
+- For `member`, `doors` and `admin` keys; viewers get `403 FORBIDDEN`.
+- Only in sealed requests: on the home network through `POST /v1/sealed`, as the app sends every request, and through remote access. With `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`, so whether the home is armed never crosses a network in the clear. Scripts and the API console, which do not seal, cannot read it.
+- Nor does the size of the sealed answer tell it: the JSON is followed by spaces up to the size it would have with every partition at its longest, so that its size depends only on the partitions there are (their names and rooms), never on their state. For that the panel's words are cut, at a character, to 32 bytes (`state`, `armed_type`, `alarm_type`) and 100 (`trouble`), with control characters made spaces, and `open_zones` and the delay's seconds stop at 99999.
+
+```json
+{
+  "enabled": true,
+  "partitions": [
+    {
+      "id": 81,
+      "name": "Garage",
+      "state": "entry_delay",
+      "armed": true,
+      "armed_mode": "away",
+      "armed_type": "Away",
+      "alarm": false,
+      "alarm_type": null,
+      "open_zones": 1,
+      "delay": { "type": "entry", "remaining": 12, "total": 30 },
+      "trouble": null
+    }
+  ]
+}
+```
+
+(`room` left out.) `state` is the panel's word in lower case: `disarmed_ready`, `disarmed_not_ready`, `armed`, `exit_delay`, `entry_delay`, `alarm`, `confirmation_required`, `offline`, or another a panel reports. `armed_type` and `alarm_type` are the panel's own words (e.g. `Stay`, `Fire`), `null` unless armed or in alarm. `delay` is `null` unless an entry or exit delay is counting down, in seconds as the panel last reported. Partitions the alarm does not use are left out. In `/v1/devices` a partition stays a device of type `other`.
 
 ## Debugging
 

@@ -63,6 +63,7 @@ function sections() {
         ["Supported devices", show(inventory.supported_devices)],
         ["Lights", show(inventory.lights)],
         ["Thermostats", show(inventory.thermostats)],
+        ["Fans", show(inventory.fans)],
         ["Blinds", show(inventory.blinds)],
         ["Cameras", show(inventory.cameras)],
         ["Relays", show(inventory.relays)],

@@ -6,6 +6,16 @@
 --   or rain starting; on their days, within their hours, and (by default) at most once a day. They
 --   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
 --   it, or it has been dry for an hour.
+-- - Shabbat schedules (the Jewish calendar, ADR-037) run when a holy period begins (candle
+--   lighting) or ends (havdalah), plus their offset, once per period. "during_shabbat" keeps a
+--   time, sun or weather schedule away from holy time ("skip") or to it ("only"). While the
+--   calendar is off or has no location no moment counts as holy: Shabbat schedules and "only" do
+--   not run, and "skip" runs as usual.
+-- - After a restart, the first minute also runs Shabbat schedules and "only" schedules whose moment
+--   passed in the last 6 hours and did not run, late (a family keeping Shabbat cannot make up for
+--   them by hand); the others keep their 5 minutes. What was due while the schedules were paused,
+--   or while the calendar was off or had no location, is not caught up, not even by a later
+--   restart; nor is anything when what the schedules ran could not be read.
 -- A scheduled scene runs like one from a member's key: doors and gates in it are skipped.
 -- The installer can pause them all in Composer (the Schedules property); each run is shown in the
 -- Last Automation property (src/core/installer_view.lua).
@@ -20,12 +30,42 @@ local Weather = require("src.core.weather")
 local Scheduler = {}
 
 Scheduler.GRACE_MINUTES = 5
+Scheduler.CATCH_UP_SECONDS = 6 * 3600
 Scheduler.HEAT_REARM = 2
 Scheduler.WIND_REARM = 10
 Scheduler.DRY_SECONDS = 3600
 Scheduler.RAIN_EXPECTED_CHANCE = 50
 
-local state = { services = nil, timer = nil }
+-- `firstTick`: the first minute after start, which catches up (CATCH_UP_SECONDS). `stopped`: Shabbat
+-- automation could not run when last looked at (Scheduler.switchesChanged).
+local state = { services = nil, timer = nil, firstTick = false, stopped = false }
+
+-- The Jewish calendar service (src/core/jewish_calendar.lua), or nil.
+local function calendarService()
+    return state.services and state.services.calendar or nil
+end
+
+-- Whether Shabbat automation can run: the schedules are not paused, and the calendar is on and has
+-- a location.
+local function canRun()
+    local services = state.services
+    if not services or (services.paused and services.paused()) then
+        return false
+    end
+    local calendar = calendarService()
+    return calendar ~= nil and calendar.status() == "ok"
+end
+
+-- After a change of a Composer switch or of the location (main.lua), and every minute: once Shabbat
+-- automation can run again after it could not (the schedules resumed, the calendar turned on or
+-- given a location), what was due meanwhile stays missed, also after a restart.
+function Scheduler.switchesChanged(now)
+    local running = canRun()
+    if running and state.stopped then
+        Schedules.setCatchUpAfter(now or Clock.now())
+    end
+    state.stopped = not running
+end
 
 -- Seconds from 1970 for a date and time read as UTC (no time zone involved).
 local function asUtc(fields)
@@ -96,19 +136,88 @@ function Scheduler.targetMinute(schedule, info)
     return minute
 end
 
--- When a time or sun schedule runs next (seconds from 1970), or nil.
+-- Whether a schedule may run at `at` as far as Shabbat and holidays go (holy time is from candle
+-- lighting to havdalah), and why not: "shabbat" (skipped: holy time), "not_shabbat" (only then,
+-- and it is not) or "calendar" (off, or no location: no moment counts as holy).
+local function shabbatAllows(schedule, calendar, at)
+    local mode = schedule.during_shabbat or "run"
+    if mode == "run" then
+        return true
+    end
+    local holy = calendar and calendar.holyAt(at)
+    if holy == nil then
+        return mode == "skip", "calendar"
+    end
+    if mode == "skip" then
+        return not holy, "shabbat"
+    end
+    return holy, "not_shabbat"
+end
+
+-- The local date of a day number of the calendar, at noon.
+local function localDate(calendar, rd)
+    local year, month, day = calendar.civilDate(rd)
+    return Scheduler.localTime(os.time({ year = year, month = month, day = day, hour = 12, min = 0, sec = 0 }))
+end
+
+-- A Shabbat schedule's moment in a period: its begin (candle lighting) or end (havdalah) plus the
+-- offset, and the key it runs under, once per period. nil in a period that lacks a sunset
+-- (`approximate`), even when this one time happens: a begin whose end never comes would leave the
+-- home in Shabbat mode until the sun sets again, weeks later.
+local function shabbatMoment(schedule, calendar, period)
+    local trigger = schedule.trigger
+    local base = trigger.event == "candle_lighting" and period.starts_at or period.ends_at
+    if not base or period.approximate then
+        return nil
+    end
+    return base + (trigger.offset or 0) * 60, "shabbat:" .. calendar.dateKey(period.first) .. ":" .. trigger.event
+end
+
+-- When a schedule runs next (seconds from 1970), or nil: a time or sun schedule by its minute (not
+-- in holy time with "skip", only then with "only"), a Shabbat schedule by the holy periods.
 function Scheduler.nextRun(schedule, now)
     if schedule.enabled == false or schedule.trigger.type == "weather" then
         return nil
     end
+    local calendar = calendarService()
+    local mode = schedule.during_shabbat or "run"
+    if schedule.trigger.type == "shabbat" or mode == "only" then
+        if not calendar or calendar.status() ~= "ok" then
+            return nil
+        end
+        local lastFired = Schedules.runtime(schedule.id).last_fired
+        for _, period in ipairs(calendar.periodsBetween(now - 86400, now + 400 * 86400)) do
+            if schedule.trigger.type == "shabbat" then
+                local at, key = shabbatMoment(schedule, calendar, period)
+                if at and at > now and key ~= lastFired and hasDay(schedule, os.date("*t", at).wday - 1) then
+                    return at
+                end
+            else
+                -- Each civil day of the period, the evening before it, and the night after it (far
+                -- north in summer, havdalah may come after midnight), at the schedule's minute.
+                for rd = period.first - 1, period.last + 1 do
+                    local info = localDate(calendar, rd)
+                    if hasDay(schedule, info.weekday) then
+                        local minute = Scheduler.targetMinute(schedule, info)
+                        local at = minute and epochAt(info, minute)
+                        if at and at > now and calendar.holyAt(at) then
+                            return at
+                        end
+                    end
+                end
+            end
+        end
+        return nil
+    end
     local today = Scheduler.localTime(now)
-    for add = 0, 7 do
+    -- Three weeks for one that skips holy time: a weekly one may fall on holidays two weeks running.
+    for add = 0, mode == "skip" and 20 or 7 do
         -- By calendar date, at noon, so a daylight saving change never skips or repeats a day.
         local info = Scheduler.localTime(os.time({ year = today.year, month = today.month, day = today.day + add, hour = 12, min = 0, sec = 0 }))
         if hasDay(schedule, info.weekday) then
             local minute = Scheduler.targetMinute(schedule, info)
             local at = minute and epochAt(info, minute)
-            if at and at > now then
+            if at and at > now and shabbatAllows(schedule, calendar, at) then
                 return at
             end
         end
@@ -167,7 +276,7 @@ local function run(schedule, now, note, weather)
     end
     runtime.last_run = lastRun
     if state.services.onRun then
-        pcall(state.services.onRun, { at = now, scene_id = schedule.scene_id, schedule = schedule, weather = weather, result = result, error = lastRun.error })
+        pcall(state.services.onRun, { at = now, scene_id = schedule.scene_id, schedule = schedule, weather = weather, note = note, result = result, error = lastRun.error })
     end
     Log.info("schedules", "schedule ran", {
         schedule = schedule.id,
@@ -217,16 +326,52 @@ local function dayBefore(info)
     return Scheduler.localTime(os.time({ year = info.year, month = info.month, day = info.day - 1, hour = 12, min = 0, sec = 0 }))
 end
 
--- A time or sun schedule due at `now`: its run today, or yesterday's just before midnight, when
--- `now` is at most GRACE_MINUTES after it. Returns the key of that run and its moment.
-local function dueRun(schedule, info, now)
+-- Whether a run whose moment is `at` is due at `now`, and whether it is late: at most GRACE_MINUTES
+-- after it, or, in the first minute after a restart, CATCH_UP_SECONDS for a moment not before
+-- `catchUp` (Schedules.catchUpAfter; nil: no catch-up now).
+local function dueAt(at, now, catchUp)
+    if now < at then
+        return false, false
+    end
+    if now < at + Scheduler.GRACE_MINUTES * 60 then
+        return true, false
+    end
+    return catchUp ~= nil and at >= catchUp and now < at + Scheduler.CATCH_UP_SECONDS, true
+end
+
+-- A time or sun schedule due at `now`: its run today, or yesterday's just before midnight (dueAt).
+-- Returns the key of that run, its moment, and whether it is late (past the grace time).
+local function dueRun(schedule, info, now, catchUp)
     for _, day in ipairs({ info, dayBefore(info) }) do
         if hasDay(schedule, day.weekday) then
             local minute = Scheduler.targetMinute(schedule, day)
             -- On the day clocks go forward, a time that does not exist runs when it would have.
             local at = minute and epochAt(day, minute)
-            if at and now >= at and now < at + Scheduler.GRACE_MINUTES * 60 then
-                return day.date .. "@" .. minute, at
+            if at then
+                local due, late = dueAt(at, now, catchUp)
+                if due then
+                    return day.date .. "@" .. minute, at, late
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- A Shabbat schedule due at `now` (dueAt): when a holy period began or ended, plus the offset, on
+-- one of its days (the local weekday of that moment). Returns the key of that run (the period's
+-- first holy date and the event, so it runs once per period whatever changes), its moment, and
+-- whether it is late.
+local function dueShabbat(schedule, calendar, now, catchUp)
+    if not calendar or calendar.status() ~= "ok" then
+        return nil
+    end
+    for _, period in ipairs(calendar.periodsBetween(now - 2 * 86400, now + 86400)) do
+        local at, key = shabbatMoment(schedule, calendar, period)
+        if at and hasDay(schedule, os.date("*t", at).wday - 1) then
+            local due, late = dueAt(at, now, catchUp)
+            if due then
+                return key, at, late
             end
         end
     end
@@ -237,12 +382,20 @@ end
 -- Composer nothing runs and nothing is remembered as done.
 function Scheduler.tick(now)
     now = now or Clock.now()
+    local firstTick = state.firstTick
+    state.firstTick = false
     if state.services and state.services.onTick then
         pcall(state.services.onTick, now)
     end
+    Scheduler.switchesChanged(now)
+    -- Only the first minute after start catches up, also when it finds the schedules paused, and
+    -- only what came due after they could last run: what was due while paused, or while the
+    -- calendar was off or had no location, never runs afterwards.
+    local catchUp = firstTick and (Schedules.catchUpAfter() or 0) or nil
     if state.services and state.services.paused and state.services.paused() then
         return 0
     end
+    local calendar = calendarService()
     local info = Scheduler.localTime(now)
     local records = Schedules.records()
     local needsWeather = false
@@ -255,7 +408,7 @@ function Scheduler.tick(now)
     local weather = Weather.current(now)
     -- A reading on its way (just after a restart): conditions wait for it, within the grace time.
     local weatherComing = not weather and Weather.pending()
-    local ran, changed = 0, false
+    local ran, changed, due = 0, false, {}
     for _, schedule in ipairs(records) do
         local runtime = Schedules.runtime(schedule.id)
         local trigger = schedule.trigger
@@ -274,7 +427,9 @@ function Scheduler.tick(now)
                     day = dayBefore(info)
                 end
                 local onceDone = trigger.once_a_day ~= false and runtime.fired_day == day.date
-                if runtime.armed and weatherActive(trigger, weather) and hasDay(schedule, day.weekday) and inHours(trigger, info.minute) and not onceDone then
+                -- Held back in holy time ("skip"), a rule stays armed: it runs after havdalah if
+                -- the weather still passes.
+                if runtime.armed and weatherActive(trigger, weather) and hasDay(schedule, day.weekday) and inHours(trigger, info.minute) and not onceDone and shabbatAllows(schedule, calendar, now) then
                     runtime.armed = false
                     runtime.dry_since = nil
                     runtime.fired_day = day.date
@@ -284,25 +439,36 @@ function Scheduler.tick(now)
                 changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince
             end
         else
-            local key, at = dueRun(schedule, info, now)
+            local key, at, late
+            if trigger.type == "shabbat" then
+                key, at, late = dueShabbat(schedule, calendar, now, catchUp)
+            else
+                key, at, late = dueRun(schedule, info, now, schedule.during_shabbat == "only" and catchUp or nil)
+            end
             local waitForWeather = key and weatherComing and next(schedule.only_if or {}) ~= nil and now < at + (Scheduler.GRACE_MINUTES - 1) * 60
             if key and runtime.last_fired ~= key and not waitForWeather then
                 runtime.last_fired = key
                 changed = true
                 -- Changed after its time: it starts with the next one.
                 if (schedule.updated_epoch or 0) <= at then
-                    local met = Scheduler.conditionsMet(schedule, weather)
-                    if met == nil then
-                        met = schedule.if_no_weather ~= "skip"
-                        if met then
-                            run(schedule, now, "no_weather")
-                            ran = ran + 1
+                    -- Holy time at the schedule's moment, not now: 17:59 checked at 18:01 is 17:59.
+                    local allowed, why = shabbatAllows(schedule, calendar, at)
+                    local met = allowed and Scheduler.conditionsMet(schedule, weather)
+                    if not allowed then
+                        -- "only" outside holy time, or without the calendar, is like a day not in
+                        -- its days: nothing to say.
+                        if why == "shabbat" then
+                            runtime.last_run = { at = Clock.iso(now), skipped_by = "shabbat" }
+                            Log.info("schedules", "schedule skipped: Shabbat or a holiday", { schedule = schedule.id })
+                        end
+                    elseif met == nil then
+                        if schedule.if_no_weather ~= "skip" then
+                            due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or "no_weather" }
                         else
                             runtime.last_run = { at = Clock.iso(now), skipped_by = "no_weather" }
                         end
                     elseif met then
-                        run(schedule, now, nil)
-                        ran = ran + 1
+                        due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil }
                     else
                         runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
                         Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
@@ -310,6 +476,20 @@ function Scheduler.tick(now)
                 end
             end
         end
+    end
+    -- In the order they were due: after a restart, what is caught up runs oldest first.
+    table.sort(due, function(a, b)
+        if a.at ~= b.at then
+            return a.at < b.at
+        end
+        return a.schedule.id < b.schedule.id
+    end)
+    for _, item in ipairs(due) do
+        if item.note == "late" then
+            Log.info("schedules", "schedule caught up after a restart", { schedule = item.schedule.id, due_at = Clock.iso(item.at) })
+        end
+        run(item.schedule, now, item.note)
+        ran = ran + 1
     end
     if ran > 0 or changed then
         Schedules.saveRuntime()
@@ -334,9 +514,15 @@ local function scheduleNext()
     state.timer = ok and timer or nil
 end
 
--- `services.runScene(sceneId, caller)` runs a saved scene and returns its result.
+-- `services.runScene(sceneId, caller)` runs a saved scene and returns its result;
+-- `services.calendar` is the Jewish calendar (src/core/jewish_calendar.lua).
 function Scheduler.start(services)
     state.services = services
+    state.firstTick = true
+    -- As the Composer switches are now (not the location, in case it is read a moment late): only
+    -- a change from here on stops the catch-up.
+    local calendar = calendarService()
+    state.stopped = (services.paused ~= nil and services.paused()) or calendar == nil or calendar.status() == "off"
     Scheduler.stop()
     local now = Clock.now()
     local info = Scheduler.localTime(now)

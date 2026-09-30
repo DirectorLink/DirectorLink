@@ -13,8 +13,8 @@ local Schedules = require("src.core.schedules")
 
 local Handlers = {}
 
-local KINDS = { lights = "light", climate = "climate", blinds = "blind", relays = "relay" }
-local LISTS = { lights = "lightList", climate = "climateList", blinds = "blindList", relays = "relayList" }
+local KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay" }
+local LISTS = { lights = "lightList", climate = "climateList", fans = "fanList", blinds = "blindList", relays = "relayList" }
 local MAX_PROBLEMS = 50
 
 local function nullable(value)
@@ -79,6 +79,7 @@ local function validateSet(stepType, set, field)
     local allowed = ({
         lights = { on = true, brightness = true },
         climate = { mode = true, target_temperature = true, fan_speed = true, heat_setpoint = true, cool_setpoint = true },
+        fans = { on = true, speed = true },
         blinds = { position = true },
         relays = { action = true },
     })[stepType]
@@ -138,6 +139,20 @@ local function validateSet(stepType, set, field)
             return nil, Problem.invalidField(field, 'mode "off" turns the AC off; leave out the temperature, setpoints and fan speed')
         end
         return result
+    elseif stepType == "fans" then
+        if set.on ~= nil and set.speed ~= nil then
+            return nil, Problem.invalidField(field, 'Send either "on" or a speed, not both')
+        end
+        if set.speed ~= nil then
+            if not isWhole(set.speed, 1, Scenes.MAX_FAN_SPEED) then
+                return nil, Problem.invalidField(field .. ".speed", "speed must be a whole number from 1 (low) to " .. Scenes.MAX_FAN_SPEED .. " (high)")
+            end
+            return { speed = set.speed }
+        end
+        if type(set.on) ~= "boolean" then
+            return nil, Problem.invalidField(field .. ".on", 'fans need "on": true or false, or a speed')
+        end
+        return { on = set.on }
     elseif stepType == "blinds" then
         if not isWhole(set.position, 0, 100) then
             return nil, Problem.invalidField(field .. ".position", "position must be a whole number from 0 (closed) to 100 (open)")
@@ -163,7 +178,7 @@ local function validateStep(registry, item, field)
     end
     local stepType = item.type
     if type(stepType) ~= "string" or not KINDS[stepType] then
-        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, blinds, relays")
+        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, fans, blinds, relays")
     end
     local roomId = nil
     if item.room_id ~= nil and item.room_id ~= Json.null then
@@ -376,6 +391,14 @@ local function deviceCommands(step, device)
             return nil, "NOT_SUPPORTED", leftOut or "Nothing in this step applies to this thermostat"
         end
         return commands, leftOut
+    elseif step.type == "fans" then
+        if set.on == false then
+            return { { action = "off" } }
+        end
+        if type(set.speed) == "number" then
+            return { { action = "set_speed", params = { speed = set.speed } } }
+        end
+        return { { action = "on" } }
     elseif step.type == "blinds" then
         -- Checked first: a shade that only opens and closes fully is skipped for a position between.
         return { { action = "set_position", params = { position = set.position }, check = true } }

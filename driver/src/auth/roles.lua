@@ -1,6 +1,7 @@
 -- API key roles. Each role can do everything the roles before it can:
 --   viewer  read everything (rooms, devices, states, camera pictures)
---   member  also control lights, thermostats and blinds, and run scenes
+--   member  also control lights, thermostats and blinds, run scenes, and read the alarm's status
+--           (read-only, when Alarm Status is On in Composer)
 --   doors   also open doors and gates (relays; needs "Door Control" enabled in Composer)
 --   admin   also manage API keys, rooms, scenes, schedules, invitations, profiles, remote access
 --           and the log

@@ -22,6 +22,8 @@ export const state = {
   schedulesUnsupported: false,
   schedulesError: null,
   weather: null,
+  // GET /v1/calendar (calendar.js): null until read, and while the Jewish calendar is off.
+  calendar: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
   loaded: false,
   system: null,
@@ -29,10 +31,12 @@ export const state = {
   devices: [],
   lights: [],
   thermostats: [],
+  fans: [], // [] on drivers without /v1/fans (before 1.2.0)
   blinds: [],
   cameras: [],
   relays: [], // doors and gates; [] on drivers without /v1/relays
   doorbells: [], // DoorBird doorstations; [] on drivers without /v1/doorbells
+  alarm: null, // GET /v1/alarm (alarm.js): { enabled, partitions }, read-only; null when not shown
   // This key's role (GET /v1/api-keys/current): viewer < member < doors < admin.
   // Drivers without roles answer 404 there; their keys can do everything, so "admin".
   role: null,
@@ -65,11 +69,13 @@ export const ui = {
   scheduleEditor: null, // the schedule being edited (views/schedules.js)
   cameFrom: null, // the screen before this one (app.js), so an editor can go back to its list
   schedulesMessage: null, // schedules list: saved, deleted or not switched
+  calendarSettings: null, // Settings → Shabbat and holidays: the settings being changed (views/settings.js)
   drafts: {}, // form fields being typed: key -> text
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture
   dragging: false, // a slider thumb is held: redraws wait
+  reordering: false, // Settings → Rooms: a room is being moved (views/settings.js): redraws wait
   tick: 0, // bumped by timers that need a redraw
 };
 
@@ -97,6 +103,7 @@ export function notify() {
 export const KINDS = {
   light: { list: "lights", path: "/v1/lights" },
   thermostat: { list: "thermostats", path: "/v1/thermostats" },
+  fan: { list: "fans", path: "/v1/fans" },
   blind: { list: "blinds", path: "/v1/blinds" },
   camera: { list: "cameras", path: "/v1/cameras" },
   relay: { list: "relays", path: "/v1/relays" },

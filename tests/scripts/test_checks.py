@@ -1,7 +1,9 @@
-"""The release checks themselves (scripts/build.py, check_package.py and check_repo.py): the relay's
-CA file holds exactly the pinned roots however its blocks are written, nothing else in driver/certs
-reaches the package, line endings do not change it, check_repo vets what is staged, and the door
-switches in driver.xml ship off.
+"""The release checks themselves (scripts/build.py, check_package.py, check_repo.py and
+check_app.py): the relay's CA file holds exactly the pinned roots however its blocks are written,
+nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
+what is staged, the door switches, the Jewish calendar and the alarm's status in driver.xml ship
+off, the alarm stays read-only, and the app names every month, holiday and weekly reading the
+calendar API can send.
 
     python -m unittest discover -s tests/scripts
 """
@@ -9,6 +11,7 @@ switches in driver.xml ship off.
 import base64
 import contextlib
 import io
+import re
 import shutil
 import subprocess
 import sys
@@ -20,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import build  # noqa: E402
+import check_app  # noqa: E402
 import check_package  # noqa: E402
 import check_repo  # noqa: E402
 
@@ -134,6 +138,128 @@ class DriverXml(unittest.TestCase):
                 shipped_on = source.replace(f"<default>{off}</default>", f"<default>{on}</default>")
                 printed = refusal(check_package.check_driver_xml, shipped_on, "0")
                 self.assertIn(f"{name} must default to {off}", printed or "", "a door switch that ships on passed")
+
+    def test_the_jewish_calendar_ships_off(self):
+        # Off: the driver works nothing out and the app shows none of it (1.2.0, ADR-037).
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        shipped_on, count = re.subn(r"(<name>Jewish Calendar</name>.*?<default>)Off(</default>)", r"\1On\2", source, count=1, flags=re.S)
+        self.assertEqual(count, 1, "driver.xml has a Jewish Calendar property that defaults to Off")
+        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+        self.assertIn("Jewish Calendar must default to Off", printed or "", "a Jewish calendar that ships on passed")
+
+    def test_the_alarm_status_ships_off(self):
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        start = source.index("<name>Alarm Status</name>")
+        end = source.index("</property>", start)
+        block = source[start:end]
+        self.assertEqual(block.count("<default>Off</default>"), 1)
+        shipped_on = source[:start] + block.replace("<default>Off</default>", "<default>On</default>") + source[end:]
+        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+        self.assertIn("Alarm Status must default to Off", printed or "", "an alarm status that ships on passed")
+
+
+def driver_sources():
+    """The driver's Lua files as the package names them (src/...)."""
+    base = ROOT / "driver"
+    return {path.relative_to(base).as_posix(): path.read_text(encoding="utf-8") for path in (base / "src").rglob("*.lua")}
+
+
+class AlarmReadOnly(unittest.TestCase):
+    ADAPTER = "src/adapters/alarm.lua"
+
+    def refused(self, files):
+        return refusal(check_package.check_alarm_read_only, files)
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(driver_sources()))
+
+    def test_the_adapter_may_only_read_and_watch(self):
+        files = driver_sources()
+        adapter = files[self.ADAPTER]
+        send = "function Alarm.execute()\n    C4:SendToDevice(81, \"DISARM\", {})\n"
+        for number, changed in enumerate((
+            adapter.replace("function Alarm.execute()\n", send),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    C4:SendToProxy(5001, \"ARM\", {})\n"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    local send = C4.SendToDevice\n"),
+            adapter.replace("local Alarm = {}", "local Alarm = {}\nlocal Log = require(\"src.core.log\")"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    print(\"state\")\n"),
+            adapter.replace("function Alarm.execute()\n", "function Alarm.execute()\n    _G.C4:SendToDevice(81, \"ARM\", {})\n"),
+        )):
+            with self.subTest(change=number):
+                self.assertNotEqual(changed, adapter, "the test did not change the adapter")
+                self.assertIsNotNone(self.refused({**files, self.ADAPTER: changed}))
+
+    def test_comments_and_strings_do_not_count_but_code_does(self):
+        files = driver_sources()
+        # The adapter's own comment names the commands it never sends.
+        self.assertIn("PARTITION_ARM", files[self.ADAPTER])
+        relays = files["src/api/handlers/relays.lua"]
+        commented = relays + "\n-- never PARTITION_DISARM here\n--[[ nor C4:SendToDevice(81, \"PARTITION_ARM\") ]]\n"
+        self.assertIsNone(self.refused({**files, "src/api/handlers/relays.lua": commented}))
+        sending = relays + '\nlocal function disarm(id) C4:SendToDevice(id, "PARTITION_DISARM", {}) end\n'
+        printed = self.refused({**files, "src/api/handlers/relays.lua": sending})
+        self.assertIn("partition command", printed or "")
+
+    def test_the_api_only_reads_the_alarm(self):
+        files = driver_sources()
+        routes = files["src/api/routes.lua"]
+        read = '    { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },\n'
+        write = '    { method = "POST", path = "/v1/alarm/{partitionId}/disarm", handler = "alarm.status", role = "admin" },\n'
+        self.assertIn(read, routes)
+        printed = self.refused({**files, "src/api/routes.lua": routes.replace(read, read + write)})
+        self.assertIn("the alarm is only read", printed or "")
+
+    def test_no_scene_step_reaches_the_alarm(self):
+        files = driver_sources()
+        for name, old, new in (
+            ("src/core/scenes.lua", "relays = true }", "relays = true, alarm = true }"),
+            ("src/api/handlers/scenes.lua", 'relays = "relay" }', 'relays = "relay", partitions = "alarm" }'),
+        ):
+            with self.subTest(name=name):
+                self.assertIn(old, files[name])
+                printed = self.refused({**files, name: files[name].replace(old, new, 1)})
+                self.assertIn("scene steps must never reach the alarm", printed or "")
+
+
+class CalendarNames(unittest.TestCase):
+    """check_app.py: every dictionary names what GET /v1/calendar sends by key (1.2.0, ADR-037)."""
+
+    def setUp(self):
+        import yaml
+
+        self.spec = yaml.safe_load((ROOT / "api" / "openapi.yaml").read_text(encoding="utf-8"))
+        self.dictionaries = {code: check_app.read_dictionary((ROOT / "app" / "i18n" / f"{code}.js").read_text(encoding="utf-8")) for code in ("en", "he")}
+
+    def test_the_dictionaries_are_read_as_the_app_reads_them(self):
+        he = self.dictionaries["he"]
+        self.assertEqual(he["calendar"]["parashot"]["28"], "מצורע")
+        self.assertEqual(he["calendar"]["join"], "־")
+        self.assertEqual(he["connect"]["errors"]["wrongCode"]["two"], "הקוד שגוי. נותרו עוד {count} ניסיונות לפני שהצימוד יינעל לדקה.")
+        self.assertEqual(he["connect"]["errors"]["invalidCode"], "הזינו את קוד הצימוד בן 8 הספרות, למשל ⁦1234 5678⁩.")
+        self.assertEqual(check_app.read_dictionary('// x\nexport default { a: { "b-c": \'it\\\'s\', 1: "\\u{1F56F}" }, /* y */ d: [1, 2.5], };'), {"a": {"b-c": "it's", "1": "\U0001F56F"}, "d": [1, 2.5]})
+
+    def test_the_real_dictionaries_pass(self):
+        self.assertIsNone(refusal(check_app.check_calendar_names, self.spec, self.dictionaries))
+
+    def test_a_missing_month_holiday_or_reading_fails(self):
+        for group, key in (("months", "adar_2"), ("holidays", "shiva_asar_btamuz"), ("parashot", "54")):
+            with self.subTest(group=group):
+                del self.dictionaries["he"]["calendar"][group][key]
+                printed = refusal(check_app.check_calendar_names, self.spec, self.dictionaries)
+                self.assertIn(f"app/i18n/he.js has no calendar.{group} name for: {key}", printed or "")
+                self.setUp()
+
+    def test_a_key_added_to_the_api_fails_until_it_is_named(self):
+        self.spec["components"]["schemas"]["HolidayKey"]["enum"].append("yom_hamishpacha")
+        printed = refusal(check_app.check_calendar_names, self.spec, self.dictionaries)
+        self.assertIn("app/i18n/en.js has no calendar.holidays name for: yom_hamishpacha", printed or "")
+
+    def test_an_empty_name_or_rosh_chodesh_without_its_month_fails(self):
+        self.dictionaries["en"]["calendar"]["parashot"]["3"] = " "
+        self.assertIn("calendar.parashot name for: 3", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
+        self.setUp()
+        self.dictionaries["he"]["calendar"]["holidays"]["rosh_chodesh"] = "ראש חודש"
+        self.assertIn("rosh_chodesh must name the month", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
 
 
 class StagedRoots(unittest.TestCase):

@@ -105,7 +105,7 @@ function tests.the_composer_action_picks_up_moved_renamed_added_and_removed_devi
     local rooms = get(mock, key, "/v1/rooms").json.items
     T.eq(byId(rooms, 10).device_count, byId(roomsBefore, 10).device_count - 1, "kitchen: shutter and camera out, a light in")
     T.eq(byId(rooms, 11).device_count, byId(roomsBefore, 11).device_count + 1)
-    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 4 lights, 1 thermostats, 2 blinds, 2 cameras, 1 relays, 1 doorbells")
+    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 4 lights, 1 thermostats, 0 fans, 2 blinds, 2 cameras, 1 relays, 1 doorbells")
 
     local entry = logged("project rediscovered")[1]
     T.truthy(entry, "the refresh is logged")
@@ -346,11 +346,14 @@ function tests.a_refresh_logs_the_devices_again_at_debug_level_only()
     end
     T.eq(thermostats("info"), 3, "the first discovery")
     T.eq(thermostats("debug"), 0)
+    T.eq(loggedAt("initialized fan", "info"), 2, "fans too (1.2.0)")
     refresh()
     T.eq(thermostats("info"), 3, "not again at info level")
     T.eq(thermostats("debug"), 3, "but at debug level")
+    T.eq(loggedAt("initialized fan", "info"), 2)
+    T.eq(loggedAt("initialized fan", "debug"), 2)
     T.eq(loggedAt("project rediscovered", "info"), 1)
-    T.eq(loggedAt("initialized 17 controllable proxies", "info"), 2, "the count stays at info level")
+    T.eq(loggedAt("initialized 19 controllable proxies", "info"), 2, "the count stays at info level")
     T.eq(loggedAt("unsupported device 27: Light State variable (1000) is unavailable", "info"), 2, "and devices that failed")
     local Log = require("src.core.log")
     T.eq(Log.info("test", "after the refresh").level, "info", "and the log is as before")
@@ -529,7 +532,7 @@ function tests.composer_properties_follow_a_refresh()
     mock.properties["Schedule Status"] = "stale"
     mock.properties["Status"] = "stale"
     refresh()
-    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 3 lights, 1 thermostats, 2 blinds, 3 cameras, 1 relays, 1 doorbells")
+    T.eq(mock.properties["Inventory"], "2 rooms, 14 devices, 3 lights, 1 thermostats, 0 fans, 2 blinds, 3 cameras, 1 relays, 1 doorbells")
     T.eq(mock.properties["Schedule Status"], "None")
     T.eq(mock.properties["Status"], "Ready")
 end

@@ -118,6 +118,7 @@ Release notes come from `docs/releases/v<version>.md`. The workflow refuses to r
 | `app/` | `directorlink-app` | `app.directorlink.io` |
 | `console/` | `directorlink-console` | `console.directorlink.io` |
 | `site/` | `directorlink-site` | `directorlink.io`, `www.directorlink.io` |
+| `github-link/` | `directorlink-github` | `github.directorlink.io` (a redirect to the repository on GitHub, keeping the path) |
 
 The workflow needs two repository secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the jobs succeed and deploy nothing.
 

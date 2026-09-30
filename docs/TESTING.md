@@ -2,6 +2,73 @@
 
 ## Current release
 
+`v1.2.0` — Shabbat and holiday times, off until the Composer property Jewish Calendar is On (0y, ADR-037); the alarm's status, read-only and off until Alarm Status is On (0x, ADR-038, thanks to bkwagner, #15); fans (0w, thanks to bkwagner, #18); Forget key while the app is busy and shades after a restart (0v); rooms in order by dragging them (0u). Update DirectorLink in Composer (no reboot).
+
+## 0y. Shabbat and holidays (1.2.0)
+
+With **Log Level** Debug set before updating, on a Friday or a holiday eve if possible:
+
+1. After the update, **Jewish Calendar** = `Off` and **Calendar Status** = `Off` show after Last Automation. Nothing new appears in the app (Home, Schedules, the schedule editor, Settings), `GET /v1/calendar` answers `200` with `"enabled": false` and nulls, and `GET /v1/system` has `"features": {"jewish_calendar": false, …}`. `PATCH /v1/calendar/settings` `{"havdalah_minutes": 50}` answers `409 JEWISH_CALENDAR_OFF` for an admin and `403` for a viewer or member; `POST` of a Shabbat schedule answers `409 JEWISH_CALENDAR_OFF`. Existing schedules show `"during_shabbat": "run"` and `"calendar_status": null`, and run as before.
+2. Sunrise and sunset schedules' `next_run` and the weather card's times may have moved by up to a minute (NOAA): compare them with hebcal.com's zmanim for the city; equal, or one minute off on a few days.
+3. Set **Jewish Calendar** to `On` (no restart). Calendar Status reads at once *Israel (from the location) · candles 20 min before sunset, havdalah 42 min after · next Fri … to Sat …*, and its times equal hebcal.com's Shabbat times for the city (20/42) to the minute. `GET /v1/logs?category=calendar&level=debug` shows *calendar computed* in well under 50 ms. Within a minute Home shows the Hebrew date line (the next day's from sunset: leave Home open over sunset, and the date changes within about 10 seconds of it), and Schedules the times card; an admin sees the Settings card, a member sees the times but not Change or the card.
+4. In Hebrew: the date in letters (for example י״ח בתשרי תשפ״ז) and the weekly readings in full spelling (for example תזריע־מצורע).
+5. Create *30 min before candle lighting* with one light and a gate: on Friday it runs, the gate is skipped (scheduled scenes never open doors), and Last Automation shows *schedule 30 min before candle lighting*. Create *at havdalah*, *every day 07:30, not on Shabbat and holidays* (on Saturday it reads *Didn't run …: Shabbat or a holiday*, `skipped_by: shabbat`) and *08:00 only on Shabbat and holidays*.
+6. Run Update Driver on Friday night: nothing runs twice, havdalah runs on Saturday, and anything missed while it reloaded (within six hours) runs once, marked *late after a restart*.
+7. As an admin, set 30/50 in Settings → Shabbat and holidays and Save: *Saved*, and the times move in the app and in Calendar Status. Save a stale change from a second device: the conflict message. A member gets `403` on the PATCH.
+8. Set **Jewish Calendar** to `Off` with those schedules in place: they say *Not running: the Jewish calendar is off in Composer* (the "not on Shabbat" one says it runs on Shabbat too), the Shabbat schedule's editor offers only its switch and Delete, the Home line and the Settings card go within a minute, and Schedule Status says *· N Shabbat schedules not running (Jewish Calendar is Off)*. Set it On again: nothing is caught up, and an Update Driver in the next hours catches up nothing that was due while it was Off (nor while **Schedules** was `Paused`).
+9. **Print Schedules and Scenes**: line 2 is *Jewish calendar: …*, and the Shabbat texts read as expected.
+10. The screens at 320, 360, 414 and 1280 px, in English and Hebrew, light and dark: no horizontal scroll.
+11. Later, recorded in docs/VALIDATION.md: Fridays 23 and 30 Oct 2026 and 26 Mar 2027 (clock changes), Adar I and II in Feb–Mar 2027, and Shavuot 10–12 Jun 2027 (or Abroad for 3–4 Oct 2026).
+
+## 0x. Alarm status (1.2.0)
+
+1. After the update, **Alarm Status** = `Off` shows right after Relay Hold (note whether Composer shows its tooltip). Inventory counts no alarm partitions (it reads as in 0w step 1, with *0 fans*), `GET /v1/system` has `"alarm_status": false`, and the app has no Alarm section on Home and no Alarm line in Settings → Controller.
+2. In the console with an admin key, `GET /v1/alarm` answers `200 {"enabled": false, "partitions": []}`; with a viewer key, `403 FORBIDDEN`.
+3. Set it to `On` (no restart): `GET /v1/logs?category=alarm` shows *alarm status on in Composer*, with `partitions_watched` 0 on the test system; Inventory ends with *, 0 alarm partitions* and `features.alarm_status` is true; the console's `GET /v1/alarm` answers `403 SEALED_REQUEST_REQUIRED`; the app, at home and on mobile data, shows no errors and no Alarm section (there are no partitions).
+4. Set it back to `Off`: the log shows *alarm status off in Composer*, the Inventory suffix goes, and step 2 answers again.
+5. On a home with an alarm (the contributor's), with it On: Home lists each active partition within about 10 s of a change (arm away or home at the keypad, open a zone, the exit and entry delay, an alarm); there is nothing to press, a viewer device shows nothing, and `GET /v1/logs` at Debug holds no partition state. With nothing else changing, arm, disarm and start a delay: in developer tools → Network the `POST /v1/sealed` answers of each 10-second round keep their sizes (the alarm's is padded). Keep any *unsupported device N: …* line from `category=adapters`.
+6. The scene editor offers no alarm step.
+
+## 0w. Fans (1.2.0)
+
+On the test system, which has no fans (a regression check):
+
+1. After the update, Inventory reads *… 22 thermostats, 0 fans, 15 blinds …*, with 111 lights unchanged; `GET /v1/system` shows `"fans": 0` and `GET /v1/fans` answers `{"items": []}`.
+2. The app looks as before: no Fans section and no fan badge; `GET /v1/logs?category=api&level=debug` shows no `GET /v1/fans` every 10 s, only at connect (developer tools → Network shows only `POST /v1/sealed`: the app seals every request). Room All off and existing scenes behave as before.
+
+On a Director with a fan (ask @bkwagner), with Log Level Debug set before updating:
+
+3. Save `GET /v1/logs?level=debug&category=fan`: *proxy variables* (IS_ON, CURRENT_SPEED, PRESET_SPEED with values), *proxy setup* (the GET_SETUP answer) and *initialized fan*.
+4. `GET /v1/fans` shows each fan with `on`, `speed` as on its keypad, and `speeds [1,2,3,4]`.
+5. In the app: switch off and on, then each speed Low to High, each confirmed without *waiting for the device to confirm*; `GET /v1/logs?category=fan_command` shows OFF, ON and SET_SPEED with SPEED 1–4. Note which speed ON returns to (preset or last).
+6. Change the fan from a keypad: the app follows within about 10 s, and *fan variable changed* debug lines show the raw values.
+7. Run a scene *All fans: Medium* and a room step *Off*, then a schedule that runs it. Favorite the fan and toggle it from its Home tile. With a viewer key there are no controls and `PATCH` answers `403`. At 320 px, in English and Hebrew, Home does not scroll sideways: a room with many kinds of devices puts its badges on two lines.
+8. Save `GET /v1/fans` and a scene run result, validate them against `api/openapi.yaml`, and record in docs/VALIDATION.md.
+
+## 0v. Forget key while the app is busy, and shades after a restart (1.2.0)
+
+With **Log Level** Debug, on a second browser paired for this (pair it again with a new code before each step), and the API console open with another admin key:
+
+1. **During a refresh:** leave the app on Settings → Controller for a minute or more (it refreshes every 10 seconds; every sixth refresh also reads the rooms), then press **Forget access key**. The app ends on the pairing screen with *The access key was removed from this device.* and still shows it a minute later: not *Can't reach your controller*, not the home. **API Keys** in Composer goes down by one. In `GET /v1/logs?category=api&level=debug`, that key's `key_id` has nothing after its `DELETE /v1/api-keys/current -> 204`. Do it once more with **Jewish Calendar** `On`: the same, also a few minutes later, and after pairing again the Home line is this home's.
+2. **Right after a light:** switch a light, then at once Settings → **Pair again**. The pairing screen stays, and the log has nothing with that key's id after its DELETE.
+3. **While connecting:** reload the page and press **Forget access key** in Settings before the home has loaded. The end is the same as step 1. Pair again, open Scenes: it never says the key no longer works.
+4. **Controller out of reach:** on a laptop at home without remote access, unplug the controller's network cable (the laptop stays on Wi-Fi: requests go out and get no answer) and wait until Settings says *Can't reach home*. Press **Forget access key**, and **Retry** within the next seconds. About 4 seconds later (the revoke waits that long for an answer) the pairing screen says *The access key was removed from this device.*, and still does a minute later. Plug the cable back in: the key stays in Composer (it could not be revoked): remove it there. (With Wi-Fi off instead, requests fail at once: *Can't reach home* shows after about 13 seconds, Forget key ends at once, and there is no time for Retry.)
+5. **Shades after a restart:** reboot the controller. In `GET /v1/blinds` every shade at rest has `"moving": false`, also one whose *proxy variables* in `GET /v1/logs?category=blind&level=debug` show `1002=Stopped:0` with Level and Target Level a little apart. Once nothing moves, the app reads the blinds every 10 seconds, not every 2.
+6. Shades move as before (0s step 1, 0r step 8): a move to 50% shows *Opening… to 50%* until the shade stops, and Stop halfway shows it stopped at once, then where it stopped.
+
+## 0u. Rooms in order by dragging them (1.2.0)
+
+1. On an Android phone and an iPhone, as an admin, in Settings → Rooms, hold a room's handle (⠿) for a moment: the room lifts. Drag it several places down and let go. The other rooms make room while you drag; the new order stays after reloading, and shows on another device within a minute.
+2. Swipe over the handles and over the room names without holding: the page scrolls and nothing moves.
+3. Hold the first room's handle and drag it to just above the tab bar: the list scrolls by itself. Let go at the end: the room is last.
+4. Drag a room and put it back where it was: nothing is saved. Start a drag and switch apps: the room goes back.
+5. Repeat step 1 in Hebrew: the handle is on the left and dragging works the same.
+6. On a computer: drag with the mouse; press Escape mid-drag and the room goes back. Tab to a handle, press Space, use the arrow keys, press Space: the room moves. With VoiceOver or NVDA the positions are read out.
+7. The up and down arrows still move a room one place at a time.
+8. As a member or viewer: no handles or arrows, and unticking a room still hides it only for you.
+9. Away from home (through the relay): a drag is saved once and shows at home.
+10. With DirectorLink 1.0.0 on the controller: a drag says to update DirectorLink, and the room goes back.
+
 `v1.1.1` — door relays are pulse-only unless Relay Hold allows holding them (0t, ADR-036); four fixes around shades (0s): Forget key while a shade moves, the moment after Stop, a shade moving again after the app was away, and a shade left marked as not stopped after a restart. Update DirectorLink in Composer (no reboot).
 
 ## 0t. Door relays are pulse-only (1.1.1)

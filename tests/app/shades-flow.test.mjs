@@ -44,8 +44,10 @@ globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 16);
 // a request takes there and back; the controller handles it halfway. `revokes`: DELETE
 // /v1/api-keys/current revokes the key, and every request after it is answered 401. `stopLag`:
 // how long after answering a Stop the shade reports that it stopped (the proxy hears it from the
-// actuator), where it was. `down`: nothing answers.
-const controller = { blinds: [], devices: [], calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false };
+// actuator), where it was. `down`: nothing answers. `silent`: requests get there, and no answer
+// comes back (they end when the app gives up on them). `slow`: how much longer the answers to these
+// paths take. Light 22 is a lamp that never reports it is on.
+const controller = { blinds: [], devices: [], calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false, silent: false, slow: {} };
 
 function answer(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -59,9 +61,17 @@ globalThis.fetch = async (url, init = {}) => {
   const method = init.method || "GET";
   const keyed = Boolean(init.headers?.Authorization);
   controller.calls.push({ at: Date.now(), method, path, keyed });
+  if (controller.silent) {
+    return new Promise((_resolve, reject) => {
+      const stop = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+      if (init.signal?.aborted) stop();
+      init.signal?.addEventListener("abort", stop);
+    });
+  }
   if (controller.rtt) await later(controller.rtt / 2);
   const response = handle(method, path, keyed, init.body);
   if (controller.rtt) await later(controller.rtt / 2);
+  if (controller.slow[path]) await later(controller.slow[path]);
   return response;
 };
 
@@ -96,6 +106,7 @@ function handle(method, path, keyed, body) {
     // As DirectorLink 1.0.0 answered it in a sealed request.
     return answer(400, { status: 400, code: "BAD_REQUEST", detail: "Remote requests are GET, POST, PATCH or DELETE on /v1/..." });
   }
+  if (path === "/v1/lights/22") return answer(method === "GET" ? 200 : 202, { id: 22, name: "Lamp", on: false, dimmable: false, brightness: null });
   if (method === "GET") return answer(200, { items: [] });
   return answer(404, { status: 404, code: "NOT_FOUND", detail: `no ${method} ${path}` });
 }
@@ -105,10 +116,12 @@ const controls = await import("../../app/js/controls.js");
 const session = await import("../../app/js/session.js");
 const { blindStateLabel } = await import("../../app/js/model.js");
 const { MOVE_POLL_MS, shadeView } = await import("../../app/js/shades.js");
-const { copyHouse } = await import("../../app/js/scenes.js");
+const { copyHouse, loadScenes } = await import("../../app/js/scenes.js");
 const { roomOrderErrorText } = await import("../../app/js/views/settings.js");
 const { setLanguage, t } = await import("../../app/js/i18n.js");
 const { ApiError } = await import("../../app/api-client.js");
+// As app.js does: the scenes are read once connected, and with the rooms.
+session.whenConnected(loadScenes);
 
 // Lets fetch answers, promise chains and response bodies settle.
 async function settle() {
@@ -142,7 +155,7 @@ async function connect(blinds) {
   session.forgetKey();
   // Requests still on their way get their answers first.
   await advance(100 + controller.rtt);
-  Object.assign(controller, { calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false });
+  Object.assign(controller, { calls: [], patch: null, rtt: 0, revokes: false, revoked: false, stopLag: null, down: false, silent: false, slow: {} });
   controller.blinds = blinds.map((blind) => ({ ...blind }));
   document.hidden = false;
   state.host = HOST;
@@ -236,9 +249,10 @@ test("forgetting the key while a shade moves sends nothing without it", async ()
   assert.equal(controls.blindMove(52), null);
 });
 
-// Forget key revokes the key on the controller, which answers 401 from then on: a read that gets
-// there after the DELETE (the 2 s reads of a moving shade, the refresh every 10 s) is what was asked
-// for, not a key that stopped working. Wherever the reads fall, and however long the answers take.
+// Forget key revokes the key on the controller, which answers 401 from then on. Pressed while the app
+// reads (the 2 s reads of a moving shade, the refresh every 10 s), wherever the reads fall and
+// however long the answers take: nothing is sent after the DELETE, and nothing says the key no
+// longer works.
 test("forgetting the key while a shade moves never says it no longer works", async () => {
   const said = [];
   const sent = [];
@@ -261,6 +275,165 @@ test("forgetting the key while a shade moves never says it no longer works", asy
   assert.deepEqual(said, []);
   assert.deepEqual(sent, [], "nothing is read once the key is being revoked");
   assert.equal(controls.blindMove(52), null);
+});
+
+const reads = (path) => controller.calls.filter((call) => call.method === "GET" && call.path === path).length;
+
+// Moves the fake clock on until `done()`, for `ms` at most.
+async function until(done, ms) {
+  for (let waited = 0; !done() && waited < ms; waited += 10) await advance(10, 10);
+  assert.ok(done(), `not within ${ms} ms`);
+}
+
+// Forget access key in Settings: what it shows once the key is forgotten (views/settings.js), and
+// what the app should still show a while later. Pair again ends the same way, with its own text.
+function forgetInSettings() {
+  return session.revokeAndForget().then(() => {
+    state.notice = { kind: "info", text: t("settings.controller.forgotten") };
+    notify();
+  });
+}
+const FORGOTTEN = "setup: The access key was removed from this device.";
+const ended = () => `${state.status}${state.apiKey ? " with a key" : ""}: ${state.notice?.text}`;
+
+// What was sent after the DELETE of Forget key.
+function sentAfterDelete() {
+  const index = controller.calls.findIndex((call) => call.method === "DELETE");
+  if (index < 0) return ["(no DELETE)"];
+  return controller.calls.slice(index + 1).map((call) => `${call.method} ${call.path}${call.keyed ? "" : " (no key)"}`);
+}
+
+// Every sixth refresh also reads the rooms, the cameras and the devices, and runs what follows a
+// connect (the scenes). Forget key pressed while such a refresh is on its way, its answers coming
+// before the DELETE's or after it: they change nothing, and nothing more is sent (1.1.1 went on to
+// read the rooms and the scenes with the key being revoked, or with none, and could end connected).
+test("forgetting the key during the refresh that also reads the rooms sends nothing more", async () => {
+  const problems = [];
+  for (const slow of [0, 1500]) {
+    for (const wait of [10, 250, 450]) {
+      await connect([shade()]);
+      Object.assign(controller, { rtt: 400, revokes: true, slow: { "/v1/lights": slow } });
+      session.startPolling();
+      // Once a refresh has read the rooms, the sixth refresh after it reads them again.
+      await until(() => reads("/v1/rooms") > 0, 100000);
+      const refreshes = reads("/v1/lights");
+      await until(() => reads("/v1/lights") === refreshes + 6, 100000);
+      await advance(wait, 10);
+      const forgotten = forgetInSettings();
+      await advance(3000, 10);
+      await forgotten;
+      await advance(30000, 100);
+      const sent = sentAfterDelete();
+      if (sent.length || ended() !== FORGOTTEN) problems.push(`answers ${slow} ms slower, ${wait} ms in: sent ${sent.join(", ") || "nothing"}; ${ended()}`);
+    }
+  }
+  session.stopPolling();
+  assert.deepEqual(problems, []);
+});
+
+// The controller stopped answering (Wi-Fi gone, the controller restarting): each refresh waits 8 s
+// for its reads, sends them once more, and after two failed refreshes the app says it cannot reach
+// the controller. Forget key waits 4 s for the DELETE and forgets the key anyway. The reads that were
+// on their way give up later: none is sent again, and the app stays on the pairing screen (1.1.1 sent
+// them again with the key being revoked, and could end on "Can't reach your controller").
+test("forgetting the key while the controller does not answer ends on the pairing screen", async () => {
+  const problems = [];
+  const warnings = mock.method(console, "warn", () => {});
+  for (let phase = 0; phase < 40000; phase += 2000) {
+    await connect([shade()]);
+    // Connected a while: the app knows how this controller seals (here: it cannot).
+    const first = session.api("/v1/blinds");
+    await advance(100, 10);
+    await first;
+    session.startPolling();
+    controller.silent = true;
+    await advance(10000 + phase, 100);
+    const before = state.status;
+    const forgetAt = Date.now();
+    let took = null;
+    const forgotten = forgetInSettings().then(() => {
+      took = Date.now() - forgetAt;
+    });
+    await advance(40000, 100);
+    await forgotten;
+    const sent = sentAfterDelete();
+    if (sent.length || took !== 4000 || ended() !== FORGOTTEN) {
+      problems.push(`${phase} ms in (${before}): forgotten after ${took} ms; sent ${sent.join(", ") || "nothing"}; ${ended()}`);
+    }
+  }
+  warnings.mock.restore();
+  assert.deepEqual(problems, []);
+});
+
+// Forget key pressed while the app connects (as it starts, or Retry), whether the controller then
+// answers or not: the connect ends without changing anything, and nothing more is sent (1.1.1 ended
+// connected without a key and read the scenes without one, or said it could not reach the controller).
+// Nor does Retry, pressed while Forget key waits for the DELETE, read anything.
+test("forgetting the key while the app connects sends nothing more", async () => {
+  const problems = [];
+  const failures = mock.method(console, "error", () => {});
+  for (const silent of [false, true]) {
+    for (const wait of [100, 300, 500, 700]) {
+      await connect([shade()]);
+      Object.assign(controller, { rtt: 400, revokes: true });
+      Object.assign(state, { loaded: false, scenes: null, scenesError: null });
+      const connecting = session.connect();
+      await advance(wait, 10);
+      controller.silent = silent;
+      const forgotten = forgetInSettings();
+      await advance(40000, 50);
+      await Promise.all([connecting, forgotten]);
+      const sent = sentAfterDelete();
+      if (sent.length || ended() !== FORGOTTEN || state.loaded || state.scenesError) {
+        problems.push(`${silent ? "no answers" : "answers"}, ${wait} ms in: sent ${sent.join(", ") || "nothing"}; ${ended()}; loaded ${state.loaded}; scenes: ${state.scenesError}`);
+      }
+    }
+  }
+
+  await connect([shade()]);
+  const first = session.api("/v1/blinds");
+  await advance(100, 10);
+  await first;
+  Object.assign(state, { loaded: false, status: "unreachable" });
+  controller.silent = true;
+  const forgotten = forgetInSettings();
+  await advance(1000, 10);
+  const retried = session.connect();
+  await advance(40000, 50);
+  await Promise.all([retried, forgotten]);
+  const sent = sentAfterDelete();
+  if (sent.length || ended() !== FORGOTTEN) problems.push(`Retry while forgetting: sent ${sent.join(", ") || "nothing"}; ${ended()}`);
+  failures.mock.restore();
+  assert.deepEqual(problems, []);
+});
+
+// A light switched just before Forget key: the app reads it every 600 ms until it reports the change,
+// for 5 s at most. Forget key pressed while the command is on its way, or while the app waits for the
+// light: nothing more is read, and nothing changes (1.1.1 went on reading it with the key being
+// revoked, then without one).
+test("forgetting the key right after switching a light sends nothing more", async () => {
+  const problems = [];
+  for (const wait of [50, 300, 900, 3000]) {
+    await connect([]);
+    const lamp = { id: 22, name: "Lamp", room: { id: 11, name: "Living Room" }, on: false, dimmable: false, brightness: null };
+    state.lights = [lamp];
+    // Connected a while: the app knows how this controller seals (here: it cannot).
+    const first = session.api("/v1/lights");
+    await advance(100, 10);
+    await first;
+    Object.assign(controller, { rtt: 200, revokes: true });
+    const switched = controls.setLight(lamp, { on: true });
+    await advance(wait, 10);
+    const forgotten = forgetInSettings();
+    await advance(10000, 50);
+    await Promise.all([switched, forgotten]);
+    const sent = sentAfterDelete();
+    if (sent.length || ended() !== FORGOTTEN || state.errors["light:22"] || state.pending["light:22"]) {
+      problems.push(`${wait} ms in: sent ${sent.join(", ") || "nothing"}; ${ended()}; error ${state.errors["light:22"]?.text}; pending ${state.pending["light:22"]}`);
+    }
+  }
+  state.lights = [];
+  assert.deepEqual(problems, []);
 });
 
 test("a new target while the shade moves keeps the slider on it", async () => {

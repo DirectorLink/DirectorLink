@@ -1,11 +1,13 @@
 // DirectorLink app: hash router, renderer and start-up. Screens live in js/views/.
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
-// "/v1/lights", "/v1/thermostats", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
-// "/v1/weather", "/v1/auth/pair" —
+// "/v1/lights", "/v1/thermostats", "/v1/fans", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
+// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { startAccount } from "./js/account.js";
+import { alarmSignature, startAlarm } from "./js/alarm.js";
+import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
 import { h, iconButton } from "./js/dom.js";
@@ -28,7 +30,7 @@ import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
-import { settingsView } from "./js/views/settings.js";
+import { resetCalendarSettings, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 
 const view = document.querySelector("#view");
@@ -94,8 +96,11 @@ window.addEventListener("hashchange", () => {
   if (route.name === "access" && previous.name !== "access") resetAccess();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
+  if (route.name === "settings" && previous.name !== "settings") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
+  // The Hebrew date on Home (Schedules reads the calendar too).
+  if (route.name === "home" && previous.name !== "home") loadCalendar();
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -182,10 +187,13 @@ function signature() {
     state.rooms,
     state.lights,
     state.thermostats,
+    state.fans,
     state.blinds,
     state.cameras,
     state.relays,
     state.doorbells,
+    // The alarm (read-only), and the seconds an entry or exit delay has left.
+    alarmSignature(),
     // Rings stop being recent, and "3 minutes ago" moves on, without new data.
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
@@ -226,6 +234,7 @@ function signature() {
     state.schedulesPaused,
     state.schedulesUnsupported,
     state.weather,
+    state.calendar,
     ui.schedulesMessage,
     // Times being typed are left out: the editor does not rebuild a time field while it is used.
     route.name === "schedule" ? { ...ui.scheduleEditor, at: undefined, from: undefined, to: undefined } : 0,
@@ -234,6 +243,7 @@ function signature() {
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
+    route.name === "settings" ? ui.calendarSettings : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
@@ -319,7 +329,7 @@ function restoreUi({ key, selection, open }) {
 }
 
 function render(force = false) {
-  if (ui.dragging) return; // redrawn when the slider is let go
+  if (ui.dragging || ui.reordering) return; // redrawn when the slider or the room is let go
   const current = signature();
   if (!force && current === lastSignature) return;
   lastSignature = current;
@@ -374,6 +384,10 @@ whenConnected(() => syncProfile(applyLanguage));
 // The home's scenes, for the Scenes tab and the ones shown on Home.
 whenConnected(loadScenes);
 whenConnected(loadSchedules);
+// Members and admins: the alarm, read-only, when the installer turned it on; then every 10 s.
+whenConnected(startAlarm);
+// The Jewish calendar, while it is on in Composer: read now, then every 10 minutes (js/calendar.js).
+whenConnected(keepCalendar);
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
 // Opened on Schedules (a reload): the weather once connected.

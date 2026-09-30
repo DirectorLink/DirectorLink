@@ -15,10 +15,13 @@ local BINDING = Harness.BINDING
 local bigEndian, serverFrame, clientFrames = Harness.bigEndian, Harness.serverFrame, Harness.clientFrames
 local connected, relayRequest = Harness.connected, Harness.relayRequest
 
+-- The last live timer of this delay, leaving out the scheduler's minute timer: its delay depends on
+-- the wall clock (exactly 30 s when a test starts at second 31).
 local function lastTimer(mock, delay)
     for index = #mock.timers, 1, -1 do
         local timer = mock.timers[index]
-        if timer.delay == delay and not timer.cancelled and not timer.fired then
+        if timer.delay == delay and not timer.cancelled and not timer.fired
+            and not (timer.source or ""):find("core/scheduler", 1, true) then
             return timer
         end
     end

@@ -5,6 +5,7 @@ import {
   cameraTile,
   doorbellCard,
   emptyState,
+  fanRow,
   lightRow,
   relayRow,
   sectionTitle,
@@ -15,7 +16,7 @@ import { allOff } from "../controls.js";
 import { h, name } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { NO_ROOM, climateIsOn, lightIsOn, roomById, roomGroup, roomName } from "../model.js";
+import { NO_ROOM, climateIsOn, fanIsOn, lightIsOn, roomById, roomGroup, roomName } from "../model.js";
 import { can } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
@@ -37,9 +38,11 @@ export function roomView(roomId, { openCamera }) {
   }
 
   const group = roomGroup(id);
-  const anythingOn = group.lights.some(lightIsOn) || group.thermostats.some(climateIsOn);
+  const anythingOn = group.lights.some(lightIsOn) || group.thermostats.some(climateIsOn) || group.fans.some(fanIsOn);
+  // With fans (1.2.0), All off turns them off too.
+  const allOffHint = group.fans.length ? t("rooms.allOffHintFans") : t("rooms.allOffHint");
   const actions = [];
-  if ((group.lights.length || group.thermostats.length) && can("member")) {
+  if ((group.lights.length || group.thermostats.length || group.fans.length) && can("member")) {
     actions.push(
       h(
         "button",
@@ -47,7 +50,7 @@ export function roomView(roomId, { openCamera }) {
           type: "button",
           class: "button button-secondary button-small",
           disabled: !anythingOn,
-          title: t("rooms.allOffHint"),
+          title: allOffHint,
           "aria-describedby": "all-off-hint",
           dataset: { key: "all-off" },
           onclick: () => allOff(group),
@@ -55,7 +58,7 @@ export function roomView(roomId, { openCamera }) {
         icon("power"),
         t("rooms.allOff")
       ),
-      h("span", { id: "all-off-hint", class: "visually-hidden" }, t("rooms.allOffHint"))
+      h("span", { id: "all-off-hint", class: "visually-hidden" }, allOffHint)
     );
   }
 
@@ -65,6 +68,10 @@ export function roomView(roomId, { openCamera }) {
   }
   if (group.thermostats.length) {
     sections.push(section("climate", "climate", t("sections.climate"), group.thermostats.map((item) => thermostatCard(item))));
+  }
+  // Fans, on drivers that have /v1/fans (1.2.0).
+  if (group.fans.length) {
+    sections.push(section("fans", "fan", t("sections.fans"), group.fans.map((fan) => fanRow(fan))));
   }
   if (group.blinds.length) {
     sections.push(section("blinds", "blinds", t("sections.blinds"), group.blinds.map((blind) => blindRow(blind))));
@@ -105,7 +112,7 @@ export function roomView(roomId, { openCamera }) {
     pageHeader({ title: roomName(room), back: "#/", titleDir: "auto" }),
     actions.length ? h("div", { class: "toolbar" }, actions) : null,
     // View-only keys: the state is shown, the controls are not.
-    !can("member") && (group.lights.length || group.thermostats.length || group.blinds.length)
+    !can("member") && (group.lights.length || group.thermostats.length || group.fans.length || group.blinds.length)
       ? h("p", { class: "view-only-hint" }, icon("info"), h("span", {}, t("roles.viewOnlyHint")))
       : null,
     offlineBanner(),

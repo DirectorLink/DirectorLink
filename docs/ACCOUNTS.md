@@ -77,7 +77,9 @@ Every remote request and every answer travels as one envelope:
 - Why not AES-GCM: DriverWorks documents `C4:Encrypt` with AES-256-CBC, and `C4:HMAC`, but no GCM
   tags. CBC with an HMAC over the ciphertext is the standard safe construction, and browsers have
   both in WebCrypto. The driver functions are native, so camera pictures stay fast.
-- The cloud sees the home id, the key id, the size and the time of each envelope.
+- The cloud sees the home id, the key id, the size and the time of each envelope (and so does the
+  home network, at home). The alarm's answer is padded to a size that does not depend on whether
+  the home is armed (ADR-038).
 
 ## On the home network (1.0.0)
 

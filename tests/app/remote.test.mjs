@@ -16,7 +16,7 @@ globalThis.localStorage = {
   removeItem: (key) => stored.delete(key),
 };
 
-const { RemoteError, acceptInvitation, invitationLink, parseInvitation, remoteCall, saveRemote } = await import("../../app/js/remote.js");
+const { RemoteError, acceptInvitation, invitationLink, lanCall, parseInvitation, remoteCall, saveRemote } = await import("../../app/js/remote.js");
 
 const HOME = "0123456789abcdef0123456789abcdef";
 const INVITATION = "89abcdef";
@@ -48,6 +48,22 @@ test("a refused invitation keeps the home's problem code", async () => {
   assert.ok(error instanceof RemoteError);
   assert.equal(error.code, "KEY_LIMIT_REACHED");
   assert.equal(error.message, "Too many keys");
+});
+
+// On the home network a sealed read that got no answer is sealed again and sent once more, unless
+// the key was forgotten meanwhile (session.js: it is no longer wanted).
+test("a sealed read no longer wanted is not sent again", async () => {
+  let wanted = true;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push(`${init.method} ${new URL(url).pathname}`);
+    wanted = false;
+    throw new TypeError("Failed to fetch");
+  };
+  const target = { home: "lan", keyId: "0badc0de", offset: 0 };
+  const error = await lanCall("192.168.1.10", "ak_test", target, "/v1/lights", { wanted: () => wanted }).catch((failure) => failure);
+  assert.equal(error.code, "NOT_SENT");
+  assert.deepEqual(calls, ["POST /v1/sealed"]);
 });
 
 test("invitation links carry the home, the invitation and its secret after #", () => {

@@ -5,6 +5,7 @@
   --bg: #f5f5f4; --card: #ffffff; --ink: #18181b; --muted: #52525b; --line: #e4e4e7;
   --primary: #2563eb; --primaryText: #ffffff; --accent: #1d4ed8;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px rgb(0 0 0 / 0.04);
+  --phone: #18181b; --shadow-shot: 0 18px 40px rgb(24 24 27 / 0.16);
   --radius: 16px; --radius-sm: 12px; --radius-lg: 18px;
   --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --font-head: "Sora", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
@@ -16,6 +17,7 @@
     --bg: #0f1012; --card: #1b1d21; --ink: #f4f4f5; --muted: #a1a1aa; --line: #2a2d33;
     --primary: #60a5fa; --primaryText: #0b1220; --accent: #93c5fd;
     --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+    --phone: #000000; --shadow-shot: 0 18px 40px rgb(0 0 0 / 0.5);
     color-scheme: dark;
   }
 }
@@ -161,10 +163,34 @@ main {
 }
 
 .hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 40px;
+  padding-block: 56px 64px;
+}
+
+.hero-text {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding-block: 56px 64px;
+}
+
+/* Screenshots: a phone-like frame around each screen (the pictures are 390 px phones at 1.4-1.5x). */
+.hero-shot img,
+.shot-list img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 8px solid var(--phone);
+  border-radius: 40px;
+  background: var(--phone);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-shot);
+}
+
+.hero-shot {
+  display: block;
+  width: 290px;
 }
 
 .hero h1 {
@@ -225,6 +251,67 @@ main {
   .button-secondary:hover {
     background: color-mix(in srgb, var(--primary) 8%, var(--card));
   }
+}
+
+.shots {
+  margin-block-end: 56px;
+}
+
+.shots h2 {
+  margin-block-end: 8px;
+  font-size: 26px;
+}
+
+.shots-lead {
+  margin-block-end: 24px;
+  color: var(--muted);
+}
+
+.shot-list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 32px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shot-list figure,
+.shot-desktop {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+}
+
+.shot-list img {
+  border-width: 6px;
+  border-radius: 32px;
+}
+
+.shots figcaption {
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.shots figcaption strong {
+  display: block;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.shot-desktop {
+  margin-block-start: 40px;
+}
+
+.shot-desktop img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-shot);
 }
 
 .how h2 {
@@ -362,7 +449,23 @@ main {
     grid-template-columns: minmax(0, 1fr);
   }
   .hero {
+    grid-template-columns: minmax(0, 1fr);
     padding-block: 32px 44px;
+  }
+  .hero-shot {
+    justify-self: center;
+    width: min(260px, 72vw);
+  }
+  .shot-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 28px 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .shot-list img {
+    border-width: 5px;
+    border-radius: 26px;
   }
 }
 

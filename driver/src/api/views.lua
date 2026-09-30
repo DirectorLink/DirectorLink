@@ -9,6 +9,7 @@ local Views = {}
 local TYPE_BY_KIND = {
     light = "light",
     climate = "thermostat",
+    fan = "fan",
     blind = "blind",
     camera = "camera",
     relay = "relay",
@@ -18,6 +19,7 @@ local TYPE_BY_KIND = {
 local RESOURCE_PATH = {
     light = "/v1/lights/",
     thermostat = "/v1/thermostats/",
+    fan = "/v1/fans/",
     blind = "/v1/blinds/",
     camera = "/v1/cameras/",
     relay = "/v1/relays/",
@@ -114,6 +116,25 @@ function Views.light(registry, device)
     }
 end
 
+-- Fans (1.2.0). `speed` is how fast the fan runs, from 1 (low) to 4 (high): null while it is off,
+-- and when the controller reports no speed. `speeds` lists the ones PATCH takes.
+function Views.fan(registry, device)
+    local capabilities = device.capabilities or {}
+    local state = device.state or {}
+    local speeds = Json.array()
+    for speed = 1, tonumber(capabilities.speeds) or 0 do
+        speeds[#speeds + 1] = speed
+    end
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        on = state.power == true,
+        speed = nullable(state.speed),
+        speeds = speeds,
+    }
+end
+
 -- `capabilities` and the movement fields came in 1.1.0: a shade may only open and close fully
 -- (PATCH takes 0 and 100), or not stop; `moving` is null when the controller does not report it.
 function Views.blind(registry, device)
@@ -183,6 +204,88 @@ function Views.doorbell(registry, device)
         last_access_at = last.access or Json.null,
         events = events,
     }
+end
+
+-- A partition of the home's alarm, read-only (GET /v1/alarm, ADR-038). `state` is the panel's own
+-- word in lower case (disarmed_ready, armed, exit_delay, ...). The type of arming and of alarm are
+-- the panel's words too, and only while armed or in alarm; the delay only while one counts. In
+-- /v1/devices a partition stays a device of type "other": nothing there tells viewers more.
+local ALARM_DELAYS = { entry_delay = "entry", exit_delay = "exit" }
+
+-- The panel's words are cut to these many bytes (never inside a character), with control
+-- characters made spaces, and its counts stop at ALARM_MAX_COUNT, so that a partition's answer
+-- can never be longer than its longest form, which GET /v1/alarm is padded to (handlers/alarm.lua).
+Views.ALARM_TEXT_BYTES = { state = 32, armed_type = 32, alarm_type = 32, trouble = 100 }
+Views.ALARM_MAX_COUNT = 99999
+
+local function panelText(value, bytes)
+    if value == nil then
+        return nil
+    end
+    local text = tostring(value):gsub("%c", " ")
+    local cut = math.min(#text, bytes)
+    -- Back to the start of a character (a UTF-8 continuation byte is 128-191).
+    while cut > 0 and cut < #text and text:byte(cut + 1) >= 128 and text:byte(cut + 1) < 192 do
+        cut = cut - 1
+    end
+    return text:sub(1, cut)
+end
+
+local function panelCount(value)
+    return value and math.min(value, Views.ALARM_MAX_COUNT) or nil
+end
+
+function Views.alarmPartition(registry, device)
+    local state = device.state or {}
+    local partitionState = state.partition_state and slug(state.partition_state):sub(1, Views.ALARM_TEXT_BYTES.state) or nil
+    if partitionState == "" then
+        partitionState = nil
+    end
+    local armed = state.home == true or state.away == true or partitionState == "armed"
+    local alarm = state.alarm == true or partitionState == "alarm"
+    local delayType = partitionState and ALARM_DELAYS[partitionState] or nil
+    local delay = Json.null
+    if delayType or (state.delay_remaining or 0) > 0 then
+        delay = {
+            type = delayType or Json.null,
+            remaining = nullable(panelCount(state.delay_remaining)),
+            total = nullable(panelCount(state.delay_total)),
+        }
+    end
+    return {
+        id = device.id,
+        name = device.name,
+        room = Views.roomRef(registry, device.room_id, device.room_name),
+        state = nullable(partitionState),
+        armed = armed,
+        armed_mode = (state.away and "away") or (state.home and "home") or Json.null,
+        armed_type = armed and nullable(panelText(state.armed_type, Views.ALARM_TEXT_BYTES.armed_type)) or Json.null,
+        alarm = alarm,
+        alarm_type = alarm and nullable(panelText(state.alarm_type, Views.ALARM_TEXT_BYTES.alarm_type)) or Json.null,
+        open_zones = nullable(panelCount(state.open_zones)),
+        delay = delay,
+        trouble = nullable(panelText(state.trouble, Views.ALARM_TEXT_BYTES.trouble)),
+    }
+end
+
+-- The longest form a partition's view can take, whatever the panel reports: the same id, name and
+-- room, and every field that follows the panel at its longest (a quote takes the most room once
+-- the view is JSON inside a sealed answer's JSON).
+function Views.alarmPartitionLongest(view)
+    local form = {}
+    for field, value in pairs(view) do
+        form[field] = value
+    end
+    local bytes, count = Views.ALARM_TEXT_BYTES, Views.ALARM_MAX_COUNT
+    form.state = string.rep("x", bytes.state)
+    form.armed, form.alarm = false, false
+    form.armed_mode = "home"
+    form.armed_type = string.rep('"', bytes.armed_type)
+    form.alarm_type = string.rep('"', bytes.alarm_type)
+    form.open_zones = count
+    form.delay = { type = "entry", remaining = count, total = count }
+    form.trouble = string.rep('"', bytes.trouble)
+    return form
 end
 
 -- What the zone is doing now, from the thermostat's reported HVAC state.

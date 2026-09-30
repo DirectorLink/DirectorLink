@@ -155,6 +155,26 @@ Not seen yet: a DirectorLink `SET_LEVEL` moving one of these lights (`LEVEL` goe
 rather than `1`.
 
 
+## Fan proxy
+
+Fan speed controllers sit behind the Fan proxy `fan.c4i`. bkwagner read it on a live Director
+(#18): `1000` IS_ON, `1001` CURRENT_SPEED (0–4) and `1003` PRESET_SPEED, and a `SET_SPEED`
+command listing 0–4 (Off, Low, Medium, Medium High, High). Snap One's proxy documentation
+(docs-driverworks-proxyprotocol, *Fan Proxy*) adds:
+
+- `ON` turns the fan on at its preset speed, or at its last one (the protocol driver chooses);
+  `OFF`; `SET_SPEED {SPEED}` from 0 (off) to the highest speed; also `TOGGLE`, `CYCLE_SPEED_UP` /
+  `_DOWN`, `DESIGNATE_PRESET {PRESET}` and, where `can_reverse`, `SET_DIRECTION`.
+- The UI request `GET_SETUP` answers `<fan_setup>` with `speeds_count`, `speed_names` (by default
+  for 4: Low, Medium Low, Medium High, High — other names than the contributor's fan listed),
+  `can_reverse`, `can_set_preset` and `preset_speed`.
+- `CURRENT_SPEED` is reported 0 when the fan turns off.
+
+Not seen yet: a DirectorLink command moving a real fan, what `GET_SETUP` answers on one, and fans
+with fewer than four speeds. DirectorLink 1.2.0 takes speeds 1–4, as read, and logs the variables
+and the setup at Debug.
+
+
 ## Thermostat setpoint variables 1100–1150
 
 Thermostat V2 and the Control4 thermostat proxy (`control4_thermostat_proxy.c4i`) share these

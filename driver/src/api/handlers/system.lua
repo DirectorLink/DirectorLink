@@ -84,6 +84,7 @@ function System.info(ctx)
             supported_devices = counts.supported,
             lights = counts.supported_lights,
             thermostats = counts.supported_climate,
+            fans = counts.supported_fans,
             blinds = counts.supported_blinds,
             cameras = counts.supported_cameras,
             relays = counts.supported_relays,
@@ -95,6 +96,13 @@ function System.info(ctx)
             last_init_time = text(lifecycle.last_init_time),
             last_destroy_type = text(lifecycle.last_destroy_type),
             last_destroy_time = text(lifecycle.last_destroy_time),
+        },
+        -- What the installer switched on in Composer; clients show none of what is false.
+        -- jewish_calendar is the Jewish Calendar property (/v1/calendar, Shabbat schedules).
+        -- alarm_status: the alarm's partitions, read-only, for members and admins (ADR-038).
+        features = {
+            jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
+            alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
         },
     }
 end

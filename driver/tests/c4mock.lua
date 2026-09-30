@@ -226,8 +226,8 @@ function Mock.project()
     }
 end
 
--- Adds the device families of 1.1.0 to a project. Mock.project() itself stays as it is: the
--- inventory and scene tests count its devices.
+-- Adds the device families of 1.1.0 and later to a project. Mock.project() itself stays as it is:
+-- the inventory and scene tests count its devices.
 
 -- Legacy Light proxies (light.c4i): a dimmer (25, Kitchen), a switch (26, Living Room) and one
 -- whose Light State cannot be read (27, its own proxy). The protocol driver names are placeholders.
@@ -352,11 +352,103 @@ function Mock.withDualThermostat(project, options)
     return project
 end
 
--- The project the dev server and the app preview show: the default one plus every 1.1.0 family.
+-- A Fan proxy (fan.c4i) with the variables read on a live Director (#18): IS_ON (1000),
+-- CURRENT_SPEED (1001: 0 off, 1 low to 4 high) and PRESET_SPEED (1003). options: id, protocol,
+-- room (11), name, on (false), speed (0), preset (4), variables (the values instead), names (the
+-- variable names instead). The protocol driver's name is a placeholder.
+function Mock.withFan(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local name = options.name or "Fan"
+    project.devices[protocol] = {
+        deviceName = "Fan Speed Controller", driverFileName = "fan_speed_controller.c4i", roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = name, driverFileName = "fan.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = name, driverFileName = "fan.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = "Fan Speed Controller", driverFileName = "fan_speed_controller.c4i" } },
+    }
+    project.variables[id] = options.variables or {
+        [1000] = options.on and "1" or "0",
+        [1001] = tostring(options.speed or 0),
+        [1003] = tostring(options.preset or 4),
+    }
+    project.variableNames[id] = options.names or { [1000] = "IS_ON", [1001] = "CURRENT_SPEED", [1003] = "PRESET_SPEED" }
+    return project
+end
+
+-- The demo's fans: 41 on at Medium in the living room, 42 off in the kitchen.
+function Mock.withFans(project)
+    Mock.withFan(project, { id = 41, protocol = 116, room = 11, name = "Ceiling Fan", on = true, speed = 2, preset = 3 })
+    Mock.withFan(project, { id = 42, protocol = 117, room = 10, name = "Patio Fan" })
+    return project
+end
+
+-- Security partitions (security.c4i, 1.2.0) with the variables bkwagner read on a live Director
+-- (#15). Variable 1004, which DirectorLink does not read, holds a text that must never reach the API.
+Mock.PARTITION_VARIABLES = {
+    [1000] = "HOME_STATE", [1001] = "AWAY_STATE", [1002] = "DISARMED_STATE", [1003] = "ALARM_STATE",
+    [1005] = "TROUBLE_TEXT", [1006] = "IS_ACTIVE", [1007] = "PARTITION_STATE", [1008] = "DELAY_TIME_TOTAL",
+    [1009] = "DELAY_TIME_REMAINING", [1010] = "OPEN_ZONE_COUNT", [1011] = "ALARM_TYPE", [1012] = "ARMED_TYPE",
+}
+Mock.PARTITION_NAMES = {}
+for id, name in pairs(Mock.PARTITION_VARIABLES) do
+    Mock.PARTITION_NAMES[name] = id
+end
+
+-- An alarm panel (its driver's name is a placeholder) that lists three partitions, as a real panel
+-- lists every partition it has: 80 "House" (Living Room), disarmed with a zone open; 81 "Garage"
+-- (Kitchen), armed away; and 82 "Partition 3", which the panel does not use (IS_ACTIVE 0).
+function Mock.withPartitions(project)
+    local partitions = {
+        { id = 80, name = "House", room = 11, state = "DISARMED_NOT_READY", disarmed = "1", open = "1" },
+        { id = 81, name = "Garage", room = 10, state = "ARMED", away = "1", armedType = "Away" },
+        { id = 82, name = "Partition 3", room = 11, state = "DISARMED_READY", disarmed = "1", active = "0" },
+    }
+    local proxies = {}
+    for _, partition in ipairs(partitions) do
+        proxies[partition.id] = { deviceName = partition.name, driverFileName = "security.c4i" }
+    end
+    project.devices[130] = {
+        deviceName = "Alarm Panel", driverFileName = "alarm_panel.c4z", roomId = 11, roomName = "Living Room", proxies = proxies,
+    }
+    for _, partition in ipairs(partitions) do
+        project.devices[partition.id] = {
+            deviceName = partition.name, driverFileName = "security.c4i", roomId = partition.room,
+            roomName = partition.room == 10 and "Kitchen" or "Living Room",
+            protocol = { [130] = { deviceName = "Alarm Panel", driverFileName = "alarm_panel.c4z" } },
+        }
+        project.variables[partition.id] = {
+            [1000] = "0", [1001] = partition.away or "0", [1002] = partition.disarmed or "0", [1003] = "0",
+            [1004] = "Keypad text of " .. partition.name, [1005] = "", [1006] = partition.active or "1",
+            [1007] = partition.state, [1008] = "0", [1009] = "0", [1010] = partition.open or "0",
+            [1011] = "", [1012] = partition.armedType or "",
+        }
+        project.variableNames[partition.id] = {}
+        for variableId, name in pairs(Mock.PARTITION_VARIABLES) do
+            project.variableNames[partition.id][variableId] = name
+        end
+    end
+    return project
+end
+
+-- A partition reports: variables by name, e.g. { PARTITION_STATE = "ALARM", ALARM_STATE = "1" },
+-- each delivered like any variable change.
+function Mock.setPartition(mock, id, values)
+    for name, value in pairs(values) do
+        Mock.changeVariable(mock, id, assert(Mock.PARTITION_NAMES[name], "no partition variable " .. name), value)
+    end
+end
+
+-- The project the dev server and the app preview show: the default one plus every family added
+-- since (1.1.0, and the fans and the alarm's partitions of 1.2.0).
 function Mock.demoProject()
     local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
     Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
     Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
+    Mock.withFans(project)
+    Mock.withPartitions(project)
     return project
 end
 
@@ -496,7 +588,12 @@ function Mock.install(project)
         mock.listeners[#mock.listeners + 1] = { deviceId, variableId }
     end
 
-    function C4:UnregisterVariableListener(_deviceId, _variableId)
+    function C4:UnregisterVariableListener(deviceId, variableId)
+        for index = #mock.listeners, 1, -1 do
+            if mock.listeners[index][1] == deviceId and mock.listeners[index][2] == variableId then
+                table.remove(mock.listeners, index)
+            end
+        end
     end
 
     function C4:UnregisterAllVariableListeners()
@@ -727,7 +824,13 @@ function Mock.install(project)
     end
 
     function C4:SetTimer(delay, callback, repeating)
-        local timer = { delay = delay, callback = callback, repeating = repeating, cancelled = false, fired = false }
+        -- source: the file its callback comes from (with "/"), so a test can tell the scheduler's
+        -- minute timer (whose delay depends on the wall clock) from the one it is looking for.
+        local defined = type(callback) == "function" and debug.getinfo(callback, "S")
+        local timer = {
+            delay = delay, callback = callback, repeating = repeating, cancelled = false, fired = false,
+            source = defined and (defined.source:gsub("\\", "/")) or "",
+        }
         function timer:Cancel()
             self.cancelled = true
         end
