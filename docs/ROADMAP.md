@@ -16,15 +16,6 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 - Better diagnostics for devices DirectorLink does not support yet.
 - KNX percentage dimming ([#11](https://github.directorlink.io/issues/11)).
 
-## Waiting for a test on a real system
-
-Built and tested against a fake Director, not yet seen on a real one:
-
-- Fans and the alarm's status (1.2.0): the test system has neither.
-- Shabbat and holiday times (1.2.0).
-- Refresh Project and rediscovery after changes in Composer (1.1.0).
-- Director OS 3.3.x and other 3.4.x releases, before broad compatibility claims (tested on 3.4.3).
-
 ## Not planned
 
 - **Installing driver updates from the app, or automatically.** A driver can only replace itself through a way around Control4's file protection that Control4 does not document. Updates stay in Composer, with the app's guided notice (ADR-035).
