@@ -319,8 +319,8 @@ No DirectorLink build has run against a real alarm yet.
 
 ## History: the first milestones (to 0.2.0)
 
-What was built first, kept as written then. What has been built since is in `docs/ROADMAP.md` and
-`docs/releases/`.
+What was built first, kept as written then. What has been built since is in `docs/releases/`, and
+what comes next in `docs/ROADMAP.md`.
 
 ### Step 1 — bootstrap/package
 
