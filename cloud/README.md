@@ -12,7 +12,7 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/invitations.js` — tombstones for invitations whose email or creator goes, and the daily purge
 - `src/member-keys.js` — which account uses which key id; the controller's `keys` list ends the membership of accounts whose keys are all revoked
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
-- `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account
+- `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account, and accounts left without a sign-in
 - `src/google.js` — Google's authorization-code flow with PKCE
 - `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret, and the check of Apple's notifications
 - `src/apple-notifications.js` — Apple's server-to-server notifications about its accounts (ADR-041)
@@ -64,7 +64,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 cd cloud && echo 'TEST_TOKEN=local-test-token' > .dev.vars && npx --yes wrangler@4.143.0 dev --local --port 8787
 ```
 
-`.dev.vars` may also set `REQUEST_TIMEOUT_MS` (default 15000). In another terminal, a fake driver and the test endpoints:
+`.dev.vars` may also set `REQUEST_TIMEOUT_MS` (default 15000) and `UNUSED_ACCOUNT_DAYS` (default 90: the daily clean-up's wait for accounts nobody can sign in to; the tests set 0 and run it with `wrangler dev --test-scheduled`, `GET /__scheduled`). In another terminal, a fake driver and the test endpoints:
 
 ```bash
 node scripts/relay_smoke.mjs                                            # prints the home id it made up
@@ -74,7 +74,7 @@ node scripts/relay_smoke.mjs get "/v1/lights?room_id=10" --home <home_id> --toke
 
 `scripts/relay_smoke.mjs` speaks the protocol byte by byte over `node:net`/`node:tls` (its header lists every option). With `--url wss://api.directorlink.io` it checks the deployed relay; its client mode (`status`, `get` with `--url https://api.directorlink.io`) checks a real driver through it.
 
-Tests: `node --test tests/cloud/*.test.mjs`. `frames.test.mjs` checks the smoke script's WebSocket code against a fake relay. `relay.test.mjs` runs the relay end to end in `wrangler dev` on a free port, from a temporary copy of this folder with its own `.dev.vars`, so your `.dev.vars` and `.wrangler/` are left alone; its first run needs network access for `npx`.
+Tests: `node --test tests/cloud/*.test.mjs` (CI runs them too, `.github/workflows/validate.yml`). `frames.test.mjs` checks the smoke script's WebSocket code against a fake relay, and `jwt.test.mjs` the signing-key cache, in Node. `relay.test.mjs` (and the accounts, Apple and homes tests) run the Worker end to end in `wrangler dev` on a free port, from a temporary copy of this folder with its own `.dev.vars`, so your `.dev.vars` and `.wrangler/` are left alone; its first run needs network access for `npx`.
 
 ## Deploying (by hand for now)
 
@@ -106,12 +106,12 @@ curl https://api.directorlink.io/health
 | `GET /auth/providers` | `{"providers": ["google", "apple"]}`: the sign-ins set up here (their settings and secrets exist). No cookie; CORS for `APP_ORIGINS`. The app asks only when someone chooses to sign in, and shows only these buttons |
 | `GET /auth/google/start?return_to=<app URL>` | 302 to Google; sets the 10-minute `__Host-dl_signin` cookie. `return_to` must be on one of `APP_ORIGINS`, else the app's Settings |
 | `GET /auth/google/callback` | Google comes back here; 302 to `return_to` with `?signin=ok`, `cancelled`, `expired`, `failed` or `unverified`, and on success the `__Host-dl_session` cookie |
-| `GET /auth/{google\|apple}/start?…&link=1` | the same, adding that provider to the signed-in account (session cookie required; else `?signin=expired`). Outcomes `linked`, `taken` (the identity belongs to another account), `duplicate` (the account has one from this provider) |
+| `GET /auth/{google\|apple}/start?…&link=1` | the same, adding that provider to the signed-in account (session cookie required; else `?signin=expired`). Outcomes `linked`, `taken` (the identity belongs to another account, or another account began with it and gets it back when it signs in), `duplicate` (the account has one from this provider) |
 | `GET /auth/apple/start?return_to=<app URL>` | 302 to Apple (`response_mode=form_post`); sets the 10-minute `__Host-dl_signin_apple` cookie (`SameSite=None`: Apple's answer is a POST from its site). 503 `SIGN_IN_NOT_CONFIGURED` until the Apple settings exist |
 | `POST /auth/apple/callback` | Apple's form comes here; 303 to `return_to` with the same outcomes as Google's |
-| `POST /auth/apple/notifications` | Apple's server-to-server notifications (ADR-041): `{"payload": "<JWT>"}` signed with Apple's keys, issuer Apple, audience `APPLE_APP_ID` (the primary App ID). `consent-revoked`, `account-delete`: that Apple sign-in goes, and an account left without one is signed out everywhere (its homes and memberships stay); `email-disabled`, `email-enabled`: the stored address follows Apple's. 200 `{"ok": true}` (also for an Apple ID with no account, or a notice from before the person's last sign-in); 400 `INVALID_REQUEST` / `INVALID_NOTIFICATION`; 503 `NOTIFICATIONS_NOT_CONFIGURED` without `APPLE_APP_ID` |
+| `POST /auth/apple/notifications` | Apple's server-to-server notifications (ADR-041): `{"payload": "<JWT>"}` signed with Apple's keys, issuer Apple, audience `APPLE_APP_ID` (the primary App ID). `consent-revoked`, `account-deleted` (older documents: `account-delete`, also accepted): that Apple sign-in goes, and an account left without one is signed out everywhere. After `consent-revoked` it stays as it was for the same Apple ID to come back; after `account-deleted` it keeps nothing of the person: without a home it is deleted, with one it stays for the home without name and email, outside other homes (homes, their members and keys stay). `email-disabled`, `email-enabled`: the stored address follows Apple's. 200 `{"ok": true}` (also for an Apple ID with no account, or a notice from before the person's last sign-in); 400 `INVALID_REQUEST` / `INVALID_NOTIFICATION` (the log line names the refused audience); 503 `NOTIFICATIONS_NOT_CONFIGURED` without `APPLE_APP_ID`, `PROVIDER_UNREACHABLE` when Apple's keys cannot be read |
 | `GET /v1/me` | `{"id", "email", "name", "created_at", "providers", "sign_in_providers"}` (`providers`: the account's, `google`, `apple`; `sign_in_providers`: those set up here), or 401 `NOT_SIGNED_IN` |
-| `DELETE /v1/me/identities/{google\|apple}` | 204: the account no longer signs in with that provider; 409 `LAST_SIGN_IN` for its only one |
+| `DELETE /v1/me/identities/{google\|apple}` | 204: the account no longer signs in with that provider; 409 `LAST_SIGN_IN` for its only one, 409 `SIGN_IN_HELD_ELSEWHERE` (nothing changed) when another account began with the one it would keep |
 | `DELETE /v1/me` | 204; the account and all its sessions are deleted |
 | `POST /auth/logout` | 204; this session ends |
 | `POST /auth/logout?everywhere=1` | 204; every session of the account ends, on every device |
@@ -126,7 +126,7 @@ curl https://api.directorlink.io/health
 | `POST /v1/homes/{home_id}/e2e` | `{ envelope }` sealed by a member's device; `{ envelope }` sealed by the home. 403 `NOT_A_MEMBER`, 400 `INVALID_ENVELOPE` (also for requests over 128 KiB), 503 `HOME_OFFLINE`, 504 `HOME_TIMEOUT`, or the driver's refusal code |
 | `POST /v1/homes/{home_id}/secret` | `{ secret_sha256 }` from the controller (`POST /v1/remote/secret`, home network); the owner only (403 `OWNER_ONLY`). 204: only the new secret opens the home's connection from now on, and the driver is reconnected |
 | `POST /v1/homes/{home_id}/invitations` | For drivers before 1.0.0, which do not register their invitations themselves: `{ invitation_id, email, expires_at }` of an invitation the controller made; 201. The home's owner only (403 `OWNER_ONLY`). Registered once: 409 `INVITATION_EXISTS`; at most 20 waiting per account and home: 429 `INVITATION_LIMIT_REACHED` |
-| `POST /v1/join` | `{ home_id, invitation_id, envelope[, ask_owner] }` sealed with the invitation's secret, by the invited email (404 `INVITATION_NOT_FOUND`); `{ home_id, envelope, member }` with the new key sealed inside; `member` says whether the account now belongs to the home. Another email (ADR-041): with `ask_owner: true`, 202 `{"status", "code", "requested_at", "decided_at", "expires_at"}` and nothing is sent to the home until the owner approves (then the same call joins); 403 `REFUSED_BY_OWNER` once refused; 429 `JOIN_REQUEST_LIMIT_REACHED` (5 per invitation, 20 waiting per home); without `ask_owner`, 403 `EMAIL_MISMATCH` |
+| `POST /v1/join` | `{ home_id, invitation_id, envelope[, ask_owner] }` sealed with the invitation's secret, by the invited email (404 `INVITATION_NOT_FOUND`); `{ home_id, envelope, member }` with the new key sealed inside; `member` says whether the account now belongs to the home. Another email (ADR-041): with `ask_owner: true`, 202 `{"status", "code", "requested_at", "decided_at", "expires_at"}` and nothing is sent to the home until the owner approves (then the same call joins); 403 `REFUSED_BY_OWNER` once refused; 429 `JOIN_REQUEST_LIMIT_REACHED` (5 open per invitation, 20 waiting per home on invitations still waiting); without `ask_owner`, 403 `EMAIL_MISMATCH`. An approved account the owner refused while the home made its key gets 403 `REFUSED_BY_OWNER` and no envelope (logged `join_key_withheld`) |
 | `GET /v1/join/{home_id}/{invitation_id}` | this account's request: `{"status": "pending" \| "approved" \| "refused" \| "expired", "code", "requested_at", "decided_at", "expires_at"}`; 404 `NOT_FOUND` (none), 404 `INVITATION_NOT_FOUND` (used, revoked, gone) |
 | `DELETE /v1/join/{home_id}/{invitation_id}` | 204: the request is withdrawn (not a refused one: 404) |
 | `GET /v1/homes/{home_id}/join-requests` | the owner only (403 `OWNER_ONLY`): `{"items": [{"id", "user_id", "name", "email", "email_hidden", "providers", "account_created_at", "requested_at", "status", "decided_at", "code", "invitation": {"id", "email", "expires_at"}}]}`, pending and approved requests for invitations still waiting; `email` is null when Apple hides it |
@@ -134,7 +134,7 @@ curl https://api.directorlink.io/health
 | `GET /v1/homes/{home_id}/members` | the owner only: `{"items": [{"user_id", "email", "name", "owner", "added_at", "key_ids"}]}`; `key_ids`: the home's API keys this account uses, as far as the cloud has seen (the key an invitation made, and each key the home accepted a sealed request with) |
 | `DELETE /v1/homes/{home_id}/members/{user_id}` | 204: the owner removes someone, or anyone leaves (the owner cannot, 409) |
 
-They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`, `src/index.js`) removes invitations a day after their expiry, with their requests to join, and expired sessions and unfinished sign-ins.
+They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`, `src/index.js`) removes invitations a day after their expiry, with their requests to join, and expired sessions and unfinished sign-ins; and accounts nobody can sign in to (Apple's consent-revoked took their only sign-in) that nobody signed in to for 90 days, as after Apple's account-deleted (ADR-041: deleted without a home, emptied of the person with one).
 
 `/v1/me`, `/v1/homes…`, `/v1/join` and `/auth/logout` answer CORS with credentials only for `APP_ORIGINS`, and `DELETE`/`POST` from any other origin (or none) are refused with 403 `ORIGIN_NOT_ALLOWED`.
 

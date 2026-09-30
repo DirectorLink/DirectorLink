@@ -15,7 +15,7 @@
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
-import { handleAccounts } from "./accounts.js";
+import { handleAccounts, purgeAccountsWithoutSignIn } from "./accounts.js";
 import { handleAppleNotification } from "./apple-notifications.js";
 import { handleHomes } from "./homes.js";
 import { HomeRelay } from "./home-relay.js";
@@ -33,6 +33,7 @@ export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(purgeInvitations(env));
     ctx.waitUntil(purgeSessions(env));
+    ctx.waitUntil(purgeAccountsWithoutSignIn(env));
   },
 
   async fetch(request, env) {

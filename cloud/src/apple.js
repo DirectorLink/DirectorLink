@@ -136,8 +136,9 @@ export async function verifyIdToken(env, idToken, { nonce, now = Date.now() }) {
 }
 
 // The events Apple sends to POST /auth/apple/notifications (apple-notifications.js). Apple's
-// documentation names the last one "account-delete"; "account-deleted" is taken as the same.
-const EVENT_TYPES = new Set(["email-disabled", "email-enabled", "consent-revoked", "account-delete", "account-deleted"]);
+// documentation now names the last one "account-deleted"; older documents say "account-delete",
+// which is taken as the same.
+const EVENT_TYPES = new Set(["email-disabled", "email-enabled", "consent-revoked", "account-deleted", "account-delete"]);
 
 // Checks one of Apple's server-to-server notifications: the `payload` of its POST, a JWT signed
 // with Apple's keys (those of its ID tokens), issued by Apple, for DirectorLink's primary App ID.
@@ -163,7 +164,7 @@ export async function verifyNotification(env, payload, now = Date.now()) {
   const at = Number(events.event_time);
   const time = Number.isFinite(at) && at > 0 ? (at < 1e12 ? at * 1000 : at) : typeof claims.iat === "number" ? claims.iat * 1000 : now;
   const email = typeof events.email === "string" && events.email.includes("@") && events.email.length <= 254 ? events.email.toLowerCase() : null;
-  return { type: events.type === "account-deleted" ? "account-delete" : events.type, subject: events.sub, email, private: isTrue(events.is_private_email), time };
+  return { type: events.type === "account-delete" ? "account-deleted" : events.type, subject: events.sub, email, private: isTrue(events.is_private_email), time };
 }
 
 // The Apple side of accounts.js: how a sign-in starts and comes back.

@@ -24,30 +24,62 @@ export function decodeJson(part) {
 
 // Each provider's signing keys are kept for an hour, and asked for again early only when a token
 // names a key not among them, at most once a minute: made-up tokens posted to this Worker (Apple's
-// notifications are open to anyone) cannot make it ask the provider again and again.
+// notifications are open to anyone) cannot make it ask the provider again and again. Tokens that
+// arrive while the keys are being read wait for that one read. A read that fails (the provider down,
+// an error page, no keys) keeps the keys it had and still counts as the minute's try.
 const KEYS_KEEP_MS = 3600 * 1000;
 const KEYS_RETRY_MS = 60 * 1000;
-const signingKeys = new Map(); // JWKS URL -> { keys, at }
+const signingKeys = new Map(); // JWKS URL -> { keys, at, tried }
+const reading = new Map(); // JWKS URL -> the read under way
 
-async function readKeys(jwksUrl, provider, kept) {
-  try {
-    const jwks = await (await fetch(jwksUrl)).json();
-    const entry = { keys: Array.isArray(jwks?.keys) ? jwks.keys : [], at: Date.now() };
-    signingKeys.set(jwksUrl, entry);
-    return entry;
-  } catch (error) {
-    if (kept) {
-      return kept;
-    }
-    throw new SignInError("PROVIDER_UNREACHABLE", `Could not read ${provider}'s signing keys: ${error}`);
+async function fetchKeys(jwksUrl) {
+  const response = await fetch(jwksUrl);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
   }
+  const jwks = await response.json();
+  const keys = Array.isArray(jwks?.keys) ? jwks.keys.filter((key) => key && typeof key.kid === "string") : [];
+  if (!keys.length) {
+    throw new Error("no keys in the answer");
+  }
+  return keys;
+}
+
+function readKeys(jwksUrl, provider) {
+  let read = reading.get(jwksUrl);
+  if (read) {
+    return read;
+  }
+  const tried = Date.now();
+  read = fetchKeys(jwksUrl)
+    .then(
+      (keys) => {
+        const entry = { keys, at: tried, tried };
+        signingKeys.set(jwksUrl, entry);
+        return entry;
+      },
+      (error) => {
+        const kept = signingKeys.get(jwksUrl);
+        signingKeys.set(jwksUrl, { keys: kept?.keys ?? [], at: kept?.at ?? 0, tried });
+        if (kept?.keys.length) {
+          return signingKeys.get(jwksUrl);
+        }
+        throw new SignInError("PROVIDER_UNREACHABLE", `Could not read ${provider}'s signing keys: ${error}`);
+      }
+    )
+    .finally(() => reading.delete(jwksUrl));
+  reading.set(jwksUrl, read);
+  return read;
 }
 
 async function signingKey(jwksUrl, kid, provider) {
   let entry = signingKeys.get(jwksUrl);
-  const age = entry ? Date.now() - entry.at : Infinity;
-  if (age > KEYS_KEEP_MS || (age > KEYS_RETRY_MS && !entry.keys.some((key) => key.kid === kid))) {
-    entry = await readKeys(jwksUrl, provider, entry);
+  if (!entry || Date.now() - entry.at > KEYS_KEEP_MS || !entry.keys.some((key) => key.kid === kid)) {
+    if (reading.has(jwksUrl) || !entry || Date.now() - entry.tried >= KEYS_RETRY_MS) {
+      entry = await readKeys(jwksUrl, provider);
+    } else if (!entry.keys.length) {
+      throw new SignInError("PROVIDER_UNREACHABLE", `Could not read ${provider}'s signing keys a moment ago`);
+    }
   }
   const jwk = entry.keys.find((key) => key.kid === kid);
   if (!jwk) {
@@ -84,7 +116,10 @@ export async function verifySignedJwt(token, { jwksUrl, issuers, audience, provi
     throw new SignInError("INVALID_ID_TOKEN", `The token was not issued by ${provider}`);
   }
   if (!audience || !audiences.includes(audience)) {
-    throw new SignInError("INVALID_ID_TOKEN", "The token is for another application");
+    const error = new SignInError("INVALID_ID_TOKEN", "The token is for another application");
+    // The provider signed it: which application it named (a public client id) can be logged.
+    error.audience = audiences.filter((item) => typeof item === "string").join(" ").slice(0, 200) || null;
+    throw error;
   }
   if (claims.exp !== undefined && (typeof claims.exp !== "number" || claims.exp + CLOCK_SKEW_SECONDS < seconds)) {
     throw new SignInError("INVALID_ID_TOKEN", "The token has expired");

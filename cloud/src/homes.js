@@ -44,8 +44,9 @@ const MAX_PENDING_PER_MEMBER = 20;
 const MAX_PENDING_PER_HOME = 20;
 const SECRET_SHA256 = /^[0-9a-f]{64}$/;
 
-// Requests to join with an invitation made for another email (ADR-041): a few per invitation, and
-// at most 20 waiting for a home's owner.
+// Requests to join with an invitation made for another email (ADR-041): a few open per invitation
+// (waiting or approved; a refusal still stops the account it refused), and at most 20 waiting for a
+// home's owner on invitations that can still be accepted.
 const MAX_REQUESTS_PER_INVITATION = 5;
 const MAX_WAITING_REQUESTS_PER_HOME = 20;
 // Apple's Hide My Email: an address that says nothing about who it is.
@@ -389,11 +390,12 @@ async function askOwner(env, user, homeId, invitationId, invitation) {
   const inserted = await env.DB.prepare(
     "INSERT INTO join_requests (id, home_id, invitation_id, user_id, code, status, requested_at) SELECT ?, ?, ?, ?, ?, 'pending', ? " +
       `WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND ${LIVE_INVITATION}) ` +
-      "AND (SELECT COUNT(*) FROM join_requests WHERE home_id = ? AND invitation_id = ?) < ? " +
-      "AND (SELECT COUNT(*) FROM join_requests WHERE home_id = ? AND status = 'pending') < ? " +
+      "AND (SELECT COUNT(*) FROM join_requests WHERE home_id = ? AND invitation_id = ? AND status IN ('pending', 'approved')) < ? " +
+      "AND (SELECT COUNT(*) FROM join_requests JOIN invitations ON invitations.home_id = join_requests.home_id AND invitations.id = join_requests.invitation_id " +
+      `WHERE join_requests.home_id = ? AND join_requests.status = 'pending' AND ${LIVE_INVITATION}) < ? ` +
       "ON CONFLICT (home_id, invitation_id, user_id) DO NOTHING"
   )
-    .bind(id, homeId, invitationId, user.id, code, now, homeId, invitationId, now, homeId, invitationId, MAX_REQUESTS_PER_INVITATION, homeId, MAX_WAITING_REQUESTS_PER_HOME)
+    .bind(id, homeId, invitationId, user.id, code, now, homeId, invitationId, now, homeId, invitationId, MAX_REQUESTS_PER_INVITATION, homeId, now, MAX_WAITING_REQUESTS_PER_HOME)
     .run();
   if (!inserted.meta.changes) {
     const asked = await env.DB.prepare("SELECT code, status, requested_at, decided_at FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ?")
@@ -459,7 +461,12 @@ async function join(request, env, user) {
   // The controller has made the key; membership follows only while the invitation is still
   // pending here (a change of owner meanwhile tombstones it) and, for another email, still
   // approved. The used invitation goes, with the requests to join with it. The sealed answer goes
-  // back either way, with whether this account is now a member.
+  // back with whether this account is now a member; for another email only if it is: an account
+  // the owner refused while the home made the key never gets it (the owner sees the new key in
+  // People and devices, and can remove it).
+  const decided = mine
+    ? null
+    : await env.DB.prepare("SELECT status FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ?").bind(homeId, input.invitation_id, user.id).first();
   const now = iso();
   const pending =
     "EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)" +
@@ -482,6 +489,10 @@ async function join(request, env, user) {
     }
   }
   const joined = Boolean(await member(env, homeId, user.id).catch(() => null));
+  if (!mine && !joined) {
+    log("join_key_withheld", { home: homeId, user: user.id, invitation: input.invitation_id, request: decided?.status ?? null, key_id: validKeyId(reply.key_id) ? reply.key_id : null });
+    return decided?.status === "refused" ? refusedJoin() : invitationNotFound();
+  }
   log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined, approved: !mine });
   return json({ home_id: homeId, envelope: reply.envelope, member: joined });
 }
