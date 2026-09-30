@@ -953,6 +953,61 @@ select:disabled {
   height: 20px;
 }
 
+/* Home, a list a summary chip filters: Turn off all next to Show all (views/home.js, turn-off.js).
+   On a phone they go under the title, at the end; a long label wraps rather than scroll. */
+.section-head.is-filtered {
+  flex-wrap: wrap;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.turn-off-button {
+  min-width: 0;
+  white-space: normal;
+  text-align: center;
+}
+
+.turn-off-button.is-confirm {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primaryText);
+}
+
+.turn-off-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding-inline: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.turn-off-state.is-done {
+  color: var(--okText);
+}
+
+.turn-off-state .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.turn-off-failed {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding-inline-start: 1.2em;
+  overflow-wrap: anywhere;
+}
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);

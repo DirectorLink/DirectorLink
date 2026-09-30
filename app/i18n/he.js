@@ -154,6 +154,35 @@ export default {
       blinds: "חדרים עם תריס פתוח",
     },
     showAll: "הצג הכול",
+    off: {
+      button: {
+        lights: { one: "כיבוי התאורה", two: "כיבוי שתי התאורות", many: "כיבוי כל ה-{count}", other: "כיבוי כל ה-{count}" },
+        climate: { one: "כיבוי המזגן", two: "כיבוי שני המזגנים", many: "כיבוי כל ה-{count}", other: "כיבוי כל ה-{count}" },
+        blinds: { one: "סגירת התריס", two: "סגירת שני התריסים", many: "סגירת כל ה-{count}", other: "סגירת כל ה-{count}" },
+      },
+      hint: {
+        lights: "מכבה את האורות הדלוקים בחדרים האלה",
+        climate: "מכבה את המזגנים הפועלים בחדרים האלה",
+        blinds: "סוגר את התריסים הפתוחים בחדרים האלה",
+      },
+      confirm: {
+        lights: { one: "הקישו שוב לכיבוי", two: "הקישו שוב לכיבוי שתיהן", many: "הקישו שוב לכיבוי {count}", other: "הקישו שוב לכיבוי {count}" },
+        climate: { one: "הקישו שוב לכיבוי", two: "הקישו שוב לכיבוי שניהם", many: "הקישו שוב לכיבוי {count}", other: "הקישו שוב לכיבוי {count}" },
+        blinds: { one: "הקישו שוב לסגירה", two: "הקישו שוב לסגירת שניהם", many: "הקישו שוב לסגירת {count}", other: "הקישו שוב לסגירת {count}" },
+      },
+      running: { lights: "מכבה…", climate: "מכבה…", blinds: "סוגר…" },
+      done: "בוצע",
+      failed: {
+        lights: { one: "תאורה אחת לא כבתה:", two: "{count} תאורות לא כבו:", many: "{count} תאורות לא כבו:", other: "{count} תאורות לא כבו:" },
+        climate: { one: "מזגן אחד לא כבה:", two: "{count} מזגנים לא כבו:", many: "{count} מזגנים לא כבו:", other: "{count} מזגנים לא כבו:" },
+        blinds: { one: "תריס אחד לא נסגר:", two: "{count} תריסים לא נסגרו:", many: "{count} תריסים לא נסגרו:", other: "{count} תריסים לא נסגרו:" },
+      },
+      error: {
+        lights: "הכיבוי נכשל: {error}",
+        climate: "הכיבוי נכשל: {error}",
+        blinds: "הסגירה נכשלה: {error}",
+      },
+    },
     noMatch: "אין חדרים מתאימים כרגע.",
     noDevicesTitle: "אין עדיין מה לשלוט בו",
     noDevicesText: "DirectorLink לא מצא תאורה, מיזוג, תריסים או מצלמות בפרויקט ה-Control4.",

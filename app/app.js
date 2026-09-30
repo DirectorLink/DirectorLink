@@ -215,6 +215,7 @@ function signature() {
     state.offlineCopy,
     ui.filter,
     ui.find,
+    ui.offRuns,
     ui.editFavorites,
     ui.relayStage,
     ui.doorbellStage,

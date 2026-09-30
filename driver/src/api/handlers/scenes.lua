@@ -2,6 +2,8 @@
 -- members and above run them, admins make and change them, and try steps before saving
 -- (POST /v1/scenes/try). A run sends the same commands as the device routes do; doors and gates
 -- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
+-- POST /v1/off (1.3.0, Home's "Turn off all") runs one step of that kind: lights off, AC off or
+-- blinds closed, on the devices it names.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -167,6 +169,27 @@ local function validateSet(stepType, set, field)
     return { action = "pulse" }
 end
 
+-- 1 to `maximum` ids of supported devices of the step type, without repeats; nil and a problem
+-- otherwise.
+local function validateDeviceIds(registry, ids, stepType, field, maximum)
+    if not isList(ids) or #ids == 0 or #ids > maximum then
+        return nil, Problem.invalidField(field, "device_ids must be a list of 1 to " .. maximum .. " device ids")
+    end
+    local deviceIds = Json.array()
+    local seen = {}
+    for _, id in ipairs(ids) do
+        local device = isWhole(id, 1, math.huge) and registry.getDevice(id) or nil
+        if not device or device.kind ~= KINDS[stepType] or device.supported ~= true then
+            return nil, Problem.invalidField(field, "Device " .. tostring(id) .. " is not one of this home's " .. stepType)
+        end
+        if not seen[id] then
+            seen[id] = true
+            deviceIds[#deviceIds + 1] = id
+        end
+    end
+    return deviceIds
+end
+
 local function validateStep(registry, item, field)
     if type(item) ~= "table" or item == Json.null or Json.isArray(item) then
         return nil, Problem.invalidField(field, field .. " must be an object")
@@ -189,20 +212,10 @@ local function validateStep(registry, item, field)
     end
     local deviceIds = nil
     if item.device_ids ~= nil and item.device_ids ~= Json.null then
-        if not isList(item.device_ids) or #item.device_ids == 0 or #item.device_ids > Scenes.MAX_DEVICES then
-            return nil, Problem.invalidField(field .. ".device_ids", "device_ids must be a list of 1 to " .. Scenes.MAX_DEVICES .. " device ids")
-        end
-        deviceIds = Json.array()
-        local seen = {}
-        for _, id in ipairs(item.device_ids) do
-            local device = isWhole(id, 1, math.huge) and registry.getDevice(id) or nil
-            if not device or device.kind ~= KINDS[stepType] or device.supported ~= true then
-                return nil, Problem.invalidField(field .. ".device_ids", "Device " .. tostring(id) .. " is not one of this home's " .. stepType)
-            end
-            if not seen[id] then
-                seen[id] = true
-                deviceIds[#deviceIds + 1] = id
-            end
+        local problem
+        deviceIds, problem = validateDeviceIds(registry, item.device_ids, stepType, field .. ".device_ids", Scenes.MAX_DEVICES)
+        if not deviceIds then
+            return nil, problem
         end
     end
     local set, problem = validateSet(stepType, item.set, field .. ".set")
@@ -634,6 +647,35 @@ function Handlers.try(ctx)
     end
     local result = run(ctx, steps)
     ctx.services.log.info("scenes", "steps tried", { steps = #steps, by = ctx.apiKey.id, ran = result.ran })
+    return 202, result
+end
+
+-- What POST /v1/off does to each type: never anything that opens or turns on.
+local OFF = { lights = { on = false }, climate = { mode = "off" }, blinds = { position = 0 } }
+local MAX_OFF_DEVICES = 500
+
+-- POST {"type": "lights" | "climate" | "blinds", "device_ids": [...]}: turns off those lights or
+-- thermostats, or closes those blinds, in one request (members): Home's "Turn off all" in the app,
+-- which names the ones it shows on or open. Answers like running a scene.
+function Handlers.off(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { type = true, device_ids = true }, true)
+    if problem then
+        return problem
+    end
+    local offType = body.type
+    if type(offType) ~= "string" or not OFF[offType] then
+        return Problem.invalidField("type", "type must be one of lights, climate, blinds")
+    end
+    local deviceIds
+    deviceIds, problem = validateDeviceIds(ctx.services.registry, body.device_ids, offType, "device_ids", MAX_OFF_DEVICES)
+    if not deviceIds then
+        return problem
+    end
+    local result = run(ctx, { { type = offType, device_ids = deviceIds, set = OFF[offType] } })
+    ctx.services.log.info("scenes", "turned off", {
+        type = offType, devices = #deviceIds, by = ctx.apiKey.id, ran = result.ran, skipped = result.skipped, failed = result.failed,
+    })
     return 202, result
 end
 

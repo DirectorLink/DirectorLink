@@ -61,6 +61,8 @@ export const state = {
 // UI-only state (not from the controller).
 export const ui = {
   filter: null, // home summary filter: "lights" | "climate" | "blinds"
+  // Home's Turn off all (turn-off.js): filter -> { stage: "confirm" | "running" | "done" | "partial" | "error", … }
+  offRuns: {},
   editFavorites: false,
   roomDrafts: {}, // settings: room names being edited, "roomId:lang" -> text
   roomMessages: {}, // settings: per-room save result

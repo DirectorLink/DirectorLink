@@ -153,6 +153,36 @@ export default {
       blinds: "Rooms with blinds open",
     },
     showAll: "Show all",
+    // Turn off all, next to Show all in a filtered list (members and above).
+    off: {
+      button: {
+        lights: { one: "Turn off the light", other: "Turn off all {count}" },
+        climate: { one: "Turn off the AC", other: "Turn off all {count}" },
+        blinds: { one: "Close the blind", other: "Close all {count}" },
+      },
+      hint: {
+        lights: "Turns off the lights that are on in these rooms",
+        climate: "Turns off the AC that is on in these rooms",
+        blinds: "Closes the open blinds in these rooms",
+      },
+      confirm: {
+        lights: { one: "Tap again to turn it off", other: "Tap again to turn off {count}" },
+        climate: { one: "Tap again to turn it off", other: "Tap again to turn off {count}" },
+        blinds: { one: "Tap again to close it", other: "Tap again to close {count}" },
+      },
+      running: { lights: "Turning off…", climate: "Turning off…", blinds: "Closing…" },
+      done: "Done",
+      failed: {
+        lights: { one: "1 light didn’t turn off:", other: "{count} lights didn’t turn off:" },
+        climate: { one: "1 AC didn’t turn off:", other: "{count} AC didn’t turn off:" },
+        blinds: { one: "1 blind didn’t close:", other: "{count} blinds didn’t close:" },
+      },
+      error: {
+        lights: "Couldn’t turn them off: {error}",
+        climate: "Couldn’t turn them off: {error}",
+        blinds: "Couldn’t close them: {error}",
+      },
+    },
     noMatch: "No rooms match right now.",
     noDevicesTitle: "Nothing to control yet",
     noDevicesText: "DirectorLink did not find lights, climate, blinds or cameras in this Control4 project.",

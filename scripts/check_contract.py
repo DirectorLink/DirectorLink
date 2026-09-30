@@ -455,6 +455,14 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
+    # Home's "Turn off all" (1.3.0): lights, AC or blinds it names, never doors.
+    off = client.check("POST", "/v1/off", 202, body={"type": "lights", "device_ids": [20, 22]})
+    if (off["ran"], off["failed"], off["skipped"]) != (2, 0, 0):
+        fail(f"POST /v1/off should turn off both lights: {off}")
+    client.check("POST", "/v1/off", 202, body={"type": "climate", "device_ids": [30, 31, 32]})
+    client.check("POST", "/v1/off", 202, body={"type": "blinds", "device_ids": [50]})
+    client.check("POST", "/v1/off", 400, body={"type": "relays", "device_ids": [70]})
+    client.check("POST", "/v1/off", 400, body={"type": "lights", "device_ids": [70]})
     auto = {"type": "climate", "device_ids": [31], "set": {"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}}
     dual = client.check("POST", "/v1/scenes", 201, body={"name": "Study auto", "steps": [auto]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [auto]})
@@ -540,6 +548,7 @@ def scenario(client, bridge):
     client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
     client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
+    client.check("POST", "/v1/off", 403, body={"type": "lights", "device_ids": [20]})
     client.check("GET", "/v1/schedules", 200)
     client.check("GET", "/v1/weather", 200)
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})

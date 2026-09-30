@@ -79,6 +79,10 @@ restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
 
+`POST /v1/off` with `type` (lights, climate, blinds) and `device_ids` runs one step on those devices
+(members, 1.3.0): lights off, AC off or blinds closed, and answers the same way. It is Home's "Turn
+off all" in the app.
+
 ## The app
 
 - **Scenes** tab: every scene with a Run button (members and above); admins tap a name to change

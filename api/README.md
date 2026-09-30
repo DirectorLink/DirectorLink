@@ -134,6 +134,18 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 - A move takes seconds to a minute, and `position` may keep the value the blind left until it stops: while `moving` is true, show `target_position`, and read the blind again every few seconds. `moving` is `null` when the controller does not report movement.
 - `position` and `target_position` are `null` when unknown.
 
+## Turning off several at once
+
+Since 1.3.0 `POST /v1/off` turns off lights, or thermostats (mode `off`), or closes blinds, in one request (members and above; the app's **Turn off all** on Home):
+
+```bash
+curl -X POST http://<controller-ip>:41999/v1/off \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"type": "lights", "device_ids": [20, 22, 25]}'
+```
+
+`type` is `lights`, `climate` or `blinds`; `device_ids` names 1 to 500 of them. It answers `202` like running a scene: `ran`, `skipped` (e.g. a thermostat without an Off mode, `MODE_NOT_SUPPORTED`), `failed` (refused by the controller) and `problems` with each such device. It never turns anything on, and doors and gates are not among its types.
+
 ## Relays
 
 Doors and gates open with `POST /v1/relays/{id}/pulse` (the relay closes, then opens again after 500 ms), as in the app and scenes. `PATCH` with `{"state": "open"}` releases a relay. `{"state": "closed"}` would hold it closed, and its door or gate open: since 1.1.1 it is `409 HOLD_NOT_ALLOWED` and nothing is sent, unless an installer sets **Relay Hold** to Allowed in Composer.

@@ -465,4 +465,109 @@ function tests.a_fan_speed_a_unit_does_not_have_is_reported()
     T.eq(onlyFan.problems[1].code, "NOT_SUPPORTED")
 end
 
+-- POST /v1/off (1.3.0): Home's "Turn off all" turns off the lights or AC, or closes the blinds,
+-- that the app shows on or open, in one request.
+local function turnOff(mock, key, body)
+    local before = #mock.commands
+    local answer = T.http(mock, "POST", "/v1/off", { key = key, body = body })
+    return answer, commandsSince(mock, before)
+end
+
+function tests.a_member_turns_off_the_lights_it_names_in_one_request()
+    local mock, admin = start()
+    local member = createKey(mock, admin, "member")
+    local answer, sent = turnOff(mock, member, { type = "lights", device_ids = { 20, 22, 20 } })
+    T.eq(answer.status, 202, answer.body)
+    T.eq(answer.json.ran, 2, "a repeated id counts once")
+    T.eq(answer.json.skipped, 0)
+    T.eq(answer.json.failed, 0)
+    T.eq(#answer.json.problems, 0)
+    T.truthy(answer.json.scene_id == nil)
+    T.same(sent, {
+        { device = 20, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET_PRESET_ID = 2 } },
+        { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET_PRESET_ID = 2 } },
+    }, "the Off preset, as PATCH {\"on\": false} sends; nothing to the hall light")
+end
+
+function tests.turn_off_sets_the_ac_off_and_closes_the_blinds()
+    local mock, admin = startDual()
+    local member = createKey(mock, admin, "member")
+    local climate, sent = turnOff(mock, member, { type = "climate", device_ids = { 30, 31 } })
+    T.eq(climate.status, 202, climate.body)
+    T.eq(climate.json.ran, 2)
+    T.same(sent, {
+        { device = 30, command = "SET_MODE_HVAC", params = { MODE = "Off" } },
+        { device = 31, command = "SET_MODE_HVAC", params = { MODE = "Off" } },
+    }, "only the mode, as a scene's All AC: Off")
+
+    local blinds
+    blinds, sent = turnOff(mock, member, { type = "blinds", device_ids = { 50 } })
+    T.eq(blinds.status, 202, blinds.body)
+    T.eq(blinds.json.ran, 1)
+    T.eq(#sent, 1, "only the living-room blind")
+    T.eq(sent[1].device, 50)
+    T.eq(sent[1].command, "SET_LEVEL_TARGET")
+    T.same(sent[1].params, { LEVEL_TARGET = 0 })
+end
+
+function tests.turn_off_says_which_devices_did_not_turn_off_and_runs_the_rest()
+    local project = Mock.project()
+    project.variables[30][1120] = "Heat,Cool"
+    local mock = Mock.startDriver(project)
+    local admin = T.pair(mock, "Chrome on Windows")
+    local skipped = turnOff(mock, admin, { type = "climate", device_ids = { 30 } })
+    T.eq(skipped.json.skipped, 1, "a thermostat without Off is left as it is")
+    T.eq(skipped.json.problems[1].device_id, 30)
+    T.eq(skipped.json.problems[1].code, "MODE_NOT_SUPPORTED")
+
+    local send = C4.SendToDevice
+    C4.SendToDevice = function(self, deviceId, command, params)
+        if deviceId == 20 then
+            error("device offline")
+        end
+        return send(self, deviceId, command, params)
+    end
+    local answer, sent = turnOff(mock, admin, { type = "lights", device_ids = { 20, 22 } })
+    C4.SendToDevice = send
+    T.eq(answer.status, 202, answer.body)
+    T.eq(answer.json.ran, 1)
+    T.eq(answer.json.failed, 1)
+    T.eq(answer.json.problems[1].device_id, 20)
+    T.eq(answer.json.problems[1].outcome, "failed")
+    T.eq(answer.json.problems[1].step, 1)
+    T.same(devicesOf(sent), { 22 }, "the desk lamp still turned off")
+end
+
+function tests.turn_off_is_for_members_and_never_opens_or_turns_on_anything()
+    local mock, admin = start()
+    local viewer = createKey(mock, admin, "viewer")
+    local doors = createKey(mock, admin, "doors")
+    local before = #mock.commands
+    T.eq(T.http(mock, "POST", "/v1/off", { key = viewer, body = { type = "lights", device_ids = { 20 } } }).status, 403, "viewers do not control")
+    T.eq(T.http(mock, "POST", "/v1/off", { body = { type = "lights", device_ids = { 20 } } }).status, 401)
+    local refused = function(body, field)
+        local answer = T.http(mock, "POST", "/v1/off", { key = doors, body = body })
+        T.eq(answer.status, 400, answer.body)
+        T.eq(answer.json.code, "INVALID_FIELD", answer.body)
+        T.eq(answer.json.errors[1].field, field, answer.body)
+    end
+    refused({ type = "relays", device_ids = { 70 } }, "type")
+    refused({ type = "fans", device_ids = { 41 } }, "type")
+    refused({ device_ids = { 20 } }, "type")
+    refused({ type = "lights" }, "device_ids")
+    refused({ type = "lights", device_ids = {} }, "device_ids")
+    refused({ type = "lights", device_ids = { 70 } }, "device_ids")
+    refused({ type = "climate", device_ids = { 20 } }, "device_ids")
+    refused({ type = "blinds", device_ids = { 50, 999 } }, "device_ids")
+    refused({ type = "lights", device_ids = { 20 }, set = { on = true } }, "set")
+    local many = {}
+    for index = 1, 501 do
+        many[index] = 20
+    end
+    refused({ type = "lights", device_ids = many }, "device_ids")
+    T.eq(#commandsSince(mock, before), 0, "nothing is sent")
+    local ok = T.http(mock, "POST", "/v1/off", { key = doors, body = { type = "lights", device_ids = { 21 } } })
+    T.eq(ok.status, 202, "doors and admin keys can do what members can")
+end
+
 return tests
