@@ -1,17 +1,14 @@
 # Roadmap
 
-What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.2.0](releases/v1.2.0.md). This page lists only what is still to come.
+What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.3.0](releases/v1.3.0.md). This page lists only what is still to come.
 
-## 1.3.0 (in progress)
+## 1.4.0 (in progress)
 
-- **The pairing code is never sent.** The app and the controller use the code to lock their key exchange (CPace), so someone who changes traffic during pairing can only make it fail (ADR-039).
-- **The API console's key expires after 24 hours.** It travels unprotected on the home network; an old console key stops working 24 hours after the update (ADR-040).
-- **Find my controller:** the app's pairing screen looks for the controller in the address ranges homes use, instead of typing its address.
-- **Turn off all from Home:** tap "7 lights on", "3 AC on" or "4 blinds open", then *Turn off all* / *Close all* in the list, with a confirm tap.
-- **Sign in with Apple**, with the owner's approval for a join whose email does not match the invitation (Apple can hide the email), and Apple's account notifications (ADR-041).
+- **Backup and restore:** admins download a backup of everything DirectorLink keeps (scenes, schedules, each person's settings, room names and order, which devices have access, the link to the account), locked with a password in the browser, and restore it after the driver was removed, the controller replaced or the project rebuilt.
 
 ## Later
 
+- An automatic daily backup to the home's account, locked end to end like remote access.
 - Releases signed on GitHub, the signature checked by the driver in plain Lua (the minimum OS stays 3.3.0).
 - Fans with other than four speeds, from the fan's own speed list.
 - Better diagnostics for devices DirectorLink does not support yet.

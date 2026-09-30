@@ -2,7 +2,68 @@
 
 ## Current release
 
-`v1.2.0` — Shabbat and holiday times, off until the Composer property Jewish Calendar is On (0y, ADR-037); the alarm's status, read-only and off until Alarm Status is On (0x, ADR-038, thanks to bkwagner, #15); fans (0w, thanks to bkwagner, #18); Forget key while the app is busy and shades after a restart (0v); rooms in order by dragging them (0u). Update DirectorLink in Composer (no reboot).
+`v1.3.0` — pairing never sends the code, and the API console's key lasts a day (0za, ADR-039, ADR-040); Find my controller (0zb); Sign in with Apple, the owner's approval of joins with another email, and Apple's notices (0zc, ADR-041); Turn off all from Home (0zd). Update DirectorLink in Composer (no reboot). The cloud is deployed before the app.
+
+## 0za. Pairing without sending the code, and the console's key (1.3.0)
+
+1. Update the driver in Composer, run **New Pairing Code**, and pair the app from a computer. It connects, and the Lua log shows *paired a new client … cpace=true*. In the browser's network tab, neither of the two `POST /v1/auth/pair` requests contains the code. Note how long each takes on the controller (estimated at under half a second each).
+2. A wrong code 4 times: the tries left count down 4, 3, 2, 1, and the fifth gives the one-minute lock. Another device can still pair.
+3. Pair the API console. Connection shows about 24 hours left and the warning line. Keys, and the app's People and devices, show the console key's expiry.
+4. The console key made before the update shows about 24 hours from the first 1.3.0 start, and keeps that value after a driver restart.
+5. After it expires (or after pairing a script with `expires_in: 60`), requests get `401 KEY_EXPIRED`, the key is gone from the list within a minute, and the console says *Your console key expired*, even with the app open meanwhile.
+6. A script pairs with `curl … -d '{"pairing_code":"…","name":"x"}'`: the key comes back in the clear, with `expires_at: null`.
+7. **Older controller:** with a 1.2.x driver (before updating), the app and the console show the "older DirectorLink" warning.
+   - **Cancel** makes it disappear at once, and nothing is sent.
+   - Warned again, type another address, or pick another controller in Find: the warning goes.
+   - **Pair anyway** pairs only the address the warning named.
+
+## 0zb. Find my controller (1.3.0)
+
+1. Use Chrome or Edge on a Windows computer on the home network, in a browser that never paired (or with site data cleared), at app.directorlink.io. The pairing screen shows **Find my controller** under the address.
+2. Tap it. The browser asks about devices on the local network, and the screen says to allow it. Allow.
+3. Within about 10 s the screen says *Found DirectorLink 1.3.0 at <address>*. The address is filled in, and the code field has the focus. Pair with a code from Composer.
+4. Pair again, then **Find my controller**: the address used before is asked first and found at once. **Cancel** during a search stops it.
+5. In DevTools → Network during a search, there is only `GET http://<ip>:41999/v1/health`, with no Authorization header.
+6. Android Chrome: the same as steps 2–3. iPhone Safari or Chrome: no button.
+7. Refuse the browser's prompt, then search: the screen says to allow local network access in the site's settings.
+8. On a network without the controller (e.g. a phone hotspot): *No controller found on this network…* within about 30 s.
+9. Hebrew: the button reads *חיפוש הבקר שלי*, right to left.
+
+## 0zc. Sign in with Apple, joins with another email, Apple's notices (1.3.0)
+
+After the cloud is deployed (migration 0005, the `APPLE_PRIVATE_KEY` secret, then the Worker), `curl https://api.directorlink.io/auth/providers` answers `["google","apple"]`.
+
+1. **Sign-in buttons.** In a private window, Settings → Account shows **Sign in**. Tap it: Google and Apple appear, one under the other on a phone, with no sideways scroll at 320 and 390 px. Apple's button is black, or white in the dark theme. Check Hebrew too.
+2. **Sign in with Apple.** Sign in with your Apple ID: you come back signed in, and Settings says it signs in with Apple. On a Google account, **Continue with Apple** links it; remove it again.
+3. **Approve.**
+   - Invite a Gmail address. On an iPhone, open the link, sign in with Apple choosing **Hide My Email**, and tap Accept. The iPhone shows *Waiting for the home's owner* and a code.
+   - On the owner's computer, open People and devices → **Asking to join**. Check the name, *email hidden by Apple*, Apple, the account's age, and the invitation's email, role and maker. Check the code matches, then **Approve**.
+   - Within about 5 s the iPhone opens Home through the account, and People shows the new account.
+4. **Refuse.** Repeat with another account and **Refuse**: the invitee is told the owner did not let this account join.
+5. **Notices.**
+   - In Apple's developer portal (Identifiers → io.directorlink.app → Sign in with Apple → Configure), set the server-to-server endpoint to `https://api.directorlink.io/auth/apple/notifications`.
+   - On an iPhone: Settings → your name → Sign in with Apple → DirectorLink → **Stop Using**. The Workers log shows `apple_notification` consent-revoked, and that account is signed out. Homes and members stay.
+   - Signing in with Apple again gives back the same account.
+   - A refused notice logs its `aud`. If it's `io.directorlink.signin`, tell the developers.
+
+## 0zd. Turn off all from Home (1.3.0)
+
+With Log Level Debug:
+1. On Home with no chip tapped, there is no new button. Tap *N lights on*: **Turn off all N** appears next to Show all. A viewer sees no button in any filtered list.
+2. Tap once: *Tap again to turn off N*, with Cancel instead of Show all.
+   - Wait 5 s: it goes back.
+   - Tap, then Cancel: it goes back.
+   - The API log shows no `POST /v1/off`.
+3. Tap twice: *Turning off…*, then *Done*.
+   - The lights that were on go off.
+   - The log shows exactly one `POST /v1/off -> 202`, and *turned off* with ran = N.
+   - The chip reads *All lights off*, and the button is gone.
+4. Hide a room (Settings → Rooms) and repeat: its lights stay on.
+5. Through the account on mobile data: one request, and about as quick.
+6. **Climate:** AC and floor heating go Off (`SET_MODE_HVAC Off` in the log). Thermostats already Off are not counted.
+7. **Blinds:** *Close all N*, then *Tap again to close N*. The blinds show closing, the button doesn't come back while they move, and once closed the chip reads *Blinds closed*.
+8. With one light's actuator unplugged, *1 light didn't turn off* names it and its room for 15 s. The rest are off, and the button stays for the one left.
+9. 320, 390 and 1280 px, English and Hebrew, light and dark: no sideways scroll, before and at the second tap.
 
 ## 0y. Shabbat and holidays (1.2.0)
 
