@@ -9,6 +9,7 @@ import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { pairWithCode } from "../session.js";
 import { signInButtons } from "./common.js";
+import { findController } from "./find.js";
 import { state, ui } from "../state.js";
 
 function draftInput(key, fallback, props) {
@@ -138,6 +139,7 @@ export function connectScreen() {
     h("label", { class: "field-label", for: "controller-host" }, t("connect.hostLabel")),
     host,
     h("p", { id: "controller-host-help", class: "field-help" }, t("connect.hostHelp")),
+    findController({ busy }),
     h("label", { class: "field-label", for: "pairing-code" }, t("connect.codeLabel")),
     code,
     h("p", { id: "pairing-code-help", class: "field-help" }, t("connect.codeHelp")),

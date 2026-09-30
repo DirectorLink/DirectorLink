@@ -71,6 +71,7 @@ export const ui = {
   schedulesMessage: null, // schedules list: saved, deleted or not switched
   calendarSettings: null, // Settings → Shabbat and holidays: the settings being changed (views/settings.js)
   drafts: {}, // form fields being typed: key -> text
+  find: null, // Find my controller on the pairing screen (views/find.js): { stage, range, controllers }
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture
