@@ -277,6 +277,10 @@ it:
 - At Debug, the start-up log lists each proxy's variables with their values, and its `GET_SETUP`
   answer (Snap One documents the number of speeds and their names there), which nothing depends
   on yet.
+- **Every fan is taken to have four speeds.** Snap One's fan proxy takes 0 to N speeds
+  (`discrete_levels` in its setup); DirectorLink does not read that yet. On a fan with three, its
+  top speed shows as Medium High and High sends `SET_SPEED` 4, a speed it does not have; on a fan
+  with five or more, the speeds above 4 show only as on.
 
 No DirectorLink command has run on a real fan yet.
 

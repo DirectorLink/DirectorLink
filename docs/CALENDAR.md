@@ -58,7 +58,8 @@ an estimate, the sun at the estimate gives the time. A sunset after local midnig
 June) is a later moment, never wrapped into the day.
 
 Until 1.2.0 `sun.lua` used the Almanac for Computers method, which agreed with Hebcal's times to the
-minute 78% of the time. **Existing sunrise and sunset schedules may move by up to a minute.**
+minute 78% of the time. **Existing sunrise and sunset schedules may move by up to a minute** (in
+Israel and at mid-latitudes; in the far north, Stockholm or Reykjavik, by two on some days).
 `Sun.times` keeps its signature and its rounding to the nearest minute of the local day.
 
 Hebcal's candle lighting and havdalah come from this same model, to the minute. Hebcal's zmanim
@@ -78,8 +79,11 @@ minutes before sunset, 20 by default, and `m` after, 42 by default):
 
 **The polar rule.** Where a sunset the period needs does not happen (polar day or night), that time
 is `nil` and the period is `approximate`; the engine never guesses a time. The service counts an
-approximate period's civil days as holy, from 00:00 on the first to 24:00 on the last, and
-Shabbat triggers do not run.
+approximate period's civil days as holy, from 00:00 on the first to 24:00 on the last, and also
+from its candle lighting or until its havdalah when that one happens (as the polar night begins,
+Friday's sun may still set when Saturday's does not). Shabbat triggers do not run for it, neither
+at its begin nor at its end, even when that time happens: a begin whose end never comes would keep
+a home in Shabbat mode until the sun sets again.
 
 ## Reference data
 

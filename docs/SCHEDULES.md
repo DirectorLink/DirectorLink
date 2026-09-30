@@ -62,7 +62,8 @@ skipped. Opening a door or gate needs a person.
 - Weather schedules run when the reading crosses the threshold (or rain starts), on their days,
   within their hours; hours across midnight (22:00–06:00) belong to the day they start.
 - What the scheduler remembers (last run, whether a weather schedule may run again) is saved, so a
-  restart does not run anything twice.
+  restart does not run anything twice. A save that fails is logged; if what it remembers cannot be
+  read at a start, nothing is caught up then (below), and the log says so.
 - Each run is logged (`GET /v1/logs?category=schedules`).
 
 ## The weather
@@ -118,19 +119,25 @@ it.
   only on Shabbat and holidays whose moment passed in the last 6 hours, and did not run, run late:
   oldest first, each once, with `last_run.note: "late"`, "late after a restart" in Last Automation,
   and a log line. A family keeping Shabbat cannot make up for them by hand. Everything else keeps
-  its 5 minutes. What was due while the schedules were paused, or while the calendar was off, is
-  never caught up.
+  its 5 minutes. What was due while the schedules were paused, or while the calendar was off or had
+  no location, is never caught up, not even by a later restart: the controller keeps the moment
+  they could run again (`catch_up_after`, with what the schedules ran). Nor is anything caught up
+  when what the schedules ran could not be read at the start: it could run a Shabbat schedule a
+  second time.
 - **Calendar off, or no location.** No moment counts as holy: Shabbat schedules and `only`
   schedules are kept but do not run (`calendar_status` says `off` or `no_location`, and so does
   Schedule Status), and `skip` schedules run as usual. While the calendar is off, setting a Shabbat
   trigger or `during_shabbat` other than `run` is 409 `JEWISH_CALENDAR_OFF`; switching a schedule
   off or on, its days, its scene, `during_shabbat: "run"` and deleting still work. Turned on again,
-  they run from their next moment, and nothing is caught up (a moment in the last 5 minutes still
-  runs, as after a pause). Without a location there are still the Hebrew date and the weekly reading,
-  but no times.
-- **Where the sun does not set** (above about 66°, around midsummer and midwinter) there are no
-  times: Shabbat schedules wait for the first period that has them again, and the condition takes
-  the civil days, from 00:00 on the first day to 24:00 on the last.
+  or given a location, they run from their next moment, and nothing is caught up, not even by a
+  restart (a moment in the last 5 minutes still runs, as after a pause). Without a location there
+  are still the Hebrew date and the weekly reading, but no times.
+- **Where the sun does not set** (above about 66°, around midsummer and midwinter) a period whose
+  candle lighting or havdalah does not happen has no Shabbat schedules: neither its begin nor its
+  end runs, even when the other one happens (a begin whose end never comes would keep the home in
+  Shabbat mode until the sun sets again, weeks later), and they wait for the first period that has
+  both times again. The condition takes its civil days, from 00:00 on the first day to 24:00 on the
+  last, and also from its candle lighting, or to its havdalah, when that one happens.
 
 For example:
 
@@ -152,7 +159,8 @@ in Composer, on the DirectorLink device (0.15.0):
 
 - **Schedules** (On / Paused): pauses every DirectorLink schedule at once, without deleting
   anything — e.g. while troubleshooting. Nothing runs, and nothing is caught up afterwards (except a
-  time due in the last 5 minutes). The app says the schedules are paused by the installer.
+  time due in the last 5 minutes), not even by a restart. The app says the schedules are paused by
+  the installer.
 - **Schedule Status** (read-only): e.g. `3 on · next tomorrow 06:45 Good morning · 1 weather rule`,
   or `Paused in Composer - 3 schedules are not running`, or `None`.
 - **Last Automation** (read-only): the last scene DirectorLink ran, when, why and what happened,
