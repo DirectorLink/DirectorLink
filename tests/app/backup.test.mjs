@@ -106,7 +106,7 @@ const PREVIEW = {
   references: {
     by_id: 40,
     by_name: [{ kind: "light", name: "Kitchen Island", room: "Kitchen", from: 20, to: 120 }],
-    renamed: [],
+    renamed: [{ kind: "climate", id: 30, name: "Parents", now: "Parents AC" }],
     unmatched: [{ kind: "light", id: 21, name: "Hall Light", room: "Living Room", used_in: [{ section: "scenes", name: "Good night" }, { section: "profiles", name: "Dana" }] }],
     unmatched_count: 1,
   },
@@ -388,7 +388,7 @@ test("a restore opens the file here, has the controller check it, and replaces n
 
   const preview = panelText();
   for (const words of ["Backup of Home", "DirectorLink 1.4.0", "Scenes12", "Schedules5", "Devices with access3", "This device keeps its access (it was paired after the backup was made).",
-    "Remote access: the home goes back to the backup’s link", "Kitchen Island (Kitchen)", "Hall Light (Living Room) — scene “Good night”, Dana’s favorites",
+    "Remote access: the home goes back to the backup’s link", "Kitchen Island (Kitchen)", "Thermostat Parents → Parents AC", "Hall Light (Living Room) — scene “Good night”, Dana’s favorites",
     "1 scene step has nothing left to act on", "Door Control", "backup: Enabled · now: Disabled", "A restore never changes DirectorLink’s properties in Composer"]) {
     assert.ok(preview.includes(words), `the preview says: ${words}\n${preview}`);
   }

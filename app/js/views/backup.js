@@ -282,6 +282,7 @@ function summary(preview, { result = false } = {}) {
   ];
   const unmatched = references.unmatched || [];
   const byName = references.by_name || [];
+  const renamed = references.renamed || [];
   const composer = preview.composer || [];
   return [
     h(
@@ -292,6 +293,14 @@ function summary(preview, { result = false } = {}) {
     h("ul", { class: "backup-notes" }, notes.map((note) => h("li", {}, note))),
     byName.length
       ? h("div", { class: "backup-references" }, h("h4", { class: "backup-heading" }, t("backup.preview.byName")), h("ul", {}, byName.map((item) => referenceLine(item))))
+      : null,
+    renamed.length
+      ? h(
+          "div",
+          { class: "backup-references", dataset: { key: "backup-renamed" } },
+          h("h4", { class: "backup-heading" }, t("backup.preview.renamed")),
+          h("ul", {}, renamed.map((item) => h("li", { dir: "auto" }, `${kindText(item.kind)} `, name(item.name), " → ", name(item.now))))
+        )
       : null,
     unmatched.length
       ? h(

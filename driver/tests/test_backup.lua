@@ -209,7 +209,8 @@ function tests.the_document_holds_every_store_as_stored_and_no_key()
 end
 
 function tests.a_restore_into_fresh_storage_brings_everything_back()
-    local old = start()
+    -- The dev bridge's fake home (Mock.demoProject: every device family).
+    local old = start(Mock.demoProject())
     local home = furnish(old)
     local document = export(old)
     local scenes = list(old.mock, old.key, "/v1/scenes").items
@@ -218,7 +219,7 @@ function tests.a_restore_into_fresh_storage_brings_everything_back()
     local rooms = list(old.mock, old.key, "/v1/rooms").items
 
     -- The driver was removed and added again: nothing is left, and the owner pairs anew.
-    local s = start()
+    local s = start(Mock.demoProject())
     T.eq(#list(s.mock, s.key, "/v1/scenes").items, 0)
     local done, preview = replace(s, document)
     T.eq(preview.counts.scenes, 2)
@@ -452,15 +453,27 @@ function tests.the_restoring_admin_keeps_their_key_and_their_role()
     T.eq(restored.json.restore.keys.over_limit, true)
     T.eq(list(s.mock, s.key, "/v1/api-keys/current").role, "admin")
     T.eq(T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "One more" } }).json.code, "KEY_LIMIT_REACHED")
+    -- More than a DirectorLink ever has (a file made by hand): the limit, and the restoring key.
+    full.sections.keys.keys[21] = { id = "00000015", name = "Device 21", role = "member", alg = "sha256", hash = string.rep("15", 32), lock = string.rep("ef", 32) }
+    local capped = restore(s, { document = full }).json.restore.keys
+    T.eq(capped.count, 21)
+    T.eq(capped.left_out, 1)
 end
 
-function tests.expired_keys_stay_out()
+function tests.expired_keys_and_more_profiles_than_a_directorlink_has_stay_out()
     local s = start()
     local document = export(s)
     document.sections.keys.keys[#document.sections.keys.keys + 1] = { id = "0badc0de", name = "Old console", role = "admin", alg = "sha256", hash = string.rep("12", 32), lock = string.rep("34", 32), created_at = "2026-01-01T00:00:00Z", expires = os.time() - 60 }
+    -- A file made by hand: more profiles than DirectorLink keeps.
+    local profiles = document.sections.profiles.profiles
+    for index = 1, 105 do
+        profiles[#profiles + 1] = { id = string.format("%08x", 4096 + index), name = "Guest " .. index, prefs = {} }
+    end
     local check = restore(s, { document = document })
     T.eq(check.json.restore.keys.expired, 1)
     T.eq(check.json.restore.counts.keys, 1)
+    T.eq(check.json.restore.counts.profiles, 100)
+    T.eq(check.json.restore.left_out.profiles, 6)
 end
 
 -- The project was rebuilt: the kitchen light has another id, the hall light is gone, the living
@@ -763,6 +776,8 @@ function tests.an_identity_the_relay_refuses_gives_way_to_the_controller_s_own()
     fire(s.mock, 1000)
     OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
     T.contains(connection.sent, "X-DirectorLink-Home: " .. currentHome)
+    Harness.accept(connection.sent)
+    T.contains(s.mock.properties["Remote Status"], "home " .. currentHome:sub(1, 8) .. " (the relay refused the backup's home)", "Composer says so")
     local said = false
     for _, line in ipairs(s.mock.debugLog) do
         said = said or line:find("refused the remote identity restored from a backup", 1, true) ~= nil

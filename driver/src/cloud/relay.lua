@@ -320,7 +320,8 @@ local function onOpen()
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION })
     Relay.announceKeys()
     startKeepalive()
-    publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8))
+    publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8)
+        .. (state.backupRefused and " (the relay refused the backup's home)" or ""))
     log("info", "connected to the relay", { home_id = identity.home_id })
 end
 
@@ -347,6 +348,7 @@ local function onClose(reason, status, body)
             local previous = identity.previous
             state.identity = { home_id = previous.home_id, home_secret = previous.home_secret, next_secrets = previous.next_secrets }
             saveIdentity(state.identity)
+            state.backupRefused = true
             log("warn", "the relay refused the remote identity restored from a backup; this controller's own is back",
                 { refused = identity.home_id, home_id = previous.home_id, detail = tostring(detail) })
             scheduleReconnect("the backup's identity was refused; using this controller's", 1)
@@ -510,6 +512,7 @@ end
 -- restore that failed): the next use reads the store again.
 function Relay.restoreIdentity(identity)
     state.trying = nil
+    state.backupRefused = nil
     if identity == nil then
         state.identity = nil
         return true
