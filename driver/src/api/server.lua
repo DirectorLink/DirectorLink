@@ -256,14 +256,23 @@ function Server.handleRequest(request, client, respond)
             payload = Problem.new(405, "METHOD_NOT_ALLOWED", request.method .. " is not supported for " .. request.path)
             extraHeaders = { { "Allow", table.concat(match.allowed, ", ") } }
         else
+            local refusal
             if not match.route.public then
                 -- Sealed remote requests carry their device's key as principal (src/cloud/remote.lua);
                 -- LAN requests come from the HTTP parser, which never sets one.
-                apiKey = request.principal or authenticate(request)
+                apiKey = request.principal
+                if not apiKey then
+                    apiKey, refusal = authenticate(request)
+                end
             end
             if not match.route.public and not apiKey then
                 status = 401
                 payload = Problem.unauthorized()
+                -- A key that expired (ADR-040: the console's lasts a day) is gone now: pair again.
+                if refusal == "KEY_EXPIRED" then
+                    payload = Problem.new(401, "KEY_EXPIRED", "This API key expired and was removed. Get a new pairing code in Composer "
+                        .. "(DirectorLink → Actions → New Pairing Code) and pair again.")
+                end
                 extraHeaders = { { "WWW-Authenticate", 'Bearer realm="DirectorLink"' } }
             elseif not match.route.public and not Roles.allows(apiKey.role, match.route.role) then
                 status = 403

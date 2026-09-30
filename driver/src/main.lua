@@ -102,6 +102,15 @@ local function keysChanged()
     Relay.announceKeys()
 end
 
+-- Keys whose expiry passed (ADR-040: the console's) were removed: like a revoked key.
+local function keysExpired(removed)
+    for _, key in ipairs(removed) do
+        Invitations.revokeCreatedBy(key.id)
+        Log.info("auth", "API key expired and was removed", { key_id = key.id, name = key.name })
+    end
+    keysChanged()
+end
+
 -- Keys from before 0.12.0 (or whose profile is gone) each get a profile of their own.
 local function assignProfiles()
     local assigned = 0
@@ -392,8 +401,11 @@ function OnDriverLateInit(driverInitType)
         return
     end
 
+    Keys.onExpired(keysExpired)
     local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
     Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
+    -- Before the first look at the keys, which removes expired ones and their invitations.
+    Invitations.load()
     RoomNames.load()
     RoomLayout.load()
     local sceneCount, scenesStoredAs = Scenes.load()
@@ -405,7 +417,6 @@ function OnDriverLateInit(driverInitType)
     if Keys.complete() then
         assignProfiles()
     end
-    Invitations.load()
     publishKeyCount()
 
     -- A driver without keys (just added, or all keys revoked) offers a pairing code right away;

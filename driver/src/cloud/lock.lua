@@ -16,6 +16,7 @@ Lock.REMEMBER_SECONDS = 300 -- request ids are remembered this long, so none can
 local DEVICE_LABEL = "DirectorLink e2e v1"
 local INVITATION_LABEL = "DirectorLink invite v1"
 local PAIRING_LABEL = "DirectorLink pair v1"
+local CPACE_LABEL = "DirectorLink pair v2"
 
 local function hmac(key, keyEncoding, data)
     local mac, err = C4:HMAC("SHA256", key, data, { key_encoding = keyEncoding, data_encoding = "NONE", return_encoding = "HEX" })
@@ -39,6 +40,12 @@ end
 -- the pairing code and both public keys (base64), so the answer opens only for that exchange.
 function Lock.pairingKey(sharedHex, code, appPublic, driverPublic)
     return hmac(sharedHex, "HEX", PAIRING_LABEL .. "|" .. code .. "|" .. appPublic .. "|" .. driverPublic)
+end
+
+-- The lock key (hex) that seals the answer of a pairing with CPace (src/auth/cpace_pairing.lua):
+-- from the exchange's intermediate session key (hex, 64 bytes), which only the two sides hold.
+function Lock.cpaceKey(iskHex)
+    return hmac(iskHex, "HEX", CPACE_LABEL)
 end
 
 local function subkeys(lockKey)

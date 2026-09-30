@@ -3,7 +3,8 @@
 -- sealed requests (src/cloud/lock.lua, derived from the key), made when the key is created or, for
 -- older keys, the first time the key is used on the home network; that one is stored as it is, and
 -- opens sealed requests at home and through the relay (docs/ACCOUNTS.md, "What the lock does not
--- protect").
+-- protect"). A key may have an expiry (ADR-040: the console's lasts a day); once it has passed,
+-- the key is refused and removed.
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
@@ -28,9 +29,15 @@ local ALGORITHMS = {
     { name = "sha1", c4 = "SHA1", length = 40 },
 }
 
+-- The console's key name (console/js/session.js). Its keys from before 1.3.0 expire a day after
+-- the first start of 1.3.0 (store version 4), like the ones it pairs now.
+local CONSOLE_NAME = "DirectorLink Console"
+local CONSOLE_SECONDS = 24 * 60 * 60
+
 local state = {
     keys = {},
     lastUsed = {},
+    onExpired = nil,
 }
 
 -- 32 random hex characters (src/core/random.lua: Director's UUIDs mixed into a pool).
@@ -93,9 +100,10 @@ local function save()
             lock = key.lock,
             created_at = key.created_at,
             profile = key.profile,
+            expires = key.expires,
         }
     end
-    local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)
+    local ok = Store.write(STORE_KEY, { version = 4, keys = records }, false)
     if ok then
         state.complete = true
     end
@@ -124,7 +132,46 @@ local function addLoaded(key, hash, alg, lock)
         created_at = type(key.created_at) == "string" and key.created_at or Clock.iso(),
         -- The person's profile (profiles.lua); keys from before 0.12.0 get one at start.
         profile = type(key.profile) == "string" and key.profile or nil,
+        -- When it stops working (os.time), or nil for never (ADR-040).
+        expires = tonumber(key.expires),
     }
+end
+
+-- Removes the keys whose expiry has passed and tells the driver (Keys.onExpired): their
+-- invitations go, and the profiles and the relay's list of keys follow. Returns what was removed
+-- ({ id, name }).
+local function expire(now)
+    now = now or os.time()
+    local removed = {}
+    for index = #state.keys, 1, -1 do
+        local key = state.keys[index]
+        if key.expires and key.expires <= now then
+            table.remove(state.keys, index)
+            state.lastUsed[key.id] = nil
+            table.insert(removed, 1, { id = key.id, name = key.name })
+        end
+    end
+    if #removed > 0 then
+        save()
+        if state.onExpired then
+            pcall(state.onExpired, removed)
+        end
+    end
+    return removed
+end
+
+-- callback(removed) runs after expired keys were removed.
+function Keys.onExpired(callback)
+    state.onExpired = callback
+end
+
+-- The console's keys from before 1.3.0 (a store before version 4) expire a day from now.
+local function expireOldConsoleKeys(now)
+    for _, key in ipairs(state.keys) do
+        if key.name == CONSOLE_NAME and not key.expires then
+            key.expires = now + CONSOLE_SECONDS
+        end
+    end
 end
 
 -- Moves keys from the encrypted store of 0.9.0 and older, when Director can still read it.
@@ -155,22 +202,35 @@ function Keys.load()
     -- A store Director could not read this time may still hold keys: until one is saved again,
     -- the list is not known to be complete (Keys.complete).
     state.complete = form ~= "unreadable"
+    local now = os.time()
     if form == "missing" then
-        return #state.keys, form, migrate()
+        local oldForm = migrate()
+        if #state.keys > 0 then
+            expireOldConsoleKeys(now)
+            save()
+        end
+        return #state.keys, form, oldForm
     end
     for _, key in ipairs(Store.items(stored and stored.keys)) do
         if type(key) == "table" and type(key.id) == "string" and type(key.hash) == "string" and algorithmNamed(key.alg) then
             addLoaded(key, key.hash, key.alg, key.lock)
         end
     end
-    -- Written by 0.9.1 as plain JSON, which Director hands back decoded: store it as it is now.
-    if form == "table" then
+    local version = type(stored) == "table" and tonumber(stored.version) or 0
+    if form ~= "unreadable" and version < 4 then
+        -- Once, when 1.3.0 first starts: the store is version 4 from then on.
+        expireOldConsoleKeys(now)
+        save()
+    elseif form == "table" then
+        -- Written by 0.9.1 as plain JSON, which Director hands back decoded: store it as it is now.
         save()
     end
+    -- Keys that expired meanwhile go at the first look at the keys (Keys.onExpired is set by then).
     return #state.keys, form
 end
 
 function Keys.count()
+    expire()
     return #state.keys
 end
 
@@ -180,11 +240,13 @@ function Keys.complete()
     return state.complete ~= false
 end
 
--- Returns the key record for a presented secret, or nil.
+-- Returns the key record for a presented secret, or nil (and "KEY_EXPIRED" for a key whose
+-- expiry has passed: it is removed now).
 function Keys.verify(presented)
     if type(presented) ~= "string" or presented == "" or #presented > MAX_PRESENTED_LENGTH then
         return nil
     end
+    local now = os.time()
     local hashes = {}
     local match
     for _, key in ipairs(state.keys) do
@@ -194,6 +256,10 @@ function Keys.verify(presented)
         if hashes[key.alg] and constantTimeEqual(hashes[key.alg], key.hash) then
             match = key
         end
+    end
+    if match and match.expires and match.expires <= now then
+        expire(now)
+        return nil, "KEY_EXPIRED"
     end
     if match then
         state.lastUsed[match.id] = Clock.iso()
@@ -208,8 +274,10 @@ function Keys.verify(presented)
     return match
 end
 
--- A key for a remote request: { id, name, role, lock }, or nil when unknown or without a lock key.
+-- A key for a remote request: { id, name, role, lock }, or nil when unknown, expired (it is removed
+-- now) or without a lock key.
 function Keys.remote(id)
+    expire()
     for _, key in ipairs(state.keys) do
         if key.id == id and key.lock then
             return { id = key.id, name = key.name, role = key.role, lock = key.lock, profile = key.profile }
@@ -227,8 +295,9 @@ function Keys.touch(id)
 end
 
 -- Returns the new record (including its secret, which is not kept), or nil plus an error code.
--- `profile`: the id of the profile it belongs to (profiles.lua).
-function Keys.create(name, role, profile)
+-- `profile`: the id of the profile it belongs to (profiles.lua); `expires` (os.time): when it stops
+-- working, nil for never.
+function Keys.create(name, role, profile, expires)
     role = role or "member"
     if not Roles.valid(role) then
         return nil, "INVALID_ROLE"
@@ -266,6 +335,7 @@ function Keys.create(name, role, profile)
         lock = lockFor(secret),
         created_at = Clock.iso(),
         profile = profile,
+        expires = expires,
     }
     table.insert(state.keys, record)
 
@@ -279,11 +349,13 @@ function Keys.create(name, role, profile)
         role = record.role,
         created_at = record.created_at,
         profile = record.profile,
+        expires_at = expires and Clock.iso(expires) or nil,
         secret = secret,
     }
 end
 
 function Keys.list()
+    expire()
     local items = {}
     for _, key in ipairs(state.keys) do
         items[#items + 1] = {
@@ -293,6 +365,7 @@ function Keys.list()
             created_at = key.created_at,
             last_used_at = state.lastUsed[key.id],
             profile = key.profile,
+            expires_at = key.expires and Clock.iso(key.expires) or nil,
         }
     end
     return items
@@ -309,6 +382,7 @@ function Keys.adminCount()
 end
 
 function Keys.find(id)
+    expire()
     for _, key in ipairs(state.keys) do
         if key.id == id then
             return {
@@ -318,6 +392,7 @@ function Keys.find(id)
                 created_at = key.created_at,
                 last_used_at = state.lastUsed[key.id],
                 profile = key.profile,
+                expires_at = key.expires and Clock.iso(key.expires) or nil,
             }
         end
     end
