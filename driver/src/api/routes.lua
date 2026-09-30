@@ -42,6 +42,8 @@ return {
     { method = "PATCH", path = "/v1/scenes/{sceneId}", handler = "scenes.update", role = "admin" },
     { method = "DELETE", path = "/v1/scenes/{sceneId}", handler = "scenes.delete", role = "admin" },
     { method = "POST", path = "/v1/scenes/{sceneId}/run", handler = "scenes.run", role = "member" },
+    -- Home's "Turn off all": lights, AC or blinds only, never doors (handlers/scenes.lua).
+    { method = "POST", path = "/v1/off", handler = "scenes.off", role = "member" },
 
     { method = "GET", path = "/v1/schedules", handler = "schedules.list", role = "viewer" },
     { method = "POST", path = "/v1/schedules", handler = "schedules.create", role = "admin" },

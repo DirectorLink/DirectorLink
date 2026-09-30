@@ -920,6 +920,42 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/off:
+    post:
+      tags: [Scenes]
+      operationId: turnOff
+      x-directorlink-role: member
+      summary: Turn off lights or AC, or close blinds
+      description: |
+        Since 1.3.0. Turns off the lights, or the thermostats (mode `off`, like a scene's "All AC:
+        Off"), or closes the blinds (position 0) that it names, in one request: the app's "Turn off
+        all" on Home, which names the ones it shows on or open. Answers like running a scene: a
+        device the controller refused is `failed`, a thermostat without an Off mode is `skipped`
+        (`MODE_NOT_SUPPORTED`), and the rest still run. It never turns anything on, and doors and
+        gates are not among its types.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnOff"
+            example:
+              type: lights
+              device_ids: [20, 22]
+      responses:
+        "202":
+          description: The commands were handed to the controller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/schedules:
     get:
       tags: [Schedules]
@@ -2714,6 +2750,24 @@ components:
           maxItems: 40
           items:
             $ref: "#/components/schemas/SceneStep"
+
+    TurnOff:
+      type: object
+      required: [type, device_ids]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [lights, climate, blinds]
+          description: lights are turned off, thermostats set to `off`, blinds closed.
+        device_ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          description: Lights, thermostats or blinds, as `type` says; a repeated id counts once.
+          items:
+            type: integer
+            minimum: 1
 
     SceneRun:
       type: object
