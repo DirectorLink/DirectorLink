@@ -351,11 +351,13 @@ async function tryHomeNetwork() {
   if (state.transport !== "remote" || IS_IOS || !state.host || !remote || !state.apiKey) return;
   const generation = sealGeneration;
   const since = forgets;
+  const wanted = () => since === forgets;
   try {
-    const result = await apiRequest(state.host, "/v1/sealed", { timeoutMs: 2500 });
+    const result = await apiRequest(state.host, "/v1/sealed", { timeoutMs: 2500, wanted });
     if (!result.ok || since !== forgets) return;
     const seal = { home: LAN_HOME, keyId: sealHere()?.keyId || remote.keyId, offset: clockOffset(result.data?.time) };
-    await lanCall(state.host, state.apiKey, seal, "/v1/api-keys/current", { timeoutMs: 2500 });
+    // A read without an answer is sent once more (remote.js), but not once the key is forgotten.
+    await lanCall(state.host, state.apiKey, seal, "/v1/api-keys/current", { timeoutMs: 2500, wanted });
     if (generation !== sealGeneration || state.transport !== "remote") return;
     rememberSeal(state.host, seal.keyId, true);
     lanSeal = seal;

@@ -594,8 +594,10 @@ export default {
     join: "-",
     shabbat: "Shabbat",
     parashat: "Parashat {name}",
-    // The week's Shabbat when a holiday reading replaces the parasha: "Shabbat Shmini Atzeret".
+    // The week's Shabbat when a holiday reading replaces the parasha: "Shabbat Shmini Atzeret";
+    // for a holiday whose name does not follow "Shabbat" well, its own (by the holiday's key).
     shabbatOf: "Shabbat {name}",
+    shabbatNames: { pesach_7: "Shabbat, Seventh day of Pesach", pesach_8: "Shabbat, Eighth day of Pesach" },
     months: {
       tishrei: "Tishrei",
       cheshvan: "Cheshvan",
@@ -708,7 +710,7 @@ export default {
       noLocation: "Set the home’s location in Composer for Shabbat times",
       footnote: "{candles} min before sunset · {havdalah} min after · {where}",
       israel: "as in Israel",
-      abroad: "as abroad",
+      abroad: "as outside Israel",
       change: "Change",
     },
     // Settings (admins): how the controller works out the times.

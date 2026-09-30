@@ -589,6 +589,7 @@ export default {
     shabbat: "שבת",
     parashat: "פרשת {name}",
     shabbatOf: "שבת {name}",
+    shabbatNames: { pesach_7: "שבת שביעי של פסח", pesach_8: "שבת אחרון של פסח" },
     months: {
       tishrei: "תשרי",
       cheshvan: "חשוון",

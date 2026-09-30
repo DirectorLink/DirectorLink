@@ -546,7 +546,7 @@ test("the times on Schedules and the line on Home, from the calendar API's examp
       homeHebrew: "כ״ד בתשרי תשפ״ז · פרשת בראשית",
     },
     approximate: {
-      times: { title: "Shabbat", times: "No sunset at this latitude: no times", later: "", footnote: "20 min before sunset · 42 min after · as abroad" },
+      times: { title: "Shabbat", times: "No sunset at this latitude: no times", later: "", footnote: "20 min before sunset · 42 min after · as outside Israel" },
       home: "10 Tamuz 5786 · Parashat Chukat-Balak",
       hebrew: { title: "שבת", times: "אין שקיעה בקו רוחב זה: אין זמנים", later: "", footnote: "20 דק׳ לפני השקיעה · 42 דק׳ אחריה · כמו בחו״ל" },
       homeHebrew: "י׳ בתמוז תשפ״ו · פרשת חוקת־בלק",
@@ -579,6 +579,13 @@ test("the times on Schedules and the line on Home, from the calendar API's examp
   const ok = structuredClone(EXAMPLES.Calendar.ok.value);
   ok.today = { date: "2026-10-03", hebrew: { year: 5787, month: "tishrei", day: 22, leap_year: true }, after_sunset: false, holidays: ok.week.holidays };
   assert.equal(homeLine(ok), "22 Tishrei 5787 · Shabbat Shmini Atzeret · Simchat Torah");
+  // On a Shabbat that is the seventh day of Pesach (19 April 2025), in words that read as a name.
+  const pesach = structuredClone(EXAMPLES.Calendar.ok.value);
+  const seventh = { key: "pesach_7", day: null, month: null, yom_tov: true, name: "Pesach VII" };
+  pesach.today = { date: "2025-04-19", hebrew: { year: 5785, month: "nisan", day: 21, leap_year: false }, after_sunset: false, holidays: [seventh], changes_at: "2025-04-19T16:15:00Z" };
+  pesach.week = { date: "2025-04-19", parasha: null, holidays: [seventh] };
+  assert.equal(homeLine(pesach), "21 Nisan 5785 · Shabbat, Seventh day of Pesach");
+  await inHebrew(() => assert.equal(homeLine(pesach), "כ״א בניסן תשפ״ה · שבת שביעי של פסח"));
 });
 
 test("Home, Schedules and Settings show the calendar only when it is on", () => {
@@ -677,21 +684,23 @@ test("a JEWISH_CALENDAR_OFF answer turns the calendar off here, and says why", a
   await inHebrew(() => assert.equal(errorText(off), "הלוח העברי כבוי ב-Composer (המאפיין Jewish Calendar של DirectorLink)."));
 });
 
-test("the calendar is read again 5 seconds after its next change: a period's start or end, or sunset", async () => {
+test("the calendar is read again 5 seconds after its next change: a period's start or end, or the Hebrew date's", async () => {
   const ok = EXAMPLES.Calendar.ok;
   system({ jewish_calendar: true }, ok.timezone);
   const now = RealDate.parse(ok.now);
-  assert.equal(nextChange(ok.value, null, now), RealDate.parse(ok.value.next.starts_at));
-  // Today's sunset (the weather: 18:24 in Tel Aviv) comes first: the Hebrew date changes then.
-  assert.equal(nextChange(ok.value, { today: { sunset: "18:24" } }, now), RealDate.parse("2026-09-29T15:24:00Z"));
-  assert.equal(nextChange(ok.value, { today: { sunset: "13:40" } }, now), RealDate.parse(ok.value.next.starts_at), "a sunset already past");
+  // The Hebrew date changes first, at today.changes_at: the controller's sunset, to the second
+  // (18:28:37 in Tel Aviv; the weather's sunset is rounded to the minute).
+  assert.equal(nextChange(ok.value, now), RealDate.parse("2026-09-29T15:28:37Z"));
+  assert.equal(nextChange(ok.value, RealDate.parse("2026-09-29T16:00:00Z")), RealDate.parse(ok.value.next.starts_at), "after sunset: candle lighting");
+  // Inside a period too: the date changes at the second evening's sunset, before havdalah.
   const period = EXAMPLES.Calendar.three_day_period;
-  assert.equal(nextChange(period.value, null, RealDate.parse(period.now)), RealDate.parse(period.value.current.ends_at));
-  assert.equal(nextChange(period.value, null, RealDate.parse("2030-01-01T00:00:00Z")), null);
-  assert.equal(nextChange(EXAMPLES.Calendar.off.value, null, now), null);
+  assert.equal(nextChange(period.value, RealDate.parse(period.now)), RealDate.parse(period.value.today.changes_at));
+  assert.ok(RealDate.parse(period.value.today.changes_at) < RealDate.parse(period.value.current.ends_at));
+  assert.equal(nextChange(period.value, RealDate.parse("2024-10-05T12:00:00Z")), RealDate.parse(period.value.current.ends_at), "havdalah");
+  assert.equal(nextChange(period.value, RealDate.parse("2030-01-01T00:00:00Z")), null);
+  assert.equal(nextChange(EXAMPLES.Calendar.off.value, now), null);
   // After a read the next one is planned then; a moment more than a day away waits.
   connectedAdmin();
-  state.weather = { today: { sunset: "18:24" } };
   const planned = [];
   const realSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = (callback, delay, ...rest) => {
@@ -705,17 +714,17 @@ test("the calendar is read again 5 seconds after its next change: a period's sta
   try {
     controller(ok.value);
     await loadCalendar();
-    assert.deepEqual(planned.map(({ delay }) => delay), [(4 * 60 + 24) * 60 * 1000 + 5000]);
+    assert.deepEqual(planned.map(({ delay }) => delay), [((4 * 60 + 28) * 60 + 37) * 1000 + 5000]);
     const asked = controller(ok.value);
     planned[0].callback();
     await loadCalendar();
     assert.ok(asked.includes("/v1/calendar"), "read when it is due");
-    state.weather = null;
     planned.length = 0;
-    controller(ok.value);
-    keepCalendar();
+    const later = structuredClone(ok.value);
+    later.today.changes_at = "2026-10-01T12:00:00Z";
+    controller(later);
     await loadCalendar();
-    assert.deepEqual(planned, [], "Friday's candle lighting is three days away");
+    assert.deepEqual(planned, [], "the next change is two days away");
   } finally {
     globalThis.setTimeout = realSetTimeout;
     realTime();

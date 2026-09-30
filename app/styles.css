@@ -1207,7 +1207,7 @@ select:disabled {
 
 .room-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -1248,16 +1248,21 @@ select:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   margin-block-end: 6px;
 }
 
 .room-chevron {
+  flex: none;
   color: var(--muted);
 }
 
+/* A room with every kind of device (seven badges) wraps them at 320 px rather than widen the page. */
 .badges {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 
 .badge {

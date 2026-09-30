@@ -7,18 +7,22 @@
 // .parashot in i18n/*.js).
 
 import { t } from "./i18n.js";
-import { dayAndTime, homeZone } from "./schedules.js";
-import { api } from "./session.js";
+import { dayAndTime } from "./schedules.js";
+import { api, keyInUse, whenForgotten } from "./session.js";
 import { notify, state } from "./state.js";
 
 // Read again this often while the app is in front (with the rooms refresh, once a minute), and a
-// few seconds after each moment it changes: a holy period beginning or ending, and sunset, when the
-// Hebrew date changes. A moment further off than a day waits for a later read.
+// few seconds after each moment it changes: a holy period beginning or ending, and the Hebrew date
+// changing (the answer's today.changes_at: sunset, or midnight). A moment further off than a day
+// waits for a later read.
 const REFRESH_MS = 10 * 60 * 1000;
 const AFTER_CHANGE_MS = 5000;
 const LONGEST_WAIT_MS = 24 * 3600 * 1000;
 
 export const calendarOn = () => state.system?.features?.jewish_calendar === true;
+// Only with the key in use: once it is forgotten, or being forgotten (Settings → Forget key or
+// Pair again), nothing more is read (session.js).
+const wanted = () => calendarOn() && Boolean(keyInUse());
 
 let loadedAt = 0;
 let loading = null;
@@ -28,7 +32,7 @@ let changeTimer = null;
 // GET /v1/calendar, when the calendar is on. One read at a time: asked for during a read (which
 // may have left before a change, such as new settings), it reads once more after it.
 export function loadCalendar() {
-  if (!calendarOn()) {
+  if (!wanted()) {
     forgetCalendar();
     return Promise.resolve();
   }
@@ -40,7 +44,7 @@ export function loadCalendar() {
     do {
       readAgain = false;
       await readCalendar();
-    } while (readAgain && calendarOn());
+    } while (readAgain && wanted());
   })().finally(() => {
     loading = null;
   });
@@ -50,8 +54,9 @@ export function loadCalendar() {
 async function readCalendar() {
   try {
     const answer = await api("/v1/calendar");
-    // Turned off meanwhile (JEWISH_CALENDAR_OFF, or the next /v1/system): nothing to show.
-    if (!calendarOn()) {
+    // Turned off meanwhile (JEWISH_CALENDAR_OFF, or the next /v1/system), or the key forgotten:
+    // nothing to show.
+    if (!wanted()) {
       forgetCalendar();
       return;
     }
@@ -59,6 +64,7 @@ async function readCalendar() {
     loadedAt = Date.now();
   } catch {
     // Kept as it was; the next rooms refresh tries again.
+    if (!wanted()) return;
   }
   planNextRead();
   notify();
@@ -67,13 +73,11 @@ async function readCalendar() {
 // After connecting and with each rooms refresh (app.js): read the calendar once it is on, and every
 // 10 minutes; forget it once it is off.
 export function keepCalendar() {
-  if (!calendarOn()) {
+  if (!wanted()) {
     forgetCalendar();
     return undefined;
   }
   if (!state.calendar || Date.now() - loadedAt >= REFRESH_MS) return loadCalendar();
-  // Today's sunset may have become known since the last read (the weather, on Schedules).
-  if (!changeTimer) planNextRead();
   return undefined;
 }
 
@@ -81,11 +85,15 @@ function forgetCalendar() {
   window.clearTimeout(changeTimer);
   changeTimer = null;
   loadedAt = 0;
+  readAgain = false;
   if (state.calendar !== null) {
     state.calendar = null;
     notify();
   }
 }
+
+// A forgotten key: what this home's calendar said goes with it (another home may be paired next).
+whenForgotten(forgetCalendar);
 
 // A 409 JEWISH_CALENDAR_OFF: the installer turned the calendar off since /v1/system was read. It is
 // off here too until the next read of /v1/system says otherwise; errors.calendarOff says why
@@ -98,29 +106,12 @@ export function noteCalendarOff(error) {
   return true;
 }
 
-// "18:24" today in the home's time zone, in ms (NaN without a time).
-function todayAt(clock, now) {
-  const match = /^(\d{1,2}):(\d{2})$/.exec(clock || "");
-  if (!match) return NaN;
-  const format = new Intl.DateTimeFormat("en-US", { timeZone: homeZone(), hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric" });
-  const parts = (date) => Object.fromEntries(format.formatToParts(date).map((part) => [part.type, Number(part.value)]));
-  const today = parts(new Date(now));
-  const wall = Date.UTC(today.year, today.month - 1, today.day, Number(match[1]), Number(match[2]));
-  // The zone's offset from UTC then: its clock at that moment, read as if it were UTC.
-  const seen = parts(new Date(wall));
-  return 2 * wall - Date.UTC(seen.year, seen.month - 1, seen.day, seen.hour, seen.minute);
-}
-
 // The next moment (ms) the calendar's answer changes: the current period's end, the next one's
-// start or end, or sunset, when the Hebrew date turns. Sunset comes from the weather (read on
-// Schedules), and on the eve of a period from its candle lighting, which is the candle-lighting
-// minutes before sunset (to the minute). null when no moment is known.
-export function nextChange(calendar, weather, now = Date.now()) {
+// start or end, or the Hebrew date turning (today.changes_at: the controller's exact sunset, or
+// midnight). null when no moment is known.
+export function nextChange(calendar, now = Date.now()) {
   if (!calendar?.enabled) return null;
-  const moments = [calendar.current?.ends_at, calendar.next?.starts_at, calendar.next?.ends_at].map((iso) => Date.parse(iso || ""));
-  const minutes = calendar.settings?.candle_lighting_minutes;
-  if (Number.isFinite(minutes)) moments.push(Date.parse(calendar.next?.starts_at || "") + (minutes + 1) * 60000);
-  if (weather?.today?.sunset) moments.push(todayAt(weather.today.sunset, now));
+  const moments = [calendar.current?.ends_at, calendar.next?.starts_at, calendar.next?.ends_at, calendar.today?.changes_at].map((iso) => Date.parse(iso || ""));
   const future = moments.filter((at) => Number.isFinite(at) && at > now);
   return future.length ? Math.min(...future) : null;
 }
@@ -128,7 +119,7 @@ export function nextChange(calendar, weather, now = Date.now()) {
 function planNextRead() {
   window.clearTimeout(changeTimer);
   changeTimer = null;
-  const at = nextChange(state.calendar, state.weather);
+  const at = nextChange(state.calendar);
   if (at === null) return;
   const wait = at - Date.now() + AFTER_CHANGE_MS;
   if (wait > LONGEST_WAIT_MS) return;
@@ -243,7 +234,7 @@ export function homeLine(calendar = state.calendar) {
   const reading = week?.parasha
     ? t("calendar.parashat", { name: parashaName(week.parasha) })
     : holiday
-      ? t("calendar.shabbatOf", { name: holidayName(holiday) })
+      ? named(`calendar.shabbatNames.${holiday.key}`, t("calendar.shabbatOf", { name: holidayName(holiday) }))
       : "";
   const parts = [hebrewDateText(today.hebrew)];
   if (holiday && week.date === today.date) {
