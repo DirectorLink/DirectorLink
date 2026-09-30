@@ -1,9 +1,10 @@
 name: Deploy DirectorLink sites
 
-# Publishes the three static sites to Cloudflare Workers (static assets):
+# Publishes the three static sites to Cloudflare Workers (static assets), and the short link:
 #   app/     -> https://app.directorlink.io      (Worker directorlink-app)
 #   console/ -> https://console.directorlink.io  (Worker directorlink-console)
 #   site/    -> https://directorlink.io, www     (Worker directorlink-site)
+#   github-link/ -> https://github.directorlink.io (Worker directorlink-github, a redirect to GitHub)
 # Pushes to main deploy; pull requests from this repository get preview versions.
 # Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; without them the
 # jobs report that and succeed, so CI stays green before Cloudflare is set up.
@@ -15,12 +16,14 @@ on:
       - "app/**"
       - "console/**"
       - "site/**"
+      - "github-link/**"
       - ".github/workflows/deploy.yml"
   pull_request:
     paths:
       - "app/**"
       - "console/**"
       - "site/**"
+      - "github-link/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
@@ -39,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        folder: [app, console, site]
+        folder: [app, console, site, github-link]
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

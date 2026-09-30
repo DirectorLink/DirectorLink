@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Static validation for the two small DirectorLink sites:
+"""Static validation for the small DirectorLink sites:
 
-  console/  API console, debugging and logs  -> https://console.directorlink.io
-  site/     landing page                     -> https://directorlink.io (and www)
+  console/      API console, debugging and logs  -> https://console.directorlink.io
+  site/         landing page                     -> https://directorlink.io (and www)
+  github-link/  short link to the source code    -> https://github.directorlink.io
 
 Checks the published files, the Cloudflare configuration, the security headers, that the
 console uses the app's API client unchanged, and that the pages keep to the CSP (no inline
-scripts or styles, no scripts from elsewhere).
+scripts or styles, no scripts from elsewhere). Links to the source code use the short link:
+the repository's long address appears only where a machine needs it.
 """
 
 from html.parser import HTMLParser
@@ -14,6 +16,7 @@ import json
 import re
 from pathlib import Path
 import struct
+import subprocess
 import sys
 import zlib
 
@@ -21,8 +24,20 @@ ROOT = Path(__file__).resolve().parents[1]
 CONSOLE = ROOT / "console"
 SITE = ROOT / "site"
 APP = ROOT / "app"
+GITHUB_LINK = ROOT / "github-link"
 
-GITHUB = "https://github.com/IsraelCIL/DirectorLink"
+GITHUB = "https://github.directorlink.io"
+# The repository's own address. People only ever see the short link above; the long one stays
+# where a machine needs it: the short link's target, and the app's check that GitHub's release
+# answers point into this project (app/js/updates.js and its tests).
+REPOSITORY = "https://github.com/IsraelCIL/DirectorLink"
+REPOSITORY_ALLOWED = {
+    "github-link/worker.js",
+    "app/js/updates.js",
+    "tests/app/updates.test.mjs",
+    "tests/app/update-notice.test.mjs",
+    "scripts/check_sites.py",
+}
 NOT_AFFILIATED = "not affiliated with Control4 or Snap One"
 SLOGAN = ("Direct to Director.", "End-to-end integration.", "Open source.")
 
@@ -89,6 +104,8 @@ class PageParser(HTMLParser):
         self.ids = set()
         self.scripts = []
         self.stylesheets = []
+        self.images = []
+        self.images_without_alt = []
         self.links = []
         self.inline_scripts = 0
         self.inline_handlers = []
@@ -122,6 +139,12 @@ class PageParser(HTMLParser):
             self.stylesheets.append(values.get("href"))
         if tag == "link" and values.get("rel") == "icon":
             self.icon = values.get("href")
+        if tag == "img" and values.get("src"):
+            self.images.append(values["src"])
+            if "alt" not in values:
+                self.images_without_alt.append(values["src"])
+        if tag == "source" and values.get("srcset"):
+            self.images.extend(part.split()[0] for part in values["srcset"].split(",") if part.strip())
         if tag == "a" and values.get("href"):
             self.links.append(values["href"])
         if tag in ("header", "main", "footer", "nav"):
@@ -253,9 +276,14 @@ def check_common(folder):
 
         # Every local reference resolves to a published file.
         published = {"/" + path.relative_to(folder).as_posix() for path in published_files(folder)}
-        for reference in [*page.scripts, *page.stylesheets, page.icon]:
+        for reference in [*page.scripts, *page.stylesheets, *page.images, page.icon]:
             if reference and reference.startswith("/") and reference not in published:
                 fail(f"{name}/{page_name} references {reference}, which is not published")
+        for image in page.images:
+            if not image.startswith("/"):
+                fail(f"{name}/{page_name} loads a picture from elsewhere ({image}); the CSP only allows its own")
+        if page.images_without_alt:
+            fail(f"{name}/{page_name}: every picture needs alt text ({', '.join(page.images_without_alt)})")
     css_files = [path for path in folder.rglob("*.css")]
     for path in css_files:
         css = path.read_text(encoding="utf-8")
@@ -412,11 +440,41 @@ def check_icons():
                 fail(f"{rel(path)} is {width}x{height}, but the manifest says {icon.get('sizes')}")
 
 
+def check_github_link():
+    config = jsonc(GITHUB_LINK / "wrangler.jsonc")
+    if config.get("name") != "directorlink-github":
+        fail("github-link/wrangler.jsonc must name the Worker directorlink-github")
+    if config.get("main") != "worker.js" or "assets" in config:
+        fail("github-link/wrangler.jsonc runs worker.js and publishes no files")
+    if config.get("routes") != [{"pattern": "github.directorlink.io", "custom_domain": True}]:
+        fail("github-link/wrangler.jsonc routes must be exactly the custom domain github.directorlink.io")
+    if config.get("observability", {}).get("enabled") is not True:
+        fail("github-link/wrangler.jsonc must enable Workers observability")
+    worker = (GITHUB_LINK / "worker.js").read_text(encoding="utf-8")
+    require(worker, f'const REPOSITORY = "{REPOSITORY}";', "github-link/worker.js must lead to the repository")
+    require(worker, "REPOSITORY + path + url.search", "github-link/worker.js must keep the path and query")
+    require(worker, ", 301)", "github-link/worker.js answers with a permanent redirect")
+
+
+def check_short_links():
+    """The long address is for machines only; every link people see is the short one."""
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    long_address = REPOSITORY.lower().removeprefix("https://").encode()
+    for relative in tracked.splitlines():
+        path = ROOT / relative
+        if relative in REPOSITORY_ALLOWED or not path.is_file():
+            continue
+        if long_address in path.read_bytes().lower():
+            fail(f"{relative} uses the repository's long address; link to {GITHUB} instead")
+
+
 def main():
     check_console()
     check_site()
     check_icons()
-    print("OK: DirectorLink console and site validated")
+    check_github_link()
+    check_short_links()
+    print("OK: DirectorLink console, site and short link validated")
 
 
 if __name__ == "__main__":

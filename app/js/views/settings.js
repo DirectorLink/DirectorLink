@@ -1335,7 +1335,7 @@ function aboutSection() {
     h(
       "div",
       { class: "button-row" },
-      h("a", { class: "button button-quiet", href: "https://github.com/IsraelCIL/DirectorLink", rel: "noreferrer", target: "_blank" }, t("settings.about.source"), icon("external"))
+      h("a", { class: "button button-quiet", href: "https://github.directorlink.io", rel: "noreferrer", target: "_blank" }, t("settings.about.source"), icon("external"))
     )
   );
 }

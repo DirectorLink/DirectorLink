@@ -87,7 +87,7 @@ async function get(url, kind = "json") {
     requests++;
     let problem;
     try {
-      const response = await fetch(url, { headers: { "User-Agent": "DirectorLink calendar test data (github.com/IsraelCIL/DirectorLink)" } });
+      const response = await fetch(url, { headers: { "User-Agent": "DirectorLink calendar test data (github.directorlink.io)" } });
       if (response.ok) {
         return kind === "json" ? await response.json() : await response.text();
       }

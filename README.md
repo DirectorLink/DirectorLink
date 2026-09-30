@@ -59,7 +59,7 @@ DirectorLink itself does not depend on Composer Pro during normal operation. Com
 
 ### 1. Download DirectorLink
 
-Download DirectorLink from **[GitHub Releases](https://github.com/IsraelCIL/DirectorLink/releases)**.
+Download DirectorLink from **[GitHub Releases](https://github.directorlink.io/releases)**.
 
 Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
@@ -170,6 +170,7 @@ driver/    DriverWorks driver (Lua 5.1) and its tests
 app/       the app (PWA)                       → https://app.directorlink.io
 console/   API console, debugging and logs      → https://console.directorlink.io
 site/      landing page                         → https://directorlink.io
+github-link/ short link to this repository      → https://github.directorlink.io
 cloud/     accounts and the relay (Worker)      → https://api.directorlink.io
 tests/     app and cloud tests, shared vectors
 scripts/   build and validation
@@ -183,6 +184,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 - **App:** https://app.directorlink.io
 - **API console, debugging and logs:** https://console.directorlink.io
 - **Website:** https://directorlink.io
+- **Source code:** https://github.directorlink.io
 
 ## Status
 
