@@ -7,7 +7,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { after, afterEach, before, test } from "node:test";
 
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
-import { appleVars, signInWithApple, startFakeApple } from "./fake-apple.mjs";
+import { appleVars, postNotification, signInWithApple, startFakeApple } from "./fake-apple.mjs";
 import { cookiesOf, googleVars, signInAs, startFakeGoogle } from "./fake-google.mjs";
 import { invitationKey, lockKey, open, seal } from "./lock.mjs";
 import { STARTUP_MS, startWorker } from "./worker.mjs";
@@ -467,10 +467,11 @@ test("a member may have 20 invitations waiting for a home", TEST, async () => {
   assert.equal(more.json.code, "INVITATION_LIMIT_REACHED");
 });
 
-// Accepting an invitation for the home of `state` as the account of `cookie`.
-function joinWith(state, cookie, invitationId, secret) {
+// Accepting an invitation for the home of `state` as the account of `cookie`. `extra`: more fields
+// (ask_owner).
+function joinWith(state, cookie, invitationId, secret, extra = {}) {
   const request = { id: randomHex(8), ts: nowSeconds(), method: "POST", path: "/v1/auth/join", body: { name: "Phone" } };
-  return call("POST", "/v1/join", { cookie, body: { home_id: state.home, invitation_id: invitationId, envelope: seal(invitationKey(secret), { home: state.home, key: invitationId }, "req", JSON.stringify(request)) } });
+  return call("POST", "/v1/join", { cookie, body: { home_id: state.home, invitation_id: invitationId, envelope: seal(invitationKey(secret), { home: state.home, key: invitationId }, "req", JSON.stringify(request)), ...extra } });
 }
 
 async function invite(state, dana, email) {
@@ -623,4 +624,176 @@ test("changes need the app's origin, and the app gets CORS answers", TEST, async
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
   assert.equal((await call("GET", "/v1/homes", {})).status, 401, "not signed in");
+});
+
+// --- Another email, approved by the home's owner (ADR-041) ------------------------------------------
+
+const requestsOf = async (state, cookie) => (await call("GET", `/v1/homes/${state.home}/join-requests`, { cookie })).json.items;
+const decide = (state, cookie, id, decision) => call("POST", `/v1/homes/${state.home}/join-requests/${id}`, { cookie, body: { decision } });
+const myRequest = (state, cookie, invitationId) => call("GET", `/v1/join/${state.home}/${invitationId}`, { cookie });
+
+test("an invitation accepted with another email waits for the owner's approval, then works once", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  // Avi signs in with Apple and hides his email.
+  const hidden = (await signInWithApple(worker.http, apple, { sub: `001.hidden.${randomHex(4)}`, email: `${randomHex(4)}@privaterelay.appleid.com`, private: true, firstName: "Avi", lastName: "Cohen" }, APP)).cookie;
+  const joins = () => state.seen.filter((message) => message.type === "join").length;
+  const before = joins();
+
+  const asked = await joinWith(state, hidden, invitationId, secret, { ask_owner: true });
+  assert.equal(asked.status, 202, asked.text);
+  assert.equal(asked.json.status, "pending");
+  assert.match(asked.json.code, /^\d{6}$/, "a code to read out to the owner");
+  const waiting = await myRequest(state, hidden, invitationId);
+  assert.deepEqual([waiting.status, waiting.json.status, waiting.json.code], [200, "pending", asked.json.code]);
+  const again = await joinWith(state, hidden, invitationId, secret, { ask_owner: true });
+  assert.deepEqual([again.status, again.json.code], [202, asked.json.code], "one request per account, still waiting");
+  assert.equal(joins(), before, "the home is not asked before the owner approves");
+
+  // What the owner sees, and nobody else.
+  const [request, ...more] = await requestsOf(state, dana);
+  assert.deepEqual(more, []);
+  assert.equal(request.name, "Avi Cohen");
+  assert.equal(request.email, null);
+  assert.equal(request.email_hidden, true);
+  assert.deepEqual(request.providers, ["apple"]);
+  assert.equal(request.code, asked.json.code);
+  assert.equal(request.status, "pending");
+  assert.deepEqual([request.invitation.id, request.invitation.email], [invitationId, AVI.email]);
+  assert.ok(Date.parse(request.requested_at) && Date.parse(request.account_created_at));
+  const noa = await signIn(NOA);
+  for (const cookie of [noa, hidden]) {
+    assert.equal((await call("GET", `/v1/homes/${state.home}/join-requests`, { cookie })).json.code, "OWNER_ONLY");
+    assert.equal((await decide(state, cookie, request.id, "approve")).json.code, "OWNER_ONLY");
+  }
+  assert.equal((await decide(state, dana, request.id, "maybe")).status, 400);
+  assert.equal((await call("POST", `/v1/homes/${state.home}/join-requests/${request.id}`, { cookie: dana, origin: "https://evil.example", body: { decision: "approve" } })).json.code, "ORIGIN_NOT_ALLOWED");
+
+  const approved = await decide(state, dana, request.id, "approve");
+  assert.equal(approved.status, 200, approved.text);
+  assert.equal(approved.json.status, "approved");
+  assert.equal((await myRequest(state, hidden, invitationId)).json.status, "approved");
+  // The app seals a new request with the invitation's secret, which the home checks as always.
+  const joined = await joinWith(state, hidden, invitationId, secret);
+  assert.equal(joined.status, 200, joined.text);
+  assert.equal(joined.json.member, true);
+  assert.equal(joins(), before + 1);
+  assert.doesNotMatch(joined.text, /ak_/, "the new key travels sealed");
+  const newKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+  assert.equal((await e2e(hidden, state, newKey.key, newKey.id)).status, 200, "a member, with its own key");
+  const members = await membersOf(state, dana);
+  assert.ok(members.some((m) => m.name === "Avi Cohen" && m.key_ids.includes(newKey.id)), "its key is recorded for it");
+
+  // Used once: gone for everyone, its request too.
+  assert.equal((await myRequest(state, hidden, invitationId)).json.code, "INVITATION_NOT_FOUND");
+  assert.deepEqual(await requestsOf(state, dana), []);
+  assert.equal((await joinWith(state, await signIn(AVI), invitationId, secret)).json.code, "INVITATION_NOT_FOUND");
+});
+
+test("a refusal stays; a request can be withdrawn; an app that does not ask gets EMAIL_MISMATCH", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret)).json.code, "EMAIL_MISMATCH", "apps before 1.3.0 do not ask");
+  assert.equal((await myRequest(state, noa, invitationId)).json.code, "NOT_FOUND");
+
+  assert.equal((await joinWith(state, noa, invitationId, secret, { ask_owner: true })).status, 202);
+  assert.equal((await call("DELETE", `/v1/join/${state.home}/${invitationId}`, { cookie: noa, origin: "https://evil.example" })).json.code, "ORIGIN_NOT_ALLOWED");
+  assert.equal((await call("DELETE", `/v1/join/${state.home}/${invitationId}`, { cookie: noa })).status, 204, "withdrawn");
+  assert.equal((await myRequest(state, noa, invitationId)).json.code, "NOT_FOUND");
+  assert.deepEqual(await requestsOf(state, dana), []);
+
+  assert.equal((await joinWith(state, noa, invitationId, secret, { ask_owner: true })).status, 202, "asked again");
+  const [request] = await requestsOf(state, dana);
+  assert.equal((await decide(state, dana, request.id, "refuse")).json.status, "refused");
+  const refused = await joinWith(state, noa, invitationId, secret, { ask_owner: true });
+  assert.deepEqual([refused.status, refused.json.code], [403, "REFUSED_BY_OWNER"]);
+  assert.equal((await myRequest(state, noa, invitationId)).json.status, "refused");
+  assert.equal((await call("DELETE", `/v1/join/${state.home}/${invitationId}`, { cookie: noa })).status, 404, "a refusal cannot be withdrawn to ask again");
+  assert.deepEqual(await requestsOf(state, dana), [], "the owner's list shows only open requests");
+  assert.equal((await joinWith(state, await signIn(AVI), invitationId, secret)).status, 200, "the invited person is not affected");
+});
+
+test("an approval lets the account try the invitation; the home still checks its secret", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const noa = await signIn(NOA);
+  const guessed = randomBytes(32).toString("hex");
+  assert.equal((await joinWith(state, noa, invitationId, guessed, { ask_owner: true })).status, 202);
+  const [request] = await requestsOf(state, dana);
+  assert.equal((await decide(state, dana, request.id, "approve")).status, 200);
+  const wrong = await joinWith(state, noa, invitationId, guessed);
+  assert.deepEqual([wrong.status, wrong.json.code], [400, "BAD_MAC"]);
+  assert.equal((await call("GET", `/v1/homes/${state.home}`, { cookie: noa })).json.member, false);
+  assert.equal((await joinWith(state, await signIn(AVI), invitationId, secret)).status, 200, "the invitation still works for the person it was for");
+});
+
+test("requests end with their invitation, and an invitation takes five", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const short = randomHex(4);
+  const shortSecret = randomBytes(32).toString("hex");
+  state.invitations.set(short, shortSecret);
+  const registered = await call("POST", `/v1/homes/${state.home}/invitations`, { cookie: dana, body: { invitation_id: short, email: AVI.email, expires_at: new Date(Date.now() + 2500).toISOString() } });
+  assert.equal(registered.status, 201, registered.text);
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, short, shortSecret, { ask_owner: true })).status, 202);
+  const [request] = await requestsOf(state, dana);
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  assert.equal((await myRequest(state, noa, short)).json.status, "expired", "the app can say the invitation ran out");
+  assert.equal((await decide(state, dana, request.id, "approve")).status, 404, "too late to approve");
+  assert.deepEqual(await requestsOf(state, dana), []);
+  assert.equal((await joinWith(state, noa, short, shortSecret)).json.code, "INVITATION_NOT_FOUND");
+
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const asker = (index) => signIn({ sub: `google-asker-${randomHex(4)}`, email: `asker${index}@example.com`, name: `Asker ${index}` });
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal((await joinWith(state, await asker(index), invitationId, secret, { ask_owner: true })).status, 202);
+  }
+  const sixth = await joinWith(state, await asker(5), invitationId, secret, { ask_owner: true });
+  assert.deepEqual([sixth.status, sixth.json.code], [429, "JOIN_REQUEST_LIMIT_REACHED"]);
+});
+
+test("a request goes when the account asking goes, and a new owner starts without any", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const { invitationId, secret } = await invite(state, dana, AVI.email);
+  const ori = await signIn({ sub: `google-ori-${randomHex(4)}`, email: "ori.asks@example.com", name: "Ori" });
+  assert.equal((await joinWith(state, ori, invitationId, secret, { ask_owner: true })).status, 202);
+  assert.equal((await requestsOf(state, dana)).length, 1);
+  assert.equal((await call("DELETE", "/v1/me", { cookie: ori })).status, 204);
+  assert.deepEqual(await requestsOf(state, dana), []);
+
+  const noa = await signIn(NOA);
+  assert.equal((await joinWith(state, noa, invitationId, secret, { ask_owner: true })).status, 202);
+  const newOwner = await signIn({ sub: `google-new-owner-${randomHex(4)}`, email: "new.owner@example.com", name: "New owner" });
+  state.claimToken = randomHex(24);
+  assert.equal((await call("POST", "/v1/homes/claim", { cookie: newOwner, body: { home_id: state.home, claim_token: state.claimToken } })).json.transferred, true);
+  assert.deepEqual(await requestsOf(state, newOwner), []);
+  assert.equal((await myRequest(state, noa, invitationId)).json.code, "INVITATION_NOT_FOUND");
+});
+
+test("Apple's notices never take a home or a membership", TEST, async () => {
+  const state = await home();
+  const person = { sub: `001.owner.${randomHex(4)}`, email: "apple.owner@example.com", firstName: "Apple", lastName: "Owner" };
+  const owner = (await signInWithApple(worker.http, apple, person, APP)).cookie;
+  assert.equal((await call("POST", "/v1/homes/claim", { cookie: owner, body: { home_id: state.home, claim_token: state.claimToken } })).status, 200);
+  const { invitationId, secret } = await invite(state, owner, AVI.email);
+  const avi = await signIn(AVI);
+  const joined = await joinWith(state, avi, invitationId, secret);
+  assert.equal(joined.status, 200, joined.text);
+  const aviKey = JSON.parse(JSON.parse(open(invitationKey(secret), joined.json.envelope, "res")).body);
+
+  // The owner, who signs in only with Apple, stops using it for DirectorLink.
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub }))).status, 200);
+  assert.equal((await call("GET", "/v1/homes", { cookie: owner })).status, 401, "signed out everywhere");
+  assert.equal((await e2e(avi, state, aviKey.key, aviKey.id)).status, 200, "the family keeps its access");
+  // The same Apple ID signs in again: the same account, still the owner.
+  const back = (await signInWithApple(worker.http, apple, person, APP, { withUser: false })).cookie;
+  assert.deepEqual((await call("GET", "/v1/homes", { cookie: back })).json.items.map((item) => [item.home_id, item.owner]), [[state.home, true]]);
+  assert.deepEqual((await membersOf(state, back)).map((m) => m.email).sort(), ["apple.owner@example.com", AVI.email]);
+
+  // Deleting the Apple Account: nobody can sign in to it any more, the home and its members stay.
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "account-delete", sub: person.sub }))).status, 200);
+  assert.equal((await call("GET", "/v1/homes", { cookie: back })).status, 401);
+  assert.equal((await e2e(avi, state, aviKey.key, aviKey.id)).status, 200);
+  assert.ok((await call("GET", "/v1/homes", { cookie: avi })).json.items.some((item) => item.home_id === state.home && !item.owner));
 });

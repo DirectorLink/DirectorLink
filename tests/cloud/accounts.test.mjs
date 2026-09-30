@@ -19,7 +19,9 @@ before(async () => {
   google = await startFakeGoogle();
   worker = await startWorker({
     migrate: true,
-    devVars: googleVars(google, APP, PUBLIC_URL),
+    // wrangler.jsonc has Apple's public ids, but no key here: Apple sign-in is off. Its
+    // notifications are off too without the App ID.
+    devVars: { ...googleVars(google, APP, PUBLIC_URL), APPLE_APP_ID: "" },
   });
 }, { timeout: STARTUP_MS + 10_000 });
 
@@ -219,4 +221,21 @@ test("Sign in with Apple answers 503 until it is set up", TEST, async () => {
   const response = await get(`/auth/apple/start?return_to=${encodeURIComponent(`${APP}/#/settings`)}`);
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "SIGN_IN_NOT_CONFIGURED");
+});
+
+test("the app is told only the sign-ins that are set up, so Apple's button stays hidden without its key", TEST, async () => {
+  const response = await get("/auth/providers", { origin: APP });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { providers: ["google"] });
+  assert.equal(response.headers.get("access-control-allow-origin"), APP);
+  assert.equal(response.headers.get("access-control-allow-credentials"), null, "no cookie is needed or sent");
+  assert.equal((await get("/auth/providers", { origin: "https://attacker.example" })).headers.get("access-control-allow-origin"), null);
+  const { cookie } = await signIn({ person: { ...PERSON, sub: "google-providers", email: "providers@example.com" } });
+  assert.deepEqual((await me(cookie)).json.sign_in_providers, ["google"], "and in /v1/me");
+});
+
+test("Apple's notifications answer 503 until the App ID is set", TEST, async () => {
+  const response = await fetch(`${worker.http}/auth/apple/notifications`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: "x.y.z" }) });
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).code, "NOTIFICATIONS_NOT_CONFIGURED");
 });

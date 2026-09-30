@@ -10,11 +10,13 @@
 //   GET /test/homes/{home_id}/status   the home's connection     } Authorization: Bearer <TEST_TOKEN>
 //   GET /test/homes/{home_id}/v1/...   relayed to the driver     } (version 0 only)
 //   /auth/google/start, /auth/google/callback, /auth/logout, /v1/me   accounts (accounts.js)
+//   POST /auth/apple/notifications     Apple's notifications about its accounts (apple-notifications.js)
 //   /v1/homes/..., /v1/join            homes, members, invitations, sealed requests (homes.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
 import { handleAccounts } from "./accounts.js";
+import { handleAppleNotification } from "./apple-notifications.js";
 import { handleHomes } from "./homes.js";
 import { HomeRelay } from "./home-relay.js";
 import { purgeInvitations } from "./invitations.js";
@@ -45,6 +47,9 @@ export default {
       const test = TEST_ROUTE.exec(url.pathname);
       if (test) {
         return await testEndpoint(request, env, test[1], test[2], url.search);
+      }
+      if (url.pathname === "/auth/apple/notifications") {
+        return await handleAppleNotification(request, env);
       }
       const account = await handleAccounts(request, env);
       if (account) {

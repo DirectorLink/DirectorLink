@@ -1,6 +1,7 @@
 // A fake Apple for the cloud tests: Sign in with Apple's token endpoint, which checks the Worker's
-// ES256 client secret the way Apple does, and signing keys for its ID tokens. Also the steps of a
-// sign-in through the Worker (Apple posts its answer back as a form).
+// ES256 client secret the way Apple does, and signing keys for its ID tokens and for its
+// server-to-server notifications. Also the steps of a sign-in through the Worker (Apple posts its
+// answer back as a form), and posting a notification.
 
 import { generateKeyPairSync, randomBytes, sign, verify } from "node:crypto";
 import { createServer } from "node:http";
@@ -11,6 +12,8 @@ import { freePort } from "./worker.mjs";
 export const SERVICES_ID = "io.directorlink.test";
 export const TEAM_ID = "TEAMID1234";
 export const KEY_ID = "KEYID56789";
+// The primary App ID the Services ID is grouped with: Apple's notifications are addressed to it.
+export const APP_ID = "io.directorlink.test.app";
 
 function base64url(buffer) {
   return Buffer.from(buffer).toString("base64url");
@@ -33,8 +36,8 @@ export async function startFakeApple() {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
 
-  function idToken(claims, key = signingKey.privateKey) {
-    const header = base64url(JSON.stringify({ alg: "RS256", kid, typ: "JWT" }));
+  function idToken(claims, key = signingKey.privateKey, keyId = kid) {
+    const header = base64url(JSON.stringify({ alg: "RS256", kid: keyId, typ: "JWT" }));
     const payload = base64url(JSON.stringify(claims));
     return `${header}.${payload}.${base64url(sign("RSA-SHA256", Buffer.from(`${header}.${payload}`), key))}`;
   }
@@ -109,8 +112,26 @@ export async function startFakeApple() {
       codes.set(code, { nonce: params.get("nonce"), redirectUri: params.get("redirect_uri"), person, claims, forged });
       return code;
     },
+    // A server-to-server notification as Apple signs it: `events` (type, sub, …) written as a JSON
+    // string inside the JWT, as Apple does. options: claims (to replace), forged (another key),
+    // kid (another key id), eventsObject (events as an object).
+    notification(events, { claims = {}, forged = false, kid: keyId = kid, eventsObject = false } = {}) {
+      const now = Math.floor(Date.now() / 1000);
+      const body = { event_time: now, ...events };
+      const payload = { iss: url, aud: APP_ID, iat: now, jti: base64url(randomBytes(8)), events: eventsObject ? body : JSON.stringify(body), ...claims };
+      return idToken(payload, forged ? stranger.privateKey : signingKey.privateKey, keyId);
+    },
     close: () => new Promise((resolve) => server.close(resolve)),
   };
+}
+
+// Posts a notification to the Worker as Apple does ({"payload": "<JWT>"}, no cookie, no Origin).
+export function postNotification(workerUrl, payload, { body } = {}) {
+  return fetch(`${workerUrl}/auth/apple/notifications`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: body ?? JSON.stringify({ payload }),
+  });
 }
 
 export const APPLE_PERSON = { sub: "001234.apple-user.0001", email: "Noam@Example.com", firstName: "Noam", lastName: "Cohen" };
@@ -121,6 +142,7 @@ export function appleVars(fake) {
     APPLE_SERVICES_ID: SERVICES_ID,
     APPLE_TEAM_ID: TEAM_ID,
     APPLE_KEY_ID: KEY_ID,
+    APPLE_APP_ID: APP_ID,
     APPLE_PRIVATE_KEY: fake.privatePem.trim().replace(/\r?\n/g, "\\n"),
     APPLE_AUTH_URL: `${fake.url}/auth/authorize`,
     APPLE_TOKEN_URL: `${fake.url}/auth/token`,

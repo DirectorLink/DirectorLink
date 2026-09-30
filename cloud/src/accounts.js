@@ -1,5 +1,6 @@
 // Accounts (docs/ACCOUNTS.md): sign in with Google or Apple, the session, and deleting the account.
 //
+//   GET    /auth/providers                                   the sign-ins set up on this server
 //   GET    /auth/{google|apple}/start?return_to=<app URL>[&link=1]   → the provider, then back
 //   GET    /auth/google/callback                             (Google redirects here)
 //   POST   /auth/apple/callback                              (Apple posts its form here)
@@ -87,6 +88,13 @@ function cors(request, env) {
   return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true", Vary: "Origin" };
 }
 
+// The providers set up here (their settings and secrets exist): the app shows only their buttons.
+export function configuredProviders(env) {
+  return Object.values(PROVIDERS)
+    .filter((provider) => provider.configured(env))
+    .map((provider) => provider.name);
+}
+
 function withHeaders(response, headers) {
   for (const [name, value] of Object.entries(headers ?? {})) {
     response.headers.set(name, value);
@@ -148,7 +156,9 @@ async function accountFor(env, provider, person) {
   let identity = await find();
   if (!identity) {
     // An account made before identities existed (by the previous Worker while an update rolled
-    // out) gets its identity now.
+    // out) gets its identity now; so does one whose only sign-in, the Apple ID it began with, Apple
+    // said was no longer used for DirectorLink (apple-notifications.js): the same Apple ID gets it
+    // back.
     const legacy = await env.DB.prepare("SELECT id FROM users WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
     if (legacy) {
       await env.DB.prepare("INSERT OR IGNORE INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -332,7 +342,11 @@ async function me(request, env, headers) {
       return withHeaders(notSignedIn(), headers);
     }
     const { results } = await env.DB.prepare("SELECT provider FROM identities WHERE user_id = ? ORDER BY created_at").bind(user.id).all();
-    return json({ id: user.id, email: user.email, name: user.name, created_at: user.created_at, providers: results.map((row) => row.provider) }, 200, headers);
+    return json(
+      { id: user.id, email: user.email, name: user.name, created_at: user.created_at, providers: results.map((row) => row.provider), sign_in_providers: configuredProviders(env) },
+      200,
+      headers
+    );
   }
   if (request.method === "DELETE") {
     const user = await currentUser(request, env);
@@ -341,6 +355,8 @@ async function me(request, env, headers) {
     }
     await env.DB.batch([
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
+      // Its requests to join homes, and those waiting for it to decide (ADR-041).
+      env.DB.prepare("DELETE FROM join_requests WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
       env.DB.prepare("DELETE FROM invitations WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
       env.DB.prepare("DELETE FROM member_keys WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
       env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
@@ -424,6 +440,17 @@ async function logout(request, env, headers) {
 // Routes this module answers; null for any other path.
 export async function handleAccounts(request, env) {
   const path = new URL(request.url).pathname;
+  if (path === "/auth/providers") {
+    // Asked by the app, without cookies, only when someone chooses to sign in (or is signed in).
+    if (request.method !== "GET" && request.method !== "OPTIONS") {
+      return methodNotAllowed();
+    }
+    const headers = cors(request, env);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: { ...(headers ?? {}), "Access-Control-Allow-Methods": "GET", "Access-Control-Max-Age": "600" } });
+    }
+    return json({ providers: configuredProviders(env) }, 200, headers ? { "Access-Control-Allow-Origin": headers["Access-Control-Allow-Origin"], Vary: "Origin" } : {});
+  }
   const auth = /^\/auth\/(google|apple)\/(start|callback)$/.exec(path);
   if (auth) {
     const provider = PROVIDERS[auth[1]];

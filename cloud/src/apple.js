@@ -5,10 +5,11 @@
 // a fake Apple (tests/cloud/apple.test.mjs).
 //
 // Settings: APPLE_SERVICES_ID (the client id), APPLE_TEAM_ID, APPLE_KEY_ID (vars); APPLE_PRIVATE_KEY
-// (secret: the .p8 file, PKCS #8 PEM).
+// (secret: the .p8 file, PKCS #8 PEM). APPLE_APP_ID: the primary App ID, which Apple's
+// notifications about its accounts are addressed to (apple-notifications.js).
 
 import { base64url } from "./http.js";
-import { SignInError, isTrue, verifyJwt } from "./jwt.js";
+import { SignInError, isTrue, verifyJwt, verifySignedJwt } from "./jwt.js";
 
 const APPLE = {
   auth: "https://appleid.apple.com/auth/authorize",
@@ -132,6 +133,37 @@ export async function verifyIdToken(env, idToken, { nonce, now = Date.now() }) {
   const claims = await verifyJwt(idToken, { jwksUrl: ends.jwks, issuers: [ends.issuer], audience: env.APPLE_SERVICES_ID, nonce, now, provider: "Apple" });
   const verified = typeof claims.email === "string" && claims.email.includes("@") && claims.email.length <= 254 && isTrue(claims.email_verified);
   return { subject: claims.sub, email: verified ? claims.email.toLowerCase() : null, name: null, private: isTrue(claims.is_private_email) };
+}
+
+// The events Apple sends to POST /auth/apple/notifications (apple-notifications.js). Apple's
+// documentation names the last one "account-delete"; "account-deleted" is taken as the same.
+const EVENT_TYPES = new Set(["email-disabled", "email-enabled", "consent-revoked", "account-delete", "account-deleted"]);
+
+// Checks one of Apple's server-to-server notifications: the `payload` of its POST, a JWT signed
+// with Apple's keys (those of its ID tokens), issued by Apple, for DirectorLink's primary App ID.
+// Apple addresses these to the App ID its Services ID is grouped with, not to the Services ID, so an
+// ID token posted here (for the Services ID) is refused. Returns { type, subject, email, private,
+// time } (`time`: when it happened, in milliseconds).
+export async function verifyNotification(env, payload, now = Date.now()) {
+  const ends = endpoints(env);
+  const claims = await verifySignedJwt(payload, { jwksUrl: ends.jwks, issuers: [ends.issuer], audience: env.APPLE_APP_ID, provider: "Apple", now });
+  // `events` is a JSON object written as a string.
+  let events = claims.events;
+  if (typeof events === "string") {
+    try {
+      events = JSON.parse(events);
+    } catch {
+      events = null;
+    }
+  }
+  if (!events || typeof events !== "object" || !EVENT_TYPES.has(events.type) || typeof events.sub !== "string" || events.sub === "" || events.sub.length > 255) {
+    throw new SignInError("INVALID_NOTIFICATION", "The notification names no known event and account");
+  }
+  // Seconds in Apple's documentation; milliseconds have been seen too.
+  const at = Number(events.event_time);
+  const time = Number.isFinite(at) && at > 0 ? (at < 1e12 ? at * 1000 : at) : typeof claims.iat === "number" ? claims.iat * 1000 : now;
+  const email = typeof events.email === "string" && events.email.includes("@") && events.email.length <= 254 ? events.email.toLowerCase() : null;
+  return { type: events.type === "account-deleted" ? "account-delete" : events.type, subject: events.sub, email, private: isTrue(events.is_private_email), time };
 }
 
 // The Apple side of accounts.js: how a sign-in starts and comes back.

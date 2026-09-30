@@ -1,7 +1,7 @@
 // Page header, connection chip and the states every screen shares (not connected, loading,
 // controller unreachable).
 
-import { SIGN_IN_PROVIDERS, signIn } from "../account.js";
+import { loadProviders, providersStatus, refreshProviders, signIn, signInProviders } from "../account.js";
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -66,12 +66,28 @@ export function offlineBanner() {
   return h("p", { class: "banner banner-info" }, icon("cloudOff"), h("span", {}, t("offline.banner")));
 }
 
-// Data is shown from the last successful read while the controller cannot be reached.
-// One button per sign-in provider (account.js). `key` names Google's button; others add their
-// name. `style`: the button style for Google (Apple's is its own black or white); `size`: e.g.
-// "button-wide".
-export function signInButtons({ hash, key, style = "button-primary", size = "" }) {
-  return SIGN_IN_PROVIDERS.map((provider) =>
+// One button per sign-in provider the account server has set up (account.js), side by side and the
+// same size. Until it has said which, one Sign in button asks it first: a device on which nobody
+// signs in never contacts it. `ask`: ask at once (an invitation link needs a sign-in anyway). `key`
+// names Google's button; others add their name. `style`: the button style for Google (Apple's is
+// its own black or white, as Apple's guidelines ask); `size`: e.g. "button-wide".
+export function signInButtons({ hash, key, style = "button-primary", size = "", ask = false }) {
+  const providers = signInProviders();
+  if (!providers) {
+    if (ask && providersStatus() === "idle") loadProviders();
+    const status = providersStatus();
+    return [
+      h(
+        "button",
+        { type: "button", class: `button ${style} ${size}`.trim(), dataset: { key: `${key}-choose` }, disabled: status === "loading", onclick: () => loadProviders() },
+        icon("user"),
+        status === "loading" ? t("common.loading") : t("connect.signInShort")
+      ),
+      status === "failed" ? h("p", { class: "notice notice-error", role: "status" }, t("connect.signInUnreachable")) : null,
+    ];
+  }
+  refreshProviders();
+  return providers.map((provider) =>
     h(
       "button",
       {
@@ -86,6 +102,7 @@ export function signInButtons({ hash, key, style = "button-primary", size = "" }
   );
 }
 
+// Data is shown from the last successful read while the controller cannot be reached.
 export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
   // Through the account the reason is known (signed out, home offline, …); signed out, the banner
@@ -98,9 +115,9 @@ export function staleBanner() {
     icon("wifiOff"),
     h("span", {}, remote ? state.notice.text : t("status.staleBanner")),
     signedOut
-      ? SIGN_IN_PROVIDERS.length > 1
-        ? h("a", { class: "button button-small", href: "#/settings", dataset: { key: "stale-sign-in" } }, t("connect.signInShort"))
-        : signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
+      ? signInProviders()?.length === 1
+        ? signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
+        : h("a", { class: "button button-small", href: "#/settings", dataset: { key: "stale-sign-in" } }, t("connect.signInShort"))
       : h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
   );
 }

@@ -1,17 +1,24 @@
 // #/join: accepting an invitation (docs/ACCOUNTS.md). The link's secret was taken out of the
-// address as the page opened (app.js) and is kept for this tab only, so it survives the Google
-// sign-in but is never sent to a server or left in the history.
+// address as the page opened (app.js) and is kept for this tab only, so it survives the sign-in
+// but is never sent to a server or left in the history. An invitation for another email waits for
+// the home's owner to approve this account (ADR-041): the page shows a code to read out to them,
+// asks every few seconds, and finishes by itself once they have.
 
 import { clearHost, saveApiKey } from "../../api-client.js";
 import { h } from "../dom.js";
-import { t } from "../i18n.js";
+import { formatDateTime, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { RemoteError, acceptInvitation, parseInvitation, saveRemote } from "../remote.js";
+import { RemoteError, acceptInvitation, checkJoinRequest, joinCodeText, parseInvitation, saveRemote, withdrawJoinRequest } from "../remote.js";
 import { clientName, connect, errorText, forgetSealing } from "../session.js";
 import { notify, state, ui } from "../state.js";
 import { pageHeader, signInButtons } from "./common.js";
 
 const JOIN_KEY = "directorlink.join";
+// The invitation this tab asked the home's owner about, so a reload carries on waiting.
+const ASKED_KEY = "directorlink.joinAsked";
+const POLL_MS = 5000;
+let pollTimer = null;
+let pollNavigate = null;
 
 export function storeInvitation(text) {
   try {
@@ -32,8 +39,25 @@ function storedInvitation() {
 function clearInvitation() {
   try {
     sessionStorage.removeItem(JOIN_KEY);
+    sessionStorage.removeItem(ASKED_KEY);
   } catch {
     // Nothing stored.
+  }
+}
+
+function markAsked(key) {
+  try {
+    sessionStorage.setItem(ASKED_KEY, key);
+  } catch {
+    // Blocked storage: a reload shows Accept again, which carries on the same request.
+  }
+}
+
+function asked(key) {
+  try {
+    return sessionStorage.getItem(ASKED_KEY) === key;
+  } catch {
+    return false;
   }
 }
 
@@ -49,6 +73,11 @@ function joinError(error) {
       case "INVITATION_EXPIRED":
       case "JOIN_REFUSED":
         return t("join.errors.used");
+      // The home's owner refused this account (ADR-041).
+      case "REFUSED_BY_OWNER":
+        return t("join.errors.refused");
+      case "JOIN_REQUEST_LIMIT_REACHED":
+        return t("join.errors.tooManyRequests");
       case "KEY_LIMIT_REACHED":
         return t("connect.errors.keyLimit");
       case "HOME_OFFLINE":
@@ -63,16 +92,31 @@ function joinError(error) {
   return errorText(error);
 }
 
-async function accept(invitation, navigate) {
+// The invitation this tab holds, as one string (a request waiting is for it).
+function invitationKey(invitation) {
+  return `${invitation.home}.${invitation.invitation}`;
+}
+
+// `confirmed`: this device's key may be replaced without asking again (asked at the first tap).
+async function accept(invitation, navigate, { confirmed = false } = {}) {
   // This device already has a key (its home, or another): the invitation's key replaces it.
-  if (state.apiKey && !window.confirm(t("join.replaceConfirm"))) {
+  if (state.apiKey && !confirmed && !ui.joinConfirmed && !window.confirm(t("join.replaceConfirm"))) {
     return;
   }
+  ui.joinConfirmed = true;
   ui.joinBusy = true;
   ui.joinMessage = null;
   notify();
   try {
     const key = await acceptInvitation(invitation, clientName());
+    if (key.waiting) {
+      // Another email: the home's owner decides; this page asks again every few seconds.
+      ui.joinWait = { ...key.waiting, for: invitationKey(invitation) };
+      markAsked(invitationKey(invitation));
+      schedulePoll(navigate);
+      return;
+    }
+    ui.joinWait = null;
     if (!key.member) {
       // The home made the key but the account could not be added: it could not be used from here.
       clearInvitation();
@@ -97,11 +141,128 @@ async function accept(invitation, navigate) {
     navigate("#/");
     connect();
   } catch (error) {
+    if (error instanceof RemoteError && error.code === "REFUSED_BY_OWNER") {
+      ui.joinWait = { ...(ui.joinWait || {}), status: "refused", for: invitationKey(invitation) };
+    }
     ui.joinMessage = joinError(error);
   } finally {
     ui.joinBusy = false;
     notify();
   }
+}
+
+// What the owner decided, asked every few seconds while this page is open and in view.
+function schedulePoll(navigate) {
+  pollNavigate = navigate;
+  if (pollTimer) return;
+  pollTimer = window.setTimeout(async () => {
+    pollTimer = null;
+    const invitation = storedInvitation();
+    if (!window.location.hash.startsWith("#/join") || !invitation || state.account.status !== "signed-in" || ui.joinWait?.status !== "pending" || ui.joinWait.for !== invitationKey(invitation)) return;
+    if (document.hidden) {
+      schedulePoll(pollNavigate);
+      return;
+    }
+    await followRequest(invitation, pollNavigate);
+  }, POLL_MS);
+}
+
+// Asks the account server about this account's request, and does what its answer says.
+async function followRequest(invitation, navigate) {
+  let result;
+  try {
+    result = await checkJoinRequest(invitation);
+  } catch {
+    // Offline for a moment: ask again later.
+    if (ui.joinWait?.status === "pending") schedulePoll(navigate);
+    return;
+  }
+  const key = invitationKey(invitation);
+  switch (result.outcome) {
+    case "wait":
+      ui.joinWait = { ...result.request, for: key };
+      schedulePoll(navigate);
+      break;
+    case "finish":
+      ui.joinWait = { ...result.request, for: key };
+      // Approved: accepted at once, unless this device's key would be replaced without having
+      // asked (the page was opened again); then the person taps Finish joining.
+      if (!state.apiKey || ui.joinConfirmed) {
+        notify();
+        await accept(invitation, navigate, { confirmed: true });
+        return;
+      }
+      break;
+    case "refused":
+    case "expired":
+      ui.joinWait = { ...result.request, for: key };
+      ui.joinMessage = null;
+      break;
+    case "gone":
+      ui.joinWait = null;
+      ui.joinMessage = t("join.errors.used");
+      break;
+    default:
+      ui.joinWait = null;
+  }
+  notify();
+}
+
+async function withdraw(invitation) {
+  ui.joinBusy = true;
+  notify();
+  try {
+    await withdrawJoinRequest(invitation);
+    ui.joinWait = null;
+    ui.joinMessage = t("join.withdrawn");
+  } catch (error) {
+    // Already gone (the owner's answer came first, or the invitation was used): nothing to withdraw.
+    if (error instanceof RemoteError && error.code === "NOT_FOUND") {
+      ui.joinWait = null;
+      ui.joinMessage = null;
+    } else {
+      ui.joinMessage = joinError(error);
+    }
+  } finally {
+    ui.joinBusy = false;
+    notify();
+  }
+}
+
+// While the owner decides, and after: the code to read out, and what happens next.
+function waitingContent(invitation, navigate) {
+  const wait = ui.joinWait;
+  const message = ui.joinMessage ? h("p", { class: "notice notice-error", role: "alert" }, ui.joinMessage) : null;
+  if (wait.status === "refused") {
+    return [h("p", { class: "notice notice-error", role: "status", dataset: { key: "join-refused" } }, t("join.errors.refused"))];
+  }
+  if (wait.status === "expired") {
+    return [h("p", { class: "notice notice-error", role: "status", dataset: { key: "join-expired" } }, t("join.errors.expiredWaiting"))];
+  }
+  if (wait.status === "approved") {
+    return [
+      h("p", { class: "notice notice-success", role: "status" }, t("join.approved")),
+      message,
+      h(
+        "button",
+        { type: "button", class: "button button-primary button-wide", dataset: { key: "join-finish" }, disabled: Boolean(ui.joinBusy), onclick: () => accept(invitation, navigate) },
+        ui.joinBusy ? t("join.accepting") : t("join.finish")
+      ),
+    ];
+  }
+  schedulePoll(navigate);
+  return [
+    h("h3", { class: "settings-subtitle" }, t("join.waitingTitle")),
+    h("p", { class: "connect-text" }, t("join.waitingText")),
+    h("p", { class: "join-code", dir: "ltr", dataset: { key: "join-code" }, "aria-label": t("join.codeLabel", { code: String(wait.code || "").split("").join(" ") }) }, joinCodeText(wait.code)),
+    h("p", { class: "field-help" }, t("join.waitingHelp", { time: wait.expires_at ? formatDateTime(new Date(wait.expires_at)) : "" })),
+    message,
+    h(
+      "button",
+      { type: "button", class: "button button-secondary button-wide", dataset: { key: "join-withdraw" }, disabled: Boolean(ui.joinBusy), onclick: () => withdraw(invitation) },
+      t("join.withdraw")
+    ),
+  ];
 }
 
 export function joinView({ navigate }) {
@@ -116,9 +277,17 @@ export function joinView({ navigate }) {
     content.push(
       h("p", { class: "connect-text" }, t("join.intro")),
       h("p", { class: "field-help" }, t("join.signInFirst")),
-      signInButtons({ hash: "#/join", key: "join-sign-in", size: "button-wide" })
+      // Opening an invitation is choosing to sign in: the sign-ins are asked for at once.
+      signInButtons({ hash: "#/join", key: "join-sign-in", size: "button-wide", ask: true })
     );
+  } else if (ui.joinWait && ui.joinWait.for === invitationKey(invitation)) {
+    content.push(h("p", { class: "connect-signed-in" }, icon("user"), t("join.as", { email: account.user.email })), ...waitingContent(invitation, navigate));
   } else {
+    // Reloaded while it waited: the request carries on.
+    if (ui.joinChecked !== invitationKey(invitation) && asked(invitationKey(invitation))) {
+      ui.joinChecked = invitationKey(invitation);
+      followRequest(invitation, navigate);
+    }
     content.push(
       h("p", { class: "connect-text" }, t("join.intro")),
       h("p", { class: "connect-signed-in" }, icon("user"), t("join.as", { email: account.user.email })),

@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 29 September 2026</p>
+      <p class="updated">Last updated 30 September 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -67,15 +67,34 @@
       <h2>Signing in with Google or Apple</h2>
       <p>
         Signing in is optional. It is for using your home away from the home network and for inviting
-        family. When you sign in, Google or Apple tells us your account ID with them, your email
-        address and your name (Apple sends the name only the first time, and may give an address of
-        its Hide My Email relay instead of yours). We ask for nothing else, never see your password,
-        and use these only to know which homes your account belongs to and to match invitations. If
-        you add Apple to your account in the app's Settings (or Google to an Apple account), both sign
-        in to the same DirectorLink account; otherwise each is its own account.
+        family. You can sign in with Google or with Apple. When you sign in, Google or Apple tells us
+        your account ID with them, your email address and your name. Apple's account ID is one Apple
+        makes for DirectorLink only; Apple sends your name only the first time, as you enter it there,
+        and gives us either the email address you choose to share or an address of its Hide My Email
+        relay instead of yours. We ask for nothing else, never see your password, and use these only
+        to know which homes your account belongs to and to match invitations. If you add Apple to your
+        account in the app's Settings (or Google to an Apple account), both sign in to the same
+        DirectorLink account; otherwise each is its own account.
         We do not sell or share any of it, and there are no ads, tracking or analytics.
       </p>
-      <p>A device that has never signed in does not contact our account service at all.</p>
+      <p>
+        Apple tells our servers when you stop using Sign in with Apple for DirectorLink, delete your
+        Apple Account, or turn Hide My Email forwarding off or on. We then remove that Apple sign-in
+        from your DirectorLink account, and sign the account out on every device if it was its only
+        way to sign in, or update the address we keep. Your homes and memberships stay. Apple sends
+        nothing else, and we send nothing back.
+      </p>
+      <p>
+        If you open an invitation that was sent to another email address (for example because Apple
+        hides yours), the home's owner is asked to let your account join: they see the name and email
+        address of your account (or that Apple hides it), how it signs in, when it was made and when
+        you asked, with a six-digit code that you read out to them.
+      </p>
+      <p>
+        A device that has never signed in does not contact our account service until you tap
+        <strong>Sign in</strong> or open an invitation link. It then asks which ways to sign in are
+        available, without sending anything about you or your home.
+      </p>
 
       <h2>What our servers store</h2>
       <ul>
@@ -83,6 +102,7 @@
         <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out. Expired ones are deleted every day.</li>
         <li>Homes: which homes your account owns or belongs to, and since when, and the ids (never the keys themselves) of the access keys your account uses at each home.</li>
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
+        <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path

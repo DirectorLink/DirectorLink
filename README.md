@@ -42,7 +42,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - Installation method is outside the scope of this project
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
-- LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
+- LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
 - Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, and the alarm's status (security partitions: read-only, off by default)
 - Room names in several languages
