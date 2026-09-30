@@ -9,6 +9,7 @@ local Lock = require("src.cloud.lock")
 local Random = require("src.core.random")
 local X25519 = require("src.core.x25519")
 local CpacePairing = require("src.auth.cpace_pairing")
+local Keys = require("src.auth.keys")
 
 local Auth = {}
 
@@ -49,7 +50,7 @@ end
 -- A key asked for with expires_in (ADR-040; the console asks for a day) lasts from 60 seconds to
 -- 30 days.
 Auth.EXPIRES_IN_MIN = 60
-Auth.EXPIRES_IN_MAX = 30 * 24 * 60 * 60
+Auth.EXPIRES_IN_MAX = Keys.LONGEST_LIFE
 
 local function expiresIn(value)
     if value == nil then
@@ -111,8 +112,10 @@ local function cpaceStart(ctx, body)
         return Problem.invalidField("cpace.nonce", "cpace.nonce is " .. CpacePairing.NONCE_BYTES .. " random bytes, base64")
     end
     -- The answer comes sealed: a controller whose lock failed its self-test cannot pair this way.
+    -- Its own code, so the app can tell it from DirectorLink before 1.3.0 (which refuses the field
+    -- cpace): updating would not help here.
     if not ctx.services.remote.available() then
-        return Problem.invalidField("cpace", "This controller cannot seal the answer (the lock self-test failed); pair with pairing_code")
+        return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal the answer (the lock self-test failed; see the log); pair with pairing_code")
     end
     local _, nameProblem = Validate.name(body.name, "name", "Paired client")
     if nameProblem then

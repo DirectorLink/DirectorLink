@@ -113,6 +113,20 @@ function tests.attempts_started_and_never_finished_count_too()
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = codeOf(mock) } }).status, 429)
 end
 
+-- Five attempts started are the device's five tries of the minute: the plain code gets no sixth.
+function tests.after_five_attempts_started_the_plain_code_is_not_compared()
+    local mock = Mock.startDriver()
+    local Base64 = modules()
+    for _ = 1, 5 do
+        T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { cpace = { nonce = Base64.encode(string.rep("s", 16)) } } }).status, 200)
+    end
+    local plain = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = codeOf(mock) } })
+    T.eq(plain.status, 429, "even the right code")
+    T.eq(plain.json.code, "PAIRING_RATE_LIMITED")
+    -- Another device is not held up by it.
+    T.eq(T.http(mock, "POST", "/v1/auth/pair", { ip = "10.0.0.9", body = { pairing_code = codeOf(mock) } }).status, 201)
+end
+
 function tests.twenty_attempts_close_the_code()
     local mock = Mock.startDriver()
     for attempt = 1, 19 do
@@ -217,8 +231,8 @@ function tests.a_controller_that_cannot_seal_refuses_cpace_and_keeps_the_code()
     end)
     local Base64 = modules()
     local refused = T.http(mock, "POST", "/v1/auth/pair", { body = { cpace = { nonce = Base64.encode(string.rep("n", 16)) } } })
-    T.eq(refused.status, 400)
-    T.eq(refused.json.errors[1].field, "cpace", "the app then warns before it sends the code")
+    T.eq(refused.status, 503)
+    T.eq(refused.json.code, "LOCK_UNAVAILABLE", "the app then warns before it sends the code, and says updating will not help")
     T.eq(T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = codeOf(mock), name = "Chrome" } }).status, 201, "not counted")
 end
 

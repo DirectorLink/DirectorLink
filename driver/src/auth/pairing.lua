@@ -237,16 +237,22 @@ local function lockDevice(client, ip, now)
     }
 end
 
--- What a wrong code, already counted, means: the code closes after MAX_CODE_FAILURES in all, the
--- device is locked after MAX_FAILED_ATTEMPTS, or it may try again.
-local function wrongCode(client, ip, now)
+-- A device that already used up its tries, or a code that did (CPace attempts count when they
+-- start, so a device can reach the limit before anything locked it): no other code is compared.
+local function overLimit(client, ip, now)
     if state.codeFailures >= MAX_CODE_FAILURES then
         return closeAfterFailures()
     end
     if client.failed >= MAX_FAILED_ATTEMPTS then
         return lockDevice(client, ip, now)
     end
-    return {
+    return nil
+end
+
+-- What a wrong code, already counted, means: the code closes after MAX_CODE_FAILURES in all, the
+-- device is locked after MAX_FAILED_ATTEMPTS, or it may try again.
+local function wrongCode(client, ip, now)
+    return overLimit(client, ip, now) or {
         code = "PAIRING_CODE_INVALID",
         message = "The pairing code is incorrect",
         attempts_remaining = MAX_FAILED_ATTEMPTS - client.failed,
@@ -267,7 +273,7 @@ end
 function Pairing.verify(input, ip)
     local now = os.time()
     local client = clientState(ip, now)
-    local refused = admit(client, now)
+    local refused = admit(client, now) or overLimit(client, ip, now)
     if refused then
         return false, refused
     end
@@ -288,15 +294,9 @@ end
 function Pairing.begin(ip)
     local now = os.time()
     local client = clientState(ip, now)
-    local refused = admit(client, now)
+    local refused = admit(client, now) or overLimit(client, ip, now)
     if refused then
         return nil, refused
-    end
-    if state.codeFailures >= MAX_CODE_FAILURES then
-        return nil, closeAfterFailures()
-    end
-    if client.failed >= MAX_FAILED_ATTEMPTS then
-        return nil, lockDevice(client, ip, now)
     end
     client.failed = client.failed + 1
     state.codeFailures = state.codeFailures + 1

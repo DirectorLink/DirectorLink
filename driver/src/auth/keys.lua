@@ -33,6 +33,11 @@ local ALGORITHMS = {
 -- the first start of 1.3.0 (store version 4), like the ones it pairs now.
 local CONSOLE_NAME = "DirectorLink Console"
 local CONSOLE_SECONDS = 24 * 60 * 60
+-- No key is made to last longer (expires_in, src/api/handlers/auth.lua). One with more left was
+-- made while the controller's clock ran ahead, which has since been put back: it is over too, or
+-- it would last as much longer (ADR-040). The margin is for small corrections of the clock.
+Keys.LONGEST_LIFE = 30 * 24 * 60 * 60
+local CLOCK_MARGIN = 60 * 60
 
 local state = {
     keys = {},
@@ -137,6 +142,11 @@ local function addLoaded(key, hash, alg, lock)
     }
 end
 
+-- True for a key that expires, once that time has passed (or it has more left than any key gets).
+local function over(key, now)
+    return key.expires ~= nil and (key.expires <= now or key.expires - now > Keys.LONGEST_LIFE + CLOCK_MARGIN)
+end
+
 -- Removes the keys whose expiry has passed and tells the driver (Keys.onExpired): their
 -- invitations go, and the profiles and the relay's list of keys follow. Returns what was removed
 -- ({ id, name }).
@@ -145,7 +155,7 @@ local function expire(now)
     local removed = {}
     for index = #state.keys, 1, -1 do
         local key = state.keys[index]
-        if key.expires and key.expires <= now then
+        if over(key, now) then
             table.remove(state.keys, index)
             state.lastUsed[key.id] = nil
             table.insert(removed, 1, { id = key.id, name = key.name })
@@ -257,7 +267,7 @@ function Keys.verify(presented)
             match = key
         end
     end
-    if match and match.expires and match.expires <= now then
+    if match and over(match, now) then
         expire(now)
         return nil, "KEY_EXPIRED"
     end
@@ -372,6 +382,7 @@ function Keys.list()
 end
 
 function Keys.adminCount()
+    expire()
     local count = 0
     for _, key in ipairs(state.keys) do
         if key.role == "admin" then
@@ -399,8 +410,10 @@ function Keys.find(id)
     return nil
 end
 
--- Changes a key's name and/or role. Returns the updated record, or nil plus an error code.
+-- Changes a key's name and/or role. Returns the updated record, or nil plus an error code. An
+-- expired key is gone first: it is not found, and it is no admin that another could leave to.
 function Keys.update(id, changes)
+    expire()
     for _, key in ipairs(state.keys) do
         if key.id == id then
             if changes.role and not Roles.valid(changes.role) then

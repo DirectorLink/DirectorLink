@@ -134,6 +134,86 @@ function tests.a_sealed_request_with_an_expired_key_is_refused()
     T.eq(Keys.count(), 0, "and it is gone")
 end
 
+-- An invitation made by a key that has since expired is gone even when nothing looked at the keys
+-- in between: the join itself looks first.
+function tests.an_expired_keys_invitation_cannot_be_joined()
+    local mock = Mock.startDriver()
+    local owner = T.pair(mock, "Owner phone")
+    local Harness = require("relay_harness")
+    local Lock = require("src.cloud.lock")
+    local _, connection = Harness.connected({ mock = mock })
+    local home = T.http(mock, "GET", "/v1/remote", { key = owner }).json.home_id
+    local console = pairWith(mock, { name = "DirectorLink Console", expires_in = 60 }).json
+    local invitation = T.http(mock, "POST", "/v1/invitations", { key = console.key, body = { role = "admin" } })
+    T.eq(invitation.status, 201, invitation.body)
+    invitation = invitation.json
+    local result = later(120, function()
+        local request = { id = "join-1", ts = os.time(), method = "POST", path = "/v1/auth/join", body = { name = "Joined late" } }
+        local envelope = Lock.seal(Lock.invitationKey(invitation.secret), home, invitation.id, "req", Json.encode(request))
+        return Harness.relayRequest(mock, connection, { type = "join", id = "relay-join-1", invitation = invitation.id, envelope = envelope })
+    end)
+    T.eq(result.ok, false)
+    T.eq(result.code, "INVITATION_NOT_FOUND")
+    T.eq(mock.properties["API Keys"], "1", "no key was made")
+end
+
+-- Every minute (the scheduler's tick), even when nothing asks: Composer's count, the invitations
+-- and the cloud's list of keys follow.
+function tests.expired_keys_go_within_a_minute()
+    local mock = Mock.startDriver()
+    T.pair(mock, "Owner phone")
+    local console = pairWith(mock, { name = "DirectorLink Console", expires_in = 60 }).json
+    local Invitations = require("src.auth.invitations")
+    T.truthy(Invitations.create("member", 3600, console.id))
+    T.eq(mock.properties["API Keys"], "2")
+    later(61, function()
+        require("src.core.scheduler").tick()
+    end)
+    T.eq(mock.properties["API Keys"], "1")
+    T.eq(#Invitations.list(), 0, "its invitation went with it")
+end
+
+-- An expired admin not yet removed is no other admin: the last live one cannot step down.
+function tests.an_expired_admin_does_not_count_for_last_admin()
+    local mock = Mock.startDriver()
+    local phone, response = T.pair(mock, "Owner phone")
+    pairWith(mock, { name = "DirectorLink Console", expires_in = 60 })
+    local demoted = later(120, function()
+        return T.http(mock, "PATCH", "/v1/api-keys/" .. response.json.id, { key = phone, body = { role = "member" } })
+    end)
+    T.eq(demoted.status, 409, demoted.body)
+    T.eq(demoted.json.code, "LAST_ADMIN")
+end
+
+function tests.a_change_to_an_expired_key_finds_no_key()
+    local mock = Mock.startDriver()
+    local phone = T.pair(mock, "Owner phone")
+    local short = pairWith(mock, { name = "Script", expires_in = 60 }).json
+    local patched = later(120, function()
+        return T.http(mock, "PATCH", "/v1/api-keys/" .. short.id, { key = phone, body = { name = "Renamed" } })
+    end)
+    T.eq(patched.status, 404, patched.body)
+    T.notContains(mock.persist[STORE], "Renamed")
+end
+
+-- Paired while the controller's clock ran a year ahead, then the clock was put back: the key is
+-- over, instead of lasting a year longer. A small correction changes nothing.
+function tests.a_key_with_more_left_than_any_key_gets_is_over()
+    local mock = Mock.startDriver()
+    local phone = T.pair(mock, "Owner phone")
+    local ahead = later(365 * DAY, function()
+        return pairWith(mock, { name = "DirectorLink Console", expires_in = DAY }).json
+    end)
+    local refused = T.http(mock, "GET", "/v1/system", { key = ahead.key })
+    T.eq(refused.status, 401)
+    T.eq(refused.json.code, "KEY_EXPIRED")
+    local longest = later(600, function()
+        return pairWith(mock, { name = "Script", expires_in = 30 * DAY }).json
+    end)
+    T.eq(T.http(mock, "GET", "/v1/system", { key = longest.key }).status, 200, "30 days, with the clock put back 10 minutes")
+    T.eq(T.http(mock, "GET", "/v1/system", { key = phone }).status, 200, "keys that never expire are not touched")
+end
+
 -- The store as 1.2.0 wrote it: version 3, and no expiry.
 local function asVersion3(mock)
     local text = mock.persist[STORE]:gsub("^json:", "")

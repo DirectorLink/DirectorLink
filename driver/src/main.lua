@@ -471,6 +471,8 @@ function OnDriverLateInit(driverInitType)
         onTick = function(now)
             refreshScheduleStatus(now)
             refreshCalendarStatus(now)
+            -- Keys that expired go within a minute, with their invitations, even when nothing asks.
+            Keys.count()
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil

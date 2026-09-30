@@ -33,7 +33,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 
 2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`. Five wrong codes within a minute lock pairing for that device (IP address) for 60 s (`429`, `Retry-After`); twenty wrong codes in all close the code. Pairing works only on the home network. With `"expires_in": 86400` (seconds, 60 to 2592000) the key stops working after that long: it is then refused with `401 KEY_EXPIRED` and removed; `expires_at` says when (null for never). With `"exchange": {"public_key": …}` (X25519, base64) the answer is sealed instead (the app's way before 1.3.0).
 
-   The app and the API console never send the code: they pair with CPace (1.3.0), in two requests (`{"name", "cpace": {"nonce"}}`, then `{"cpace": {"session", "share", "confirm"}}`); the exact inputs are in `api/openapi.yaml` (`POST /v1/auth/pair`) and `docs/ACCOUNTS.md`, the test vectors in `tests/vectors/cpace.json`. Each attempt counts as a wrong code until it succeeds. DirectorLink before 1.3.0 refuses the field `cpace`.
+   The app and the API console never send the code: they pair with CPace (1.3.0), in two requests (`{"name", "cpace": {"nonce"}}`, then `{"cpace": {"session", "share", "confirm"}}`); the exact inputs are in `api/openapi.yaml` (`POST /v1/auth/pair`) and `docs/ACCOUNTS.md`, the test vectors in `tests/vectors/cpace.json`. Each attempt counts as a wrong code until it succeeds. DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose lock failed its self-test answers `503 LOCK_UNAVAILABLE`.
 
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 

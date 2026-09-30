@@ -184,8 +184,8 @@ paths:
         `PAIRING_CODE_INVALID`. An exchange works once, from the device that started it, for 60
         seconds (`PAIRING_SESSION_EXPIRED`); one begun before a new code was made answers
         `PAIRING_CODE_EXPIRED`. A share of low order is refused (`INVALID_FIELD`, `cpace.share`).
-        DirectorLink before 1.3.0, and a controller whose lock failed its self-test, refuse the
-        field `cpace` (`INVALID_FIELD`).
+        DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose
+        lock failed its self-test answers `503` `LOCK_UNAVAILABLE`.
 
         **With the code** (scripts; the app only after warning that it travels unprotected): the
         key comes back as it is. With `exchange` (the app's X25519 public key), the answer is
