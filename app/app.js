@@ -211,6 +211,7 @@ function signature() {
     state.canInstall,
     state.offlineCopy,
     ui.filter,
+    ui.offRuns,
     ui.editFavorites,
     ui.relayStage,
     ui.doorbellStage,

@@ -67,7 +67,8 @@ export function waitForLightConfirmation(lightId, change) {
   return waitForConfirmation("light", lightId, change);
 }
 
-function optimistic(kind, device, change) {
+// The device as the screen shows it right after `change` was sent (also turn-off.js).
+export function optimistic(kind, device, change) {
   if (kind === "light") {
     if ("brightness" in change) {
       return { ...device, brightness: change.brightness, on: change.brightness > 0 };
@@ -405,6 +406,37 @@ export function setBlind(blind, position) {
   );
 }
 
+// Blinds sent to `position` by one request for them all (Home's Close all, turn-off.js): each is
+// followed as after its own command. Returns what to call once the answer is in, with the ids of
+// the blinds that did not take it: their moves are put back as they were.
+export function sendingBlinds(blinds, position) {
+  const now = Date.now();
+  const sent = [];
+  for (const blind of blinds) {
+    const current = findDevice("blind", blind.id);
+    if (!current || !can("member")) continue;
+    const id = current.id;
+    const number = (lastCommand.get(id) || 0) + 1;
+    lastCommand.set(id, number);
+    sent.push({ id, number, previous: moves.get(id) || null });
+    setMove(id, startMove(current, position, now, reportsMotion.has(id)));
+    setSettle(id, null);
+    clearError(deviceKey("blind", id));
+  }
+  notify();
+  return (refused = new Set()) => {
+    const answeredAt = Date.now();
+    for (const { id, number, previous } of sent) {
+      // A newer command to the same blind was sent meanwhile: it has the say.
+      if (lastCommand.get(id) !== number) continue;
+      if (refused.has(id)) setMove(id, previous);
+      else if (moves.has(id)) setMove(id, answered(moves.get(id), answeredAt));
+    }
+    notify();
+    scheduleMovePoll();
+  };
+}
+
 // It stops where it is: the app shows the shade as stopped, then where it reports it stopped, and
 // reads it for a few seconds.
 export function stopBlind(blind) {
@@ -448,9 +480,11 @@ export function allOff(group) {
 // Doors and gates, and the gate at a doorbell: the Open button asks for a second tap within a
 // few seconds, then sends the command and shows "Opening…" / "Sent". Relays pulse
 // (POST /v1/relays/{id}/pulse); doorbells press their button (POST /v1/doorbells/{id}/open).
+// Home's Turn off all asks for its second tap the same way (turn-off.js).
 const stageTimers = new Map();
 
-function setStage(map, id, stage, clearAfter) {
+// ui[map][id] = stage (null takes it out), taken out again after `clearAfter` ms when given.
+export function setStage(map, id, stage, clearAfter) {
   const timerKey = `${map}:${id}`;
   window.clearTimeout(stageTimers.get(timerKey));
   if (stage) {
