@@ -824,7 +824,13 @@ function Mock.install(project)
     end
 
     function C4:SetTimer(delay, callback, repeating)
-        local timer = { delay = delay, callback = callback, repeating = repeating, cancelled = false, fired = false }
+        -- source: the file its callback comes from (with "/"), so a test can tell the scheduler's
+        -- minute timer (whose delay depends on the wall clock) from the one it is looking for.
+        local defined = type(callback) == "function" and debug.getinfo(callback, "S")
+        local timer = {
+            delay = delay, callback = callback, repeating = repeating, cancelled = false, fired = false,
+            source = defined and (defined.source:gsub("\\", "/")) or "",
+        }
         function timer:Cancel()
             self.cancelled = true
         end
