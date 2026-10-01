@@ -250,6 +250,21 @@ Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/c
 - `POST /v1/restore {"upload": "<id>"}` checks it and changes nothing (`dry_run` is true unless sent false); `{"upload": "<id>", "dry_run": false}` replaces every store, or none (`500 RESTORE_FAILED`). A small document can go as `{"document": {...}}` instead of an upload. The answer, `restore`, says what there is after it (`counts`), what is left out (`left_out`), the keys (`yours`: `in_backup` or `added`), the remote identity (`same`, or `restore`: the backup's home from two seconds after the answer, unless the relay refuses it), the rooms and devices found by id, by name (`by_name`), renamed and not found (`unmatched`, with `used_in`), and `composer` (the backup's value and the current one).
 - Refused: `422 BACKUP_INVALID` (not a backup, or a section missing or of the wrong shape, with `errors`), `409 BACKUP_TOO_NEW` (made by a newer DirectorLink), `409 UPLOAD_INCOMPLETE`, `404 UPLOAD_NOT_FOUND`, `503 PROJECT_NOT_READY` (the project is not read yet).
 
+## DirectorLink's settings
+
+`GET /v1/settings` (since 1.4.0, admins; ADR-043) lists DirectorLink's Composer properties in Composer's order, each with its `value`, `composer_value` (as Composer shows it), `choices`, `changeable` and `set_in` (`app_and_composer` or `composer`); `status`, the read-only properties as Composer shows them (`status`, `version`, `api_status`, `pairing_status`, `api_keys`, `remote_status`, `schedule_status`, `last_automation`, `calendar_status`, `inventory`; English text, `null` until set; never the pairing code); and `actions`, Composer's actions with `in_app`. A change made in Composer shows at once.
+
+```json
+PATCH /v1/settings
+{ "schedules": "paused", "log_level": "debug" }
+```
+
+changes `schedules` (`on`, `paused`), `jewish_calendar` (`off`, `on`) and `log_level` (`debug`, `info`, `warn`, `error`) as Composer does: the property is set, so Composer shows the new value, and it takes effect as a change there does; a later change in Composer wins. Every field is checked before anything changes; one already at its value is left alone. The answer is the whole document again. `door_control`, `relay_hold`, `alarm_status` and `remote_access` are set in Composer only: any key, an admin's too, gets `403 SET_IN_COMPOSER` (`errors[0].field` names it), and nothing changes. Nothing in the API runs New Pairing Code, Revoke All API Keys or Reset Remote Identity. `PATCH /v1/logs/settings` sets the same Log Level property.
+
+`GET /v1/settings/printout` gives `lines`, what the Composer action Print Schedules and Scenes prints (two spaces before each schedule and scene, four before a scene's steps), and `POST /v1/project/refresh` runs Refresh Project: the answer has the `inventory` (as in `GET /v1/system`) and `changes` (`added`, `removed`, `moved`, `renamed`, `rooms_added`, `rooms_removed`, `rooms_renamed`); `503 PROJECT_REFRESH_FAILED` when Director could not list the project (the one read before stays in use).
+
+Every change, in the app or in Composer, and every Refresh Project, is logged in the category `settings` with `from` (`app` or `composer`) and, from the app, the key's `key_id` and `key_name`: `GET /v1/logs?category=settings`. Drivers before 1.4.0 answer `404`.
+
 ## Debugging
 
-`GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` while investigating. Secrets are never logged.
+`GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` (or `PATCH /v1/settings`) while investigating. Secrets are never logged.

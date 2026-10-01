@@ -85,8 +85,8 @@ With **Log Level** Debug set before updating, on a Friday or a holiday eve if po
 
 1. After the update, **Alarm Status** = `Off` shows right after Relay Hold (note whether Composer shows its tooltip). Inventory counts no alarm partitions (it reads as in 0w step 1, with *0 fans*), `GET /v1/system` has `"alarm_status": false`, and the app has no Alarm section on Home and no Alarm line in Settings → Controller.
 2. In the console with an admin key, `GET /v1/alarm` answers `200 {"enabled": false, "partitions": []}`; with a viewer key, `403 FORBIDDEN`.
-3. Set it to `On` (no restart): `GET /v1/logs?category=alarm` shows *alarm status on in Composer*, with `partitions_watched` 0 on the test system; Inventory ends with *, 0 alarm partitions* and `features.alarm_status` is true; the console's `GET /v1/alarm` answers `403 SEALED_REQUEST_REQUIRED`; the app, at home and on mobile data, shows no errors and no Alarm section (there are no partitions).
-4. Set it back to `Off`: the log shows *alarm status off in Composer*, the Inventory suffix goes, and step 2 answers again.
+3. Set it to `On` (no restart): `GET /v1/logs?category=settings` shows *Alarm Status set to On in Composer* (1.4.0; *alarm status on in Composer* in the category `alarm` before), with `partitions_watched` 0 on the test system; Inventory ends with *, 0 alarm partitions* and `features.alarm_status` is true; the console's `GET /v1/alarm` answers `403 SEALED_REQUEST_REQUIRED`; the app, at home and on mobile data, shows no errors and no Alarm section (there are no partitions).
+4. Set it back to `Off`: the log shows *Alarm Status set to Off in Composer*, the Inventory suffix goes, and step 2 answers again.
 5. On a home with an alarm (the contributor's), with it On: Home lists each active partition within about 10 s of a change (arm away or home at the keypad, open a zone, the exit and entry delay, an alarm); there is nothing to press, a viewer device shows nothing, and `GET /v1/logs` at Debug holds no partition state. With nothing else changing, arm, disarm and start a delay: in developer tools → Network the `POST /v1/sealed` answers of each 10-second round keep their sizes (the alarm's is padded). Keep any *unsupported device N: …* line from `category=adapters`.
 6. The scene editor offers no alarm step.
 
@@ -140,7 +140,7 @@ With **Door Control** Enabled and an admin key in the console or curl. Have some
 2. `PATCH /v1/relays/{id}` `{"state": "closed"}` on a door answers `409 HOLD_NOT_ALLOWED` (*Holding a relay closed is off: use pulse…*). The door does not open, its `state` does not change, and `GET /v1/logs?category=api` shows `PATCH /v1/relays/{id} -> 409` with the key id.
 3. These open the door as before (202; the door opens and the relay releases half a second later): the app's Open, at home and on mobile data; a scene with the gate; `POST /v1/relays/{id}/pulse`. `PATCH {"state": "open"}` answers 202 too, but only releases the relay: the door does not open, and `state` stays or turns `open`.
 4. Set Relay Hold to `Allowed` (no restart). `GET /v1/logs?category=relay_command` shows *relay hold allowed in Composer*. `PATCH {"state": "closed"}` answers 202, the door stays open and `state` turns `closed`. `PATCH {"state": "open"}` releases it at once (`open`).
-5. Set it back to `Not allowed`. The log shows *relay hold not allowed in Composer*, and step 2 is refused again at once.
+5. Set it back to `Not allowed`. The log shows *Relay Hold set to Not allowed in Composer* (category `settings` since 1.4.0), and step 2 is refused again at once.
 
 ## 0s. Shades: four fixes (1.1.1)
 
@@ -230,7 +230,7 @@ On a Director with these devices (the contributor, @bkwagner, read them on a liv
 2. Run a scene from the app: Last Automation shows its name, *run from* the device's name, and how many devices.
 3. When a schedule runs, Last Automation says which schedule (or, for a weather rule, the reading, e.g. *heat rule, 31C outside*).
 4. Actions → **Print Schedules and Scenes**: the Lua output lists every schedule and scene with its steps.
-5. Set **Schedules** to `Paused`: Schedule Status says *Paused in Composer*, the app's Schedules page says the installer paused them, and a schedule due now does not run. Set it back to `On`.
+5. Set **Schedules** to `Paused`: Schedule Status says *Paused* (*Paused in Composer* before 1.4.0), the app's Schedules page says they are paused, and a schedule due now does not run. Set it back to `On`.
 
 `v0.14.0` — schedules: scenes run by themselves at a time, at sunrise or sunset, or when it gets hot, windy or rainy (weather from Open-Meteo). Update DirectorLink in Composer (no reboot).
 
