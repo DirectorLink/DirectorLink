@@ -48,6 +48,22 @@ local function rounded(value)
     return math.floor(value * 100 + 0.5) / 100
 end
 
+-- What DirectorLink found in the project (also the answer of POST /v1/project/refresh).
+function System.inventory(counts)
+    return {
+        rooms = counts.rooms,
+        devices = counts.devices,
+        supported_devices = counts.supported,
+        lights = counts.supported_lights,
+        thermostats = counts.supported_climate,
+        fans = counts.supported_fans,
+        blinds = counts.supported_blinds,
+        cameras = counts.supported_cameras,
+        relays = counts.supported_relays,
+        doorbells = counts.supported_doorbells,
+    }
+end
+
 function System.info(ctx)
     local admin = ctx.apiKey and ctx.apiKey.role == "admin"
     local services = ctx.services
@@ -80,18 +96,7 @@ function System.info(ctx)
             longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
-        inventory = {
-            rooms = counts.rooms,
-            devices = counts.devices,
-            supported_devices = counts.supported,
-            lights = counts.supported_lights,
-            thermostats = counts.supported_climate,
-            fans = counts.supported_fans,
-            blinds = counts.supported_blinds,
-            cameras = counts.supported_cameras,
-            relays = counts.supported_relays,
-            doorbells = counts.supported_doorbells,
-        },
+        inventory = System.inventory(counts),
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,
             last_init_type = text(lifecycle.last_init_type),

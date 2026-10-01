@@ -449,8 +449,8 @@ function tests.the_alarm_state_is_never_logged()
             T.notContains(text, word, "no state in the log")
         end
     end
-    T.contains(log, "alarm status off in Composer")
-    T.contains(log, "alarm status on in Composer")
+    T.contains(log, "Alarm Status set to Off in Composer")
+    T.contains(log, "Alarm Status set to On in Composer")
 end
 
 return tests

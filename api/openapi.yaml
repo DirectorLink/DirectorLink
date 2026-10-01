@@ -99,6 +99,13 @@ tags:
       Everything DirectorLink keeps on the controller, to download and restore (ADR-042,
       docs/BACKUP.md). For admins, in sealed requests only: a backup holds every key's hash and lock
       key and the home's remote identity. The app encrypts it with a password before saving it.
+  - name: Settings
+    description: |
+      DirectorLink's own settings, its Composer properties (ADR-043). Admins change **Schedules**,
+      **Jewish Calendar** and **Log Level** here as in Composer: the property is set, Composer shows
+      the new value, and a later change in Composer wins. **Door Control**, **Relay Hold**, **Alarm
+      Status** and **Remote Access**, and the actions New Pairing Code, Revoke All API Keys and Reset
+      Remote Identity, are set in Composer only, for every key. Drivers before 1.4.0 answer 404.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -2070,6 +2077,111 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
+  /v1/settings:
+    get:
+      tags: [Settings]
+      operationId: getSettings
+      x-directorlink-role: admin
+      summary: Get DirectorLink's settings, statuses and actions
+      description: |
+        Every DirectorLink property in Composer with its value, its choices and whether the app may
+        change it (`changeable`; `set_in`), the read-only properties as Composer shows them (in
+        English; never the pairing code), and Composer's actions with whether the app may run them.
+        A change made in Composer shows here at once.
+      responses:
+        "200":
+          description: The settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriverSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    patch:
+      tags: [Settings]
+      operationId: updateSettings
+      x-directorlink-role: admin
+      summary: Change Schedules, Jewish Calendar or Log Level
+      description: |
+        Name each setting by its key with its new value. All of them are checked before anything
+        changes. Each is set as Composer sets it: the property changes in Composer, takes effect as
+        a change there does (pausing schedules, turning the Jewish calendar on or off), and is
+        logged with the key's name and id (log category `settings`). A setting already at its
+        value is left alone. A setting made in Composer only is refused for every key, admins
+        included (`403 SET_IN_COMPOSER`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DriverSettingsUpdate"
+            example:
+              schedules: paused
+      responses:
+        "200":
+          description: The settings, as they are now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriverSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/settings/printout:
+    get:
+      tags: [Settings]
+      operationId: getSettingsPrintout
+      x-directorlink-role: admin
+      summary: Every schedule and scene, as Print Schedules and Scenes prints them
+      description: The lines the Composer action **Print Schedules and Scenes** prints to the Lua output, in English.
+      responses:
+        "200":
+          description: The printout.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsPrintout"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/project/refresh:
+    post:
+      tags: [Settings]
+      operationId: refreshProject
+      x-directorlink-role: admin
+      summary: Read the Composer project again
+      description: |
+        As the Composer action **Refresh Project**: after devices or rooms were added, removed,
+        renamed or moved in Composer. Keys, scenes, schedules, room names and the room order stay
+        as they are. Logged with the key's name and id.
+      responses:
+        "200":
+          description: The project was read again.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProjectRefresh"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "503":
+          description: Director could not list the project (`PROJECT_REFRESH_FAILED`); the project read before stays in use.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -2340,7 +2452,8 @@ components:
         The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
         door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or a claim token was
         asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status or a
-        backup was asked for without sealing the request (`SEALED_REQUEST_REQUIRED`).
+        backup was asked for without sealing the request (`SEALED_REQUEST_REQUIRED`), or a setting
+        made in Composer only was sent to `PATCH /v1/settings` (`SET_IN_COMPOSER`, for every key).
       content:
         application/problem+json:
           schema:
@@ -4407,6 +4520,143 @@ components:
       properties:
         level:
           $ref: "#/components/schemas/LogLevel"
+
+    DriverSetting:
+      type: object
+      required: [key, property, value, composer_value, choices, changeable, set_in]
+      properties:
+        key:
+          type: string
+          enum: [door_control, relay_hold, alarm_status, remote_access, schedules, jewish_calendar, log_level]
+        property:
+          type: string
+          description: The property's name in Composer.
+          example: Schedules
+        value:
+          type: string
+          description: One of `choices`; the property's default while Composer has no value.
+          example: paused
+        composer_value:
+          type: string
+          description: The value as Composer shows it.
+          example: Paused
+        choices:
+          type: array
+          items:
+            type: string
+        changeable:
+          type: boolean
+          description: An admin may change it with `PATCH /v1/settings`.
+        set_in:
+          type: string
+          enum: [app_and_composer, composer]
+
+    DriverSettings:
+      type: object
+      required: [settings, status, actions]
+      properties:
+        settings:
+          type: array
+          description: In Composer's order.
+          items:
+            $ref: "#/components/schemas/DriverSetting"
+        status:
+          type: object
+          description: DirectorLink's read-only properties as Composer shows them (English text), or null before DirectorLink set one.
+          required: [status, version, api_status, pairing_status, api_keys, remote_status, schedule_status, last_automation, calendar_status, inventory]
+          properties:
+            status:
+              type: [string, "null"]
+            version:
+              type: [string, "null"]
+            api_status:
+              type: [string, "null"]
+            pairing_status:
+              type: [string, "null"]
+            api_keys:
+              type: [string, "null"]
+            remote_status:
+              type: [string, "null"]
+            schedule_status:
+              type: [string, "null"]
+            last_automation:
+              type: [string, "null"]
+            calendar_status:
+              type: [string, "null"]
+            inventory:
+              type: [string, "null"]
+        actions:
+          type: array
+          description: "Composer's actions. `in_app`: the app may run it too (`POST /v1/project/refresh`, `GET /v1/settings/printout`)."
+          items:
+            type: object
+            required: [key, action, in_app]
+            properties:
+              key:
+                type: string
+                enum: [new_pairing_code, revoke_api_keys, print_automation, refresh_project, reset_remote_identity]
+              action:
+                type: string
+                description: The action's name in Composer.
+              in_app:
+                type: boolean
+
+    DriverSettingsUpdate:
+      type: object
+      description: The settings to change, by key. Any other key is refused; one set in Composer only with `403 SET_IN_COMPOSER`.
+      minProperties: 1
+      properties:
+        schedules:
+          type: string
+          enum: ["on", paused]
+        jewish_calendar:
+          type: string
+          enum: ["off", "on"]
+        log_level:
+          $ref: "#/components/schemas/LogLevel"
+
+    SettingsPrintout:
+      type: object
+      required: [printed_at, lines]
+      properties:
+        printed_at:
+          type: string
+          format: date-time
+        lines:
+          type: array
+          description: Indented by two spaces for each schedule and scene, four for a scene's steps.
+          items:
+            type: string
+
+    ProjectRefresh:
+      type: object
+      required: [refreshed_at, inventory, changes]
+      properties:
+        refreshed_at:
+          type: string
+          format: date-time
+        inventory:
+          description: What DirectorLink found, as in `GET /v1/system`.
+          $ref: "#/components/schemas/System/properties/inventory"
+        changes:
+          type: object
+          description: What changed since the project was read before.
+          required: [added, removed, moved, renamed, rooms_added, rooms_removed, rooms_renamed]
+          properties:
+            added:
+              type: integer
+            removed:
+              type: integer
+            moved:
+              type: integer
+            renamed:
+              type: integer
+            rooms_added:
+              type: integer
+            rooms_removed:
+              type: integer
+            rooms_renamed:
+              type: integer
 
     Backup:
       type: object

@@ -40,6 +40,7 @@ local suites = {
     "test_fans",
     "test_alarm",
     "test_backup",
+    "test_settings",
 }
 
 if #arg > 0 then

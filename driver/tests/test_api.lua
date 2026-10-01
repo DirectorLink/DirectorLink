@@ -710,11 +710,11 @@ function tests.relay_hold_changed_in_composer_applies_at_once()
     T.eq(#mock.commands, before)
 
     local messages = {}
-    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=relay_command", { key = key }).json.items) do
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=settings", { key = key }).json.items) do
         messages[#messages + 1] = entry.message
     end
-    T.contains(table.concat(messages, "\n"), "relay hold allowed in Composer")
-    T.contains(table.concat(messages, "\n"), "relay hold not allowed in Composer")
+    T.contains(table.concat(messages, "\n"), "Relay Hold set to Allowed in Composer")
+    T.contains(table.concat(messages, "\n"), "Relay Hold set to Not allowed in Composer")
 end
 
 function tests.admins_change_roles_but_keep_one_admin()

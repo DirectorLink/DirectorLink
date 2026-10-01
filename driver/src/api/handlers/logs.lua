@@ -50,9 +50,9 @@ function Logs.update_settings(ctx)
         return Problem.invalidField("level", "level must be one of debug, info, warn, error")
     end
 
-    Log.setLevel(body.level)
-    ctx.services.onLogLevelChanged(body.level)
-    Log.info("logs", "log level changed", { level = body.level, client = ctx.client.ip })
+    -- The Composer property Log Level, set as the app sets it (ADR-043): Composer shows it, and the
+    -- change is logged with who made it.
+    ctx.services.settings.change({ log_level = body.level }, ctx.apiKey)
     return 200, { level = Log.getLevel() }
 end
 

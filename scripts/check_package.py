@@ -536,6 +536,79 @@ def check_alarm_read_only(files):
             fail(f"{name}: scene steps must never reach the alarm ({match.group(0).strip()})")
 
 
+# DirectorLink's settings in the app (1.4.0, ADR-043): admins change Schedules, Jewish Calendar and
+# Log Level through the API as Composer does, and run Refresh Project and read what Print Schedules
+# and Scenes prints. Door Control, Relay Hold, Alarm Status and Remote Access, and the actions New
+# Pairing Code, Revoke All API Keys and Reset Remote Identity stay in Composer, for every key: none
+# is marked for the app in src/core/settings.lua, nothing in the package writes those properties,
+# the change path writes only what is marked, and nothing the API runs reaches those actions.
+SETTINGS_MODULE = "src/core/settings.lua"
+APP_SETTINGS = ("Schedules", "Jewish Calendar", "Log Level")
+COMPOSER_ONLY_SETTINGS = ("Door Control", "Relay Hold", "Alarm Status", "Remote Access")
+APP_ACTIONS = ("Print Schedules and Scenes", "Refresh Project")
+COMPOSER_ONLY_ACTIONS = ("New Pairing Code", "Revoke All API Keys", "Reset Remote Identity")
+COMPOSER_ONLY_CALLS = re.compile(r"\b[Pp]airing\.open\b|\b[Kk]eys\.revokeAll\b|\bresetIdentity\b")
+SETTINGS_CONTRACT = {
+    SETTINGS_MODULE: (
+        'if not setting.app then\n            return { code = "SET_IN_COMPOSER"',
+        "if setting.app and value ~= nil and Properties ~= nil and value ~= Settings.value(setting) then",
+    ),
+    "src/api/handlers/settings.lua": (
+        'return Problem.new(403, "SET_IN_COMPOSER"',
+        "local failure = settings.check(body)\n    if failure then",
+    ),
+}
+
+
+def settings_entries(code, table, name_field):
+    """(name, app) of each entry of `Settings.<table> = { ... }`, one entry per line."""
+    match = re.search(rf"^Settings\.{table} = \{{(.*?)^\}}", code, re.M | re.S)
+    if not match:
+        fail(f"could not read Settings.{table} in {SETTINGS_MODULE}")
+    lines = [line for line in match.group(1).splitlines() if line.strip()]
+    entries = []
+    for line in lines:
+        name = re.search(rf'\b{name_field}\s*=\s*"([^"]+)"', line)
+        app = re.findall(r"\bapp\s*=\s*(\w+)", line)
+        if not name:
+            fail(f"could not read an entry of Settings.{table} in {SETTINGS_MODULE}: {line.strip()!r}")
+        if table != "STATUS" and (len(app) != 1 or app[0] not in ("true", "false")):
+            fail(f"Settings.{table} in {SETTINGS_MODULE}: {name.group(1)} needs app = true or false, once")
+        entries.append((name.group(1), bool(app) and app[0] == "true"))
+    return entries
+
+
+def check_settings_composer_only(files):
+    code = lua_code(files.get(SETTINGS_MODULE, ""))
+    for table, field, in_app, composer_only in (
+        ("LIST", "property", APP_SETTINGS, COMPOSER_ONLY_SETTINGS),
+        ("ACTIONS", "action", APP_ACTIONS, COMPOSER_ONLY_ACTIONS),
+    ):
+        entries = dict(settings_entries(code, table, field))
+        marked = sorted(name for name, app in entries.items() if app)
+        if marked != sorted(in_app):
+            fail(f"Settings.{table} in {SETTINGS_MODULE} lets the app change {', '.join(marked)}; only {', '.join(in_app)} may be (ADR-043)")
+        for name in composer_only:
+            if entries.get(name) is not False:
+                fail(f"Settings.{table} in {SETTINGS_MODULE} must list {name} with app = false: it is set in Composer only")
+    if any(name == "Pairing Code" for name, _ in settings_entries(code, "STATUS", "property")):
+        fail(f"Settings.STATUS in {SETTINGS_MODULE} must not show the pairing code: whoever reads it could pair")
+    for name, fragments in SETTINGS_CONTRACT.items():
+        for fragment in fragments:
+            if fragment not in files.get(name, ""):
+                fail(f"{name} is missing settings contract: {fragment}")
+    names = "|".join(re.escape(name) for name in COMPOSER_ONLY_SETTINGS)
+    writes = re.compile(rf'UpdateProperty\s*\(\s*"(?:{names})"|\bProperties\s*\[\s*(?:"(?:{names})"|Alarm\.PROPERTY)\s*\]\s*=(?!=)')
+    for name, text in sorted(files.items()):
+        if not name.endswith(".lua"):
+            continue
+        found = writes.search(lua_code(text))
+        if found:
+            fail(f"{name} sets a property made in Composer only ({found.group(0)}): only the installer changes it")
+        if name.startswith("src/api/") and COMPOSER_ONLY_CALLS.search(lua_code(text)):
+            fail(f"{name} reaches a Composer action ({COMPOSER_ONLY_CALLS.search(lua_code(text)).group(0)}): New Pairing Code, Revoke All API Keys and Reset Remote Identity are run in Composer only")
+
+
 def check_calendar_privacy(files):
     """The Jewish calendar's files make no network calls: they know the home's location."""
     for name in CALENDAR_ENGINE:
@@ -566,6 +639,7 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_settings_composer_only(files)
     check_calendar_privacy(files)
     check_remote_methods(files)
     check_relay_roots(files)

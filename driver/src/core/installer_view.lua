@@ -166,7 +166,8 @@ function View.scheduleStatus(now, paused, calendar)
         return "None"
     end
     if paused then
-        return string.format("Paused in Composer - %d schedule%s not running", total, total == 1 and " is" or "s are")
+        -- Paused with the Schedules property, in Composer or by an admin in the app (ADR-043).
+        return string.format("Paused - %d schedule%s not running", total, total == 1 and " is" or "s are")
     end
     if on == 0 then
         return string.format("All %d off", total)
@@ -270,7 +271,7 @@ end
 function View.printout(now, paused, registry, calendar)
     local lines = {}
     local schedules = Schedules.records()
-    lines[#lines + 1] = string.format("DirectorLink schedules: %d%s (controller time %s)", #schedules, paused and ", PAUSED in Composer (Schedules property)" or "", os.date("%Y-%m-%d %H:%M", now))
+    lines[#lines + 1] = string.format("DirectorLink schedules: %d%s (controller time %s)", #schedules, paused and ", PAUSED (Schedules property)" or "", os.date("%Y-%m-%d %H:%M", now))
     lines[#lines + 1] = "Jewish calendar: " .. (calendar and calendar.statusText(now) or "Off")
     for _, schedule in ipairs(schedules) do
         local runtime = Schedules.runtime(schedule.id)
