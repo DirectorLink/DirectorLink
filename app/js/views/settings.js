@@ -19,6 +19,7 @@ import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.j
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { backupPanel } from "./backup.js";
+import { driverSettingsPanel } from "./driver-settings.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { chip, stepper } from "./schedules.js";
 import { updateFact, updatePanel } from "./updates.js";
@@ -902,6 +903,8 @@ function controllerSection(navigate) {
           )
         : null
     ),
+    // Admins: DirectorLink's own settings, as in Composer (ADR-043).
+    driverSettingsPanel(),
     // Admins: everything DirectorLink keeps, as a file locked with a password (ADR-042).
     backupPanel()
   );
