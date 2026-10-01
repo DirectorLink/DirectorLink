@@ -360,6 +360,7 @@ test("pausing schedules asks first; resuming asks nothing", async () => {
   confirmAnswer = false;
   await click("driver-setting-schedules");
   assert.ok(confirmed[0].includes("Pause every schedule?"), confirmed[0]);
+  assert.ok(confirmed[0].includes("(except a time due in the last 5 minutes)"), "what was due in the last 5 minutes runs on resume");
   assert.equal(requests("PATCH", "/v1/settings").length, 0);
   confirmAnswer = true;
   await click("driver-setting-schedules");
