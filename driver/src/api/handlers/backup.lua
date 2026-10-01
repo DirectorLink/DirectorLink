@@ -41,7 +41,15 @@ function Handlers.export(ctx)
     end
     Backup.sweep(Clock.now())
     local document = Backup.export(ctx.services.registry)
-    ctx.services.log.info("backup", "backup made", { key_id = ctx.apiKey.id, scenes = #document.sections.scenes.scenes, keys = #document.sections.keys.keys })
+    -- Whether Director gave the controller's MAC address (C4:GetUniqueMAC) and the relay had
+    -- accepted the home's identity: what tells this home's backups from another's (ADR-042).
+    ctx.services.log.info("backup", "backup made", {
+        key_id = ctx.apiKey.id,
+        scenes = #document.sections.scenes.scenes,
+        keys = #document.sections.keys.keys,
+        controller_known = document.controller_id ~= Json.null,
+        remote_identity = document.sections.remote_identity.linked == true,
+    })
     return 200, document
 end
 
