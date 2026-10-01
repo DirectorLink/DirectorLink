@@ -100,9 +100,9 @@ A successful install shows:
 - **Jewish Calendar:** `Off`, so DirectorLink works out no Shabbat or holiday times. `On` gives schedules and the app Shabbat and holiday times, the Hebrew date and the weekly reading, from the project's location; **Calendar Status** shows what it works out
 - **Log Level** and **Inventory** (rooms and devices found)
 
-Admins can also change **Schedules**, **Jewish Calendar** and **Log Level**, and run **Refresh Project**, in the app (Settings → Controller → DirectorLink settings); Composer shows the change, and a later change in Composer wins. The app shows the other properties and the statuses with "Set in Composer": Door Control, Relay Hold, Alarm Status and Remote Access, and the actions New Pairing Code, Revoke All API Keys and Reset Remote Identity, are changed in Composer only. Every change is in the log with who made it (ADR-043).
+Admins can also change **Schedules**, **Jewish Calendar** and **Log Level**, and run **Refresh Project**, in the app (Settings → Controller → DirectorLink settings); Composer shows the change, and a later change in Composer wins. The app shows the other properties and the statuses with "Set in Composer": Door Control, Relay Hold, Alarm Status and Remote Access, and the actions New Pairing Code, Revoke All API Keys and Reset Remote Identity, are changed in Composer only. Every change is in the log with who made it, whatever the Log Level (ADR-043).
 
-Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home).
+Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home). A DirectorLink backup file together with its password counts as such a copy.
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.
 
@@ -124,7 +124,7 @@ Update the installed driver manually through Composer Pro using the `DirectorLin
 
 To downgrade, download `DirectorLink.c4z` from an older release and install that version through Composer Pro. Release notes say when a downgrade is not safe.
 
-Do not remove and re-add the project instance unless a release specifically requires it.
+Do not remove and re-add the project instance unless a release specifically requires it. Removing it deletes everything DirectorLink keeps: have an admin make a backup in the app first (Settings → Controller → Backup, [`docs/BACKUP.md`](docs/BACKUP.md)).
 
 ## API
 

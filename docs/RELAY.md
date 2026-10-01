@@ -14,7 +14,10 @@ When **Remote Access** is switched on the first time, the driver creates and kee
 persistent data (ADR-028):
 
 - `home_id` — 32 hex characters, random. Not secret; shown shortened in Composer.
-- `home_secret` — 64 hex characters, random. Never logged, never shown.
+- `home_secret` — 64 hex characters, random. Never logged, never shown. It leaves the controller
+  only in a backup (1.4.0, ADR-042): `GET /v1/backup` gives it, with the waiting replacements, to
+  admin keys in sealed requests only, and the app saves it encrypted with a password; only an
+  identity the relay has accepted goes into one.
 
 The relay trusts the first secret it sees for a `home_id` (it stores the SHA-256) and afterwards
 only accepts that secret. This only decides which connection carries the home's envelopes: who may
@@ -26,7 +29,8 @@ needs the home's owner, since whoever holds that copy can connect as the home:
 1. The owner's app, on the home network, asks the controller for a new secret
    (`POST /v1/remote/secret`, admin key, refused through the relay). The driver makes a new one for
    every request (never one made earlier, which a copy of its data taken meanwhile would hold),
-   keeps the newest three for a day next to the one in use, and answers only its SHA-256.
+   keeps the newest three for a day next to the one in use, and answers only its SHA-256 (the
+   secrets themselves go only into a backup).
 2. The app gives the SHA-256 to the account service (`POST /v1/homes/{home_id}/secret`, the owner's
    session only). From then on the relay accepts only the new secret, and it closes the driver's
    socket (4001 `secret replaced`).
@@ -43,6 +47,13 @@ everywhere and replaces the secret again at home, or the installer runs Reset Re
 The Composer action **Reset Remote Identity** is the last resort, for when the owner cannot do this
 (someone else took the home over): the driver makes a new `home_id` and secret, revokes its pending
 invitations and claim token, and connects as a new home, which the owner links again.
+
+**A restore from a backup** (ADR-042, docs/BACKUP.md) may bring the backup's identity to this
+controller: the one it replaces is kept until the relay accepts the backup's, and comes back if the
+relay refuses it (401, or 400 for an identity it does not take). Another home's identity moves only
+when the admin asks. The relay lets one connection carry a home: a second controller with the same
+identity replaces the first (4000 `replaced`), and the two push each other off every few seconds,
+so the controller the backup was made on must be off, or have Remote Access off, first.
 
 ## Connecting
 
