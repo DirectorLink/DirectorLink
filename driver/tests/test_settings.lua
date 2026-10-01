@@ -424,6 +424,119 @@ function tests.an_app_change_is_applied_once_when_director_reports_it_back()
     T.eq(changes(s)[#changes(s)].data.from, "composer")
 end
 
+-- A Director that reports every UpdateProperty back to OnPropertyChanged at once, whichever the
+-- property (ADR-043: not yet seen on a real controller whether it does).
+local function reportEveryUpdate()
+    local update = C4.UpdateProperty
+    function C4:UpdateProperty(name, value)
+        update(self, name, value)
+        Properties[name] = value
+        OnPropertyChanged(name)
+    end
+end
+
+function tests.only_directorlink_s_settings_are_acted_on_and_the_pairing_code_is_never_logged()
+    local s = start(nil, reportEveryUpdate)
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local code = s.mock.properties["Pairing Code"]
+    T.truthy(code and code:match("^%d%d%d%d %d%d%d%d$"), "a code: " .. tostring(code))
+    T.eq(#changes(s), 0, "Status, Version, Pairing Code and the other statuses are DirectorLink's own: no change in Composer")
+    -- Whatever a field is called, and in the message too.
+    local Log = require("src.core.log")
+    Log.warn("auth", "code " .. code .. " and " .. code:gsub(" ", ""), { value = code, typed = code:gsub(" ", "") })
+    local logs = T.http(s.mock, "GET", "/v1/logs?level=debug&limit=500", { key = s.key })
+    T.eq(logs.status, 200)
+    T.notContains(logs.body, code)
+    T.notContains(logs.body, (code:gsub(" ", "")))
+    T.contains(logs.body, "[redacted]")
+    for _, line in ipairs(s.mock.debugLog) do
+        T.notContains(line, (code:gsub(" ", "")), "nor in Director's log")
+        T.notContains(line, code)
+    end
+end
+
+function tests.every_change_is_logged_whatever_the_log_level()
+    local s = start()
+    T.eq(patch(s, { log_level = "warn" }).status, 200)
+    T.eq(patch(s, { log_level = "error" }).status, 200)
+    local count = #changes(s)
+    T.eq(patch(s, { schedules = "paused", jewish_calendar = "on" }).status, 200)
+    T.eq(T.http(s.mock, "POST", "/v1/project/refresh", { key = s.key }).status, 200)
+    composer("Door Control", "Enabled")
+    composer("Remote Access", "On")
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    local messages = {}
+    for index, entry in ipairs(changes(s)) do
+        if index > count then
+            messages[#messages + 1] = entry.message
+        end
+    end
+    T.same(messages, {
+        "Schedules set to Paused in the app by Owner phone",
+        "Jewish Calendar set to On in the app by Owner phone",
+        "Refresh Project run in the app by Owner phone",
+        "Door Control set to Enabled in Composer",
+        "Remote Access set to On in Composer",
+        "Refresh Project run in Composer",
+    }, "at Log Level Error, every one of them")
+    T.eq(require("src.core.log").getLevel(), "error")
+end
+
+-- Director may report an app change back late, after another change: what it reports is the value
+-- DirectorLink applied last, never a change in Composer.
+function tests.a_late_report_of_an_app_change_is_never_taken_for_composer_s()
+    local s = start()
+    local queued = 0
+    local update = C4.UpdateProperty
+    function C4:UpdateProperty(name, value)
+        update(self, name, value)
+        if name == "Schedules" then
+            queued = queued + 1
+        end
+    end
+    local function deliver()
+        for _ = 1, queued do
+            OnPropertyChanged("Schedules")
+        end
+        queued = 0
+    end
+    local count = #changes(s)
+    -- Two changes in the app before Director reports either.
+    T.eq(patch(s, { schedules = "paused" }).status, 200)
+    T.eq(patch(s, { schedules = "on" }).status, 200)
+    deliver()
+    T.eq(#changes(s), count + 2, "the two changes, nothing more")
+    -- A change in Composer between the app's and its report.
+    T.eq(patch(s, { schedules = "paused" }).status, 200)
+    composer("Schedules", "On")
+    deliver()
+    local logged = changes(s)
+    T.eq(#logged, count + 4)
+    T.eq(logged[#logged].message, "Schedules set to On in Composer")
+    T.eq(logged[#logged - 1].data.from, "app")
+    T.eq(current(s, "schedules"), "on")
+end
+
+function tests.a_setting_whose_effect_fails_is_reported_as_it_stands()
+    local s = start()
+    local Scheduler = require("src.core.scheduler")
+    local switchesChanged = Scheduler.switchesChanged
+    Scheduler.switchesChanged = function()
+        error("the scheduler broke")
+    end
+    local answer = patch(s, { schedules = "paused" })
+    Scheduler.switchesChanged = switchesChanged
+    T.eq(answer.status, 500)
+    T.eq(answer.json.code, "SETTING_NOT_APPLIED")
+    T.contains(answer.json.detail, "Schedules is set to Paused")
+    T.eq(answer.json.errors[1].field, "schedules")
+    T.eq(s.mock.properties["Schedules"], "Paused", "Composer shows what is set")
+    T.eq(current(s, "schedules"), "paused", "and the API says the same")
+    local logged = changes(s)
+    T.contains(logged[#logged].message, "Schedules set to Paused in the app by Owner phone; applying it failed")
+    T.contains(logged[#logged].data.error, "the scheduler broke")
+end
+
 -- Director keeps the properties when DirectorLink restarts or is updated: a change made in the app
 -- is there afterwards, as Composer's are; DirectorLink keeps no copy of its own.
 function tests.an_app_change_stays_after_an_update_as_composer_keeps_it()

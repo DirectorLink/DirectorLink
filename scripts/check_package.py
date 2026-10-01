@@ -547,7 +547,12 @@ APP_SETTINGS = ("Schedules", "Jewish Calendar", "Log Level")
 COMPOSER_ONLY_SETTINGS = ("Door Control", "Relay Hold", "Alarm Status", "Remote Access")
 APP_ACTIONS = ("Print Schedules and Scenes", "Refresh Project")
 COMPOSER_ONLY_ACTIONS = ("New Pairing Code", "Revoke All API Keys", "Reset Remote Identity")
-COMPOSER_ONLY_CALLS = re.compile(r"\b[Pp]airing\.open\b|\b[Kk]eys\.revokeAll\b|\bresetIdentity\b")
+# What the API may not reach: the three actions, and what turns remote access on or off or watches
+# the alarm (the effects of Remote Access and Alarm Status), the relay module included.
+COMPOSER_ONLY_CALLS = re.compile(
+    r"\b[Pp]airing\.open\b|\b[Kk]eys\.revokeAll\b|\bresetIdentity\b|\bRelay\.(?:start|stop)\b|\bonPropertyChanged\b"
+    r"""|require\s*\(?\s*["']src\.cloud\.relay["']"""
+)
 SETTINGS_CONTRACT = {
     SETTINGS_MODULE: (
         'if not setting.app then\n            return { code = "SET_IN_COMPOSER"',
@@ -598,7 +603,8 @@ def check_settings_composer_only(files):
             if fragment not in files.get(name, ""):
                 fail(f"{name} is missing settings contract: {fragment}")
     names = "|".join(re.escape(name) for name in COMPOSER_ONLY_SETTINGS)
-    writes = re.compile(rf'UpdateProperty\s*\(\s*"(?:{names})"|\bProperties\s*\[\s*(?:"(?:{names})"|Alarm\.PROPERTY)\s*\]\s*=(?!=)')
+    named = rf"""(?:"(?:{names})"|'(?:{names})'|Alarm\.PROPERTY)"""
+    writes = re.compile(rf"UpdateProperty\s*\(\s*{named}|\bProperties\s*\[\s*{named}\s*\]\s*=(?!=)")
     for name, text in sorted(files.items()):
         if not name.endswith(".lua"):
             continue
@@ -606,7 +612,7 @@ def check_settings_composer_only(files):
         if found:
             fail(f"{name} sets a property made in Composer only ({found.group(0)}): only the installer changes it")
         if name.startswith("src/api/") and COMPOSER_ONLY_CALLS.search(lua_code(text)):
-            fail(f"{name} reaches a Composer action ({COMPOSER_ONLY_CALLS.search(lua_code(text)).group(0)}): New Pairing Code, Revoke All API Keys and Reset Remote Identity are run in Composer only")
+            fail(f"{name} reaches a Composer action or switch ({COMPOSER_ONLY_CALLS.search(lua_code(text)).group(0)}): New Pairing Code, Revoke All API Keys and Reset Remote Identity, and what Remote Access and Alarm Status do, are run in Composer only")
 
 
 def check_calendar_privacy(files):

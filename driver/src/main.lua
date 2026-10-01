@@ -275,7 +275,7 @@ local services = {
     settings = Settings,
     -- Refresh Project from the app (POST /v1/project/refresh), as the Composer action runs it.
     refreshProject = function(by)
-        Log.info("settings", "Refresh Project run in the app by " .. tostring(by.name), {
+        Log.always("settings", "Refresh Project run in the app by " .. tostring(by.name), {
             action = "refresh_project",
             from = "app",
             key_id = by.id,
@@ -464,6 +464,12 @@ function OnDriverLateInit(driverInitType)
         log = Log,
         openNow = Keys.count() == 0,
         onChange = function(code, status)
+            -- Whoever reads it could pair an admin key: it never reaches the log, as "1234 5678"
+            -- or as typed.
+            if code ~= "-" then
+                Log.hide(code)
+                Log.hide((code:gsub("%s", "")))
+            end
             updateProperty("Pairing Code", code)
             updateProperty("Pairing Status", status)
         end,
@@ -564,7 +570,7 @@ function ExecuteCommand(command, params)
     elseif params.ACTION == "REFRESH_PROJECT" then
         -- After moving, renaming, adding or removing devices and rooms in Composer, when Director
         -- does not announce it (or has not yet): no driver restart needed.
-        Log.info("settings", "Refresh Project run in Composer", { action = "refresh_project", from = "composer" })
+        Log.always("settings", "Refresh Project run in Composer", { action = "refresh_project", from = "composer" })
         refreshProject("Composer action")
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
@@ -583,16 +589,8 @@ function ExecuteCommand(command, params)
     end
 end
 
--- What a change of one of DirectorLink's properties does, made in Composer (OnPropertyChanged) or in
--- the app (PATCH /v1/settings: src/core/settings.lua sets the property first, as Composer would):
--- one path for both. `by`: the API key that made it, nil for Composer. Every change is logged with
--- who made it and from where (category "settings").
-local function propertyChanged(name, by)
-    if not Properties then
-        return
-    end
-    local data = Settings.changeData(name, by)
-    local message = name .. " set to " .. tostring(Properties[name]) .. (by and (" in the app by " .. tostring(by.name)) or " in Composer")
+-- What a change of one of DirectorLink's properties does (`data`: what the log says of it).
+local function propertyEffect(name, data)
     if name == "Remote Access" then
         if Properties[name] == "On" then
             Relay.start()
@@ -600,7 +598,8 @@ local function propertyChanged(name, by)
             Relay.stop()
         end
     elseif name == "Schedules" then
-        -- Resumed: what was due while paused is never caught up, not even after a restart.
+        -- Resumed: what was due while paused is not caught up, not even after a restart, except a
+        -- time due in the last 5 minutes (src/core/scheduler.lua).
         Scheduler.switchesChanged()
         refreshScheduleStatus()
     elseif name == "Jewish Calendar" then
@@ -614,25 +613,46 @@ local function propertyChanged(name, by)
             publishInventory()
         end
     elseif name == "Log Level" then
-        if not Log.normalizeLevel(Properties[name]) then
-            return
-        end
-        -- Kept at the more detailed of the two levels: the change itself is always in the log.
-        local logged = Log.info("settings", message, data)
         Log.setLevel(Properties[name])
-        if not logged then
-            Log.info("settings", message, data)
-        end
+    end
+end
+
+-- A change of one of DirectorLink's properties, made in Composer (OnPropertyChanged) or in the app
+-- (PATCH /v1/settings: src/core/settings.lua sets the property first, as Composer would): one path
+-- for both. `by`: the API key that made it, nil for Composer. Every change is logged with who made
+-- it and from where (category "settings"), whatever the log level. An effect that fails is logged
+-- with it, and the error goes on to the caller.
+local function propertyChanged(name, by)
+    if not Properties then
         return
     end
-    Log.info("settings", message, data)
+    if name == "Log Level" and not Log.normalizeLevel(Properties[name]) then
+        return
+    end
+    Settings.applied(name, Properties[name])
+    local data = Settings.changeData(name, by)
+    local message = name .. " set to " .. tostring(Properties[name]) .. (by and (" in the app by " .. tostring(by.name)) or " in Composer")
+    local ok, err = pcall(propertyEffect, name, data)
+    if not ok then
+        data.error = tostring(err)
+        message = message .. "; applying it failed"
+    end
+    Log.always("settings", message, data)
+    if not ok then
+        error(err, 0)
+    end
 end
 
 Settings.configure({ apply = propertyChanged })
 
 function OnPropertyChanged(name)
-    -- The value DirectorLink just set for the app, reported back: it took effect then.
-    if Settings.isEcho(name) then
+    -- Only DirectorLink's settings: the properties it only shows (Status, Pairing Code, ...) are
+    -- its own, and Director may report each update of them back here.
+    if not Settings.forProperty(name) then
+        return
+    end
+    -- The value DirectorLink applied last, reported back (however late): nothing changed.
+    if not Settings.changed(name) then
         return
     end
     propertyChanged(name, nil)

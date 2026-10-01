@@ -60,8 +60,10 @@ local state = {
     apply = nil,
     -- The read-only properties as DirectorLink last showed them in Composer.
     shown = {},
-    -- property -> the value the app just set, until Director reports it back (if it does).
-    echoes = {},
+    -- property -> the value DirectorLink last applied (from the app or Composer). Director may
+    -- report a value DirectorLink set back to OnPropertyChanged, at once or later, once or more:
+    -- it is the value applied, so it is not taken for a change in Composer.
+    applied = {},
 }
 
 function Settings.configure(options)
@@ -176,34 +178,43 @@ end
 
 -- Sets each setting of a checked body as Composer would, then applies it as a change in Composer
 -- is applied (`by`: the API key that sent it). A setting already at its value is left alone.
--- Returns the keys changed, in Composer's order.
+-- Returns the keys changed, in Composer's order, and the ones whose change was set but could not
+-- be applied at once ({ key, property, value, error }): the property keeps the new value, which is
+-- the one DirectorLink reads, and the answer says so (src/api/handlers/settings.lua).
 function Settings.change(changes, by)
-    local changed = {}
+    local changed, failed = {}, {}
     for _, setting in ipairs(Settings.LIST) do
         local value = changes[setting.key]
         if setting.app and value ~= nil and Properties ~= nil and value ~= Settings.value(setting) then
             local composerValue = Settings.composerValue(setting, value)
             Properties[setting.property] = composerValue
-            -- Composer shows it; Director may call OnPropertyChanged for it (Settings.isEcho).
-            state.echoes[setting.property] = composerValue
+            -- Before Composer is told: Director may report it back at once (Settings.changed).
+            state.applied[setting.property] = composerValue
             pcall(function()
                 C4:UpdateProperty(setting.property, composerValue)
             end)
             changed[#changed + 1] = setting.key
             if state.apply then
-                state.apply(setting.property, by)
+                local ok, err = pcall(state.apply, setting.property, by)
+                if not ok then
+                    failed[#failed + 1] = { key = setting.key, property = setting.property, value = composerValue, error = tostring(err) }
+                end
             end
         end
     end
-    return changed
+    return changed, failed
 end
 
--- OnPropertyChanged with the value DirectorLink itself just set for the app (applied then): true,
--- once, so that it is not applied twice. Any other value is a change made in Composer.
-function Settings.isEcho(property)
-    local echo = state.echoes[property]
-    state.echoes[property] = nil
-    return echo ~= nil and Properties ~= nil and Properties[property] == echo
+-- DirectorLink applied `value` of `property` (src/main.lua, propertyChanged).
+function Settings.applied(property, value)
+    state.applied[property] = value
+end
+
+-- OnPropertyChanged: true when the property's value is not the one DirectorLink applied last, so
+-- a change made in Composer. Director reporting back a value DirectorLink set, however late and
+-- however often, is not one.
+function Settings.changed(property)
+    return Properties == nil or Properties[property] ~= state.applied[property]
 end
 
 -- What the log says of a change: who made it, from where, and the value now.

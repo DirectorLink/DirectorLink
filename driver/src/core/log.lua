@@ -27,11 +27,16 @@ local REDACTED = {
     token = true,
 }
 
+-- Values that never reach the log, whatever field or message they are in (Log.hide): the pairing
+-- code, which pairs an admin key.
+local MAX_HIDDEN = 8
+
 local state = {
     level = "info",
     seq = 0,
     entries = {},
     quiet = 0, -- Log.quietly calls running: their info entries are written at debug level
+    hidden = {},
 }
 
 -- Accepts debug/info/warn/error (and Composer's "Warning"); returns nil otherwise.
@@ -63,9 +68,40 @@ function Log.getLevel()
     return state.level
 end
 
+-- `value` with every hidden value in it replaced.
+local function scrub(value)
+    if type(value) ~= "string" then
+        return value
+    end
+    for _, hidden in ipairs(state.hidden) do
+        local start = value:find(hidden, 1, true)
+        while start do
+            value = value:sub(1, start - 1) .. "[redacted]" .. value:sub(start + #hidden)
+            start = value:find(hidden, start + #"[redacted]", true)
+        end
+    end
+    return value
+end
+
+-- Keeps `value` out of every entry from now on, in any field and in the message (the newest few).
+function Log.hide(value)
+    value = tostring(value or "")
+    if #value < 4 then
+        return
+    end
+    for index, hidden in ipairs(state.hidden) do
+        if hidden == value then
+            table.remove(state.hidden, index)
+            break
+        end
+    end
+    table.insert(state.hidden, 1, value)
+    state.hidden[MAX_HIDDEN + 1] = nil
+end
+
 local function sanitize(value, depth)
     if type(value) ~= "table" or value == Json.null then
-        return value
+        return scrub(value)
     end
     if depth > 5 then
         return "[nested]"
@@ -81,11 +117,11 @@ local function sanitize(value, depth)
     return setmetatable(copy, getmetatable(value))
 end
 
-function Log.write(level, category, message, data)
-    if level == "info" and state.quiet > 0 then
+local function record(level, category, message, data, always)
+    if level == "info" and state.quiet > 0 and not always then
         level = "debug"
     end
-    if not LEVELS[level] or LEVELS[level] < LEVELS[state.level] then
+    if not LEVELS[level] or (LEVELS[level] < LEVELS[state.level] and not always) then
         return nil
     end
 
@@ -95,7 +131,7 @@ function Log.write(level, category, message, data)
         time = Clock.iso(),
         level = level,
         category = tostring(category or "general"),
-        message = tostring(message or ""),
+        message = scrub(tostring(message or "")),
         data = Json.null,
     }
     if data ~= nil then
@@ -120,6 +156,15 @@ function Log.write(level, category, message, data)
     end)
 
     return entry
+end
+
+function Log.write(level, category, message, data)
+    return record(level, category, message, data, false)
+end
+
+-- An info entry written whatever the log level (who changed a setting, ADR-043): never left out.
+function Log.always(category, message, data)
+    return record("info", category, message, data, true)
 end
 
 function Log.debug(category, message, data)
@@ -185,6 +230,7 @@ function Log.reset()
     state.seq = 0
     state.entries = {}
     state.quiet = 0
+    state.hidden = {}
 end
 
 return Log

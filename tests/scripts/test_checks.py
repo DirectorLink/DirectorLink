@@ -271,6 +271,9 @@ class SettingsComposerOnly(unittest.TestCase):
             'C4:UpdateProperty("Relay Hold", "Allowed")',
             'Properties [ "Remote Access" ]= "On"',
             "Properties[Alarm.PROPERTY] = \"On\"",
+            'C4:UpdateProperty(Alarm.PROPERTY, "On")',
+            "Properties['Door Control'] = 'Enabled'",
+            "C4:UpdateProperty('Remote Access', 'On')",
         ):
             with self.subTest(line=line):
                 printed = self.changed(self.HANDLER, "local Handlers = {}\n", "local Handlers = {}\n" + line + "\n")
@@ -280,7 +283,8 @@ class SettingsComposerOnly(unittest.TestCase):
                                        'local Handlers = {}\nlocal on = Properties["Door Control"] == "Enabled"\n-- Properties["Door Control"] = "Enabled"\n'))
 
     def test_the_api_reaches_no_action_made_in_composer_only(self):
-        for call in ("ctx.services.pairing.open()", "ctx.services.keys.revokeAll()", "Relay.resetIdentity()"):
+        for call in ("ctx.services.pairing.open()", "ctx.services.keys.revokeAll()", "Relay.resetIdentity()", "Relay.start()",
+                     "require('src.cloud.relay').start()", "ctx.services.adapters.onPropertyChanged(\"Alarm Status\")"):
             with self.subTest(call=call):
                 printed = self.changed(self.HANDLER, "function Handlers.get(ctx)\n", "function Handlers.get(ctx)\n    " + call + "\n")
                 self.assertIn("run in Composer only", printed or "")

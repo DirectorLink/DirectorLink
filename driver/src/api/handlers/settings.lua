@@ -34,7 +34,16 @@ function Handlers.update(ctx)
         end
         return Problem.invalidField(failure.field, failure.detail)
     end
-    settings.change(body, ctx.apiKey)
+    local _, failed = settings.change(body, ctx.apiKey)
+    if failed and #failed > 0 then
+        -- The property keeps the new value (Composer shows it, and it is what DirectorLink reads):
+        -- the answer says so rather than that nothing changed.
+        local errors = Json.array()
+        for _, failure in ipairs(failed) do
+            errors[#errors + 1] = { field = failure.key, message = failure.property .. " is set to " .. failure.value .. ", but applying it failed: " .. failure.error }
+        end
+        return Problem.new(500, "SETTING_NOT_APPLIED", errors[1].message .. ". The property keeps the new value; GET /v1/logs says more", { errors = errors })
+    end
     return 200, settings.document()
 end
 

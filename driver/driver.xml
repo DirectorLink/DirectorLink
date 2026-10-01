@@ -132,7 +132,7 @@
           <item>Paused</item>
         </items>
         <default>On</default>
-        <tooltip>Paused stops every DirectorLink schedule; what was due meanwhile is not run later. Admins can also change it in the DirectorLink app (Settings, Controller, DirectorLink settings); Composer shows the change, and a change here wins.</tooltip>
+        <tooltip>Paused stops every DirectorLink schedule; what was due meanwhile is not run later, except a time due in the last 5 minutes. Admins can also change it in the DirectorLink app (Settings, Controller, DirectorLink settings); Composer shows the change, and a change here wins.</tooltip>
       </property>
       <property>
         <name>Schedule Status</name>
