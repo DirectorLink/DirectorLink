@@ -412,17 +412,17 @@ test("the list says what did not run on Shabbat, what ran late, and what waits f
   const texts = english();
   assert.equal(texts.skipped, "Didn’t run today 06:30: Shabbat or a holiday · Next: tomorrow 06:30");
   assert.match(texts.late, /^Ran today 09:10 \(late, after a restart\) · Next: /);
-  assert.equal(texts.offShabbat, "Not running: the Jewish calendar is off in Composer");
-  assert.equal(texts.offSkip, "Ran today 06:30 · Runs on Shabbat and holidays too while the Jewish calendar is off in Composer · Next: tomorrow 06:30");
-  assert.equal(texts.offOnly, "Not running: the Jewish calendar is off in Composer");
+  assert.equal(texts.offShabbat, "Not running: the Jewish calendar is off");
+  assert.equal(texts.offSkip, "Ran today 06:30 · Runs on Shabbat and holidays too while the Jewish calendar is off · Next: tomorrow 06:30");
+  assert.equal(texts.offOnly, "Not running: the Jewish calendar is off");
   assert.equal(texts.noLocation, "Not running: set the home’s location in Composer");
   assert.equal(texts.switchedOff, "Off");
   await inHebrew(() => {
     const hebrew = english();
     assert.equal(hebrew.skipped, "לא הופעל היום ב-06:30: שבת או חג · הבא: מחר ב-06:30");
     assert.match(hebrew.late, /^הופעל היום ב-09:10 \(באיחור, אחרי הפעלה מחדש\) · הבא: /);
-    assert.equal(hebrew.offShabbat, "לא פועל: הלוח העברי כבוי ב-Composer");
-    assert.equal(hebrew.offSkip, "הופעל היום ב-06:30 · פועל גם בשבתות ובחגים, כל עוד הלוח העברי כבוי ב-Composer · הבא: מחר ב-06:30");
+    assert.equal(hebrew.offShabbat, "לא פועל: הלוח העברי כבוי");
+    assert.equal(hebrew.offSkip, "הופעל היום ב-06:30 · פועל גם בשבתות ובחגים, כל עוד הלוח העברי כבוי · הבא: מחר ב-06:30");
     assert.equal(hebrew.noLocation, "לא פועל: יש להגדיר את מיקום הבית ב-Composer");
   });
 });
@@ -507,11 +507,11 @@ test("with the calendar off, a Shabbat schedule can only be switched on or off, 
     assert.ok(keys.includes("schedule-enabled") && keys.includes("schedule-delete"), label);
     assert.ok(!keys.includes("schedule-save") && !keys.some((key) => key.startsWith("schedule-type:")), `${label}: nothing else`);
     assert.match(textOf(view), /30 min before candle lighting · Runs ⁨Shabbat lights⁩/);
-    assert.match(textOf(view), /The Jewish calendar is off in Composer/);
+    assert.match(textOf(view), /The Jewish calendar is off, so this schedule doesn’t run\. Turn the calendar on under Settings → Controller → DirectorLink settings/);
     // An "only on Shabbat" time schedule is edited as usual, and says what its condition does now.
     const only = scheduleEditorView("4d5e6f70");
     assert.ok(keysOf(only).includes("schedule-save") && !keysOf(only).some((key) => key.startsWith("schedule-during")), label);
-    assert.match(textOf(only), /Set to run only on Shabbat and holidays\. While the Jewish calendar is off in Composer, it doesn’t run\./);
+    assert.match(textOf(only), /Set to run only on Shabbat and holidays\. While the Jewish calendar is off, it doesn’t run\./);
     assert.equal(scheduleBody(draftFor("4d5e6f70")).during_shabbat, undefined, "and does not send it");
   }
   // Turned off while a new Shabbat schedule was being made: it becomes a time schedule again.
@@ -622,6 +622,21 @@ test("Home, Schedules and Settings show the calendar only when it is on", () => 
   state.calendar = null;
 });
 
+// Only admins have DirectorLink settings: members and viewers are told who turns schedules back on.
+test("paused schedules: admins are told where to turn them back on, the others who can", () => {
+  connectedAdmin();
+  system({ jewish_calendar: false });
+  state.schedulesPaused = true;
+  assert.match(textOf(schedulesView()), /Settings → Controller → DirectorLink settings/);
+  for (const role of ["member", "viewer"]) {
+    state.role = role;
+    const text = textOf(schedulesView());
+    assert.match(text, /Schedules are paused: none runs until an admin turns them back on\./, role);
+    assert.doesNotMatch(text, /DirectorLink settings/, role);
+  }
+  state.schedulesPaused = false;
+});
+
 // ---- reading the calendar ----------------------------------------------------------------------
 
 // The controller: it does not seal (as before 1.0.0), and answers the calendar with `answer`.
@@ -680,8 +695,8 @@ test("a JEWISH_CALENDAR_OFF answer turns the calendar off here, and says why", a
   assert.equal(noteCalendarOff(off), true);
   assert.equal(calendar.calendarOn(), false);
   assert.equal(state.calendar, null);
-  assert.equal(errorText(off), "The Jewish calendar is off in Composer (DirectorLink’s Jewish Calendar property).");
-  await inHebrew(() => assert.equal(errorText(off), "הלוח העברי כבוי ב-Composer (המאפיין Jewish Calendar של DirectorLink)."));
+  assert.equal(errorText(off), "The Jewish calendar is off. Turn it on under Settings → Controller → DirectorLink settings, or with DirectorLink’s Jewish Calendar property in Composer.");
+  await inHebrew(() => assert.equal(errorText(off), "הלוח העברי כבוי. אפשר להפעיל אותו בהגדרות ← בקר ← הגדרות DirectorLink, או במאפיין Jewish Calendar של DirectorLink ב-Composer."));
 });
 
 test("the calendar is read again 5 seconds after its next change: a period's start or end, or the Hebrew date's", async () => {

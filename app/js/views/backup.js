@@ -1,22 +1,27 @@
 // Settings → Controller → Backup (admins; ADR-042, docs/BACKUP.md): download everything
 // DirectorLink keeps as a file locked with a password, and restore from one. The file is opened
 // here, the controller checks it without changing anything, and only once the admin has seen what
-// it holds and confirmed is everything replaced.
+// it holds and confirmed is everything replaced. A DirectorLink before 1.4.0 has no backups: the
+// panel shows only once the controller is known to have them (js/driver-settings.js reads it).
 
-import { BackupFileError, FILE_EXTENSION, MIN_PASSWORD, checkBackup, decryptBackup, makeBackup, passwordStrength, readHeader, restoreBackup } from "../backup.js";
+import { BackupFileError, FILE_EXTENSION, MAX_FILE_BYTES, MIN_PASSWORD, checkBackup, decryptBackup, makeBackup, passwordStrength, readHeader, restoreBackup } from "../backup.js";
+import { driverSettings, keepDriverSettings } from "../driver-settings.js";
 import { h, name } from "../dom.js";
 import { formatDateTime, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { saveRemote, savedRemote } from "../remote.js";
-import { connect, errorText, whenForgotten } from "../session.js";
+import { connect, errorText, roleLabel, whenForgotten } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 
 // What is typed and chosen: the passwords, the file and the opened backup stay in this module,
-// never in storage or in `ui` (the redraw signature), and go when the panel closes.
+// never in storage or in `ui` (the redraw signature), and go when the panel closes. The file input
+// is kept as it is across redraws, so that it still shows the file chosen.
 let secrets = {};
+let fileInput = null;
 
 function forgetSecrets() {
   secrets = { password: "", confirm: "", open: "", file: null, document: null, upload: null };
+  fileInput = null;
 }
 forgetSecrets();
 // This device's key forgotten (Forget, Pair again, a revoked key): nothing of a backup stays.
@@ -26,7 +31,7 @@ whenForgotten(() => {
 });
 
 // ui.backup: { stage: null | "download" | "restore" | "preview" | "done", busy, message, fileName,
-// header, preview, result, relinked }.
+// header, preview, result, relinked, replaces (the backup's key this device is), moveRemote }.
 function panel() {
   ui.backup ??= { stage: null };
   return ui.backup;
@@ -49,7 +54,7 @@ function say(kind, text) {
 
 export function backupError(error) {
   if (error instanceof BackupFileError) {
-    return t({ WRONG_PASSWORD: "backup.errors.wrongPassword", NEWER_FILE: "backup.errors.newerFile" }[error.code] || "backup.errors.notABackup");
+    return t({ WRONG_PASSWORD: "backup.errors.wrongPassword", NEWER_FILE: "backup.errors.newerFile", TOO_LARGE: "backup.errors.fileTooLarge" }[error.code] || "backup.errors.notABackup");
   }
   const key = {
     BACKUP_TOO_NEW: "backup.errors.tooNew",
@@ -58,26 +63,36 @@ export function backupError(error) {
     RESTORE_FAILED: "backup.errors.failed",
     BACKUP_TOO_LARGE: "backup.errors.tooLarge",
     SEALED_REQUEST_REQUIRED: "backup.errors.sealed",
+    UPLOAD_NOT_FOUND: "backup.errors.uploadGone",
+    KEYS_KEPT: "backup.errors.keysKept",
+    LAST_ADMIN: "backup.errors.lastAdmin",
+    UNAVAILABLE: "backup.errors.unavailable",
   }[error?.code];
-  return key ? t(key) : errorText(error);
+  if (key) return t(key);
+  // A DirectorLink before 1.4.0 has no backup routes.
+  if (error?.status === 404 || error?.status === 405) return t("backup.errors.updateDriver");
+  return errorText(error);
 }
 
 function field(id, label, ...content) {
   return h("div", { class: "field" }, h("label", { class: "field-label", for: id }, label), ...content);
 }
 
+// The typed value is set as the input's value, never as its value attribute: the page's HTML
+// never holds a password.
 function passwordInput(id, value, autocomplete, onInput) {
-  return h("input", {
+  const input = h("input", {
     id,
     type: "password",
     autocomplete,
     autocapitalize: "off",
     spellcheck: "false",
     minlength: String(MIN_PASSWORD),
-    value,
     dataset: { key: id },
     oninput: (event) => onInput(event.target.value),
   });
+  input.value = value;
+  return input;
 }
 
 function buttons(...children) {
@@ -164,6 +179,8 @@ async function chooseFile(event) {
   current.message = null;
   if (chosen) {
     try {
+      // Not read at all when larger than any backup can be.
+      if (Number(chosen.size) > MAX_FILE_BYTES) throw new BackupFileError("TOO_LARGE");
       const text = await chosen.text();
       const header = readHeader(text);
       secrets.file = text;
@@ -174,6 +191,11 @@ async function chooseFile(event) {
     }
   }
   notify();
+}
+
+function fileField() {
+  fileInput ??= h("input", { id: "backup-file", type: "file", accept: `${FILE_EXTENSION},application/octet-stream,application/json`, dataset: { key: "backup-file" }, onchange: chooseFile });
+  return fileInput;
 }
 
 async function open(event) {
@@ -193,7 +215,8 @@ async function open(event) {
     secrets.upload = upload;
     secrets.file = null;
     secrets.open = "";
-    show("preview", { preview, fileName: current.fileName });
+    fileInput = null;
+    show("preview", { preview, fileName: current.fileName, replaces: "", moveRemote: false });
   } catch (error) {
     current.busy = false;
     if (ui.backup === current) say("error", backupError(error));
@@ -214,7 +237,7 @@ function restoreForm(current) {
     field(
       "backup-file",
       t("backup.restoreForm.file"),
-      h("input", { id: "backup-file", type: "file", accept: `${FILE_EXTENSION},application/octet-stream,application/json`, dataset: { key: "backup-file" }, onchange: chooseFile }),
+      fileField(),
       said
         ? h("p", { class: "field-help", dataset: { key: "backup-file-says" } }, name(current.fileName || ""), " · ", t("backup.restoreForm.fileSays", said))
         : null
@@ -252,20 +275,37 @@ function referenceLine(item, extra) {
   return h("li", { dir: "auto" }, `${kindText(item.kind)} `, name(`${item.name || `#${item.id}`}${place}`), extra ? ` — ${extra}` : "");
 }
 
-// What the preview and the result both say: counts, notes, references, Composer.
+// A door or gate whose id is another one now is left out, not moved: what it is now, then where
+// the backup used it.
+function unmatchedText(item) {
+  const uses = (item.used_in || []).map(whereText).join(", ");
+  return [item.now ? t("backup.preview.nowNamed", { name: item.now }) : "", uses].filter(Boolean).join("; ");
+}
+
+function remoteNote(remote) {
+  if (remote.action === "restore") return t(remote.remote_access ? "backup.preview.remoteRestore" : "backup.preview.remoteOff");
+  if (remote.action === "kept") return t("backup.preview.remoteKept");
+  if (remote.action === "none") return t("backup.preview.remoteNone");
+  return t("backup.preview.remoteSame");
+}
+
+// What the preview and the result both say: counts, notes, keys, references, Composer.
 function summary(preview, { result = false } = {}) {
   const counts = preview.counts || {};
   const keys = preview.keys || {};
   const remote = preview.remote || {};
   const references = preview.references || {};
   const leftOut = preview.left_out || {};
+  const kept = keys.action === "kept";
   const notes = [
-    t(keys.yours === "added" ? "backup.preview.yoursAdded" : "backup.preview.yoursInBackup"),
-    t("backup.preview.othersPair"),
+    kept ? t("backup.preview.keysKept") : t("backup.preview.yoursAdded"),
+    kept ? null : t("backup.preview.othersPair"),
+    keys.replaced ? t("backup.preview.replaced", { name: keys.replaced.name }) : null,
     keys.conflict ? t("backup.preview.conflict") : null,
     keys.expired ? t("backup.preview.expired", { count: keys.expired }) : null,
+    keys.left_out ? t("backup.preview.leftOutKeys", { count: keys.left_out }) : null,
     keys.over_limit ? t("backup.preview.overLimit", { count: keys.limit }) : null,
-    remote.action === "restore" ? t(remote.remote_access ? "backup.preview.remoteRestore" : "backup.preview.remoteOff") : t("backup.preview.remoteSame"),
+    remoteNote(remote),
     t("backup.preview.schedulesFresh"),
     t("backup.preview.invitations"),
     leftOut.steps ? t("backup.preview.leftOutSteps", { count: leftOut.steps }) : null,
@@ -280,17 +320,29 @@ function summary(preview, { result = false } = {}) {
     ["roomNames", counts.room_names],
     ["roomOrder", counts.room_order],
   ];
+  const back = Array.isArray(keys.items) ? keys.items : [];
   const unmatched = references.unmatched || [];
   const byName = references.by_name || [];
   const renamed = references.renamed || [];
   const composer = preview.composer || [];
   return [
+    remote.old_controller
+      ? h("p", { class: "notice notice-error", role: result ? "status" : null, dataset: { key: result ? "backup-result-old-controller" : "backup-old-controller" } }, t("backup.preview.oldController"))
+      : null,
     h(
       "dl",
       { class: "facts", dataset: { key: result ? "backup-result-counts" : "backup-preview-counts" } },
       rows.map(([key, value]) => h("div", { class: "fact" }, h("dt", {}, t(`backup.preview.${key}`)), h("dd", {}, String(value ?? 0))))
     ),
     h("ul", { class: "backup-notes" }, notes.map((note) => h("li", {}, note))),
+    back.length
+      ? h(
+          "div",
+          { class: "backup-references", dataset: { key: "backup-keys" } },
+          h("h4", { class: "backup-heading" }, t("backup.preview.keysBack")),
+          h("ul", {}, back.map((item) => h("li", { dir: "auto" }, name(item.name), ` — ${roleLabel(item.role)}`)))
+        )
+      : null,
     byName.length
       ? h("div", { class: "backup-references" }, h("h4", { class: "backup-heading" }, t("backup.preview.byName")), h("ul", {}, byName.map((item) => referenceLine(item))))
       : null,
@@ -310,7 +362,7 @@ function summary(preview, { result = false } = {}) {
           h(
             "ul",
             {},
-            unmatched.map((item) => referenceLine(item, (item.used_in || []).map(whereText).join(", "))),
+            unmatched.map((item) => referenceLine(item, unmatchedText(item))),
             references.unmatched_count > unmatched.length ? h("li", {}, t("backup.preview.more", { count: references.unmatched_count - unmatched.length })) : null
           )
         )
@@ -338,20 +390,83 @@ function summary(preview, { result = false } = {}) {
   ];
 }
 
+// The backup looks like another home's: said first, with why (ADR-042).
+function anotherHomeNotice(preview) {
+  const origin = preview.origin || {};
+  if (!origin.another_home) return null;
+  const home = preview.backup?.home || t("backup.unnamedHome");
+  const reasons = (origin.reasons || []).map((reason) => t(`backup.preview.anotherReasons.${reason}`, { home, now: origin.home_now || t("backup.unnamedHome") }));
+  return h(
+    "div",
+    { class: "notice notice-error", role: "alert", dataset: { key: "backup-another-home" } },
+    h("p", {}, t("backup.preview.anotherHome", { home })),
+    h("ul", {}, reasons.map((reason) => h("li", {}, reason))),
+    h("p", {}, t("backup.preview.anotherHomeEnd"))
+  );
+}
+
+// "This device is …": in the reinstall case, the backup's key this device had before, so that it
+// takes that key's place (its favorites and role) and no old key is left on no device.
+function thisDeviceField(current, keys) {
+  const items = Array.isArray(keys.items) ? keys.items : [];
+  if (keys.action !== "restore" || !items.length) return null;
+  return h(
+    "div",
+    { class: "field" },
+    h("label", { class: "field-label", for: "backup-this-device" }, t("backup.preview.thisDevice")),
+    h(
+      "select",
+      {
+        id: "backup-this-device",
+        dataset: { key: "backup-this-device" },
+        onchange: (event) => {
+          current.replaces = event.target.value;
+          notify();
+        },
+      },
+      h("option", { value: "", selected: !current.replaces }, t("backup.preview.thisDeviceNone")),
+      items.map((item) => h("option", { value: item.id, selected: current.replaces === item.id }, `${item.name} (${roleLabel(item.role)})`))
+    ),
+    h("p", { class: "field-help" }, t("backup.preview.thisDeviceHelp"))
+  );
+}
+
+// Another home's remote access moves here only when asked.
+function moveRemoteField(current, remote) {
+  if (remote.action !== "kept") return null;
+  return h(
+    "div",
+    { class: "toggle-row backup-move-remote" },
+    h("input", {
+      id: "backup-move-remote",
+      type: "checkbox",
+      checked: Boolean(current.moveRemote),
+      dataset: { key: "backup-move-remote" },
+      onchange: (event) => {
+        current.moveRemote = Boolean(event.target.checked);
+        notify();
+      },
+    }),
+    h("label", { for: "backup-move-remote", class: "field-help" }, t("backup.preview.moveRemote"))
+  );
+}
+
 async function replaceEverything() {
   const current = panel();
   if (current.busy || !secrets.document) return;
-  if (!window.confirm(t("backup.preview.confirm"))) return;
+  const preview = current.preview || {};
+  const home = preview.backup?.home || t("backup.unnamedHome");
+  if (!window.confirm(t(preview.origin?.another_home ? "backup.preview.confirmAnother" : "backup.preview.confirm", { home }))) return;
   current.busy = true;
   current.message = { kind: "info", text: t("backup.preview.restoring") };
   notify();
   try {
-    const answer = await restoreBackup(secrets.document, secrets.upload);
+    const answer = await restoreBackup(secrets.document, secrets.upload, { replacesKey: current.replaces || undefined, moveRemote: current.moveRemote === true });
     const result = answer?.restore || current.preview;
     // The home is now the backup's (remote access, ADR-042): a device linked to the one before
     // goes through the account to this one from now on.
     const linked = savedRemote();
-    const relinked = Boolean(result?.remote?.action === "restore" && linked && linked.home !== result.remote.home_id);
+    const relinked = Boolean(result?.remote?.action === "restore" && result.remote.home_id && linked && linked.home !== result.remote.home_id);
     if (relinked) saveRemote({ home: result.remote.home_id, keyId: linked.keyId });
     forgetSecrets();
     show("done", { result, relinked, restoredAt: answer?.restored_at || null });
@@ -366,13 +481,17 @@ async function replaceEverything() {
 function previewPanel(current) {
   const preview = current.preview || {};
   const made = madeText(preview.backup?.home, preview.backup?.created_at);
+  const keys = preview.keys || {};
   return h(
     "div",
     { class: "backup-preview", dataset: { key: "backup-preview" } },
     h("h4", { class: "backup-heading" }, t("backup.preview.title")),
+    anotherHomeNotice(preview),
     h("p", {}, t("backup.preview.made", { ...made, version: preview.backup?.driver_version || "—" })),
     ...summary(preview),
-    h("p", { class: "notice notice-error" }, t("backup.preview.warning")),
+    thisDeviceField(current, keys),
+    moveRemoteField(current, preview.remote || {}),
+    h("p", { class: "notice notice-error" }, t(keys.action === "kept" ? "backup.preview.warningKept" : "backup.preview.warning")),
     buttons(
       h(
         "button",
@@ -397,9 +516,14 @@ function donePanel(current) {
   );
 }
 
-// The panel in the Controller card: for admins, once connected.
+// The panel in the Controller card: for admins, once connected, with a DirectorLink that has
+// backups (1.4.0: the one that has DirectorLink settings; an older one answers 404 there).
 export function backupPanel() {
   if (!state.loaded || !can("admin")) return null;
+  const settings = driverSettings();
+  keepDriverSettings();
+  if (settings.unsupported) return null;
+  if (!settings.document && !settings.error && !settings.loadedAt) return null;
   const current = panel();
   const content = {
     download: downloadForm,

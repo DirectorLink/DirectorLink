@@ -127,3 +127,23 @@ test("a refusal by the home's owner keeps its code", async () => {
   assert.equal(error.code, "REFUSED_BY_OWNER");
   assert.equal(error.httpStatus, 403);
 });
+
+// A backup through the account asks for a minute (js/backup.js): the account request waits that
+// long, and 20 seconds for everything else.
+test("a request through the account waits as long as it asks, 20 seconds at least", async () => {
+  saveRemote({ home: HOME, keyId: "0badc0de" });
+  const delays = [];
+  const setTimer = window.setTimeout;
+  window.setTimeout = (callback, ms) => {
+    delays.push(ms);
+    return setTimer(() => {}, 0);
+  };
+  globalThis.fetch = async () => answer(401, { code: "NOT_SIGNED_IN" });
+  try {
+    await remoteCall("ak_test", "/v1/backup", { timeoutMs: 60000 }).catch(() => {});
+    await remoteCall("ak_test", "/v1/lights").catch(() => {});
+  } finally {
+    window.setTimeout = setTimer;
+  }
+  assert.deepEqual(delays, [60000, 20000]);
+});

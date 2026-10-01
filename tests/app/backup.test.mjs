@@ -99,10 +99,26 @@ const HOST = "controller.invalid";
 const KEY = "ak_test_backup_key";
 const PREVIEW = {
   backup: { created_at: "2026-09-30T20:00:00Z", driver_version: "1.4.0", format_version: 1, home: "Home" },
+  origin: { another_home: false, reasons: [], home_now: "Home", controller: "same" },
   counts: { keys: 3, profiles: 2, scenes: 12, schedules: 5, room_names: 4, room_order: 6 },
   left_out: { scenes: 0, steps: 1, schedules: 0, profiles: 0 },
-  keys: { count: 3, yours: "added", conflict: false, expired: 0, left_out: 0, over_limit: false, limit: 20 },
-  remote: { action: "restore", home_id: "b".repeat(32), current_home_id: "a".repeat(32), remote_access: true },
+  keys: {
+    action: "restore",
+    count: 3,
+    in_backup: 2,
+    items: [
+      { id: "0a1b2c3d", name: "Owner phone", role: "admin", expires_at: null },
+      { id: "1b2c3d4e", name: "Dana phone", role: "member", expires_at: null },
+    ],
+    replaced: null,
+    yours: "added",
+    conflict: false,
+    expired: 0,
+    left_out: 0,
+    over_limit: false,
+    limit: 20,
+  },
+  remote: { action: "restore", home_id: "b".repeat(32), current_home_id: "a".repeat(32), remote_access: true, old_controller: false },
   references: {
     by_id: 40,
     by_name: [{ kind: "light", name: "Kitchen Island", room: "Kitchen", from: 20, to: 120 }],
@@ -115,7 +131,9 @@ const PREVIEW = {
     { name: "Relay Hold", backup: "Not allowed", current: "Not allowed" },
   ],
 };
-const controller = { calls: [], document: null, restore: null, parts: [] };
+// `old`: a DirectorLink before 1.4.0, which has no settings and no backups (404).
+const controller = { calls: [], document: null, restore: null, parts: [], old: false };
+const SETTINGS = { settings: [{ key: "schedules", property: "Schedules", value: "on", composer_value: "On", choices: ["on", "paused"], changeable: true, set_in: "app_and_composer" }], status: {}, actions: [] };
 
 function answer(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -133,6 +151,10 @@ globalThis.fetch = async (url, init = {}) => {
 function handle(method, path, body) {
   if (path === "/v1/sealed") return answer(404, { status: 404, code: "NOT_FOUND" });
   if (path === "/v1/api-keys/current") return answer(200, { id: "0a1b2c3d", role: "admin" });
+  if (controller.old && (path === "/v1/settings" || path === "/v1/backup" || path.startsWith("/v1/restore"))) {
+    return answer(404, { status: 404, code: "NOT_FOUND", detail: `No API route for ${path}` });
+  }
+  if (method === "GET" && path === "/v1/settings") return answer(200, SETTINGS);
   if (method === "GET" && path === "/v1/backup") return answer(200, controller.document);
   if (method === "POST" && path === "/v1/restore/parts") {
     if (body.index === 0) controller.parts = [];
@@ -221,17 +243,19 @@ const DOCUMENT = {
   },
 };
 
-// Connected to the fake controller as an admin, on Settings.
-async function connect(role = "admin") {
+// Connected to the fake controller as an admin, on Settings (which reads DirectorLink's settings:
+// the Backup panel shows once the controller is known to have it).
+async function connect(role = "admin", { old = false } = {}) {
   session.forgetKey();
   await advance(20000, 500);
-  Object.assign(controller, { calls: [], document: structuredClone(DOCUMENT), restore: null, parts: [] });
+  Object.assign(controller, { calls: [], document: structuredClone(DOCUMENT), restore: null, parts: [], old });
   saved.length = 0;
   confirmed.length = 0;
   confirmAnswer = true;
   Object.assign(state, { host: HOST, apiKey: KEY, role, status: "connected", loaded: true, notice: null, errors: {}, pending: {}, rooms: [], lights: [], thermostats: [], blinds: [], fans: [], cameras: [], relays: [], doorbells: [], devices: [], scenes: [] });
   ui.backup = { stage: null };
   notify();
+  backupPanel();
   await advance(100);
 }
 
@@ -246,8 +270,9 @@ test("a backup file opens with its password, and only with it", async () => {
   assert.equal(outer.version, 1);
   const header = JSON.parse(outer.header);
   assert.deepEqual(
-    { cipher: header.cipher, kdf: header.kdf, iterations: header.iterations, home: header.home, created_at: header.created_at },
-    { cipher: "AES-256-GCM", kdf: "PBKDF2-SHA-256", iterations: 600000, home: "Home", created_at: "2026-09-30T20:00:00Z" }
+    { version: header.version, cipher: header.cipher, kdf: header.kdf, iterations: header.iterations, home: header.home, created_at: header.created_at },
+    { version: 1, cipher: "AES-256-GCM", kdf: "PBKDF2-SHA-256", iterations: 600000, home: "Home", created_at: "2026-09-30T20:00:00Z" },
+    "the file's version is in the header the password authenticates"
   );
   assert.equal(Buffer.from(header.salt, "base64").length, 16, "a 16-byte salt");
   assert.equal(Buffer.from(header.iv, "base64").length, 12, "a 12-byte IV");
@@ -288,6 +313,12 @@ test("a file that was changed or is not a backup is refused", async () => {
   await assert.rejects(backup.decryptBackup(variant(null, (h) => (h.iterations = 1e9)), "correct horse battery"), { code: "NOT_A_BACKUP" });
   await assert.rejects(backup.decryptBackup(variant(null, (h) => (h.cipher = "AES-128-CBC")), "correct horse battery"), { code: "NOT_A_BACKUP" });
   await assert.rejects(backup.decryptBackup(variant((copy) => (copy.version = 2)), "correct horse battery"), { code: "NEWER_FILE" });
+  // Only version 1, outside and inside: 0, a negative one, text, or none in the header do not open.
+  for (const version of [0, -5, "1", null]) {
+    await assert.rejects(backup.decryptBackup(variant((copy) => (copy.version = version)), "correct horse battery"), { code: "NOT_A_BACKUP" }, String(version));
+  }
+  await assert.rejects(backup.decryptBackup(variant(null, (h) => delete h.version), "correct horse battery"), { code: "NOT_A_BACKUP" });
+  await assert.rejects(backup.decryptBackup(variant(null, (h) => (h.version = 0)), "correct horse battery"), { code: "NOT_A_BACKUP" });
   await assert.rejects(backup.decryptBackup("hello", "x"), { code: "NOT_A_BACKUP" });
   await assert.rejects(backup.decryptBackup(file.slice(0, 100), "x"), { code: "NOT_A_BACKUP" });
   await assert.rejects(backup.decryptBackup(JSON.stringify({ format: "something" }), "x"), { code: "NOT_A_BACKUP" });
@@ -296,10 +327,14 @@ test("a file that was changed or is not a backup is refused", async () => {
 
 test("the password's strength hint, and the file's name", () => {
   assert.equal(backup.passwordStrength("short"), "weak");
-  assert.equal(backup.passwordStrength("aaaaaaaaaaaa"), "weak");
-  assert.equal(backup.passwordStrength("abcdefghij"), "fair");
-  assert.equal(backup.passwordStrength("Abcdefgh12"), "strong");
+  // Common passwords, a word with digits and symbols, sequences, keyboard rows and repeats.
+  for (const password of ["aaaaaaaaaaaa", "abcdefghij", "Abcdefgh12", "Password1!", "Password123", "P@ssw0rd2024!", "Shalom2024!", "Elephant2024!", "12345678901234", "qwertyuiopasdf", "abcdefghijklmnop", "1234567890", "iloveyou12", "abcabcabcabc"]) {
+    assert.equal(backup.passwordStrength(password), "weak", password);
+  }
+  assert.equal(backup.passwordStrength("maple7Tiger"), "fair");
   assert.equal(backup.passwordStrength("correct horse battery staple"), "strong");
+  assert.equal(backup.passwordStrength("lemon tree 42 bike"), "strong");
+  assert.equal(backup.passwordStrength("Tz8#kq!Lm2@vR9"), "strong");
   assert.equal(backup.MIN_PASSWORD, 10);
   assert.equal(backup.backupFileName(DOCUMENT, new Date(2026, 9, 1)), "DirectorLink backup Home 2026-10-01.dlbackup");
   assert.equal(backup.backupFileName({ home: { name: 'Villa: "A/B"?' } }, new Date(2026, 0, 9)), "DirectorLink backup Villa A B 2026-01-09.dlbackup");
@@ -347,6 +382,12 @@ test("a download asks for a password twice, and saves the file locked with it", 
   await submit("backup-download-submit");
   assert.equal(message(), "The two passwords are not the same.");
   assert.equal(requests("GET", "/v1/backup").length, 0, "nothing is asked for until both agree");
+  // Drawn again with the message: the passwords are the inputs' values, never their attributes.
+  for (const key of ["backup-password", "backup-confirm"]) {
+    const input = byKey(backupPanel(), key);
+    assert.equal(input.attributes.value, undefined, `${key}: nothing in the page's HTML`);
+    assert.match(input.value, /^correct horse battery staple/);
+  }
 
   await typeInto("backup-confirm", "correct horse battery staple");
   await submit("backup-download-submit");
@@ -388,14 +429,19 @@ test("a restore opens the file here, has the controller check it, and replaces n
 
   const preview = panelText();
   for (const words of ["Backup of Home", "DirectorLink 1.4.0", "Scenes12", "Schedules5", "Devices with access3", "This device keeps its access (it was paired after the backup was made).",
+    "Keys that come back", "Owner phone — Admin", "Dana phone — Member",
     "Remote access: the home goes back to the backup’s link", "Kitchen Island (Kitchen)", "Thermostat Parents → Parents AC", "Hall Light (Living Room) — scene “Good night”, Dana’s favorites",
-    "1 scene step has nothing left to act on", "Door Control", "backup: Enabled · now: Disabled", "A restore never changes DirectorLink’s properties in Composer"]) {
+    "1 scene step has nothing left to act on", "DirectorLink settings, not restored", "Door Control", "backup: Enabled · now: Disabled",
+    "set the schedules, the Jewish calendar and the log level again under DirectorLink settings"]) {
     assert.ok(preview.includes(words), `the preview says: ${words}\n${preview}`);
   }
+  assert.ok(!preview.includes("the installer sets them again"), "three of them are set in the app now");
+  assert.ok(!byKey(backupPanel(), "backup-another-home"), "this home's own backup");
 
   confirmAnswer = false;
   await click("backup-replace");
   assert.equal(confirmed.length, 1);
+  assert.equal(confirmed[0], "Replace everything DirectorLink keeps on this controller with the backup of “Home”?", "it names the home");
   assert.equal(requests("POST", "/v1/restore").length, 1, "not confirmed: nothing replaced");
   confirmAnswer = true;
   remote.saveRemote({ home: "a".repeat(32), keyId: "0a1b2c3d" });
@@ -468,7 +514,7 @@ test("in Hebrew", async () => {
     await typeInto("backup-open-password", "correct horse battery staple");
     await submit("backup-open-submit");
     const preview = panelText();
-    for (const words of ["מה יש בגיבוי", "סצנות12", "המכשיר הזה שומר על הגישה שלו", "הסצנה „Good night”", "מוגדר ב-Composer, לא משוחזר", "החלפת הכול"]) {
+    for (const words of ["מה יש בגיבוי", "סצנות12", "המכשיר הזה שומר על הגישה שלו", "מפתחות שחוזרים", "Owner phone — מנהל", "הסצנה „Good night”", "הגדרות DirectorLink, לא משוחזרות", "החלפת הכול"]) {
       assert.ok(preview.includes(words), `the preview says: ${words}\n${preview}`);
     }
   } finally {
@@ -486,5 +532,120 @@ test("forgetting this device's key forgets an opened backup too", async () => {
   session.forgetKey();
   assert.deepEqual(ui.backup, { stage: null });
   Object.assign(state, { apiKey: KEY, loaded: true, role: "admin" });
+  // Another home may be paired next: what it has is read again first.
+  assert.equal(backupPanel(), null);
+  await advance(100);
   assert.ok(byKey(backupPanel(), "backup-restore"), "back to the start: nothing of it is left to restore");
+});
+
+// ---- After the 1.4.0 review ---------------------------------------------------------------------
+
+// Opens a backup up to its preview; `preview` is what the controller's check answers.
+async function toPreview(preview = PREVIEW) {
+  controller.restore = (body) => (body.dry_run === undefined ? { status: 200, body: { dry_run: true, restore: preview } } : null);
+  await click("backup-restore");
+  await chooseFile(await backup.encryptBackup(DOCUMENT, "correct horse battery staple", { iterations: 100000 }));
+  await typeInto("backup-open-password", "correct horse battery staple");
+  await submit("backup-open-submit");
+  assert.ok(byKey(backupPanel(), "backup-replace"), message());
+  controller.restore = null;
+}
+
+test("the chosen file stays chosen across redraws, and a file too large is not read", async () => {
+  await connect();
+  await click("backup-restore");
+  const input = byKey(backupPanel(), "backup-file");
+  await chooseFile(await backup.encryptBackup(DOCUMENT, "correct horse battery staple", { iterations: 100000 }));
+  assert.equal(byKey(backupPanel(), "backup-file"), input, "the same input, still holding the file");
+  await typeInto("backup-open-password", "x");
+  assert.equal(byKey(backupPanel(), "backup-file"), input);
+  let read = false;
+  await fire("backup-file", "change", { target: { files: [{ name: "holiday.mp4", size: 300 * 1024 * 1024, text: async () => ((read = true), "") }] } });
+  assert.equal(read, false, "not read into memory");
+  assert.equal(message(), "This file is too large to be a DirectorLink backup.");
+  await click("backup-cancel");
+  await click("backup-restore");
+  assert.notEqual(byKey(backupPanel(), "backup-file"), input, "a new restore starts with no file");
+});
+
+test("the keys that come back are listed, and this device can take its old key's place", async () => {
+  await connect();
+  await toPreview();
+  const select = byKey(backupPanel(), "backup-this-device");
+  assert.ok(select, "offered while the backup's keys come back");
+  assert.ok(panelText().includes("None of these (a new device)"));
+  assert.ok(panelText().includes("Owner phone (Admin)"));
+  await fire("backup-this-device", "change", { target: { value: "0a1b2c3d" } });
+  controller.restore = (body) =>
+    body.dry_run === false
+      ? { status: 200, body: { dry_run: false, restore: { ...PREVIEW, keys: { ...PREVIEW.keys, items: PREVIEW.keys.items.slice(1), replaced: { id: "0a1b2c3d", name: "Owner phone", role: "admin" } } }, restored_at: "2026-10-01T08:00:05Z" } }
+      : null;
+  await click("backup-replace");
+  const replace = requests("POST", "/v1/restore").at(-1);
+  assert.equal(replace.body.replaces_key, "0a1b2c3d");
+  assert.equal(replace.body.move_remote, undefined);
+  assert.ok(panelText().includes("This device took the place of “Owner phone”, with its favorites and its role."));
+
+  // A key that would leave no admin is refused by the controller, and said so.
+  await click("backup-done-ok");
+  await toPreview();
+  await fire("backup-this-device", "change", { target: { value: "1b2c3d4e" } });
+  controller.restore = (body) => (body.dry_run === false ? { status: 409, body: { status: 409, code: "LAST_ADMIN" } } : null);
+  await click("backup-replace");
+  assert.equal(message(), "That key is not an admin’s, and no admin would be left. Choose another key, or none.");
+});
+
+test("with other devices paired, the keys are kept as they are, and what is left out is said", async () => {
+  await connect();
+  await toPreview({ ...PREVIEW, keys: { ...PREVIEW.keys, action: "kept", yours: "kept", items: [], left_out: 2 } });
+  const text = panelText();
+  assert.ok(text.includes("Keys: kept as they are now."), text);
+  assert.ok(text.includes("2 keys in the backup could not be used and are left out."));
+  assert.ok(text.includes("Devices keep their access as it is now."));
+  assert.ok(!text.includes("Devices whose keys are in the backup keep working"));
+  assert.equal(byKey(backupPanel(), "backup-this-device"), null);
+});
+
+test("another home's backup is named first, and its remote access moves only when ticked", async () => {
+  await connect();
+  const other = {
+    ...PREVIEW,
+    backup: { ...PREVIEW.backup, home: "Cohen family" },
+    origin: { another_home: true, reasons: ["home_id", "name", "references"], home_now: "Home", controller: "other" },
+    remote: { ...PREVIEW.remote, action: "kept" },
+  };
+  await toPreview(other);
+  const warning = text(byKey(backupPanel(), "backup-another-home"));
+  for (const words of ["This backup looks like it is of another home: “Cohen family”.", "It is linked to another home in the account.", "Its home is called “Cohen family”, this one “Home”.", "Most of its rooms and devices are not in this project.", "Restore it only if this controller is that home’s."]) {
+    assert.ok(warning.includes(words), `${words}\n${warning}`);
+  }
+  assert.ok(panelText().includes("Remote access: this controller stays linked as it is now; the backup’s link stays out."));
+  assert.ok(panelText().includes("Move remote access to this controller. The controller this backup was made on must be off, or reset first"));
+  await click("backup-replace");
+  assert.equal(confirmed.at(-1), "This backup looks like it is of another home. Replace everything DirectorLink keeps on this controller with the backup of “Cohen family”?");
+  assert.equal(requests("POST", "/v1/restore").at(-1).body.move_remote, undefined, "not ticked: not asked for");
+
+  await click("backup-done-ok");
+  await toPreview(other);
+  await fire("backup-move-remote", "change", { target: { checked: true } });
+  controller.restore = (body) =>
+    body.dry_run === false ? { status: 200, body: { dry_run: false, restore: { ...other, remote: { ...PREVIEW.remote, old_controller: true } }, restored_at: "2026-10-01T08:00:05Z" } } : null;
+  await click("backup-replace");
+  assert.equal(requests("POST", "/v1/restore").at(-1).body.move_remote, true);
+  assert.ok(text(byKey(backupPanel(), "backup-result-old-controller")).includes("turn Remote Access off on the controller this backup was made on"));
+});
+
+test("a DirectorLink before 1.4.0 shows no Backup, and a route it lacks says to update", async () => {
+  await connect("admin", { old: true });
+  assert.equal(backupPanel(), null, "hidden, as DirectorLink settings are");
+  assert.equal(requests("GET", "/v1/backup").length, 0);
+  // Known to have settings, but no backup route (a 404 from the controller): explained, not raw.
+  await connect();
+  controller.old = true;
+  await click("backup-download");
+  await typeInto("backup-password", "correct horse battery staple");
+  await typeInto("backup-confirm", "correct horse battery staple");
+  await submit("backup-download-submit");
+  assert.equal(message(), "Backups need DirectorLink 1.4.0 or newer on the controller. Update DirectorLink in Composer.");
+  controller.old = false;
 });

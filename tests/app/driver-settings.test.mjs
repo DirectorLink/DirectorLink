@@ -323,6 +323,38 @@ test("turning the Jewish calendar off asks first, saying what stops; on asks not
   assert.equal(await message(), "", "the message goes after a while");
 });
 
+// A keyboard or screen-reader user keeps their place: while a change is on its way the controls
+// say they are busy but are not disabled (a disabled control loses the focus), and a press
+// meanwhile sends nothing.
+test("a switch keeps the focus while its change is on its way, and a second press is ignored", async () => {
+  await connect();
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  const fetchBefore = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if ((init.method || "GET") === "PATCH") await held;
+    return fetchBefore(url, init);
+  };
+  const press = (element) => Promise.all(element.listeners.click.map((listener) => listener({ preventDefault() {}, stopPropagation() {} })));
+  try {
+    const pressing = press(byKey(await panel(), "driver-setting-jewish_calendar"));
+    await settle();
+    const busy = driverSettingsPanel();
+    for (const key of ["driver-setting-jewish_calendar", "driver-setting-schedules", "driver-setting-log_level", "driver-refresh"]) {
+      assert.equal(byKey(busy, key).attributes.disabled, undefined, `${key}: not disabled`);
+      assert.equal(byKey(busy, key).attributes["aria-disabled"], "true", `${key}: says it is busy`);
+    }
+    await press(byKey(busy, "driver-setting-schedules"));
+    release();
+    await pressing;
+    await settle();
+  } finally {
+    globalThis.fetch = fetchBefore;
+  }
+  assert.deepEqual(requests("PATCH", "/v1/settings").map((call) => call.body), [{ jewish_calendar: "off" }], "the press while busy sent nothing");
+  assert.equal(byKey(await panel(), "driver-setting-jewish_calendar").attributes["aria-disabled"], undefined);
+});
+
 test("pausing schedules asks first; resuming asks nothing", async () => {
   await connect();
   confirmAnswer = false;

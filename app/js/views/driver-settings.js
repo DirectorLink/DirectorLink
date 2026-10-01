@@ -23,6 +23,13 @@ const COMPOSER_ONLY = ["door_control", "relay_hold", "alarm_status", "remote_acc
 const STATUSES = ["status", "version", "api_status", "pairing_status", "api_keys", "remote_status", "schedule_status", "last_automation", "calendar_status", "inventory"];
 const LEVELS = ["debug", "info", "warn", "error"];
 
+// While a change is on its way the controls say they are busy but stay focusable (not disabled):
+// a keyboard or screen-reader user keeps their place, and what they press meanwhile is ignored
+// (js/driver-settings.js).
+function busy(current) {
+  return current.busy ? "true" : null;
+}
+
 function valueText(setting) {
   const key = `driverSettings.values.${setting.value}`;
   const text = t(key);
@@ -51,7 +58,7 @@ function switchRow(current, setting, name, onValue, offValue) {
         class: "switch",
         "aria-checked": String(on),
         "aria-labelledby": id,
-        disabled: Boolean(current.busy),
+        "aria-disabled": busy(current),
         dataset: { key: id },
         onclick: () => changeSetting(setting.key, on ? offValue : onValue),
       },
@@ -71,9 +78,15 @@ function levelRow(current, setting) {
       "select",
       {
         id,
-        disabled: Boolean(current.busy),
+        "aria-disabled": busy(current),
         dataset: { key: id },
-        onchange: (event) => changeSetting("log_level", event.target.value),
+        onchange: (event) => {
+          if (current.busy) {
+            event.target.value = setting.value;
+            return;
+          }
+          changeSetting("log_level", event.target.value);
+        },
       },
       LEVELS.map((level) => h("option", { value: level, selected: setting.value === level }, t(`driverSettings.logLevel.levels.${level}`)))
     ),
@@ -91,7 +104,7 @@ function refreshRow(current) {
       { class: "button-row" },
       h(
         "button",
-        { type: "button", class: "button button-secondary", disabled: Boolean(current.busy), dataset: { key: "driver-refresh" }, onclick: () => refreshProject() },
+        { type: "button", class: "button button-secondary", "aria-disabled": busy(current), dataset: { key: "driver-refresh" }, onclick: () => refreshProject() },
         icon("refresh"),
         current.busy === "refresh" ? t("driverSettings.refresh.working") : t("driverSettings.refresh.button")
       )

@@ -2639,6 +2639,12 @@ input::placeholder {
   gap: 12px;
 }
 
+/* Busy, still focusable (js/views/driver-settings.js). */
+.driver-settings [aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: progress;
+}
+
 .driver-refresh {
   display: flex;
   flex-direction: column;
