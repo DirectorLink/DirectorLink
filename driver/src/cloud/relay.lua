@@ -70,8 +70,10 @@ local function validSecret(value)
     return type(value) == "string" and #value == 64 and value:match("^%x+$") ~= nil
 end
 
--- An identity as stored: { home_id, home_secret, next_secrets } or nil. `previous` (an identity
--- restored from a backup, until the relay accepts it: ADR-042) is read with it, once.
+-- An identity as stored: { home_id, home_secret, next_secrets, linked } or nil. `linked`: the relay
+-- has accepted it (1.4.0: it is a home in the account service; only such an identity goes into a
+-- backup). `previous` (an identity restored from a backup, until the relay accepts it: ADR-042) is
+-- read with it, once.
 local function identityFrom(stored, nested)
     if type(stored) == "table" and type(stored.home_id) == "string" and type(stored.home_secret) == "string" then
         local candidates = {}
@@ -84,6 +86,7 @@ local function identityFrom(stored, nested)
             home_id = stored.home_id,
             home_secret = stored.home_secret,
             next_secrets = #candidates > 0 and candidates or nil,
+            linked = stored.linked == true or nil,
             previous = not nested and identityFrom(stored.previous, true) or nil,
         }
     end
@@ -292,6 +295,11 @@ local function onOpen()
     if current.previous then
         log("info", "the relay accepted the remote identity restored from a backup", { home_id = current.home_id, previous = current.previous.home_id })
         current.previous = nil
+        current.linked = true
+        saveIdentity(current)
+    elseif not current.linked then
+        -- A home in the account service from now on: a backup may hold it (ADR-042).
+        current.linked = true
         saveIdentity(current)
     end
     if candidate then
@@ -343,10 +351,11 @@ local function onClose(reason, status, body)
         end
         state.trying = nil
         -- An identity restored from a backup that the relay does not know (its secret was replaced
-        -- after the backup was made): the one this controller had comes back (ADR-042).
-        if status == 401 and identity.previous then
+        -- after the backup was made) or does not take (400: not an identity it accepts): the one
+        -- this controller had comes back (ADR-042).
+        if (status == 401 or status == 400) and identity.previous then
             local previous = identity.previous
-            state.identity = { home_id = previous.home_id, home_secret = previous.home_secret, next_secrets = previous.next_secrets }
+            state.identity = { home_id = previous.home_id, home_secret = previous.home_secret, next_secrets = previous.next_secrets, linked = previous.linked }
             saveIdentity(state.identity)
             state.backupRefused = true
             log("warn", "the relay refused the remote identity restored from a backup; this controller's own is back",
@@ -495,15 +504,20 @@ function Relay.storedIdentity()
 end
 
 -- Backups (ADR-042, src/core/backup.lua): the home id and its secrets, the one in use and the
--- replacements waiting for the owner's approval (one of them may be approved later).
+-- replacements waiting for the owner's approval (one of them may be approved later), marked
+-- `linked`. Only an identity the relay has accepted, a home in the account service: one it never
+-- saw would replace, when restored, a home that is linked. None is made for a backup.
 function Relay.backupIdentity()
-    local identity = Relay.identity()
+    local identity = Relay.storedIdentity()
+    if not identity or not identity.linked then
+        return { version = 1, linked = false }
+    end
     local candidates = nil
     for _, item in ipairs(identity.next_secrets or {}) do
         candidates = candidates or Json.array()
         candidates[#candidates + 1] = { secret = item.secret, at = item.at }
     end
-    return { version = 1, home_id = identity.home_id, home_secret = identity.home_secret, next_secrets = candidates }
+    return { version = 1, linked = true, home_id = identity.home_id, home_secret = identity.home_secret, next_secrets = candidates }
 end
 
 -- Uses `identity` ({ home_id, home_secret, next_secrets, previous }) from now on and saves it.

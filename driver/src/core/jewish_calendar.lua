@@ -191,8 +191,6 @@ local function reckoning()
     return false, country ~= "" and "from the country" or "from the time zone"
 end
 
--- The settings stored on the controller (defaults until an admin changes them). Returns them and
--- how the store answered (as Store.read).
 -- The settings of a stored record ({ version, settings }, as the store or a backup holds it), with
 -- the defaults for what it does not say.
 function JewishCalendar.read(data)
@@ -217,6 +215,8 @@ function JewishCalendar.read(data)
     return settings
 end
 
+-- The settings stored on the controller (defaults until an admin changes them). Returns them and
+-- how the store answered (as Store.read).
 function JewishCalendar.load()
     local data, form = Store.read(STORE_KEY, false)
     state.complete = form ~= "unreadable"
@@ -225,7 +225,12 @@ function JewishCalendar.load()
     if not state.complete then
         Log.error("calendar", "the calendar settings could not be read; they cannot be changed until the driver restarts")
     end
-    return settings, form
+    return state.settings, form
+end
+
+-- False after the stored settings could not be read at start (they may come back at the next one).
+function JewishCalendar.complete()
+    return state.complete
 end
 
 -- Backups (ADR-042, src/core/backup.lua): the settings as the store keeps them.

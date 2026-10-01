@@ -654,7 +654,7 @@ def scenario(client, bridge):
     check = client.check_sealed(bridge, "POST", "/v1/restore", 200, body={"upload": upload})
     counts = check["restore"]["counts"]
     if (check["dry_run"], counts["scenes"], check["restore"]["keys"]["yours"], check["restore"]["references"]["unmatched_count"]) != (
-            True, len(document["sections"]["scenes"]["scenes"]), "in_backup", 0):
+            True, len(document["sections"]["scenes"]["scenes"]), "kept", 0):
         fail(f"POST /v1/restore should check the backup just made without a change: {check}")
     client.check_sealed(bridge, "POST", "/v1/restore", 422, body={"document": {"format": "something else"}})
     client.check_sealed(bridge, "POST", "/v1/restore", 409, body={"document": dict(document, format_version=99)})

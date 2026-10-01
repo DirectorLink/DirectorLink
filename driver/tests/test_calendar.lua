@@ -1156,4 +1156,15 @@ function tests.new_yorks_clock_changes_move_no_shabbat_time()
     T.eq(mock.properties["Calendar Status"], "Abroad (from the location) · candles 20 min before sunset, havdalah 42 min after · next Fri 06 Nov 16:26 to Sat 07 Nov 17:27 Shabbat")
 end
 
+-- What a load read, and how the store answered (main.lua does not use it; another caller may).
+function tests.loading_the_calendar_returns_its_settings()
+    Mock.startDriver()
+    local JewishCalendar = require("src.core.jewish_calendar")
+    local settings, form = JewishCalendar.load()
+    T.eq(settings.candle_lighting_minutes, 20)
+    T.eq(settings.havdalah_minutes, 42)
+    T.eq(form, "missing")
+    T.eq(JewishCalendar.complete(), true)
+end
+
 return tests

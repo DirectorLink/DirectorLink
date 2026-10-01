@@ -1939,10 +1939,11 @@ paths:
       description: |
         Keys (their hashes and lock keys, never a key), profiles, room names and the room order,
         scenes, schedules (without what they ran), the calendar's settings and the home's remote
-        identity, one section per store as the store keeps it; how DirectorLink's Composer
-        properties are set (listed when restoring, never restored); and the names of the rooms and
-        devices the sections refer to, so that a restore can match a project whose ids changed.
-        Pending invitations are not in it.
+        identity (only one the relay has accepted, marked `linked`; none is made for a backup),
+        one section per store as the store keeps it; how DirectorLink's Composer properties are set
+        (listed when restoring, never restored); the names of the rooms and devices the sections
+        refer to, so that a restore can match a project whose ids changed; and which controller
+        made it (`controller_id`). Pending invitations are not in it.
 
         Only in sealed requests (`POST /v1/sealed` on the home network, and through remote access):
         a request with `Authorization: Bearer` gets 403 `SEALED_REQUEST_REQUIRED`. The DirectorLink
@@ -1968,9 +1969,10 @@ paths:
       description: |
         A backup's JSON text, cut into parts that each fit in a sealed request (at most 48 KiB of
         text; 2 MiB and 100 parts in all). The first part (`index` 0, no `upload`) starts an upload
-        and replaces any other; the answer's `upload` goes with the next ones, in order. Once
-        `complete`, check it and restore it with `POST /v1/restore`. An upload belongs to the key
-        that sent it and is dropped 10 minutes after its last use. Sealed requests only.
+        and replaces the key's own one before; the answer's `upload` goes with the next ones, in
+        order. Once `complete`, check it and restore it with `POST /v1/restore`. An upload belongs
+        to the key that sent it, one per key and three in all (a fourth replaces the one used
+        longest ago), and is dropped 10 minutes after its last use. Sealed requests only.
       requestBody:
         required: true
         content:
@@ -2017,16 +2019,29 @@ paths:
         request. A backup made by a newer DirectorLink than this one is refused (409
         `BACKUP_TOO_NEW`); older ones are read as an update reads their stores.
 
-        What a restore does besides (ADR-042): the admin's key that sends it stays as it is now,
-        added if the backup does not have it (its profile too), even past the 20 keys; keys whose
-        expiry has passed stay out. Rooms and devices are matched to the project by id, else by the
-        same name in the same room; a step, favorite, hidden room, room name or place in the order
-        whose room or device matches nothing is left out and listed in `references.unmatched`. A
-        schedule starts as if saved at the restore (nothing due before runs; a weather rule waits
-        until the weather has turned). Pending invitations are revoked. The remote identity: the
-        same home keeps the one in use; another home's is used from a few seconds after the answer,
-        and if the relay refuses it the controller's own comes back. Composer properties are never
-        restored: `composer` lists them to set again by hand. Sealed requests only.
+        What a restore does besides (ADR-042):
+        - Keys: the backup's come back only when no key but the sender's is paired, and the
+          sender's was paired after the backup was made (the driver was added again):
+          `keys.action` `restore`, with `keys.items`. Otherwise every key stays as it is now
+          (`kept`): no key revoked or demoted since comes back. The sender's key stays as it is
+          now, added if the backup does not have it (its profile too), even past the 20 keys; with
+          `replaces_key` it takes the place of one of the backup's keys (that key's profile and
+          role; the key itself stays out). Keys whose expiry has passed, or that have more than 30
+          days and an hour left, stay out, as do key records a driver would not make.
+        - Rooms and devices are matched to the project: the same id with the same name; else the
+          one other room, or device of the kind in the same room, with that name (ids swapped);
+          else the same id renamed. Doors and gates only with the same id and name, never moved.
+          What matches nothing is left out and listed in `references.unmatched`.
+        - A schedule starts as if saved at the restore (nothing due before runs; a weather rule
+          waits until the weather has turned). Pending invitations are revoked.
+        - `origin` says whether the backup looks like another home's (another home id, another
+          controller, another name, or most of what it refers to not in this project). The
+          remote identity: the same home keeps the one in use; the backup's is used from a few
+          seconds after the answer (if the relay refuses it the controller's own comes back), but
+          another home's only with `move_remote`.
+        - Composer properties are never restored: `composer` lists them.
+
+        Sealed requests only.
       requestBody:
         required: true
         content:
@@ -2053,7 +2068,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
         "409":
-          description: The backup was made by a newer DirectorLink (`BACKUP_TOO_NEW`), or the upload has parts still to come (`UPLOAD_INCOMPLETE`).
+          description: The backup was made by a newer DirectorLink (`BACKUP_TOO_NEW`), the upload has parts still to come (`UPLOAD_INCOMPLETE`), `replaces_key` was sent while the keys are kept (`KEYS_KEPT`), or it would leave no admin (`LAST_ADMIN`).
           content:
             application/problem+json:
               schema:
@@ -2071,7 +2086,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
         "503":
-          description: DirectorLink has not read the project yet (`PROJECT_NOT_READY`).
+          description: DirectorLink has not read the project yet (`PROJECT_NOT_READY`), or could not read one of its stores when it started (`UNAVAILABLE`, with `store`; a restore would overwrite it; restart the driver).
           content:
             application/problem+json:
               schema:
@@ -2108,9 +2123,11 @@ paths:
         Name each setting by its key with its new value. All of them are checked before anything
         changes. Each is set as Composer sets it: the property changes in Composer, takes effect as
         a change there does (pausing schedules, turning the Jewish calendar on or off), and is
-        logged with the key's name and id (log category `settings`). A setting already at its
-        value is left alone. A setting made in Composer only is refused for every key, admins
-        included (`403 SET_IN_COMPOSER`).
+        logged with the key's name and id (log category `settings`, whatever the log level). A
+        setting already at its value is left alone. A setting made in Composer only is refused for
+        every key, admins included (`403 SET_IN_COMPOSER`). When a setting is set but applying it
+        fails, the property keeps the new value (it is what DirectorLink reads, and Composer shows
+        it) and the answer is `500 SETTING_NOT_APPLIED`, naming it in `errors`.
       requestBody:
         required: true
         content:
@@ -2132,6 +2149,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "500":
+          description: A setting was set (Composer shows it) but applying it failed (`SETTING_NOT_APPLIED`, with `errors`); the log says why.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /v1/settings/printout:
     get:
@@ -2417,7 +2440,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`), or needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`), or needs DirectorLink's Jewish Calendar property On (`JEWISH_CALENDAR_OFF`; an installer turns it on in Composer, and since 1.4.0 an admin with `PATCH /v1/settings`).
       content:
         application/problem+json:
           schema:
@@ -2631,7 +2654,8 @@ components:
         features:
           type: object
           description: |
-            Optional parts of DirectorLink that an installer switches on in Composer. Clients show
+            Optional parts of DirectorLink, switched on with its properties: in Composer, and the
+            Jewish calendar also by an admin in the app (`PATCH /v1/settings`, 1.4.0). Clients show
             none of a feature that is false, and none at all when `features` is missing (drivers
             before 1.2.0).
           required: [jewish_calendar, alarm_status]
@@ -4683,6 +4707,10 @@ components:
             name:
               type: [string, "null"]
               description: The project's name (its site in Composer).
+        controller_id:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{32}$"
+          description: The controller that made it (a hash of its MAC address), null when Director does not give it. Tells a backup of this controller from one of another.
         composer:
           type: object
           description: How DirectorLink's Composer properties were set (Door Control, Relay Hold, Schedules, Jewish Calendar, Alarm Status, Remote Access, Log Level). Listed when restoring, never restored.
@@ -4747,10 +4775,13 @@ components:
                   type: object
             remote_identity:
               type: object
-              required: [version, home_id, home_secret]
+              description: The home's remote identity, only when the relay has accepted it (`linked` true); otherwise only `version` and `linked` false.
+              required: [version, linked]
               properties:
                 version:
                   type: integer
+                linked:
+                  type: boolean
                 home_id:
                   type: string
                   pattern: "^[0-9a-f]{32}$"
@@ -4834,6 +4865,14 @@ components:
           type: boolean
           default: true
           description: True (the default) checks and changes nothing; false restores.
+        replaces_key:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: '"This device is …": the id of one of the backup''s keys (`keys.items`) whose place the sending key takes, with its profile and role; that key is not restored. Only when the backup''s keys come back (`keys.action` `restore`).'
+        move_remote:
+          type: boolean
+          default: false
+          description: Another home's backup (`origin.another_home`) brings its remote identity here only with this; the controller it was made on must be off or reset first.
       oneOf:
         - required: [upload]
         - required: [document]
@@ -4854,8 +4893,28 @@ components:
     RestorePreview:
       type: object
       description: What a restore does (a check) or did.
-      required: [backup, counts, left_out, keys, remote, references, composer]
+      required: [backup, origin, counts, left_out, keys, remote, references, composer]
       properties:
+        origin:
+          type: object
+          description: Whether the backup looks like another home's.
+          required: [another_home, reasons, home_now, controller]
+          properties:
+            another_home:
+              type: boolean
+            reasons:
+              type: array
+              description: "`home_id`: linked to another home in the account; `controller`: made on another controller (when there is no home id to compare); `name`: the home has another name; `references`: most of what it refers to is not in this project."
+              items:
+                type: string
+                enum: [home_id, controller, name, references]
+            home_now:
+              type: [string, "null"]
+              description: This project's name.
+            controller:
+              type: string
+              enum: [same, other, unknown]
+              description: Whether this controller made the backup.
         backup:
           type: object
           required: [created_at, driver_version, format_version, home]
@@ -4901,14 +4960,47 @@ components:
               type: integer
         keys:
           type: object
-          required: [count, yours, conflict, expired, left_out, over_limit, limit]
+          required: [action, count, in_backup, items, replaced, yours, conflict, expired, left_out, over_limit, limit]
           properties:
+            action:
+              type: string
+              enum: [restore, kept]
+              description: "`restore`: the backup's keys come back (no other key is paired, and the sending key was paired after the backup was made). `kept`: every key stays as it is now."
             count:
               type: integer
+            in_backup:
+              type: integer
+              description: Key records in the backup.
+            items:
+              type: array
+              description: The backup's keys that come back, by name and role (none while kept).
+              items:
+                type: object
+                required: [id, name, role, expires_at]
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  role:
+                    type: string
+                  expires_at:
+                    type: [string, "null"]
+            replaced:
+              type: [object, "null"]
+              description: The backup's key whose place the sending key took (`replaces_key`).
+              required: [id, name, role]
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                role:
+                  type: string
             yours:
               type: string
-              enum: [in_backup, added]
-              description: The key that sends the restore stays as it is now; `added` when the backup does not have it.
+              enum: [added, kept]
+              description: The key that sends the restore stays as it is now; `added` to the backup's keys, or `kept` with the others.
             conflict:
               type: boolean
               description: The backup has another key with this key's id; the one in use is kept.
@@ -4924,19 +5016,22 @@ components:
               type: integer
         remote:
           type: object
-          required: [action, home_id, current_home_id, remote_access]
+          required: [action, home_id, current_home_id, remote_access, old_controller]
           properties:
             action:
               type: string
-              enum: [same, restore]
-              description: "`same`: the home in use stays. `restore`: the backup's home is used from a few seconds after the answer; if the relay refuses it, the controller's own comes back."
+              enum: [same, restore, kept, none]
+              description: "`same`: the home in use stays. `restore`: the backup's home is used from a few seconds after the answer; if the relay refuses it, the controller's own comes back. `kept`: another home's identity stays out (`move_remote` brings it). `none`: the backup holds no identity; the one in use stays."
             home_id:
-              type: string
+              type: [string, "null"]
               pattern: "^[0-9a-f]{32}$"
             current_home_id:
               type: [string, "null"]
             remote_access:
               type: boolean
+            old_controller:
+              type: boolean
+              description: The backup's identity is used here and the controller it was made on may still run with it; the two would push each other off the relay.
         references:
           type: object
           required: [by_id, by_name, renamed, unmatched, unmatched_count]
@@ -4981,7 +5076,7 @@ components:
               description: Rooms and devices that match nothing (the first 100), with where the backup used them. What used them is left out.
               items:
                 type: object
-                required: [kind, id, name, room, used_in]
+                required: [kind, id, name, room, now, used_in]
                 properties:
                   kind:
                     type: string
@@ -4992,6 +5087,9 @@ components:
                     type: [string, "null"]
                   room:
                     type: [string, "null"]
+                  now:
+                    type: [string, "null"]
+                    description: What the id is called now, when it is still such a room or device (a door or gate renamed or swapped is not moved).
                   used_in:
                     type: array
                     items:

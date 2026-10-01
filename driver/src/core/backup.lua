@@ -8,8 +8,11 @@
 -- write fails, the values from before are put back. What refers to the project's devices and rooms
 -- by id (scene steps, favorites, hidden rooms, room names and the room order) is matched to the
 -- project as it is now: by id, else by the same name in the same room; what matches nothing is left
--- out and listed. Composer properties are never restored, only listed: a file must never switch a
--- safety setting on.
+-- out and listed. Doors and gates are never moved to another device. The backup's keys come back
+-- only onto a controller where nothing but the restoring device is paired; otherwise every key
+-- stays as it is. Another home's backup is told apart, and its remote identity moves here only
+-- when the admin asks. Composer properties are never restored, only listed: a file must never
+-- switch a safety setting on.
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -35,6 +38,8 @@ Backup.MAX_BYTES = 2 * 1024 * 1024
 Backup.MAX_PART_BYTES = 48 * 1024
 Backup.MAX_PARTS = 100
 Backup.UPLOAD_SECONDS = 600
+-- Uploads held at once: one per key, at most this many in all (the one used longest ago goes).
+Backup.MAX_UPLOADS = 3
 -- References that match nothing, listed one by one in a preview (all are counted).
 Backup.MAX_LISTED = 100
 -- DirectorLink's Composer properties: listed in the preview, never restored.
@@ -56,6 +61,13 @@ local SECTIONS = {
 -- Scene step types and favorites ("kind:id") name the kinds of the project's devices so.
 local STEP_KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay" }
 local FAVORITE_KINDS = { light = "light", thermostat = "climate", fan = "fan", blind = "blind", camera = "camera", relay = "relay", doorbell = "doorbell" }
+-- What opens doors and gates: kept only on the device (or room) with the same id and the same
+-- name, never moved to another one, which would open the wrong door.
+local DOOR_KINDS = { relay = true, doorbell = true }
+-- A waiting replacement for the home secret dated later than this after the restore's clock is
+-- not kept (made while a clock ran ahead, it would be kept for good).
+local CLOCK_MARGIN = 3600
+local PALETTE = "^%l[%l%d%-]*$"
 
 local function isWhole(value, minimum, maximum)
     return type(value) == "number" and value == math.floor(value) and value >= minimum and value <= maximum
@@ -67,6 +79,10 @@ end
 
 local function isHex(value, length)
     return type(value) == "string" and #value == length and value:match("^%x+$") ~= nil
+end
+
+local function isLowerHex(value, length)
+    return type(value) == "string" and #value == length and value:match("^[0-9a-f]+$") ~= nil
 end
 
 local function items(list)
@@ -84,6 +100,30 @@ local function nullable(value)
         return Json.null
     end
     return value
+end
+
+-- A name as the API takes one (src/api/validate.lua: trimmed, 1 to 64 characters), cut to 64
+-- characters; `fallback` when there is none.
+local function cleanName(value, fallback)
+    if type(value) ~= "string" then
+        return fallback
+    end
+    local trimmed = value:gsub("^%s+", ""):gsub("%s+$", "")
+    if trimmed == "" then
+        return fallback
+    end
+    -- A character starts at a byte that is not a UTF-8 continuation byte.
+    local count = 0
+    for position = 1, #trimmed do
+        local byte = trimmed:byte(position)
+        if byte < 128 or byte >= 192 then
+            count = count + 1
+            if count > 64 then
+                return trimmed:sub(1, position - 1)
+            end
+        end
+    end
+    return trimmed
 end
 
 -- ---- The document ----------------------------------------------------------------------------
@@ -168,6 +208,23 @@ local function references(registry, sections)
     return { rooms = rooms, devices = devices }
 end
 
+-- This controller, as a backup names it: a hash of its MAC address (C4:GetUniqueMAC), the same
+-- after the driver is removed and added again, another on a replacement. nil when Director does
+-- not give it: then the home id and the other signs decide (Backup.plan).
+function Backup.controllerId()
+    local ok, mac = pcall(function()
+        return C4:GetUniqueMAC()
+    end)
+    if not ok or type(mac) ~= "string" or mac == "" then
+        return nil
+    end
+    local hashed, hash = pcall(C4.Hash, C4, "SHA256", "DirectorLink controller " .. mac:lower(), { return_encoding = "HEX" })
+    if hashed and type(hash) == "string" and #hash == 64 then
+        return hash:lower():sub(1, 32)
+    end
+    return nil
+end
+
 local function composerValues()
     local values = {}
     for _, name in ipairs(Backup.COMPOSER) do
@@ -194,6 +251,7 @@ function Backup.export(registry)
         driver_version = Version.BRIDGE_VERSION,
         created_at = Clock.iso(),
         home = { name = nullable(homeName(registry)) },
+        controller_id = nullable(Backup.controllerId()),
         composer = composerValues(),
         references = references(registry, sections),
         sections = sections,
@@ -202,16 +260,57 @@ end
 
 -- ---- Parts of a document on its way back -------------------------------------------------------
 
--- One at a time: a new first part replaces a document not used yet.
-local upload = nil
+-- One upload per key (its next first part replaces it), at most MAX_UPLOADS in all; each is dropped
+-- UPLOAD_SECONDS after its last use, by a timer too, so that a backup checked and then left does
+-- not stay in the controller's memory (some MB for a big one).
+local uploads = {}
+local sweeper = nil
 
 local function uploadProblem(code, detail)
     return nil, { status = code == "UPLOAD_NOT_FOUND" and 404 or 400, code = code, detail = detail }
 end
 
+-- Drops the uploads whose time has passed.
+function Backup.sweep(now)
+    now = now or Clock.now()
+    for keyId, upload in pairs(uploads) do
+        if now > upload.expires then
+            uploads[keyId] = nil
+        end
+    end
+end
+
+-- The timer that drops the next upload whose time passes (kept referenced, one at a time).
+local function scheduleSweep(now)
+    if sweeper then
+        pcall(function()
+            sweeper:Cancel()
+        end)
+        sweeper = nil
+    end
+    local soonest = nil
+    for _, upload in pairs(uploads) do
+        if not soonest or upload.expires < soonest then
+            soonest = upload.expires
+        end
+    end
+    if not soonest then
+        return
+    end
+    pcall(function()
+        sweeper = C4:SetTimer((math.max(soonest - now, 0) + 1) * 1000, function()
+            sweeper = nil
+            local at = Clock.now()
+            Backup.sweep(at)
+            scheduleSweep(at)
+        end, false)
+    end)
+end
+
 -- A part of the document's JSON text: { upload (after the first), index (from 0), count, text }.
 -- Returns { upload, received, count, complete }, or nil and a problem.
 function Backup.receivePart(keyId, body, now)
+    Backup.sweep(now)
     local count, index, text = body.count, body.index, body.text
     if not isWhole(count, 1, Backup.MAX_PARTS) then
         return uploadProblem("INVALID_FIELD", "count is how many parts there are, 1 to " .. Backup.MAX_PARTS)
@@ -222,33 +321,51 @@ function Backup.receivePart(keyId, body, now)
     if type(text) ~= "string" or text == "" or #text > Backup.MAX_PART_BYTES then
         return uploadProblem("INVALID_FIELD", "text is a part of the backup's JSON, at most " .. Backup.MAX_PART_BYTES .. " bytes")
     end
+    local upload = uploads[keyId]
     if index == 0 then
         if body.upload ~= nil then
             return uploadProblem("INVALID_FIELD", "The first part starts a new upload: leave out upload")
         end
-        upload = { id = Random.hex(16), key = keyId, count = count, parts = { text }, bytes = #text, expires = now + Backup.UPLOAD_SECONDS }
+        if not upload then
+            local held, oldest = 0, nil
+            for otherKey, other in pairs(uploads) do
+                held = held + 1
+                if not oldest or other.expires < uploads[oldest].expires then
+                    oldest = otherKey
+                end
+            end
+            if held >= Backup.MAX_UPLOADS then
+                uploads[oldest] = nil
+            end
+        end
+        upload = { id = Random.hex(16), count = count, parts = { text }, bytes = #text, expires = now + Backup.UPLOAD_SECONDS }
+        uploads[keyId] = upload
     else
-        if not upload or upload.id ~= body.upload or upload.key ~= keyId or now > upload.expires or not upload.parts then
+        if not upload or upload.id ~= body.upload or not upload.parts then
             return uploadProblem("UPLOAD_NOT_FOUND", "No upload with this id is waiting; send the backup again from its first part")
         end
         if upload.count ~= count or index ~= #upload.parts then
             return uploadProblem("INVALID_FIELD", "Send the parts in order: part " .. #upload.parts .. " of " .. upload.count .. " is next")
         end
         if upload.bytes + #text > Backup.MAX_BYTES then
-            upload = nil
+            uploads[keyId] = nil
+            scheduleSweep(now)
             return uploadProblem("BACKUP_TOO_LARGE", "A backup is at most " .. Backup.MAX_BYTES .. " bytes")
         end
         upload.parts[#upload.parts + 1] = text
         upload.bytes = upload.bytes + #text
         upload.expires = now + Backup.UPLOAD_SECONDS
     end
+    scheduleSweep(now)
     return { upload = upload.id, received = #upload.parts, count = upload.count, complete = #upload.parts == upload.count }
 end
 
 -- The document an upload of `keyId` carried, once all its parts are in (read once, then kept for
 -- the restore that follows its check); nil and a problem otherwise.
 function Backup.uploaded(keyId, id, now)
-    if not upload or upload.id ~= id or upload.key ~= keyId or now > upload.expires then
+    Backup.sweep(now)
+    local upload = uploads[keyId]
+    if not upload or upload.id ~= id then
         return uploadProblem("UPLOAD_NOT_FOUND", "No upload with this id is waiting; send the backup again")
     end
     if upload.parts then
@@ -258,18 +375,31 @@ function Backup.uploaded(keyId, id, now)
         local document, err = Json.decode(table.concat(upload.parts))
         upload.parts = nil
         if type(document) ~= "table" then
-            upload = nil
+            uploads[keyId] = nil
+            scheduleSweep(now)
             return nil, { status = 422, code = "BACKUP_INVALID", detail = "The backup is not valid JSON: " .. tostring(err) }
         end
         upload.document = document
     end
     upload.expires = now + Backup.UPLOAD_SECONDS
+    scheduleSweep(now)
     return upload.document
 end
 
-function Backup.forget(id)
-    if upload and upload.id == id then
-        upload = nil
+-- How many uploads are held now.
+function Backup.held()
+    local count = 0
+    for _ in pairs(uploads) do
+        count = count + 1
+    end
+    return count
+end
+
+-- The upload of `keyId` was restored: it goes.
+function Backup.forget(keyId, id)
+    if uploads[keyId] and uploads[keyId].id == id then
+        uploads[keyId] = nil
+        scheduleSweep(Clock.now())
     end
 end
 
@@ -306,16 +436,26 @@ local function tooNew(detail)
     return nil, { status = 409, code = "BACKUP_TOO_NEW", detail = detail }
 end
 
+local function absent(value)
+    return value == nil or value == Json.null
+end
+
+-- The remote identity as the relay accepts one (cloud/src/index.js): a home id of 32 lower-case
+-- hex digits, a secret of 64 hex digits, and the replacements waiting for approval. A backup made
+-- where the relay had accepted none holds none (`linked` false).
 local function validIdentity(section)
-    if not isHex(section.home_id, 32) or not isHex(section.home_secret, 64) then
+    if section.linked ~= true then
+        return (absent(section.linked) or section.linked == false) and absent(section.home_id) and absent(section.home_secret)
+    end
+    if not isLowerHex(section.home_id, 32) or not isHex(section.home_secret, 64) then
         return false
     end
-    if section.next_secrets ~= nil and section.next_secrets ~= Json.null then
+    if not absent(section.next_secrets) then
         if type(section.next_secrets) ~= "table" then
             return false
         end
         for _, item in ipairs(section.next_secrets) do
-            if type(item) ~= "table" or not isHex(item.secret, 64) or type(item.at) ~= "number" then
+            if type(item) ~= "table" or not isHex(item.secret, 64) or not isWhole(item.at, 0, math.huge) then
                 return false
             end
         end
@@ -363,7 +503,7 @@ local function validate(document)
         elseif rule.object and not isObject(section[rule.object]) then
             errors[#errors + 1] = { field = field .. "." .. rule.object, message = name .. " must have an object " .. rule.object }
         elseif name == "remote_identity" and not validIdentity(section) then
-            errors[#errors + 1] = { field = field, message = "The remote identity is not valid" }
+            errors[#errors + 1] = { field = field, message = "The remote identity is not one the relay accepts" }
         end
     end
     if #errors > 0 then
@@ -398,56 +538,70 @@ local function infoName(info)
     return isObject(info) and type(info.name) == "string" and info.name or nil
 end
 
--- The room a backup's room id is now: the same id, else the one room of the same name.
-local function findRoom(m, id)
+-- The room a backup's room id is now: the same id with the same name; else the one other room of
+-- that name (the ids were swapped, or the room was made again); else the same id with another name
+-- (renamed). `strict` (a step that opens doors): only the same id with the same name.
+local function findRoom(m, id, strict)
     local rooms = m.registry.rooms or {}
-    if rooms[id] then
+    local room = rooms[id]
+    local name = infoName(m.rooms[tostring(id)])
+    if room and room.name == name then
         return id, "id"
     end
-    local name = infoName(m.rooms[tostring(id)])
-    if not name then
+    if strict then
         return nil
     end
-    local match, count = nil, 0
-    for roomId, room in pairs(rooms) do
-        if room.name == name then
-            match, count = tonumber(roomId), count + 1
+    if name then
+        local match, count = nil, 0
+        for roomId, candidate in pairs(rooms) do
+            if candidate.name == name and tonumber(roomId) ~= id then
+                match, count = tonumber(roomId), count + 1
+            end
+        end
+        if count == 1 then
+            return match, "name"
         end
     end
-    if count == 1 then
-        return match, "name"
+    if room then
+        return id, "id"
     end
     return nil
 end
 
--- The device of `kind` a backup's device id is now: the same id if it is still a device of that
--- kind, else the one device of that kind with the same name in the same room.
+-- The device of `kind` a backup's device id is now: the same id, still a device of that kind, with
+-- the same name; else the one other device of that kind with that name in the same room (the ids
+-- were swapped, or it was added again); else the same id with another name (renamed). Doors and
+-- gates (DOOR_KINDS): only the same id with the same name, never another device.
 local function findDevice(m, id, kind)
     local devices = m.registry.devices or {}
     local device = devices[id]
-    if device and device.kind == kind then
-        return id, "id"
-    end
+    local same = device ~= nil and device.kind == kind
     local info = m.devices[tostring(id)]
     local name = infoName(info)
-    if not name then
+    if same and device.name == name then
+        return id, "id"
+    end
+    if DOOR_KINDS[kind] then
         return nil
     end
-    local room = nil
-    if tonumber(info.room_id) then
-        room = findRoom(m, tonumber(info.room_id))
-        if not room then
-            return nil
+    if name then
+        local placed = tonumber(info.room_id) ~= nil
+        local room = placed and findRoom(m, tonumber(info.room_id)) or nil
+        -- In a room that is gone, a name tells no device apart.
+        if room or not placed then
+            local match, count = nil, 0
+            for deviceId, candidate in pairs(devices) do
+                if candidate.kind == kind and candidate.name == name and tonumber(deviceId) ~= id and (room == nil or tonumber(candidate.room_id) == room) then
+                    match, count = tonumber(deviceId), count + 1
+                end
+            end
+            if count == 1 then
+                return match, "name"
+            end
         end
     end
-    local match, count = nil, 0
-    for deviceId, candidate in pairs(devices) do
-        if candidate.kind == kind and candidate.name == name and (room == nil or tonumber(candidate.room_id) == room) then
-            match, count = tonumber(deviceId), count + 1
-        end
-    end
-    if count == 1 then
-        return match, "name"
+    if same then
+        return id, "id"
     end
     return nil
 end
@@ -458,14 +612,14 @@ local function roomLabel(m, roomId)
 end
 
 -- Resolves one reference: returns the id to keep, or nil (left out, listed with `where`: the
--- section and the name of what used it).
-local function resolve(m, kind, id, where)
-    local key = kind .. ":" .. tostring(id)
+-- section and the name of what used it). `strict` for a room a step that opens doors acts on.
+local function resolve(m, kind, id, where, strict)
+    local key = kind .. (strict and "!" or "") .. ":" .. tostring(id)
     local found = m.found[key]
     if found == nil then
         local newId, how
         if kind == "room" then
-            newId, how = findRoom(m, id)
+            newId, how = findRoom(m, id, strict)
         else
             newId, how = findDevice(m, id, kind)
         end
@@ -480,11 +634,21 @@ local function resolve(m, kind, id, where)
         elseif how == "name" then
             m.byName[#m.byName + 1] = { kind = kind, name = name, room = kind ~= "room" and nullable(roomLabel(m, info.room_id)) or Json.null, from = id, to = newId }
         else
+            -- What the id is now, when it is still a room or a device of this kind: a door or gate
+            -- renamed or swapped is not moved, and says so.
+            local now = nil
+            if kind == "room" then
+                now = (m.registry.rooms or {})[id]
+            else
+                now = (m.registry.devices or {})[id]
+                now = now and now.kind == kind and now or nil
+            end
             local entry = {
                 kind = kind,
                 id = id,
                 name = nullable(name),
                 room = kind ~= "room" and isObject(info) and nullable(roomLabel(m, info.room_id)) or Json.null,
+                now = now and nullable(now.name) or Json.null,
                 used_in = Json.array(),
             }
             m.missing[key] = entry
@@ -519,8 +683,9 @@ local function matchScenes(m, scenes, counts)
             counts.scenes = counts.scenes + 1
         else
             seen[scene.id] = true
+            local name = cleanName(scene.name, "Scene")
             local steps = Json.array()
-            local where = { section = "scenes", name = scene.name }
+            local where = { section = "scenes", name = name }
             for _, step in ipairs(scene.steps) do
                 local keep = true
                 local roomId = step.room_id
@@ -528,7 +693,8 @@ local function matchScenes(m, scenes, counts)
                     -- Only the room its devices were picked in (docs/SCENES.md): kept if it is found.
                     roomId = findRoom(m, roomId)
                 elseif roomId then
-                    roomId = resolve(m, "room", roomId, where)
+                    -- Every device of the room: doors and gates only in the very same room.
+                    roomId = resolve(m, "room", roomId, where, step.type == "relays")
                     keep = roomId ~= nil
                 end
                 local ids = nil
@@ -552,7 +718,7 @@ local function matchScenes(m, scenes, counts)
             end
             result[#result + 1] = {
                 id = scene.id,
-                name = scene.name,
+                name = name,
                 icon = scene.icon,
                 show_on_home = scene.show_on_home,
                 steps = steps,
@@ -565,6 +731,16 @@ local function matchScenes(m, scenes, counts)
     return result
 end
 
+-- Preferences as the API takes them (src/api/handlers/profiles.lua); anything else is left out.
+local function cleanPrefs(prefs)
+    local palette = prefs.palette
+    return {
+        language = (prefs.language == "auto" or RoomNames.validLanguage(prefs.language)) and prefs.language or nil,
+        theme = Profiles.THEMES[prefs.theme] and prefs.theme or nil,
+        palette = type(palette) == "string" and #palette <= 20 and palette:match(PALETTE) and palette or nil,
+    }
+end
+
 local function matchProfiles(m, profiles, counts)
     local seen = {}
     local result = Json.array()
@@ -573,7 +749,8 @@ local function matchProfiles(m, profiles, counts)
             counts.profiles = counts.profiles + 1
         else
             seen[profile.id] = true
-            local where = { section = "profiles", name = profile.name }
+            local name = cleanName(profile.name, "Profile")
+            local where = { section = "profiles", name = name }
             local favorites, listed = Json.array(), {}
             for _, entry in ipairs(profile.prefs.favorites or {}) do
                 local kind, id = tostring(entry):match("^(%l+):(%d+)$")
@@ -593,24 +770,22 @@ local function matchProfiles(m, profiles, counts)
                     hidden[#hidden + 1] = newId
                 end
             end
+            local prefs = cleanPrefs(profile.prefs)
+            prefs.favorites, prefs.hidden_rooms = favorites, hidden
             result[#result + 1] = {
                 id = profile.id,
-                name = profile.name,
+                name = name,
                 created_at = profile.created_at,
                 version = profile.version,
-                prefs = {
-                    language = profile.prefs.language,
-                    theme = profile.prefs.theme,
-                    palette = profile.prefs.palette,
-                    favorites = favorites,
-                    hidden_rooms = hidden,
-                },
+                prefs = prefs,
             }
         end
     end
     return result
 end
 
+-- Room names matched to the project, each a name as the API takes one, in at most
+-- RoomNames.MAX_LANGUAGES languages a room.
 local function matchRoomNames(m, names)
     local rooms = {}
     local ids = {}
@@ -623,12 +798,25 @@ local function matchRoomNames(m, names)
         local newId = resolve(m, "room", id, { section = "room_names" })
         if newId and next(names[id]) then
             local key = tostring(newId)
-            if not rooms[key] then
-                rooms[key] = {}
-                count = count + 1
+            local languages = {}
+            for language in pairs(names[id]) do
+                languages[#languages + 1] = language
             end
-            for language, name in pairs(names[id]) do
-                rooms[key][language] = rooms[key][language] or name
+            table.sort(languages)
+            for _, language in ipairs(languages) do
+                local name = cleanName(names[id][language], nil)
+                local room = rooms[key] or {}
+                local held = 0
+                for _ in pairs(room) do
+                    held = held + 1
+                end
+                if name and not room[language] and held < RoomNames.MAX_LANGUAGES then
+                    if not rooms[key] then
+                        rooms[key] = room
+                        count = count + 1
+                    end
+                    room[language] = name
+                end
             end
         end
     end
@@ -649,42 +837,105 @@ end
 
 -- ---- The keys and the remote identity ----------------------------------------------------------
 
--- The backup's keys, and the restoring admin's own as it is now, whatever the backup says of it: it
--- must keep working (ADR-042). Returns the keys and what the preview says of them.
-local function mergeKeys(section, restorerId, now)
-    local backupKeys, dropped = Keys.read(section)
-    local current = nil
-    for _, key in ipairs(Keys.backup().keys) do
+-- The keys after the restore (ADR-042). The backup's come back only onto a controller where no key
+-- but the restoring admin's is paired, and that one was paired after the backup was made (the
+-- driver was removed and added again, or the controller replaced): every device with its key then
+-- works without pairing again. Otherwise every key stays exactly as it is now: a key revoked, or an
+-- admin made a member, since the backup was made must not come back. The restoring admin's key stays as it is now either way; with `replaces` (the id
+-- of one of the backup's keys: "this device is …") it takes that key's profile and role, and that
+-- key stays out, so that nobody's old key is left on no device. Returns the keys, what the preview
+-- says of them and the restoring key as it will be; or nil and a problem.
+local function mergeKeys(section, restorerId, now, replaces)
+    -- Keys whose expiry passed go first, as at every look at the keys.
+    Keys.list()
+    local currentKeys = Keys.backup().keys
+    local current, others = nil, 0
+    for _, key in ipairs(currentKeys) do
         if key.id == restorerId then
             current = key
+        else
+            others = others + 1
         end
     end
-    local result, seen = Json.array(), {}
-    local info = { expired = 0, left_out = dropped, conflict = false, yours = "added", limit = Keys.MAX_KEYS }
-    local kept = 0
+    local backupKeys, dropped = Keys.readBackup(section)
+    -- The restoring key is in the backup: this controller kept its keys since it was made.
+    local kept = false
     for _, key in ipairs(backupKeys) do
-        if key.expires and key.expires <= now then
-            info.expired = info.expired + 1
-        elseif seen[key.id] or (kept >= Keys.MAX_KEYS and not (current and key.id == current.id)) then
-            -- The backup's own keys stay within the limit (a DirectorLink never has more).
-            info.left_out = info.left_out + 1
-        elseif current and key.id == current.id then
-            seen[key.id] = true
-            if key.hash == current.hash then
-                info.yours = "in_backup"
-            else
-                -- Another key with this key's id (8 random hex digits): the one in use wins.
-                info.conflict = true
-            end
-            result[#result + 1] = current
-        else
-            seen[key.id] = true
-            kept = kept + 1
+        kept = kept or (current ~= nil and key.id == current.id and key.hash == current.hash)
+    end
+    local info = {
+        action = (others == 0 and not kept) and "restore" or "kept",
+        in_backup = #backupKeys + dropped,
+        expired = 0,
+        left_out = 0,
+        conflict = false,
+        yours = "added",
+        limit = Keys.MAX_KEYS,
+        replaced = Json.null,
+        items = Json.array(),
+    }
+    if info.action == "kept" then
+        if replaces ~= nil then
+            return nil, { status = 409, code = "KEYS_KEPT", detail = "Other devices are paired with this controller, so its keys stay as they are and the backup's are not restored: leave out replaces_key" }
+        end
+        local result = Json.array()
+        for _, key in ipairs(currentKeys) do
             result[#result + 1] = key
         end
+        info.yours = "kept"
+        info.count = #result
+        info.over_limit = #result > Keys.MAX_KEYS
+        return result, info, current
+    end
+    info.left_out = dropped
+    local result, seen = Json.array(), {}
+    local taken, replacing = 0, nil
+    for _, key in ipairs(backupKeys) do
+        key.name = cleanName(key.name, "API key")
+        if Keys.over(key, now) then
+            info.expired = info.expired + 1
+        elseif seen[key.id] or (current and key.hash == current.hash and key.id ~= current.id) then
+            -- The same key twice, or the restoring key's secret under another id.
+            info.left_out = info.left_out + 1
+        elseif current and key.id == current.id then
+            -- Another key with this key's id (8 random hex digits): the one in use wins.
+            seen[key.id] = true
+            info.conflict = true
+            result[#result + 1] = current
+        elseif replaces ~= nil and key.id == replaces then
+            seen[key.id] = true
+            replacing = key
+        elseif taken >= Keys.MAX_KEYS then
+            -- The backup's own keys stay within the limit (a DirectorLink never has more).
+            info.left_out = info.left_out + 1
+        else
+            seen[key.id] = true
+            taken = taken + 1
+            result[#result + 1] = key
+            info.items[#info.items + 1] = { id = key.id, name = key.name, role = key.role, expires_at = key.expires and Clock.iso(key.expires) or Json.null }
+        end
+    end
+    if replaces ~= nil then
+        if not replacing or not current then
+            return nil, {
+                status = 400,
+                code = "INVALID_FIELD",
+                detail = "replaces_key is the id of one of the backup's keys that comes back, other than this device's own",
+                errors = { { field = "replaces_key", message = "Not one of the backup's keys that comes back" } },
+            }
+        end
+        current.role, current.profile = replacing.role, replacing.profile
+        info.replaced = { id = replacing.id, name = replacing.name, role = replacing.role }
     end
     if current and not seen[current.id] then
         result[#result + 1] = current
+    end
+    local admins = 0
+    for _, key in ipairs(result) do
+        admins = admins + (key.role == "admin" and 1 or 0)
+    end
+    if admins == 0 then
+        return nil, { status = 409, code = "LAST_ADMIN", detail = "This device would become " .. tostring(current and current.role) .. " and no admin would be left: choose another key, or none" }
     end
     info.count = #result
     info.over_limit = #result > Keys.MAX_KEYS
@@ -700,67 +951,164 @@ local function copyIdentity(identity)
         candidates = candidates or {}
         candidates[#candidates + 1] = { secret = item.secret, at = item.at }
     end
-    return { home_id = identity.home_id, home_secret = identity.home_secret, next_secrets = candidates, previous = copyIdentity(identity.previous) }
+    return {
+        home_id = identity.home_id,
+        home_secret = identity.home_secret,
+        next_secrets = candidates,
+        linked = identity.linked,
+        previous = copyIdentity(identity.previous),
+    }
 end
 
--- The identity to use after the restore (ADR-042). The same home: the one in use stays (its
--- secret may be newer than the backup's). Another home: the backup's, with the one it replaces kept
--- as `previous` until the relay accepts it; if the relay refuses it, that one comes back. A
--- controller that has none yet (remote access never on) takes the backup's.
-local function chooseIdentity(section)
-    local backup = { home_id = section.home_id, home_secret = section.home_secret, next_secrets = {} }
+-- Whether the backup is this home's (ADR-042). By the home id when both the backup and this
+-- controller have one the relay accepted, else by the controller it was made on; and besides, by
+-- the home's name and by how much of what it refers to this project has. Returns { another_home,
+-- reasons, home_now, controller ("same", "other" or "unknown") }.
+local function origin(document, context, m, current)
+    local reasons = Json.array()
+    local section = document.sections.remote_identity
+    local mine = {}
+    if current and current.linked then
+        mine[current.home_id] = true
+    end
+    if current and current.previous and current.previous.linked then
+        mine[current.previous.home_id] = true
+    end
+    local made = isLowerHex(document.controller_id, 32) and document.controller_id or nil
+    local controller = "unknown"
+    if made and context.controller then
+        controller = made == context.controller and "same" or "other"
+    end
+    if section.linked == true and next(mine) then
+        if not mine[section.home_id] then
+            reasons[#reasons + 1] = "home_id"
+        end
+    elseif controller == "other" then
+        reasons[#reasons + 1] = "controller"
+    end
+    local home = isObject(document.home) and document.home or {}
+    local name, now = cleanName(home.name, nil), cleanName(context.homeName, nil)
+    if name and now and name ~= now then
+        reasons[#reasons + 1] = "name"
+    end
+    local total = m.byId + #m.byName + #m.unmatched
+    if total > 0 and #m.unmatched * 2 > total then
+        reasons[#reasons + 1] = "references"
+    end
+    return { another_home = #reasons > 0, reasons = reasons, home_now = nullable(now), controller = controller }
+end
+
+-- The identity to use after the restore (ADR-042), and what happens to it: "same" (the backup's
+-- home is the one in use, which stays: its secret may be newer), "restore" (the backup's is used,
+-- with the one it replaces kept as `previous` until the relay accepts it; if the relay refuses it,
+-- that one comes back), "kept" (another home's, which moves here only when the admin asks:
+-- `move`), or "none" (the backup holds no identity: the one in use stays).
+local function chooseIdentity(section, current, from, move, now)
+    current = copyIdentity(current)
+    if section.linked ~= true then
+        return current, "none"
+    end
+    local backup = { home_id = section.home_id, home_secret = section.home_secret:lower(), linked = true }
     for _, item in ipairs(items(section.next_secrets)) do
-        backup.next_secrets[#backup.next_secrets + 1] = { secret = item.secret, at = item.at }
+        -- At most the few the relay tries, none made later than now.
+        if item.at <= now + CLOCK_MARGIN and #(backup.next_secrets or {}) < Relay.CANDIDATES then
+            backup.next_secrets = backup.next_secrets or {}
+            backup.next_secrets[#backup.next_secrets + 1] = { secret = item.secret:lower(), at = item.at }
+        end
     end
-    if #backup.next_secrets == 0 then
-        backup.next_secrets = nil
+    if current and section.home_id == current.home_id then
+        return current, "same"
     end
-    local current = copyIdentity(Relay.storedIdentity())
-    if not current then
-        return backup, "restore", nil
-    end
-    local fallback = current.previous or current
-    if section.home_id == current.home_id then
-        return current, "same", current.home_id
-    end
-    if section.home_id == fallback.home_id then
+    local fallback = current and (current.previous or current) or nil
+    if fallback and section.home_id == fallback.home_id then
+        -- This controller's own, from before another one was restored.
         fallback.previous = nil
-        return fallback, "restore", current.home_id
+        return fallback, "restore"
     end
-    fallback.previous = nil
-    backup.previous = fallback
-    return backup, "restore", current.home_id
+    if from.another_home and not move then
+        return current, "kept"
+    end
+    if fallback then
+        fallback.previous = nil
+        backup.previous = fallback
+    end
+    return backup, "restore"
 end
 
 -- ---- Planning and applying a restore --------------------------------------------------------------
 
+-- The stores a restore writes that keep whether they were read in full at start: one that was not
+-- may still hold data (it comes back at the next start) that a restore would overwrite, and that
+-- could not be put back if the restore failed.
+local READ_AT_START = {
+    { name = "keys", complete = Keys.complete },
+    { name = "scenes", complete = Scenes.complete },
+    { name = "schedules", complete = Schedules.complete },
+    { name = "calendar", complete = JewishCalendar.complete },
+}
+
 -- Checks `document` against this controller and works out everything a restore writes, without
--- changing anything. `context`: { registry, restorer (the admin's key id), now }. Returns the plan
--- ({ sections, identity, preview }), or nil and a problem ({ status, code, detail, errors }).
+-- changing anything. `context`: { registry, restorer (the admin's key id), now, replaces (the id of
+-- the backup's key this device is), move_remote (another home's identity moves here),
+-- controller (Backup.controllerId()) }. Returns the plan ({ sections, identity, preview }), or nil
+-- and a problem ({ status, code, detail, errors }).
 function Backup.plan(document, context)
     local ok, problem = validate(document)
     if not ok then
         return nil, problem
+    end
+    for _, store in ipairs(READ_AT_START) do
+        if store.complete() == false then
+            return nil, {
+                status = 503,
+                code = "UNAVAILABLE",
+                detail = "DirectorLink could not read its " .. store.name .. " when it started: a restore would overwrite them. Restart the driver and try again",
+                extra = { store = store.name },
+            }
+        end
     end
     local now = context.now or Clock.now()
     local sections = document.sections
     local m = newMatcher(context.registry, document.references)
     local counts = { scenes = 0, steps = 0, schedules = 0, profiles = 0 }
 
-    local keys, keyInfo, restorer = mergeKeys(sections.keys, context.restorer, now)
+    local keys, keyInfo, restorer = mergeKeys(sections.keys, context.restorer, now, context.replaces)
+    if not keys then
+        return nil, keyInfo
+    end
 
+    -- Each key's profile comes along: the backup's, else the one it has now (the restoring admin's
+    -- when the backup does not have it; with the keys kept, every key's). With the keys kept, the
+    -- backup's profiles no key uses stay out.
     local profiles, droppedProfiles = Profiles.read(sections.profiles)
     counts.profiles = droppedProfiles
-    local matchedProfiles = matchProfiles(m, profiles, counts)
-    -- The restoring admin's profile, when the backup does not have it, comes along with the key.
-    if restorer and restorer.profile then
-        local present = false
-        for _, profile in ipairs(matchedProfiles) do
-            present = present or profile.id == restorer.profile
+    local used = {}
+    for _, key in ipairs(keys) do
+        if key.profile then
+            used[key.profile] = true
         end
-        local own = not present and Profiles.find(restorer.profile) or nil
-        if own then
-            matchedProfiles[#matchedProfiles + 1] = own
+    end
+    if keyInfo.action == "kept" then
+        local wanted = {}
+        for _, profile in ipairs(profiles) do
+            if used[profile.id] then
+                wanted[#wanted + 1] = profile
+            end
+        end
+        profiles = wanted
+    end
+    local matchedProfiles = matchProfiles(m, profiles, counts)
+    local present = {}
+    for _, profile in ipairs(matchedProfiles) do
+        present[profile.id] = true
+    end
+    for _, key in ipairs(keys) do
+        if key.profile and not present[key.profile] and (keyInfo.action == "kept" or key == restorer) then
+            local own = Profiles.find(key.profile)
+            if own then
+                present[own.id] = true
+                matchedProfiles[#matchedProfiles + 1] = own
+            end
         end
     end
 
@@ -788,7 +1136,10 @@ function Backup.plan(document, context)
     local roomNames, namedRooms = matchRoomNames(m, RoomNames.read(sections.room_names))
     local order = matchRoomOrder(m, RoomLayout.read(sections.room_order))
     local calendar = JewishCalendar.read(sections.calendar)
-    local identity, action, currentHome = chooseIdentity(sections.remote_identity)
+
+    local current = Relay.storedIdentity()
+    local from = origin(document, { controller = context.controller, homeName = homeName(context.registry) }, m, current)
+    local identity, action = chooseIdentity(sections.remote_identity, current, from, context.move_remote == true, now)
 
     local composer = Json.array()
     local stored = isObject(document.composer) and document.composer or {}
@@ -813,6 +1164,7 @@ function Backup.plan(document, context)
             format_version = document.format_version,
             home = type(home.name) == "string" and home.name or Json.null,
         },
+        origin = from,
         counts = {
             keys = #keys,
             profiles = #matchedProfiles,
@@ -825,9 +1177,12 @@ function Backup.plan(document, context)
         keys = keyInfo,
         remote = {
             action = action,
-            home_id = identity.home_id,
-            current_home_id = nullable(currentHome),
+            home_id = sections.remote_identity.linked == true and sections.remote_identity.home_id or Json.null,
+            current_home_id = current and nullable(current.home_id) or Json.null,
             remote_access = Properties ~= nil and Properties["Remote Access"] == "On",
+            -- The controller the backup was made on may still be on with this identity: the two
+            -- would push each other off the relay.
+            old_controller = action == "restore" and from.controller ~= "same",
         },
         references = {
             by_id = m.byId,
@@ -912,10 +1267,12 @@ function Backup.apply(plan, now)
         made = plan.preview.backup.created_at,
         driver_version = plan.preview.backup.driver_version,
         keys = counts.keys,
+        keys_from_backup = plan.preview.keys.action == "restore",
         profiles = counts.profiles,
         scenes = counts.scenes,
         schedules = counts.schedules,
         remote = plan.preview.remote.action,
+        another_home = plan.preview.origin.another_home,
         unmatched = plan.preview.references.unmatched_count,
     })
     return true

@@ -3,7 +3,9 @@
 -- and lock key and the home's remote identity, which never cross a network in the clear.
 --   GET  /v1/backup         the document (the app encrypts it with a password before saving it)
 --   POST /v1/restore/parts  the document's JSON text on its way back, in parts
---   POST /v1/restore        checks it ("dry_run", the default: nothing changes) or restores it
+--   POST /v1/restore        checks it ("dry_run", the default: nothing changes) or restores it;
+--                           "replaces_key": this device is that key of the backup's, "move_remote":
+--                           another home's remote identity moves here
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -24,9 +26,10 @@ local function inTheClear(ctx)
 end
 
 local function problemFrom(failure)
-    local extra = nil
+    local extra = failure.extra
     if failure.errors then
-        extra = { errors = Json.array(failure.errors) }
+        extra = extra or {}
+        extra.errors = Json.array(failure.errors)
     end
     return Problem.new(failure.status, failure.code, failure.detail, extra)
 end
@@ -36,6 +39,7 @@ function Handlers.export(ctx)
     if refused then
         return refused
     end
+    Backup.sweep(Clock.now())
     local document = Backup.export(ctx.services.registry)
     ctx.services.log.info("backup", "backup made", { key_id = ctx.apiKey.id, scenes = #document.sections.scenes.scenes, keys = #document.sections.keys.keys })
     return 200, document
@@ -68,7 +72,7 @@ function Handlers.restore(ctx)
         return refused
     end
     local body = ctx.body
-    local problem = Validate.body(body, { upload = true, document = true, dry_run = true }, true)
+    local problem = Validate.body(body, { upload = true, document = true, dry_run = true, replaces_key = true, move_remote = true }, true)
     if problem then
         return problem
     end
@@ -77,6 +81,12 @@ function Handlers.restore(ctx)
     end
     if body.dry_run ~= nil and type(body.dry_run) ~= "boolean" then
         return Problem.invalidField("dry_run", "dry_run must be true or false")
+    end
+    if body.replaces_key ~= nil and not (type(body.replaces_key) == "string" and #body.replaces_key == 8 and body.replaces_key:match("^[0-9a-f]+$")) then
+        return Problem.invalidField("replaces_key", "replaces_key is the id of the backup's key this device takes the place of (8 hex digits)")
+    end
+    if body.move_remote ~= nil and type(body.move_remote) ~= "boolean" then
+        return Problem.invalidField("move_remote", "move_remote must be true or false")
     end
     local services = ctx.services
     -- Devices and rooms are matched to the project: it has to have been read.
@@ -92,7 +102,14 @@ function Handlers.restore(ctx)
             return problemFrom(failure)
         end
     end
-    local plan, failure = Backup.plan(document, { registry = services.registry, restorer = ctx.apiKey.id, now = now })
+    local plan, failure = Backup.plan(document, {
+        registry = services.registry,
+        restorer = ctx.apiKey.id,
+        now = now,
+        replaces = body.replaces_key,
+        move_remote = body.move_remote == true,
+        controller = Backup.controllerId(),
+    })
     if not plan then
         return problemFrom(failure)
     end
@@ -104,7 +121,7 @@ function Handlers.restore(ctx)
         return Problem.new(500, "RESTORE_FAILED", "The " .. tostring(store) .. " could not be saved; nothing was changed", { store = store })
     end
     if body.upload ~= nil then
-        Backup.forget(tostring(body.upload))
+        Backup.forget(ctx.apiKey.id, tostring(body.upload))
     end
     if services.onRestored then
         pcall(services.onRestored, { switching = plan.switching })

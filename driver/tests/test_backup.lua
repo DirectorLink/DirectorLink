@@ -170,12 +170,14 @@ end
 function tests.the_document_holds_every_store_as_stored_and_no_key()
     local s = start()
     local home = furnish(s)
+    -- The relay accepted the home's identity: a backup holds it.
+    Harness.connected({ mock = s.mock })
     Properties["Door Control"] = "Enabled"
-    Properties["Remote Access"] = "On"
     local document, text = export(s)
     T.eq(document.format_version, 1)
     T.eq(document.driver_version, "dev")
     T.eq(document.home.name, "Home", "the project's site")
+    T.truthy(document.controller_id:match("^[0-9a-f]+$") and #document.controller_id == 32, "the controller, as a hash of its MAC address")
     T.truthy(document.created_at:match("^%d%d%d%d%-%d%d%-%d%dT"))
     T.eq(document.composer["Door Control"], "Enabled", "Composer's settings are listed")
     T.eq(document.composer["Remote Access"], "On")
@@ -196,6 +198,7 @@ function tests.the_document_holds_every_store_as_stored_and_no_key()
     T.same(sections.room_order.order, { 11, 10 })
     T.eq(sections.calendar.settings.candle_lighting_minutes, 30)
     local identity = stored(s.mock, "directorlink_remote_identity")
+    T.eq(sections.remote_identity.linked, true)
     T.eq(sections.remote_identity.home_id, identity.home_id)
     T.eq(sections.remote_identity.home_secret, identity.home_secret)
     -- What the ids were, for a project whose ids changed.
@@ -212,6 +215,7 @@ function tests.a_restore_into_fresh_storage_brings_everything_back()
     -- The dev bridge's fake home (Mock.demoProject: every device family).
     local old = start(Mock.demoProject())
     local home = furnish(old)
+    Harness.connected({ mock = old.mock })
     local document = export(old)
     local scenes = list(old.mock, old.key, "/v1/scenes").items
     local schedules = list(old.mock, old.key, "/v1/schedules").items
@@ -225,7 +229,17 @@ function tests.a_restore_into_fresh_storage_brings_everything_back()
     T.eq(preview.counts.scenes, 2)
     T.eq(preview.counts.schedules, 1)
     T.eq(preview.counts.keys, 4, "three from the backup, and the one restoring")
+    T.eq(preview.keys.action, "restore", "only the restoring device is paired: the backup's keys come back")
     T.eq(preview.keys.yours, "added")
+    local named = {}
+    for _, item in ipairs(preview.keys.items) do
+        named[#named + 1] = item.name .. ":" .. item.role
+    end
+    table.sort(named)
+    T.same(named, { "Dana phone:member", "Hall tablet:viewer", "Owner phone:admin" }, "each by name and role")
+    T.eq(preview.origin.another_home, false, "the same controller and home")
+    T.eq(preview.remote.action, "restore", "a controller with no identity takes its own backup's")
+    T.eq(preview.remote.old_controller, false)
     T.eq(preview.backup.home, "Home")
     T.eq(preview.references.unmatched_count, 0)
     T.eq(preview.references.by_id, 6, "rooms 10 and 11, lights 20 and 21, thermostat 30 and blind 50")
@@ -373,7 +387,7 @@ function tests.a_write_that_fails_puts_every_store_back()
     T.eq(T.http(s.mock, "PUT", "/v1/rooms/order", { key = s.key, body = { room_ids = { 10, 11 } } }).status, 200)
     Properties["Jewish Calendar"] = "On"
     T.eq(T.http(s.mock, "PATCH", "/v1/calendar/settings", { key = s.key, body = { havdalah_minutes = 72 } }).status, 200)
-    export(s)
+    Harness.connected({ mock = s.mock })
     local id = upload(s, document)
     T.eq(restore(s, { upload = id }).status, 200)
     local before = {}
@@ -408,25 +422,118 @@ function tests.a_write_that_fails_puts_every_store_back()
     T.eq(#list(s.mock, s.key, "/v1/scenes").items, 2)
 end
 
-function tests.the_restoring_admin_keeps_their_key_and_their_role()
-    local s = start()
-    -- The backup was made while the tablet was a member's; it is an admin's now, and restores.
-    local tablet, tabletId = createKey(s, "Tablet", "member")
-    local document = export(s)
-    T.eq(T.http(s.mock, "PATCH", "/v1/api-keys/" .. tabletId, { key = s.key, body = { role = "admin" } }).status, 200)
-    local answer = sealed(s, { method = "POST", path = "/v1/restore", body = { document = document, dry_run = false } }, tablet, tabletId)
-    T.eq(answer.status, 200, answer.body)
-    T.eq(answer.json.restore.keys.yours, "in_backup")
-    T.eq(list(s.mock, tablet, "/v1/api-keys/current").role, "admin", "it keeps the role it has now")
+-- The keys' ids, roles and names as the controller lists them now ("id:role").
+local function keyList(s, key)
+    local result = {}
+    for _, item in ipairs(list(s.mock, key or s.key, "/v1/api-keys").items) do
+        result[#result + 1] = item.id .. ":" .. item.role
+    end
+    table.sort(result)
+    return result
+end
 
-    -- A key made after the backup was made is added.
-    local late, lateId = createKey(s, "Late admin", "admin")
-    answer = sealed(s, { method = "POST", path = "/v1/restore", body = { document = document, dry_run = false } }, late, lateId)
+function tests.an_older_backup_brings_back_no_key_revoked_or_demoted_since()
+    -- The same controller: a phone was lost and its key revoked, the tablet is a member's now.
+    local s = start()
+    local lost, lostId = createKey(s, "Lost phone", "admin")
+    local tablet, tabletId = createKey(s, "Tablet", "admin")
+    local document = export(s)
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. lostId, { key = s.key }).status, 204)
+    T.eq(T.http(s.mock, "PATCH", "/v1/api-keys/" .. tabletId, { key = s.key, body = { role = "member" } }).status, 200)
+    local before = keyList(s)
+    local check = restore(s, { document = document })
+    T.eq(check.status, 200, check.body)
+    local keys = check.json.restore.keys
+    T.eq(keys.action, "kept", "other devices are paired: every key stays as it is now")
+    T.eq(keys.yours, "kept")
+    T.eq(#keys.items, 0, "none of the backup's comes back")
+    T.eq(keys.in_backup, 3)
+    T.eq(check.json.restore.counts.keys, 2)
+    T.eq(restore(s, { document = document, dry_run = false }).status, 200)
+    T.eq(T.http(s.mock, "GET", "/v1/api-keys/current", { key = lost }).status, 401, "the lost phone stays out")
+    T.eq(list(s.mock, tablet, "/v1/api-keys/current").role, "member", "and the tablet a member")
+    T.same(keyList(s), before)
+
+    -- Only the owner's key is left, and the backup has it: the controller kept its keys since,
+    -- and the lost phone stays out too.
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. tabletId, { key = s.key }).status, 204)
+    local alone = restore(s, { document = document, dry_run = false })
+    T.eq(alone.json.restore.keys.action, "kept")
+    T.eq(T.http(s.mock, "GET", "/v1/api-keys/current", { key = lost }).status, 401)
+    T.eq(#list(s.mock, s.key, "/v1/api-keys").items, 1)
+    -- "This device is …" is for a controller where only this device is paired.
+    local refused = restore(s, { document = document, replaces_key = s.id })
+    T.eq(refused.status, 409)
+    T.eq(refused.json.code, "KEYS_KEPT")
+end
+
+function tests.with_the_keys_kept_each_key_keeps_its_profile_and_gets_the_backup_s_preferences()
+    local s = start()
+    local member, memberId = createKey(s, "Dana phone", "member")
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = member, body = { prefs = { theme = "dark" } } }).status, 200)
+    local document = export(s)
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = member, body = { prefs = { theme = "light" } } }).status, 200)
+    -- A key paired after the backup was made has a profile the backup does not have.
+    local late = createKey(s, "Late phone", "viewer")
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = late, body = { prefs = { language = "he" } } }).status, 200)
+    T.eq(restore(s, { document = document, dry_run = false }).status, 200)
+    T.eq(list(s.mock, member, "/v1/profile").prefs.theme, "dark", "the backup's preferences")
+    T.eq(list(s.mock, late, "/v1/profile").prefs.language, "he", "kept where the backup has none")
+    T.truthy(memberId)
+end
+
+function tests.a_restoring_device_can_take_its_old_key_s_place()
+    local old = start()
+    local home = furnish(old)
+    local ownerId = old.id
+    local document = export(old)
+    -- The driver was removed and added again: the owner's phone paired anew.
+    local s = start()
+    local check = restore(s, { document = document })
+    T.eq(check.json.restore.keys.action, "restore")
+    local offered = {}
+    for _, item in ipairs(check.json.restore.keys.items) do
+        offered[item.id] = item.name .. ":" .. item.role
+    end
+    T.eq(offered[ownerId], "Owner phone:admin", "the backup's keys, offered by name and role")
+    local done = restore(s, { document = document, dry_run = false, replaces_key = ownerId })
+    T.eq(done.status, 200, done.body)
+    T.same(done.json.restore.keys.replaced, { id = ownerId, name = "Owner phone", role = "admin" })
+    T.eq(done.json.restore.counts.keys, 3, "the member, the viewer and this device: no key left on no device")
+    T.eq(T.http(s.mock, "GET", "/v1/api-keys/current", { key = old.key }).status, 401, "the old key stays out")
+    local me = list(s.mock, s.key, "/v1/api-keys/current")
+    T.eq(me.role, "admin")
+    T.eq(me.id, s.id, "this device keeps its own key")
+    local prefs = list(s.mock, s.key, "/v1/profile").prefs
+    T.eq(prefs.language, "he", "with the owner's preferences")
+    T.same(prefs.favorites, { "light:20", "thermostat:30", "blind:50" })
+    T.eq(list(s.mock, home.member, "/v1/api-keys/current").role, "member")
+
+    -- Not one of the backup's keys, or a member's when no admin would be left.
+    local fresh = start()
+    T.eq(restore(fresh, { document = document, replaces_key = "0badc0de" }).status, 400)
+    local members = Json.decode(Json.encode(document))
+    local kept = {}
+    for _, record in ipairs(members.sections.keys.keys) do
+        if record.role ~= "admin" then
+            kept[#kept + 1] = record
+        end
+    end
+    members.sections.keys.keys = kept
+    local refused = restore(fresh, { document = members, replaces_key = home.memberId })
+    T.eq(refused.status, 409)
+    T.eq(refused.json.code, "LAST_ADMIN")
+    T.eq(list(fresh.mock, fresh.key, "/v1/api-keys/current").role, "admin", "nothing changed")
+end
+
+function tests.the_restoring_admin_keeps_their_key_and_their_role()
+    -- Only this device is paired, and the backup has it: as it is now.
+    local s = start()
+    local document = export(s)
+    local answer = restore(s, { document = document, dry_run = false })
     T.eq(answer.status, 200, answer.body)
-    T.eq(answer.json.restore.keys.yours, "added")
-    T.eq(list(s.mock, late, "/v1/api-keys/current").role, "admin")
-    T.eq(#list(s.mock, late, "/v1/api-keys").items, 3)
-    T.eq(list(s.mock, tablet, "/v1/api-keys/current").role, "member", "the others are as the backup has them")
+    T.eq(answer.json.restore.keys.yours, "kept")
+    T.eq(list(s.mock, s.key, "/v1/api-keys/current").role, "admin")
 
     -- A backup with another key of the same id (8 random hex digits): the one in use wins.
     local clash = Json.decode(Json.encode(document))
@@ -454,15 +561,70 @@ function tests.the_restoring_admin_keeps_their_key_and_their_role()
     T.eq(list(s.mock, s.key, "/v1/api-keys/current").role, "admin")
     T.eq(T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "One more" } }).json.code, "KEY_LIMIT_REACHED")
     -- More than a DirectorLink ever has (a file made by hand): the limit, and the restoring key.
+    local fresh = start()
     full.sections.keys.keys[21] = { id = "00000015", name = "Device 21", role = "member", alg = "sha256", hash = string.rep("15", 32), lock = string.rep("ef", 32) }
-    local capped = restore(s, { document = full }).json.restore.keys
+    local capped = restore(fresh, { document = full }).json.restore.keys
     T.eq(capped.count, 21)
     T.eq(capped.left_out, 1)
 end
 
-function tests.expired_keys_and_more_profiles_than_a_directorlink_has_stay_out()
+function tests.a_backup_s_key_records_are_checked_as_keys_are_made()
+    local old = start()
+    local member, memberId = createKey(old, "Kid tablet", "member")
+    local document = export(old)
+    local keys = document.sections.keys.keys
+    local memberHash
+    for _, record in ipairs(keys) do
+        if record.id == memberId then
+            memberHash = record.hash
+        end
+    end
+    local function record(id, role, hash)
+        return { id = id, name = "Crafted", role = role, alg = "sha256", hash = hash, lock = string.rep("2b", 32), created_at = "x" }
+    end
+    keys[#keys + 1] = record("0000aaaa", nil, string.rep("1a", 32))
+    keys[#keys + 1] = record("0000bbbb", "guest", string.rep("3c", 32))
+    keys[#keys + 1] = record("NOT-HEX!", "member", string.rep("5e", 32))
+    keys[#keys + 1] = record(string.rep("a", 300), "member", string.rep("7a", 32))
+    keys[#keys + 1] = record("00c0ffee", "admin", memberHash)
+    keys[#keys + 1] = record("0000cccc", "member", string.rep("AB", 32))
+    local badLock = record("0000dddd", "member", string.rep("9d", 32))
+    badLock.lock = "not a lock"
+    keys[#keys + 1] = badLock
     local s = start()
-    local document = export(s)
+    -- The restoring key's secret under another id would open both.
+    local mine = record("0000eeee", "admin", nil)
+    for _, item in ipairs(require("src.auth.keys").backup().keys) do
+        if item.id == s.id then
+            mine.hash = item.hash
+        end
+    end
+    keys[#keys + 1] = mine
+    local check = restore(s, { document = document })
+    T.eq(check.json.restore.keys.left_out, 8, "no role, an unknown role, two bad ids, two keys of one secret, an upper-case hash, a bad lock key")
+    T.eq(restore(s, { document = document, dry_run = false }).status, 200)
+    local expected = { memberId .. ":member", old.id .. ":admin", s.id .. ":admin" }
+    table.sort(expected)
+    T.same(keyList(s), expected, "none of them, and none made admin")
+    T.eq(list(s.mock, member, "/v1/api-keys/current").role, "member", "the member's secret is still only the member's")
+end
+
+function tests.a_key_with_more_left_than_any_key_gets_is_counted_as_expired()
+    local document = export(start())
+    local s = start()
+    local keys = document.sections.keys.keys
+    keys[#keys + 1] = { id = "0000cccc", name = "Clock ahead", role = "admin", alg = "sha256", hash = string.rep("9c", 32), lock = string.rep("ad", 32), created_at = "x", expires = os.time() + 40 * 86400 }
+    keys[#keys + 1] = { id = "0000dddd", name = "In a week", role = "member", alg = "sha256", hash = string.rep("9d", 32), lock = string.rep("ae", 32), created_at = "x", expires = os.time() + 7 * 86400 }
+    local check = restore(s, { document = document }).json.restore
+    T.eq(check.keys.expired, 1, "more than 30 days and an hour left: made while a clock ran ahead (ADR-040)")
+    T.eq(check.counts.keys, 3, "the backup's owner, the one for a week, and this device")
+    T.eq(restore(s, { document = document, dry_run = false }).status, 200)
+    T.eq(#list(s.mock, s.key, "/v1/api-keys").items, 3, "what the preview said")
+end
+
+function tests.expired_keys_and_more_profiles_than_a_directorlink_has_stay_out()
+    local document = export(start())
+    local s = start()
     document.sections.keys.keys[#document.sections.keys.keys + 1] = { id = "0badc0de", name = "Old console", role = "admin", alg = "sha256", hash = string.rep("12", 32), lock = string.rep("34", 32), created_at = "2026-01-01T00:00:00Z", expires = os.time() - 60 }
     -- A file made by hand: more profiles than DirectorLink keeps.
     local profiles = document.sections.profiles.profiles
@@ -471,8 +633,8 @@ function tests.expired_keys_and_more_profiles_than_a_directorlink_has_stay_out()
     end
     local check = restore(s, { document = document })
     T.eq(check.json.restore.keys.expired, 1)
-    T.eq(check.json.restore.counts.keys, 1)
-    T.eq(check.json.restore.counts.profiles, 100)
+    T.eq(check.json.restore.counts.keys, 2, "the backup's owner and this device")
+    T.eq(check.json.restore.counts.profiles, 101, "a hundred, and this device's own on top")
     T.eq(check.json.restore.left_out.profiles, 6)
 end
 
@@ -659,6 +821,212 @@ function tests.uploads_come_in_order_for_one_key_and_expire()
     T.eq(late.json.code, "UPLOAD_NOT_FOUND")
 end
 
+-- Two door relays in the kitchen, 70 and 71, and a second light there, 120.
+local function withDoors(project, first, second, island, pantry)
+    project.devices[70].deviceName = first
+    project.devices[71] = { deviceName = second, driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen" }
+    Mock.renameDevice(project, 20, island)
+    Mock.addLight(project, 120, 220, 10, pantry, 0)
+    return project
+end
+
+local function sceneNamed(s, name)
+    for _, scene in ipairs(list(s.mock, s.key, "/v1/scenes").items) do
+        if scene.name == name then
+            return scene
+        end
+    end
+end
+
+function tests.a_swapped_device_follows_its_name_and_a_door_is_never_moved()
+    local old = start(withDoors(Mock.project(), "Garden Gate", "Main Door", "Kitchen Island", "Pantry Light"))
+    for _, scene in ipairs({
+        { name = "Morning gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } } } },
+        { name = "Island", steps = { { type = "lights", device_ids = { 20 }, set = { on = true } } } },
+    }) do
+        T.eq(T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = scene }).status, 201)
+    end
+    T.eq(T.http(old.mock, "PATCH", "/v1/profile", { key = old.key, body = { prefs = { favorites = { "relay:70", "light:20" } } } }).status, 200)
+    local document = export(old)
+
+    -- The project was rebuilt: the two relays and the two lights came back with each other's ids.
+    local s = start(withDoors(Mock.project(), "Main Door", "Garden Gate", "Pantry Light", "Kitchen Island"))
+    local done, preview = replace(s, document)
+    local byName = {}
+    for _, entry in ipairs(preview.references.by_name) do
+        byName[#byName + 1] = entry.kind .. ":" .. entry.from .. ">" .. entry.to
+    end
+    T.same(byName, { "light:20>120" }, "the light by its name, in the same room")
+    local gate
+    for _, entry in ipairs(preview.references.unmatched) do
+        if entry.kind == "relay" then
+            gate = entry
+        end
+    end
+    T.eq(gate.id, 70)
+    T.eq(gate.name, "Garden Gate")
+    T.eq(gate.now, "Main Door", "listed with what that id is now")
+    T.same(sceneNamed(s, "Island").steps[1].device_ids, { 120 })
+    T.eq(#sceneNamed(s, "Morning gate").steps, 0, "the gate's step is left out, never moved to the main door")
+    T.same(list(s.mock, old.key, "/v1/profile").prefs.favorites, { "light:120" }, "the owner's favorites")
+    T.truthy(done)
+end
+
+-- The kitchen (10) and the living room (11) swapped their ids.
+local function swappedRooms()
+    local project = Mock.project()
+    for _, room in ipairs(project.hierarchy[1][1]) do
+        if room.id == 10 then
+            room.name = "Living Room"
+        elseif room.id == 11 then
+            room.name = "Kitchen"
+        end
+    end
+    for _, device in pairs(project.devices) do
+        if device.roomId == 10 then
+            device.roomName = "Living Room"
+        elseif device.roomId == 11 then
+            device.roomName = "Kitchen"
+        end
+    end
+    return project
+end
+
+function tests.a_swapped_room_follows_its_name_and_doors_stay_in_their_own_room()
+    local old = start()
+    for _, scene in ipairs({
+        { name = "Kitchen lights", steps = { { type = "lights", room_id = 10, set = { on = true } } } },
+        { name = "Kitchen doors", steps = { { type = "relays", room_id = 10, set = { action = "pulse" } } } },
+    }) do
+        T.eq(T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = scene }).status, 201)
+    end
+    local document = export(old)
+    local s = start(swappedRooms())
+    local done = replace(s, document)
+    T.eq(sceneNamed(s, "Kitchen lights").steps[1].room_id, 11, "the kitchen by its name")
+    T.eq(#sceneNamed(s, "Kitchen doors").steps, 0, "every door of a room only in the very same room")
+    local kitchen
+    for _, entry in ipairs(done.references.unmatched) do
+        if entry.kind == "room" and entry.id == 10 then
+            kitchen = entry
+        end
+    end
+    T.eq(kitchen.name, "Kitchen")
+    T.eq(kitchen.now, "Living Room")
+end
+
+function tests.a_store_not_read_at_start_is_never_overwritten()
+    local old = start()
+    furnish(old)
+    local document = export(old)
+    -- Director could not read the scenes at start: they may come back at the next one.
+    local readable = false
+    local s = start(nil, function(mock)
+        mock.persist["directorlink_scenes"] = 'json:{"version":1,"scenes":[{"id":"0badbeef","name":"Kept","steps":[]}]}'
+        local get = C4.PersistGetValue
+        C4.PersistGetValue = function(self, name, encrypted)
+            if name == "directorlink_scenes" and not readable then
+                error("database is locked")
+            end
+            return get(self, name, encrypted)
+        end
+    end)
+    readable = true
+    local before = s.mock.persist["directorlink_scenes"]
+    local check = restore(s, { document = document })
+    T.eq(check.status, 503)
+    T.eq(check.json.code, "UNAVAILABLE")
+    T.eq(check.json.store, "scenes")
+    T.eq(restore(s, { document = document, dry_run = false }).status, 503)
+    T.eq(s.mock.persist["directorlink_scenes"], before, "the saved scenes stay, to come back at the next start")
+end
+
+function tests.names_and_preferences_are_cut_to_what_the_api_takes()
+    local s = start()
+    local document = export(s)
+    local long = string.rep("A", 100000)
+    local sections = document.sections
+    sections.scenes.scenes = { { id = "0000abcd", name = long, steps = {}, version = 1 } }
+    local profile = sections.profiles.profiles[1]
+    profile.name = "  " .. string.rep("\215\144", 70) .. "  "
+    profile.prefs.theme = "<b>x</b>"
+    profile.prefs.palette = string.rep("p", 5000)
+    profile.prefs.language = "not a language"
+    local names = {}
+    for first = 1, 26 do
+        for second = 1, 26 do
+            names[string.char(96 + first, 96 + second)] = "n"
+        end
+    end
+    sections.room_names.rooms = { ["10"] = names, ["11"] = { he = long, en = "   " } }
+    sections.keys.keys[#sections.keys.keys + 1] = { id = "0000abcd", name = long, role = "member", alg = "sha256", hash = string.rep("9c", 32), lock = string.rep("ad", 32) }
+    -- Larger than a sealed request: as it runs once opened.
+    T.eq(restore(s, { document = document, dry_run = false }, opened).status, 200)
+    T.eq(#list(s.mock, s.key, "/v1/scenes").items[1].name, 64)
+    local mine = list(s.mock, s.key, "/v1/profile")
+    T.eq(mine.name, string.rep("\215\144", 64), "64 characters, trimmed")
+    T.eq(tostring(mine.prefs.theme), "null")
+    T.eq(tostring(mine.prefs.palette), "null")
+    T.eq(tostring(mine.prefs.language), "null")
+    local RoomNames = require("src.core.room_names")
+    local count = 0
+    for _ in pairs(RoomNames.get(10)) do
+        count = count + 1
+    end
+    T.eq(count, RoomNames.MAX_LANGUAGES)
+    T.eq(#RoomNames.get(11).he, 64)
+    T.eq(RoomNames.get(11).en, nil)
+    for _, key in ipairs(list(s.mock, s.key, "/v1/api-keys").items) do
+        T.truthy(#key.name <= 64, "a key's name")
+    end
+end
+
+-- The backup module's own timer that was set last and has not run.
+local function sweepTimer(mock)
+    for index = #mock.timers, 1, -1 do
+        local timer = mock.timers[index]
+        if not timer.cancelled and not timer.fired and (timer.source or ""):find("core/backup", 1, true) then
+            return timer
+        end
+    end
+end
+
+function tests.each_key_has_its_own_upload_and_none_stays_past_its_ten_minutes()
+    local s = start()
+    local _, otherId = createKey(s, "Second admin", "admin")
+    local Backup = require("src.core.backup")
+    local text = Json.encode(export(s))
+    local now = os.time()
+    local mine = Backup.receivePart(s.id, { index = 0, count = 2, text = text:sub(1, 100) }, now)
+    local theirs = Backup.receivePart(otherId, { index = 0, count = 1, text = text }, now)
+    T.truthy(theirs.complete)
+    local next, problem = Backup.receivePart(s.id, { upload = mine.upload, index = 1, count = 2, text = text:sub(101) }, now)
+    T.eq(problem, nil, "another admin's upload does not replace this one")
+    T.truthy(next.complete)
+    T.truthy(Backup.uploaded(otherId, theirs.upload, now + 1))
+    T.eq(Backup.held(), 2)
+    -- At most three at once: a fourth key's replaces the one used longest ago.
+    Backup.receivePart("0000aaaa", { index = 0, count = 1, text = "{}" }, now + 2)
+    Backup.receivePart("0000bbbb", { index = 0, count = 1, text = "{}" }, now + 3)
+    T.eq(Backup.held(), 3)
+    T.eq(Backup.uploaded(s.id, mine.upload, now + 3), nil, "the one used longest ago went")
+    T.truthy(Backup.uploaded(otherId, theirs.upload, now + 3))
+
+    -- Ten minutes after the last use, the timer drops them all, and their memory with them.
+    local clock = os.time
+    os.time = function(t)
+        return t and clock(t) or now + 3 + Backup.UPLOAD_SECONDS + 1
+    end
+    local ok, err = pcall(function()
+        local timer = assert(sweepTimer(s.mock), "a timer for the uploads")
+        timer.fired = true
+        timer.callback()
+    end)
+    os.time = clock
+    T.truthy(ok, err)
+    T.eq(Backup.held(), 0)
+end
+
 -- ---- The remote identity ----------------------------------------------------------------------
 
 -- The relay's last live timer of this delay.
@@ -697,12 +1065,17 @@ local function refuse()
         .. "Content-Length: " .. #body .. "\r\n\r\n" .. body)
 end
 
--- A restore sealed through the account, as the app sends it away from home.
-local function remoteRestore(s, connection, home, document)
+-- A restore sealed through the account, as the app sends it away from home; `extra`: more fields
+-- of the request's body.
+local function remoteRestore(s, connection, home, document, extra)
     counter = counter + 1
     local lock = Lock().deviceKey(s.key)
+    local body = { document = document, dry_run = false }
+    for name, value in pairs(extra or {}) do
+        body[name] = value
+    end
     local envelope = Lock().seal(lock, home, s.id, "req", Json.encode({
-        id = "remote-" .. counter, ts = os.time(), method = "POST", path = "/v1/restore", body = { document = document, dry_run = false },
+        id = "remote-" .. counter, ts = os.time(), method = "POST", path = "/v1/restore", body = body,
     }))
     local reply = Harness.relayRequest(s.mock, connection, { type = "e2e", id = "relay-" .. counter, envelope = envelope })
     T.truthy(reply.envelope, "answered sealed")
@@ -711,8 +1084,8 @@ end
 
 function tests.the_same_home_keeps_its_connection_and_newer_secret()
     local s = start()
-    local document = export(s)
     local _, connection = Harness.connected({ mock = s.mock })
+    local document = export(s)
     -- The owner replaced the home secret after the backup was made.
     local Relay = require("src.cloud.relay")
     local identity = Relay.identity()
@@ -727,6 +1100,7 @@ end
 
 function tests.another_home_s_identity_is_used_once_the_answer_is_out_and_kept_when_the_relay_knows_it()
     local old = start()
+    Harness.connected({ mock = old.mock })
     local document = export(old)
     local backupHome = document.sections.remote_identity
     -- The controller linked again after the accident: another home, connected.
@@ -734,7 +1108,9 @@ function tests.another_home_s_identity_is_used_once_the_answer_is_out_and_kept_w
     local _, connection = Harness.connected({ mock = s.mock })
     local currentHome = T.http(s.mock, "GET", "/v1/remote", { key = s.key }).json.home_id
     T.truthy(currentHome ~= backupHome.home_id)
-    local result = remoteRestore(s, connection, currentHome, document)
+    -- Linked to another home in the account: it moves here only when the admin asks.
+    local result = remoteRestore(s, connection, currentHome, document, { move_remote = true })
+    T.eq(result.restore.origin.another_home, true)
     T.eq(result.restore.remote.action, "restore")
     T.eq(result.restore.remote.home_id, backupHome.home_id)
     T.eq(result.restore.remote.current_home_id, currentHome)
@@ -757,12 +1133,13 @@ end
 
 function tests.an_identity_the_relay_refuses_gives_way_to_the_controller_s_own()
     local old = start()
+    Harness.connected({ mock = old.mock })
     local document = export(old)
     local s = start()
     local _, connection = Harness.connected({ mock = s.mock })
     local currentHome = T.http(s.mock, "GET", "/v1/remote", { key = s.key }).json.home_id
     local currentSecret = stored(s.mock, "directorlink_remote_identity").home_secret
-    remoteRestore(s, connection, currentHome, document)
+    remoteRestore(s, connection, currentHome, document, { move_remote = true })
     local request = reconnection(s.mock, connection)
     T.contains(request, "X-DirectorLink-Home: " .. document.sections.remote_identity.home_id)
     -- Its secret was replaced after the backup was made: the relay does not accept it.
@@ -787,6 +1164,7 @@ end
 
 function tests.with_remote_access_off_the_backup_s_identity_waits_for_the_relay()
     local old = start()
+    Harness.connected({ mock = old.mock })
     local document = export(old)
     -- This controller had remote access on after the accident, then off.
     local s = start()
@@ -794,7 +1172,7 @@ function tests.with_remote_access_off_the_backup_s_identity_waits_for_the_relay(
     Properties["Remote Access"] = "Off"
     OnPropertyChanged("Remote Access")
     local own = stored(s.mock, "directorlink_remote_identity").home_id
-    T.eq(restore(s, { document = document, dry_run = false }).status, 200)
+    T.eq(restore(s, { document = document, dry_run = false, move_remote = true }).status, 200)
     T.eq(timerOf(s.mock, 2000), nil, "nothing to reconnect")
     local saved = stored(s.mock, "directorlink_remote_identity")
     T.eq(saved.home_id, document.sections.remote_identity.home_id)
@@ -803,6 +1181,140 @@ function tests.with_remote_access_off_the_backup_s_identity_waits_for_the_relay(
     local _, _, request = Harness.connected({ mock = updated })
     T.contains(request, "X-DirectorLink-Home: " .. document.sections.remote_identity.home_id, "switched on later, it is tried then")
     T.eq(stored(updated, "directorlink_remote_identity").previous, nil)
+end
+
+function tests.a_backup_makes_no_remote_identity_and_holds_only_one_the_relay_accepted()
+    -- Remote Access was never on: nothing to hold, and nothing is made for the backup.
+    local s = start()
+    T.eq(s.mock.persist["directorlink_remote_identity"], nil)
+    local document = export(s)
+    T.same(document.sections.remote_identity, { version = 1, linked = false })
+    T.eq(s.mock.persist["directorlink_remote_identity"], nil, "no identity made")
+    -- One the app asked about (GET /v1/remote makes it) that the relay never saw is not linked either.
+    T.eq(T.http(s.mock, "GET", "/v1/remote", { key = s.key }).status, 200)
+    T.eq(export(s).sections.remote_identity.linked, false)
+    -- Once the relay has accepted it, a backup holds it.
+    Harness.connected({ mock = s.mock })
+    local linked = export(s).sections.remote_identity
+    T.eq(linked.linked, true)
+    T.eq(linked.home_id, stored(s.mock, "directorlink_remote_identity").home_id)
+    -- The one without, restored onto a controller linked since, changes nothing there.
+    local fresh = start()
+    Harness.connected({ mock = fresh.mock })
+    local own = stored(fresh.mock, "directorlink_remote_identity")
+    local done = restore(fresh, { document = document, dry_run = false })
+    T.eq(done.json.restore.remote.action, "none")
+    T.eq(tostring(done.json.restore.remote.home_id), "null")
+    T.eq(stored(fresh.mock, "directorlink_remote_identity").home_id, own.home_id)
+    T.eq(timerOf(fresh.mock, 2000), nil, "no new connection")
+end
+
+function tests.another_home_s_backup_is_told_apart_and_its_identity_moves_only_when_asked()
+    local old = start()
+    furnish(old)
+    Harness.connected({ mock = old.mock })
+    local document = export(old)
+    local backupHome = document.sections.remote_identity.home_id
+
+    -- Another controller, linked to its home, whose project has none of the backup's devices.
+    local project = Mock.project()
+    for _, id in ipairs({ 20, 21, 30, 50 }) do
+        Mock.removeDevice(project, id)
+    end
+    project.mac = "001122334455"
+    local s = start(project)
+    local _, connection = Harness.connected({ mock = s.mock })
+    local own = stored(s.mock, "directorlink_remote_identity").home_id
+    local other = Json.decode(Json.encode(document))
+    other.home.name = "Cohen family"
+    local check = restore(s, { document = other }).json.restore
+    T.eq(check.origin.another_home, true)
+    T.same(check.origin.reasons, { "home_id", "name", "references" })
+    T.eq(check.origin.controller, "other")
+    T.eq(check.remote.action, "kept", "its identity does not move here unasked")
+    T.eq(check.remote.home_id, backupHome)
+    T.eq(check.remote.current_home_id, own)
+    local done = restore(s, { document = other, dry_run = false })
+    T.eq(done.status, 200, done.body)
+    T.eq(stored(s.mock, "directorlink_remote_identity").home_id, own, "this home stays linked as it is")
+    T.eq(stored(s.mock, "directorlink_remote_identity").previous, nil)
+    T.eq(timerOf(s.mock, 2000), nil, "and its connection stays")
+
+    -- Asked: it moves, and the controller it was made on may still run with it.
+    local moved = restore(s, { document = other, dry_run = false, move_remote = true }).json.restore
+    T.eq(moved.remote.action, "restore")
+    T.eq(moved.remote.old_controller, true)
+    T.eq(stored(s.mock, "directorlink_remote_identity").home_id, backupHome)
+    T.truthy(connection)
+
+    -- A replacement controller with no identity yet: told apart by the controller it was made on.
+    local replacement = Mock.project()
+    replacement.mac = "665544332211"
+    local r = start(replacement)
+    local fresh = restore(r, { document = document }).json.restore
+    T.same(fresh.origin.reasons, { "controller" })
+    T.eq(fresh.remote.action, "kept")
+    T.eq(restore(r, { document = document, dry_run = false, move_remote = true }).json.restore.remote.action, "restore")
+    T.eq(stored(r.mock, "directorlink_remote_identity").home_id, backupHome)
+
+    -- The same controller with its driver added again: its own backup, nothing to ask.
+    local same = start()
+    local again = restore(same, { document = document, dry_run = false }).json.restore
+    T.eq(again.origin.another_home, false)
+    T.eq(again.origin.controller, "same")
+    T.eq(again.remote.action, "restore")
+    T.eq(again.remote.old_controller, false)
+end
+
+function tests.a_backup_s_identity_is_checked_as_the_relay_takes_it()
+    local old = start()
+    Harness.connected({ mock = old.mock })
+    local document = export(old)
+    local function variant(change)
+        local copy = Json.decode(Json.encode(document))
+        change(copy.sections.remote_identity)
+        return copy
+    end
+    local s = start()
+    local status, code = problem(s, variant(function(identity)
+        identity.home_id = identity.home_id:upper()
+    end))
+    T.eq(status, 422, "the relay takes a home id in lower case only")
+    T.eq(code, "BACKUP_INVALID")
+    T.eq(problem(s, variant(function(identity)
+        identity.linked = nil
+    end)), 422, "an identity not marked linked")
+    -- At most the few waiting secrets the relay tries, none dated after now.
+    local many = variant(function(identity)
+        identity.home_secret = identity.home_secret:upper()
+        identity.next_secrets = {}
+        for index = 1, 500 do
+            identity.next_secrets[index] = { secret = string.rep(string.format("%02x", index % 256), 32), at = index <= 2 and os.time() + 10 * 365 * 86400 or os.time() - index }
+        end
+    end)
+    T.eq(restore(s, { document = many, dry_run = false }).status, 200)
+    local saved = stored(s.mock, "directorlink_remote_identity")
+    T.eq(saved.home_secret, document.sections.remote_identity.home_secret, "in lower case")
+    T.eq(#saved.next_secrets, 3)
+    for _, item in ipairs(saved.next_secrets) do
+        T.truthy(item.at <= os.time(), "none dated ahead")
+    end
+end
+
+function tests.an_identity_the_relay_finds_not_valid_gives_way_too()
+    local old = start()
+    Harness.connected({ mock = old.mock })
+    local document = export(old)
+    local s = start()
+    local _, connection = Harness.connected({ mock = s.mock })
+    local currentHome = T.http(s.mock, "GET", "/v1/remote", { key = s.key }).json.home_id
+    remoteRestore(s, connection, currentHome, document, { move_remote = true })
+    reconnection(s.mock, connection)
+    local body = '{"type":"about:blank","title":"Bad Request","status":400,"code":"INVALID_HOME_SECRET"}'
+    ReceivedFromNetwork(Harness.BINDING, 443, "HTTP/1.1 400 Bad Request\r\nContent-Type: application/problem+json\r\n"
+        .. "Content-Length: " .. #body .. "\r\n\r\n" .. body)
+    T.eq(stored(s.mock, "directorlink_remote_identity").home_id, currentHome, "the controller's own is back")
+    T.contains(s.mock.properties["Remote Status"], "Reconnecting in 1 s")
 end
 
 -- ---- A big home --------------------------------------------------------------------------------
