@@ -2,7 +2,63 @@
 
 ## Current release
 
-`v1.3.0` — pairing never sends the code, and the API console's key lasts a day (0za, ADR-039, ADR-040); Find my controller (0zb); Sign in with Apple, the owner's approval of joins with another email, and Apple's notices (0zc, ADR-041); Turn off all from Home (0zd). Update DirectorLink in Composer (no reboot). The cloud is deployed before the app.
+`v1.4.0` — backup and restore (0ze, ADR-042); DirectorLink settings in the app (0zf, ADR-043). Update DirectorLink in Composer (no reboot). The cloud is unchanged.
+
+## 0ze. Backup and restore (1.4.0)
+
+1. **Who sees it.** After the update, Settings → Controller shows **Backup** on an admin device, but not on a member or viewer device. With a 1.3.0 driver there's no Backup. In the API console, `GET /v1/backup` answers `403 SEALED_REQUEST_REQUIRED`.
+2. **Download backup.**
+   - A password under 10 characters is refused, and so are two different passwords. A common one (*Password1!*) shows *weak*; a long passphrase shows *strong*.
+   - The file is saved as *DirectorLink backup <home> <date>.dlbackup*. Opened in a text editor, no scene names, hashes or keys are readable.
+   - `GET /v1/logs?category=backup` shows *backup made*, with `controller_known` (this checks the controller's MAC address is read) and `remote_identity`.
+3. **Restore on the same controller.**
+   - A wrong password gives *Wrong password, or the file was changed*.
+   - The right one shows a preview with the home's counts, no "another home" warning, *Keys: kept as they are now* and *Remote access: this home stays linked*.
+   - **Cancel** changes nothing.
+4. **Replace everything** on the same controller.
+   - *Restored*. Every phone keeps working without pairing.
+   - Remote Status stays *Connected … home <same id>*, and the log shows *restored from a backup*.
+   - Composer properties are unchanged.
+5. **A revoked key stays revoked** (test controller): pair devices A and B, make a backup, revoke B, then restore from A. The preview says the keys are kept; afterwards B still gets 401.
+6. **A reinstall** (test controller, or a quiet time — this removes the driver).
+   - Remove DirectorLink in Composer and add it again. Set the properties the preview listed, and pair one device with a new code.
+   - Restore at once. The keys are listed: choose **This device is <old key>**.
+   - Scenes, schedules, favorites and room names come back.
+   - People and devices shows no duplicate admin, and this device has the old favorites.
+   - Family phones that weren't opened meanwhile work without pairing.
+   - Within seconds Remote Status reads *Connected … home <old id>*, and the account shows the home online with its people.
+7. **Another home's backup.** Open it: the warning names that home, and so does the confirmation. With **Move remote access to this controller** unticked, Remote Status doesn't change.
+8. **Phone.** 320 and 390 px, English and Hebrew, light and dark: no sideways scroll. A file over 4 MB is refused before it's read.
+
+## 0zf. DirectorLink settings in the app (1.4.0)
+
+1. **What the section shows.** In the app, as an admin: Settings → Controller → **DirectorLink settings** shows:
+   - Jewish calendar, Schedules and Log level, as Composer has them;
+   - Refresh project;
+   - Door control, Holding relays closed, Alarm status and Remote access, with their values and *Set in Composer (…)*;
+   - the statuses, with the Inventory as in Composer;
+   - Schedules and scenes.
+2. **Schedules.** Turn them off in the app; it asks first.
+   - Composer's Schedules shows *Paused*, and Schedule Status says *Paused - N schedules are not running*.
+   - A schedule due now doesn't run.
+   - Turn them back on in the app: Composer shows *On*.
+3. **A Composer change.** In Composer, set Schedules to *Paused*, then open Settings in the app again: the switch is off. Set it back to *On* in Composer.
+4. **Jewish calendar.**
+   - On in the app (no question): Composer shows *On*, and the calendar screens appear.
+   - Off in the app: it asks first, and Composer shows *Off*.
+   - Leave it as the house had it.
+5. **Log level.**
+   - Set Debug in the app: Composer shows *Debug*.
+   - Set Error in the app, then pause schedules: `GET /v1/logs?category=settings` still shows *Schedules set to Paused in the app by …*.
+   - Set it back to Info.
+6. **The echo.** Change Schedules in the app: the `settings` log shows exactly one *in the app* entry and no *in Composer* entry. This settles whether Director reports the driver's own property changes back.
+7. **Pairing code.** Run **New Pairing Code**. Searching `GET /v1/logs?level=debug` for its 8 digits, with or without the space, finds nothing.
+8. **Refresh project** says *Project read again: N rooms, M devices*. **Schedules and scenes** lists the same as Composer's Print Schedules and Scenes.
+9. **Composer-only.** In the API console as admin, `PATCH /v1/settings {"door_control":"enabled"}` answers `403 SET_IN_COMPOSER`, and Door Control is unchanged. The same for `relay_hold`, `alarm_status` and `remote_access`.
+10. **Other roles.** With a member or viewer device the section is absent, and `GET /v1/settings` answers 403.
+11. **Phone and keyboard.**
+    - 320 px, Hebrew, dark theme: no sideways scroll.
+    - Tab to the Jewish calendar switch and press Space: focus stays on the switch after saving.
 
 ## 0za. Pairing without sending the code, and the console's key (1.3.0)
 
