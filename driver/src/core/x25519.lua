@@ -97,6 +97,20 @@ local function invert(o, input)
     copy(o, c)
 end
 
+-- o = input ^ ((p - 1) / 2), Euler's criterion: 1 for a square, p - 1 for a non-square. The
+-- exponent is 2^254 - 10: every bit from 253 down is set but bits 3 and 0.
+local function legendre(o, input)
+    local c = gf()
+    copy(c, input)
+    for a = 252, 0, -1 do
+        square(c, c)
+        if a ~= 3 and a ~= 0 then
+            mul(c, c, input)
+        end
+    end
+    copy(o, c)
+end
+
 -- (v >> 16) & 1 in two's complement.
 local function bit16(v)
     return floor(v / LIMB) % 2
@@ -180,6 +194,63 @@ function X25519.scalarmult(scalar, point)
     return pack(a)
 end
 
+local ZERO = string.rep(string.char(0), 32)
+local ONE = string.char(1) .. string.rep(string.char(0), 31)
+
+-- The u-coordinates of small order, and their other encodings (libsodium's list, bit 255 cleared):
+-- the shared secret would be zero. Another side's key or share is refused before it is used.
+local SMALL_ORDER = {
+    ["0000000000000000000000000000000000000000000000000000000000000000"] = true,
+    ["0100000000000000000000000000000000000000000000000000000000000000"] = true,
+    ["e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"] = true,
+    ["5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"] = true,
+    ["ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+    ["edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+    ["eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"] = true,
+}
+
+function X25519.smallOrder(point)
+    local cleared = point:sub(1, 31) .. string.char(point:byte(32) % 128)
+    return SMALL_ORDER[(cleared:gsub(".", function(c)
+        return string.format("%02x", c:byte())
+    end))] == true
+end
+local A = gf({ 0x6D06, 7 }) -- 486662, Curve25519's A
+
+-- Elligator 2 for Curve25519 (RFC 9380, section 6.7.1, with Z = 2): the u-coordinate (32 bytes)
+-- of the curve point that the field element `u` (32 bytes, little-endian, bit 255 ignored) maps
+-- to. CPace makes its generator from the pairing code this way (src/core/cpace.lua). Checked
+-- against RFC 9380's curve25519 vectors (driver/tests/test_cpace.lua).
+function X25519.elligator2(u)
+    assert(type(u) == "string" and #u == 32, "Elligator 2 needs a 32-byte field element")
+    local r = unpack(u)
+    local one = gf({ 1 })
+    -- x1 = -A / (1 + 2 u^2); the divisor is never zero, since -1/2 is not a square.
+    local d = gf()
+    square(d, r)
+    add(d, d, d)
+    add(d, d, one)
+    invert(d, d)
+    local x1 = gf()
+    sub(x1, gf(), A)
+    mul(x1, x1, d)
+    -- g(x1) = x1^3 + A x1^2 + x1 = x1 ((x1 + A) x1 + 1), never zero here.
+    local g = gf()
+    add(g, x1, A)
+    mul(g, g, x1)
+    add(g, g, one)
+    mul(g, g, x1)
+    local e = gf()
+    legendre(e, g)
+    -- x = x1 when g(x1) is a square, else x2 = -x1 - A (whose g is then a square).
+    local x2 = gf()
+    sub(x2, gf(), x1)
+    sub(x2, x2, A)
+    local notSquare = pack(e) == ONE and 0 or 1
+    swap(x1, x2, notSquare)
+    return pack(x1)
+end
+
 local BASE = string.char(9) .. string.rep(string.char(0), 31)
 
 -- The public key (32 bytes) for a private key (32 random bytes).
@@ -191,7 +262,7 @@ end
 -- that would make it all zeros (RFC 7748, section 6.1).
 function X25519.shared(privateKey, publicKey)
     local value = X25519.scalarmult(privateKey, publicKey)
-    if value == string.rep(string.char(0), 32) then
+    if value == ZERO then
         return nil
     end
     return value

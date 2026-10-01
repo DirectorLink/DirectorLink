@@ -31,7 +31,9 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
      -d '{"pairing_code": "1234 5678", "name": "My laptop"}'
    ```
 
-2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`. Five wrong codes within a minute lock pairing for that device (IP address) for 60 s (`429`, `Retry-After`); twenty wrong codes in all close the code. Pairing works only on the home network. With `"exchange": {"public_key": …}` (X25519, base64) the answer is sealed instead, as the app does (`docs/ACCOUNTS.md`).
+2. Keep the returned `key` — it is shown only once. Without an active code the answer is `403 PAIRING_NOT_ACTIVE`. Five wrong codes within a minute lock pairing for that device (IP address) for 60 s (`429`, `Retry-After`); twenty wrong codes in all close the code. Pairing works only on the home network. With `"expires_in": 86400` (seconds, 60 to 2592000) the key stops working after that long: it is then refused with `401 KEY_EXPIRED` and removed; `expires_at` says when (null for never). With `"exchange": {"public_key": …}` (X25519, base64) the answer is sealed instead (the app's way before 1.3.0).
+
+   The app and the API console never send the code: they pair with CPace (1.3.0), in two requests (`{"name", "cpace": {"nonce"}}`, then `{"cpace": {"session", "share", "confirm"}}`); the exact inputs are in `api/openapi.yaml` (`POST /v1/auth/pair`) and `docs/ACCOUNTS.md`, the test vectors in `tests/vectors/cpace.json`. Each attempt counts as a wrong code until it succeeds. DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose lock failed its self-test answers `503 LOCK_UNAVAILABLE`.
 
 3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
 
@@ -131,6 +133,18 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 - `capabilities.position` is false for a blind that only opens and closes fully: `PATCH` then takes only `{"position": 0}` and `{"position": 100}`, and anything else is `409 POSITION_NOT_SUPPORTED`. With `capabilities.stop` false, `POST /v1/blinds/{id}/stop` is `409 STOP_NOT_SUPPORTED`. Both are true where the controller does not say.
 - A move takes seconds to a minute, and `position` may keep the value the blind left until it stops: while `moving` is true, show `target_position`, and read the blind again every few seconds. `moving` is `null` when the controller does not report movement.
 - `position` and `target_position` are `null` when unknown.
+
+## Turning off several at once
+
+Since 1.3.0 `POST /v1/off` turns off lights, or thermostats (mode `off`), or closes blinds, in one request (members and above; the app's **Turn off all** on Home):
+
+```bash
+curl -X POST http://<controller-ip>:41999/v1/off \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"type": "lights", "device_ids": [20, 22, 25]}'
+```
+
+`type` is `lights`, `climate` or `blinds`; `device_ids` names 1 to 500 of them. It answers `202` like running a scene: `ran`, `skipped` (e.g. a thermostat without an Off mode, `MODE_NOT_SUPPORTED`), `failed` (refused by the controller) and `problems` with each such device. It never turns anything on, and doors and gates are not among its types.
 
 ## Relays
 

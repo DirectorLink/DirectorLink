@@ -1,5 +1,5 @@
 // Home: the Hebrew date (with the Jewish calendar on), summary chips, the favorites strip and the
-// room cards.
+// room cards; a list a chip filters can turn off what it shows (turn-off.js).
 
 import { calendarOn, homeLine } from "../calendar.js";
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
@@ -29,6 +29,7 @@ import { installApp } from "../pwa.js";
 import { runScene } from "../scenes.js";
 import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
+import { cancelTurnOff, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
@@ -100,6 +101,7 @@ function summaryChips() {
           dataset: { key: `filter:${filter}` },
           onclick: () => {
             ui.filter = ui.filter === filter ? null : filter;
+            resetTurnOff();
             notify();
           },
         },
@@ -418,25 +420,100 @@ function roomsSection() {
     return emptyState("rooms", t("home.noDevicesTitle"), t("home.noDevicesText"));
   }
   const shown = rooms.filter((entry) => matchesFilter(entry.group, ui.filter));
+  const filter = ui.filter;
+  const run = filter ? ui.offRuns[filter] : null;
+  const count = filter ? offTargets(filter).length : 0;
+  // While the second tap is awaited, Cancel stands where Show all was.
+  const confirming = run?.stage === "confirm" && count > 0 && can("member");
   return h(
     "section",
     { class: "home-section", "aria-labelledby": "rooms-title" },
     h(
       "div",
-      { class: "section-head" },
-      h("h2", { id: "rooms-title", class: "section-title" }, icon("rooms"), ui.filter ? t(`home.filtered.${ui.filter}`) : t("home.rooms")),
-      ui.filter
+      { class: `section-head ${filter ? "is-filtered" : ""}` },
+      h("h2", { id: "rooms-title", class: "section-title" }, icon("rooms"), filter ? t(`home.filtered.${filter}`) : t("home.rooms")),
+      filter
         ? h(
-            "button",
-            { type: "button", class: "button button-quiet button-small", dataset: { key: "filter-clear" }, onclick: () => { ui.filter = null; notify(); } },
-            icon("close"),
-            t("home.showAll")
+            "div",
+            { class: "filter-actions" },
+            turnOffControls(filter, run, count),
+            confirming
+              ? null
+              : h(
+                  "button",
+                  { type: "button", class: "button button-quiet button-small", dataset: { key: "filter-clear" }, onclick: () => { ui.filter = null; resetTurnOff(); notify(); } },
+                  icon("close"),
+                  t("home.showAll")
+                )
           )
         : null
     ),
+    filter ? turnOffNote(filter, run) : null,
     shown.length
       ? h("div", { class: "room-grid" }, shown.map(roomCard))
       : h("p", { class: "muted-note" }, t("home.noMatch"))
+  );
+}
+
+// ---- turn off all (turn-off.js) ------------------------------------------------------------
+
+// Members and above, while something in the list is on or open: "Turn off all 7", then "Tap again
+// to turn off 7" with Cancel, "Turning off…" and "Done". Viewers get none of it.
+function turnOffControls(filter, run, count) {
+  if (!can("member")) return null;
+  const stage = run?.stage;
+  if (stage === "done") {
+    return h("span", { class: "turn-off-state is-done", role: "status" }, icon("check"), t("home.off.done"));
+  }
+  const iconName = filter === "blinds" ? "blinds" : "power";
+  if (stage === "running") {
+    return h(
+      "button",
+      { type: "button", class: "button button-secondary button-small turn-off-button", disabled: true, dataset: { key: "turn-off" } },
+      icon(iconName),
+      h("span", { role: "status" }, t(`home.off.running.${filter}`))
+    );
+  }
+  if (!count) return null;
+  const confirming = stage === "confirm";
+  const hint = confirming ? t("relays.confirmHint") : t(`home.off.hint.${filter}`);
+  return [
+    h(
+      "button",
+      {
+        type: "button",
+        class: `button button-secondary button-small turn-off-button ${confirming ? "is-confirm" : ""}`,
+        title: hint,
+        "aria-describedby": "turn-off-hint",
+        dataset: { key: "turn-off" },
+        onclick: () => pressTurnOff(filter),
+      },
+      icon(iconName),
+      h("span", {}, confirming ? t(`home.off.confirm.${filter}`, { count }) : t(`home.off.button.${filter}`, { count }))
+    ),
+    h("span", { id: "turn-off-hint", class: "visually-hidden" }, hint),
+    confirming
+      ? h("button", { type: "button", class: "button button-quiet button-small", dataset: { key: "turn-off-cancel" }, onclick: () => cancelTurnOff(filter) }, t("common.cancel"))
+      : null,
+  ];
+}
+
+// What did not turn off, by name and room, or why nothing did.
+function turnOffNote(filter, run) {
+  if (run?.stage === "error") {
+    return h("p", { class: "notice notice-error turn-off-note", role: "alert" }, run.text);
+  }
+  if (run?.stage !== "partial") return null;
+  return h(
+    "div",
+    { class: "notice notice-error turn-off-note", role: "alert" },
+    h("p", {}, t(`home.off.failed.${filter}`, { count: run.count })),
+    h(
+      "ul",
+      { class: "turn-off-failed" },
+      run.failed.map((device) => h("li", {}, name(device.name, "span", "turn-off-device"), " · ", name(roomName(device.room), "span", "turn-off-room"))),
+      run.more > 0 ? h("li", {}, t("scenes.more", { count: run.more })) : null
+    )
   );
 }
 

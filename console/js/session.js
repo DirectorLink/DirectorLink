@@ -13,9 +13,20 @@ import {
   savedApiKey,
   savedHost,
 } from "../api-client.js";
+import { pairWithCpace, unprotectedReason } from "./cpace.js";
 
 export const CLIENT_NAME = "DirectorLink Console";
 export const ROLES = ["viewer", "member", "doors", "admin"];
+// The console's own key travels unprotected with every request, so it lasts a day (ADR-040).
+export const KEY_SECONDS = 24 * 60 * 60;
+export const EXPIRED_TEXT = "Your console key expired. Get a new pairing code in Composer (DirectorLink → Actions → New Pairing Code).";
+// When the key in use expires, as the controller said (ISO time): kept next to it, because once
+// something else looked at the keys the controller has removed an expired key, and then answers
+// only UNAUTHORIZED. A refusal after that time means it expired. The clocks may be apart a little.
+const EXPIRES_KEY = "directorlink.console.keyExpires";
+const CLOCK_SLACK_MS = 5 * 60 * 1000;
+// A timer may wait at most 2^31 - 1 ms (24.8 days); the console asks again after 6 hours at most.
+const LONGEST_WAIT_MS = 6 * 60 * 60 * 1000;
 
 export const state = {
   host: savedHost(),
@@ -27,7 +38,36 @@ export const state = {
   system: null,
   spec: null,
   notice: null, // { kind, text } shown on the connection screen
+  // The controller cannot pair without the code crossing the network (DirectorLink before 1.3.0,
+  // or its lock failed its self-test): { host, reason: "older" | "lock" }, or null. The connection
+  // screen warns while the address field holds that host, and only Pair anyway sends the code, to
+  // that host (ADR-039).
+  pairingUnprotected: null,
 };
+
+function readExpiry() {
+  try {
+    return Date.parse(window.localStorage.getItem(EXPIRES_KEY) || "");
+  } catch {
+    return NaN;
+  }
+}
+
+function keepExpiry(expiresAt) {
+  try {
+    if (expiresAt) window.localStorage.setItem(EXPIRES_KEY, expiresAt);
+    else window.localStorage.removeItem(EXPIRES_KEY);
+  } catch {
+    // Storage blocked: only the controller's KEY_EXPIRED tells.
+  }
+}
+
+// What a 401 for the key in use means: it expired (KEY_EXPIRED, or it was refused after its time),
+// or it is unknown (undefined: handleUnauthorized's own text).
+function refusedText(code) {
+  const at = readExpiry();
+  return code === "KEY_EXPIRED" || (Number.isFinite(at) && Date.now() >= at - CLOCK_SLACK_MS) ? EXPIRED_TEXT : undefined;
+}
 
 const listeners = new Set();
 
@@ -89,7 +129,9 @@ export function handleUnauthorized(message) {
 }
 
 export function forgetLocally() {
+  window.clearTimeout(expiryTimer);
   clearApiKey();
+  keepExpiry(null);
   state.apiKey = "";
   state.role = null;
   state.key = null;
@@ -114,7 +156,7 @@ export async function send(path, { method = "GET", body, auth = true, timeoutMs 
     notify();
   }
   if (result.status === 401 && apiKey) {
-    handleUnauthorized();
+    handleUnauthorized(refusedText(result.data?.code));
   }
   return result;
 }
@@ -134,7 +176,7 @@ export async function image(path, { auth = true } = {}) {
     return await apiImage(state.host, path, { apiKey: auth ? state.apiKey : undefined });
   } catch (error) {
     if (error instanceof ApiError) {
-      if (error.status === 401 && auth) handleUnauthorized();
+      if (error.status === 401 && auth) handleUnauthorized(refusedText(error.code));
       throw error;
     }
     markUnreachable();
@@ -172,6 +214,8 @@ export function useKey(key) {
   }
   state.apiKey = value;
   saveApiKey(value);
+  // Until the controller says (connect), a new key's expiry is not known.
+  keepExpiry(null);
 }
 
 // Loads the key's role, the system information and the API description.
@@ -189,6 +233,8 @@ export async function connect() {
     if (current.ok) {
       state.key = current.data;
       state.role = current.data?.role || "admin";
+      keepExpiry(state.key?.expires_at);
+      watchExpiry();
     } else if (current.status === 404 || current.status === 405) {
       // Drivers before API key roles: every key could do everything.
       state.key = null;
@@ -209,6 +255,39 @@ export async function connect() {
     notify();
     return false;
   }
+}
+
+// A key that expires (the console's own, ADR-040): at its end, by this computer's clock, the
+// console asks the controller, whose 401 sends it back to pairing. A controller whose clock is
+// behind still takes the key: then it asks again a minute later. A key that lasts longer than a
+// timer can wait is asked about every 6 hours meanwhile.
+let expiryTimer = null;
+
+function watchExpiry() {
+  window.clearTimeout(expiryTimer);
+  const at = Date.parse(state.key?.expires_at || "");
+  if (!state.apiKey || !Number.isFinite(at)) return;
+  expiryTimer = window.setTimeout(async () => {
+    const current = await send("/v1/api-keys/current").catch(() => null);
+    if (!current?.ok || !state.apiKey) return;
+    state.key = current.data;
+    if (Date.parse(state.key?.expires_at || "") > Date.now()) {
+      watchExpiry();
+    } else {
+      expiryTimer = window.setTimeout(watchExpiry, 60000);
+    }
+  }, Math.min(Math.max(at - Date.now(), 1000), LONGEST_WAIT_MS));
+}
+
+// "23 h 5 min left (Oct 1, 14:05)" for the console's key (ADR-040: it lasts a day).
+export function timeLeft(expiresAt, now = Date.now()) {
+  const at = Date.parse(expiresAt || "");
+  if (!Number.isFinite(at)) return "Never";
+  if (at <= now) return "Expired";
+  const minutes = Math.max(1, Math.round((at - now) / 60000));
+  const left = minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+  const when = new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(at);
+  return `${left} left (${when})`;
 }
 
 export async function loadSpec() {
@@ -247,18 +326,55 @@ export function pairingProblemText(error) {
       return "DirectorLink already has as many API keys as it can hold. Revoke one you no longer use (Keys tab, with another admin key), then pair again.";
     case "PAIRING_UNAVAILABLE":
       return "Pairing isn't available right now — DirectorLink may still be starting. Try again in a minute.";
+    // Pairing with CPace (cpace.js): the exchange was left open too long, or the answers did not
+    // come from a controller that knows the code.
+    case "PAIRING_SESSION_EXPIRED":
+      return "Pairing took too long. Try again.";
+    case "PAIRING_NOT_CONFIRMED":
+      return "The controller at this address didn't prove it knows the code, so nothing was paired. Check the address and try again. If it happens again, someone on your network may be in the way.";
     default:
       return error?.message || "Pairing failed.";
   }
 }
 
-// The pairing code created in Composer (DirectorLink → Actions → New Pairing Code): 15 minutes,
-// works once, always gives an admin key.
-export async function pairWithCode(hostValue, code) {
-  state.notice = null;
-  // The address first (the field above), so it is kept even when the code is mistyped.
+// The old way, only after the warning: the code itself, for a key that lasts a day where the
+// controller knows expires_in (DirectorLink before 1.3.0 refuses the field: then without).
+async function pairSendingCode(post, pairingCode) {
+  const body = { pairing_code: pairingCode, name: CLIENT_NAME, expires_in: KEY_SECONDS };
   try {
-    useHost(hostValue);
+    return await post(body);
+  } catch (error) {
+    if (error?.code !== "INVALID_FIELD" || error.problem?.errors?.[0]?.field !== "expires_in") throw error;
+    delete body.expires_in;
+    return post(body);
+  }
+}
+
+// The warning about pairing unprotected, while the address field holds the host it is about.
+export function unprotectedFor(value) {
+  const warned = state.pairingUnprotected;
+  return warned && warned.host === normalizeHost(value) ? warned : null;
+}
+
+// Another address in the field: the warning about the one before is not about this one.
+export function addressChanged(value) {
+  if (state.pairingUnprotected && !unprotectedFor(value)) {
+    state.pairingUnprotected = null;
+    notify();
+  }
+}
+
+// The pairing code created in Composer (DirectorLink → Actions → New Pairing Code): 15 minutes,
+// works once, always gives an admin key, which lasts a day here. The code is never sent (CPace,
+// cpace.js, ADR-039); a controller that cannot pair that way (DirectorLink before 1.3.0) learns
+// nothing about it: the connection screen warns, and only `anyway` (Pair anyway) sends it.
+export async function pairWithCode(hostValue, code, { anyway = false } = {}) {
+  state.notice = null;
+  state.pairingUnprotected = null;
+  // The address first (the field above), so it is kept even when the code is mistyped.
+  let host;
+  try {
+    host = useHost(hostValue);
   } catch (error) {
     state.notice = { kind: "error", text: error.message };
     notify();
@@ -274,15 +390,24 @@ export async function pairWithCode(hostValue, code) {
   try {
     state.status = "connecting";
     notify();
-    const created = await call("/v1/auth/pair", {
-      method: "POST",
-      auth: false,
-      body: { pairing_code: pairingCode, name: CLIENT_NAME },
-    });
+    const post = (body) => call("/v1/auth/pair", { method: "POST", auth: false, body });
+    let created;
+    try {
+      created = anyway
+        ? await pairSendingCode(post, pairingCode)
+        : await pairWithCpace(post, { code: pairingCode, name: CLIENT_NAME, expiresIn: KEY_SECONDS });
+    } catch (error) {
+      if (error?.code !== "CPACE_UNSUPPORTED") throw error;
+      state.status = state.apiKey ? previousStatus : "setup";
+      state.pairingUnprotected = { host, reason: unprotectedReason(error) };
+      notify();
+      return false;
+    }
     if (!created?.key) {
       throw new ApiError("DirectorLink paired, but no API key came back.");
     }
     useKey(created.key);
+    keepExpiry(created.expires_at);
     return connect();
   } catch (error) {
     state.status = state.apiKey ? previousStatus : "setup";

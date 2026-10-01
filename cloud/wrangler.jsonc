@@ -23,9 +23,16 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "directorlink", "database_id": "413f0c4a-c1c8-458e-9364-286bf24f179f", "migrations_dir": "migrations" }
   ],
-  // GOOGLE_CLIENT_SECRET is a secret (npx wrangler@4.143.0 secret put GOOGLE_CLIENT_SECRET).
+  // GOOGLE_CLIENT_SECRET is a secret (npx wrangler@4.143.0 secret put GOOGLE_CLIENT_SECRET), and so
+  // is APPLE_PRIVATE_KEY (the Sign in with Apple key's .p8 file): Apple sign-in stays off until it
+  // is set. The Apple ids are public: the Services ID signs in on the web, the Team ID and Key ID
+  // name the key, and Apple's notifications are addressed to the primary App ID (ADR-041).
   "vars": {
     "GOOGLE_CLIENT_ID": "1034749624411-vfj1im8dc42utkvl6lfiv3hs49mcna2s.apps.googleusercontent.com",
+    "APPLE_SERVICES_ID": "io.directorlink.signin",
+    "APPLE_TEAM_ID": "VA4Q88T4RC",
+    "APPLE_KEY_ID": "Q3WXX95K83",
+    "APPLE_APP_ID": "io.directorlink.app",
     "APP_ORIGINS": "https://app.directorlink.io",
     "PUBLIC_URL": "https://api.directorlink.io"
   },

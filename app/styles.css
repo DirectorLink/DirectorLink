@@ -661,6 +661,18 @@ img {
   margin-top: 6px;
 }
 
+/* A request to join (ADR-041): the code the owner compares with the person they invited. */
+.access-code {
+  margin-top: 4px;
+  font-size: 0.875rem;
+}
+
+.access-code strong {
+  font-size: 1rem;
+  letter-spacing: 0.08em;
+  unicode-bidi: isolate;
+}
+
 .access-actions {
   display: flex;
   align-items: center;
@@ -679,12 +691,41 @@ select:disabled {
   opacity: 0.6;
 }
 
-/* Sign in with Apple: black, or white on a dark theme (Apple's button styles), in banners too. */
+/* Sign in with Apple, as Apple's Human Interface Guidelines ask: black, or white on a dark theme,
+   in banners too; the Apple logo and the title in the same color, the system font, at least as
+   large as the other sign-in buttons (44 px high, at least 140 px wide). */
 .button-apple,
 .banner .button-apple {
   background: #000;
   color: #fff;
   border-color: #000;
+  min-width: 140px;
+  font-family: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 500;
+}
+
+.button-apple .icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Settings → Account: the sign-in buttons share one width, side by side or one under the other.
+   A wrapping row, not an auto-fit grid: such a grid counts its columns from its max-width, and the
+   page could not get narrower than two of them on a phone. */
+.sign-in-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 100%;
+  max-width: 440px;
+}
+
+.sign-in-buttons > * {
+  flex: 1 1 210px;
+}
+
+.sign-in-buttons > p {
+  flex-basis: 100%;
 }
 
 :root[data-theme="dark"] .button-apple,
@@ -920,6 +961,61 @@ select:disabled {
   color: var(--muted);
   width: 20px;
   height: 20px;
+}
+
+/* Home, a list a summary chip filters: Turn off all next to Show all (views/home.js, turn-off.js).
+   On a phone they go under the title, at the end; a long label wraps rather than scroll. */
+.section-head.is-filtered {
+  flex-wrap: wrap;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+
+.turn-off-button {
+  min-width: 0;
+  white-space: normal;
+  text-align: center;
+}
+
+.turn-off-button.is-confirm {
+  background: var(--primary);
+  border-color: transparent;
+  color: var(--primaryText);
+}
+
+.turn-off-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding-inline: 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.turn-off-state.is-done {
+  color: var(--okText);
+}
+
+.turn-off-state .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.turn-off-failed {
+  display: grid;
+  gap: 2px;
+  margin: 6px 0 0;
+  padding-inline-start: 1.2em;
+  overflow-wrap: anywhere;
 }
 
 .card {
@@ -2251,6 +2347,17 @@ select:disabled {
   padding-inline: 4px;
 }
 
+/* The code read out to the home's owner while an invitation waits for their approval. */
+.join-code {
+  margin: 4px 0;
+  font-family: var(--font-head);
+  font-size: 2rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .connect-account {
   display: flex;
   flex-direction: column;
@@ -2330,8 +2437,47 @@ select:disabled {
   margin-block-start: 4px;
 }
 
-.connect-form .field-help + .field-label {
+.connect-form .field-help + .field-label,
+.connect-find + .field-label {
   margin-block-start: 8px;
+}
+
+/* Find my controller, under the address (views/find.js). */
+.connect-find {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.connect-find > .notice,
+.connect-find-results {
+  align-self: stretch;
+}
+
+.connect-find-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connect-find-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.connect-find-choice {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.connect-find-version {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 /* The pairing code, shown as "1234 5678". */
@@ -2343,6 +2489,19 @@ input[type="text"].code-input {
 
 .connect-form .button {
   margin-block-start: 4px;
+}
+
+/* DirectorLink before 1.3.0 would get the code unprotected: Pair anyway or Cancel (connect.js). */
+.connect-unprotected p {
+  margin: 0 0 8px;
+}
+
+.connect-unprotected .button {
+  margin-block-start: 0;
+}
+
+.connect-unprotected .button-danger {
+  background: var(--card);
 }
 
 /* ---- Forms --------------------------------------------------------------------------------- */

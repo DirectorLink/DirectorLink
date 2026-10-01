@@ -60,7 +60,7 @@ SECURITY_CONTRACT = {
     ),
     "src/auth/keys.lua": (
         # Only hashes are stored, never the keys themselves.
-        "local ok = Store.write(STORE_KEY, { version = 3, keys = records }, false)",
+        "local ok = Store.write(STORE_KEY, { version = 4, keys = records }, false)",
         "        records[#records + 1] = {\n"
         "            id = key.id,\n"
         "            name = key.name,\n"
@@ -70,7 +70,10 @@ SECURITY_CONTRACT = {
         "            lock = key.lock,\n"
         "            created_at = key.created_at,\n"
         "            profile = key.profile,\n"
+        "            expires = key.expires,\n"
         "        }\n",
+        # An expired key is refused (ADR-040).
+        'return nil, "KEY_EXPIRED"',
         'C4:Hash(algorithm.c4, text, { return_encoding = "HEX" })',
         "return Random.hex(32)",
         "constantTimeEqual(hashes[key.alg], key.hash)",
@@ -89,6 +92,16 @@ SECURITY_CONTRACT = {
         "LOCK_SECONDS = 60",
         "constantTimeEqual(input, state.code)",
         'close("Used at "',
+        # A CPace attempt counts as a wrong code from its start (ADR-039).
+        "client.failed = client.failed + 1\n    state.codeFailures = state.codeFailures + 1\n    return { code = state.code, ip = ip, generation = state.generation }",
+    ),
+    # CPace (ADR-039): the key is made only after the app's tag is right; low-order shares are refused.
+    "src/auth/cpace_pairing.lua": (
+        "if #appShare ~= 32 or X25519.smallOrder(appShare) then",
+        "if not sameBytes(Cpace.tag(macKey, appShare, AD), appTag) then",
+    ),
+    "src/api/handlers/auth.lua": (
+        "local paired, failure = ctx.services.pairing.conclude(session.attempt, isk ~= nil)\n    if not paired then\n        return pairingFailure(ctx, failure)\n    end",
     ),
     "src/cloud/relay.lua": (
         # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.

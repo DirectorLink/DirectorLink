@@ -42,7 +42,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - Installation method is outside the scope of this project
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
-- LAN-first, with no port forwarding; remote access with a Google account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
+- LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
 - Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, and the alarm's status (security partitions: read-only, off by default)
 - Room names in several languages
@@ -106,11 +106,11 @@ If the status shows an error, open `GET /v1/logs` (see below) or capture the Dir
 
 ### 4. Pair the owner's device
 
-Open **https://app.directorlink.io**, enter the controller IP and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
+Open **https://app.directorlink.io**, enter the controller IP (or tap **Find my controller**, in Chromium browsers on computers and Android) and the **Pairing Code** from the DirectorLink properties. The device gets an admin key.
 
 > **Pair from a computer or an Android phone, not from an iPhone or iPad.** On iPhone and iPad every browser (Safari, Chrome, Edge, …) uses Apple's WebKit, which blocks a secure page such as app.directorlink.io from reaching the controller's plain `http://` address on the home network, and offers no permission to allow it. Pairing cannot work there. iPhones and iPads join through the account instead: on a paired computer at home, sign in and use Settings → Account → **Link this home**, then **Add my other device**, and scan the QR code with the iPhone.
 
-A code is valid for 15 minutes and works once, and only on the home network. Five wrong codes lock pairing for that device for a minute; twenty close the code. The app pairs with a key exchange, so its new key is never readable on the network. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin invites them (Settings → Account → **Invite someone**, with remote access) or creates their keys (API console → Keys).
+A code is valid for 15 minutes and works once, and only on the home network. Five wrong codes lock pairing for that device for a minute; twenty close the code. The app never sends the code: it pairs with CPace, so neither the code nor its new key can be read or taken on the network (with a DirectorLink before 1.3.0 it warns first, and only **Pair anyway** sends the code). The API console pairs the same way, and its own key lasts a day. A new DirectorLink shows one right away; later, run the Composer action **New Pairing Code** on DirectorLink (an installer can read it out for the homeowner). Other devices and family members do not pair: an admin invites them (Settings → Account → **Invite someone**, with remote access) or creates their keys (API console → Keys).
 
 ### Updating DirectorLink
 

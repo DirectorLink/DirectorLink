@@ -135,6 +135,18 @@ export function formatRelative(value, now = Date.now()) {
   return text.replace(` (${Math.abs(amount)})`, "");
 }
 
+// "in 23 hours", "בעוד 23 שעות", "in 3 days" for a later controller time (ISO string), or "":
+// hours up to two days, so that a key's last day reads as hours.
+export function formatUntil(value, now = Date.now()) {
+  const at = typeof value === "string" ? Date.parse(value) : Number(value);
+  if (!Number.isFinite(at)) return "";
+  const minutes = Math.max(1, Math.round((at - now) / 60000));
+  const hours = Math.round(minutes / 60);
+  const [amount, unit] = minutes < 60 ? [minutes, "minute"] : hours < 48 ? [hours, "hour"] : [Math.round(hours / 24), "day"];
+  const text = new Intl.RelativeTimeFormat(current, { numeric: "always", style: "long" }).format(amount, unit);
+  return text.replace(` (${amount})`, "");
+}
+
 export function formatTime(date) {
   return new Intl.DateTimeFormat(current, { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
 }

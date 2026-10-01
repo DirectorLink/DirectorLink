@@ -5,7 +5,7 @@
 // "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
-import { startAccount } from "./js/account.js";
+import { providersStatus, signInProviders, startAccount } from "./js/account.js";
 import { alarmSignature, startAlarm } from "./js/alarm.js";
 import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
@@ -180,6 +180,8 @@ function signature() {
     themePreference(),
     state.status,
     state.notice,
+    // The pairing screen's warning (Cancel only clears it).
+    state.pairingUnprotected,
     state.loaded,
     state.system,
     // A newer DirectorLink release, and the one dismissed on Home (kept in localStorage).
@@ -199,6 +201,9 @@ function signature() {
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
     state.role,
     state.account,
+    // The sign-ins the account server has set up (account.js), once asked.
+    signInProviders(),
+    providersStatus(),
     // Remote access (remote.js): the connection in use, the controller's answer, and whether this
     // device is linked (kept in localStorage, so it is read here).
     state.transport,
@@ -211,6 +216,8 @@ function signature() {
     state.canInstall,
     state.offlineCopy,
     ui.filter,
+    ui.find,
+    ui.offRuns,
     ui.editFavorites,
     ui.relayStage,
     ui.doorbellStage,
@@ -224,6 +231,7 @@ function signature() {
     ui.inviteForm,
     ui.joinBusy,
     ui.joinMessage,
+    ui.joinWait,
     state.profile,
     ui.roomOrderMessage,
     state.scenes,

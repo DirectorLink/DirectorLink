@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 
-import { APPLE_PERSON, SERVICES_ID, appleVars, postBack, signInWithApple, startFakeApple } from "./fake-apple.mjs";
+import { APPLE_PERSON, SERVICES_ID, appleVars, postBack, postNotification, signInWithApple, startFakeApple } from "./fake-apple.mjs";
 import { cookiesOf, googleVars, signInAs, startFakeGoogle } from "./fake-google.mjs";
 import { STARTUP_MS, startWorker } from "./worker.mjs";
 
@@ -21,7 +21,9 @@ let google;
 before(async () => {
   apple = await startFakeApple();
   google = await startFakeGoogle();
-  worker = await startWorker({ migrate: true, devVars: { ...googleVars(google, APP, PUBLIC_URL), ...appleVars(apple) } });
+  // UNUSED_ACCOUNT_DAYS 0: the daily housekeeping (GET /__scheduled) takes any account left without
+  // a sign-in, not only those unused for 90 days.
+  worker = await startWorker({ migrate: true, scheduled: true, devVars: { ...googleVars(google, APP, PUBLIC_URL), ...appleVars(apple), UNUSED_ACCOUNT_DAYS: 0 } });
 }, { timeout: STARTUP_MS + 10_000 });
 
 after(async () => {
@@ -232,4 +234,167 @@ test("deleting the account deletes its Apple sign-in too", TEST, async () => {
   const again = await signInWithApple(worker.http, apple, person, APP);
   const after = await me(again.cookie);
   assert.notEqual(after.json.id, before.json.id, "a new account");
+});
+
+// --- Apple's server-to-server notifications (ADR-041) ------------------------------------------------
+
+test("the app learns that Apple sign-in is set up, before and after signing in", TEST, async () => {
+  const response = await fetch(`${worker.http}/auth/providers`, { headers: { Origin: APP } });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).providers, ["google", "apple"]);
+  assert.equal(response.headers.get("access-control-allow-origin"), APP);
+  const signedIn = await signInWithApple(worker.http, apple, { ...APPLE_PERSON, sub: "001.providers", email: "providers@example.com" }, APP);
+  assert.deepEqual((await me(signedIn.cookie)).json.sign_in_providers, ["google", "apple"]);
+});
+
+test("only notifications Apple signed for DirectorLink's App ID count", TEST, async () => {
+  const person = { ...APPLE_PERSON, sub: "001.notice.checked", email: "checked@example.com" };
+  const { cookie } = await signInWithApple(worker.http, apple, person, APP);
+  const revoked = { type: "consent-revoked", sub: person.sub };
+  for (const [what, payload] of [
+    ["another key", apple.notification(revoked, { forged: true })],
+    ["an unknown key id", apple.notification(revoked, { kid: "not-apples" })],
+    ["the Services ID (an ID token's audience)", apple.notification(revoked, { claims: { aud: SERVICES_ID } })],
+    ["another issuer", apple.notification(revoked, { claims: { iss: "https://appleid.example" } })],
+    ["expired", apple.notification(revoked, { claims: { exp: Math.floor(Date.now() / 1000) - 3600 } })],
+    ["no event", apple.notification({ sub: person.sub })],
+    ["an unknown event", apple.notification({ type: "password-changed", sub: person.sub })],
+    ["no account", apple.notification({ type: "consent-revoked" })],
+    ["not a JWT", "not.a.jwt"],
+  ]) {
+    const response = await postNotification(worker.http, payload);
+    assert.equal(response.status, 400, what);
+    assert.equal((await response.json()).code, "INVALID_NOTIFICATION", what);
+  }
+  assert.equal((await postNotification(worker.http, null, { body: "{}" })).status, 400, "no payload");
+  assert.equal((await postNotification(worker.http, null, { body: JSON.stringify({ payload: "x".repeat(20 * 1024) }) })).status, 400, "more than 16 KiB");
+  assert.equal((await fetch(`${worker.http}/auth/apple/notifications`)).status, 405);
+  assert.equal((await me(cookie)).status, 200, "none of them changed anything");
+});
+
+test("Apple's consent-revoked removes that Apple sign-in; an account left without one is signed out everywhere", TEST, async () => {
+  const person = { ...APPLE_PERSON, sub: "001.notice.revoked", email: "revoked@example.com" };
+  const first = await signInWithApple(worker.http, apple, person, APP);
+  const second = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  const account = (await me(first.cookie)).json;
+  const response = await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub }));
+  assert.equal(response.status, 200);
+  assert.equal((await me(first.cookie)).status, 401, "signed out");
+  assert.equal((await me(second.cookie)).status, 401, "on every device");
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub }))).status, 200, "the same notice twice");
+
+  // The account itself stays (with its homes, homes.test.mjs): the same Apple ID gets it back.
+  const again = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  const back = (await me(again.cookie)).json;
+  assert.equal(back.id, account.id);
+  assert.deepEqual(back.providers, ["apple"]);
+  assert.equal(back.name, "Noam Cohen");
+});
+
+test("Apple's account-delete leaves an account that also signs in with Google signed in with Google", TEST, async () => {
+  const cookie = await signInAs(worker.http, google, { sub: "google-both-notice", email: "both.notice@example.com", name: "Both" }, APP);
+  const person = { sub: "001.notice.both", email: "both.apple@example.com" };
+  assert.equal(outcome((await signInWithApple(worker.http, apple, person, APP, { link: cookie })).response), "linked");
+  // Apple writes `events` as a string; an object is read as well.
+  const response = await postNotification(worker.http, apple.notification({ type: "account-delete", sub: person.sub }, { eventsObject: true }));
+  assert.equal(response.status, 200);
+  const after = await me(cookie);
+  assert.equal(after.status, 200, "its sessions stay");
+  assert.deepEqual(after.json.providers, ["google"]);
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "account-delete", sub: "001.never-seen" }))).status, 200, "an Apple ID with no account");
+});
+
+test("a refused notification's log line names the audience it had", TEST, async () => {
+  const response = await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: "001.notice.audience" }, { claims: { aud: SERVICES_ID } }));
+  assert.equal(response.status, 400);
+  let line;
+  for (let tries = 0; tries < 40 && !line; tries += 1) {
+    line = worker.output().split("\n").find((text) => text.includes("apple_notification_refused") && text.includes(`"aud":"${SERVICES_ID}"`));
+    if (!line) await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.ok(line, "the refusal is logged with the audience, to see which one Apple uses");
+  assert.doesNotMatch(line, /001\.notice\.audience/, "never the person's Apple id");
+});
+
+test("an Apple ID an account began with is not free to add to another, even once Apple said it stopped", TEST, async () => {
+  // An owner who signs in only with Apple stops using it for DirectorLink…
+  const person = { sub: `001.orphan.${Date.now()}`, email: "orphan.owner@example.com", firstName: "Orphan", lastName: "Owner" };
+  const owner = await signInWithApple(worker.http, apple, person, APP);
+  const ownerId = (await me(owner.cookie)).json.id;
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub }))).status, 200);
+  // …then makes a new account with Google and tries to add the same Apple ID to it.
+  const other = await signInAs(worker.http, google, { sub: `google-orphan-${Date.now()}`, email: "orphan.google@example.com", name: "Orphan" }, APP);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  const linked = await signInWithApple(worker.http, apple, person, APP, { link: other, withUser: false });
+  assert.equal(outcome(linked.response), "taken", "it still belongs to the account it began");
+  assert.deepEqual((await me(other)).json.providers, ["google"]);
+  const back = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  assert.equal((await me(back.cookie)).json.id, ownerId, "signing in with it reaches the owner's account");
+  const removed = await fetch(`${worker.http}/v1/me/identities/google`, { method: "DELETE", headers: { Cookie: other, Origin: APP } });
+  assert.equal(removed.status, 409, "never a 500");
+  assert.equal((await removed.json()).code, "LAST_SIGN_IN");
+});
+
+test("a late Hide My Email notice does not undo the address shared since", TEST, async () => {
+  const sub = `001.notice.late.${Date.now()}`;
+  const relay = "late7x@privaterelay.appleid.com";
+  const hidden = await signInWithApple(worker.http, apple, { sub, email: relay, private: true }, APP);
+  const late = apple.notification({ type: "email-disabled", sub, email: relay, is_private_email: "true", event_time: Math.floor(Date.now() / 1000) - 5 });
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  // The person signs in again and shares the real address this time.
+  const again = await signInWithApple(worker.http, apple, { sub, email: "late.real@example.com", private: false }, APP, { withUser: false });
+  assert.equal((await me(again.cookie)).json.email, "late.real@example.com");
+  assert.equal((await postNotification(worker.http, late)).status, 200);
+  assert.equal((await me(again.cookie)).json.email, "late.real@example.com", "the notice predates the last sign-in");
+  assert.equal((await me(hidden.cookie)).status, 200);
+});
+
+test("Apple's account-deleted: an account left without a sign-in keeps nothing of the person", TEST, async () => {
+  // Without a home: deleted, as Delete account does (the same id would make a new account).
+  const person = { sub: `001.deleted.${Date.now()}`, email: "deleted.person@example.com", firstName: "Gone", lastName: "Person" };
+  const first = await signInWithApple(worker.http, apple, person, APP);
+  const id = (await me(first.cookie)).json.id;
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "account-deleted", sub: person.sub }))).status, 200);
+  assert.equal((await me(first.cookie)).status, 401);
+  const again = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  assert.notEqual((await me(again.cookie)).json.id, id, "the account is gone");
+});
+
+test("the daily housekeeping takes accounts nobody can sign in to any more", TEST, async () => {
+  const person = { sub: `001.unused.${Date.now()}`, email: "unused.person@example.com", firstName: "Un", lastName: "Used" };
+  const first = await signInWithApple(worker.http, apple, person, APP);
+  const id = (await me(first.cookie)).json.id;
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub }))).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 1100));
+  assert.equal((await fetch(`${worker.http}/__scheduled?cron=17+3+*+*+*`)).status, 200);
+  // The housekeeping may finish after the answer: wait for its log line.
+  for (let tries = 0; tries < 50 && !worker.output().includes("accounts_without_sign_in_purged"); tries += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.match(worker.output(), /accounts_without_sign_in_purged/);
+  const back = await signInWithApple(worker.http, apple, person, APP, { withUser: false });
+  assert.notEqual((await me(back.cookie)).json.id, id, "deleted: it owned no home");
+});
+
+test("a notice from before the person last signed in with that Apple ID changes nothing", TEST, async () => {
+  const person = { ...APPLE_PERSON, sub: "001.notice.stale", email: "stale@example.com" };
+  const { cookie } = await signInWithApple(worker.http, apple, person, APP);
+  const hourAgo = Math.floor(Date.now() / 1000) - 3600;
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub, event_time: hourAgo }))).status, 200);
+  assert.equal((await me(cookie)).status, 200, "a late or replayed notice: the person signed in again since");
+  // Apple's time in milliseconds counts too.
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "consent-revoked", sub: person.sub, event_time: Date.now() }))).status, 200);
+  assert.equal((await me(cookie)).status, 401);
+});
+
+test("Hide My Email forwarding turned off or on: the stored address follows Apple's", TEST, async () => {
+  const person = { sub: "001.notice.relay", email: "k2m9x@privaterelay.appleid.com", private: true };
+  const { cookie } = await signInWithApple(worker.http, apple, person, APP);
+  const disabled = apple.notification({ type: "email-disabled", sub: person.sub, email: "K7Q4Z@privaterelay.appleid.com", is_private_email: "true" });
+  assert.equal((await postNotification(worker.http, disabled)).status, 200);
+  const account = await me(cookie);
+  assert.equal(account.status, 200, "still signed in");
+  assert.equal(account.json.email, "k7q4z@privaterelay.appleid.com");
+  assert.equal((await postNotification(worker.http, apple.notification({ type: "email-enabled", sub: person.sub }))).status, 200);
+  assert.equal((await me(cookie)).json.email, "k7q4z@privaterelay.appleid.com", "no address given: kept");
 });

@@ -42,6 +42,22 @@ export default {
     hostLabel: "Controller address",
     hostHelp: "The IP address or local name, e.g. 192.168.1.50 or director.local.",
     invalidHost: "Enter an IP address or local hostname, without a port.",
+    find: {
+      button: "Find my controller",
+      cancel: "Cancel",
+      asking: "Allow access to devices on your local network when the browser asks.",
+      network: "Looking for your home network…",
+      range: "Looking in {range}…",
+      product: "DirectorLink {version}",
+      found: "Found {name} at {host}. Now enter the pairing code.",
+      several: {
+        one: "Found 1 controller. Choose yours:",
+        other: "Found {count} controllers. Choose yours:",
+      },
+      none: "No controller found on this network. Type the controller’s address. Your installer can tell you, or find it in Composer.",
+      blocked:
+        "The browser doesn’t let this site look for devices on your home network. Allow local network access in the site’s settings, then try again.",
+    },
     codeLabel: "Pairing code",
     codeHelp:
       "In Composer, select DirectorLink, then Actions → New Pairing Code — or ask your installer for one. A code lasts 15 minutes and works once.",
@@ -50,6 +66,9 @@ export default {
     signIn: "Sign in with Google",
     signInApple: "Sign in with Apple",
     signInShort: "Sign in",
+    signInUnreachable: "DirectorLink’s account service can’t be reached. Check the internet connection and try again.",
+    // One of the titles Apple allows on its button (Settings → Account: adding Apple).
+    continueApple: "Continue with Apple",
     signInHelp: "With your account you reach your home from anywhere, on iPhone and iPad too, once the home is linked to it.",
     signedInAs: "Signed in as {email}",
     signedInHelp: "To reach your home through your account: connect here once with a pairing code, then link the home in Settings → Account. Or open an invitation link.",
@@ -74,6 +93,17 @@ export default {
       keyLimit:
         "DirectorLink already has as many access keys as it can hold. Remove a device you no longer use (API console → Keys), then pair again.",
       unavailable: "Pairing isn’t available right now — DirectorLink may still be starting. Try again in a minute.",
+      sessionExpired: "Pairing took too long. Try again.",
+      notConfirmed:
+        "The controller at this address didn’t prove it knows the code, so nothing was paired. Check the address and try again. If it happens again, someone on your network may be in the way.",
+    },
+    // The code would travel unprotected (ADR-039): DirectorLink before 1.3.0, or a controller whose
+    // lock failed its self-test (updating does not help there).
+    unprotected: {
+      older: "This controller runs an older DirectorLink. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. Update DirectorLink in Composer to pair safely.",
+      lock: "This controller can’t protect pairing: its DirectorLink failed a security self-test when it started. To pair with it, the code would travel over your network unprotected: anyone on the network could read it and pair instead of you. There is nothing to update: ask your installer to check DirectorLink’s log.",
+      pairAnyway: "Pair anyway",
+      cancel: "Cancel",
     },
     lanNote:
       "The app talks to your controller directly over your home network. If the browser asks to access devices on your local network, allow it.",
@@ -125,6 +155,36 @@ export default {
       blinds: "Rooms with blinds open",
     },
     showAll: "Show all",
+    // Turn off all, next to Show all in a filtered list (members and above).
+    off: {
+      button: {
+        lights: { one: "Turn off the light", other: "Turn off all {count}" },
+        climate: { one: "Turn off the AC", other: "Turn off all {count}" },
+        blinds: { one: "Close the blind", other: "Close all {count}" },
+      },
+      hint: {
+        lights: "Turns off the lights that are on in these rooms",
+        climate: "Turns off the AC that is on in these rooms",
+        blinds: "Closes the open blinds in these rooms",
+      },
+      confirm: {
+        lights: { one: "Tap again to turn it off", other: "Tap again to turn off {count}" },
+        climate: { one: "Tap again to turn it off", other: "Tap again to turn off {count}" },
+        blinds: { one: "Tap again to close it", other: "Tap again to close {count}" },
+      },
+      running: { lights: "Turning off…", climate: "Turning off…", blinds: "Closing…" },
+      done: "Done",
+      failed: {
+        lights: { one: "1 light didn’t turn off:", other: "{count} lights didn’t turn off:" },
+        climate: { one: "1 AC didn’t turn off:", other: "{count} AC didn’t turn off:" },
+        blinds: { one: "1 blind didn’t close:", other: "{count} blinds didn’t close:" },
+      },
+      error: {
+        lights: "Couldn’t turn them off: {error}",
+        climate: "Couldn’t turn them off: {error}",
+        blinds: "Couldn’t close them: {error}",
+      },
+    },
     noMatch: "No rooms match right now.",
     noDevicesTitle: "Nothing to control yet",
     noDevicesText: "DirectorLink did not find lights, climate, blinds or cameras in this Control4 project.",
@@ -793,6 +853,8 @@ export default {
     noAccount: "No account seen",
     lastUsed: "used {time}",
     neverUsed: "not used yet",
+    keyExpires: "expires {time}",
+    keyExpired: "expired",
     roleFor: "Access of {name}",
     roleConfirm: "Change “{name}” to {role}?",
     roleConfirmAdmin: "Change “{name}” to {role}? It is no longer an admin, and the invitations it made are revoked.",
@@ -810,6 +872,28 @@ export default {
     revokeInvitationFor: "Revoke the {role} invitation",
     revokeInvitationConfirm: "Revoke this invitation? Its link stops working.",
     invitationRevoked: "The invitation was revoked.",
+    // Accounts asking to join with an invitation sent to another email (the owner only, ADR-041).
+    requests: "Asking to join",
+    requestsHelp: "These accounts opened an invitation sent to another email address, for instance with Apple’s Hide My Email. Anyone who got hold of the link could ask too, under any name: approve only when the person you invited tells you the same code, in person or on a call.",
+    requestNoName: "No name given",
+    emailHidden: "email hidden by Apple",
+    signsInWith: "signs in with {providers}",
+    accountMade: "account made {time}",
+    asked: "asked {time}",
+    requestFor: "invitation for {email}",
+    requestCode: "Code",
+    requestInvitationGone: "This invitation is no longer waiting at home: it was revoked or used.",
+    approve: "Approve",
+    approveFor: "Approve {name}",
+    approveConfirm: "Let {name} join with this invitation? Approve only if the person you invited told you the code {code} themselves.",
+    approvedDone: "{name} may join now; their app finishes by itself.",
+    approvedBadge: "Approved",
+    approvedWaiting: "Waiting for them to finish joining.",
+    refuse: "Refuse",
+    refuseFor: "Refuse {name}",
+    withdrawApproval: "Withdraw",
+    refuseConfirm: "Refuse {name}? They cannot ask again with this invitation.",
+    refusedDone: "{name} was refused.",
   },
   join: {
     title: "Invitation",
@@ -821,6 +905,15 @@ export default {
     accept: "Accept invitation",
     accepting: "Accepting…",
     replaceConfirm: "This device is already connected to a home. Accepting replaces its access key with this invitation’s. Continue?",
+    // An invitation sent to another email: the home's owner approves this account (ADR-041).
+    waitingTitle: "Waiting for the home’s owner",
+    waitingText: "This invitation was sent to another email address, so the home’s owner has to let this account join. Tell them it is you, and read them this code:",
+    codeLabel: "Code {code}",
+    waitingHelp: "They approve it in Settings → People and devices. Keep this page open: it finishes by itself once they have. The invitation lasts until {time}.",
+    withdraw: "Withdraw request",
+    withdrawn: "Your request was withdrawn. Sign in with the account the invitation was sent to, or ask again.",
+    approved: "The home’s owner let this account join.",
+    finish: "Finish joining",
     errors: {
       emailMismatch: "This invitation is for another email address. Sign in with that account, or ask for an invitation for this one.",
       used: "This invitation was used, revoked or has expired. Ask for a new one.",
@@ -828,6 +921,9 @@ export default {
       signIn: "Your sign-in expired. Sign in again.",
       hiddenEmail: "You signed in with Apple’s Hide My Email, and Apple keeps giving DirectorLink that hidden address. Sign in with Google with the invited address; or on your iPhone open Settings → your name → Sign in with Apple → DirectorLink → Stop Using, then sign in with Apple again and choose Share My Email; or ask for an invitation to the hidden address (Settings → Account shows it).",
       notRecorded: "Your home accepted this device, but your account could not be added to it. Ask for a new invitation.",
+      refused: "The home’s owner did not let this account join. Sign in with the account the invitation was sent to, or ask for an invitation to this account’s email.",
+      expiredWaiting: "The invitation expired before the home’s owner approved it. Ask for a new one.",
+      tooManyRequests: "Too many accounts are already waiting for the home’s owner. Ask for an invitation to this account’s email instead.",
     },
   },
   // Admins only: a newer DirectorLink release. Composer's menu names stay as Composer shows them.
@@ -914,6 +1010,7 @@ export default {
       name: "Name",
       providers: "Signs in with",
       addProvider: "Also sign in with {provider}",
+      addAppleHelp: "Continue with Apple adds Apple as another way to sign in to this account.",
       removeProvider: "Stop signing in with {provider}",
       removeProviderConfirm: "Stop signing in to this account with {provider}? The other way to sign in stays.",
       provider: { google: "Google", apple: "Apple" },
@@ -967,7 +1064,7 @@ export default {
         failed: "Sign-in didn’t work. Try again.",
         unverified: "This account has no verified email address.",
         linked: "Added. This account now also signs in with it.",
-        taken: "That sign-in already belongs to another DirectorLink account. Delete that account first, or keep them separate.",
+        taken: "That sign-in already belongs to another DirectorLink account: sign out and sign in with it to reach that one. To add it here, delete that account first.",
         duplicate: "This account already has a sign-in with that provider.",
         removed: "Done. This account no longer signs in that way.",
         removeFailed: "That could not be changed. Try again.",

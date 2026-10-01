@@ -81,7 +81,11 @@ PAIRING_PROBLEMS = (
     "PAIRING_RATE_LIMITED",
     "KEY_LIMIT_REACHED",
     "PAIRING_UNAVAILABLE",
+    "PAIRING_SESSION_EXPIRED",
 )
+# Modules the console shares with the app byte for byte: the API client, and pairing without
+# sending the code (CPace, ADR-039) with the lock that opens its answer.
+SHARED_WITH_APP = ("api-client.js", "js/cpace.js", "js/lock.js")
 
 
 def fail(message):
@@ -300,9 +304,10 @@ def check_console():
     if (CONSOLE / "sw.js").exists() or (CONSOLE / "manifest.webmanifest").exists():
         fail("the console is not a PWA: no service worker or manifest")
 
-    client = (CONSOLE / "api-client.js").read_bytes()
-    if client != (APP / "api-client.js").read_bytes():
-        fail("console/api-client.js must be an exact copy of app/api-client.js (cp app/api-client.js console/)")
+    for shared in SHARED_WITH_APP:
+        copy = CONSOLE / shared
+        if not copy.is_file() or copy.read_bytes() != (APP / shared).read_bytes():
+            fail(f"console/{shared} must be an exact copy of app/{shared} (cp app/{shared} console/{shared})")
 
     headers = (CONSOLE / "_headers").read_text(encoding="utf-8")
     csp = next(line for line in headers.splitlines() if "Content-Security-Policy" in line)
@@ -332,7 +337,17 @@ def check_console():
         ("formatPairingCode(", "the console must show the code as 1234 5678 while typing"),
         ('export const CLIENT_NAME = "DirectorLink Console"', "the console's key name is DirectorLink Console"),
         ('"/v1/auth/pair"', "the console must pair with a code from Composer"),
-        ('pairing_code: pairingCode', "pairing must send the (normalized) code in the JSON body"),
+        ('pairing_code: pairingCode', "pairing the old way must send the (normalized) code in the JSON body"),
+        # 1.3.0 (ADR-039, ADR-040): the code is never sent, unless Pair anyway was chosen after the
+        # warning, and the console's own key lasts a day.
+        ("await pairWithCpace(post, { code: pairingCode, name: CLIENT_NAME, expiresIn: KEY_SECONDS })",
+         "the console must pair without sending the code (CPace), for a key that lasts a day"),
+        ('if (error?.code !== "CPACE_UNSUPPORTED") throw error;', "an older DirectorLink must get no code until Pair anyway"),
+        ("anyway\n        ? await pairSendingCode(", "only Pair anyway may send the code"),
+        ("export const KEY_SECONDS = 24 * 60 * 60;", "the console's key must last a day"),
+        ('handleUnauthorized(refusedText(result.data?.code))', "an expired key must say so and send the console back to pairing"),
+        ('code === "KEY_EXPIRED" || (Number.isFinite(at) && Date.now() >= at - CLOCK_SLACK_MS) ? EXPIRED_TEXT',
+         "a key refused after its expiry (removed meanwhile) must be called expired too"),
         ('"/v1/api-keys/current"', "the console must read (and revoke) its own key"),
         ('"/v1/api-keys"', "the Keys tab must list and create keys"),
         ("/v1/logs?", "the Logs tab must follow the log"),
@@ -349,6 +364,12 @@ def check_console():
     for problem in PAIRING_PROBLEMS:
         require(code, f'"{problem}"', f"the console must explain the pairing problem {problem}")
     html = (CONSOLE / "index.html").read_text(encoding="utf-8")
+    for fragment, message in (
+        ("This key travels unprotected on your network: use the console only on a network you trust.",
+         "the console must warn that its key travels unprotected"),
+        ('id="pair-anyway-button"', "the warning about an older DirectorLink needs Pair anyway"),
+    ):
+        require(re.sub(r"\s+", " ", html), fragment, message)
     field = re.search(r'<input[^>]*id="pair-code"[^>]*>', html)
     for attribute in ('inputmode="numeric"', 'autocomplete="one-time-code"', 'placeholder="1234 5678"', 'dir="ltr"'):
         if not field or attribute not in field.group(0):

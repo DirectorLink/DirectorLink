@@ -54,6 +54,7 @@ function tests.health_and_api_description_are_public()
     local mock = Mock.startDriver()
     local health = T.http(mock, "GET", "/v1/health")
     T.eq(health.status, 200)
+    T.eq(health.json.product, "directorlink")
     T.eq(health.json.status, "ok")
     T.eq(health.json.api_version, "1")
     T.truthy(isNull(health.json.detail), "detail is null when ok")
@@ -1001,6 +1002,26 @@ function tests.only_the_controllers_address_is_accepted_as_host()
     for _, host in ipairs({ "evil.com.", "1.2.3.4.nip.io", "director.local..", "[evil.com]", "user@director.local", "controller.myhome.net" }) do
         T.eq(T.http(mock, "GET", "/v1/health", { host = host }).status, 421, host)
     end
+end
+
+-- The app's Find my controller asks GET /v1/health, without a key, at the addresses homes use
+-- most: the Host is whichever address it tried, and the page is the app.
+function tests.find_my_controller_health_answers_the_app_at_any_lan_address()
+    local mock = Mock.startDriver()
+    local app = "https://app.directorlink.io"
+    for _, host in ipairs({ "192.168.1.201:41999", "192.168.0.7:41999", "10.0.0.5:41999", "172.16.0.9:41999", "192.168.50.20:41999" }) do
+        local health = T.http(mock, "GET", "/v1/health", { host = host, headers = { Origin = app } })
+        T.eq(health.status, 200, host)
+        T.eq(health.headers["access-control-allow-origin"], app, host)
+        T.eq(health.json.product, "directorlink", host)
+        T.eq(type(health.json.version), "string", host)
+    end
+    -- Chromium before Local Network Access asks first (a Private Network Access preflight).
+    local preflight = T.http(mock, "OPTIONS", "/v1/health", { host = "10.0.0.5:41999", headers = {
+        Origin = app, ["Access-Control-Request-Method"] = "GET", ["Access-Control-Request-Private-Network"] = "true" } })
+    T.eq(preflight.status, 204)
+    T.eq(preflight.headers["access-control-allow-origin"], app)
+    T.eq(preflight.headers["access-control-allow-private-network"], "true")
 end
 
 function tests.unknown_routes_and_methods()

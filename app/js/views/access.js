@@ -1,12 +1,14 @@
 // People and devices (#/access, admin keys): the home's API keys with their roles, the invitations
 // waiting to be accepted, and, for the home's owner, the accounts that belong to the home with the
-// devices each uses (docs/ACCOUNTS.md). Devices and invitations come from the controller; people
-// from the account service, which never sees the keys, only their ids.
+// devices each uses, and those asking to join with an invitation made for another email, which
+// the owner approves or refuses (docs/ACCOUNTS.md, ADR-041). Devices and invitations come from the
+// controller; people and requests from the account service, which never sees the keys, only their
+// ids.
 
 import { h } from "../dom.js";
-import { formatDateTime, formatRelative, t } from "../i18n.js";
+import { formatDateTime, formatRelative, formatUntil, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { listMembers, removeMember, savedRemote } from "../remote.js";
+import { decideJoinRequest, joinCodeText, listJoinRequests, listMembers, removeMember, savedRemote } from "../remote.js";
 import { api, errorText, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
@@ -24,7 +26,7 @@ function failure(error) {
 async function fetchAccess() {
   const home = savedRemote()?.home || state.remoteInfo?.home_id || null;
   const accountStatus = state.account.status;
-  const [devices, invitations, people, profiles] = await Promise.all([
+  const [devices, invitations, people, profiles, requests] = await Promise.all([
     api("/v1/api-keys").then((answer) => answer?.items || [], failure),
     // Drivers before 0.10.0 have no invitations.
     api("/v1/invitations").then((answer) => answer?.items || [], (error) => (error?.status === 404 || error?.status === 405 ? [] : failure(error))),
@@ -37,8 +39,15 @@ async function fetchAccess() {
       : Promise.resolve(null),
     // The profiles (persons) keys belong to; drivers before 0.12.0 have none.
     api("/v1/profiles").then((answer) => answer?.items || [], () => null),
+    // Only the home's owner answers requests to join (an account service before 1.3.0 has none).
+    home && accountStatus === "signed-in"
+      ? listJoinRequests(home).then(
+          (answer) => answer?.items || [],
+          (error) => (["OWNER_ONLY", "NOT_A_MEMBER", "NOT_FOUND"].includes(error?.code) ? null : failure(error))
+        )
+      : Promise.resolve(null),
   ]);
-  ui.access = { ...(ui.access || {}), at: Date.now(), home, accountStatus, devices, invitations, people, profiles };
+  ui.access = { ...(ui.access || {}), at: Date.now(), home, accountStatus, devices, invitations, people, profiles, requests };
   notify();
 }
 
@@ -155,11 +164,76 @@ function removePerson(person, devices) {
   }, t("access.removed", { name }));
 }
 
+// The owner lets an account join with an invitation made for another email, or refuses it. The
+// code shown to the person asking is the proof: someone else with the link sees another one.
+function answerRequest(request, decision) {
+  const name = request.name || request.email || t("access.requestNoName");
+  const code = joinCodeText(request.code);
+  const question = decision === "approve" ? t("access.approveConfirm", { name, code }) : t("access.refuseConfirm", { name });
+  if (ui.access.busy || !window.confirm(question)) return;
+  act(() => decideJoinRequest(ui.access.home, request.id, decision), decision === "approve" ? t("access.approvedDone", { name }) : t("access.refusedDone", { name }));
+}
+
+// Everything the owner has to tell the person they invited from someone else holding the link:
+// the name (not checked by anyone), the email or that Apple hides it, how the account signs in and
+// how new it is, when it asked, for which invitation, and the code to compare.
+function requestRow(request, invitations, devices) {
+  const name = request.name || t("access.requestNoName");
+  const busy = Boolean(ui.access.busy);
+  const atHome = invitations.find((invitation) => invitation.id === request.invitation.id);
+  // The controller's list was read and the invitation is not in it: revoked (or used) at home.
+  const gone = Array.isArray(ui.access.invitations) && !atHome;
+  const maker = atHome ? devices.find((device) => device.id === atHome.created_by)?.name : null;
+  const providers = (request.providers || []).map((provider) => t(`settings.account.provider.${provider}`)).join(", ");
+  const facts = [
+    request.email_hidden ? t("access.emailHidden") : request.email,
+    providers ? t("access.signsInWith", { providers }) : null,
+    t("access.accountMade", { time: formatRelative(request.account_created_at) }),
+    t("access.asked", { time: formatRelative(request.requested_at) }),
+  ];
+  const invitation = [
+    t("access.requestFor", { email: request.invitation.email }),
+    atHome ? roleLabel(atHome.role) : null,
+    maker ? t("access.madeBy", { name: maker }) : null,
+    t("access.expires", { time: formatDateTime(new Date(request.invitation.expires_at)) }),
+  ];
+  return h(
+    "li",
+    { class: "access-item access-request", dataset: { key: `access-request-${request.id}` } },
+    h(
+      "div",
+      { class: "access-main" },
+      h("span", { class: "access-name", dir: "auto" }, name, request.status === "approved" ? h("span", { class: "access-badge" }, t("access.approvedBadge")) : null),
+      h("span", { class: "access-sub", dir: "auto" }, facts.filter(Boolean).join(" · ")),
+      h("span", { class: "access-sub", dir: "auto" }, invitation.filter(Boolean).join(" · ")),
+      h("span", { class: "access-code" }, t("access.requestCode"), " ", h("strong", { dir: "ltr", dataset: { key: `access-request-code-${request.id}` } }, joinCodeText(request.code))),
+      gone ? h("span", { class: "access-sub" }, t("access.requestInvitationGone")) : null,
+      request.status === "approved" ? h("span", { class: "access-sub" }, t("access.approvedWaiting")) : null
+    ),
+    h(
+      "div",
+      { class: "access-actions" },
+      request.status === "pending"
+        ? h(
+            "button",
+            { type: "button", class: "button button-small button-primary", disabled: busy || gone, "aria-label": t("access.approveFor", { name }), dataset: { key: `access-approve-${request.id}` }, onclick: () => answerRequest(request, "approve") },
+            t("access.approve")
+          )
+        : null,
+      h(
+        "button",
+        { type: "button", class: "button button-small button-danger", disabled: busy, "aria-label": t("access.refuseFor", { name }), dataset: { key: `access-refuse-${request.id}` }, onclick: () => answerRequest(request, "refuse") },
+        request.status === "approved" ? t("access.withdrawApproval") : t("access.refuse")
+      )
+    )
+  );
+}
+
 function section(id, title, help, content) {
   return h(
     "section",
     { class: "card settings-card", id: `access-${id}`, "aria-labelledby": `access-${id}-title` },
-    h("h2", { class: "settings-title", id: `access-${id}-title` }, icon(id === "people" ? "user" : id === "devices" ? "key" : "plus"), title),
+    h("h2", { class: "settings-title", id: `access-${id}-title` }, icon(id === "people" || id === "requests" ? "user" : id === "devices" ? "key" : "plus"), title),
     help ? h("p", { class: "field-help" }, help) : null,
     content
   );
@@ -171,6 +245,12 @@ function problemNote(value) {
 
 function lastUsed(device) {
   return device.last_used_at ? t("access.lastUsed", { time: formatRelative(device.last_used_at) }) : t("access.neverUsed");
+}
+
+// A key that expires (ADR-040: the API console's lasts a day).
+export function expiry(device, now = Date.now()) {
+  if (!device.expires_at) return null;
+  return Date.parse(device.expires_at) > now ? t("access.keyExpires", { time: formatUntil(device.expires_at, now) }) : t("access.keyExpired");
 }
 
 // The person (profile) a device belongs to, and a way to move it to another one.
@@ -215,7 +295,7 @@ function deviceRow(device, owners, profiles) {
       "div",
       { class: "access-main" },
       h("span", { class: "access-name", dir: "auto" }, device.name, device.current ? h("span", { class: "access-badge" }, t("access.thisDevice")) : null),
-      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device)].filter(Boolean).join(" · ")),
+      h("span", { class: "access-sub", dir: "auto" }, [account, lastUsed(device), expiry(device)].filter(Boolean).join(" · ")),
       personPicker(device, profiles)
     ),
     h(
@@ -311,6 +391,7 @@ export function accessView() {
     }
   }
   const invitations = Array.isArray(access.invitations) ? access.invitations : [];
+  const requests = Array.isArray(access.requests) ? access.requests : [];
   return [
     header,
     offlineBanner(),
@@ -318,6 +399,10 @@ export function accessView() {
       "div",
       { class: "settings" },
       access.message ? h("p", { class: `notice notice-${access.message.kind}`, role: access.message.kind === "error" ? "alert" : "status" }, access.message.text) : null,
+      // Shown first, and only when someone is asking.
+      requests.length
+        ? section("requests", t("access.requests"), t("access.requestsHelp"), h("ul", { class: "access-list" }, requests.map((request) => requestRow(request, invitations, devices))))
+        : problemNote(access.requests),
       people
         ? section("people", t("access.people"), t("access.peopleHelp"), h("ul", { class: "access-list" }, people.map((person) => personRow(person, devices))))
         : access.home && state.account.status === "signed-in"

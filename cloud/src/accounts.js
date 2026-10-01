@@ -1,5 +1,6 @@
 // Accounts (docs/ACCOUNTS.md): sign in with Google or Apple, the session, and deleting the account.
 //
+//   GET    /auth/providers                                   the sign-ins set up on this server
 //   GET    /auth/{google|apple}/start?return_to=<app URL>[&link=1]   → the provider, then back
 //   GET    /auth/google/callback                             (Google redirects here)
 //   POST   /auth/apple/callback                              (Apple posts its form here)
@@ -87,6 +88,13 @@ function cors(request, env) {
   return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true", Vary: "Origin" };
 }
 
+// The providers set up here (their settings and secrets exist): the app shows only their buttons.
+export function configuredProviders(env) {
+  return Object.values(PROVIDERS)
+    .filter((provider) => provider.configured(env))
+    .map((provider) => provider.name);
+}
+
 function withHeaders(response, headers) {
   for (const [name, value] of Object.entries(headers ?? {})) {
     response.headers.set(name, value);
@@ -148,7 +156,9 @@ async function accountFor(env, provider, person) {
   let identity = await find();
   if (!identity) {
     // An account made before identities existed (by the previous Worker while an update rolled
-    // out) gets its identity now.
+    // out) gets its identity now; so does one whose only sign-in, the Apple ID it began with, Apple
+    // said was no longer used for DirectorLink (apple-notifications.js): the same Apple ID gets it
+    // back.
     const legacy = await env.DB.prepare("SELECT id FROM users WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
     if (legacy) {
       await env.DB.prepare("INSERT OR IGNORE INTO identities (provider, subject, user_id, email, created_at, last_sign_in_at) VALUES (?, ?, ?, ?, ?, ?)")
@@ -189,14 +199,24 @@ async function accountFor(env, provider, person) {
   return { userId, created: true };
 }
 
+// Another account that began with this sign-in, which it no longer has (Apple said the person
+// stopped using it for DirectorLink, apple-notifications.js): signing in with it gets that account
+// back (accountFor), so it is not free to add to another.
+function heldElsewhere(env, provider, person, userId) {
+  return env.DB.prepare("SELECT id FROM users WHERE provider = ? AND subject = ? AND id <> ?").bind(provider, person.subject, userId).first();
+}
+
 // Adds an identity to the signed-in account that asked for it (link=1). Returns the outcome for
-// the app: linked, taken (another account signs in with it) or duplicate (this account already
-// has one from this provider).
+// the app: linked, taken (another account signs in with it, or began with it) or duplicate (this
+// account already has one from this provider).
 async function linkIdentity(env, provider, person, userId) {
   const now = iso(Date.now());
   const owner = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
   if (owner) {
     return owner.user_id === userId ? "linked" : "taken";
+  }
+  if (await heldElsewhere(env, provider, person, userId)) {
+    return "taken";
   }
   const account = await env.DB.prepare(
     "SELECT users.id AS id, (SELECT COUNT(*) FROM identities WHERE user_id = users.id AND provider = ?) AS same FROM users WHERE users.id = ?"
@@ -218,6 +238,9 @@ async function linkIdentity(env, provider, person, userId) {
     const now_owner = await env.DB.prepare("SELECT user_id FROM identities WHERE provider = ? AND subject = ?").bind(provider, person.subject).first();
     if (now_owner) {
       return now_owner.user_id === userId ? "linked" : "taken";
+    }
+    if (await heldElsewhere(env, provider, person, userId)) {
+      return "taken";
     }
     if (await env.DB.prepare("SELECT 1 AS found FROM identities WHERE user_id = ? AND provider = ?").bind(userId, provider).first()) {
       return "duplicate";
@@ -319,6 +342,87 @@ export async function currentUser(request, env) {
   return { id: row.id, email: row.email, name: row.name, created_at: row.created_at, token };
 }
 
+// Invitations for this account's email that no other account can accept (they stay while one can).
+function forgetInvitationsFor(env, user, where, ...values) {
+  if (!user.email) {
+    return forgetInvitations(env, where, ...values);
+  }
+  return forgetInvitations(
+    env,
+    `${where} OR (email = ? AND NOT EXISTS (SELECT 1 FROM users WHERE email = ? AND id <> ?) AND NOT EXISTS (SELECT 1 FROM identities WHERE email = ? AND user_id <> ?))`,
+    ...values,
+    user.email,
+    user.email,
+    user.id,
+    user.email,
+    user.id
+  );
+}
+
+// Everything an account is (Delete account, and an account nobody can sign in to any more).
+function accountDeletion(env, user) {
+  return [
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
+    // Its requests to join homes, and those waiting for it to decide (ADR-041).
+    env.DB.prepare("DELETE FROM join_requests WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
+    env.DB.prepare("DELETE FROM invitations WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
+    env.DB.prepare("DELETE FROM member_keys WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
+    env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
+    env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
+    ...forgetInvitationsFor(env, user, "accepted_by = ? OR created_by = ?", user.id, user.id),
+    env.DB.prepare("DELETE FROM identities WHERE user_id = ?").bind(user.id),
+    env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
+  ];
+}
+
+// An account left without any way to sign in (ADR-041: Apple's account-deleted, or no sign-in for
+// UNUSED_DAYS after Apple's consent-revoked) keeps nothing of the person. Without a home it is
+// deleted, as Delete account does. One that owns a home stays, so the home and its family keep
+// working (it can be claimed again at home, ADR-027), but without the person's name and email, and
+// outside the homes of others. Returns what was done, for the log; "kept" if it signs in again.
+export async function forgetAccountWithoutSignIn(env, userId) {
+  const user = await env.DB.prepare("SELECT id, email FROM users WHERE id = ? AND NOT EXISTS (SELECT 1 FROM identities WHERE user_id = users.id)").bind(userId).first();
+  if (!user) {
+    return "kept";
+  }
+  if (!(await env.DB.prepare("SELECT 1 AS found FROM homes WHERE owner_id = ?").bind(userId).first())) {
+    await env.DB.batch(accountDeletion(env, user));
+    return "account_deleted";
+  }
+  const others = "home_id NOT IN (SELECT id FROM homes WHERE owner_id = ?)";
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+    env.DB.prepare("DELETE FROM join_requests WHERE user_id = ?").bind(userId),
+    env.DB.prepare(`DELETE FROM member_keys WHERE user_id = ? AND ${others}`).bind(userId, userId),
+    env.DB.prepare(`DELETE FROM members WHERE user_id = ? AND ${others}`).bind(userId, userId),
+    ...forgetInvitationsFor(env, user, "accepted_by = ?", userId),
+    env.DB.prepare("UPDATE users SET email = '', name = NULL WHERE id = ?").bind(userId),
+  ]);
+  return "account_emptied";
+}
+
+// Daily (cron): accounts nobody can sign in to (Apple's consent-revoked took their only sign-in)
+// and nobody signed in to for UNUSED_DAYS: until then the same Apple ID gets its account back.
+const UNUSED_DAYS = 90;
+
+export async function purgeAccountsWithoutSignIn(env) {
+  const days = Number(env.UNUSED_ACCOUNT_DAYS ?? UNUSED_DAYS);
+  const before = iso(Date.now() - (Number.isFinite(days) && days >= 0 ? days : UNUSED_DAYS) * 24 * 3600 * 1000);
+  const { results } = await env.DB.prepare(
+    "SELECT id FROM users WHERE last_sign_in_at < ? AND NOT EXISTS (SELECT 1 FROM identities WHERE user_id = users.id) " +
+      "AND (email <> '' OR name IS NOT NULL OR NOT EXISTS (SELECT 1 FROM homes WHERE owner_id = users.id)) LIMIT 100"
+  )
+    .bind(before)
+    .all();
+  const done = { account_deleted: 0, account_emptied: 0 };
+  for (const row of results) {
+    const outcome = await forgetAccountWithoutSignIn(env, row.id);
+    if (outcome in done) done[outcome] += 1;
+  }
+  log("accounts_without_sign_in_purged", { deleted: done.account_deleted, emptied: done.account_emptied });
+}
+
 function notSignedIn() {
   return problem(401, "NOT_SIGNED_IN", "Sign in first", { "WWW-Authenticate": 'Cookie realm="DirectorLink"' });
 }
@@ -332,35 +436,18 @@ async function me(request, env, headers) {
       return withHeaders(notSignedIn(), headers);
     }
     const { results } = await env.DB.prepare("SELECT provider FROM identities WHERE user_id = ? ORDER BY created_at").bind(user.id).all();
-    return json({ id: user.id, email: user.email, name: user.name, created_at: user.created_at, providers: results.map((row) => row.provider) }, 200, headers);
+    return json(
+      { id: user.id, email: user.email, name: user.name, created_at: user.created_at, providers: results.map((row) => row.provider), sign_in_providers: configuredProviders(env) },
+      200,
+      headers
+    );
   }
   if (request.method === "DELETE") {
     const user = await currentUser(request, env);
     if (!user) {
       return withHeaders(notSignedIn(), headers);
     }
-    await env.DB.batch([
-      env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
-      env.DB.prepare("DELETE FROM invitations WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
-      env.DB.prepare("DELETE FROM member_keys WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
-      env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
-      env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
-      env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
-      // Invitations for this email stay while another account can still accept them.
-      ...forgetInvitations(
-        env,
-        "accepted_by = ? OR created_by = ? OR (email = ? AND NOT EXISTS (SELECT 1 FROM users WHERE email = ? AND id <> ?) AND NOT EXISTS (SELECT 1 FROM identities WHERE email = ? AND user_id <> ?))",
-        user.id,
-        user.id,
-        user.email,
-        user.email,
-        user.id,
-        user.email,
-        user.id
-      ),
-      env.DB.prepare("DELETE FROM identities WHERE user_id = ?").bind(user.id),
-      env.DB.prepare("DELETE FROM users WHERE id = ?").bind(user.id),
-    ]);
+    await env.DB.batch(accountDeletion(env, user));
     console.log(JSON.stringify({ event: "account_deleted", user: user.id }));
     return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });
   }
@@ -385,11 +472,18 @@ async function removeIdentity(request, env, headers, provider) {
   if (!kept) {
     return withHeaders(problem(409, "LAST_SIGN_IN", "An account keeps at least one way to sign in; delete the account instead"), headers);
   }
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider = ?").bind(user.id, provider),
-    // The account's email then follows the provider it keeps.
-    env.DB.prepare("UPDATE users SET provider = ?, subject = ? WHERE id = ? AND provider = ? AND subject = ?").bind(kept.provider, kept.subject, user.id, removed.provider, removed.subject),
-  ]);
+  try {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM identities WHERE user_id = ? AND provider = ?").bind(user.id, provider),
+      // The account's email then follows the provider it keeps.
+      env.DB.prepare("UPDATE users SET provider = ?, subject = ? WHERE id = ? AND provider = ? AND subject = ?").bind(kept.provider, kept.subject, user.id, removed.provider, removed.subject),
+    ]);
+  } catch (error) {
+    // Another account still records the sign-in this one keeps as the one it began with (linked
+    // before linkIdentity checked for that). The batch changed nothing.
+    log("identity_not_removed", { provider, user: user.id, error: String(error?.message ?? error) });
+    return withHeaders(problem(409, "SIGN_IN_HELD_ELSEWHERE", "Another DirectorLink account began with the sign-in this one would keep; nothing was changed"), headers);
+  }
   console.log(JSON.stringify({ event: "identity_removed", provider, user: user.id }));
   return new Response(null, { status: 204, headers: { ...headers, "Cache-Control": "no-store" } });
 }
@@ -424,6 +518,17 @@ async function logout(request, env, headers) {
 // Routes this module answers; null for any other path.
 export async function handleAccounts(request, env) {
   const path = new URL(request.url).pathname;
+  if (path === "/auth/providers") {
+    // Asked by the app, without cookies, only when someone chooses to sign in (or is signed in).
+    if (request.method !== "GET" && request.method !== "OPTIONS") {
+      return methodNotAllowed();
+    }
+    const headers = cors(request, env);
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: { ...(headers ?? {}), "Access-Control-Allow-Methods": "GET", "Access-Control-Max-Age": "600" } });
+    }
+    return json({ providers: configuredProviders(env) }, 200, headers ? { "Access-Control-Allow-Origin": headers["Access-Control-Allow-Origin"], Vary: "Origin" } : {});
+  }
   const auth = /^\/auth\/(google|apple)\/(start|callback)$/.exec(path);
   if (auth) {
     const provider = PROVIDERS[auth[1]];

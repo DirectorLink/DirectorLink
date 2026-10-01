@@ -9,13 +9,17 @@
 //   POST   /v1/homes/{home_id}/invitations          { invitation_id, email, expires_at }
 //   GET    /v1/homes/{home_id}/members              who belongs to the home, with their key ids (the owner only)
 //   DELETE /v1/homes/{home_id}/members/{user_id}    the owner removes someone; anyone may leave
-//   POST   /v1/join                                 { home_id, invitation_id, envelope }: accept an invitation
+//   POST   /v1/join                                 { home_id, invitation_id, envelope[, ask_owner] }: accept an invitation
+//   GET    /v1/join/{home_id}/{invitation_id}       this account's request to join with it (another email)
+//   DELETE /v1/join/{home_id}/{invitation_id}       withdraws that request
+//   GET    /v1/homes/{home_id}/join-requests        requests waiting for the owner (the owner only)
+//   POST   /v1/homes/{home_id}/join-requests/{id}   { decision: approve | refuse } (the owner only)
 //
 // All need the session cookie; they answer CORS with credentials only for the app's origins, and
 // refuse changes from any other origin.
 
 import { appOrigins, currentUser } from "./accounts.js";
-import { json, problem, readText } from "./http.js";
+import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 import { validKeyId } from "./member-keys.js";
 
@@ -39,6 +43,16 @@ const MAX_PENDING_PER_MEMBER = 20;
 // Pending invitations a controller may have registered for its home (it keeps at most 20 itself).
 const MAX_PENDING_PER_HOME = 20;
 const SECRET_SHA256 = /^[0-9a-f]{64}$/;
+
+// Requests to join with an invitation made for another email (ADR-041): a few open per invitation
+// (waiting or approved; a refusal still stops the account it refused), and at most 20 waiting for a
+// home's owner on invitations that can still be accepted.
+const MAX_REQUESTS_PER_INVITATION = 5;
+const MAX_WAITING_REQUESTS_PER_HOME = 20;
+// Apple's Hide My Email: an address that says nothing about who it is.
+const HIDDEN_EMAIL = /@privaterelay\.appleid\.com$/;
+// An invitation that can still be accepted (a tombstone has no email).
+const LIVE_INVITATION = "invitations.email <> '' AND invitations.accepted_by IS NULL AND invitations.expires_at > ?";
 
 // The driver's codes (driver/src/cloud/remote.lua) as HTTP answers.
 const CODES = {
@@ -342,6 +356,64 @@ async function registerInvitation(request, env, user, homeId) {
   return json({ invitation_id: input.invitation_id, email, expires_at: iso(expires) }, 201);
 }
 
+// Six digits the person asking sees, and the owner too, next to the request: the owner approves only
+// when the person they invited reads out the same code.
+function confirmationCode() {
+  const limit = 4294000000; // the largest multiple of 1,000,000 below 2^32: every code as likely
+  for (;;) {
+    const [value] = crypto.getRandomValues(new Uint32Array(1));
+    if (value < limit) {
+      return String(value % 1000000).padStart(6, "0");
+    }
+  }
+}
+
+function joinRequestAnswer(row, expiresAt) {
+  return { status: row.status, code: row.code, requested_at: row.requested_at, decided_at: row.decided_at ?? null, expires_at: expiresAt };
+}
+
+function invitationNotFound() {
+  return problem(404, "INVITATION_NOT_FOUND", "The invitation was used, revoked or has expired; ask for a new one");
+}
+
+function refusedJoin() {
+  return problem(403, "REFUSED_BY_OWNER", "The home's owner did not let this account join with this invitation");
+}
+
+// The signed-in account's invitation is for another email: the account asks the home's owner. Only
+// the invitation's id is needed here, not its secret, which the controller checks when the approved
+// account joins (with a new envelope: the controller accepts one only within 2 minutes).
+async function askOwner(env, user, homeId, invitationId, invitation) {
+  const now = iso();
+  const id = randomHex(16);
+  const code = confirmationCode();
+  const inserted = await env.DB.prepare(
+    "INSERT INTO join_requests (id, home_id, invitation_id, user_id, code, status, requested_at) SELECT ?, ?, ?, ?, ?, 'pending', ? " +
+      `WHERE EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND ${LIVE_INVITATION}) ` +
+      "AND (SELECT COUNT(*) FROM join_requests WHERE home_id = ? AND invitation_id = ? AND status IN ('pending', 'approved')) < ? " +
+      "AND (SELECT COUNT(*) FROM join_requests JOIN invitations ON invitations.home_id = join_requests.home_id AND invitations.id = join_requests.invitation_id " +
+      `WHERE join_requests.home_id = ? AND join_requests.status = 'pending' AND ${LIVE_INVITATION}) < ? ` +
+      "ON CONFLICT (home_id, invitation_id, user_id) DO NOTHING"
+  )
+    .bind(id, homeId, invitationId, user.id, code, now, homeId, invitationId, now, homeId, invitationId, MAX_REQUESTS_PER_INVITATION, homeId, now, MAX_WAITING_REQUESTS_PER_HOME)
+    .run();
+  if (!inserted.meta.changes) {
+    const asked = await env.DB.prepare("SELECT code, status, requested_at, decided_at FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ?")
+      .bind(homeId, invitationId, user.id)
+      .first();
+    if (asked) {
+      // The same account asking twice at once.
+      return asked.status === "refused" ? refusedJoin() : json(joinRequestAnswer(asked, invitation.expires_at), 202);
+    }
+    if (!(await env.DB.prepare(`SELECT 1 AS found FROM invitations WHERE home_id = ? AND id = ? AND ${LIVE_INVITATION}`).bind(homeId, invitationId, now).first())) {
+      return invitationNotFound();
+    }
+    return problem(429, "JOIN_REQUEST_LIMIT_REACHED", "Too many accounts are waiting for this home's owner; ask for an invitation to this account's email instead");
+  }
+  log("join_request_created", { home: homeId, user: user.id, invitation: invitationId, request: id });
+  return json({ status: "pending", code, requested_at: now, decided_at: null, expires_at: invitation.expires_at }, 202);
+}
+
 async function join(request, env, user) {
   const input = await body(request);
   const homeId = input?.home_id;
@@ -352,16 +424,31 @@ async function join(request, env, user) {
     .bind(homeId, input.invitation_id)
     .first();
   if (!invitation || !invitation.email || invitation.accepted_by || invitation.expires_at < iso()) {
-    return problem(404, "INVITATION_NOT_FOUND", "The invitation was used, revoked or has expired; ask for a new one");
+    return invitationNotFound();
   }
   // The account's email, or the email of one of its sign-ins (a Google address added to an account
   // made with Apple's Hide My Email, for instance).
   const mine =
     invitation.email === user.email ||
     Boolean(await env.DB.prepare("SELECT 1 AS found FROM identities WHERE user_id = ? AND email = ?").bind(user.id, invitation.email).first());
+  // Another email: only with the approval of the home's owner (ADR-041).
   if (!mine) {
-    log("join_email_mismatch", { home: homeId, user: user.id, invitation: input.invitation_id });
-    return problem(403, "EMAIL_MISMATCH", "This invitation is for another email address; sign in with that account, or ask for an invitation for this one");
+    const asked = await env.DB.prepare("SELECT code, status, requested_at, decided_at FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ?")
+      .bind(homeId, input.invitation_id, user.id)
+      .first();
+    if (!asked) {
+      if (input.ask_owner === true) {
+        return askOwner(env, user, homeId, input.invitation_id, invitation);
+      }
+      log("join_email_mismatch", { home: homeId, user: user.id, invitation: input.invitation_id });
+      return problem(403, "EMAIL_MISMATCH", "This invitation is for another email address; sign in with that account, or ask for an invitation for this one");
+    }
+    if (asked.status === "refused") {
+      return refusedJoin();
+    }
+    if (asked.status !== "approved") {
+      return json(joinRequestAnswer(asked, invitation.expires_at), 202);
+    }
   }
   const { reply, response } = await relay(env, homeId, { type: "join", invitation: input.invitation_id, envelope: cleanEnvelope(input.envelope) });
   if (response) {
@@ -372,29 +459,28 @@ async function join(request, env, user) {
     return driverProblem(reply.code ?? "INTERNAL");
   }
   // The controller has made the key; membership follows only while the invitation is still
-  // pending here (a change of owner meanwhile tombstones it), and the used invitation goes. The
-  // sealed answer goes back either way, with whether this account is now a member.
+  // pending here (a change of owner meanwhile tombstones it) and, for another email, still
+  // approved. The used invitation goes, with the requests to join with it. The sealed answer goes
+  // back with whether this account is now a member; for another email only if it is: an account
+  // the owner refused while the home made the key never gets it (the owner sees the new key in
+  // People and devices, and can remove it).
+  const decided = mine
+    ? null
+    : await env.DB.prepare("SELECT status FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ?").bind(homeId, input.invitation_id, user.id).first();
   const now = iso();
-  const pending = "EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)";
+  const pending =
+    "EXISTS (SELECT 1 FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL)" +
+    (mine ? "" : " AND EXISTS (SELECT 1 FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ? AND status = 'approved')");
+  const allowed = [homeId, input.invitation_id, invitation.email, ...(mine ? [] : [homeId, input.invitation_id, user.id])];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       await env.DB.batch([
-        env.DB.prepare(`INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE ${pending}`).bind(
-          homeId,
-          user.id,
-          now,
-          homeId,
-          input.invitation_id,
-          invitation.email
-        ),
+        env.DB.prepare(`INSERT OR IGNORE INTO members (home_id, user_id, added_at) SELECT ?, ?, ? WHERE ${pending}`).bind(homeId, user.id, now, ...allowed),
         // The new key is this account's (revoking it at home ends the membership).
         ...(validKeyId(reply.key_id)
-          ? [
-              env.DB.prepare(
-                `INSERT OR IGNORE INTO member_keys (home_id, key_id, user_id, added_at) SELECT ?, ?, ?, ? WHERE ${pending}`
-              ).bind(homeId, reply.key_id, user.id, now, homeId, input.invitation_id, invitation.email),
-            ]
+          ? [env.DB.prepare(`INSERT OR IGNORE INTO member_keys (home_id, key_id, user_id, added_at) SELECT ?, ?, ?, ? WHERE ${pending}`).bind(homeId, reply.key_id, user.id, now, ...allowed)]
           : []),
+        env.DB.prepare("DELETE FROM join_requests WHERE home_id = ? AND invitation_id = ?").bind(homeId, input.invitation_id),
         env.DB.prepare("DELETE FROM invitations WHERE home_id = ? AND id = ? AND email = ? AND accepted_by IS NULL").bind(homeId, input.invitation_id, invitation.email),
       ]);
       break;
@@ -403,8 +489,118 @@ async function join(request, env, user) {
     }
   }
   const joined = Boolean(await member(env, homeId, user.id).catch(() => null));
-  log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined });
+  if (!mine && !joined) {
+    log("join_key_withheld", { home: homeId, user: user.id, invitation: input.invitation_id, request: decided?.status ?? null, key_id: validKeyId(reply.key_id) ? reply.key_id : null });
+    return decided?.status === "refused" ? refusedJoin() : invitationNotFound();
+  }
+  log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined, approved: !mine });
   return json({ home_id: homeId, envelope: reply.envelope, member: joined });
+}
+
+// The signed-in account's request to join with an invitation: the app asks every few seconds while
+// the person waits. `expired`: the invitation ran out before the owner approved it.
+async function myJoinRequest(env, user, homeId, invitationId) {
+  const row = await env.DB.prepare(
+    "SELECT join_requests.code AS code, join_requests.status AS status, join_requests.requested_at AS requested_at, join_requests.decided_at AS decided_at, " +
+      "invitations.email AS email, invitations.accepted_by AS accepted_by, invitations.expires_at AS expires_at " +
+      "FROM join_requests JOIN invitations ON invitations.home_id = join_requests.home_id AND invitations.id = join_requests.invitation_id " +
+      "WHERE join_requests.home_id = ? AND join_requests.invitation_id = ? AND join_requests.user_id = ?"
+  )
+    .bind(homeId, invitationId, user.id)
+    .first();
+  if (!row) {
+    const live = await env.DB.prepare(`SELECT 1 AS found FROM invitations WHERE home_id = ? AND id = ? AND ${LIVE_INVITATION}`).bind(homeId, invitationId, iso()).first();
+    return live ? problem(404, "NOT_FOUND", "This account has not asked to join with this invitation") : invitationNotFound();
+  }
+  if (!row.email || row.accepted_by) {
+    return invitationNotFound();
+  }
+  const status = row.status !== "refused" && row.expires_at < iso() ? "expired" : row.status;
+  return json({ ...joinRequestAnswer(row, row.expires_at), status });
+}
+
+// The person asking changes their mind (a refusal stays: it is the owner's answer).
+async function withdrawJoinRequest(env, user, homeId, invitationId) {
+  const { meta } = await env.DB.prepare("DELETE FROM join_requests WHERE home_id = ? AND invitation_id = ? AND user_id = ? AND status <> 'refused'")
+    .bind(homeId, invitationId, user.id)
+    .run();
+  if (!meta.changes) {
+    return problem(404, "NOT_FOUND", "This account has no request to withdraw for this invitation");
+  }
+  log("join_request_withdrawn", { home: homeId, user: user.id, invitation: invitationId });
+  return new Response(null, { status: 204 });
+}
+
+async function ownerOnly(env, user, homeId) {
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  return home && home.owner_id === user.id ? null : problem(403, "OWNER_ONLY", "Only the home's owner sees and answers requests to join it");
+}
+
+// What the owner needs to tell the person they invited from a stranger with their link: who the
+// account says it is (nobody checks the name), how it signs in, its email unless Apple hides it,
+// how old it is, when it asked, for which invitation, and the code to compare.
+async function listJoinRequests(env, user, homeId) {
+  const refused = await ownerOnly(env, user, homeId);
+  if (refused) {
+    return refused;
+  }
+  const [{ results }, { results: identities }] = await env.DB.batch([
+    env.DB.prepare(
+      "SELECT join_requests.id AS id, join_requests.user_id AS user_id, join_requests.code AS code, join_requests.status AS status, " +
+        "join_requests.requested_at AS requested_at, join_requests.decided_at AS decided_at, join_requests.invitation_id AS invitation_id, " +
+        "invitations.email AS invitation_email, invitations.expires_at AS expires_at, users.name AS name, users.email AS email, users.created_at AS account_created_at " +
+        "FROM join_requests JOIN invitations ON invitations.home_id = join_requests.home_id AND invitations.id = join_requests.invitation_id " +
+        "JOIN users ON users.id = join_requests.user_id " +
+        `WHERE join_requests.home_id = ? AND join_requests.status IN ('pending', 'approved') AND ${LIVE_INVITATION} ORDER BY join_requests.requested_at`
+    ).bind(homeId, iso()),
+    env.DB.prepare("SELECT user_id, provider FROM identities WHERE user_id IN (SELECT user_id FROM join_requests WHERE home_id = ?) ORDER BY created_at").bind(homeId),
+  ]);
+  return json({
+    items: results.map((row) => {
+      const hidden = HIDDEN_EMAIL.test(row.email ?? "");
+      return {
+        id: row.id,
+        user_id: row.user_id,
+        name: row.name ?? null,
+        email: hidden ? null : row.email,
+        email_hidden: hidden,
+        providers: identities.filter((identity) => identity.user_id === row.user_id).map((identity) => identity.provider),
+        account_created_at: row.account_created_at,
+        requested_at: row.requested_at,
+        status: row.status,
+        decided_at: row.decided_at ?? null,
+        code: row.code,
+        invitation: { id: row.invitation_id, email: row.invitation_email, expires_at: row.expires_at },
+      };
+    }),
+  });
+}
+
+// The owner approves (the account may then join with the invitation, once) or refuses. Either can
+// be changed while the invitation lasts and nobody has used it.
+async function decideJoinRequest(request, env, user, homeId, requestId) {
+  const refused = await ownerOnly(env, user, homeId);
+  if (refused) {
+    return refused;
+  }
+  const input = await body(request);
+  if (input?.decision !== "approve" && input?.decision !== "refuse") {
+    return problem(400, "INVALID_REQUEST", 'Send { "decision": "approve" } or { "decision": "refuse" }');
+  }
+  const status = input.decision === "approve" ? "approved" : "refused";
+  const now = iso();
+  const row = await env.DB.prepare(
+    "UPDATE join_requests SET status = ?, decided_at = ? WHERE id = ? AND home_id = ? " +
+      `AND EXISTS (SELECT 1 FROM invitations WHERE invitations.home_id = join_requests.home_id AND invitations.id = join_requests.invitation_id AND ${LIVE_INVITATION}) ` +
+      "RETURNING user_id, invitation_id"
+  )
+    .bind(status, now, requestId, homeId, now)
+    .first();
+  if (!row) {
+    return problem(404, "NOT_FOUND", "No such request is waiting: its invitation may have been used, revoked or expired");
+  }
+  log("join_request_decided", { home: homeId, user: user.id, requester: row.user_id, invitation: row.invitation_id, status });
+  return json({ id: requestId, status, decided_at: now });
 }
 
 async function listMembers(env, user, homeId) {
@@ -463,6 +659,9 @@ const ROUTES = [
   [/^\/v1\/homes\/([0-9a-f]{32})\/members$/, { GET: (r, env, user, m) => listMembers(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/members\/([0-9a-f]{32})$/, { DELETE: (r, env, user, m) => removeMember(env, user, m[1], m[2]) }],
   [/^\/v1\/join$/, { POST: (r, env, user) => join(r, env, user) }],
+  [/^\/v1\/join\/([0-9a-f]{32})\/([0-9a-f]{8})$/, { GET: (r, env, user, m) => myJoinRequest(env, user, m[1], m[2]), DELETE: (r, env, user, m) => withdrawJoinRequest(env, user, m[1], m[2]) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests$/, { GET: (r, env, user, m) => listJoinRequests(env, user, m[1]) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests\/([0-9a-f]{32})$/, { POST: (r, env, user, m) => decideJoinRequest(r, env, user, m[1], m[2]) }],
 ];
 
 function cors(request, env) {

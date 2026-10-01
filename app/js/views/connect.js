@@ -2,19 +2,22 @@
 // (DirectorLink → Actions → New Pairing Code). A code lasts 15 minutes and works once. Below it,
 // signing in with Google (account.js), which will reach the home from anywhere (docs/ACCOUNTS.md).
 
-import { formatPairingCode } from "../../api-client.js";
+import { formatPairingCode, normalizeHost } from "../../api-client.js";
 import { IS_IOS } from "../platform.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { pairWithCode } from "../session.js";
 import { signInButtons } from "./common.js";
-import { state, ui } from "../state.js";
+import { addressChanged, findController } from "./find.js";
+import { notify, state, ui } from "../state.js";
 
-function draftInput(key, fallback, props) {
+// `onInput` runs after the draft is kept.
+function draftInput(key, fallback, props, onInput) {
   const input = h("input", { ...props, value: ui.drafts[key] ?? fallback, dataset: { key } });
   input.addEventListener("input", () => {
     ui.drafts[key] = input.value;
+    onInput?.();
   });
   return input;
 }
@@ -25,6 +28,49 @@ function notice() {
     "p",
     { class: `notice notice-${state.notice.kind}`, role: state.notice.kind === "error" ? "alert" : "status" },
     state.notice.text
+  );
+}
+
+// The controller cannot pair without the code crossing the network (ADR-039): it runs DirectorLink
+// before 1.3.0 ("older"), or its lock failed its self-test ("lock"). Nothing was sent. Only Pair
+// anyway sends it, the old way, and only to the controller the warning is about.
+function unprotectedWarning(code) {
+  const warned = state.pairingUnprotected;
+  if (!warned || warned.host !== normalizeHost(ui.drafts.host ?? state.host)) return null;
+  return h(
+    "div",
+    { class: "notice notice-error connect-unprotected", role: "alert", id: "pairing-unprotected" },
+    h("p", {}, t(`connect.unprotected.${warned.reason === "lock" ? "lock" : "older"}`)),
+    h(
+      "div",
+      { class: "button-row" },
+      h(
+        "button",
+        {
+          type: "button",
+          class: "button button-danger button-small",
+          dataset: { key: "pair-anyway" },
+          onclick: async () => {
+            await pairWithCode(warned.host, code.value, { anyway: true });
+            if (state.apiKey) ui.drafts.pairingCode = "";
+          },
+        },
+        t("connect.unprotected.pairAnyway")
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "button button-secondary button-small",
+          dataset: { key: "pair-cancel" },
+          onclick: () => {
+            state.pairingUnprotected = null;
+            notify();
+          },
+        },
+        t("connect.unprotected.cancel")
+      )
+    )
   );
 }
 
@@ -93,18 +139,23 @@ export function connectScreen() {
   if (IS_IOS) {
     return iosCard();
   }
-  const host = draftInput("host", state.host, {
-    id: "controller-host",
-    type: "text",
-    inputmode: "url",
-    autocomplete: "off",
-    autocapitalize: "off",
-    spellcheck: "false",
-    dir: "ltr",
-    placeholder: "192.168.1.50",
-    "aria-describedby": "controller-host-help",
-    required: true,
-  });
+  const host = draftInput(
+    "host",
+    state.host,
+    {
+      id: "controller-host",
+      type: "text",
+      inputmode: "url",
+      autocomplete: "off",
+      autocapitalize: "off",
+      spellcheck: "false",
+      dir: "ltr",
+      placeholder: "192.168.1.50",
+      "aria-describedby": "controller-host-help",
+      required: true,
+    },
+    () => addressChanged(host.value)
+  );
   const code = draftInput("pairingCode", "", {
     id: "pairing-code",
     class: "code-input",
@@ -138,10 +189,12 @@ export function connectScreen() {
     h("label", { class: "field-label", for: "controller-host" }, t("connect.hostLabel")),
     host,
     h("p", { id: "controller-host-help", class: "field-help" }, t("connect.hostHelp")),
+    findController({ busy }),
     h("label", { class: "field-label", for: "pairing-code" }, t("connect.codeLabel")),
     code,
     h("p", { id: "pairing-code-help", class: "field-help" }, t("connect.codeHelp")),
     notice(),
+    unprotectedWarning(code),
     h(
       "button",
       { type: "submit", class: "button button-primary button-wide", disabled: busy, dataset: { key: "pair" } },

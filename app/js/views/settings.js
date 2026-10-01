@@ -1,7 +1,7 @@
 // Settings: appearance, language, room names, Shabbat and holidays, controller, account, app and
 // about.
 
-import { SIGN_IN_PROVIDERS, deleteAccount, loadAccount, removeProvider, signIn, signOut } from "../account.js";
+import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { calendarOn, loadCalendar, noteCalendarOff, takeCalendarReveal } from "../calendar.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
@@ -1154,8 +1154,13 @@ function homeSection() {
   return h("div", { class: "account-home", id: "account-home" }, h("h3", { class: "settings-subtitle" }, t("settings.account.home.title")), message, ...content);
 }
 
+// The sign-ins the account server has set up that this account does not have yet.
+function addableProviders(account) {
+  return (signInProviders() || []).filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider));
+}
+
 // Signing in is optional: it is for using the home away from the home network, and for inviting
-// family (docs/ACCOUNTS.md). Google shows its own page; this card only shows the result.
+// family (docs/ACCOUNTS.md). Google and Apple show their own pages; this card only shows the result.
 function accountSection() {
   const account = state.account;
   const notice = account.notice
@@ -1191,14 +1196,22 @@ function accountSection() {
           t("settings.account.signOutEverywhere")
         ),
         // Signing in with another provider gives another account; adding it here, while signed in,
-        // makes both sign in to this one.
-        ...SIGN_IN_PROVIDERS.filter((provider) => Array.isArray(account.user.providers) && !account.user.providers.includes(provider)).map((provider) =>
-          h(
-            "button",
-            { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
-            icon(provider === "apple" ? "apple" : "user"),
-            t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
-          )
+        // makes both sign in to this one. Only those the account server has set up.
+        // Apple's button keeps one of Apple's own titles (Continue with Apple), explained below.
+        ...addableProviders(account).map((provider) =>
+          provider === "apple"
+            ? h(
+                "button",
+                { type: "button", class: "button button-apple", dataset: { key: "account-add-apple" }, "aria-describedby": "account-add-apple-help", disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+                icon("apple"),
+                t("connect.continueApple")
+              )
+            : h(
+                "button",
+                { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+                icon("user"),
+                t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
+              )
         ),
         // With two, either may go (the last one stays).
         ...(Array.isArray(account.user.providers) && account.user.providers.length > 1
@@ -1233,6 +1246,7 @@ function accountSection() {
           t("settings.account.delete")
         )
       ),
+      addableProviders(account).includes("apple") ? h("p", { class: "field-help", id: "account-add-apple-help" }, t("settings.account.addAppleHelp")) : null,
       homeSection(),
     ];
   } else if (account.status === "unknown" || account.status === "loading") {
@@ -1244,7 +1258,8 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        signInButtons({ hash: "#/settings", key: "account-sign-in" }),
+        // Side by side and the same size (Apple's no smaller than Google's).
+        h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/settings", key: "account-sign-in" })),
         account.status === "unavailable"
           ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
           : null

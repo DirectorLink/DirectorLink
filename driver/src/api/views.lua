@@ -378,6 +378,7 @@ function Views.apiKey(record, currentId)
         last_used_at = nullable(record.last_used_at),
         current = record.id == currentId,
         profile_id = nullable(record.profile),
+        expires_at = nullable(record.expires_at),
     }
 end
 

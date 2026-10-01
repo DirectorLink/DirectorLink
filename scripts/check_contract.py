@@ -12,6 +12,8 @@ The Jewish calendar is called while it is off (as it ships) and then on, as the 
 """
 
 import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -52,15 +54,19 @@ def resolve(node):
     return node
 
 
-def x25519_public(private):
-    """The X25519 public key (RFC 7748) of 32 private bytes, for pairing with a key exchange."""
-    p = 2**255 - 19
+P25519 = 2**255 - 19
+
+
+def x25519_public(private, u=9):
+    """X25519 (RFC 7748): 32 private bytes times the u-coordinate `u` (the base point unless given),
+    for pairing with a key exchange or with CPace."""
+    p = P25519
     scalar = bytearray(private)
     scalar[0] &= 248
     scalar[31] &= 127
     scalar[31] |= 64
     k = int.from_bytes(scalar, "little")
-    x1, x2, z2, x3, z3, swap = 9, 1, 0, 9, 1, 0
+    x1, x2, z2, x3, z3, swap = u, 1, 0, u, 1, 0
     for t in reversed(range(255)):
         bit = (k >> t) & 1
         swap ^= bit
@@ -77,6 +83,39 @@ def x25519_public(private):
     if swap:
         x2, z2 = x3, z3
     return (x2 * pow(z2, p - 2, p) % p).to_bytes(32, "little")
+
+
+def lv_cat(*parts):
+    """CPace's length-value encoding (LEB128 lengths)."""
+    out = b""
+    for part in parts:
+        length, encoded = len(part), b""
+        while True:
+            low, length = length & 0x7F, length >> 7
+            encoded += bytes([low | (0x80 if length else 0)])
+            if not length:
+                break
+        out += encoded + part
+    return out
+
+
+def cpace_client(code, name, expires_in, sid, share_a):
+    """The client's side of DirectorLink's CPace (ADR-039): the generator from the code (Elligator 2,
+    RFC 9380), its share Yb, and the tags. Returns (Yb, its tag, the controller's tag, ISK)."""
+    ci = lv_cat(b"DirectorLink pair v2", name.encode(), b"" if expires_in is None else str(expires_in).encode())
+    prs, dsi = code.encode(), b"CPace255"
+    zeros = bytes(max(0, 128 - 1 - len(lv_cat(prs)) - len(lv_cat(dsi))))
+    u = int.from_bytes(hashlib.sha512(lv_cat(dsi, prs, zeros, ci, sid)).digest()[:32], "little") & ((1 << 255) - 1)
+    a, p = 486662, P25519
+    x1 = -a * pow(1 + 2 * u * u, p - 2, p) % p
+    x = x1 if pow((x1 * x1 * x1 + a * x1 * x1 + x1) % p, (p - 1) // 2, p) == 1 else (-x1 - a) % p
+    yb = os.urandom(32)
+    share_b = x25519_public(yb, x)
+    k = x25519_public(yb, int.from_bytes(share_a, "little") & ((1 << 255) - 1))
+    isk = hashlib.sha512(lv_cat(b"CPace255_ISK", sid, k) + lv_cat(share_a, b"") + lv_cat(share_b, b"")).digest()
+    mac_key = hashlib.sha512(b"CPaceMac" + sid + isk).digest()
+    tag = lambda share: hmac.new(mac_key, lv_cat(share, b""), hashlib.sha512).digest()
+    return share_b, tag(share_b), tag(share_a), isk
 
 
 def absolute(schema):
@@ -416,6 +455,14 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
+    # Home's "Turn off all" (1.3.0): lights, AC or blinds it names, never doors.
+    off = client.check("POST", "/v1/off", 202, body={"type": "lights", "device_ids": [20, 22]})
+    if (off["ran"], off["failed"], off["skipped"]) != (2, 0, 0):
+        fail(f"POST /v1/off should turn off both lights: {off}")
+    client.check("POST", "/v1/off", 202, body={"type": "climate", "device_ids": [30, 31, 32]})
+    client.check("POST", "/v1/off", 202, body={"type": "blinds", "device_ids": [50]})
+    client.check("POST", "/v1/off", 400, body={"type": "relays", "device_ids": [70]})
+    client.check("POST", "/v1/off", 400, body={"type": "lights", "device_ids": [70]})
     auto = {"type": "climate", "device_ids": [31], "set": {"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}}
     dual = client.check("POST", "/v1/scenes", 201, body={"name": "Study auto", "steps": [auto]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [auto]})
@@ -501,6 +548,7 @@ def scenario(client, bridge):
     client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
     client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
+    client.check("POST", "/v1/off", 403, body={"type": "lights", "device_ids": [20]})
     client.check("GET", "/v1/schedules", 200)
     client.check("GET", "/v1/weather", 200)
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
@@ -564,6 +612,28 @@ def scenario(client, bridge):
     bridge.new_pairing_code()
     exchange = {"public_key": base64.b64encode(x25519_public(os.urandom(32))).decode()}
     client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "sealed pairing", "exchange": exchange}, auth=False)
+
+    # Pairing with CPace (ADR-039): the code never goes to the controller; the key, for a day here,
+    # comes back sealed with the exchange's key. A wrong tag is a wrong code; an exchange works once.
+    bridge.new_pairing_code()
+    b64 = lambda data: base64.b64encode(data).decode()
+    nonce = os.urandom(16)
+    started = client.check("POST", "/v1/auth/pair", 200, body={"name": "cpace", "expires_in": 86400, "cpace": {"nonce": b64(nonce)}}, auth=False)
+    sid = nonce + base64.b64decode(started["cpace"]["nonce"])
+    share, tag, controller_tag, isk = cpace_client(bridge.pairing_code.replace(" ", ""), "cpace", 86400, sid, base64.b64decode(started["cpace"]["share"]))
+    finish = {"cpace": {"session": started["cpace"]["session"], "share": b64(share), "confirm": b64(tag)}}
+    paired = client.check("POST", "/v1/auth/pair", 201, body=finish, auth=False)
+    if base64.b64decode(paired["cpace"]["confirm"]) != controller_tag:
+        fail("POST /v1/auth/pair (CPace): the controller's tag is not the one the exchange gives")
+    created = bridge.open_pairing(isk, paired["sealed"])
+    errors = list(Draft202012Validator(absolute({"$ref": "#/components/schemas/NewApiKey"}), registry=REGISTRY).iter_errors(created))
+    if errors or not created.get("expires_at"):
+        fail(f"POST /v1/auth/pair (CPace): the sealed key does not match NewApiKey, with expires_at: {created!r}")
+    client.check("POST", "/v1/auth/pair", 409, body=finish, auth=False)  # works once
+    bridge.new_pairing_code()
+    started = client.check("POST", "/v1/auth/pair", 200, body={"cpace": {"nonce": b64(nonce)}}, auth=False)
+    wrong = {"cpace": {"session": started["cpace"]["session"], "share": b64(share), "confirm": b64(bytes(64))}}
+    client.check("POST", "/v1/auth/pair", 403, body=wrong, auth=False)
 
     # Last, because it locks pairing for a minute.
     bridge.new_pairing_code()

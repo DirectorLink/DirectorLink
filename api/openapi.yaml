@@ -33,9 +33,9 @@ info:
     DNS rebinding). Browsers may call the API only from DirectorLink's own sites.
 
     **Sealed requests.** The DirectorLink app does not send its key on the home network: it seals
-    each request with its device's lock key and sends it to `POST /v1/sealed`, and pairs with a key
-    exchange so the new key is never readable on the network (docs/ACCOUNTS.md). Scripts may keep
-    using `Authorization: Bearer`.
+    each request with its device's lock key and sends it to `POST /v1/sealed`, and pairs with CPace,
+    so neither the pairing code nor the new key crosses the network (docs/ACCOUNTS.md). Scripts may
+    keep using `Authorization: Bearer`, and pair by sending the code.
 
     **Errors.** All errors use RFC 9457 Problem Details (`application/problem+json`) with a stable,
     machine-readable `code`.
@@ -108,6 +108,7 @@ paths:
       tags: [System]
       operationId: getHealth
       summary: Check that the bridge is running
+      description: Needs no key, so a client can also use it to find DirectorLink on the home network.
       security: []
       responses:
         "200":
@@ -162,11 +163,34 @@ paths:
         Five wrong codes within a minute lock pairing for that device (IP address) for 60 seconds;
         twenty wrong codes in all close the code. Pairing works only on the home network, never as
         a sealed request (`PAIRING_ONLY_ON_HOME_NETWORK`). The key is always `admin`: running
-        Composer actions already means full control of the project.
+        Composer actions already means full control of the project. With `expires_in` (seconds,
+        60 to 2592000) the key stops working that long after (`expires_at`); the API console asks
+        for a day for its own key.
 
-        With `exchange` (the app's X25519 public key), the answer is sealed: it holds the driver's
-        public key and the new key sealed with a lock key derived from the shared secret, the code
-        and both public keys, so the key never crosses the network in the clear.
+        **Without sending the code (CPace, since 1.3.0; the app and the console pair this way).**
+        CPace (draft-irtf-cfrg-cpace, CPACE-X25519-SHA512) in two requests; the controller is the
+        initiator A, the client B. (1) `{ name, expires_in?, cpace: { nonce } }` answers `200` with
+        `cpace: { session, nonce, share }`. (2) `{ cpace: { session, share, confirm } }` answers
+        `201` with `cpace: { confirm }` and the new key `sealed`. The password (PRS) is the 8
+        digits; `sid` is the client's nonce, then the controller's (16 bytes each); `CI` is
+        `lv_cat("DirectorLink pair v2", name, expires_in)` (each as sent, `""` when absent;
+        expires_in in decimal); ADa and ADb are empty; the transcript is initiator-responder. The
+        tags are the draft's key confirmation: `mac_key = SHA-512("CPaceMac" || sid || ISK)`, the
+        client's `confirm` is HMAC-SHA512(mac_key, lv_cat(Yb, "")), the controller's
+        HMAC-SHA512(mac_key, lv_cat(Ya, "")). The key is made only after the client's tag is
+        right, and is sealed (the Envelope format, home and key `pair`, direction `res`) with the
+        lock key HMAC-SHA256(ISK, "DirectorLink pair v2"). An attempt counts as a wrong code from
+        its first request until it succeeds (the limits above); a wrong tag answers
+        `PAIRING_CODE_INVALID`. An exchange works once, from the device that started it, for 60
+        seconds (`PAIRING_SESSION_EXPIRED`); one begun before a new code was made answers
+        `PAIRING_CODE_EXPIRED`. A share of low order is refused (`INVALID_FIELD`, `cpace.share`).
+        DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose
+        lock failed its self-test answers `503` `LOCK_UNAVAILABLE`.
+
+        **With the code** (scripts; the app only after warning that it travels unprotected): the
+        key comes back as it is. With `exchange` (the app's X25519 public key), the answer is
+        sealed: it holds the driver's public key and the new key sealed with a lock key derived
+        from the shared secret, the code and both public keys.
       security: []
       requestBody:
         required: true
@@ -178,24 +202,35 @@ paths:
               pairing_code: "1234 5678"
               name: Chrome on my laptop
       responses:
+        "200":
+          description: "CPace, first request: the controller's share. Nothing is paired yet."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CpaceStarted"
         "201":
-          description: Paired. The response holds the new API key, shown only once, or (with `exchange`) the key sealed for this exchange.
+          description: Paired. The response holds the new API key, shown only once, or the key sealed for this exchange (with `exchange`, or CPace's second request).
           content:
             application/json:
               schema:
                 oneOf:
                   - $ref: "#/components/schemas/NewApiKey"
                   - $ref: "#/components/schemas/SealedPairing"
+                  - $ref: "#/components/schemas/CpacePaired"
         "400":
           $ref: "#/components/responses/BadRequest"
         "403":
-          description: The pairing code is wrong (`PAIRING_CODE_INVALID`, with `attempts_remaining`), no code is active — it expired, was used, was closed after too many wrong codes, or none was created (`PAIRING_NOT_ACTIVE`) — or the request was sealed (`PAIRING_ONLY_ON_HOME_NETWORK`).
+          description: The pairing code is wrong, or CPace's tag is (`PAIRING_CODE_INVALID`, with `attempts_remaining`), no code is active — it expired, was used, was closed after too many wrong codes, or none was created (`PAIRING_NOT_ACTIVE`) — a new code was made during a CPace exchange (`PAIRING_CODE_EXPIRED`), or the request was sealed (`PAIRING_ONLY_ON_HOME_NETWORK`).
           content:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
         "409":
-          $ref: "#/components/responses/Conflict"
+          description: The controller has as many keys as it holds (`KEY_LIMIT_REACHED`), or the CPace exchange is not open, any more or from this device (`PAIRING_SESSION_EXPIRED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
@@ -919,6 +954,42 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/off:
+    post:
+      tags: [Scenes]
+      operationId: turnOff
+      x-directorlink-role: member
+      summary: Turn off lights or AC, or close blinds
+      description: |
+        Since 1.3.0. Turns off the lights, or the thermostats (mode `off`, like a scene's "All AC:
+        Off"), or closes the blinds (position 0) that it names, in one request: the app's "Turn off
+        all" on Home, which names the ones it shows on or open. Answers like running a scene: a
+        device the controller refused is `failed`, a thermostat without an Off mode is `skipped`
+        (`MODE_NOT_SUPPORTED`), and the rest still run. It never turns anything on, and doors and
+        gates are not among its types.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TurnOff"
+            example:
+              type: lights
+              device_ids: [20, 22]
+      responses:
+        "202":
+          description: The commands were handed to the controller.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/schedules:
     get:
@@ -2070,7 +2141,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Unauthorized:
-      description: The API key is missing, wrong or revoked (`UNAUTHORIZED`).
+      description: The API key is missing, wrong or revoked (`UNAUTHORIZED`), or it expired and was removed (`KEY_EXPIRED`, ADR-040).
       content:
         application/problem+json:
           schema:
@@ -2171,8 +2242,14 @@ components:
 
     Health:
       type: object
-      required: [status, version, api_version, detail]
+      required: [product, status, version, api_version, detail]
       properties:
+        product:
+          type: string
+          const: directorlink
+          description: |
+            Always `directorlink`: tells DirectorLink from other devices on the home network (the
+            app's Find my controller asks this route at the addresses homes use most). Since 1.3.0.
         status:
           $ref: "#/components/schemas/BridgeStatus"
         version:
@@ -2299,6 +2376,92 @@ components:
               description: The **Alarm Status** property is On; members and admins can read `GET /v1/alarm` in sealed requests.
 
     PairRequest:
+      oneOf:
+        - $ref: "#/components/schemas/PairWithCode"
+        - $ref: "#/components/schemas/CpaceStart"
+        - $ref: "#/components/schemas/CpaceFinish"
+
+    KeyExpiresIn:
+      type: integer
+      minimum: 60
+      maximum: 2592000
+      description: The new key stops working this many seconds after it is made (ADR-040); without it, never.
+
+    CpaceStart:
+      type: object
+      required: [cpace]
+      additionalProperties: false
+      description: "CPace, first request: no code is sent. `name` and `expires_in` are bound into the exchange (CI)."
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        expires_in:
+          $ref: "#/components/schemas/KeyExpiresIn"
+        cpace:
+          type: object
+          required: [nonce]
+          additionalProperties: false
+          properties:
+            nonce:
+              type: string
+              description: 16 random bytes, base64 (the client's half of sid).
+
+    CpaceFinish:
+      type: object
+      required: [cpace]
+      additionalProperties: false
+      description: "CPace, second request: the client's share and its tag."
+      properties:
+        cpace:
+          type: object
+          required: [session, share, confirm]
+          additionalProperties: false
+          properties:
+            session:
+              type: string
+              description: From the first answer.
+            share:
+              type: string
+              description: The client's share Yb (32 bytes, base64).
+            confirm:
+              type: string
+              description: HMAC-SHA512(mac_key, lv_cat(Yb, "")), base64 (64 bytes).
+
+    CpaceStarted:
+      type: object
+      required: [cpace]
+      properties:
+        cpace:
+          type: object
+          required: [session, nonce, share]
+          properties:
+            session:
+              type: string
+              description: Names this exchange in the second request (it works once, for 60 seconds, from this device).
+            nonce:
+              type: string
+              description: The controller's 16 random bytes, base64 (the second half of sid).
+            share:
+              type: string
+              description: The controller's share Ya (32 bytes, base64).
+
+    CpacePaired:
+      type: object
+      required: [cpace, sealed]
+      properties:
+        cpace:
+          type: object
+          required: [confirm]
+          properties:
+            confirm:
+              type: string
+              description: HMAC-SHA512(mac_key, lv_cat(Ya, "")), base64 (64 bytes); check it before opening `sealed`.
+        sealed:
+          $ref: "#/components/schemas/Envelope"
+
+    PairWithCode:
       type: object
       required: [pairing_code]
       additionalProperties: false
@@ -2312,6 +2475,8 @@ components:
           minLength: 1
           maxLength: 64
           description: A name for the new key, e.g. the browser or app using it.
+        expires_in:
+          $ref: "#/components/schemas/KeyExpiresIn"
         exchange:
           type: object
           required: [public_key]
@@ -2438,7 +2603,7 @@ components:
 
     ApiKey:
       type: object
-      required: [id, name, role, created_at, last_used_at, current]
+      required: [id, name, role, created_at, last_used_at, current, expires_at]
       properties:
         id:
           type: string
@@ -2461,6 +2626,10 @@ components:
           type: [string, "null"]
           pattern: "^[0-9a-f]{8}$"
           description: The profile (person) the key belongs to.
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+          description: When the key stops working (paired with `expires_in`, such as the API console's own key); null for never. Then it is refused with `KEY_EXPIRED` and removed.
 
     NewApiKey:
       allOf:
@@ -2714,6 +2883,24 @@ components:
           maxItems: 40
           items:
             $ref: "#/components/schemas/SceneStep"
+
+    TurnOff:
+      type: object
+      required: [type, device_ids]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [lights, climate, blinds]
+          description: lights are turned off, thermostats set to `off`, blinds closed.
+        device_ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          description: Lights, thermostats or blinds, as `type` says; a repeated id counts once.
+          items:
+            type: integer
+            minimum: 1
 
     SceneRun:
       type: object

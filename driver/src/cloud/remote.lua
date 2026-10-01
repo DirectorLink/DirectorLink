@@ -320,6 +320,8 @@ end
 
 local function handleJoin(message, send)
     local invitationId = message.invitation
+    -- Keys that expired go first, and the invitations they made with them (ADR-040).
+    state.services.keys.count()
     local invitation = type(invitationId) == "string" and state.services.invitations.find(invitationId) or nil
     if not invitation then
         send({ type = "join_result", id = message.id, ok = false, code = "INVITATION_NOT_FOUND" })

@@ -25,6 +25,11 @@ export const state = {
   // GET /v1/calendar (calendar.js): null until read, and while the Jewish calendar is off.
   calendar: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
+  // The controller cannot pair without the code crossing the network (DirectorLink before 1.3.0,
+  // or its lock failed its self-test): { host, reason: "older" | "lock" }, or null. The connect
+  // screen warns while its address field holds that host, and only "Pair anyway" sends the code,
+  // to that host (session.js, ADR-039).
+  pairingUnprotected: null,
   loaded: false,
   system: null,
   rooms: [],
@@ -58,6 +63,8 @@ export const state = {
 // UI-only state (not from the controller).
 export const ui = {
   filter: null, // home summary filter: "lights" | "climate" | "blinds"
+  // Home's Turn off all (turn-off.js): filter -> { stage: "confirm" | "running" | "done" | "partial" | "error", … }
+  offRuns: {},
   editFavorites: false,
   roomDrafts: {}, // settings: room names being edited, "roomId:lang" -> text
   roomMessages: {}, // settings: per-room save result
@@ -71,6 +78,7 @@ export const ui = {
   schedulesMessage: null, // schedules list: saved, deleted or not switched
   calendarSettings: null, // Settings → Shabbat and holidays: the settings being changed (views/settings.js)
   drafts: {}, // form fields being typed: key -> text
+  find: null, // Find my controller on the pairing screen (views/find.js): { stage, range, controllers }
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
   featuredCamera: null, // Cameras tab: id of the large picture

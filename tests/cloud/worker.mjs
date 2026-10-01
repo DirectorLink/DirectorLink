@@ -29,8 +29,8 @@ export function freePort() {
 }
 
 // devVars: the Worker's .dev.vars (secrets and overridden vars). migrate: apply the D1 migrations
-// to the local database first.
-export async function startWorker({ devVars = {}, migrate = false } = {}) {
+// to the local database first. scheduled: GET /__scheduled runs the daily housekeeping.
+export async function startWorker({ devVars = {}, migrate = false, scheduled = false } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "directorlink-cloud-"));
   cpSync(CLOUD, dir, { recursive: true, filter: (source) => !/[\\/](\.wrangler|node_modules|\.dev\.vars[^\\/]*)$/.test(source) });
   writeFileSync(path.join(dir, ".dev.vars"), Object.entries(devVars).map(([name, value]) => `${name}=${value}\n`).join(""));
@@ -59,7 +59,7 @@ export async function startWorker({ devVars = {}, migrate = false } = {}) {
 
   const port = await freePort();
   const inspectorPort = await freePort();
-  const command = `npx --yes wrangler@4.143.0 dev --local --ip 127.0.0.1 --port ${port} --inspector-port ${inspectorPort} --no-show-interactive-dev-session`;
+  const command = `npx --yes wrangler@4.143.0 dev --local --ip 127.0.0.1 --port ${port} --inspector-port ${inspectorPort} --no-show-interactive-dev-session${scheduled ? " --test-scheduled" : ""}`;
   const child = spawn(command, {
     cwd: dir,
     shell: true,
