@@ -55,7 +55,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 ## Installation
 
-DirectorLink itself does not depend on Composer Pro during normal operation. Composer is only one way to install the `DirectorLink.c4z` driver into a Control4 project.
+You need **Composer Pro**, Control4's setup tool, to add DirectorLink to your Control4 project, and later to update it. After that, DirectorLink runs on its own: the app, scenes, schedules and remote access never need Composer.
 
 ### 1. Download DirectorLink
 
@@ -63,15 +63,13 @@ Download DirectorLink from **[GitHub Releases](https://github.directorlink.io/re
 
 Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
-### 2. Install Composer Pro
+### 2. Get Composer Pro
 
-If you need Composer Pro for the initial driver installation, this project currently provides the following Control4-hosted installer link:
+DirectorLink is installed like any other Control4 driver: with Composer Pro, on a Windows computer on the same network as your controller.
 
-**Composer Pro 2026.3.18.506**
-
-https://update2.control4.com/release/2026.3.18.506-res+Composer/win/ComposerPro-2026.3.18.506-res.exe
-
-DirectorLink does not depend on this specific Composer version after the driver has been installed.
+- **You need an active Control4 account with access to Composer Pro.** Composer asks you to sign in with it, and it can't connect to your controller without it. Control4 gives these accounts to its dealers and installers.
+- **Download Composer Pro from https://composer.directorlink.io.** It lists the Composer installers on Control4's own servers, newest first. Choose the newest **Composer Pro** release and install it.
+- **No Composer Pro account?** Ask your Control4 installer to add DirectorLink for you. It takes a few minutes and needs no reboot (step 3).
 
 ### 3. Add the driver to Composer
 
