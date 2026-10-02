@@ -21,7 +21,8 @@ import { alarmFact } from "./alarm.js";
 import { backupPanel } from "./backup.js";
 import { offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { chip, stepper } from "./schedules.js";
-import { updateFact, updatePanel } from "./updates.js";
+import { updateCheckButton, updateFact, updatePanel } from "./updates.js";
+import { APP_VERSION } from "../version.js";
 
 export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
   return [
@@ -802,6 +803,7 @@ function controllerSection(navigate) {
     [t("settings.controller.status"), t(`status.${state.status}`)],
     state.role ? [t("settings.controller.access"), roleLabel(state.role)] : null,
     state.lastUpdated && state.loaded ? [t("settings.controller.updated"), formatTime(state.lastUpdated)] : null,
+    [t("settings.controller.appVersion"), APP_VERSION],
     system?.bridge?.version ? [t("settings.controller.bridgeVersion"), system.bridge.version] : null,
     // Admins: whether a newer DirectorLink is out (views/updates.js).
     updateFact(),
@@ -853,6 +855,7 @@ function controllerSection(navigate) {
       { class: "facts" },
       rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", { dir: "auto" }, value)))
     ),
+    updateCheckButton(),
     updatePanel(),
     state.role && !can("member") ? h("p", { class: "notice notice-info" }, t("roles.viewOnly")) : null,
     state.status === "unreachable" && state.notice ? h("p", { class: "notice notice-error" }, state.notice.text) : null,

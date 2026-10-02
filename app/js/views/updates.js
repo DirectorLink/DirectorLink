@@ -6,14 +6,30 @@
 import { h, iconButton } from "../dom.js";
 import { formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { PACKAGE_NAME, checkForUpdate, dismissUpdate, dismissedVersion, savedCheck, updateStatus } from "../updates.js";
+import {
+  PACKAGE_NAME,
+  checkForUpdate,
+  dismissUpdate,
+  dismissedVersion,
+  manualCheckWait,
+  parseVersion,
+  savedCheck,
+  updateStatus,
+} from "../updates.js";
 import { notify, state } from "../state.js";
 
 // Set when the notice on Home is followed: Settings then brings the steps into view.
 let revealSteps = false;
+// True while Check now waits for GitHub.
+let checking = false;
 
 function driverVersion() {
   return state.system?.bridge?.version;
+}
+
+// Admins with a driver of a known version: the only ones who ask GitHub.
+function canCheck() {
+  return state.role === "admin" && Boolean(parseVersion(driverVersion()));
 }
 
 // For an admin key with a driver of a known version: { release } (a newer one), { upToDate } or
@@ -27,10 +43,23 @@ export async function checkUpdates() {
   if (await checkForUpdate({ role: state.role, driverVersion: driverVersion() })) notify();
 }
 
+// Check now in Settings: asks GitHub at once, at most once a minute (js/updates.js).
+export async function checkNow() {
+  if (checking || !canCheck() || manualCheckWait({ check: savedCheck() }) > 0) return;
+  checking = true;
+  notify();
+  try {
+    await checkForUpdate({ role: state.role, driverVersion: driverVersion(), force: true });
+  } finally {
+    checking = false;
+    notify();
+  }
+}
+
 // What these screens show, for the renderer's signature (app.js): the last check is kept in
-// localStorage, and "Up to date" ends 3 days after GitHub's last answer.
+// localStorage, "Up to date" ends 3 days after GitHub's last answer, and Check now waits a minute.
 export function updatesSignature() {
-  return [knownUpdate(), dismissedVersion()];
+  return [knownUpdate(), dismissedVersion(), checking, manualCheckWait({ check: savedCheck() }) > 0];
 }
 
 // A day, kept on one line when the text wraps.
@@ -52,8 +81,34 @@ function statusText(known) {
 
 // Settings → Controller: the "Updates" line as [label, value], or null.
 export function updateFact() {
+  if (checking && canCheck()) return [t("updates.label"), t("updates.checking")];
   const known = knownUpdate();
   return known ? [t("updates.label"), statusText(known)] : null;
+}
+
+// Settings → Controller, under the facts: Check now, for admins with a driver of a known version.
+// While a minute has not passed since the last try it says so and does nothing; it stays
+// focusable (aria-disabled), so the keyboard is not lost when it is pressed.
+export function updateCheckButton() {
+  if (!canCheck()) return null;
+  const waiting = checking || manualCheckWait({ check: savedCheck() }) > 0;
+  return h(
+    "div",
+    { class: "button-row update-check" },
+    h(
+      "button",
+      {
+        type: "button",
+        class: "button button-secondary button-small",
+        "aria-disabled": waiting ? "true" : "false",
+        title: waiting && !checking ? t("updates.checkWait") : undefined,
+        dataset: { key: "update-check-now" },
+        onclick: () => checkNow(),
+      },
+      icon("refresh"),
+      checking ? t("updates.checking") : t("updates.checkNow")
+    )
+  );
 }
 
 // Settings → Controller, under that line: the download, What's new and the steps in Composer.

@@ -50,7 +50,7 @@ globalThis.localStorage = {
 const { state } = await import("../../app/js/state.js");
 const { formatDate, setLanguage } = await import("../../app/js/i18n.js");
 const { refreshRooms, whenConnected } = await import("../../app/js/session.js");
-const { checkUpdates, updateBanner, updateFact, updatePanel } = await import("../../app/js/views/updates.js");
+const { checkNow, checkUpdates, updateBanner, updateCheckButton, updateFact, updatePanel } = await import("../../app/js/views/updates.js");
 const { default: en } = await import("../../app/i18n/en.js");
 const { default: he } = await import("../../app/i18n/he.js");
 
@@ -207,4 +207,45 @@ test("a failed GET /v1/system does not stop the rooms refresh", async () => {
   assert.ok(asked.includes("/v1/rooms"));
   assert.deepEqual(state.rooms, [{ id: 1, name: "Kitchen" }], "the rooms are refreshed");
   assert.equal(state.system.bridge.version, "1.0.0", "the version known so far stays");
+});
+
+
+test("Check now in Settings: admins only; it asks GitHub at once, then not again within a minute", async () => {
+  state.role = "member";
+  state.system = { bridge: { version: "1.0.0" } };
+  assert.equal(updateCheckButton(), null, "not for a member");
+  admin("1.0.0");
+  // GitHub said 1.0.0 two hours ago: up to date, and the 12 hours are not over.
+  lastCheck(release("1.0.0"), 2 * HOUR);
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    const tag = "v1.1.0";
+    const body = {
+      tag_name: tag,
+      name: `DirectorLink ${tag}`,
+      draft: false,
+      prerelease: false,
+      immutable: true,
+      published_at: "2026-10-02T08:00:00Z",
+      html_url: `${RELEASES}/tag/${tag}`,
+      assets: [{ name: "DirectorLink.c4z", browser_download_url: `${RELEASES}/download/${tag}/DirectorLink.c4z` }],
+    };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const button = updateCheckButton().children[0];
+  assert.equal(button.dataset.key, "update-check-now", "it keeps focus across redraws");
+  assert.equal(button.attributes["aria-disabled"], "false");
+  assert.equal(button.textContent, "Check now");
+  const pressed = checkNow();
+  assert.deepEqual(updateFact(), ["Updates", "Checking…"]);
+  await pressed;
+  assert.deepEqual(asked, ["https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest"]);
+  assert.match(updateFact()[1], /^DirectorLink 1\.1\.0 is available/);
+  // Within the minute the button says so, stays focusable, and does nothing.
+  const waiting = updateCheckButton().children[0];
+  assert.equal(waiting.attributes["aria-disabled"], "true");
+  assert.equal(waiting.attributes.title, "You can check again in a minute");
+  await checkNow();
+  assert.equal(asked.length, 1, "not twice within a minute");
 });

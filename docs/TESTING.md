@@ -2,7 +2,15 @@
 
 ## Current release
 
-`v1.4.0` — backup and restore (0ze, ADR-042). Update DirectorLink in Composer (no reboot). The cloud is unchanged.
+`v1.4.1` — Check now for updates, and the app's version in Settings (0zg). The app updates by itself; the driver is unchanged apart from its version.
+
+## 0zg. Check now, and the app's version (1.4.1)
+
+1. On an admin device, Settings → Controller shows **App version 1.4.1** and the DirectorLink version, then **Updates** with a **Check now** button under the facts. A member or viewer device shows App version, but no Updates line and no button.
+2. Tap **Check now**: the Updates line says *Checking…*, then *Up to date* or *DirectorLink X is available*.
+3. **Check now** again within a minute: the button says *You can check again in a minute* (on hover) and nothing is sent. In DevTools → Network, the first press made one request to `api.github.com`, and the second made none.
+4. After a minute, **Check now** asks again.
+5. Hebrew: *בדיקה עכשיו*, then *בודק…*, right to left.
 
 ## 0ze. Backup and restore (1.4.0)
 
