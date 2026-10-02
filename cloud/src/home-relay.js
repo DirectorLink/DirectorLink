@@ -101,9 +101,17 @@ export class HomeRelay extends DurableObject {
       return problem(401, "WRONG_HOME_SECRET", "This home_id is registered with a different home_secret");
     }
 
-    // One driver connection per home: a new one replaces the previous.
+    // One driver connection per home: a new one replaces the previous. Requests sent over the
+    // previous one fail now rather than at their timeout: a driver that connects again has lost
+    // that connection, often without the relay noticing (the old socket never answers the close).
     let replaced = 0;
     for (const old of this.ctx.getWebSockets(DRIVER)) {
+      const { conn } = old.deserializeAttachment() ?? {};
+      for (const [id, entry] of this.pending) {
+        if (entry.conn === conn) {
+          this.settle(id, { failed: "The home connected again before it answered" });
+        }
+      }
       try {
         old.close(4000, "replaced");
         replaced += 1;

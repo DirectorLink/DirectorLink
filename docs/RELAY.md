@@ -194,7 +194,9 @@ and gets no upgrade request. Data that arrives while no connection is being made
 30 s of the driver's disconnect, waits up to 8 s for the driver's `hello` and then goes through.
 Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for longer still answers
 `503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
-as before. It is never sent again, because the controller may have carried it out.
+as before, and so does one sent over a connection the driver has since replaced, at once rather
+than at its 15 s timeout (the relay may not have noticed that connection die). It is never sent
+again, because the controller may have carried it out.
 
 **Logs.** On the controller, `GET /v1/logs?category=relay` gives one line per event:
 - `relay connection closed` (info): an open connection was lost. It carries the `reason`, the

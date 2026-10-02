@@ -496,3 +496,30 @@ test("a driver that does not come back gets the caller a 503 after the wait", TE
   const waited = Date.now() - started;
   assert.ok(waited >= RECONNECT_WAIT_MS - 100 && waited < RECONNECT_WAIT_MS + 3000, `answered after ${waited} ms`);
 });
+
+// The driver connects again while the relay still holds its old connection, which went dead
+// without a close (the relay's close 4000 is never answered): what was sent over it fails at once.
+test("requests sent over a connection the driver has replaced fail at once", TEST, async () => {
+  const { home, secret } = newHome();
+  let reached = null;
+  const first = await driver({
+    home,
+    secret,
+    onRequest: (request, connection) => {
+      connection.socket.pause();
+      reached = request.id;
+      return null;
+    },
+  });
+  const started = Date.now();
+  const pending = call(home, "/v1/lights");
+  await eventually(() => reached, "the request to reach the first connection");
+  await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "second" }) }) });
+  assertProblem(await pending, 502, "HOME_DISCONNECTED");
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < TIMEOUT_MS, `answered after ${elapsed} ms, not at the ${TIMEOUT_MS} ms timeout`);
+  const next = await call(home, "/v1/system");
+  assert.equal(next.status, 200, next.text);
+  assert.deepEqual(next.json, { by: "second" });
+  first.destroy();
+});
