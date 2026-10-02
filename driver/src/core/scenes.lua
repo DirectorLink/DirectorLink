@@ -17,7 +17,9 @@ Scenes.MAX_SCENES = 50
 Scenes.MAX_STEPS = 40
 Scenes.MAX_DEVICES = 100
 Scenes.ICONS = { moon = true, sun = true, leave = true, movie = true, bulb = true, climate = true, blinds = true, home = true }
-Scenes.TYPES = { lights = true, climate = true, fans = true, blinds = true, relays = true }
+Scenes.TYPES = { lights = true, climate = true, fans = true, blinds = true, relays = true, music = true }
+-- Music (1.5.0, ADR-044): a step pauses or stops the Sonos music in a room, or in the whole home.
+Scenes.MUSIC_ACTIONS = { pause = true, stop = true }
 Scenes.MODES = { off = true, heat = true, cool = true, auto = true }
 Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = true, circulate = true }
 -- Fans (1.2.0) take a speed from 1 (low) to 4 (high), as the Fan proxy lists them.
@@ -109,6 +111,8 @@ function Scenes.cleanSet(stepType, set)
         -- Doors and gates only get what their Open button does: a pulse. Holding a door relay
         -- closed would keep the door unlocked or the gate input pressed.
         return set.action == "pulse" and { action = "pulse" } or nil
+    elseif stepType == "music" then
+        return Scenes.MUSIC_ACTIONS[set.action] and { action = set.action } or nil
     end
     return nil
 end
@@ -193,7 +197,7 @@ local function loadStep(item)
         end
     end
     local set = Scenes.cleanSet(item.type, item.set)
-    if not set then
+    if not set or (item.type == "music" and ids) then
         return nil
     end
     return { type = item.type, room_id = roomId, device_ids = ids, set = set }

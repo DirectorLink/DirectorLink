@@ -2,7 +2,7 @@
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
 // "/v1/lights", "/v1/thermostats", "/v1/fans", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
-// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/auth/pair" —
+// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/music" (Sonos), "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
@@ -16,6 +16,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
+import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
@@ -101,6 +102,8 @@ window.addEventListener("hashchange", () => {
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
   // The Hebrew date on Home (Schedules reads the calendar too).
   if (route.name === "home" && previous.name !== "home") loadCalendar();
+  // Sonos: Home and a room are read every 5 s while shown.
+  musicRouteChanged(route);
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -196,6 +199,8 @@ function signature() {
     state.doorbells,
     // The alarm (read-only), and the seconds an entry or exit delay has left.
     alarmSignature(),
+    // The Sonos rooms, their pictures and favorites (js/music.js).
+    musicSignature(),
     // Rings stop being recent, and "3 minutes ago" moves on, without new data.
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
@@ -398,6 +403,8 @@ whenConnected(loadSchedules);
 whenConnected(startAlarm);
 // The Jewish calendar, while it is on in Composer: read now, then every 10 minutes (js/calendar.js).
 whenConnected(keepCalendar);
+// Sonos, while an installer turned it on: every room now, then the screen shown every 5 s.
+whenConnected(() => startMusic(route));
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
 // Opened on Schedules (a reload): the weather once connected.

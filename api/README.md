@@ -9,9 +9,9 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Topic | Rule |
 | --- | --- |
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
-| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
+| Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, music (Sonos), scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, fans, blinds, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, scenes, schedules, invitations, profiles, remote access, backups, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, fans, blinds, music, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, the room of a Sonos room, scenes, schedules, invitations, profiles, remote access, backups, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -240,6 +240,46 @@ Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/c
 ```
 
 (`room` left out.) `state` is the panel's word in lower case: `disarmed_ready`, `disarmed_not_ready`, `armed`, `exit_delay`, `entry_delay`, `alarm`, `confirmation_required`, `offline`, or another a panel reports. `armed_type` and `alarm_type` are the panel's own words (e.g. `Stay`, `Fire`), `null` unless armed or in alarm. `delay` is `null` unless an entry or exit delay is counting down, in seconds as the panel last reported. Partitions the alarm does not use are left out. In `/v1/devices` a partition stays a device of type `other`.
+
+## Music (Sonos)
+
+Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home network, with the local protocol the Sonos app uses (UPnP/SOAP on port 1400, which Sonos does not document; ADR-044, [`docs/SONOS.md`](../docs/SONOS.md)).
+
+- Off by default. Until an installer sets **Sonos** to On in Composer, `GET /v1/music` answers `{"enabled": false, "status": "off", "items": []}`, every other music route `409 SONOS_OFF`, and DirectorLink looks for no player. `GET /v1/system` says which in `features.sonos`.
+- Each item is a Sonos room, named by its id (`RINCON_…`), never an address: DirectorLink talks only to the players it found (or the one at **Sonos Address**), on port 1400.
+- Viewers read; members and admins control; admins place a Sonos room in a Control4 room.
+
+```json
+{
+  "id": "RINCON_000E58A0000101400",
+  "name": "Kitchen",
+  "room_id": 10,
+  "room_match": "name",
+  "group": { "id": "RINCON_000E58A0000101400", "coordinator": true, "rooms": [{ "id": "RINCON_000E58A0000101400", "name": "Kitchen" }, { "id": "RINCON_000E58A0000201400", "name": "Living Room" }] },
+  "state": "playing",
+  "volume": 30,
+  "muted": false,
+  "now_playing": { "kind": "music", "title": "Morning Light", "artist": "The Example Band", "album": "First Album", "station": null, "source": null, "art_href": "/v1/music/RINCON_000E58A0000101400/art", "art_key": "80ffc887" },
+  "can_skip": true,
+  "reachable": true,
+  "updated_at": "2026-10-02T10:00:00Z"
+}
+```
+
+- `GET /v1/music` lists every Sonos room (`?room_id=` those shown in one room) with `status` (`ok`, `searching`, `not_found`, `unreachable`). Asking keeps the rooms asked for read every few seconds for a while; ask every few seconds to follow them.
+- `room_id` is the Control4 room of the same name (case and spaces aside, or one of its names in other languages), or the one an admin picked (`room_match`: `name`, `admin`), or `null`.
+- `POST /v1/music/{id}/play`, `/pause`, `/next`, `/previous` act on the room's group (its coordinator) and answer `200` with the room once the player has taken the command. Pause stops a radio station, which cannot pause; next and previous on the radio are `409 ACTION_NOT_POSSIBLE` (see `can_skip`).
+- `PATCH /v1/music/{id}` with `{"volume": 0-100}` and/or `{"muted": true|false}`: this room's own speaker.
+- `GET /v1/music/{id}/favorites` lists the household's Sonos favorites (`playable` false for those only the Sonos app starts); `POST /v1/music/{id}/favorites/{favoriteId}/play` starts one on the group (a playlist replaces the queue).
+- `GET /v1/music/{id}/art` is the album art of what the group plays, through the controller (`404 NO_ART` when there is none); `now_playing.art_key` changes when the picture does.
+- `PUT /v1/music/{id}/room` with `{"room_id": 12}` (admins) puts a Sonos room in a Control4 room; `null` goes back to its name.
+- A player that does not answer: `502 PLAYER_UNREACHABLE` (and `reachable: false`); too many requests waiting: `503 PLAYER_BUSY`.
+- In scenes a `music` step `{"type": "music", "room_id": 10, "set": {"action": "pause"}}` pauses (or `"stop"`) the groups with a room there, or every group without `room_id`.
+
+```bash
+curl -X POST http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400/pause -H "Authorization: Bearer ak_..."
+curl -X PATCH http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400   -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" -d '{"volume": 25}'
+```
 
 ## Backup
 

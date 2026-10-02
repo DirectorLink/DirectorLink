@@ -39,14 +39,20 @@ REQUIRED_PROPERTIES = (
     # Shabbat and holiday times (1.2.0, ADR-037): the switch, and what the calendar works out.
     "Jewish Calendar",
     "Calendar Status",
+    # Sonos on the home network (1.5.0, ADR-044): the switch, a player's address when the search
+    # finds none, and what was found.
+    "Sonos",
+    "Sonos Address",
+    "Sonos Players",
     "Log Level",
     "Inventory",
 )
 
 # The door switches ship off; an installer turns them on in Composer (ADR-025, ADR-036). So does
 # the Jewish calendar: with it off the driver works nothing out and the app shows none of it. And
-# the alarm's status: with it off the driver does not watch the alarm (ADR-038).
-SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off", "Alarm Status": "Off"}
+# the alarm's status: with it off the driver does not watch the alarm (ADR-038). And Sonos: with it
+# off the driver looks for no player and sends nothing to one (ADR-044).
+SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off", "Alarm Status": "Off", "Sonos": "Off"}
 
 # Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
 REQUIRED_ACTIONS = ("NEW_PAIRING_CODE", "REVOKE_API_KEYS", "PRINT_AUTOMATION", "REFRESH_PROJECT", "RESET_REMOTE_IDENTITY")
@@ -166,6 +172,20 @@ SECURITY_CONTRACT = {
     "src/adapters/alarm.lua": (
         'return driver == "security.c4i" and Alarm.enabled()',
         'return Properties ~= nil and Properties[Alarm.PROPERTY] == "On"',
+    ),
+    # Sonos (ADR-044): off by default; only home network addresses DirectorLink was given by the
+    # players or the installer, only port 1400 (check_sonos).
+    "src/sonos/sonos.lua": (
+        'return Properties ~= nil and Properties[Sonos.PROPERTY] == "On"',
+    ),
+    "src/sonos/client.lua": (
+        'local url = "http://" .. job.ip .. ":" .. Protocol.PORT .. job.path',
+        "if not state.allowed[job.ip] then",
+        "local ip = Protocol.lanAddress(address)",
+    ),
+    "src/sonos/protocol.lua": (
+        "Protocol.PORT = 1400",
+        "if a == 10 or (a == 172 and b >= 16 and b <= 31) or (a == 192 and b == 168) then",
     ),
     "src/auth/invitations.lua": (
         "items[#items + 1] = { id = item.id, role = item.role, lock = item.lock, created_at = item.created_at, expires = item.expires, created_by = item.created_by, profile = item.profile }",
@@ -536,6 +556,38 @@ def check_alarm_read_only(files):
             fail(f"{name}: scene steps must never reach the alarm ({match.group(0).strip()})")
 
 
+# Sonos (ADR-044): one file talks to the players, the actions it may send are listed, and an address
+# is allowed only by the module that reads the players' answers and the installer's property; the
+# API names a Sonos room, never an address.
+SONOS_CLIENT = "src/sonos/client.lua"
+SONOS_ACTIONS = {
+    "GetTransportInfo", "GetPositionInfo", "GetMediaInfo", "Play", "Pause", "Stop", "Next", "Previous",
+    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "GetVolume", "SetVolume", "GetMute", "SetMute",
+    "GetZoneGroupState", "Browse",
+}
+
+
+def check_sonos(files):
+    for name, text in sorted(files.items()):
+        if not name.endswith(".lua"):
+            continue
+        code = lua_code(text)
+        if (name.startswith("src/sonos/") or name == "src/api/handlers/music.lua") and name != SONOS_CLIENT:
+            for call, pattern in NETWORK_CALLS:
+                if pattern.search(code):
+                    fail(f"{name} uses {call}: only {SONOS_CLIENT} talks to the Sonos players")
+        if re.search(r"\bClient\.allow\s*\(", code) and name not in ("src/sonos/sonos.lua", SONOS_CLIENT):
+            fail(f"{name} allows a Sonos address: only src/sonos/sonos.lua does, from the players' answers and Composer")
+        if "src.sonos.client" in code and name not in ("src/sonos/sonos.lua", "src/main.lua"):
+            fail(f"{name} loads {SONOS_CLIENT}: requests go through src/sonos/sonos.lua")
+    match = re.search(r"^Protocol\.ACTIONS = \{([^}]*)\}", files.get("src/sonos/protocol.lua", ""), re.M)
+    if not match:
+        fail("could not read Protocol.ACTIONS in src/sonos/protocol.lua")
+    actions = set(re.findall(r"\b(\w+)\s*=", match.group(1)))
+    if actions != SONOS_ACTIONS:
+        fail(f"src/sonos/protocol.lua: the actions sent to Sonos players must be exactly {', '.join(sorted(SONOS_ACTIONS))} (got {', '.join(sorted(actions))})")
+
+
 def check_calendar_privacy(files):
     """The Jewish calendar's files make no network calls: they know the home's location."""
     for name in CALENDAR_ENGINE:
@@ -566,6 +618,7 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)
     check_relay_roots(files)

@@ -9,6 +9,11 @@
 --        out: "SEALED <hex JSON envelope>\n"
 --   in:  "open <hex JSON { key, envelope }>\n" opens a sealed answer; out: "OPENED <hex JSON>\n"
 --        (with "isk" in hex instead of "key": the answer of a pairing with CPace)
+-- With a second argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
+-- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
+--   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
+--   in:  "FETCHED <hex JSON { code, headers, body_hex } or { error }>\n"
+-- and the driver's search for players gets the fake players' answers.
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -23,6 +28,7 @@ if specPath and specPath ~= "" then
         file:close()
     end
 end
+local sonosForwarding = arg and arg[2] == "sonos"
 
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
 -- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
@@ -175,6 +181,60 @@ local function toHex(text)
     end))
 end
 
+-- ---- Sonos through the dev server (see the protocol at the top) ------------------------------
+
+local SonosSearch = 6100
+local searchesSeen = 0
+
+local function fetch(method, url, headers, body)
+    io.write("FETCH " .. toHex(Json.encode({ method = method, url = url, headers = headers or {}, body_hex = toHex(body or "") })) .. "\n")
+    io.flush()
+    local line = io.read("*l") or ""
+    local answer = Json.decode(fromHex(line:match("^FETCHED (%x*)$") or "")) or { error = "no answer from the dev server" }
+    if answer.error then
+        return nil, answer.error
+    end
+    return { code = answer.code, headers = answer.headers or {}, body = fromHex(answer.body_hex or "") }
+end
+
+if sonosForwarding then
+    -- Only the players' own addresses, as on a controller.
+    mock.http = function(request)
+        if not tostring(request.url):match("^http://[%d%.]+:1400/") then
+            return false
+        end
+        return fetch(request.method, request.url, request.headers, request.body)
+    end
+end
+
+-- The driver searched for players: Director says the connection is up, the fake players answer,
+-- and the search ends (the fake Director runs no timers by itself).
+local function answerSonosSearch()
+    local search = mock.network[SonosSearch]
+    if not sonosForwarding or not search or search.connects <= searchesSeen then
+        return
+    end
+    searchesSeen = search.connects
+    OnConnectionStatusChanged(SonosSearch, 1900, "ONLINE")
+    local listed = fetch("GET", "http://127.0.0.1/fake/ssdp", {})
+    for _, reply in ipairs(listed and Json.decode(listed.body) or {}) do
+        ReceivedFromNetwork(SonosSearch, 1900, reply)
+    end
+    for _, timer in ipairs(mock.timers) do
+        if not timer.fired and not timer.cancelled and timer.source:find("/sonos/client.lua", 1, true) and timer.delay == 4000 then
+            timer.fired = true
+            timer.callback()
+        end
+    end
+end
+
+-- The players are read as the driver's tick would read them.
+local function sonosTick()
+    pcall(function()
+        require("src.sonos.sonos").tick()
+    end)
+end
+
 -- What the contract test and the dev server ask for besides HTTP (see the protocol at the top).
 local Lock = require("src.cloud.lock")
 local Remote = require("src.cloud.remote")
@@ -222,6 +282,7 @@ for line in io.lines() do
         io.flush()
     end
     local answer = command(line)
+    answerSonosSearch()
     if answer then
         io.write(answer .. "\n")
         io.flush()
@@ -230,6 +291,8 @@ for line in io.lines() do
     if handle then
         advanceShades()
         advanceFans()
+        sonosTick()
+        answerSonosSearch()
         handle = tonumber(handle)
         if hex == "" then
             OnServerConnectionStatusChanged(handle, 41999, "OFFLINE")

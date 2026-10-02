@@ -24,6 +24,9 @@ local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
 local Remote = require("src.cloud.remote")
 local Invitations = require("src.auth.invitations")
+local Sonos = require("src.sonos.sonos")
+local SonosClient = require("src.sonos.client")
+local SonosRooms = require("src.sonos.rooms")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -253,6 +256,8 @@ local services = {
     -- The alarm's partitions are watched, and shown to members and admins (read-only), only with
     -- "Alarm Status" = On (ADR-038). Read at every request, like the door switches.
     alarmStatusEnabled = Alarm.enabled,
+    -- Sonos players on the home network (ADR-044, src/sonos/sonos.lua), only with "Sonos" = On.
+    sonosEnabled = Sonos.enabled,
     status = function()
         return { state = STATE.status, detail = STATE.detail }
     end,
@@ -437,6 +442,7 @@ function OnDriverLateInit(driverInitType)
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
+    SonosRooms.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
         assignProfiles()
@@ -466,6 +472,17 @@ function OnDriverLateInit(driverInitType)
     if discover() then
         watchProject()
     end
+
+    -- Sonos (ADR-044): DirectorLink looks for the players and talks to them only while the
+    -- installer has set Sonos to On; Sonos Players shows what it found.
+    Sonos.configure({
+        registry = Registry,
+        roomNames = RoomNames.get,
+        onStatus = function(text)
+            updateProperty(Sonos.STATUS_PROPERTY, text)
+        end,
+    })
+    Sonos.apply()
 
     -- Schedules run on the controller (src/core/scheduler.lua); the weather is for the project's
     -- location (Composer project properties).
@@ -602,6 +619,9 @@ function OnPropertyChanged(name)
         })
         publishInventory()
     end
+    if (name == Sonos.PROPERTY or name == Sonos.ADDRESS_PROPERTY) and Properties and STATE.supported then
+        Sonos.apply(name)
+    end
     if name == "Log Level" and Properties then
         if Log.setLevel(Properties[name]) then
             Log.info("logs", "log level changed from Composer", { level = Log.getLevel() })
@@ -623,12 +643,19 @@ function OnSystemEvent(data)
     ProjectEvents.onSystemEvent(data)
 end
 
--- The relay's outgoing connection (network binding 6001).
+-- The relay's outgoing connection (network binding 6001), and the search for Sonos players (UDP,
+-- binding 6100).
 function OnConnectionStatusChanged(idBinding, nPort, strStatus)
+    if SonosClient.onConnectionStatus(idBinding, nPort, strStatus) then
+        return
+    end
     Relay.onConnectionStatus(idBinding, nPort, strStatus)
 end
 
 function ReceivedFromNetwork(idBinding, nPort, strData)
+    if SonosClient.onData(idBinding, nPort, strData) then
+        return
+    end
     Relay.onData(idBinding, nPort, strData)
 end
 
@@ -651,6 +678,7 @@ function OnDriverDestroyed(driverInitType)
     persistSet(LIFECYCLE_KEYS.last_destroy_time, os.date("%Y-%m-%d %H:%M:%S"))
     Log.info("lifecycle", "driver destroyed", { init_type = tostring(driverInitType) })
     Relay.stop()
+    Sonos.shutdown()
     Api.stop()
     AdapterManager.shutdown()
 end

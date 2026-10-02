@@ -32,6 +32,7 @@ import { can, notify, state, ui } from "../state.js";
 import { cancelTurnOff, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
+import { musicHomeSection } from "./music.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
 import { updateBanner } from "./updates.js";
 
@@ -69,6 +70,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
     alarmSection(),
     summaryChips(),
+    // Sonos (1.5.0, ADR-044): what plays, one line per group.
+    musicHomeSection(),
     scenesRow(),
     favoritesSection({ openCamera, openFavoritesPicker }),
     roomsSection(),
@@ -388,6 +391,7 @@ function roomStatus(group) {
   if (group.cameras.length) parts.push(t("rooms.cameras", { count: group.cameras.length }));
   if (group.relays.length) parts.push(t("rooms.relays", { count: group.relays.length }));
   if (group.doorbells.length) parts.push(t("rooms.doorbells", { count: group.doorbells.length }));
+  if (group.music.some((item) => item.state === "playing")) parts.push(t("rooms.musicPlaying"));
   return parts.join(" · ");
 }
 
@@ -404,6 +408,7 @@ function roomCard({ room, group }) {
     group.cameras.length ? h("span", { class: "badge" }, icon("camera")) : null,
     group.relays.length ? h("span", { class: "badge" }, icon("door")) : null,
     group.doorbells.length ? h("span", { class: `badge ${group.doorbells.some((doorbell) => ringIsActive(doorbell)) ? "badge-ring" : ""}` }, icon("bell")) : null,
+    group.music.length ? h("span", { class: `badge ${group.music.some((item) => item.state === "playing") ? "badge-on" : ""}` }, icon("music")) : null,
   ];
   return h(
     "a",
