@@ -379,7 +379,7 @@ export default {
     pause: "השהיה: {name}",
     next: "הבא",
     previous: "הקודם",
-    controls: "ניגון: {name}",
+    controls: "פקדי ניגון: {name}",
     volume: "עוצמת השמע: {name}",
     mute: "השתקה: {name}",
     favorites: {

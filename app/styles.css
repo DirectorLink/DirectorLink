@@ -2331,6 +2331,19 @@ select:disabled {
   font-weight: 500;
 }
 
+/* Favorites that could not be read: the speaker's answer and Retry. */
+.music-favorites-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-block: 4px 8px;
+}
+
+.music-favorites-error .inline-error {
+  margin: 0;
+}
+
 .music-favorites-list {
   display: flex;
   flex-direction: column;

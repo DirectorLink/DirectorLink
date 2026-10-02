@@ -61,6 +61,12 @@ function artTile(item, size = "") {
   );
 }
 
+// On Home, Pause takes the group's line away (Music playing lists what plays): the keyboard goes to
+// the section's title, or to the page's once nothing plays. Both keep it over the redraw (data-key).
+function focusAfterPause() {
+  document.querySelector(playingGroups().length ? "#home-music-title" : ".page-title")?.focus({ preventScroll: true });
+}
+
 function transportControls(item, { compact = false } = {}) {
   const playing = isPlaying(item);
   const off = item.reachable === false;
@@ -69,8 +75,13 @@ function transportControls(item, { compact = false } = {}) {
     iconButton(iconName, label, {
       class: `music-button ${extra.main ? "music-main-button" : ""}`.trim(),
       disabled: extra.disabled,
-      dataset: { key: `${musicKey(item)}:${action}${compact ? ":home" : ""}` },
-      onclick: () => musicCommand(item, action),
+      // Play and pause are one button: one data-key, so its focus stays when it turns into the other.
+      dataset: { key: `${musicKey(item)}:${extra.main ? "main" : action}${compact ? ":home" : ""}` },
+      onclick: () => {
+        const sent = musicCommand(item, action);
+        if (compact && action === "pause") focusAfterPause();
+        return sent;
+      },
     });
   const main = playing
     ? button("pause", t("music.pause", { name: item.name }), "pause", { main: true, disabled: off })
@@ -116,13 +127,47 @@ function volumeControls(item) {
   );
 }
 
+// The favorites load when the person opens the panel, and again only when they ask (Retry, or
+// closing and opening it): never because a redraw opened it again (app.js restoreUi), or a speaker
+// that does not answer would be asked over and over.
 function favoritesPanel(item) {
   const loaded = musicFavorites(item);
+  const summary = h(
+    "summary",
+    {
+      dataset: { key: `${musicKey(item)}:favorites:title` },
+      // Before it opens (the click opens it); with the keyboard too.
+      onclick: () => {
+        if (!panel.open && musicFavorites(item)?.stage !== "ready") loadFavorites(item);
+      },
+    },
+    icon("star"),
+    t("music.favorites.title")
+  );
   let body;
   if (!loaded || loaded.stage === "loading") {
     body = h("p", { class: "muted-note", role: "status" }, t("common.loading"));
   } else if (loaded.stage === "error") {
-    body = h("p", { class: "inline-error", role: "alert" }, loaded.text);
+    body = h(
+      "div",
+      { class: "music-favorites-error" },
+      h("p", { class: "inline-error", role: "alert" }, loaded.text),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "button button-secondary button-small",
+          dataset: { key: `${musicKey(item)}:favorites:retry` },
+          onclick: () => {
+            // The button goes while they load: the keyboard waits on the panel's title.
+            summary.focus({ preventScroll: true });
+            loadFavorites(item);
+          },
+        },
+        icon("refresh"),
+        t("common.retry")
+      )
+    );
   } else if (!loaded.items.length) {
     body = h("p", { class: "muted-note" }, t("music.favorites.none"));
   } else {
@@ -162,18 +207,20 @@ function favoritesPanel(item) {
         : null,
     ];
   }
-  return h(
+  const panel = h(
     "details",
     {
       class: "music-favorites",
       dataset: { key: `${musicKey(item)}:favorites` },
+      // Opened some other way (the browser's find in page): loaded if they never were.
       ontoggle: (event) => {
-        if (event.target.open && musicFavorites(item)?.stage !== "ready") loadFavorites(item);
+        if (event.target.open && !musicFavorites(item)) loadFavorites(item);
       },
     },
-    h("summary", {}, icon("star"), t("music.favorites.title")),
+    summary,
     body
   );
+  return panel;
 }
 
 // One Sonos room on its room screen.
@@ -243,7 +290,12 @@ export function musicHomeSection() {
   return h(
     "section",
     { class: "home-section music-home", "aria-labelledby": "home-music-title" },
-    h("div", { class: "section-head" }, h("h2", { id: "home-music-title", class: "section-title" }, icon("music"), t("music.playingTitle"))),
+    h(
+      "div",
+      { class: "section-head" },
+      // Focused after a Pause takes a line away (focusAfterPause).
+      h("h2", { id: "home-music-title", class: "section-title", tabindex: "-1", dataset: { key: "home-music-title" } }, icon("music"), t("music.playingTitle"))
+    ),
     h(
       "ul",
       { class: "device-list music-home-list" },
@@ -276,6 +328,26 @@ export function musicHomeSection() {
 
 // ---- admins: the room of each Sonos room ---------------------------------------------------
 
+// A name as the driver compares them (driver/src/sonos/rooms.lua): "Living Room", "living room"
+// and "LivingRoom" are one name (Lua lowers only A to Z, and its spaces are ASCII ones).
+function comparableName(text) {
+  return String(text ?? "")
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase())
+    .replace(/[ \t\n\v\f\r]+/g, "");
+}
+
+// The room a Sonos room goes back to when its first choice is picked (PUT /v1/music/{id}/room with
+// null): the one whose name, or one of its names in other languages, is the Sonos room's. null when
+// none is, or more than one, as the driver decides (Rooms.match).
+function sameNameRoom(item) {
+  if (item.room_match === "name") return roomById(item.room_id);
+  if (item.room_match !== "admin") return null;
+  const wanted = comparableName(item.name);
+  if (!wanted) return null;
+  const found = state.rooms.filter((room) => [room.name, ...Object.values(room.names || {})].some((other) => comparableName(other) === wanted));
+  return found.length === 1 ? found[0] : null;
+}
+
 // For Settings → Rooms (views/settings.js musicSection): every Sonos room with the Control4 room it is shown in, and a choice for
 // those whose name matches none (or the wrong one). Admins only; null otherwise.
 export function musicRoomsSection() {
@@ -296,7 +368,8 @@ export function musicRoomsSection() {
       { class: "device-list music-rooms-list" },
       sorted.map((item) => {
         const id = `music-room-${item.id}`;
-        const byName = item.room_match === "name" ? item.room_id : null;
+        // The first choice is null: back to the room of the same name, or in none when no room has it.
+        const byName = sameNameRoom(item);
         const how =
           item.room_match === "admin"
             ? t("music.rooms.picked")
@@ -323,7 +396,7 @@ export function musicRoomsSection() {
             h(
               "option",
               { value: "", selected: item.room_match !== "admin" },
-              byName != null && roomById(byName) ? t("music.rooms.sameName", { room: roomName(roomById(byName)) }) : t("music.rooms.noneOption")
+              byName ? t("music.rooms.sameName", { room: roomName(byName) }) : t("music.rooms.noneOption")
             ),
             state.rooms.map((room) =>
               h("option", { value: String(room.id), selected: item.room_match === "admin" && item.room_id === room.id }, roomName(room))

@@ -29,6 +29,9 @@ class FakeElement extends FakeNode {
   addEventListener(type, listener) {
     this.listeners[type] = listener;
   }
+  focus() {
+    document.activeElement = this;
+  }
   append(...children) {
     this.children.push(...children);
   }
@@ -48,6 +51,7 @@ Object.defineProperty(globalThis, "navigator", {
 });
 globalThis.document = {
   hidden: false,
+  activeElement: null,
   documentElement: {},
   addEventListener() {},
   querySelector: () => null,
@@ -126,6 +130,7 @@ function controller(answers = {}) {
       return reply(200, answer);
     }
     if (address.pathname.endsWith("/favorites")) {
+      if (answers.favoritesFail) return reply(answers.favoritesFail.status, { status: answers.favoritesFail.status, code: answers.favoritesFail.code, detail: "refused" });
       return reply(200, {
         items: [
           { id: "10", title: "Example FM 99", description: "TuneIn Station", playable: true },
@@ -267,6 +272,24 @@ test("Home and an open room are read every 5 s, other screens not, and nothing o
   assert.equal(state.music, null, "nothing of it stays");
 });
 
+test("Home and a room are redrawn only when what they show changes, not at every read", async () => {
+  home();
+  controller();
+  await music.loadMusic();
+  const before = JSON.stringify(music.musicSignature());
+  // The next read: every room read again (updated_at), and the search for players said again.
+  const reread = (item) => ({ ...item, updated_at: "2026-10-02T10:00:05Z" });
+  controller({ list: { ...ON, status: "searching", items: ON.items.map(reread) } });
+  await music.loadMusic();
+  assert.equal(music.findMusic(KITCHEN).updated_at, "2026-10-02T10:00:05Z");
+  assert.equal(JSON.stringify(music.musicSignature()), before, "nothing shown changed: no redraw");
+  // A new song is.
+  const next = (item) => (item.id === KITCHEN ? { ...reread(item), now_playing: { ...track, title: "Next Song" } } : reread(item));
+  controller({ list: { ...ON, items: ON.items.map(next) } });
+  await music.loadMusic();
+  assert.notEqual(JSON.stringify(music.musicSignature()), before);
+});
+
 test("play and pause work on the group at once on screen, and come back if the speaker refuses", async () => {
   home();
   controller();
@@ -287,6 +310,47 @@ test("play and pause work on the group at once on screen, and come back if the s
   controller({ fail: { status: 409, code: "ACTION_NOT_POSSIBLE" } });
   await music.musicCommand(music.findMusic(BEDROOM), "next");
   assert.equal(state.errors[`music:${BEDROOM}`].text, "The speaker can’t do that now");
+});
+
+test("play and pause are one button, so it keeps the focus; on Home, Pause leaves the keyboard on the section", async () => {
+  home({ role: "member" });
+  controller();
+  await music.loadMusic();
+  // app.js restoreUi puts focus back on the element with the same data-key after a redraw.
+  const playing = byKey(views.musicCard(music.findMusic(KITCHEN)), `music:${KITCHEN}:main`);
+  assert.equal(playing.attributes["aria-label"], "Pause in Kitchen");
+  const paused = byKey(views.musicCard({ ...music.findMusic(KITCHEN), state: "paused" }), `music:${KITCHEN}:main`);
+  assert.equal(paused.attributes["aria-label"], "Play in Kitchen");
+  const section = views.musicHomeSection();
+  assert.equal(byKey(section, "home-music-title").attributes.tabindex, "-1", "the section's title takes focus");
+  // Pause on Home takes the group's line away: the keyboard goes to the section's title while
+  // another group plays, then to the page's title.
+  const focused = [];
+  document.querySelector = (selector) => ({ focus: () => focused.push(selector) });
+  try {
+    controller();
+    byKey(section, `music:${KITCHEN}:main:home`).listeners.click({});
+    assert.deepEqual(views.playingGroups().map((item) => item.id), [BEDROOM]);
+    assert.deepEqual(focused, ["#home-music-title"]);
+    await settle();
+    byKey(views.musicHomeSection(), `music:${BEDROOM}:main:home`).listeners.click({});
+    assert.equal(views.musicHomeSection(), null, "nothing plays");
+    assert.deepEqual(focused, ["#home-music-title", ".page-title"]);
+    await settle();
+  } finally {
+    document.querySelector = () => null;
+  }
+  // In Hebrew, the group and its Play button do not sound the same.
+  await setLanguage("he");
+  try {
+    const card = views.musicCard(music.findMusic(KITCHEN));
+    const group = byClass(card, "music-controls")[0].getAttribute("aria-label");
+    const play = byKey(card, `music:${KITCHEN}:main`).attributes["aria-label"];
+    assert.equal(play, "ניגון: Kitchen");
+    assert.notEqual(group, play);
+  } finally {
+    await setLanguage("en");
+  }
 });
 
 test("volume and mute are each room's own", async () => {
@@ -338,10 +402,10 @@ test("a member's card: what plays, the group, controls left to right, the volume
   // The radio cannot skip; a player that does not answer has its controls off.
   const radioCard = views.musicCard(music.findMusic(BEDROOM));
   assert.equal(disabled(byKey(radioCard, `music:${BEDROOM}:next`)), true);
-  assert.equal(disabled(byKey(radioCard, `music:${BEDROOM}:pause`)), false);
+  assert.equal(disabled(byKey(radioCard, `music:${BEDROOM}:main`)), false);
   const offline = views.musicCard({ ...music.findMusic(BEDROOM), reachable: false });
   assert.ok(offline.textContent.includes("Not answering"));
-  assert.equal(disabled(byKey(offline, `music:${BEDROOM}:pause`)), true);
+  assert.equal(disabled(byKey(offline, `music:${BEDROOM}:main`)), true);
 });
 
 test("what plays, in words", () => {
@@ -375,6 +439,57 @@ test("favorites: listed when opened, the ones only Sonos starts greyed out and n
   assert.deepEqual(lines(sent), [`POST /v1/music/${KITCHEN}/favorites/10/play`]);
 });
 
+test("favorites that fail: asked once when opened, not again when a redraw opens the panel again; Retry asks again", async () => {
+  forgetKey();
+  home({ role: "member" });
+  controller();
+  await music.loadMusic();
+  const sent = controller({ favoritesFail: { status: 502, code: "PLAYER_UNREACHABLE" } });
+  const asked = () => lines(sent).filter((line) => line.endsWith("/favorites")).length;
+  const panel = () => byKey(views.musicCard(music.findMusic(KITCHEN)), `music:${KITCHEN}:favorites`);
+  const title = (details) => byKey(details, `music:${KITCHEN}:favorites:title`);
+  // The person opens it: the click on its title comes before it opens, then it toggles.
+  let details = panel();
+  title(details).listeners.click({});
+  details.open = true;
+  details.listeners.toggle({ target: details });
+  await settle();
+  assert.equal(asked(), 1);
+  // Every redraw builds the panel again and app.js opens it again, which fires toggle.
+  for (let redraw = 0; redraw < 5; redraw++) {
+    details = panel();
+    details.open = true;
+    details.listeners.toggle({ target: details });
+    await settle();
+  }
+  assert.equal(asked(), 1, "not asked again by redraws");
+  // The error stays on screen, with Retry.
+  details = panel();
+  assert.ok(details.textContent.includes("The speaker didn’t answer"), details.textContent);
+  byKey(details, `music:${KITCHEN}:favorites:retry`).listeners.click({});
+  assert.equal(document.activeElement, title(details), "while they load, the keyboard waits on the panel's title");
+  await settle();
+  assert.equal(asked(), 2);
+  // A click that closes it asks nothing; opening it again asks again.
+  details = panel();
+  details.open = true;
+  title(details).listeners.click({});
+  await settle();
+  assert.equal(asked(), 2);
+  controller();
+  details.open = false;
+  title(details).listeners.click({});
+  await settle();
+  assert.equal(music.musicFavorites(music.findMusic(KITCHEN)).stage, "ready");
+  // Opened some other way (find in page) and never loaded: loaded once.
+  const living = controller();
+  const other = byKey(views.musicCard(music.findMusic(LIVING)), `music:${LIVING}:favorites`);
+  other.open = true;
+  other.listeners.toggle({ target: other });
+  await settle();
+  assert.deepEqual(lines(living), [`GET /v1/music/${LIVING}/favorites`]);
+});
+
 test("album art comes through the controller, once per picture", async () => {
   home();
   controller();
@@ -389,6 +504,41 @@ test("album art comes through the controller, once per picture", async () => {
   assert.equal(music.musicArt({ ...music.findMusic(LIVING), now_playing: playing }), "blob:art", "the same picture for the group");
   assert.deepEqual(lines(sent), [`GET /v1/music/${KITCHEN}/art`]);
   assert.equal(music.musicArt(music.findMusic(TV)), null, "no picture");
+});
+
+test("album art: every picture on the screen stays, however many; the others go beyond 12", async () => {
+  forgetKey();
+  home();
+  controller();
+  await music.loadMusic();
+  const sent = controller();
+  const fetched = () => lines(sent).filter((line) => line.endsWith("/art")).length;
+  let made = 0;
+  const revoked = [];
+  URL.createObjectURL = () => `blob:${++made}`;
+  URL.revokeObjectURL = (url) => revoked.push(url);
+  try {
+    const playingArt = (prefix, count) =>
+      Array.from({ length: count }, (_, i) => ({ id: `${prefix}${i}`, name: `${prefix} ${i}`, state: "playing", now_playing: { ...track, art_href: `/v1/music/${prefix}${i}/art`, art_key: `${prefix}${i}` } }));
+    // 15 Sonos rooms on one screen (Home's Music playing, or No room): each redraw asks for each.
+    const many = playingArt("many", 15);
+    for (let redraw = 0; redraw < 5; redraw++) {
+      many.forEach((item) => music.musicArt(item));
+      await settle();
+    }
+    assert.equal(fetched(), 15, "each picture once");
+    assert.ok(many.every((item) => music.musicArt(item)), "all 15 shown");
+    assert.deepEqual(revoked, []);
+    // Another screen with 3: of those no longer shown, the 12 newest stay.
+    await settle();
+    playingArt("few", 3).forEach((item) => music.musicArt(item));
+    await settle();
+    assert.equal(fetched(), 18);
+    assert.deepEqual(revoked, ["blob:1", "blob:2", "blob:3"], "the oldest three go");
+  } finally {
+    URL.createObjectURL = () => "blob:art";
+    URL.revokeObjectURL = () => {};
+  }
 });
 
 test("admins pick the room of a Sonos room whose name matches none", async () => {
@@ -418,6 +568,38 @@ test("admins pick the room of a Sonos room whose name matches none", async () =>
   byKey(views.musicRoomsSection(), `music:${BEDROOM}:place`).listeners.change({ target: { value: "" } });
   await settle();
   assert.deepEqual(sent.at(-1).body, { room_id: null }, "back to its name");
+});
+
+test("after an admin's pick, the first choice says where it goes back to: the room of the same name, or none", async () => {
+  home();
+  state.rooms = [
+    { id: 11, name: "Living Room" },
+    { id: 10, name: "Kitchen" },
+    { id: 12, name: "Master Bedroom", names: { he: "חדר שינה" } },
+  ];
+  // Picked by an admin; null (PUT /v1/music/{id}/room) matches them by name again, as the driver
+  // does: without regard to case or spaces, and with the rooms' names in other languages.
+  const picked = (id, name) => room({ id, name, room_id: 11, room_match: "admin" });
+  state.music = { enabled: true, status: "ok", items: [picked(KITCHEN, "kitchen"), picked(LIVING, "Master  bedroom"), picked(BEDROOM, "חדר שינה"), picked(TV, "TV Room")] };
+  const first = (id) => byKey(views.musicRoomsSection(), `music:${id}:place`).children[0];
+  assert.deepEqual([first(KITCHEN).attributes.value, first(KITCHEN).textContent], ["", "Same name: Kitchen"]);
+  assert.equal("selected" in first(KITCHEN).attributes, false, "the admin's pick is the one selected");
+  assert.equal(first(LIVING).textContent, "Same name: Master Bedroom");
+  assert.equal(first(BEDROOM).textContent, "Same name: Master Bedroom");
+  assert.equal(first(TV).textContent, "Not in a room", "no room has its name");
+  // Two rooms of that name: the driver matches neither.
+  state.rooms.push({ id: 13, name: "KITCHEN" });
+  assert.equal(first(KITCHEN).textContent, "Not in a room");
+  // Matched by its name: the driver's room.
+  state.music = { ...state.music, items: [room({ id: KITCHEN, name: "Kitchen", room_id: 10, room_match: "name" })] };
+  assert.equal(first(KITCHEN).textContent, "Same name: Kitchen");
+  await setLanguage("he");
+  try {
+    state.music = { ...state.music, items: [picked(BEDROOM, "חדר שינה")] };
+    assert.equal(first(BEDROOM).textContent, "אותו שם: חדר שינה");
+  } finally {
+    await setLanguage("en");
+  }
 });
 
 test("a scene step pauses or stops the music in a room or the whole home", async () => {

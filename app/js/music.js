@@ -14,6 +14,7 @@ export const MUSIC_POLL_MS = 5000;
 const AFTER_COMMAND_MS = 1500;
 // What the screen shows after a command, until a read agrees or this passes.
 const PENDING_MS = 8000;
+// Pictures kept besides those on the screen.
 const ART_KEEP = 12;
 
 let timer = null;
@@ -23,6 +24,10 @@ let watching = null;
 let pending = {};
 // art_key -> { url } | { loading: true } | { failed: true }, the newest last.
 const arts = new Map();
+// The pictures the last redraw asked for (musicArt), which are never let go: a screen with more
+// than ART_KEEP of them would otherwise fetch one again at every redraw, and that redraw the next.
+let shownArt = new Set();
+let drawing = false;
 // Music id -> { stage: "loading" | "ready" | "error", items, text }.
 let favorites = {};
 
@@ -140,6 +145,7 @@ whenForgotten(() => {
   favorites = {};
   for (const art of arts.values()) if (art.url) URL.revokeObjectURL(art.url);
   arts.clear();
+  shownArt = new Set();
   state.music = null;
 });
 
@@ -311,6 +317,15 @@ export function musicArt(item) {
   const href = playing?.art_href;
   const artKey = playing?.art_key;
   if (!href || !artKey) return null;
+  // One redraw asks for all its pictures at once, in one task.
+  if (!drawing) {
+    drawing = true;
+    shownArt = new Set();
+    queueMicrotask(() => {
+      drawing = false;
+    });
+  }
+  shownArt.add(artKey);
   const known = arts.get(artKey);
   if (known) return known.url || null;
   arts.set(artKey, { loading: true });
@@ -319,10 +334,12 @@ export function musicArt(item) {
     .then((blob) => {
       if (since !== keyGeneration()) return;
       arts.set(artKey, { url: URL.createObjectURL(blob) });
-      while (arts.size > ART_KEEP) {
-        const [oldest, value] = arts.entries().next().value;
+      // Besides those on the screen, the newest ART_KEEP stay.
+      const others = [...arts.keys()].filter((key) => !shownArt.has(key));
+      for (const key of others.slice(0, Math.max(0, others.length - ART_KEEP))) {
+        const value = arts.get(key);
         if (value.url) URL.revokeObjectURL(value.url);
-        arts.delete(oldest);
+        arts.delete(key);
       }
       notify();
     })
@@ -338,8 +355,11 @@ export function musicArt(item) {
   return null;
 }
 
-// For the renderer's signature (app.js): what is shown, the pictures loaded, the favorites.
+// For the renderer's signature (app.js): what is shown, the pictures loaded, the favorites. Not when
+// each room was read (updated_at changes at every read) nor the status of the search for players,
+// which no screen shows: Home and a room are redrawn only when what they show changes.
 export function musicSignature() {
   if (!musicAvailable() || !state.music) return null;
-  return [state.music, [...arts.keys()].filter((key) => arts.get(key).url), favorites];
+  const shown = state.music.items.map((item) => ({ ...item, updated_at: undefined }));
+  return [state.music.enabled, shown, [...arts.keys()].filter((key) => arts.get(key).url), favorites];
 }
