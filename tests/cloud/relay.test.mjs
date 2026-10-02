@@ -1,7 +1,8 @@
 // The relay (cloud/) end to end: `wrangler dev --local` runs it (worker.mjs), scripts/relay_smoke.mjs
 // plays the driver and calls the test endpoints.
 //   node --test tests/cloud/relay.test.mjs
-// Its .dev.vars set TEST_TOKEN, and REQUEST_TIMEOUT_MS so the 504 case is quick.
+// Its .dev.vars set TEST_TOKEN, and REQUEST_TIMEOUT_MS and RECONNECT_WAIT_MS so the 504 case and
+// the wait for a reconnecting driver are quick.
 
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
@@ -14,6 +15,7 @@ import { STARTUP_MS, startWorker } from "./worker.mjs";
 
 const TOKEN = `test-${randomHex(16)}`;
 const TIMEOUT_MS = 1500; // REQUEST_TIMEOUT_MS for this run (the default is 15000)
+const RECONNECT_WAIT_MS = 2000; // RECONNECT_WAIT_MS for this run (the default is 8000)
 const TEST = { timeout: 30_000 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -21,7 +23,7 @@ let relay;
 const drivers = [];
 
 before(async () => {
-  relay = await startWorker({ devVars: { TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS } });
+  relay = await startWorker({ devVars: { TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS, RECONNECT_WAIT_MS } });
 }, { timeout: STARTUP_MS + 10_000 });
 
 after(async () => {
@@ -97,6 +99,21 @@ function assertRefused(statusCode, code) {
     assert.equal(error.problem?.status, statusCode);
     return true;
   };
+}
+
+// The relay's log lines (one JSON object each) of `event` for `home`, oldest first.
+function logged(event, home) {
+  return relay
+    .output()
+    .split("\n")
+    .map((line) => {
+      try {
+        return JSON.parse(line.slice(line.indexOf("{")));
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry?.event === event && entry.home === home);
 }
 
 function isoTime(value) {
@@ -434,4 +451,48 @@ test("a driver that disconnects while a request waits gets the caller a 502; the
   assert.ok(isoTime(offline.since) >= started - 1000);
   assert.ok(isoTime(offline.last_seen) >= started - 1000);
   assertProblem(await call(home, "/v1/lights"), 503, "HOME_OFFLINE");
+});
+
+// The driver's connection is cut without a closing handshake (1006), as on real controllers, and
+// the driver connects again within seconds: what is asked meanwhile waits for it.
+test("a request made while the driver reconnects waits for it and goes through", TEST, async () => {
+  const { home, secret } = newHome();
+  const first = await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "first" }) }) });
+  first.destroy();
+  await eventually(async () => !(await status(home)).connected, "the home to show offline");
+  const disconnected = await eventually(() => logged("driver_disconnected", home)[0], "the disconnect in the log");
+  assert.match(disconnected.why, /^closed with 1006/);
+  assert.equal(typeof disconnected.up_s, "number");
+  assert.equal(disconnected.ping_s, null, "this driver never pinged");
+  assert.equal(typeof disconnected.message_s, "number");
+
+  const started = Date.now();
+  const pending = call(home, "/v1/system");
+  await sleep(500);
+  await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "second" }) }) });
+  const result = await pending;
+  const waited = Date.now() - started;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "second" });
+  assert.ok(waited >= 500 && waited < RECONNECT_WAIT_MS + 1000, `answered after ${waited} ms`);
+  const connected = logged("driver_connected", home);
+  assert.equal(connected.length, 2);
+  assert.equal(typeof connected[1].down_ms, "number", "how long the home was away");
+  assert.equal(connected[0].down_ms, null, "a first connection was never away");
+});
+
+test("a driver that does not come back gets the caller a 503 after the wait", TEST, async () => {
+  const { home, secret } = newHome();
+  const connection = await driver({ home, secret });
+  connection.ping();
+  await within(once(connection, "pong"), 5000, "pong");
+  connection.destroy();
+  await eventually(async () => !(await status(home)).connected, "the home to show offline");
+  const disconnected = await eventually(() => logged("driver_disconnected", home)[0], "the disconnect in the log");
+  assert.equal(typeof disconnected.ping_s, "number", "seconds since its last ping was answered");
+
+  const started = Date.now();
+  assertProblem(await call(home, "/v1/lights"), 503, "HOME_OFFLINE");
+  const waited = Date.now() - started;
+  assert.ok(waited >= RECONNECT_WAIT_MS - 100 && waited < RECONNECT_WAIT_MS + 3000, `answered after ${waited} ms`);
 });

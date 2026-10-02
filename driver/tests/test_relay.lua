@@ -209,22 +209,230 @@ function tests.large_frames_use_64_bit_lengths()
     T.eq(frames[1].payload, payload, "mask round trip")
 end
 
-function tests.keepalive_pings_and_silence_reconnects()
-    local mock, connection = connected()
-    local keepalive = lastTimer(mock, 25000)
-    T.truthy(keepalive and keepalive.repeating, "a repeating 25 s keep-alive")
-    keepalive.callback()
-    T.eq(clientFrames(connection.sent)[1].payload, "ping")
-    connection.sent = ""
-
+-- Runs `body(advance)` with os.time moved on by advance(seconds), then puts the clock back.
+local function withClock(body)
     local realTime = os.time
-    os.time = function()
-        return realTime() + 120
+    local offset = 0
+    os.time = function(date)
+        if date then
+            return realTime(date)
+        end
+        return realTime() + offset
     end
-    keepalive.callback()
+    local ok, err = pcall(body, function(seconds)
+        offset = offset + seconds
+    end)
     os.time = realTime
-    T.eq(connection.disconnects >= 1, true, "a silent connection is dropped")
-    T.contains(mock.properties["Remote Status"], "Reconnecting in 5 s")
+    if not ok then
+        error(err, 0)
+    end
+end
+
+local function fire(timer)
+    T.truthy(timer, "a timer is waiting")
+    timer.fired = true
+    timer.callback()
+end
+
+-- The relay log's last entry with this message, or nil; and how many there are.
+local function relayLog(message)
+    local found, count = nil, 0
+    for _, entry in ipairs(require("src.core.log").query({ category = "relay" })) do
+        if entry.message == message then
+            found, count = entry, count + 1
+        end
+    end
+    return found, count
+end
+
+local function near(actual, expected, what)
+    T.truthy(type(actual) == "number" and actual >= expected and actual <= expected + 2,
+        what .. ": " .. tostring(actual) .. ", expected " .. expected)
+end
+
+-- Director makes the new connection; the relay accepts it.
+local function online(connection)
+    connection.sent = ""
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    Harness.accept(connection.sent)
+    connection.sent = ""
+end
+
+function tests.keepalive_pings_and_silence_reconnects()
+    withClock(function(advance)
+        local mock, connection = connected()
+        local keepalive = lastTimer(mock, 25000)
+        T.truthy(keepalive and keepalive.repeating, "a repeating 25 s keep-alive")
+        keepalive.callback()
+        T.eq(clientFrames(connection.sent)[1].payload, "ping")
+        connection.sent = ""
+
+        advance(120)
+        keepalive.callback()
+        T.eq(connection.disconnects >= 1, true, "a silent connection is dropped")
+        local close = clientFrames(connection.sent)[1]
+        T.eq(close.opcode, 8, "with a close frame, in case the relay still hears it")
+        T.eq(close.payload, bigEndian(1000, 2) .. "no answer", "saying why, for the relay's log")
+        -- It had been up for two minutes: it is tried again at once.
+        T.eq(mock.properties["Remote Status"], "Reconnecting in 1 s (no answer)")
+        local entry = relayLog("no answer from the relay; reconnecting")
+        T.eq(entry.level, "warn")
+        near(entry.data.heard_s, 120, "heard_s")
+        T.eq(entry.data.retry_s, 1)
+    end)
+end
+
+-- Director's own monitoring polls the connection and drops it when no data comes back in its
+-- window, which up to 1.4.0 ended the relay connection every 10 to 40 minutes: it stays off, and
+-- the driver's keep-alive checks the connection instead.
+function tests.director_does_not_monitor_the_relay_connection()
+    local mock = Mock.startDriver()
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    local options = mock.network[BINDING].options
+    T.eq(options.MONITOR_CONNECTION, false)
+    T.eq(options.KEEP_ALIVE, true, "TCP keep-alive stays on")
+    T.eq(options.KEEP_CONNECTION, false, "the driver reconnects itself, with its backoff")
+end
+
+-- If Director polls all the same, a ping makes the relay answer at once.
+function tests.a_poll_from_director_is_answered_with_a_ping()
+    local _, connection = connected()
+    OnPoll(BINDING, 443)
+    local frames = clientFrames(connection.sent)
+    T.eq(#frames, 1)
+    T.eq(frames[1].payload, "ping")
+    connection.sent = ""
+    OnPoll(6002, 443)
+    T.eq(connection.sent, "", "another binding's poll is not the relay's")
+end
+
+function tests.a_stable_connection_that_is_lost_comes_back_at_once_and_says_why()
+    withClock(function(advance)
+        local mock, connection = connected()
+        advance(600)
+        OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+        T.eq(mock.properties["Remote Status"], "Reconnecting in 1 s (connection lost)")
+        local closed = relayLog("relay connection closed")
+        T.eq(closed.level, "info")
+        T.eq(closed.data.reason, "connection lost")
+        T.eq(closed.data.attempt, 1)
+        T.eq(closed.data.retry_s, 1)
+        near(closed.data.up_s, 600, "up_s")
+        near(closed.data.heard_s, 600, "heard_s (no pong since it opened)")
+
+        fire(lastTimer(mock, 1000))
+        T.eq(connection.connects, 2)
+        T.eq(mock.properties["Remote Status"], "Connecting...")
+        -- That attempt fails too: the backoff follows.
+        OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+        T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (connection lost)")
+        local failed = relayLog("relay connection attempt failed")
+        T.eq(failed.data.attempt, 2)
+        T.eq(failed.data.retry_s, 5)
+
+        advance(6)
+        fire(lastTimer(mock, 5000))
+        online(connection)
+        local back = relayLog("connected to the relay")
+        T.eq(back.data.attempts, 2)
+        near(back.data.down_s, 6, "down_s")
+        T.truthy(mock.properties["Remote Status"]:match("^Connected since %d%d:%d%d %- home %x+ %- last drop %d%d:%d%d %(connection lost%)$"),
+            mock.properties["Remote Status"])
+    end)
+end
+
+function tests.a_connection_lost_soon_after_it_opens_keeps_the_backoff()
+    local mock, connection = connected()
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    -- Two reports of one loss: one reconnect.
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (connection lost)")
+    local _, count = relayLog("relay connection closed")
+    T.eq(count, 1, "logged once")
+    local waiting = 0
+    for _, timer in ipairs(mock.timers) do
+        if timer.delay == 5000 and not timer.fired and not timer.cancelled and not (timer.source or ""):find("core/scheduler", 1, true) then
+            waiting = waiting + 1
+        end
+    end
+    T.eq(waiting, 1, "one retry waits")
+
+    fire(lastTimer(mock, 5000))
+    online(connection)
+    -- Lost again as soon as it opened: the backoff goes on rather than starting again.
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 10 s (connection lost)")
+end
+
+function tests.the_wait_after_the_relay_closes_depends_on_its_code()
+    local cases = {
+        -- Another connection with this identity took over: give it time.
+        { code = 4000, reason = "replaced", up = 600, wait = 30 },
+        -- The owner approved a new secret: try it at once.
+        { code = 4001, reason = "secret replaced", up = 0, wait = 1 },
+        -- The relay restarted (a deploy): at once after a stable connection, else the backoff.
+        { code = 1012, reason = "restart", up = 600, wait = 1 },
+        { code = 1012, reason = "restart", up = 0, wait = 5 },
+    }
+    for _, case in ipairs(cases) do
+        withClock(function(advance)
+            local mock, connection = connected()
+            advance(case.up)
+            ReceivedFromNetwork(BINDING, 443, serverFrame(8, bigEndian(case.code, 2) .. case.reason))
+            T.eq(clientFrames(connection.sent)[1].opcode, 8, "close echoed")
+            T.eq(mock.properties["Remote Status"],
+                "Reconnecting in " .. case.wait .. " s (closed by the relay (" .. case.code .. " " .. case.reason .. "))")
+            T.eq(relayLog("relay connection closed").data.code, case.code)
+        end)
+    end
+end
+
+-- Director reports a connection's state without saying which connection: the OFFLINE for one the
+-- driver closed may arrive after it started the next.
+function tests.an_offline_for_the_connection_it_closed_does_not_end_the_next_attempt()
+    withClock(function(advance)
+        local mock, connection = connected()
+        advance(600)
+        ReceivedFromNetwork(BINDING, 443, serverFrame(8, bigEndian(1012, 2)))
+        T.eq(connection.disconnects, 1)
+        fire(lastTimer(mock, 1000))
+        T.eq(connection.connects, 2)
+        -- Only now does Director report the old connection closed.
+        OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+        T.eq(mock.properties["Remote Status"], "Connecting...", "the attempt goes on")
+        T.eq(relayLog("relay connection attempt failed"), nil)
+        online(connection)
+        T.contains(mock.properties["Remote Status"], "Connected since")
+        -- A real loss afterwards is still one.
+        OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+        T.contains(mock.properties["Remote Status"], "Reconnecting in")
+    end)
+end
+
+function tests.a_late_connection_and_stale_data_do_not_disturb_the_next_attempt()
+    local mock = Mock.startDriver()
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    local connection = mock.network[BINDING]
+    fire(lastTimer(mock, 30000))
+    T.eq(connection.disconnects, 1, "the attempt is given up")
+    -- The connection Director was still making comes up after all: no upgrade, and it is closed.
+    connection.sent = ""
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    T.eq(connection.sent, "", "no upgrade request")
+    T.eq(connection.disconnects, 2, "Director is asked to close it")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (no connection within 30 s)")
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    T.eq(mock.properties["Remote Status"], "Reconnecting in 5 s (no connection within 30 s)")
+
+    fire(lastTimer(mock, 5000))
+    T.eq(connection.connects, 2)
+    -- Bytes of the old connection arrive late: they are not the relay's answer to this one.
+    ReceivedFromNetwork(BINDING, 443, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+    T.eq(mock.properties["Remote Status"], "Connecting...")
+    online(connection)
+    T.contains(mock.properties["Remote Status"], "Connected since")
 end
 
 function tests.lost_connections_reconnect_with_backoff()

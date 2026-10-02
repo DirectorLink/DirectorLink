@@ -632,6 +632,11 @@ function ReceivedFromNetwork(idBinding, nPort, strData)
     Relay.onData(idBinding, nPort, strData)
 end
 
+-- Director polls a connection it monitors; the relay's asks not to be (src/cloud/websocket.lua).
+function OnPoll(idBinding, nPort)
+    Relay.onPoll(idBinding, nPort)
+end
+
 function OnServerStatusChanged(port, status)
     Api.onStatusChanged(port, status)
 end

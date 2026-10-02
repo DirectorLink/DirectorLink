@@ -19,6 +19,15 @@ Relay.KEEPALIVE_MS = 25000
 Relay.SILENCE_SECONDS = 60
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
+-- A connection that was up for STABLE_SECONDS and is lost is tried again after QUICK_RETRY_SECONDS,
+-- then with the backoff; one lost sooner goes on with the backoff, so a connection that keeps
+-- failing as soon as it opens is not retried every second.
+Relay.QUICK_RETRY_SECONDS = 1
+Relay.STABLE_SECONDS = 60
+-- Closed with 4000 "replaced": another connection with this home's identity took its place (a
+-- second controller, after a backup was restored on it). Waiting longer keeps the two from pushing
+-- each other off every few seconds.
+Relay.REPLACED_RETRY_SECONDS = 30
 -- How long an attempt may take from NetConnect to the relay's answer to the upgrade.
 Relay.CONNECT_SECONDS = 30
 -- Replacement home secrets waiting for the owner's approval: the newest few, for a day.
@@ -34,9 +43,14 @@ local state = {
     enabled = false,
     socket = nil,
     identity = nil,
-    attempts = 0,
+    attempts = 0, -- failed attempts since the last stable connection (the backoff's step)
+    tries = 0, -- attempts started since the connection was lost
     connectedAt = nil,
+    downSince = nil, -- when the connection was lost
+    lastDrop = nil, -- { at, reason }: the last connection lost, for Remote Status
     lastHeard = 0,
+    pingedAt = nil,
+    polledAt = nil, -- when Director last polled the connection (OnPoll)
     keepalive = nil,
     retry = nil,
     connecting = nil, -- the limit on the attempt in progress (watchConnect)
@@ -149,7 +163,14 @@ end
 
 local connect
 
-local function scheduleReconnect(reason, seconds)
+local function ago(time)
+    return time and os.time() - time or nil
+end
+
+-- Connects again after `seconds`, or after the backoff's next step. Every disconnect and failed
+-- attempt is logged in one line (`note`: { level, message, data }, else "reconnecting to the
+-- relay"), with the reason, the number of the attempt that follows and how long until it starts.
+local function scheduleReconnect(reason, seconds, note)
     stopTimers()
     state.connectedAt = nil
     if not state.enabled then
@@ -159,6 +180,13 @@ local function scheduleReconnect(reason, seconds)
         state.attempts = state.attempts + 1
         seconds = Relay.BACKOFF_SECONDS[math.min(state.attempts, #Relay.BACKOFF_SECONDS)]
     end
+    state.downSince = state.downSince or os.time()
+    note = note or {}
+    local data = note.data or {}
+    data.reason = tostring(reason)
+    data.attempt = state.tries + 1
+    data.retry_s = seconds
+    log(note.level or "info", note.message or "reconnecting to the relay", data)
     publish("Reconnecting in " .. seconds .. " s (" .. tostring(reason) .. ")")
     pcall(function()
         state.retry = C4:SetTimer(seconds * 1000, function()
@@ -182,13 +210,11 @@ local function watchConnect()
             if not state.enabled or not socket or (socket.state ~= "connecting" and socket.state ~= "handshake") then
                 return
             end
-            if socket.state == "connecting" then
-                log("warn", "no TLS connection to the relay within " .. Relay.CONNECT_SECONDS .. " s; the certificate check may have failed")
-            else
-                log("warn", "the relay did not answer the upgrade within " .. Relay.CONNECT_SECONDS .. " s")
-            end
+            local message = socket.state == "connecting"
+                and "no TLS connection to the relay within " .. Relay.CONNECT_SECONDS .. " s; the certificate check may have failed"
+                or "the relay did not answer the upgrade within " .. Relay.CONNECT_SECONDS .. " s"
             socket:close(nil, true)
-            scheduleReconnect("no connection within " .. Relay.CONNECT_SECONDS .. " s")
+            scheduleReconnect("no connection within " .. Relay.CONNECT_SECONDS .. " s", nil, { level = "warn", message = message })
         end, false)
     end)
 end
@@ -249,21 +275,69 @@ local function onMessage(text, kind)
     end
 end
 
+local function ping()
+    state.pingedAt = os.time()
+    send("ping")
+end
+
+-- What a lost connection had been doing, for the log: how long it was up, and how long since the
+-- relay was last heard, the last ping and Director's last poll.
+local function connectionFacts(data)
+    data = data or {}
+    data.up_s = ago(state.connectedAt)
+    data.heard_s = state.connectedAt and ago(state.lastHeard) or nil
+    data.ping_s = state.connectedAt and ago(state.pingedAt) or nil
+    data.polled_s = ago(state.polledAt)
+    return data
+end
+
+-- A connection that was up long enough and is lost is tried again at once; otherwise the backoff
+-- goes on. Returns the wait in seconds, or nil for the backoff.
+local function quickRetry()
+    if state.connectedAt and os.time() - state.connectedAt >= Relay.STABLE_SECONDS then
+        state.attempts = 0
+        return Relay.QUICK_RETRY_SECONDS
+    end
+    return nil
+end
+
+-- Remembers why the connection was lost, for Remote Status once it is back.
+local function dropped(reason)
+    if state.connectedAt then
+        state.lastDrop = { at = os.time(), reason = tostring(reason) }
+    end
+end
+
 local function startKeepalive()
     cancel(state.keepalive)
     pcall(function()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
             if os.time() - state.lastHeard > Relay.SILENCE_SECONDS then
-                log("warn", "no answer from the relay; reconnecting")
+                local facts = connectionFacts()
+                local retry = quickRetry()
+                dropped("no answer")
                 if state.socket then
-                    state.socket:close(nil, true)
+                    state.socket:close(1000, false, "no answer")
                 end
-                scheduleReconnect("no answer")
+                scheduleReconnect("no answer", retry, { level = "warn", message = "no answer from the relay; reconnecting", data = facts })
                 return
             end
-            send("ping")
+            ping()
         end, true)
     end)
+end
+
+-- Director polls a connection it monitors (OnPoll). The relay connection asks it not to
+-- (websocket.lua), but if it does, a ping makes the relay answer at once.
+function Relay.onPoll(binding)
+    if tonumber(binding) ~= Relay.BINDING or not state.socket then
+        return
+    end
+    state.polledAt = os.time()
+    log("debug", "Director polled the relay connection", { connected = state.connectedAt ~= nil })
+    if state.connectedAt then
+        ping()
+    end
 end
 
 -- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway). The cloud
@@ -321,16 +395,31 @@ local function onOpen()
     cancel(state.connecting)
     state.connecting = nil
     state.trying = nil
-    state.attempts = 0
     state.lastHeard = os.time()
+    state.pingedAt = nil
     state.connectedAt = os.time()
     local identity = Relay.identity()
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION })
     Relay.announceKeys()
     startKeepalive()
+    local drop = state.lastDrop
     publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8)
+        .. (drop and (" - last drop " .. os.date("%H:%M", drop.at) .. " (" .. drop.reason .. ")") or "")
         .. (state.backupRefused and " (the relay refused the backup's home)" or ""))
-    log("info", "connected to the relay", { home_id = identity.home_id })
+    log("info", "connected to the relay", { home_id = identity.home_id, attempts = state.tries, down_s = ago(state.downSince) })
+    state.tries = 0
+    state.downSince = nil
+end
+
+-- The wait after the relay closed the connection with `code`: a new secret the owner approved
+-- (4001) is tried at once; another connection that took this one's place (4000) is given time.
+local function closedByRelay(code)
+    if code == 4001 then
+        return Relay.QUICK_RETRY_SECONDS
+    elseif code == 4000 then
+        return Relay.REPLACED_RETRY_SECONDS
+    end
+    return quickRetry()
 end
 
 local function onClose(reason, status, body)
@@ -345,8 +434,7 @@ local function onClose(reason, status, body)
         local nextTry = (state.trying or 0) + 1
         if status == 401 and identity.next_secrets and identity.next_secrets[nextTry] then
             state.trying = nextTry
-            log("info", "trying a new home secret", { candidate = nextTry })
-            scheduleReconnect("trying a new home secret", 1)
+            scheduleReconnect("trying a new home secret", 1, { message = "trying a new home secret", data = { candidate = nextTry } })
             return
         end
         state.trying = nil
@@ -358,17 +446,28 @@ local function onClose(reason, status, body)
             state.identity = { home_id = previous.home_id, home_secret = previous.home_secret, next_secrets = previous.next_secrets, linked = previous.linked }
             saveIdentity(state.identity)
             state.backupRefused = true
-            log("warn", "the relay refused the remote identity restored from a backup; this controller's own is back",
-                { refused = identity.home_id, home_id = previous.home_id, detail = tostring(detail) })
-            scheduleReconnect("the backup's identity was refused; using this controller's", 1)
+            scheduleReconnect("the backup's identity was refused; using this controller's", 1, {
+                level = "warn",
+                message = "the relay refused the remote identity restored from a backup; this controller's own is back",
+                data = { refused = identity.home_id, home_id = previous.home_id, detail = tostring(detail) },
+            })
             return
         end
-        log("warn", "the relay refused the connection", { status = status, detail = tostring(detail) })
-        scheduleReconnect("refused: " .. tostring(detail), status == 401 and Relay.REFUSED_RETRY_SECONDS or nil)
+        scheduleReconnect("refused: " .. tostring(detail), status == 401 and Relay.REFUSED_RETRY_SECONDS or nil,
+            { level = "warn", message = "the relay refused the connection", data = { status = status, detail = tostring(detail) } })
         return
     end
-    log("info", "relay connection closed", { reason = tostring(reason) })
-    scheduleReconnect(reason)
+    -- Lost: Director reported the connection offline ("connection lost"), the relay closed it
+    -- (`status` is its close code), or it could not be opened.
+    local open = state.connectedAt ~= nil
+    local code = tonumber(status)
+    local retry = nil
+    if open then
+        retry = code and closedByRelay(code) or quickRetry()
+    end
+    local facts = connectionFacts({ code = code })
+    dropped(reason)
+    scheduleReconnect(reason, retry, { message = open and "relay connection closed" or "relay connection attempt failed", data = facts })
 end
 
 connect = function()
@@ -396,7 +495,9 @@ connect = function()
         { "X-DirectorLink-Version", Version.BRIDGE_VERSION },
         { "User-Agent", "DirectorLink/" .. Version.BRIDGE_VERSION },
     }
+    state.tries = state.tries + 1
     publish("Connecting...")
+    log("debug", "connecting to the relay", { attempt = state.tries })
     -- Before connect(): a connection that fails at once cancels it on its way to the backoff.
     watchConnect()
     state.socket:connect()
@@ -491,7 +592,7 @@ function Relay.resetIdentity()
     log("warn", "remote identity reset", { home_id = identity.home_id })
     if state.enabled then
         if state.socket then
-            state.socket:close(nil, true)
+            state.socket:close(1000, false, "new identity")
         end
         scheduleReconnect("new remote identity", 1)
     end
@@ -546,7 +647,7 @@ function Relay.reconnect(seconds, reason)
         state.retry = C4:SetTimer((seconds or 1) * 1000, function()
             state.retry = nil
             if state.socket then
-                state.socket:close()
+                state.socket:close(1000, false, "reconnecting")
             end
             scheduleReconnect(reason or "new remote identity", 1)
         end, false)
@@ -571,6 +672,9 @@ function Relay.start()
     end
     state.enabled = true
     state.attempts = 0
+    state.tries = 0
+    state.downSince = nil
+    state.lastDrop = nil
     log("info", "remote access switched on")
     connect()
 end
@@ -580,7 +684,7 @@ function Relay.stop()
     state.enabled = false
     stopTimers()
     if state.socket then
-        state.socket:close()
+        state.socket:close(1000, false, "stopped")
     end
     state.connectedAt = nil
     publish("Off")
