@@ -776,6 +776,7 @@ export default {
     // Settings (admins): how the controller works out the times.
     settings: {
       title: "Shabbat and holidays",
+      cardTitle: "How the times are worked out",
       holidays: "Holidays and weekly reading",
       auto: "Automatic",
       autoHelp: "From the home’s location",
@@ -793,6 +794,7 @@ export default {
       saved: "Saved. The times are worked out again.",
       conflict: "These settings were changed on another device meanwhile. They are shown as they are now: make your change again.",
       disclaimer: "Worked out on the controller from the home’s location. Check the times against your community’s calendar.",
+      unavailable: "Only an admin can change these settings, while the Jewish calendar is on in Composer.",
     },
   },
   cameras: {
@@ -934,6 +936,9 @@ export default {
     availableUndated: "DirectorLink {version} is available",
     checkFailed: "Could not check for updates (last checked {date})",
     checkFailedUndated: "Could not check for updates",
+    checkNow: "Check now",
+    checking: "Checking…",
+    checkWait: "You can check again in a minute",
     howTo: "How to update",
     download: "Download DirectorLink.c4z",
     whatsNew: "What’s new",
@@ -1068,6 +1073,22 @@ export default {
   },
   settings: {
     title: "Settings",
+    // The rows that open Settings' pages, each with a line of how things are.
+    rows: {
+      label: "Settings pages",
+      driverVersion: "DirectorLink {version}",
+      updateBadge: "Update",
+      roomCount: { one: "{count} room", other: "{count} rooms" },
+      roomsHidden: { one: "{rooms}, {count} hidden", other: "{rooms}, {count} hidden" },
+      roomsConnect: "Connect to your controller first",
+      calendar: "Candles {candles} min · havdalah {havdalah} min",
+      access: "Devices, invitations and people",
+      signedIn: "Signed in as {email}",
+      signedOut: "Not signed in",
+      accountUnavailable: "Can’t reach the account service",
+      canInstall: "Can be installed",
+      about: "Version {version} · open source",
+    },
     appearance: {
       title: "Appearance",
       palette: "Colours",
@@ -1096,6 +1117,7 @@ export default {
       updateDriverOrder: "Update DirectorLink on your controller to set the room order.",
       namesTitle: "Room names",
       title: "Rooms",
+      listTitle: "Rooms in your lists",
       help: "Give each room a name per language. Leave a field empty to use the Control4 name.",
       connectFirst: "Connect to your controller to rename rooms.",
       saved: "Saved.",
@@ -1104,11 +1126,13 @@ export default {
     },
     controller: {
       title: "Controller",
+      connection: "Connection",
       connect: "Connect",
       status: "Status",
       access: "Access",
       updated: "Last update",
-      bridgeVersion: "DirectorLink version",
+      appVersion: "App version",
+    bridgeVersion: "DirectorLink version",
       model: "Controller",
       os: "Control4 OS",
       inventory: "Project",
@@ -1123,6 +1147,7 @@ export default {
     },
     account: {
       title: "Account",
+      cardTitle: "DirectorLink account",
       intro: "Optional. Sign in to reach your home from anywhere, sealed end to end, and to invite family. On the home network the app works without an account.",
       signIn: "Sign in with Google",
       signedInAs: "Signed in as",
@@ -1196,6 +1221,7 @@ export default {
     },
     app: {
       title: "App",
+      cardTitle: "On this device",
       offlineCopy: "Offline copy",
       offline: {
         checking: "Checking…",
@@ -1225,6 +1251,7 @@ export default {
     },
     about: {
       title: "About",
+      cardTitle: "DirectorLink",
       slogan: "Direct to Director. End-to-end integration. Open source.",
       text: "DirectorLink connects this app to your Control4 system over your home network, and from anywhere through your account, locked end to end so that no server in between can read it.",
       independent: "DirectorLink is independent and not affiliated with Control4 or Snap One.",

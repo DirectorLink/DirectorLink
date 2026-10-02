@@ -11,10 +11,12 @@ import {
   ANSWER_FRESH_MS,
   CHECK_INTERVAL_MS,
   LATEST_RELEASE_URL,
+  MANUAL_INTERVAL_MS,
   checkForUpdate,
   compareVersions,
   dismissUpdate,
   dismissedVersion,
+  manualCheckWait,
   newerRelease,
   parseVersion,
   readRelease,
@@ -345,4 +347,39 @@ test("blocked storage is not an error", async () => {
   assert.doesNotThrow(() => dismissUpdate("1.1.0", blocked));
   assert.equal(dismissedVersion(blocked), null);
   assert.equal(savedCheck(null), null);
+});
+
+test("Check now asks at once, but never twice within a minute; the 12 hours start again from it", async () => {
+  const storage = memoryStorage();
+  const { fetch, calls } = github(200, answer("1.1.0"));
+  assert.equal(await checkForUpdate(admin({ storage, fetch })), true);
+  assert.equal(calls.length, 1);
+  // An hour later the schedule does not ask; Check now does.
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR })), false);
+  assert.equal(calls.length, 1, "without Check now the 12 hours still hold");
+  await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR, force: true }));
+  assert.equal(calls.length, 2, "Check now asks at once");
+  // Pressed again 30 seconds later: it waits.
+  assert.equal(manualCheckWait({ check: savedCheck(storage), now: NOW + HOUR + 30000 }), MANUAL_INTERVAL_MS - 30000);
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR + 30000, force: true })), false);
+  assert.equal(calls.length, 2, "not twice within a minute");
+  // A minute after the last try it may ask again, and the 12 hours count from that try.
+  const later = NOW + HOUR + MANUAL_INTERVAL_MS;
+  assert.equal(manualCheckWait({ check: savedCheck(storage), now: later }), 0);
+  await checkForUpdate(admin({ storage, fetch, now: later, force: true }));
+  assert.equal(calls.length, 3);
+  assert.equal(savedCheck(storage).checkedAt, later);
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: later + CHECK_INTERVAL_MS - 1 })), false);
+  assert.equal(calls.length, 3);
+});
+
+test("Check now is only for admin keys, with a driver of a known version", async () => {
+  const { fetch, calls } = github(200, answer("1.1.0"));
+  for (const options of [{ role: "member" }, { role: "viewer" }, { driverVersion: "dev" }, { driverVersion: undefined }]) {
+    assert.equal(await checkForUpdate(admin({ storage: memoryStorage(), fetch, force: true, ...options })), false, JSON.stringify(options));
+  }
+  assert.equal(calls.length, 0);
+  // Never checked, or a clock that went back: Check now may ask.
+  assert.equal(manualCheckWait({ check: null, now: NOW }), 0);
+  assert.equal(manualCheckWait({ check: { checkedAt: NOW + HOUR }, now: NOW }), 0);
 });

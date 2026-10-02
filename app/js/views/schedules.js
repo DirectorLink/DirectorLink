@@ -167,12 +167,12 @@ function weatherCard() {
 // ---- Shabbat and holiday times (the Jewish calendar) --------------------------------------------
 
 // Under the weather, for everyone: the next Shabbat or holiday, or the one now, with its times.
-// Admins can change how they are worked out (Settings).
+// Admins can change how they are worked out (Settings → Shabbat and holidays).
 function calendarCard(admin) {
   const times = calendarOn() ? holyTimes() : null;
   if (!times) return null;
   const change = admin
-    ? h("a", { class: "calendar-change", href: "#/settings", dataset: { key: "calendar-change" }, onclick: showCalendarSettings }, t("calendar.times.change"))
+    ? h("a", { class: "calendar-change", href: "#/settings/calendar", dataset: { key: "calendar-change" }, onclick: showCalendarSettings }, t("calendar.times.change"))
     : null;
   return h(
     "section",

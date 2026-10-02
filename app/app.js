@@ -30,7 +30,7 @@ import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
-import { resetCalendarSettings, settingsView } from "./js/views/settings.js";
+import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 
 const view = document.querySelector("#view");
@@ -67,8 +67,12 @@ function parseRoute() {
   if (parts[0] === "schedules") {
     return { name: "schedules", tab: "scenes" };
   }
-  if (["scenes", "cameras", "climate", "settings"].includes(parts[0])) {
+  if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
+  }
+  // Settings' list, or one of its pages (#/settings/rooms); an unknown page is the list.
+  if (parts[0] === "settings") {
+    return { name: "settings", page: SETTINGS_PAGES.includes(parts[1]) ? parts[1] : null, tab: "settings" };
   }
   if (parts[0] === "access") {
     return { name: "access", tab: "settings" };
@@ -96,7 +100,8 @@ window.addEventListener("hashchange", () => {
   if (route.name === "access" && previous.name !== "access") resetAccess();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
-  if (route.name === "settings" && previous.name !== "settings") resetCalendarSettings();
+  // Shabbat and holidays opens with the controller's settings.
+  if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
   // The Hebrew date on Home (Schedules reads the calendar too).
@@ -104,8 +109,16 @@ window.addEventListener("hashchange", () => {
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
-  // Move focus to the new screen's heading for keyboard and screen-reader users.
-  view.querySelector(".page-title")?.focus({ preventScroll: true });
+  // Back on Settings' list from one of its pages, the row that opened it has the focus; otherwise
+  // the new screen's heading, for keyboard and screen-reader users.
+  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : null;
+  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey) : null;
+  if (row) {
+    row.scrollIntoView({ block: "center" });
+    row.focus({ preventScroll: true });
+  } else {
+    view.querySelector(".page-title")?.focus({ preventScroll: true });
+  }
 });
 
 // ---- dialogs -------------------------------------------------------------------------------
@@ -282,6 +295,7 @@ function screen() {
       return accessView(actions);
     case "settings":
       return settingsView({
+        page: route.page,
         navigate,
         onPalette: (palette) => {
           setPalette(palette);

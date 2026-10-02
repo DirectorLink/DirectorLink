@@ -246,7 +246,7 @@ that can still be accepted; a request goes with its invitation, its account or a
 
 ### 4. Removing someone, or a lost phone
 
-An admin revokes that device's key: in the app (Settings → Controller → **People and devices**),
+An admin revokes that device's key: in the app (Settings → **People and devices**),
 the API console, or Composer's Revoke All API Keys. It stops working at home and away at once.
 Signing in to the account alone gives no access, because the keys live only on the devices.
 Settings → Account → **Sign out everywhere** also ends every session of the account, on every

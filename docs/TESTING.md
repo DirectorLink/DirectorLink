@@ -2,7 +2,15 @@
 
 ## Current release
 
-`v1.4.0` — backup and restore (0ze, ADR-042). Update DirectorLink in Composer (no reboot). The cloud is unchanged.
+`v1.4.1` — Check now for updates, and the app's version in Settings (0zg). The app updates by itself; the driver is unchanged apart from its version.
+
+## 0zg. Check now, and the app's version (1.4.1)
+
+1. On an admin device, Settings → Controller shows **App version 1.4.1** and the DirectorLink version, then **Updates** with a **Check now** button under the facts. A member or viewer device shows App version, but no Updates line and no button.
+2. Tap **Check now**: the Updates line says *Checking…*, then *Up to date* or *DirectorLink X is available*.
+3. **Check now** again within a minute: the button says *You can check again in a minute* (on hover) and nothing is sent. In DevTools → Network, the first press made one request to `api.github.com`, and the second made none.
+4. After a minute, **Check now** asks again.
+5. Hebrew: *בדיקה עכשיו*, then *בודק…*, right to left.
 
 ## 0ze. Backup and restore (1.4.0)
 
@@ -300,7 +308,7 @@ On a Director with these devices (the contributor, @bkwagner, read them on a liv
 
 ## 0j. People and devices
 
-1. On the computer at home (admin key): Settings → Controller → **People and devices**. Devices lists every key, with *This device* for the computer (no Revoke, role fixed) and when each was last used; People lists your account as *Owner* with your devices, and anyone who joined with theirs; Invitations lists the ones waiting.
+1. On the computer at home (admin key): Settings → **People and devices**. Devices lists every key, with *This device* for the computer (no Revoke, role fixed) and when each was last used; People lists your account as *Owner* with your devices, and anyone who joined with theirs; Invitations lists the ones waiting.
 2. Change the role of the iPhone's key to *Member*: the iPhone can still switch lights, and Door Control gates are refused. Set it back to *Admin*.
 3. **Add my other device** makes an invitation that appears under Invitations; **Revoke** it: its link answers "used, revoked or has expired".
 4. Invite a second Google account, accept it on another device, then **Remove** that person: their device shows "Your home does not know this device’s key" (or the account message), and they are gone from People.

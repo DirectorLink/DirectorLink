@@ -369,6 +369,8 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Consequence:** Nothing new runs on the controller. GitHub sees admins' IP addresses about twice a day; the privacy page says so. An admin whose app asked just before a release was published hears of it up to 12 hours later. When GitHub gives no usable answer (a rate limit, no connection), a newer release the app already knows of is still offered, but *Up to date* is said only within 3 days of GitHub's last answer; after that Settings says that the check did not work, and when it last did. A release that is not immutable is never offered; it can still say that the driver is up to date (1.0.0, the latest release when the 1.1.0 app went live, was published mutable). With the repository's immutable-releases setting forgotten, admins get no notice of a newer release rather than one for files that could still change.
 
+**1.4.1:** Settings → Controller has **Check now**, which asks GitHub at once but at most once a minute (the 12 hours then start again from it), and shows the app's own version next to the driver's.
+
 ## ADR-034 — The driver checks the relay's certificate against roots it carries
 
 **Context:** Up to 1.0.0 the driver opened the relay connection with `NetPortOptions` `SSL` and no `VERIFY_MODE`, and Control4's documentation says Director then checks nothing. Everything through the relay is sealed end to end (ADR-029), but the handshake carries the home secret, so anyone in the network path could pose as the relay, take the secret and keep the home offline.
