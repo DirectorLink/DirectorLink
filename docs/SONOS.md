@@ -13,7 +13,11 @@ driver in Control4, so DirectorLink talks to the speakers itself, on the home ne
 3. If it says `None found`, set **Sonos Address** to one player's IP address (the Sonos app shows
    it under Settings → System → About My System). That player lists the others. This is needed
    when the controller and the speakers are on different networks (VLANs), where the search cannot
-   reach them.
+   reach them. Spaces around it, `http://` before it and `:1400` after it are fine
+   (`http://192.168.50.12:1400/` is read as `192.168.50.12`). Anything else (a name, another port,
+   an address outside the home network) is not used, and Sonos Players says so:
+   `Sonos Address is not understood: ...`. If no player answers at the address, Sonos Players says
+   `None found. No Sonos player answered at 192.168.50.12 (Sonos Address).`
 
 No restart is needed for either property. Turning Sonos off stops everything at once.
 
@@ -53,9 +57,15 @@ surrounds and sub, is one room. A Boost or a Bridge is no room.
 ## Scenes
 
 A scene step can pause or stop the music in a room, or in the whole home ("Good night: music off").
-A group pauses as one: if the room is grouped with others, they pause too. A radio station, which
+A group pauses as one: if the room is grouped with others, they pause too. Each group is first
+asked what it does: one that is already paused or stopped is left as it is, so a paused queue keeps
+its place in the track and a paused Spotify Connect session is not ended. A radio station, which
 Sonos cannot pause, stops. Scheduled scenes run music steps like any other (as a member's key).
-With Sonos off, a music step is skipped and says why.
+
+Each group handled counts as ran in the run's report. A step that finds nothing is skipped and says
+why, as a problem with `device_id` 0: `SONOS_OFF` (Sonos is off in Composer), `NO_PLAYERS` (no
+player found yet) or `NO_SONOS_ROOM` (no Sonos room is shown in the step's room, for example after
+a Sonos room was renamed).
 
 ## How DirectorLink talks to the speakers
 
@@ -68,13 +78,25 @@ through Sonos's cloud, which DirectorLink does not use.)
 - **Finding the players.** An SSDP search (UDP to 239.255.255.250:1900, for
   `urn:schemas-upnp-org:device:ZonePlayer:1`) when Sonos is turned on and every 5 minutes, and the
   player at Sonos Address if set. One player's zone group state (GetZoneGroupState) lists every
-  room and group with its address.
+  room and group with its address. A search takes the first 32 addresses that answer, each once
+  (any one player lists the whole household); an address from a search is contacted until the
+  next search, or for as long as a player lists it. When a player does not list the rooms, the
+  next address is asked at once, 4 in a row at most; the others wait for the next read.
 - **Only the players.** DirectorLink sends requests only to addresses of the home network
   (10.x, 172.16–31.x, 192.168.x) on port 1400, which a player gave in its answer to the search or
   in its zone group state, or which the installer typed in Composer. An API request names a Sonos
   room, never an address. No other host is contacted: album art a music service keeps on its own
-  servers is not shown. `scripts/check_package.py` fails the build if any other part of the driver
-  talks to the players, or if another action is added.
+  servers is not shown, and an answer that redirects elsewhere (any 3xx, or more than one answer
+  to a request) is a failure whose content is never used. One file sends to the players
+  (`src/sonos/client.lua`); `scripts/check_package.py` fails the build if another Sonos file or the
+  music API sends anything itself, if any file but `src/sonos/sonos.lua` allows an address or loads
+  the client (`src/main.lua` only hands it the search's network events: `onData` and
+  `onConnectionStatus`, nothing else), or if another action is added.
+- **Answers are not trusted.** Any device on the home network can answer the search. Every answer
+  is read in time in proportion to its size, so a crafted one cannot hold the controller's single
+  Lua thread: at most 512 KB, 16 KB for one tag, 5000 elements, 64 deep, entities never expanded.
+  What is shown is cut to 1 KB (a title, an artist, a favorite's name) and a room's name to 100
+  bytes; a picture path longer than 2 KB is not used.
 - **What it sends.** Reading: GetTransportInfo, GetPositionInfo, GetMediaInfo, GetVolume, GetMute,
   GetZoneGroupState, Browse of the favorites (FV:2), and a GET of the album art. Controlling: Play,
   Pause, Stop, Next, Previous, SetVolume, SetMute, and to start a favorite SetAVTransportURI,
@@ -85,7 +107,14 @@ through Sonos's cloud, which DirectorLink does not use.)
   A read is one request at a time per group (its transport and track on the coordinator, then each
   room's volume and mute); at most 4 requests are on their way at once, each with a 4-second
   timeout, so the controller's single Lua thread never waits for a speaker. After a command the
-  room is read again within 2 seconds.
+  room is read again within 2 seconds. When 40 requests already wait, a read is put off to the
+  next tick (every 2 seconds): a room is shown as not answering only when its player did not
+  answer. The album art is asked for once however many ask at the same time, and a picture the
+  player did not give is not asked for again within 30 seconds.
+- **Pause.** Pause goes to the group's coordinator. When Sonos refuses it (UPnP error 701),
+  DirectorLink reads what the group plays (GetMediaInfo): a radio station, which Sonos cannot
+  pause, is stopped instead; anything else (the TV, line-in, a group already stopped) is left as it
+  is and the refusal is reported (`409 ACTION_NOT_POSSIBLE`).
 
 ## API
 
@@ -112,7 +141,12 @@ admins control. See [`api/README.md`](../api/README.md) and `api/openapi.yaml`.
   (`tests/sonos/made/`). Older S1 players have not been tried.
 - The search from a DriverWorks driver (a UDP network connection, as Snap One's own SSDP module
   does it) has not been seen on a real controller yet; Sonos Address is the way when it finds
-  nothing.
+  nothing. A device on the network that answers the search for 32 made-up addresses before the
+  players do fills the search: the players already known, and the one at Sonos Address, are still
+  asked first.
+- Whether Director's HTTP client (`C4:url`) follows a redirect by itself has not been checked on a
+  controller. If it does, a "player" that redirects makes the controller send that one request to
+  the other host, but nothing it answers is used.
 
 ## Testing without speakers
 

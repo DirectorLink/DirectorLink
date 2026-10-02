@@ -409,6 +409,73 @@ function tests.a_device_on_the_network_cannot_hold_the_lua_thread()
     T.eq(asked, 1)
 end
 
+-- A device that answers the search for thousands of addresses: a search takes MAX_SEARCH_REPLIES
+-- of them, each once, quickly; a few are asked for the rooms in a row, not all; and the next
+-- search forgets those no player listed.
+function tests.a_flood_of_search_answers_is_bounded()
+    -- Each start loads the driver afresh: its client too.
+    local function client()
+        return require("src.sonos.client")
+    end
+    local template = SonosFake.read("real/ssdp_response.txt"):gsub("\r?\n", "\r\n")
+    local function from(ip)
+        return (template:gsub("192%.168%.50%.11", ip))
+    end
+    local function flood()
+        local datagram = {}
+        for a = 0, 39 do
+            for b = 1, 250 do
+                datagram[#datagram + 1] = from("10.9." .. a .. "." .. b)
+                if #datagram == 100 then
+                    ReceivedFromNetwork(6100, 1900, table.concat(datagram))
+                    datagram = {}
+                end
+            end
+        end
+    end
+    local function allowedFlood()
+        local count = 0
+        for a = 0, 39 do
+            for b = 1, 250 do
+                count = count + (client().allowed("10.9." .. a .. "." .. b) and 1 or 0)
+            end
+        end
+        return count
+    end
+    -- Nothing but the flood: four addresses asked for the rooms, one after the other, then none.
+    local mock = start()
+    OnConnectionStatusChanged(6100, 1900, "ONLINE")
+    quick("10,000 answers", flood)
+    T.eq(allowedFlood(), client().MAX_SEARCH_REPLIES)
+    local before = #mock.urlRequests
+    quick("the search's end", function()
+        fire(mock, 4000)
+    end)
+    T.eq(#mock.urlRequests - before, module().MAX_TOPOLOGY_TRIES)
+    T.eq(mock.properties["Sonos Players"], "None found. Set Sonos Address to one player's IP address.")
+    -- One address answering again and again counts once; the players are found after it.
+    local mock2, home, key = start()
+    OnConnectionStatusChanged(6100, 1900, "ONLINE")
+    for _ = 1, 40 do
+        ReceivedFromNetwork(6100, 1900, from("10.8.0.1"))
+    end
+    for _, answer in ipairs(home:searchReplies()) do
+        ReceivedFromNetwork(6100, 1900, answer)
+        ReceivedFromNetwork(6100, 1900, answer)
+    end
+    flood()
+    T.eq(allowedFlood(), client().MAX_SEARCH_REPLIES - 4)
+    fire(mock2, 4000)
+    T.eq(#music(mock2, key).items, 3)
+    -- The next search: the flood's addresses are no longer contacted; the players still are.
+    module().tick(os.time() + 400)
+    T.eq(allowedFlood(), 0)
+    T.eq(client().allowed("10.8.0.1"), false)
+    for _, ip in ipairs({ "192.168.50.11", "192.168.50.12", "192.168.50.13" }) do
+        T.eq(client().allowed(ip), true, ip)
+    end
+end
+
 -- ---- off ----------------------------------------------------------------------------------
 
 function tests.off_by_default_it_looks_for_nothing_and_sends_nothing()
@@ -471,6 +538,38 @@ function tests.nothing_found_says_what_to_do_in_composer()
     local mock = start()
     fire(mock, 4000)
     T.eq(mock.properties["Sonos Players"], "None found. Set Sonos Address to one player's IP address.")
+end
+
+-- Sonos Address as an installer may type or paste it: spaces around it, "http://" before it,
+-- ":1400" or a path after it. Anything else is said to be not understood in Sonos Players.
+function tests.sonos_address_as_typed_or_pasted()
+    for _, typed in ipairs({ "192.168.50.12 ", " 192.168.50.12", "192.168.50.12:1400", "http://192.168.50.12", "HTTP://192.168.50.12:1400/",
+        "http://192.168.50.12:1400/xml/device_description.xml" }) do
+        local mock, home, key = start({ address = typed })
+        T.same(home:sent(), { "192.168.50.12 GetZoneGroupState" }, typed)
+        T.eq(#music(mock, key).items, 3, typed)
+        T.eq(mock.properties["Sonos Players"], "3 players: חוץ (192.168.50.13), מטבח (192.168.50.11), סלון (192.168.50.12)", typed)
+    end
+    local bad = "Sonos Address is not understood: type one player's IP address on the home network (10.x, 172.16-31.x or 192.168.x)."
+    for _, typed in ipairs({ "kitchen.local", "192.168.50.12:8080", "192.168.50", "8.8.8.8", "192.168.50.12, 192.168.50.13" }) do
+        local mock, home = start({ address = typed })
+        T.eq(mock.properties["Sonos Players"], bad .. " Looking for players...", typed)
+        fire(mock, 4000)
+        T.eq(mock.properties["Sonos Players"], "None found. " .. bad, typed)
+        T.eq(#home.calls, 0, typed)
+    end
+    -- Found by the search all the same: the list, after the warning.
+    local mock, home = start({ address = "sonos-kitchen" })
+    discover(mock, home)
+    T.eq(mock.properties["Sonos Players"], bad .. " 3 players: חוץ (192.168.50.13), מטבח (192.168.50.11), סלון (192.168.50.12)")
+    -- An address understood where no player answers: said so, not "set Sonos Address".
+    mock = start({ address = "192.168.50.99" })
+    fire(mock, 4000)
+    T.eq(mock.properties["Sonos Players"], "None found. No Sonos player answered at 192.168.50.99 (Sonos Address).")
+    -- Corrected in Composer: the warning goes at once.
+    Properties["Sonos Address"] = "192.168.50.12"
+    OnPropertyChanged("Sonos Address")
+    T.eq(mock.properties["Sonos Players"], "3 players: חוץ (192.168.50.13), מטבח (192.168.50.11), סלון (192.168.50.12)")
 end
 
 function tests.only_home_network_addresses_on_port_1400_are_ever_contacted()
@@ -668,6 +767,103 @@ function tests.a_player_that_does_not_answer_is_shown_so_and_found_again()
     T.eq(failed.json.code, "PLAYER_UNREACHABLE")
 end
 
+-- A household of `count` single-room groups, at 192.168.60.x, each paused in Spotify Connect.
+local function manyRooms(count)
+    local home = SonosFake.household()
+    home.players = {}
+    local groups = {}
+    for index = 1, count do
+        local id, ip = string.format("RINCON_000E58B%07d01400", index), "192.168.60." .. index
+        home:add(ip, id, "connect", 10)
+        groups[#groups + 1] = string.format('<ZoneGroup Coordinator="%s" ID="%s:1"><ZoneGroupMember UUID="%s" Location="http://%s:1400/xml/device_description.xml" ZoneName="Room %d"/></ZoneGroup>', id, id, id, ip, index)
+    end
+    local zones = "<ZoneGroupState><ZoneGroups>" .. table.concat(groups) .. "</ZoneGroups></ZoneGroupState>"
+    home.topology = '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:GetZoneGroupStateResponse xmlns:u="urn:schemas-upnp-org:service:ZoneGroupTopology:1"><ZoneGroupState>'
+        .. zones:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;") .. "</ZoneGroupState></u:GetZoneGroupStateResponse></s:Body></s:Envelope>"
+    return home
+end
+
+-- More reads than the queue takes ("busy"): those rooms are read at the next tick, not shown as
+-- not answering, and no new search starts.
+function tests.a_full_queue_is_not_a_player_that_does_not_answer()
+    local home = manyRooms(50)
+    local mock, _, key = start({ address = "192.168.60.1", prepare = function(m)
+        m.http = home:handler()
+    end })
+    fire(mock, 4000)
+    local searches = mock.network[6100].connects
+    mock.httpDeferred = true
+    withClock(os.time() + 120, function(advance)
+        T.eq(#music(mock, key).items, 50)
+        for _, entry in ipairs(music(mock, key).items) do
+            T.eq(entry.reachable, true, entry.name .. " shown as not answering before any player answered")
+        end
+        T.eq(mock.properties["Sonos Players"]:find("not answering", 1, true), nil)
+        T.eq(mock.network[6100].connects, searches, "no search for a full queue")
+        -- Every room is read in the end.
+        for _ = 1, 10 do
+            Mock.deliverHttp(mock)
+            module().tick(advance(2))
+        end
+        Mock.deliverHttp(mock)
+    end)
+    mock.httpDeferred = false
+    local reads = {}
+    for _, call in ipairs(home.calls) do
+        if call.action == "GetTransportInfo" then
+            reads[call.ip] = true
+        end
+    end
+    for index = 1, 50 do
+        T.truthy(reads["192.168.60." .. index], "Room " .. index .. " was read")
+    end
+    for _, entry in ipairs(music(mock, key).items) do
+        T.same({ entry.state, entry.reachable }, { "paused", true }, entry.name)
+    end
+    T.eq(mock.network[6100].connects, searches)
+end
+
+-- A picture the player does not give: asked for once, however often and however many ask (a
+-- viewer's script); the room is still shown as answering, and the queue does not fill.
+function tests.a_picture_that_fails_is_not_asked_for_again_at_once()
+    local mock, home, key = start({ grouped = true })
+    discover(mock, home)
+    music(mock, key)
+    local fake = mock.http
+    local asked = 0
+    mock.http = function(request)
+        if request.method == "GET" then
+            asked = asked + 1
+            return { code = 500, headers = {}, body = "" }
+        end
+        return fake(request)
+    end
+    local viewer = createKey(mock, key, "viewer")
+    mock.httpDeferred = true
+    local waiting = {}
+    for _ = 1, 50 do
+        waiting[#waiting + 1] = T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).handle
+    end
+    Mock.deliverHttp(mock)
+    mock.httpDeferred = false
+    T.eq(asked, 1, "one request for the picture")
+    for _, handle in ipairs(waiting) do
+        local answer = T.response(mock, handle)
+        T.eq(answer.status, 502)
+        T.eq(answer.json.code, "PLAYER_UNREACHABLE")
+    end
+    for _ = 1, 20 do
+        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).status, 502)
+    end
+    T.eq(asked, 1, "not asked again within " .. module().ART_RETRY_SECONDS .. " seconds")
+    T.eq(item(music(mock, key), KITCHEN).reachable, true)
+    -- Later it is asked for again.
+    withClock(os.time() + module().ART_RETRY_SECONDS + 1, function()
+        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).status, 502)
+    end)
+    T.eq(asked, 2)
+end
+
 function tests.a_player_that_never_reports_back_times_out()
     local mock, home, key = start({ grouped = true })
     discover(mock, home)
@@ -713,11 +909,29 @@ function tests.a_radio_station_cannot_pause_so_it_stops_and_cannot_skip()
     home:clear()
     local paused = T.http(mock, "POST", "/v1/music/" .. BEDROOM .. "/pause", { key = key })
     T.eq(paused.status, 200, paused.body)
-    T.same(home:sent(), { "192.168.50.13 Pause", "192.168.50.13 Stop" })
+    -- Refused (701): what plays is read again, and it is a station.
+    T.same(home:sent(), { "192.168.50.13 Pause", "192.168.50.13 GetMediaInfo", "192.168.50.13 Stop" })
     T.eq(paused.json.state, "stopped")
     local skipped = T.http(mock, "POST", "/v1/music/" .. BEDROOM .. "/next", { key = key })
     T.eq(skipped.status, 409)
     T.eq(skipped.json.code, "ACTION_NOT_POSSIBLE")
+end
+
+-- Sonos answers 701 to Pause for other reasons too (a group already stopped, the TV): only a
+-- radio stream is stopped instead; a queue or a Spotify Connect session keeps its place.
+function tests.pause_refused_stops_only_a_radio_station()
+    local mock, home, key = start({ grouped = true })
+    discover(mock, home)
+    home.refuse.Pause = 701
+    for _, case in ipairs({ { KITCHEN, "192.168.50.11" }, { TV, "192.168.50.14" } }) do
+        home:clear()
+        local before = home.players[case[2]].transport
+        local refused = T.http(mock, "POST", "/v1/music/" .. case[1] .. "/pause", { key = key })
+        T.eq(refused.status, 409, refused.body)
+        T.eq(refused.json.code, "ACTION_NOT_POSSIBLE")
+        T.same(home:sent(), { case[2] .. " Pause", case[2] .. " GetMediaInfo" }, "no Stop")
+        T.eq(home.players[case[2]].transport, before)
+    end
 end
 
 function tests.volume_and_mute_are_each_rooms_own()
@@ -835,6 +1049,113 @@ function tests.album_art_through_the_controller_from_the_coordinator()
     T.eq(none.json.code, "NO_ART")
 end
 
+-- Director's C4:url hands OnDone one response per hop when it follows a redirect. `answers(url,
+-- method)` gives the responses for a request (nil: the fake players answer).
+local function withResponses(answers, run)
+    local real = C4.url
+    C4.url = function(self)
+        local transfer = real(self)
+        local get, post = transfer.Get, transfer.Post
+        local function send(t, method, url, ...)
+            local responses = answers(url, method)
+            if not responses then
+                return (method == "GET" and get or post)(t, url, ...)
+            end
+            t.callback(t, responses, 0, nil)
+            return t
+        end
+        function transfer:Get(url, headers)
+            return send(self, "GET", url, headers)
+        end
+        function transfer:Post(url, body, headers)
+            return send(self, "POST", url, body, headers)
+        end
+        return transfer
+    end
+    local ok, err = pcall(run)
+    C4.url = real
+    if not ok then
+        error(err, 0)
+    end
+end
+
+-- A "player" that redirects would have the controller fetch another host (on the internet, or a
+-- service on the controller itself) and hand the bytes to the app: an answer other than one final
+-- response from the player is a failure, and its body is never used.
+function tests.a_redirect_from_a_player_is_a_failure_and_its_body_is_never_used()
+    local mock, home, key = start({ grouped = true })
+    discover(mock, home)
+    music(mock, key)
+    local path = "/v1/music/" .. KITCHEN .. "/art"
+    local function restart()
+        for _, value in ipairs({ "Off", "On" }) do
+            Properties["Sonos"] = value
+            OnPropertyChanged("Sonos")
+        end
+        discover(mock, home)
+        music(mock, key)
+    end
+    for name, responses in pairs({
+        followed = function(url)
+            return {
+                { url = url, code = 302, headers = { Location = "http://203.0.113.7/evil.jpg" }, body = "" },
+                { url = "http://203.0.113.7/evil.jpg", code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "BYTES-FROM-203.0.113.7" },
+            }
+        end,
+        to_the_controller = function(url)
+            return {
+                { url = url, code = 307, headers = { Location = "http://127.0.0.1:8080/" }, body = "" },
+                { url = "http://127.0.0.1:8080/", code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "BYTES-FROM-THE-CONTROLLER" },
+            }
+        end,
+        not_followed = function(url)
+            return { { url = url, code = 301, headers = { Location = "http://203.0.113.7/" }, body = "BYTES-OF-A-REDIRECT" } }
+        end,
+        one_response_from_elsewhere = function()
+            return { { url = "http://203.0.113.7/evil.jpg", code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "BYTES-FROM-203.0.113.7" } }
+        end,
+    }) do
+        withResponses(function(url, method)
+            return method == "GET" and responses(url) or nil
+        end, function()
+            -- Off and on: nothing kept from the case before.
+            restart()
+            local art = T.http(mock, "GET", path, { key = key })
+            T.eq(art.status, 502, name)
+            T.eq(art.json.code, "PLAYER_UNREACHABLE", name)
+            T.contains(art.json.detail, "redirected", name)
+            T.notContains(art.body, "BYTES", name)
+        end)
+    end
+    -- A command redirected is a failure too.
+    withResponses(function(url, method)
+        if method == "POST" and url:find("/AVTransport/", 1, true) then
+            return {
+                { url = url, code = 302, headers = { Location = "http://203.0.113.7/" }, body = "" },
+                { url = "http://203.0.113.7/", code = 200, headers = {}, body = SonosFake.read("made/fault_701.xml") },
+            }
+        end
+    end, function()
+        local paused = T.http(mock, "POST", "/v1/music/" .. KITCHEN .. "/pause", { key = key })
+        T.eq(paused.status, 502, paused.body)
+        T.contains(paused.json.detail, "redirected")
+    end)
+    -- "100 Continue" before the answer is no redirect.
+    withResponses(function(url, method)
+        if method == "GET" then
+            return {
+                { url = url, code = 100, headers = {}, body = "" },
+                { url = url, code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "JFIF-FROM-THE-PLAYER" },
+            }
+        end
+    end, function()
+        restart()
+        local art = T.http(mock, "GET", path, { key = key })
+        T.eq(art.status, 200, art.body)
+        T.eq(art.body, "JFIF-FROM-THE-PLAYER")
+    end)
+end
+
 -- ---- scenes --------------------------------------------------------------------------------
 
 function tests.a_scene_pauses_the_music_in_a_room_or_the_whole_home()
@@ -844,22 +1165,62 @@ function tests.a_scene_pauses_the_music_in_a_room_or_the_whole_home()
     local tried = T.http(mock, "POST", "/v1/scenes/try", { key = key, body = { steps = { { type = "music", room_id = 11, set = { action = "pause" } } } } })
     T.eq(tried.status, 202, tried.body)
     T.eq(tried.json.ran, 1)
-    -- Living Room's group is Kitchen's: the group pauses.
-    T.same(home:sent(), { "192.168.50.11 Pause" })
+    -- Living Room's group is Kitchen's: the group, which plays, pauses.
+    T.same(home:sent(), { "192.168.50.11 GetTransportInfo", "192.168.50.11 Pause" })
     home:clear()
+    home.players["192.168.50.11"].transport = "PLAYING"
     local created = T.http(mock, "POST", "/v1/scenes", { key = key, body = { name = "Good night", steps = { { type = "music", set = { action = "stop" } } } } })
     T.eq(created.status, 201, created.body)
     T.same(created.json.steps[1], { type = "music", room_id = Json.null, device_ids = Json.null, set = { action = "stop" } })
     local ran = T.http(mock, "POST", "/v1/scenes/" .. created.json.id .. "/run", { key = key })
     T.eq(ran.json.ran, 3)
-    local sent = home:sent()
-    table.sort(sent)
-    T.same(sent, { "192.168.50.11 Stop", "192.168.50.13 Stop", "192.168.50.14 Stop" })
+    local stopped = {}
+    for _, action in ipairs(home:sent()) do
+        if action:match(" Stop$") then
+            stopped[#stopped + 1] = action
+        end
+    end
+    table.sort(stopped)
+    -- TV Room was paused (Spotify Connect): left as it is.
+    T.same(stopped, { "192.168.50.11 Stop", "192.168.50.13 Stop" })
+    T.eq(home.players["192.168.50.14"].transport, "PAUSED_PLAYBACK")
     -- A schedule runs it like a member's key.
     home:clear()
     local Handlers = require("src.api.handlers.scenes")
     local result = Handlers.runSaved({ registry = require("src.core.registry"), adapters = require("src.adapters.manager"), doorControlEnabled = function() return false end, log = require("src.core.log") }, created.json.id, { id = "schedule:x", role = "member" })
     T.eq(result.ran, 3)
+end
+
+-- What was read last may be a minute old: a scene asks each group what it does, and pauses (or
+-- stops) only one that plays. A paused queue keeps its place, a paused Spotify Connect session
+-- is not ended, and a group started a moment ago in the Sonos app is paused all the same.
+function tests.a_scene_leaves_a_group_that_does_not_play_as_it_is()
+    local mock, home, key = start({ grouped = true })
+    discover(mock, home)
+    music(mock, key)
+    -- Since the last read: Kitchen was paused and TV Room started, in the Sonos app.
+    home.players["192.168.50.11"].transport = "PAUSED_PLAYBACK"
+    home.players["192.168.50.14"].transport = "PLAYING"
+    home:clear()
+    local tried = T.http(mock, "POST", "/v1/scenes/try", { key = key, body = { steps = { { type = "music", set = { action = "pause" } } } } })
+    T.eq(tried.status, 202, tried.body)
+    T.same({ tried.json.ran, tried.json.skipped }, { 3, 0 })
+    local sent = home:sent()
+    table.sort(sent)
+    T.same(sent, {
+        "192.168.50.11 GetTransportInfo",
+        "192.168.50.13 GetMediaInfo", "192.168.50.13 GetTransportInfo", "192.168.50.13 Pause", "192.168.50.13 Stop",
+        "192.168.50.14 GetTransportInfo", "192.168.50.14 Pause",
+    })
+    T.eq(home.players["192.168.50.11"].transport, "PAUSED_PLAYBACK")
+    T.eq(home.players["192.168.50.14"].transport, "PAUSED_PLAYBACK")
+    -- Stopped is left too, by a stop step as by a pause step.
+    home.players["192.168.50.13"].transport = "STOPPED"
+    home:clear()
+    T.http(mock, "POST", "/v1/scenes/try", { key = key, body = { steps = { { type = "music", set = { action = "stop" } } } } })
+    for _, action in ipairs(home:sent()) do
+        T.eq(action:match(" (%w+)$"), "GetTransportInfo", "nothing plays: " .. action)
+    end
 end
 
 function tests.a_music_step_names_a_room_or_nothing_and_pauses_or_stops()
@@ -912,6 +1273,29 @@ function tests.with_sonos_off_a_music_step_is_skipped_and_says_why()
     T.same({ tried.json.ran, tried.json.skipped }, { 0, 1 })
     T.same({ tried.json.problems[1].code, tried.json.problems[1].device_id }, { "SONOS_OFF", 0 })
     T.eq(#home.calls, 0)
+end
+
+-- A step that finds nothing to pause says why: no players found yet, or none shown in its room
+-- ("Good night: music off" in a room whose Sonos room was renamed must not just say done).
+function tests.a_music_step_that_finds_no_sonos_room_says_why()
+    local mock, home, key = start()
+    local function try(roomId)
+        local tried = T.http(mock, "POST", "/v1/scenes/try", { key = key, body = { steps = { { type = "music", room_id = roomId, set = { action = "pause" } } } } })
+        T.eq(tried.status, 202, tried.body)
+        return tried.json
+    end
+    local none = try(10)
+    T.same({ none.ran, none.skipped }, { 0, 1 })
+    T.same(none.problems[1], { step = 1, device_id = 0, outcome = "skipped", code = "NO_PLAYERS", detail = "No Sonos players have been found yet" })
+    -- The owner's Sonos rooms have Hebrew names: none is shown in Kitchen (10).
+    discover(mock, home)
+    home:clear()
+    local elsewhere = try(10)
+    T.same({ elsewhere.ran, elsewhere.skipped }, { 0, 1 })
+    T.same(elsewhere.problems[1], { step = 1, device_id = 0, outcome = "skipped", code = "NO_SONOS_ROOM", detail = "No Sonos room is shown in this room" })
+    T.eq(#home:sent(), 0)
+    -- The whole home has them.
+    T.same({ try(nil).ran, try(nil).skipped }, { 3, 0 })
 end
 
 -- ---- turned off again ----------------------------------------------------------------------

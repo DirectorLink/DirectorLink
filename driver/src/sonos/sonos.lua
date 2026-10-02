@@ -37,7 +37,13 @@ Sonos.MAX_FAVORITES = 100
 Sonos.ART_MAX_BYTES = 300 * 1024
 Sonos.ART_CACHE = 4
 Sonos.MAX_PLAYERS = 64
+-- Addresses kept from one search (the search takes no more), and how many of them (or of the
+-- players known) are asked for the household's rooms in a row when one does not answer.
+Sonos.MAX_FOUND = Client.MAX_SEARCH_REPLIES
+Sonos.MAX_TOPOLOGY_TRIES = 4
 Sonos.MAX_STATUS_LENGTH = 400
+-- A picture the player did not give is not asked for again for this long.
+Sonos.ART_RETRY_SECONDS = 30
 
 local TRANSPORT = {
     PLAYING = "playing",
@@ -59,7 +65,8 @@ local state = {
     topologyBusy = false,
     searchAt = nil,
     searching = false,
-    found = {}, -- addresses that answered a search, in order
+    found = {}, -- addresses that answered the last search, in order
+    foundSet = {}, -- the same, address -> true
     failedAt = {}, -- address -> when it last did not answer GetZoneGroupState
     status = "off",
     shown = nil, -- the Sonos Players text last shown in Composer
@@ -68,6 +75,8 @@ local state = {
     timer = nil,
     favorites = nil, -- { at, items }
     art = {}, -- { key, body, type }, newest first
+    artFailed = {}, -- key -> { at, code, detail }: a picture the player did not give
+    artWaiting = {}, -- key -> the callbacks waiting for the picture on its way
 }
 
 function Sonos.enabled()
@@ -111,20 +120,50 @@ local function sortedPlayers()
     return list
 end
 
+-- The installer's Sonos Address as a player's address, or nil; and false when something is typed
+-- that is not one. Spaces around it, "http://" before it and ":1400" (or a path) after it are
+-- taken as typed from a browser or the Sonos app.
+function Sonos.parseAddress(text)
+    text = Protocol.trim(type(text) == "string" and text or "")
+    if text == "" then
+        return nil
+    end
+    local host, rest = text:gsub("^[Hh][Tt][Tt][Pp]://", ""):match("^([%d%.]+)(.*)$")
+    local ip = Protocol.lanAddress(host)
+    if not ip or not (rest == "" or rest == ":1400" or rest:match("^:1400/") or rest:match("^/")) then
+        return nil, false
+    end
+    return ip
+end
+
+local function propertyAddress()
+    return Sonos.parseAddress(Properties and Properties[Sonos.ADDRESS_PROPERTY] or nil)
+end
+
+local BAD_ADDRESS = "Sonos Address is not understood: type one player's IP address on the home network (10.x, 172.16-31.x or 192.168.x)."
+
 -- Composer's Sonos Players: what DirectorLink found, with each player's address.
 local function publishStatus()
+    local address, understood = propertyAddress()
+    local warning = understood == false and BAD_ADDRESS or nil
     if state.status == "off" then
         publish("Off")
     elseif state.status == "searching" then
-        publish("Looking for players...")
+        publish((warning and warning .. " " or "") .. "Looking for players...")
     elseif state.status == "not_found" then
-        publish("None found. Set Sonos Address to one player's IP address.")
+        if warning then
+            publish("None found. " .. warning)
+        elseif address then
+            publish("None found. No Sonos player answered at " .. address .. " (Sonos Address).")
+        else
+            publish("None found. Set Sonos Address to one player's IP address.")
+        end
     else
         local parts = {}
         for _, player in ipairs(sortedPlayers()) do
             parts[#parts + 1] = player.name .. " (" .. player.ip .. (player.reachable == false and ", not answering" or "") .. ")"
         end
-        publish(#parts .. (#parts == 1 and " player: " or " players: ") .. table.concat(parts, ", "))
+        publish((warning and warning .. " " or "") .. #parts .. (#parts == 1 and " player: " or " players: ") .. table.concat(parts, ", "))
     end
 end
 
@@ -135,23 +174,19 @@ end
 
 -- ---- finding the players -------------------------------------------------------------------
 
-local function propertyAddress()
-    return Protocol.lanAddress(Properties and Properties[Sonos.ADDRESS_PROPERTY] or nil)
-end
-
+-- An address that answered the search, once (at most MAX_FOUND, as the search takes).
 local function addFound(ip)
-    for _, known in ipairs(state.found) do
-        if known == ip then
-            return
-        end
+    if not state.foundSet[ip] and #state.found < Sonos.MAX_FOUND then
+        state.foundSet[ip] = true
+        state.found[#state.found + 1] = ip
     end
-    state.found[#state.found + 1] = ip
 end
 
 local function applyTopology(topology)
     local before = state.players
     local players, count = {}, 0
     local renamed = {}
+    local listed = {}
     for id, found in pairs(topology.players) do
         if count < Sonos.MAX_PLAYERS and Client.allow(found.ip, "topology") then
             -- The same table for a player known before: reads and commands on their way still
@@ -160,9 +195,13 @@ local function applyTopology(topology)
             renamed[id] = player.ip ~= found.ip or player.name ~= found.name
             player.name, player.ip, player.group = found.name, found.ip, nil
             players[id] = player
+            listed[found.ip] = true
             count = count + 1
         end
     end
+    -- A player no longer in the household is no longer contacted (unless the search or the
+    -- installer gave its address).
+    Client.forget("topology", listed)
     local groups = {}
     for _, found in ipairs(topology.groups) do
         if players[found.id] then
@@ -192,19 +231,21 @@ local function applyTopology(topology)
 end
 
 -- Asks a player for the household's rooms (GetZoneGroupState): the installer's address first, then
--- the players known, then those that answered the search.
-local function readTopology()
+-- the players known, then those that answered the search. One that does not answer is followed at
+-- once by another, MAX_TOPOLOGY_TRIES in a row at most; the rest wait for the next read.
+local function readTopology(tries)
     if state.topologyBusy or not state.running then
         return
     end
+    tries = tries or 1
     local candidates, seen = {}, {}
     local function add(ip)
         if ip and not seen[ip] and Client.allowed(ip) then
-            seen[ip] = true
+            seen[ip] = #candidates + 1
             candidates[#candidates + 1] = ip
         end
     end
-    add(propertyAddress())
+    add((propertyAddress()))
     for _, player in ipairs(sortedPlayers()) do
         if player.reachable ~= false then
             add(player.ip)
@@ -216,9 +257,18 @@ local function readTopology()
     for _, player in pairs(state.players) do
         add(player.ip)
     end
-    -- One that did not answer lately goes last.
+    for address in pairs(state.failedAt) do
+        if not seen[address] then
+            state.failedAt[address] = nil
+        end
+    end
+    -- One that did not answer lately goes last; the others keep the order above.
     table.sort(candidates, function(a, b)
-        return (state.failedAt[a] or 0) < (state.failedAt[b] or 0)
+        local x, y = state.failedAt[a] or 0, state.failedAt[b] or 0
+        if x ~= y then
+            return x < y
+        end
+        return seen[a] < seen[b]
     end)
     local ip = candidates[1]
     if not ip then
@@ -234,6 +284,11 @@ local function readTopology()
             return
         end
         state.topologyBusy = false
+        if failure == "busy" then
+            -- Not asked: too many requests wait. Asked at the next tick.
+            state.topologyAt = nil
+            return
+        end
         state.topologyAt = now()
         local topology = values and Protocol.topology(values.ZoneGroupState)
         if topology then
@@ -243,10 +298,12 @@ local function readTopology()
             state.failedAt[ip] = now()
             Log.warn("sonos", "a Sonos player did not list the household's rooms", { address = ip, reason = tostring(failure or "unreadable") })
             -- Another address not tried yet is tried at once.
-            for _, other in ipairs(candidates) do
-                if not state.failedAt[other] then
-                    readTopology()
-                    return
+            if tries < Sonos.MAX_TOPOLOGY_TRIES then
+                for _, other in ipairs(candidates) do
+                    if not state.failedAt[other] then
+                        readTopology(tries + 1)
+                        return
+                    end
                 end
             end
             if not next(state.players) and not state.searching then
@@ -256,15 +313,24 @@ local function readTopology()
     end)
 end
 
+-- The installer's address may be contacted (the one typed before no longer).
+local function allowProperty()
+    Client.forget("property")
+    local property = propertyAddress()
+    if property then
+        Client.allow(property, "property")
+    end
+    return property
+end
+
 local function search()
     if state.searching or not state.running then
         return
     end
     state.searching = true
     state.searchAt = now()
-    local property = propertyAddress()
-    if property then
-        Client.allow(property, "property")
+    state.found, state.foundSet = {}, {}
+    if allowProperty() then
         -- The installer's player answers at once; the search may add others.
         readTopology()
     end
@@ -346,6 +412,11 @@ local function refreshGroup(group)
             return
         end
         group.busy = false
+        if failure == "busy" then
+            -- Not read this time (too many requests wait), which says nothing of the player: read
+            -- at the next tick, shown as it was.
+            return
+        end
         group.polledAt = now()
         local reachable = failure == nil
         if group.reachable ~= reachable then
@@ -463,9 +534,10 @@ local function stop()
         state.timer = nil
     end
     Client.reset()
-    state.players, state.groups, state.found, state.failedAt = {}, {}, {}, {}
+    state.players, state.groups, state.found, state.foundSet, state.failedAt = {}, {}, {}, {}, {}
     state.topologyAt, state.topologyBusy, state.searchAt, state.searching = nil, false, nil, false
     state.watchHome, state.watchRooms, state.favorites, state.art = 0, {}, nil, {}
+    state.artFailed, state.artWaiting = {}, {}
     setStatus("off")
 end
 
@@ -500,8 +572,11 @@ function Sonos.apply(changed)
     elseif changed == Sonos.ADDRESS_PROPERTY then
         state.failedAt = {}
         state.searchAt = nil
+        publishStatus()
         if not state.searching then
             search()
+        elseif allowProperty() then
+            readTopology()
         end
     end
 end
@@ -663,8 +738,26 @@ local function soon(group)
     end
 end
 
+-- Pause refused (UPnP 701, "transition not available"): Stop instead, but only when the group
+-- plays a radio stream, which Sonos cannot pause. Its media is read again first: what was read
+-- before may be a minute old. Sonos answers 701 to other things too (a group already stopped, the
+-- TV): those are left as they are and the refusal reported. done(failure, sent).
+local function stopRadio(coordinator, done)
+    Client.call(coordinator.ip, "GetMediaInfo", { { "InstanceID", 0 } }, function(media, failure)
+        if not media then
+            done(failure or "no answer")
+        elseif Protocol.sourceKind(nil, media.CurrentURI) ~= "radio" then
+            done("701")
+        else
+            sequence({ { coordinator.ip, "Stop", { { "InstanceID", 0 } } } }, function(again)
+                done(again, "stop")
+            end)
+        end
+    end)
+end
+
 -- play, pause, next, previous or stop on the player's group (its coordinator). done(view) or
--- done(nil, code, detail). Pause falls back to Stop where Sonos cannot pause (a radio stream).
+-- done(nil, code, detail). Pause stops a radio stream, which Sonos cannot pause (stopRadio).
 function Sonos.transport(player, action, done)
     local coordinator, group = coordinatorOf(player)
     local args = { { "InstanceID", 0 } }
@@ -688,10 +781,11 @@ function Sonos.transport(player, action, done)
         Log.info("sonos", "Sonos " .. action, { player = coordinator.id })
         done(Sonos.view(player))
     end
+    local generation = state.generation
     sequence({ { coordinator.ip, COMMANDS[action], args } }, function(failure)
         if failure == "701" and action == "pause" then
-            sequence({ { coordinator.ip, "Stop", { { "InstanceID", 0 } } } }, function(again)
-                finish(again, "stop")
+            stopRadio(coordinator, function(again, sent)
+                finish(generation ~= state.generation and "stopped" or again, sent)
             end)
             return
         end
@@ -817,7 +911,9 @@ function Sonos.playFavorite(player, favoriteId, done)
 end
 
 -- The picture of what the player's group plays, from the coordinator (the page is HTTPS, the
--- player plain HTTP on the home network). done(bytes, type) or done(nil, code, detail).
+-- player plain HTTP on the home network). done(bytes, type) or done(nil, code, detail). One
+-- request for a picture however many ask for it at once; one the player did not give is not asked
+-- for again for ART_RETRY_SECONDS. A picture never changes whether a room is shown as answering.
 function Sonos.art(player, done)
     local coordinator, group = coordinatorOf(player)
     local path = group and group.now and group.now.art
@@ -832,25 +928,68 @@ function Sonos.art(player, done)
             return
         end
     end
+    local failed = state.artFailed[key]
+    if failed and now() - failed.at < Sonos.ART_RETRY_SECONDS then
+        done(nil, failed.code, failed.detail)
+        return
+    end
+    local waiting = state.artWaiting[key]
+    if waiting then
+        waiting[#waiting + 1] = done
+        return
+    end
+    waiting = { done }
+    state.artWaiting[key] = waiting
+    local function answer(...)
+        if state.artWaiting[key] == waiting then
+            state.artWaiting[key] = nil
+        end
+        for _, callback in ipairs(waiting) do
+            local ok, err = pcall(callback, ...)
+            if not ok then
+                Log.warn("sonos", "an album art answer failed", { reason = tostring(err) })
+            end
+        end
+    end
+    local function fail(code, detail)
+        local count = 0
+        for other, entry in pairs(state.artFailed) do
+            if now() - entry.at >= Sonos.ART_RETRY_SECONDS then
+                state.artFailed[other] = nil
+            else
+                count = count + 1
+            end
+        end
+        -- Kept a while, a few at most: asking again at once would only fill the queue.
+        if count < Sonos.ART_CACHE * 4 then
+            state.artFailed[key] = { at = now(), code = code, detail = detail }
+        end
+        answer(nil, code, detail)
+    end
     local generation = state.generation
     Client.picture(coordinator.ip, path, function(body, mediaType)
         if generation ~= state.generation then
-            done(nil, "SONOS_OFF", "Sonos was turned off")
+            answer(nil, "SONOS_OFF", "Sonos was turned off")
             return
         end
         if not body then
-            done(nil, refusal(mediaType))
+            if mediaType == "busy" then
+                answer(nil, refusal(mediaType))
+            else
+                fail(refusal(mediaType))
+            end
             return
         end
         if #body > Sonos.ART_MAX_BYTES then
-            done(nil, "NO_ART", "The picture is too large")
+            fail("NO_ART", "The picture is too large")
             return
         end
+        state.artFailed[key] = nil
         table.insert(state.art, 1, { key = key, body = body, type = mediaType })
         while #state.art > Sonos.ART_CACHE do
             table.remove(state.art)
         end
-        done(body, mediaType)
+        answer(body, mediaType)
     end)
 end
 
@@ -861,10 +1000,16 @@ end
 
 -- ---- scenes --------------------------------------------------------------------------------
 
+-- What a group does when it plays nothing a scene needs to pause or stop.
+local QUIET = { PAUSED_PLAYBACK = true, STOPPED = true, NO_MEDIA_PRESENT = true }
+
 -- A scene's music step: pauses (or stops) every group with a room in `roomId`, or every group in
--- the home. A group plays as one: pausing it pauses each of its rooms. Returns the groups it was
--- sent to ({ id, name }), or nil and why not ("SONOS_OFF", "NO_PLAYERS"). Answers are not waited
--- for; a refusal is logged.
+-- the home. A group plays as one: pausing it pauses each of its rooms. Each group is first asked
+-- what it does (GetTransportInfo; what was read before may be a minute old): one that is paused
+-- or stopped is left as it is, so a paused queue keeps its place in the track and a paused Spotify
+-- Connect session is not ended. Returns the groups it handles ({ id, name }), or nil and why not:
+-- "SONOS_OFF", "NO_PLAYERS", or "NO_SONOS_ROOM" (no Sonos room is shown in `roomId`). Answers are
+-- not waited for; a refusal is logged.
 function Sonos.sceneStep(roomId, action)
     if not state.running then
         return nil, "SONOS_OFF"
@@ -872,12 +1017,13 @@ function Sonos.sceneStep(roomId, action)
     if not next(state.groups) then
         return nil, "NO_PLAYERS"
     end
-    local sent = {}
+    local handled = {}
     local ids = {}
     for id in pairs(state.groups) do
         ids[#ids + 1] = id
     end
     table.sort(ids)
+    local generation = state.generation
     for _, id in ipairs(ids) do
         local group = state.groups[id]
         local inRoom = roomId == nil
@@ -886,15 +1032,33 @@ function Sonos.sceneStep(roomId, action)
         end
         local coordinator = state.players[id]
         if inRoom and coordinator then
-            sent[#sent + 1] = { id = id, name = coordinator.name }
-            Sonos.transport(coordinator, action == "stop" and "stop" or "pause", function(view, code)
-                if not view then
-                    Log.warn("sonos", "a scene could not pause the music", { player = id, code = code })
+            handled[#handled + 1] = { id = id, name = coordinator.name }
+            Client.call(coordinator.ip, "GetTransportInfo", { { "InstanceID", 0 } }, function(values, failure)
+                if generation ~= state.generation then
+                    return
                 end
+                local transport = values and values.CurrentTransportState
+                if not values then
+                    Log.warn("sonos", "a scene could not pause the music", { player = id, code = (refusal(failure)) })
+                    return
+                end
+                group.transport = transport or group.transport
+                if QUIET[transport] then
+                    Log.debug("sonos", "a scene left a Sonos group that does not play", { player = id, state = transport })
+                    return
+                end
+                Sonos.transport(coordinator, action == "stop" and "stop" or "pause", function(view, code)
+                    if not view then
+                        Log.warn("sonos", "a scene could not pause the music", { player = id, code = code })
+                    end
+                end)
             end)
         end
     end
-    return sent
+    if #handled == 0 then
+        return nil, roomId == nil and "NO_PLAYERS" or "NO_SONOS_ROOM"
+    end
+    return handled
 end
 
 -- For tests: everything as at a fresh start, Sonos off.

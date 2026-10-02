@@ -20,6 +20,12 @@ local Handlers = {}
 local KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay" }
 local LISTS = { lights = "lightList", climate = "climateList", fans = "fanList", blinds = "blindList", relays = "relayList" }
 local MAX_PROBLEMS = 50
+-- Why a music step did nothing (src/sonos/sonos.lua, Sonos.sceneStep): a problem with device_id 0.
+local MUSIC_SKIPPED = {
+    SONOS_OFF = "Sonos is off; turn on the Sonos property of DirectorLink in Composer",
+    NO_PLAYERS = "No Sonos players have been found yet",
+    NO_SONOS_ROOM = "No Sonos room is shown in this room",
+}
 
 local function nullable(value)
     if value == nil then
@@ -467,15 +473,14 @@ local function run(ctx, steps)
     for index, step in ipairs(steps) do
         local refusal, why
         if step.type == "music" then
-            -- The Sonos groups with a room in the step's room (or every group): each one sent to
-            -- counts as ran; what the players answer is not waited for (src/sonos/sonos.lua).
+            -- The Sonos groups with a room in the step's room (or every group): each one handled
+            -- counts as ran (one that does not play is left as it is); what the players answer is
+            -- not waited for (src/sonos/sonos.lua). None: skipped, and why (MUSIC_SKIPPED).
             local sent, missing = Sonos.sceneStep(step.room_id, step.set.action)
             if sent then
                 result.ran = result.ran + #sent
-            elseif missing == "SONOS_OFF" then
-                note("skipped", index, 0, missing, "Sonos is off; turn on the Sonos property of DirectorLink in Composer")
             else
-                note("skipped", index, 0, missing, "No Sonos players have been found yet")
+                note("skipped", index, 0, missing, MUSIC_SKIPPED[missing] or MUSIC_SKIPPED.NO_PLAYERS)
             end
         elseif step.type == "relays" then
             if not Roles.allows(ctx.apiKey.role, "doors") then
