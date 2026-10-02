@@ -1,7 +1,8 @@
 // The update notice for admin keys (docs/DECISIONS.md, ADR-035): Settings → Controller says whether
-// a newer DirectorLink is out, with its download, What's new and the steps in Composer; Home shows a
-// short notice until it is dismissed for that version. Nothing GitHub writes is shown as markup:
-// only the version, the date and links into the project's releases (checked in js/updates.js).
+// a newer DirectorLink is out, with its download, What's new and the steps in Composer, and its row
+// on Settings' list has a badge; Home shows a short notice until it is dismissed for that version.
+// Nothing GitHub writes is shown as markup: only the version, the date and links into the
+// project's releases (checked in js/updates.js).
 
 import { h, iconButton } from "../dom.js";
 import { formatDate, t } from "../i18n.js";
@@ -18,7 +19,7 @@ import {
 } from "../updates.js";
 import { notify, state } from "../state.js";
 
-// Set when the notice on Home is followed: Settings then brings the steps into view.
+// Set when the notice on Home is followed: Settings → Controller then brings the steps into view.
 let revealSteps = false;
 // True while Check now waits for GitHub.
 let checking = false;
@@ -79,15 +80,25 @@ function statusText(known) {
   return known.answeredAt ? t("updates.checkFailed", { date: dayText(known.answeredAt) }) : t("updates.checkFailedUndated");
 }
 
-// Settings → Controller: the "Updates" line as [label, value], or null.
+// Settings → Controller → Updates: the "Updates" line as [label, value], or null.
 export function updateFact() {
   if (checking && canCheck()) return [t("updates.label"), t("updates.checking")];
   const known = knownUpdate();
   return known ? [t("updates.label"), statusText(known)] : null;
 }
 
-// Settings → Controller, under the facts: Check now, for admins with a driver of a known version.
-// While a minute has not passed since the last try it says so and does nothing; it stays
+// The Controller row on Settings' list: { text, available } in a few words, or null as updateFact.
+// `available`: a newer DirectorLink is out, and the row has a badge.
+export function updateSummary() {
+  if (checking && canCheck()) return { text: t("updates.checking"), available: false };
+  const known = knownUpdate();
+  if (!known) return null;
+  if (known.release) return { text: t("updates.availableUndated", { version: known.release.version }), available: true };
+  return { text: known.upToDate ? t("updates.upToDate") : t("updates.checkFailedUndated"), available: false };
+}
+
+// Settings → Controller → Updates, under its facts: Check now, for admins with a driver of a known
+// version. While a minute has not passed since the last try it says so and does nothing; it stays
 // focusable (aria-disabled), so the keyboard is not lost when it is pressed.
 export function updateCheckButton() {
   if (!canCheck()) return null;
@@ -111,7 +122,8 @@ export function updateCheckButton() {
   );
 }
 
-// Settings → Controller, under that line: the download, What's new and the steps in Composer.
+// Settings → Controller → Updates, under that line: the download, What's new and the steps in
+// Composer.
 export function updatePanel() {
   const reveal = revealSteps;
   revealSteps = false;
@@ -170,7 +182,7 @@ export function updateBanner() {
       "a",
       {
         class: "banner-update-link",
-        href: "#/settings",
+        href: "#/settings/controller",
         dataset: { key: "home-update" },
         onclick: (event) => {
           // Not when it opens in another tab.

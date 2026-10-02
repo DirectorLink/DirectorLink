@@ -765,6 +765,7 @@ export default {
     },
     settings: {
       title: "שבתות וחגים",
+      cardTitle: "איך מחושבים הזמנים",
       holidays: "חגים ופרשת השבוע",
       auto: "אוטומטי",
       autoHelp: "לפי מיקום הבית",
@@ -782,6 +783,7 @@ export default {
       saved: "נשמר. הזמנים חושבו מחדש.",
       conflict: "ההגדרות שונו בינתיים במכשיר אחר. הן מוצגות עכשיו כפי שהן: בצעו את השינוי שוב.",
       disclaimer: "הזמנים מחושבים בבקר לפי מיקום הבית. כדאי לבדוק אותם מול לוח הזמנים של הקהילה.",
+      unavailable: "רק מנהל יכול לשנות את ההגדרות האלה, כשהלוח העברי מופעל ב-Composer.",
     },
   },
   cameras: {
@@ -1058,6 +1060,21 @@ export default {
   },
   settings: {
     title: "הגדרות",
+    rows: {
+      label: "דפי ההגדרות",
+      driverVersion: "DirectorLink {version}",
+      updateBadge: "עדכון",
+      roomCount: { one: "חדר אחד", two: "{count} חדרים", many: "{count} חדרים", other: "{count} חדרים" },
+      roomsHidden: { one: "{rooms}, אחד מוסתר", two: "{rooms}, {count} מוסתרים", many: "{rooms}, {count} מוסתרים", other: "{rooms}, {count} מוסתרים" },
+      roomsConnect: "התחברו לבקר קודם",
+      calendar: "נרות {candles} דק׳ · הבדלה {havdalah} דק׳",
+      access: "מכשירים, הזמנות ואנשים",
+      signedIn: "מחובר בתור {email}",
+      signedOut: "לא מחובר",
+      accountUnavailable: "אין גישה לשירות החשבונות",
+      canInstall: "אפשר להתקין",
+      about: "גרסה {version} · קוד פתוח",
+    },
     appearance: {
       title: "מראה",
       palette: "צבעים",
@@ -1085,6 +1102,7 @@ export default {
       cancelled: "ההזזה בוטלה. {name} שוב במקום {position} מתוך {count}.",
       updateDriverOrder: "עדכנו את DirectorLink בבקר כדי לקבוע את סדר החדרים.",
       namesTitle: "שמות החדרים",
+      listTitle: "החדרים ברשימות שלכם",
       title: "חדרים",
       help: "תנו לכל חדר שם בכל שפה. שדה ריק משתמש בשם מ-Control4.",
       connectFirst: "התחברו לבקר כדי לשנות שמות חדרים.",
@@ -1094,6 +1112,7 @@ export default {
     },
     controller: {
       title: "בקר",
+      connection: "החיבור",
       connect: "חיבור",
       status: "מצב",
       access: "גישה",
@@ -1114,6 +1133,7 @@ export default {
     },
     account: {
       title: "חשבון",
+      cardTitle: "חשבון DirectorLink",
       intro: "לא חובה. התחברות מאפשרת להגיע לבית מכל מקום, נעול מקצה לקצה, ולהזמין בני משפחה. ברשת הביתית האפליקציה עובדת גם בלי חשבון.",
       signIn: "התחברות עם Google",
       signedInAs: "מחובר בתור",
@@ -1187,6 +1207,7 @@ export default {
     },
     app: {
       title: "אפליקציה",
+      cardTitle: "במכשיר הזה",
       offlineCopy: "עותק לא מקוון",
       offline: {
         checking: "בודק…",
@@ -1216,6 +1237,7 @@ export default {
     },
     about: {
       title: "אודות",
+      cardTitle: "DirectorLink",
       slogan: "Direct to Director. End-to-end integration. Open source.",
       text: "DirectorLink מחבר את האפליקציה למערכת ה-Control4 דרך הרשת הביתית, ומכל מקום דרך החשבון שלך, נעול מקצה לקצה כך ששום שרת באמצע לא יכול לקרוא.",
       independent: "DirectorLink הוא פרויקט עצמאי ואינו קשור ל-Control4 או ל-Snap One.",

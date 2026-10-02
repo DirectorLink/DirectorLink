@@ -19,7 +19,7 @@ export function connectionChip() {
     "a",
     {
       class: `status-chip status-${kind}`,
-      href: "#/settings",
+      href: "#/settings/controller",
       "aria-label": t("status.chipLabel", { status: label }),
     },
     h("span", { class: "status-dot", "aria-hidden": "true" }),
@@ -117,7 +117,7 @@ export function staleBanner() {
     signedOut
       ? signInProviders()?.length === 1
         ? signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
-        : h("a", { class: "button button-small", href: "#/settings", dataset: { key: "stale-sign-in" } }, t("connect.signInShort"))
+        : h("a", { class: "button button-small", href: "#/settings/account", dataset: { key: "stale-sign-in" } }, t("connect.signInShort"))
       : h("button", { type: "button", class: "button button-small", dataset: { key: "stale-retry" }, onclick: () => connect() }, t("common.retry"))
   );
 }
@@ -147,7 +147,7 @@ export function unreachableState() {
       "div",
       { class: "button-row" },
       h("button", { type: "button", class: "button button-primary", dataset: { key: "retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry")),
-      h("a", { class: "button button-secondary", href: "#/settings" }, t("settings.controller.title"))
+      h("a", { class: "button button-secondary", href: "#/settings/controller" }, t("settings.controller.title"))
     )
   );
 }

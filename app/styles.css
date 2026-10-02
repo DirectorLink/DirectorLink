@@ -2556,18 +2556,13 @@ input::placeholder {
 
 /* ---- Settings ------------------------------------------------------------------------------ */
 
-/* Settings → Controller → Backup (js/views/backup.js). */
+/* Settings → Controller → Backup, a card of its own (js/views/backup.js). */
 .backup,
 .backup-form,
 .backup-preview {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.backup {
-  padding-block-start: 16px;
-  border-top: 1px solid var(--line);
 }
 
 .backup input[type="file"] {
@@ -2642,6 +2637,117 @@ input::placeholder {
 
 .settings-title .icon {
   color: var(--primary);
+}
+
+/* Settings' pages: a long title wraps rather than being cut (Shabbat and holidays at 390 px). */
+.settings-page-header .page-title {
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/* Settings' list: a row for each of its pages, with a line of how things are (views/settings.js).
+   On wide screens the two groups sit side by side, under Appearance and Language. */
+.settings-pages {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (min-width: 1000px) {
+  .settings-pages {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.settings-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.settings-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 16px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* The line between two rows starts after the icon. */
+.settings-rows > li + li > .settings-row::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 66px 0;
+  border-block-start: 1px solid var(--line);
+}
+
+.settings-row:focus-visible {
+  outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  .settings-row:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+}
+
+.settings-row-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.settings-row-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.settings-row-status {
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* A newer DirectorLink is out (the Controller row). */
+.settings-row-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primaryText);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-row-chevron {
+  flex: none;
+  color: var(--muted);
 }
 
 .radio-group {
