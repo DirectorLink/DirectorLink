@@ -9,7 +9,7 @@ driver in Control4, so DirectorLink talks to the speakers itself, on the home ne
 1. In Composer, select DirectorLink and set the property **Sonos** to `On`. It ships `Off`: then
    DirectorLink does not look for any Sonos and sends nothing to one.
 2. Look at **Sonos Players**: within a few seconds it lists the players found, with their
-   addresses, e.g. `3 players: Kitchen (192.168.1.38), Living Room (192.168.1.39), Outside (192.168.1.40)`.
+   addresses, e.g. `3 players: Bedroom (192.168.50.13), Kitchen (192.168.50.11), Living Room (192.168.50.12)`.
 3. If it says `None found`, set **Sonos Address** to one player's IP address (the Sonos app shows
    it under Settings → System → About My System). That player lists the others. This is needed
    when the controller and the speakers are on different networks (VLANs), where the search cannot

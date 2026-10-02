@@ -55,7 +55,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 ## Installation
 
-You need **Composer Pro**, Control4's setup tool, to add DirectorLink to your Control4 project, and later to update it. After that, DirectorLink runs on its own: the app, scenes, schedules and remote access never need Composer.
+You need **Composer Pro**, Control4's setup tool, to add DirectorLink to your Control4 project, and later to update it. After that, DirectorLink runs on its own: the app, scenes and schedules never need Composer. Its settings, such as Remote Access for using the app away from home, are set in Composer too.
 
 ### 1. Download DirectorLink
 
@@ -69,7 +69,7 @@ DirectorLink is installed like any other Control4 driver: with Composer Pro, on 
 
 - **You need an active Control4 account with access to Composer Pro.** Composer asks you to sign in with it, and it can't connect to your controller without it. Control4 gives these accounts to its dealers and installers.
 - **Download Composer Pro from https://composer.directorlink.io.** It lists the Composer installers on Control4's own servers, newest first. Choose the newest **Composer Pro** release and install it.
-- **No Composer Pro account?** Ask your Control4 installer to add DirectorLink for you. It takes a few minutes and needs no reboot (step 3).
+- **No Composer Pro account?** Ask your Control4 installer to add DirectorLink for you and to set what you want on (Remote Access, Sonos and the others in step 3). It takes a few minutes and needs no reboot.
 
 ### 3. Add the driver to Composer
 
