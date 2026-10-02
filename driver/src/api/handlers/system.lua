@@ -48,22 +48,6 @@ local function rounded(value)
     return math.floor(value * 100 + 0.5) / 100
 end
 
--- What DirectorLink found in the project (also the answer of POST /v1/project/refresh).
-function System.inventory(counts)
-    return {
-        rooms = counts.rooms,
-        devices = counts.devices,
-        supported_devices = counts.supported,
-        lights = counts.supported_lights,
-        thermostats = counts.supported_climate,
-        fans = counts.supported_fans,
-        blinds = counts.supported_blinds,
-        cameras = counts.supported_cameras,
-        relays = counts.supported_relays,
-        doorbells = counts.supported_doorbells,
-    }
-end
-
 function System.info(ctx)
     local admin = ctx.apiKey and ctx.apiKey.role == "admin"
     local services = ctx.services
@@ -96,7 +80,18 @@ function System.info(ctx)
             longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
-        inventory = System.inventory(counts),
+        inventory = {
+            rooms = counts.rooms,
+            devices = counts.devices,
+            supported_devices = counts.supported,
+            lights = counts.supported_lights,
+            thermostats = counts.supported_climate,
+            fans = counts.supported_fans,
+            blinds = counts.supported_blinds,
+            cameras = counts.supported_cameras,
+            relays = counts.supported_relays,
+            doorbells = counts.supported_doorbells,
+        },
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,
             last_init_type = text(lifecycle.last_init_type),
@@ -104,12 +99,16 @@ function System.info(ctx)
             last_destroy_type = text(lifecycle.last_destroy_type),
             last_destroy_time = text(lifecycle.last_destroy_time),
         },
-        -- What the installer switched on in Composer; clients show none of what is false.
+        -- What the installer switched on in Composer, and what this DirectorLink has; clients show
+        -- none of what is false or missing.
         -- jewish_calendar is the Jewish Calendar property (/v1/calendar, Shabbat schedules).
         -- alarm_status: the alarm's partitions, read-only, for members and admins (ADR-038).
+        -- backup: GET /v1/backup and POST /v1/restore (1.4.0, ADR-042), always there; drivers
+        -- before 1.4.0 do not say it, and the app shows them no Backup.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
+            backup = true,
         },
     }
 end

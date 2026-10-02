@@ -167,6 +167,20 @@ function tests.only_admins_in_sealed_requests_reach_the_backup()
     T.eq(export(s).format, "directorlink-backup")
 end
 
+-- The app shows Backup only when GET /v1/system says the driver has it: drivers before 1.4.0 do not.
+function tests.the_system_says_that_backups_are_there_whatever_the_properties()
+    local s = start()
+    local viewer = createKey(s, "viewer device", "viewer")
+    T.eq(T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.features.backup, true)
+    T.eq(T.http(s.mock, "GET", "/v1/system", { key = viewer }).json.features.backup, true, "the app hides it from other roles itself")
+    -- Not a Composer property: nothing an installer switches turns it off.
+    Properties["Jewish Calendar"] = "On"
+    OnPropertyChanged("Jewish Calendar")
+    local features = T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.features
+    T.eq(features.jewish_calendar, true)
+    T.eq(features.backup, true)
+end
+
 function tests.the_document_holds_every_store_as_stored_and_no_key()
     local s = start()
     local home = furnish(s)

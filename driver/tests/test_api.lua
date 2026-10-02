@@ -710,11 +710,11 @@ function tests.relay_hold_changed_in_composer_applies_at_once()
     T.eq(#mock.commands, before)
 
     local messages = {}
-    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=settings", { key = key }).json.items) do
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=relay_command", { key = key }).json.items) do
         messages[#messages + 1] = entry.message
     end
-    T.contains(table.concat(messages, "\n"), "Relay Hold set to Allowed in Composer")
-    T.contains(table.concat(messages, "\n"), "Relay Hold set to Not allowed in Composer")
+    T.contains(table.concat(messages, "\n"), "relay hold allowed in Composer")
+    T.contains(table.concat(messages, "\n"), "relay hold not allowed in Composer")
 end
 
 function tests.admins_change_roles_but_keep_one_admin()
@@ -961,6 +961,24 @@ function tests.secrets_never_reach_the_log()
     local everything = table.concat(mock.debugLog, "\n")
     T.notContains(everything, key, "API key in driver log")
     T.notContains(everything, code, "pairing code in driver log")
+end
+
+-- Director may report DirectorLink's own property updates back to OnPropertyChanged: the pairing
+-- code among them is neither acted on nor logged, as typed or as shown.
+function tests.the_pairing_code_reported_back_by_director_is_never_logged()
+    local mock = Mock.startDriver()
+    require("src.core.log").setLevel("debug")
+    local code = mock.properties["Pairing Code"]
+    for _, name in ipairs({ "Pairing Code", "Pairing Status", "Status", "API Keys" }) do
+        -- As Director holds them once DirectorLink updated them.
+        Properties[name] = mock.properties[name]
+        OnPropertyChanged(name)
+    end
+    local key = T.pair(mock)
+    local entries = T.http(mock, "GET", "/v1/logs?level=debug&limit=500", { key = key }).json.items
+    local everything = table.concat(mock.debugLog, "\n") .. Json.encode(entries)
+    T.notContains(everything, code, "pairing code in the log")
+    T.notContains(everything, (code:gsub("%s", "")), "pairing code as typed in the log")
 end
 
 function tests.cors_allows_the_app_and_console_and_rejects_other_origins()

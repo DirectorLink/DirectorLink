@@ -2,8 +2,8 @@
 check_app.py): the relay's CA file holds exactly the pinned roots however its blocks are written,
 nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
 what is staged, the door switches, the Jewish calendar and the alarm's status in driver.xml ship
-off, the alarm stays read-only, the settings made in Composer only stay there, and the app names
-every month, holiday and weekly reading the calendar API can send.
+off, the alarm stays read-only, and the app names every month, holiday and weekly reading the
+calendar API can send.
 
     python -m unittest discover -s tests/scripts
 """
@@ -219,75 +219,6 @@ class AlarmReadOnly(unittest.TestCase):
                 self.assertIn(old, files[name])
                 printed = self.refused({**files, name: files[name].replace(old, new, 1)})
                 self.assertIn("scene steps must never reach the alarm", printed or "")
-
-
-class SettingsComposerOnly(unittest.TestCase):
-    """check_package.py: the app changes only Schedules, Jewish Calendar and Log Level (1.4.0,
-    ADR-043); Door Control, Relay Hold, Alarm Status, Remote Access and three actions stay in Composer."""
-
-    MODULE = "src/core/settings.lua"
-    HANDLER = "src/api/handlers/settings.lua"
-
-    def refused(self, files):
-        return refusal(check_package.check_settings_composer_only, files)
-
-    def changed(self, name, old, new):
-        files = driver_sources()
-        self.assertIn(old, files[name], "the test did not find what it changes")
-        return self.refused({**files, name: files[name].replace(old, new, 1)})
-
-    def test_the_driver_passes(self):
-        self.assertIsNone(self.refused(driver_sources()))
-
-    def test_a_setting_made_in_composer_only_cannot_be_marked_for_the_app(self):
-        for prop in ("Door Control", "Relay Hold", "Alarm Status", "Remote Access"):
-            with self.subTest(prop=prop):
-                line = next(line for line in driver_sources()[self.MODULE].splitlines() if f'property = "{prop}"' in line)
-                printed = self.changed(self.MODULE, line, line.replace("app = false", "app = true"))
-                self.assertIn("lets the app change", printed or "")
-
-    def test_the_app_settings_and_actions_are_exactly_these(self):
-        line = next(line for line in driver_sources()[self.MODULE].splitlines() if 'property = "Schedules"' in line)
-        self.assertIn("lets the app change", self.changed(self.MODULE, line, line.replace("app = true", "app = false")) or "")
-        self.assertIn("app = true or false", self.changed(self.MODULE, line, line.replace(", app = true", "")) or "")
-        for action in ("New Pairing Code", "Revoke All API Keys", "Reset Remote Identity"):
-            with self.subTest(action=action):
-                line = next(line for line in driver_sources()[self.MODULE].splitlines() if f'action = "{action}"' in line)
-                self.assertIsNotNone(self.changed(self.MODULE, line, line.replace("app = false", "app = true")))
-
-    def test_the_pairing_code_is_never_shown_in_the_app(self):
-        old = '    { key = "status", property = "Status" },\n'
-        printed = self.changed(self.MODULE, old, old + '    { key = "pairing_code", property = "Pairing Code" },\n')
-        self.assertIn("pairing code", printed or "")
-
-    def test_the_refusal_stays(self):
-        self.assertIn("settings contract", self.changed(self.MODULE, "if not setting.app then", "if false then") or "")
-        self.assertIn("settings contract", self.changed(self.MODULE, "if setting.app and value ~= nil", "if value ~= nil") or "")
-        self.assertIn("settings contract", self.changed(self.HANDLER, 'return Problem.new(403, "SET_IN_COMPOSER"', 'return Problem.new(200, "OK"') or "")
-
-    def test_nothing_writes_a_property_made_in_composer_only(self):
-        for line in (
-            'Properties["Door Control"] = "Enabled"',
-            'C4:UpdateProperty("Relay Hold", "Allowed")',
-            'Properties [ "Remote Access" ]= "On"',
-            "Properties[Alarm.PROPERTY] = \"On\"",
-            'C4:UpdateProperty(Alarm.PROPERTY, "On")',
-            "Properties['Door Control'] = 'Enabled'",
-            "C4:UpdateProperty('Remote Access', 'On')",
-        ):
-            with self.subTest(line=line):
-                printed = self.changed(self.HANDLER, "local Handlers = {}\n", "local Handlers = {}\n" + line + "\n")
-                self.assertIn("made in Composer only", printed or "")
-        # Comparing is reading, and comments do not count.
-        self.assertIsNone(self.changed(self.HANDLER, "local Handlers = {}\n",
-                                       'local Handlers = {}\nlocal on = Properties["Door Control"] == "Enabled"\n-- Properties["Door Control"] = "Enabled"\n'))
-
-    def test_the_api_reaches_no_action_made_in_composer_only(self):
-        for call in ("ctx.services.pairing.open()", "ctx.services.keys.revokeAll()", "Relay.resetIdentity()", "Relay.start()",
-                     "require('src.cloud.relay').start()", "ctx.services.adapters.onPropertyChanged(\"Alarm Status\")"):
-            with self.subTest(call=call):
-                printed = self.changed(self.HANDLER, "function Handlers.get(ctx)\n", "function Handlers.get(ctx)\n    " + call + "\n")
-                self.assertIn("run in Composer only", printed or "")
 
 
 class CalendarNames(unittest.TestCase):

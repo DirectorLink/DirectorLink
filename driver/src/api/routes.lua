@@ -97,13 +97,6 @@ return {
     { method = "POST", path = "/v1/restore/parts", handler = "backup.part", role = "admin" },
     { method = "POST", path = "/v1/restore", handler = "backup.restore", role = "admin" },
 
-    -- DirectorLink's settings (ADR-043): admins change Schedules, Jewish Calendar and Log Level as
-    -- Composer does; the others are set in Composer only, for every key (handlers/settings.lua).
-    { method = "GET", path = "/v1/settings", handler = "settings.get", role = "admin" },
-    { method = "PATCH", path = "/v1/settings", handler = "settings.update", role = "admin" },
-    { method = "GET", path = "/v1/settings/printout", handler = "settings.printout", role = "admin" },
-    { method = "POST", path = "/v1/project/refresh", handler = "settings.refresh_project", role = "admin" },
-
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings", role = "admin" },

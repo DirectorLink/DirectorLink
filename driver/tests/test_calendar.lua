@@ -168,11 +168,15 @@ local function devicesSince(mock, from)
 end
 
 local function logged(mock, admin, message)
-    for _, category in ipairs({ "calendar", "schedules", "settings" }) do
-        for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=" .. category .. "&level=debug&limit=500", { key = admin }).json.items) do
-            if entry.message == message then
-                return entry
-            end
+    for _, entry in ipairs(T.http(mock, "GET", "/v1/logs?category=calendar&level=debug&limit=500", { key = admin }).json.items) do
+        if entry.message == message then
+            return entry
+        end
+    end
+    local schedules = T.http(mock, "GET", "/v1/logs?category=schedules&level=debug&limit=500", { key = admin }).json.items
+    for _, entry in ipairs(schedules) do
+        if entry.message == message then
+            return entry
         end
     end
     return nil
@@ -318,7 +322,7 @@ function tests.turned_on_it_gives_the_times_of_tel_aviv_as_in_israel()
     T.same(answer, EXAMPLES.Calendar.ok.value)
     T.eq(mock.properties["Calendar Status"], "Israel (from the location) · candles 20 min before sunset, havdalah 42 min after · next "
         .. shown(CANDLES) .. " to " .. shown(HAVDALAH) .. " Shabbat, Shmini Atzeret, Simchat Torah")
-    T.truthy(logged(mock, admin, "Jewish Calendar set to On in Composer"), "the switch is logged")
+    T.truthy(logged(mock, admin, "jewish calendar on in Composer"), "the switch is logged")
     local computed = logged(mock, admin, "calendar computed")
     T.truthy(computed, "worked out, at debug level")
     T.eq(computed.data.from, "2026-09-26")

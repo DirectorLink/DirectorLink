@@ -481,7 +481,7 @@ function tests.the_installer_pauses_all_schedules_in_composer()
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "07:30" }, days = { 0, 1, 2, 3, 4, 5, 6 } })
     Properties["Schedules"] = "Paused"
     OnPropertyChanged("Schedules")
-    T.contains(mock.properties["Schedule Status"], "Paused - 1 schedule is not running")
+    T.contains(mock.properties["Schedule Status"], "Paused in Composer - 1 schedule is not running")
     T.eq(T.http(mock, "GET", "/v1/schedules", { key = admin }).json.paused, true)
     clock.set(runAt + 5)
     T.eq(Scheduler.tick(), 0, "paused")

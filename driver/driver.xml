@@ -86,7 +86,6 @@
           <item>Enabled</item>
         </items>
         <default>Disabled</default>
-        <tooltip>Enabled lets keys with door access open doors and gates from the app. Set in Composer only: the app shows it but cannot change it.</tooltip>
       </property>
       <property>
         <name>Relay Hold</name>
@@ -96,7 +95,7 @@
           <item>Allowed</item>
         </items>
         <default>Not allowed</default>
-        <tooltip>Allowed lets API clients hold a relay closed with PATCH state closed; the app and scenes always pulse. Leave Not allowed for doors and gates: a held contact keeps them open. Set in Composer only: the app shows it but cannot change it.</tooltip>
+        <tooltip>Allowed lets API clients hold a relay closed with PATCH state closed; the app and scenes always pulse. Leave Not allowed for doors and gates: a held contact keeps them open.</tooltip>
       </property>
       <property>
         <name>Alarm Status</name>
@@ -106,7 +105,7 @@
           <item>On</item>
         </items>
         <default>Off</default>
-        <tooltip>On shows members and admins in the app whether the alarm is armed, in alarm or has trouble; viewers never see it. Read only: DirectorLink never arms or disarms. Off: DirectorLink does not watch the alarm. Set in Composer only: the app shows it but cannot change it.</tooltip>
+        <tooltip>On shows members and admins in the app whether the alarm is armed, in alarm or has trouble; viewers never see it. Read only: DirectorLink never arms or disarms. Off: DirectorLink does not watch the alarm.</tooltip>
       </property>
       <property>
         <name>Remote Access</name>
@@ -116,7 +115,6 @@
           <item>On</item>
         </items>
         <default>Off</default>
-        <tooltip>On connects the home to DirectorLink's servers, sealed end to end, for the app away from home. Set in Composer only: the app shows it but cannot change it.</tooltip>
       </property>
       <property>
         <name>Remote Status</name>
@@ -132,7 +130,6 @@
           <item>Paused</item>
         </items>
         <default>On</default>
-        <tooltip>Paused stops every DirectorLink schedule; what was due meanwhile is not run later, except a time due in the last 5 minutes. Admins can also change it in the DirectorLink app (Settings, Controller, DirectorLink settings); Composer shows the change, and a change here wins.</tooltip>
       </property>
       <property>
         <name>Schedule Status</name>
@@ -154,7 +151,6 @@
           <item>On</item>
         </items>
         <default>Off</default>
-        <tooltip>On works out Shabbat and holiday times from the project's location, for schedules and the app. Admins can also change it in the DirectorLink app (Settings, Controller, DirectorLink settings); Composer shows the change, and a change here wins.</tooltip>
       </property>
       <property>
         <name>Calendar Status</name>
@@ -173,7 +169,6 @@
         </items>
         <default>Info</default>
         <readonly>false</readonly>
-        <tooltip>How much DirectorLink keeps in its log (GET /v1/logs). Admins can also change it in the DirectorLink app (Settings, Controller, DirectorLink settings); Composer shows the change, and a change here wins.</tooltip>
       </property>
       <property>
         <name>Inventory</name>

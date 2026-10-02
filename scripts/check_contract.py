@@ -556,9 +556,6 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
     client.check("GET", "/v1/calendar", 200)
     client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
-    client.check("GET", "/v1/settings", 403)
-    client.check("PATCH", "/v1/settings", 403, body={"door_control": "enabled"})
-    client.check("POST", "/v1/project/refresh", 403)
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key
@@ -571,33 +568,6 @@ def scenario(client, bridge):
     client.check("GET", "/v1/logs?level=loud", 400)
     client.check("PATCH", "/v1/logs/settings", 400, body={"level": "verbose"})
     client.check("GET", "/v1/logs", 401, auth=False)
-
-    # DirectorLink's settings (1.4.0, ADR-043): admins change Schedules, Jewish Calendar and Log
-    # Level as in Composer; the ones set in Composer only are refused for every key.
-    def setting(document, key):
-        return next(item for item in document["settings"] if item["key"] == key)
-
-    settings = client.check("GET", "/v1/settings", 200)
-    if (setting(settings, "door_control")["value"], setting(settings, "door_control")["changeable"]) != ("enabled", False):
-        fail(f"GET /v1/settings should show Door Control as the fake home has it, set in Composer only: {settings}")
-    if setting(settings, "log_level")["value"] != "debug" or settings["status"]["status"] != "Ready":
-        fail(f"GET /v1/settings should show the log level set above and the driver's status: {settings}")
-    paused = client.check("PATCH", "/v1/settings", 200, body={"schedules": "paused"})
-    if setting(paused, "schedules")["composer_value"] != "Paused" or client.check("GET", "/v1/schedules", 200)["paused"] is not True:
-        fail(f"PATCH /v1/settings should pause every schedule: {paused}")
-    client.check("PATCH", "/v1/settings", 200, body={"schedules": "on", "log_level": "debug"})
-    for key, value in (("door_control", "disabled"), ("relay_hold", "allowed"), ("alarm_status", "off"), ("remote_access", "on")):
-        refused = client.check("PATCH", "/v1/settings", 403, body={key: value})
-        if refused["code"] != "SET_IN_COMPOSER":
-            fail(f"PATCH /v1/settings {key} should be refused with SET_IN_COMPOSER: {refused}")
-    client.check("PATCH", "/v1/settings", 400, body={"schedules": "off"})
-    printout = client.check("GET", "/v1/settings/printout", 200)
-    if not printout["lines"][0].startswith("DirectorLink schedules:"):
-        fail(f"GET /v1/settings/printout should start as Print Schedules and Scenes does: {printout['lines'][:2]}")
-    refreshed = client.check("POST", "/v1/project/refresh", 200)
-    if refreshed["inventory"] != client.check("GET", "/v1/system", 200)["inventory"]:
-        fail(f"POST /v1/project/refresh should answer with the inventory GET /v1/system has: {refreshed}")
-    client.check("GET", "/v1/settings", 401, auth=False)
 
     # The installer turns the Jewish calendar on in Composer. The fake project is in Tel Aviv, so
     # the answer has Shabbat and holiday times, worked out on the controller; settings change with
@@ -635,6 +605,9 @@ def scenario(client, bridge):
 
     # Backups (1.4.0, ADR-042): for admins, only in sealed requests. The document goes back in parts,
     # is checked (nothing changes) and restored: here the one just made, so the fake home stays as it is.
+    # GET /v1/system says the driver has them (the app shows Backup only then).
+    if client.check("GET", "/v1/system", 200)["features"].get("backup") is not True:
+        fail("GET /v1/system should say features.backup true: the app shows Backup only then")
     clear = client.check("GET", "/v1/backup", 403)
     if clear["code"] != "SEALED_REQUEST_REQUIRED":
         fail(f"GET /v1/backup in the clear should be refused with SEALED_REQUEST_REQUIRED: {clear}")

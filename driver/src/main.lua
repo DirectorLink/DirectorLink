@@ -24,7 +24,6 @@ local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
 local Remote = require("src.cloud.remote")
 local Invitations = require("src.auth.invitations")
-local Settings = require("src.core.settings")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -34,6 +33,14 @@ local LIFECYCLE_KEYS = {
     last_destroy_time = "directorlink_last_destroy_time",
 }
 
+-- Composer's "Log Level" list uses these labels.
+local COMPOSER_LEVEL = {
+    debug = "Debug",
+    info = "Info",
+    warn = "Warning",
+    error = "Error",
+}
+
 local STATE = {
     controllerVersion = nil,
     supported = false,
@@ -41,9 +48,7 @@ local STATE = {
     detail = nil,
 }
 
--- The read-only properties are also kept for the app (src/core/settings.lua, GET /v1/settings).
 local function updateProperty(name, value)
-    Settings.shown(name, tostring(value or ""))
     pcall(function()
         C4:UpdateProperty(name, tostring(value or ""))
     end)
@@ -160,12 +165,6 @@ local function calendarChanged()
     refreshScheduleStatus()
 end
 
--- Every schedule and scene in full, as the Composer action Print Schedules and Scenes prints them
--- (and the app shows them: GET /v1/settings/printout).
-local function automationPrintout()
-    return InstallerView.printout(Clock.now(), schedulesPaused(), Registry, JewishCalendar)
-end
-
 local function automationRan(event)
     local ok, text = pcall(InstallerView.lastAutomation, event)
     if ok then
@@ -193,9 +192,6 @@ local function restored(restore)
     shownScheduleStatus, shownCalendarStatus = nil, nil
     calendarChanged()
 end
-
--- Read the project again (the action Refresh Project, Composer's changes, the app); below.
-local refreshProject
 
 local services = {
     registry = Registry,
@@ -270,20 +266,9 @@ local services = {
     onSchedulesChanged = function()
         refreshScheduleStatus()
     end,
-    -- DirectorLink's settings in the app (ADR-043, src/core/settings.lua): admins change Schedules,
-    -- Jewish Calendar and Log Level as Composer does; the others are only shown there.
-    settings = Settings,
-    -- Refresh Project from the app (POST /v1/project/refresh), as the Composer action runs it.
-    refreshProject = function(by)
-        Log.always("settings", "Refresh Project run in the app by " .. tostring(by.name), {
-            action = "refresh_project",
-            from = "app",
-            key_id = by.id,
-            key_name = by.name,
-        })
-        return refreshProject("the app")
+    onLogLevelChanged = function(level)
+        updateProperty("Log Level", COMPOSER_LEVEL[level] or "Info")
     end,
-    automationPrintout = automationPrintout,
     onServerStatus = function(online, status)
         updateProperty("API Status", online and ("Online - port " .. Api.PORT) or ("Offline (" .. status .. ")"))
     end,
@@ -337,8 +322,7 @@ end
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
 -- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps
 -- answering throughout (Lua runs one thing at a time), and keys, pairing, scenes, schedules, room
--- names and the room order stay as they are; they refer to devices and rooms by id. Returns
--- whether it read the project, and for a refresh what changed (Registry.changes).
+-- names and the room order stay as they are; they refer to devices and rooms by id.
 local function discover(reason)
     if not reason then
         setStatus("starting", "Discovering project...")
@@ -364,9 +348,8 @@ local function discover(reason)
     AdapterManager.initialize(Registry, reason and previousDevices or nil)
 
     local counts = publishInventory()
-    local changes = nil
     if reason then
-        changes = Registry.changes(previousDevices, previousRooms)
+        local changes = Registry.changes(previousDevices, previousRooms)
         changes.reason = reason
         changes.rooms = counts.rooms
         changes.devices = counts.devices
@@ -380,13 +363,15 @@ local function discover(reason)
         Log.info("discovery", "project discovered", counts)
     end
     setStatus("ok")
-    return true, changes
+    return true
 end
 
 -- Composer changes (a device moved to another room, renamed, added or removed) without restarting
 -- the driver: the action Refresh Project, and Director's project events a few seconds after the
 -- last one (a refresh they started that fails is tried once more). The events are watched once a
 -- project was read.
+local refreshProject
+
 local function watchProject()
     ProjectEvents.start({
         ownIds = { (Registry.metadata or {}).bridgeDeviceId },
@@ -401,11 +386,11 @@ refreshProject = function(reason)
         return false
     end
     ProjectEvents.cancel()
-    local refreshed, changes = discover(reason)
+    local refreshed = discover(reason)
     if refreshed then
         watchProject()
     end
-    return refreshed, changes
+    return refreshed
 end
 
 function OnDriverInit(driverInitType)
@@ -464,12 +449,6 @@ function OnDriverLateInit(driverInitType)
         log = Log,
         openNow = Keys.count() == 0,
         onChange = function(code, status)
-            -- Whoever reads it could pair an admin key: it never reaches the log, as "1234 5678"
-            -- or as typed.
-            if code ~= "-" then
-                Log.hide(code)
-                Log.hide((code:gsub("%s", "")))
-            end
             updateProperty("Pairing Code", code)
             updateProperty("Pairing Status", status)
         end,
@@ -570,11 +549,10 @@ function ExecuteCommand(command, params)
     elseif params.ACTION == "REFRESH_PROJECT" then
         -- After moving, renaming, adding or removing devices and rooms in Composer, when Director
         -- does not announce it (or has not yet): no driver restart needed.
-        Log.always("settings", "Refresh Project run in Composer", { action = "refresh_project", from = "composer" })
         refreshProject("Composer action")
     elseif params.ACTION == "PRINT_AUTOMATION" then
         -- To Composer's Lua output, for the installer: every schedule and scene in full.
-        local ok, lines = pcall(automationPrintout)
+        local ok, lines = pcall(InstallerView.printout, Clock.now(), schedulesPaused(), Registry, JewishCalendar)
         for _, line in ipairs(ok and lines or { "DirectorLink could not list its schedules: " .. tostring(lines) }) do
             print(line)
         end
@@ -589,73 +567,46 @@ function ExecuteCommand(command, params)
     end
 end
 
--- What a change of one of DirectorLink's properties does (`data`: what the log says of it).
-local function propertyEffect(name, data)
-    if name == "Remote Access" then
+function OnPropertyChanged(name)
+    if name == "Remote Access" and Properties then
         if Properties[name] == "On" then
             Relay.start()
         else
             Relay.stop()
         end
-    elseif name == "Schedules" then
-        -- Resumed: what was due while paused is not caught up, not even after a restart, except a
-        -- time due in the last 5 minutes (src/core/scheduler.lua).
+    end
+    if name == "Schedules" and Properties then
+        Log.info("schedules", schedulesPaused() and "schedules paused in Composer" or "schedules resumed in Composer")
+        -- Resumed: what was due while paused is never caught up, not even after a restart.
         Scheduler.switchesChanged()
         refreshScheduleStatus()
-    elseif name == "Jewish Calendar" then
-        -- No restart needed: the scheduler asks the calendar every minute. Turned on again, it
-        -- catches nothing up (calendarChanged).
+    end
+    -- No restart needed: the scheduler asks the calendar every minute. Turned on again, it catches
+    -- nothing up (calendarChanged).
+    if name == "Jewish Calendar" and Properties then
+        Log.info("calendar", services.calendarEnabled() and "jewish calendar on in Composer" or "jewish calendar off in Composer")
         calendarChanged()
-    elseif name == Alarm.PROPERTY then
+    end
+    if name == "Door Control" and Properties then
+        Log.info("relay_command", "door control " .. string.lower(tostring(Properties[name])) .. " in Composer")
+    end
+    if name == "Relay Hold" and Properties then
+        Log.info("relay_command", "relay hold " .. string.lower(tostring(Properties[name])) .. " in Composer")
+    end
+    if name == Alarm.PROPERTY and Properties and STATE.supported then
         -- The partitions are watched from now on, or no longer; nothing about their state is logged.
-        if STATE.supported then
-            data.partitions_watched, data.partitions_released = AdapterManager.onPropertyChanged(name)
-            publishInventory()
+        local started, released = AdapterManager.onPropertyChanged(name)
+        Log.info("alarm", Alarm.enabled() and "alarm status on in Composer" or "alarm status off in Composer", {
+            partitions_watched = started,
+            partitions_released = released,
+        })
+        publishInventory()
+    end
+    if name == "Log Level" and Properties then
+        if Log.setLevel(Properties[name]) then
+            Log.info("logs", "log level changed from Composer", { level = Log.getLevel() })
         end
-    elseif name == "Log Level" then
-        Log.setLevel(Properties[name])
     end
-end
-
--- A change of one of DirectorLink's properties, made in Composer (OnPropertyChanged) or in the app
--- (PATCH /v1/settings: src/core/settings.lua sets the property first, as Composer would): one path
--- for both. `by`: the API key that made it, nil for Composer. Every change is logged with who made
--- it and from where (category "settings"), whatever the log level. An effect that fails is logged
--- with it, and the error goes on to the caller.
-local function propertyChanged(name, by)
-    if not Properties then
-        return
-    end
-    if name == "Log Level" and not Log.normalizeLevel(Properties[name]) then
-        return
-    end
-    Settings.applied(name, Properties[name])
-    local data = Settings.changeData(name, by)
-    local message = name .. " set to " .. tostring(Properties[name]) .. (by and (" in the app by " .. tostring(by.name)) or " in Composer")
-    local ok, err = pcall(propertyEffect, name, data)
-    if not ok then
-        data.error = tostring(err)
-        message = message .. "; applying it failed"
-    end
-    Log.always("settings", message, data)
-    if not ok then
-        error(err, 0)
-    end
-end
-
-Settings.configure({ apply = propertyChanged })
-
-function OnPropertyChanged(name)
-    -- Only DirectorLink's settings: the properties it only shows (Status, Pairing Code, ...) are
-    -- its own, and Director may report each update of them back here.
-    if not Settings.forProperty(name) then
-        return
-    end
-    -- The value DirectorLink applied last, reported back (however late): nothing changed.
-    if not Settings.changed(name) then
-        return
-    end
-    propertyChanged(name, nil)
 end
 
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
