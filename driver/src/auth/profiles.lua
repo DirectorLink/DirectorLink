@@ -54,13 +54,16 @@ local function save()
     return ok
 end
 
-function Profiles.load()
-    state.profiles = {}
-    local data, form = Store.read(STORE_KEY, false)
+-- The profiles of a stored record ({ version, profiles }, as the store or a backup holds them);
+-- the ones that cannot be read are left out. Returns them and how many were left out.
+function Profiles.read(data)
+    local profiles, dropped = {}, 0
     for _, item in ipairs(Store.items(type(data) == "table" and data.profiles or nil)) do
-        if type(item) == "table" and type(item.id) == "string" and item.id:match("^%x+$") then
+        if type(item) ~= "table" or type(item.id) ~= "string" or not item.id:match("^%x+$") then
+            dropped = dropped + 1
+        else
             local prefs = type(item.prefs) == "table" and item.prefs or {}
-            state.profiles[#state.profiles + 1] = {
+            profiles[#profiles + 1] = {
                 id = item.id,
                 name = type(item.name) == "string" and item.name or "Profile",
                 created_at = type(item.created_at) == "string" and item.created_at or Clock.iso(),
@@ -75,7 +78,28 @@ function Profiles.load()
             }
         end
     end
+    return profiles, dropped
+end
+
+function Profiles.load()
+    local data, form = Store.read(STORE_KEY, false)
+    state.profiles = Profiles.read(data)
     return #state.profiles, form
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the profiles as the store keeps them.
+function Profiles.backup()
+    local records = Json.array()
+    for _, profile in ipairs(state.profiles) do
+        records[#records + 1] = copy(profile)
+    end
+    return { version = 1, profiles = records }
+end
+
+-- Replaces every profile with the ones of `data`, read as the store's are. Returns true once saved.
+function Profiles.restore(data)
+    state.profiles = Profiles.read(data)
+    return save()
 end
 
 local function findRecord(id)

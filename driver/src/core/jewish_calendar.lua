@@ -191,11 +191,9 @@ local function reckoning()
     return false, country ~= "" and "from the country" or "from the time zone"
 end
 
--- The settings stored on the controller (defaults until an admin changes them). Returns them and
--- how the store answered (as Store.read).
-function JewishCalendar.load()
-    local data, form = Store.read(STORE_KEY, false)
-    state.complete = form ~= "unreadable"
+-- The settings of a stored record ({ version, settings }, as the store or a backup holds it), with
+-- the defaults for what it does not say.
+function JewishCalendar.read(data)
     local settings = defaults()
     local saved = type(data) == "table" and data.settings or nil
     if type(saved) == "table" then
@@ -214,12 +212,46 @@ function JewishCalendar.load()
             settings.updated_at = saved.updated_at
         end
     end
-    state.settings = settings
+    return settings
+end
+
+-- The settings stored on the controller (defaults until an admin changes them). Returns them and
+-- how the store answered (as Store.read).
+function JewishCalendar.load()
+    local data, form = Store.read(STORE_KEY, false)
+    state.complete = form ~= "unreadable"
+    state.settings = JewishCalendar.read(data)
     JewishCalendar.invalidate()
     if not state.complete then
         Log.error("calendar", "the calendar settings could not be read; they cannot be changed until the driver restarts")
     end
-    return settings, form
+    return state.settings, form
+end
+
+-- False after the stored settings could not be read at start (they may come back at the next one).
+function JewishCalendar.complete()
+    return state.complete
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the settings as the store keeps them.
+function JewishCalendar.backup()
+    local settings = {}
+    for field, value in pairs(state.settings or defaults()) do
+        settings[field] = value
+    end
+    return { version = 1, settings = settings }
+end
+
+-- Replaces the settings with the ones of `data`. Returns true once saved.
+function JewishCalendar.restore(data)
+    local settings = JewishCalendar.read(data)
+    local ok = Store.write(STORE_KEY, { version = 1, settings = settings }, false)
+    state.settings = settings
+    if ok then
+        state.complete = true
+    end
+    JewishCalendar.invalidate()
+    return ok
 end
 
 -- "off" (the Composer switch), "no_location" (no latitude and longitude in the project) or "ok".

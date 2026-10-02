@@ -39,6 +39,7 @@ local suites = {
     "test_dual_thermostat",
     "test_fans",
     "test_alarm",
+    "test_backup",
 }
 
 if #arg > 0 then

@@ -1,10 +1,6 @@
 # Roadmap
 
-What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.3.0](releases/v1.3.0.md). This page lists only what is still to come.
-
-## 1.4.0 (in progress)
-
-- **Backup and restore:** admins download a backup of everything DirectorLink keeps (scenes, schedules, each person's settings, room names and order, which devices have access, the link to the account), locked with a password in the browser, and restore it after the driver was removed, the controller replaced or the project rebuilt.
+What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.4.0](releases/v1.4.0.md). This page lists only what is still to come.
 
 ## Later
 
@@ -18,3 +14,4 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 
 - **Installing driver updates from the app, or automatically.** A driver can only replace itself through a way around Control4's file protection that Control4 does not document. Updates stay in Composer, with the app's guided notice (ADR-035).
 - Editing the Control4 project (Composer programming, its scenes and schedules), and plugins.
+- Changing DirectorLink's Composer settings from the app (built for 1.4.0, withdrawn: they stay in Composer).

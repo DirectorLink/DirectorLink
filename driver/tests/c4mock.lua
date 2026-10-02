@@ -546,6 +546,12 @@ function Mock.install(project)
         return project.bridgeId
     end
 
+    -- The controller's MAC address: the same for every project unless a test gives one (another
+    -- controller).
+    function C4:GetUniqueMAC()
+        return project.mac or "000FFF0A1B2C"
+    end
+
     function C4:GetProjectProperty(name)
         return project.projectProperties[name]
     end

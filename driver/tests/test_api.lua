@@ -963,6 +963,24 @@ function tests.secrets_never_reach_the_log()
     T.notContains(everything, code, "pairing code in driver log")
 end
 
+-- Director may report DirectorLink's own property updates back to OnPropertyChanged: the pairing
+-- code among them is neither acted on nor logged, as typed or as shown.
+function tests.the_pairing_code_reported_back_by_director_is_never_logged()
+    local mock = Mock.startDriver()
+    require("src.core.log").setLevel("debug")
+    local code = mock.properties["Pairing Code"]
+    for _, name in ipairs({ "Pairing Code", "Pairing Status", "Status", "API Keys" }) do
+        -- As Director holds them once DirectorLink updated them.
+        Properties[name] = mock.properties[name]
+        OnPropertyChanged(name)
+    end
+    local key = T.pair(mock)
+    local entries = T.http(mock, "GET", "/v1/logs?level=debug&limit=500", { key = key }).json.items
+    local everything = table.concat(mock.debugLog, "\n") .. Json.encode(entries)
+    T.notContains(everything, code, "pairing code in the log")
+    T.notContains(everything, (code:gsub("%s", "")), "pairing code as typed in the log")
+end
+
 function tests.cors_allows_the_app_and_console_and_rejects_other_origins()
     local mock, key = start()
     local preflight = T.http(mock, "OPTIONS", "/v1/lights/20", { headers = { Origin = "https://app.directorlink.io" } })

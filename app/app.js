@@ -252,6 +252,8 @@ function signature() {
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
+    // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
+    route.name === "settings" ? ui.backup : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);

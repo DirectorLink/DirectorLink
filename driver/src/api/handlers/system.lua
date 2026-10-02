@@ -99,12 +99,16 @@ function System.info(ctx)
             last_destroy_type = text(lifecycle.last_destroy_type),
             last_destroy_time = text(lifecycle.last_destroy_time),
         },
-        -- What the installer switched on in Composer; clients show none of what is false.
+        -- What the installer switched on in Composer, and what this DirectorLink has; clients show
+        -- none of what is false or missing.
         -- jewish_calendar is the Jewish Calendar property (/v1/calendar, Shabbat schedules).
         -- alarm_status: the alarm's partitions, read-only, for members and admins (ADR-038).
+        -- backup: GET /v1/backup and POST /v1/restore (1.4.0, ADR-042), always there; drivers
+        -- before 1.4.0 do not say it, and the app shows them no Backup.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
+            backup = true,
         },
     }
 end

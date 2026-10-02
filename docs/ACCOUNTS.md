@@ -381,6 +381,9 @@ device's key.
   the home network), which the account service accepts only from the owner (`docs/RELAY.md`). If
   someone else took the home over first, Composer's **Reset Remote Identity** makes it a new home,
   which the owner links again.
+- **A DirectorLink backup and its password** (1.4.0, `docs/BACKUP.md`). The file holds the same:
+  the lock keys and the home secret, locked with the password in the browser. Together they are
+  as good as a copy of the controller's storage, with the same remedies.
 - **The owner's account session.** Replacing the home secret trusts it: someone who stole it could
   approve a secret of their own and cut the controller off from the relay, without reading or
   changing anything (a stolen owner session could already delete the home). Sign out everywhere,

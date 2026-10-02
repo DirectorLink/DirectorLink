@@ -25,20 +25,37 @@ local function save()
     return true
 end
 
-function RoomLayout.load()
-    state.order = {}
-    local data = Store.read(STORE_KEY, false)
-    if type(data) ~= "table" then
-        return
-    end
-    local seen = {}
-    for _, id in ipairs(Store.items(data.order)) do
+-- The room ids of a stored record ({ version, order }, as the store or a backup holds it), without
+-- repeats.
+function RoomLayout.read(data)
+    local order, seen = {}, {}
+    for _, id in ipairs(Store.items(type(data) == "table" and data.order or nil)) do
         id = tonumber(id)
         if id and not seen[id] then
             seen[id] = true
-            state.order[#state.order + 1] = id
+            order[#order + 1] = id
         end
     end
+    return order
+end
+
+function RoomLayout.load()
+    state.order = RoomLayout.read(Store.read(STORE_KEY, false))
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the order as the store keeps it.
+function RoomLayout.backup()
+    local order = Json.array()
+    for _, id in ipairs(state.order) do
+        order[#order + 1] = id
+    end
+    return { version = 1, order = order }
+end
+
+-- Replaces the order with the one of `data`. Returns true once saved.
+function RoomLayout.restore(data)
+    state.order = RoomLayout.read(data)
+    return save()
 end
 
 -- `rooms` (a list with `id`) in the home's order: the ordered ones first, then the rest as given.

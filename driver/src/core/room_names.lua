@@ -29,6 +29,25 @@ local function save()
     if not ok then
         Log.error("rooms", "could not save room names", { error = tostring(err) })
     end
+    return ok
+end
+
+-- The names of a stored record ({ version, rooms = { [roomId] = { [language] = name } } }, as the
+-- store or a backup holds it), room id (a number) -> language -> name.
+function RoomNames.read(data)
+    local result = {}
+    for roomId, byLanguage in pairs(type(data) == "table" and type(data.rooms) == "table" and data.rooms or {}) do
+        local id = tonumber(roomId)
+        if id and type(byLanguage) == "table" then
+            result[id] = {}
+            for language, name in pairs(byLanguage) do
+                if RoomNames.validLanguage(language) and type(name) == "string" then
+                    result[id][language] = name
+                end
+            end
+        end
+    end
+    return result
 end
 
 function RoomNames.load()
@@ -41,21 +60,28 @@ function RoomNames.load()
         Log.warn("rooms", "stored room names are unreadable; starting empty", { stored_as = form })
         return
     end
-    for roomId, byLanguage in pairs(data.rooms) do
-        local id = tonumber(roomId)
-        if id and type(byLanguage) == "table" then
-            names[id] = {}
-            for language, name in pairs(byLanguage) do
-                if RoomNames.validLanguage(language) and type(name) == "string" then
-                    names[id][language] = name
-                end
-            end
-        end
-    end
+    names = RoomNames.read(data)
     -- Written by 0.9.1 and older as plain JSON, which Director hands back decoded.
     if form == "table" then
         save()
     end
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the names as the store keeps them.
+function RoomNames.backup()
+    local rooms = {}
+    for roomId, byLanguage in pairs(names) do
+        if next(byLanguage) then
+            rooms[tostring(roomId)] = RoomNames.get(roomId)
+        end
+    end
+    return { version = 1, rooms = rooms }
+end
+
+-- Replaces every room's names with the ones of `data`. Returns true once saved.
+function RoomNames.restore(data)
+    names = RoomNames.read(data)
+    return save()
 end
 
 -- The names of one room, language → name (a copy).

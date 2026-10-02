@@ -60,9 +60,10 @@ function requestId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function send(method, path, body) {
+// `timeoutMs`: longer for what the home takes long to answer (a backup), 20 s otherwise.
+async function send(method, path, body, timeoutMs = TIMEOUT_MS) {
   const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = window.setTimeout(() => controller.abort(), Math.max(timeoutMs || 0, TIMEOUT_MS));
   let response;
   try {
     response = await fetch(`${ACCOUNTS_API}${path}`, {
@@ -85,8 +86,8 @@ async function send(method, path, body) {
   return data;
 }
 
-function post(path, body) {
-  return send("POST", path, body);
+function post(path, body, timeoutMs) {
+  return send("POST", path, body, timeoutMs);
 }
 
 // The home's answer, opened: { status, contentType, text, bytes }.
@@ -122,7 +123,7 @@ export async function remoteRequest(apiKey, path, options = {}) {
     throw new RemoteError("NOT_SET_UP", "Remote access is not set up on this device");
   }
   return sealedExchange(apiKey, { home: remote.home, keyId: remote.keyId }, path, options, async (envelope) => {
-    const reply = await post(`/v1/homes/${remote.home}/e2e`, { envelope });
+    const reply = await post(`/v1/homes/${remote.home}/e2e`, { envelope }, options.timeoutMs);
     return reply.envelope;
   });
 }

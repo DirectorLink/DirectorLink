@@ -255,25 +255,33 @@ local function saveRuntime()
     return ok
 end
 
-function Schedules.load()
-    state.schedules, state.runtime = {}, {}
-    local data, form = Store.read(STORE_KEY, false)
-    state.complete = form ~= "unreadable"
-    local dropped = 0
+-- The schedules of a stored record ({ version, schedules }, as the store or a backup holds them),
+-- each checked again. Returns them and how many were left out.
+function Schedules.read(data)
+    local schedules, dropped = {}, 0
     for _, item in ipairs(Store.items(type(data) == "table" and data.schedules or nil)) do
         local record = type(item) == "table" and Schedules.check(item) or nil
         local id = type(item) == "table" and item.id or nil
-        if record and type(id) == "string" and #id == 8 and id:match("^[%da-f]+$") and #state.schedules < Schedules.MAX_SCHEDULES then
+        if record and type(id) == "string" and #id == 8 and id:match("^[%da-f]+$") and #schedules < Schedules.MAX_SCHEDULES then
             record.id = id
             record.version = isWhole(item.version, 1, math.huge) and item.version or 1
             record.created_at = type(item.created_at) == "string" and item.created_at or Clock.iso()
             record.updated_at = type(item.updated_at) == "string" and item.updated_at or Clock.iso()
             record.updated_epoch = isWhole(item.updated_epoch, 0, math.huge) and item.updated_epoch or 0
-            state.schedules[#state.schedules + 1] = record
+            schedules[#schedules + 1] = record
         else
             dropped = dropped + 1
         end
     end
+    return schedules, dropped
+end
+
+function Schedules.load()
+    state.runtime = {}
+    local data, form = Store.read(STORE_KEY, false)
+    state.complete = form ~= "unreadable"
+    local dropped
+    state.schedules, dropped = Schedules.read(data)
     if dropped > 0 then
         Log.warn("schedules", "stored schedules that are not valid were left out", { schedules = dropped })
     end
@@ -300,6 +308,49 @@ end
 
 function Schedules.complete()
     return state.complete
+end
+
+-- Backups (ADR-042, src/core/backup.lua): the schedules as the store keeps them, without what they
+-- ran (that stays with the controller that ran them).
+function Schedules.backup()
+    local records = Json.array()
+    for _, schedule in ipairs(state.schedules) do
+        records[#records + 1] = copy(schedule)
+    end
+    return { version = 1, schedules = records }
+end
+
+-- What the store and the scheduler hold now, for a restore that has to put it back.
+function Schedules.snapshot()
+    return { data = Schedules.backup(), runtime = state.runtime, catch_up_after = state.catchUpAfter }
+end
+
+-- Replaces every schedule with the ones of `data`, read as the store's are. They start as if saved
+-- `now`: nothing due before runs (Scheduler: changed after its time), and a weather rule waits
+-- until the weather has turned first. With `snapshot` (Schedules.snapshot), what the scheduler
+-- remembered then comes back instead. Returns true once both are saved.
+function Schedules.restore(data, now, snapshot)
+    local schedules = Schedules.read(data)
+    local runtime = {}
+    if snapshot then
+        runtime = snapshot.runtime or {}
+        state.catchUpAfter = snapshot.catch_up_after
+    else
+        for _, schedule in ipairs(schedules) do
+            schedule.updated_epoch = math.max(schedule.updated_epoch or 0, now)
+            if schedule.trigger.type == "weather" then
+                runtime[schedule.id] = { armed = false }
+            end
+        end
+        state.catchUpAfter = now
+    end
+    state.schedules, state.runtime = schedules, runtime
+    local ok = save()
+    ok = saveRuntime() and ok
+    if ok then
+        state.complete = true
+    end
+    return ok
 end
 
 local function findRecord(id)

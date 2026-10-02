@@ -94,6 +94,11 @@ tags:
       Whether the home's alarm is armed, read-only (ADR-038). Off until an installer turns on
       **Alarm Status** in Composer; then for members and admins, in sealed requests only. Nothing
       in this API arms or disarms.
+  - name: Backup
+    description: |
+      Everything DirectorLink keeps on the controller, to download and restore (ADR-042,
+      docs/BACKUP.md). For admins, in sealed requests only: a backup holds every key's hash and lock
+      key and the home's remote identity. The app encrypts it with a password before saving it.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -1918,6 +1923,168 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/backup:
+    get:
+      tags: [Backup]
+      operationId: getBackup
+      x-directorlink-role: admin
+      summary: Everything DirectorLink keeps, as one document
+      description: |
+        Keys (their hashes and lock keys, never a key), profiles, room names and the room order,
+        scenes, schedules (without what they ran), the calendar's settings and the home's remote
+        identity (only one the relay has accepted, marked `linked`; none is made for a backup),
+        one section per store as the store keeps it; how DirectorLink's Composer properties are set
+        (listed when restoring, never restored); the names of the rooms and devices the sections
+        refer to, so that a restore can match a project whose ids changed; and which controller
+        made it (`controller_id`). Pending invitations are not in it.
+
+        Only in sealed requests (`POST /v1/sealed` on the home network, and through remote access):
+        a request with `Authorization: Bearer` gets 403 `SEALED_REQUEST_REQUIRED`. The DirectorLink
+        app encrypts the document with a password before it is saved (docs/BACKUP.md).
+      responses:
+        "200":
+          description: The backup.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Backup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/restore/parts:
+    post:
+      tags: [Backup]
+      operationId: sendRestorePart
+      x-directorlink-role: admin
+      summary: Send a backup back, in parts
+      description: |
+        A backup's JSON text, cut into parts that each fit in a sealed request (at most 48 KiB of
+        text; 2 MiB and 100 parts in all). The first part (`index` 0, no `upload`) starts an upload
+        and replaces the key's own one before; the answer's `upload` goes with the next ones, in
+        order. Once `complete`, check it and restore it with `POST /v1/restore`. An upload belongs
+        to the key that sent it, one per key and three in all (a fourth replaces the one used
+        longest ago), and is dropped 10 minutes after its last use. Sealed requests only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestorePart"
+      responses:
+        "200":
+          description: The part was received.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestorePartReceived"
+        "400":
+          description: The part is not the next one, or too large (`INVALID_FIELD`), or the upload would pass 2 MiB (`BACKUP_TOO_LARGE`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No upload with this id is waiting for this key (`UPLOAD_NOT_FOUND`); send the backup again from its first part.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/restore:
+    post:
+      tags: [Backup]
+      operationId: restoreBackup
+      x-directorlink-role: admin
+      summary: Check a backup, or restore it
+      description: |
+        With `dry_run` true (the default) the backup is checked against this controller and nothing
+        changes: the answer is what a restore would do. With `dry_run` false everything DirectorLink
+        keeps is replaced by the backup, every store or none (if one cannot be saved, the others get
+        their values from before: 500 `RESTORE_FAILED`).
+
+        The backup is an `upload` sent with `POST /v1/restore/parts`, or a `document` in this
+        request. A backup made by a newer DirectorLink than this one is refused (409
+        `BACKUP_TOO_NEW`); older ones are read as an update reads their stores.
+
+        What a restore does besides (ADR-042):
+        - Keys: the backup's come back only when no key but the sender's is paired, and the
+          sender's was paired after the backup was made (the driver was added again):
+          `keys.action` `restore`, with `keys.items`. Otherwise every key stays as it is now
+          (`kept`): no key revoked or demoted since comes back. The sender's key stays as it is
+          now, added if the backup does not have it (its profile too), even past the 20 keys; with
+          `replaces_key` it takes the place of one of the backup's keys (that key's profile and
+          role; the key itself stays out). Keys whose expiry has passed, or that have more than 30
+          days and an hour left, stay out, as do key records a driver would not make.
+        - Rooms and devices are matched to the project: the same id with the same name; else the
+          one other room, or device of the kind in the same room, with that name (ids swapped);
+          else the same id renamed. Doors and gates only with the same id and name, never moved.
+          What matches nothing is left out and listed in `references.unmatched`.
+        - A schedule starts as if saved at the restore (nothing due before runs; a weather rule
+          waits until the weather has turned). Pending invitations are revoked.
+        - `origin` says whether the backup looks like another home's (another home id, another
+          controller, another name, or most of what it refers to not in this project). The
+          remote identity: the same home keeps the one in use; the backup's is used from a few
+          seconds after the answer (if the relay refuses it the controller's own comes back), but
+          another home's only with `move_remote`.
+        - Composer properties are never restored: `composer` lists them.
+
+        Sealed requests only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreRequest"
+      responses:
+        "200":
+          description: Checked (`dry_run` true), or restored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RestoreAnswer"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No upload with this id is waiting for this key (`UPLOAD_NOT_FOUND`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: The backup was made by a newer DirectorLink (`BACKUP_TOO_NEW`), the upload has parts still to come (`UPLOAD_INCOMPLETE`), `replaces_key` was sent while the keys are kept (`KEYS_KEPT`), or it would leave no admin (`LAST_ADMIN`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          description: This is not a DirectorLink backup, or a section is missing or not valid (`BACKUP_INVALID`, with `errors`). Nothing was changed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: A store could not be saved; every store has its values from before (`RESTORE_FAILED`, with `store`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: DirectorLink has not read the project yet (`PROJECT_NOT_READY`), or could not read one of its stores when it started (`UNAVAILABLE`, with `store`; a restore would overwrite it; restart the driver).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/logs:
     get:
       tags: [Logs]
@@ -2187,8 +2354,8 @@ components:
       description: |
         The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
         door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or a claim token was
-        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status was
-        asked for without sealing the request (`SEALED_REQUEST_REQUIRED`).
+        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status or a
+        backup was asked for without sealing the request (`SEALED_REQUEST_REQUIRED`).
       content:
         application/problem+json:
           schema:
@@ -2228,6 +2395,9 @@ components:
         retry_after:
           type: integer
           description: Seconds to wait before trying again, as in the `Retry-After` header (`PAIRING_RATE_LIMITED`).
+        store:
+          type: string
+          description: The store a restore could not save (`RESTORE_FAILED`).
         errors:
           type: array
           description: Field-level details for validation errors.
@@ -2363,10 +2533,11 @@ components:
         features:
           type: object
           description: |
-            Optional parts of DirectorLink that an installer switches on in Composer. Clients show
-            none of a feature that is false, and none at all when `features` is missing (drivers
+            Optional parts of DirectorLink: `jewish_calendar` and `alarm_status` an installer
+            switches on in Composer; `backup` is the driver's own (1.4.0). Clients show none of a
+            feature that is false or missing, and none at all when `features` is missing (drivers
             before 1.2.0).
-          required: [jewish_calendar, alarm_status]
+          required: [jewish_calendar, alarm_status, backup]
           properties:
             jewish_calendar:
               type: boolean
@@ -2374,6 +2545,9 @@ components:
             alarm_status:
               type: boolean
               description: The **Alarm Status** property is On; members and admins can read `GET /v1/alarm` in sealed requests.
+            backup:
+              type: boolean
+              description: "Always true since 1.4.0: admins can make and restore backups (`GET /v1/backup`, `POST /v1/restore`, ADR-042). Missing before 1.4.0, so clients show no backup."
 
     PairRequest:
       oneOf:
@@ -4252,3 +4426,439 @@ components:
       properties:
         level:
           $ref: "#/components/schemas/LogLevel"
+
+    Backup:
+      type: object
+      description: |
+        Everything DirectorLink keeps on the controller (docs/BACKUP.md), one section per store as
+        the store keeps it, with the store's version.
+      required: [format, format_version, driver_version, created_at, home, composer, references, sections]
+      properties:
+        format:
+          const: directorlink-backup
+        format_version:
+          type: integer
+          minimum: 1
+        driver_version:
+          type: string
+          description: The DirectorLink that made it. A newer one's backup is refused.
+        created_at:
+          type: string
+          format: date-time
+        home:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: [string, "null"]
+              description: The project's name (its site in Composer).
+        controller_id:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{32}$"
+          description: The controller that made it (a hash of its MAC address), null when Director does not give it. Tells a backup of this controller from one of another.
+        composer:
+          type: object
+          description: How DirectorLink's Composer properties were set (Door Control, Relay Hold, Schedules, Jewish Calendar, Alarm Status, Remote Access, Log Level). Listed when restoring, never restored.
+          additionalProperties:
+            type: [string, "null"]
+        references:
+          type: object
+          description: The rooms and devices the sections refer to, by id, as the project named them when the backup was made.
+          required: [rooms, devices]
+          properties:
+            rooms:
+              type: object
+              additionalProperties:
+                type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+            devices:
+              type: object
+              additionalProperties:
+                type: object
+                required: [name, kind, room_id]
+                properties:
+                  name:
+                    type: string
+                  kind:
+                    type: string
+                  room_id:
+                    type: [integer, "null"]
+        sections:
+          type: object
+          additionalProperties: false
+          required: [keys, profiles, room_names, room_order, scenes, schedules, calendar, remote_identity]
+          properties:
+            keys:
+              $ref: "#/components/schemas/BackupList"
+            profiles:
+              $ref: "#/components/schemas/BackupList"
+            room_names:
+              type: object
+              required: [version, rooms]
+              properties:
+                version:
+                  type: integer
+                rooms:
+                  type: object
+                  description: Room id to language to name.
+            room_order:
+              $ref: "#/components/schemas/BackupList"
+            scenes:
+              $ref: "#/components/schemas/BackupList"
+            schedules:
+              $ref: "#/components/schemas/BackupList"
+            calendar:
+              type: object
+              required: [version, settings]
+              properties:
+                version:
+                  type: integer
+                settings:
+                  type: object
+            remote_identity:
+              type: object
+              description: The home's remote identity, only when the relay has accepted it (`linked` true); otherwise only `version` and `linked` false.
+              required: [version, linked]
+              properties:
+                version:
+                  type: integer
+                linked:
+                  type: boolean
+                home_id:
+                  type: string
+                  pattern: "^[0-9a-f]{32}$"
+                home_secret:
+                  type: string
+                  pattern: "^[0-9a-f]{64}$"
+                next_secrets:
+                  type: array
+                  description: Replacements for the secret still waiting for the owner's approval.
+                  items:
+                    type: object
+                    required: [secret, at]
+                    properties:
+                      secret:
+                        type: string
+                        pattern: "^[0-9a-f]{64}$"
+                      at:
+                        type: integer
+
+    BackupList:
+      type: object
+      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids), scenes or schedules."
+      required: [version]
+      minProperties: 2
+      maxProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+      additionalProperties:
+        type: array
+
+    RestorePart:
+      type: object
+      additionalProperties: false
+      required: [index, count, text]
+      properties:
+        upload:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: The upload the first part started; left out in the first part.
+        index:
+          type: integer
+          minimum: 0
+          description: This part's place, from 0.
+        count:
+          type: integer
+          minimum: 1
+          maximum: 100
+        text:
+          type: string
+          minLength: 1
+          description: A part of the backup's JSON text (at most 48 KiB of UTF-8).
+
+    RestorePartReceived:
+      type: object
+      required: [upload, received, count, complete]
+      properties:
+        upload:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+        received:
+          type: integer
+        count:
+          type: integer
+        complete:
+          type: boolean
+          description: Every part is in; `POST /v1/restore` can check and restore it.
+
+    RestoreRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        upload:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: A complete upload (`POST /v1/restore/parts`).
+        document:
+          $ref: "#/components/schemas/Backup"
+        dry_run:
+          type: boolean
+          default: true
+          description: True (the default) checks and changes nothing; false restores.
+        replaces_key:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: '"This device is …": the id of one of the backup''s keys (`keys.items`) whose place the sending key takes, with its profile and role; that key is not restored. Only when the backup''s keys come back (`keys.action` `restore`).'
+        move_remote:
+          type: boolean
+          default: false
+          description: Another home's backup (`origin.another_home`) brings its remote identity here only with this; the controller it was made on must be off or reset first.
+      oneOf:
+        - required: [upload]
+        - required: [document]
+
+    RestoreAnswer:
+      type: object
+      required: [dry_run, restore]
+      properties:
+        dry_run:
+          type: boolean
+        restore:
+          $ref: "#/components/schemas/RestorePreview"
+        restored_at:
+          type: string
+          format: date-time
+          description: When everything was replaced (not in a check).
+
+    RestorePreview:
+      type: object
+      description: What a restore does (a check) or did.
+      required: [backup, origin, counts, left_out, keys, remote, references, composer]
+      properties:
+        origin:
+          type: object
+          description: Whether the backup looks like another home's.
+          required: [another_home, reasons, home_now, controller]
+          properties:
+            another_home:
+              type: boolean
+            reasons:
+              type: array
+              description: "`home_id`: linked to another home in the account; `controller`: made on another controller (when there is no home id to compare); `name`: the home has another name; `references`: most of what it refers to is not in this project."
+              items:
+                type: string
+                enum: [home_id, controller, name, references]
+            home_now:
+              type: [string, "null"]
+              description: This project's name.
+            controller:
+              type: string
+              enum: [same, other, unknown]
+              description: Whether this controller made the backup.
+        backup:
+          type: object
+          required: [created_at, driver_version, format_version, home]
+          properties:
+            created_at:
+              type: string
+            driver_version:
+              type: string
+            format_version:
+              type: integer
+            home:
+              type: [string, "null"]
+        counts:
+          type: object
+          description: What there is after the restore.
+          required: [keys, profiles, scenes, schedules, room_names, room_order]
+          properties:
+            keys:
+              type: integer
+            profiles:
+              type: integer
+            scenes:
+              type: integer
+            schedules:
+              type: integer
+            room_names:
+              type: integer
+              description: Rooms with names of DirectorLink's own.
+            room_order:
+              type: integer
+        left_out:
+          type: object
+          description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).
+          required: [scenes, steps, schedules, profiles]
+          properties:
+            scenes:
+              type: integer
+            steps:
+              type: integer
+            schedules:
+              type: integer
+            profiles:
+              type: integer
+        keys:
+          type: object
+          required: [action, count, in_backup, items, replaced, yours, conflict, expired, left_out, over_limit, limit]
+          properties:
+            action:
+              type: string
+              enum: [restore, kept]
+              description: "`restore`: the backup's keys come back (no other key is paired, and the sending key was paired after the backup was made). `kept`: every key stays as it is now."
+            count:
+              type: integer
+            in_backup:
+              type: integer
+              description: Key records in the backup.
+            items:
+              type: array
+              description: The backup's keys that come back, by name and role (none while kept).
+              items:
+                type: object
+                required: [id, name, role, expires_at]
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                  role:
+                    type: string
+                  expires_at:
+                    type: [string, "null"]
+            replaced:
+              type: [object, "null"]
+              description: The backup's key whose place the sending key took (`replaces_key`).
+              required: [id, name, role]
+              properties:
+                id:
+                  type: string
+                name:
+                  type: string
+                role:
+                  type: string
+            yours:
+              type: string
+              enum: [added, kept]
+              description: The key that sends the restore stays as it is now; `added` to the backup's keys, or `kept` with the others.
+            conflict:
+              type: boolean
+              description: The backup has another key with this key's id; the one in use is kept.
+            expired:
+              type: integer
+              description: Keys whose expiry has passed, left out.
+            left_out:
+              type: integer
+            over_limit:
+              type: boolean
+              description: More keys than the limit; new devices can pair once some are removed.
+            limit:
+              type: integer
+        remote:
+          type: object
+          required: [action, home_id, current_home_id, remote_access, old_controller]
+          properties:
+            action:
+              type: string
+              enum: [same, restore, kept, none]
+              description: "`same`: the home in use stays. `restore`: the backup's home is used from a few seconds after the answer; if the relay refuses it, the controller's own comes back. `kept`: another home's identity stays out (`move_remote` brings it). `none`: the backup holds no identity; the one in use stays."
+            home_id:
+              type: [string, "null"]
+              pattern: "^[0-9a-f]{32}$"
+            current_home_id:
+              type: [string, "null"]
+            remote_access:
+              type: boolean
+            old_controller:
+              type: boolean
+              description: The backup's identity is used here and the controller it was made on may still run with it; the two would push each other off the relay.
+        references:
+          type: object
+          required: [by_id, by_name, renamed, unmatched, unmatched_count]
+          properties:
+            by_id:
+              type: integer
+              description: Rooms and devices found by their id.
+            by_name:
+              type: array
+              description: Found by the same name in the same room.
+              items:
+                type: object
+                required: [kind, name, room, from, to]
+                properties:
+                  kind:
+                    type: string
+                  name:
+                    type: string
+                  room:
+                    type: [string, "null"]
+                  from:
+                    type: integer
+                  to:
+                    type: integer
+            renamed:
+              type: array
+              description: Found by id, with another name now.
+              items:
+                type: object
+                required: [kind, id, name, now]
+                properties:
+                  kind:
+                    type: string
+                  id:
+                    type: integer
+                  name:
+                    type: string
+                  now:
+                    type: string
+            unmatched:
+              type: array
+              description: Rooms and devices that match nothing (the first 100), with where the backup used them. What used them is left out.
+              items:
+                type: object
+                required: [kind, id, name, room, now, used_in]
+                properties:
+                  kind:
+                    type: string
+                    description: room, or light, climate, fan, blind, relay, camera, doorbell.
+                  id:
+                    type: integer
+                  name:
+                    type: [string, "null"]
+                  room:
+                    type: [string, "null"]
+                  now:
+                    type: [string, "null"]
+                    description: What the id is called now, when it is still such a room or device (a door or gate renamed or swapped is not moved).
+                  used_in:
+                    type: array
+                    items:
+                      type: object
+                      required: [section]
+                      properties:
+                        section:
+                          type: string
+                          enum: [scenes, profiles, room_names, room_order]
+                        name:
+                          type: [string, "null"]
+                          description: The scene's or profile's name.
+            unmatched_count:
+              type: integer
+        composer:
+          type: array
+          description: DirectorLink's Composer properties as the backup has them and as they are now. A restore never sets them.
+          items:
+            type: object
+            required: [name, backup, current]
+            properties:
+              name:
+                type: string
+              backup:
+                type: [string, "null"]
+              current:
+                type: [string, "null"]

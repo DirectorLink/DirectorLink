@@ -2,7 +2,33 @@
 
 ## Current release
 
-`v1.3.0` — pairing never sends the code, and the API console's key lasts a day (0za, ADR-039, ADR-040); Find my controller (0zb); Sign in with Apple, the owner's approval of joins with another email, and Apple's notices (0zc, ADR-041); Turn off all from Home (0zd). Update DirectorLink in Composer (no reboot). The cloud is deployed before the app.
+`v1.4.0` — backup and restore (0ze, ADR-042). Update DirectorLink in Composer (no reboot). The cloud is unchanged.
+
+## 0ze. Backup and restore (1.4.0)
+
+1. **Who sees it.** After the update, `GET /v1/system` has `"backup": true` in `features`, and Settings → Controller shows **Backup** on an admin device, but not on a member or viewer device. With a 1.3.0 driver (no `backup` in `features`) there's no Backup. In the API console, `GET /v1/backup` answers `403 SEALED_REQUEST_REQUIRED`.
+2. **Download backup.**
+   - A password under 10 characters is refused, and so are two different passwords. A common one (*Password1!*) shows *weak*; a long passphrase shows *strong*.
+   - The file is saved as *DirectorLink backup <home> <date>.dlbackup*. Opened in a text editor, no scene names, hashes or keys are readable.
+   - `GET /v1/logs?category=backup` shows *backup made*, with `controller_known` (this checks the controller's MAC address is read) and `remote_identity`.
+3. **Restore on the same controller.**
+   - A wrong password gives *Wrong password, or the file was changed*.
+   - The right one shows a preview with the home's counts, no "another home" warning, *Keys: kept as they are now* and *Remote access: this home stays linked*.
+   - **Cancel** changes nothing.
+4. **Replace everything** on the same controller.
+   - *Restored*. Every phone keeps working without pairing.
+   - Remote Status stays *Connected … home <same id>*, and the log shows *restored from a backup*.
+   - Composer properties are unchanged.
+5. **A revoked key stays revoked** (test controller): pair devices A and B, make a backup, revoke B, then restore from A. The preview says the keys are kept; afterwards B still gets 401.
+6. **A reinstall** (test controller, or a quiet time — this removes the driver).
+   - Remove DirectorLink in Composer and add it again. Set the properties the preview listed, and pair one device with a new code.
+   - Restore at once. The keys are listed: choose **This device is <old key>**.
+   - Scenes, schedules, favorites and room names come back.
+   - People and devices shows no duplicate admin, and this device has the old favorites.
+   - Family phones that weren't opened meanwhile work without pairing.
+   - Within seconds Remote Status reads *Connected … home <old id>*, and the account shows the home online with its people.
+7. **Another home's backup.** Open it: the warning names that home, and so does the confirmation. With **Move remote access to this controller** unticked, Remote Status doesn't change.
+8. **Phone.** 320 and 390 px, English and Hebrew, light and dark: no sideways scroll. A file over 4 MB is refused before it's read.
 
 ## 0za. Pairing without sending the code, and the console's key (1.3.0)
 

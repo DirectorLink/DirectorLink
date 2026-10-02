@@ -48,6 +48,7 @@ driver/     the DriverWorks driver
                   again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, schedules, scheduler, sun, weather, installer view; room names and layout;
+                  backup (backup and restore, ADR-042; docs/BACKUP.md);
                   the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,
                   holidays, parasha, holy_times; docs/CALENDAR.md)
   tests/          driver tests against a fake Director
