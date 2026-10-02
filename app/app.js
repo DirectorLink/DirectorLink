@@ -272,7 +272,8 @@ function signature() {
     route.name === "settings" ? ui.calendarSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
-    route.name === "settings" ? state.lastUpdated?.getTime() : 0,
+    // "Last update", on Settings → Controller only: the other pages are not redrawn by every poll.
+    route.name === "settings" && route.page === "controller" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
 }

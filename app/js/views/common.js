@@ -21,6 +21,7 @@ export function connectionChip() {
       class: `status-chip status-${kind}`,
       href: "#/settings/controller",
       "aria-label": t("status.chipLabel", { status: label }),
+      dataset: { key: "status-chip" },
     },
     h("span", { class: "status-dot", "aria-hidden": "true" }),
     h("span", { class: "status-text" }, label)
@@ -48,7 +49,8 @@ export function pageHeader({ title, back, onBack, actions = [], titleDir } = {})
           icon("chevronBack")
         )
       : null,
-    h("h1", { class: "page-title", tabindex: "-1", dir: titleDir }, title),
+    // Focused when the screen opens (app.js); the data-key keeps it there over a redraw.
+    h("h1", { class: "page-title", tabindex: "-1", dir: titleDir, dataset: { key: "page-title" } }, title),
     h("div", { class: "page-actions" }, ...actions, connectionChip())
   );
 }

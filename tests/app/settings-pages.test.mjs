@@ -6,6 +6,7 @@
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 // Just enough of a browser for these modules: the elements the views build (with their listeners,
@@ -349,6 +350,10 @@ test("every page opens with its title and Back to Settings' list", () => {
     const back = byKey(view, "back");
     assert.equal(back?.attributes.href, "#/settings", `${page}: Back leads to the list`);
     assert.equal(byClass(view, "page-title").textContent, titles[page]);
+    // Opening a page focuses its title (app.js); a redraw puts focus back by data-key, there and on
+    // the connection chip.
+    assert.equal(byClass(view, "page-title").dataset.key, "page-title");
+    assert.equal(byClass(view, "status-chip").dataset.key, "status-chip");
     assert.equal(rows(view).length, 0, `${page}: no rows`);
   }
   // People and devices too (not loaded here, so that it does not start its 30 s refresh).
@@ -479,6 +484,25 @@ test("Settings → Controller: the controller, then Updates, then Backup for adm
   home("viewer");
   page = settingsView({ page: "controller", navigate() {} });
   assert.match(textOf(page), /View only: this device can see the home but not control it\./);
+});
+
+test("only Settings → Controller is redrawn by every poll (its Last update), so the other pages keep focus", () => {
+  home("admin");
+  // The only page that shows when the controller was last read.
+  for (const page of SETTINGS_PAGES) {
+    const shown = textOf(settingsView({ page, navigate() {} })).includes("Last update");
+    assert.equal(shown, page === "controller", page);
+  }
+  assert.ok(!textOf(settingsView({})).includes("Last update"), "nor the list");
+  // app.js redraws when its signature changes: state.lastUpdated, new at every poll, counts on
+  // that page only.
+  const app = readFileSync(new URL("../../app/app.js", import.meta.url), "utf8");
+  const signature = app.slice(app.indexOf("function signature()"), app.indexOf("function screen()"));
+  const lines = signature.split("\n").filter((line) => line.includes("state.lastUpdated"));
+  assert.deepEqual(
+    lines.map((line) => line.trim()),
+    ['route.name === "settings" && route.page === "controller" ? state.lastUpdated?.getTime() : 0,']
+  );
 });
 
 test("the Home notice opens Settings → Controller at the steps", async () => {
