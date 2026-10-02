@@ -981,6 +981,7 @@ export default {
     availableUndated: "DirectorLink {version} is available",
     checkFailed: "Could not check for updates (last checked {date})",
     checkFailedUndated: "Could not check for updates",
+    checkFailedNow: "Could not check just now",
     checkNow: "Check now",
     checking: "Checking…",
     checkWait: "You can check again in a minute",

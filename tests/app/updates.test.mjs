@@ -343,10 +343,39 @@ test("blocked storage is not an error", async () => {
   };
   const { fetch } = github(200, answer("1.1.0"));
   assert.equal(await checkForUpdate(admin({ storage: blocked, fetch })), true);
-  assert.equal(savedCheck(blocked), null);
+  // Kept in this tab instead (below).
+  assert.deepEqual(savedCheck(blocked), { checkedAt: NOW, answeredAt: NOW, release: readRelease(answer("1.1.0")) });
   assert.doesNotThrow(() => dismissUpdate("1.1.0", blocked));
   assert.equal(dismissedVersion(blocked), null);
   assert.equal(savedCheck(null), null);
+});
+
+test("with site data blocked, Check now's minute and the 12 hours still hold in this tab", async () => {
+  const blocked = {
+    getItem() {
+      throw new DOMException("blocked", "SecurityError");
+    },
+    setItem() {
+      throw new DOMException("blocked", "SecurityError");
+    },
+  };
+  // No localStorage at all (reading it throws): browserStorage() gives null.
+  for (const storage of [blocked, null]) {
+    const { fetch, calls } = github(200, answer("1.1.0"));
+    for (let press = 0; press < 5; press++) await checkForUpdate(admin({ storage, fetch, now: NOW + press * 1000, force: true }));
+    assert.equal(calls.length, 1, "Check now pressed 5 times in 5 s: asked once");
+    assert.equal(manualCheckWait({ check: savedCheck(storage), now: NOW + 5000 }), MANUAL_INTERVAL_MS - 5000);
+    // The rooms refresh, once a minute, asks again only after 12 hours.
+    for (let minute = 1; minute <= 5; minute++) await checkForUpdate(admin({ storage, fetch, now: NOW + minute * 60000 }));
+    assert.equal(calls.length, 1, "not at every rooms refresh");
+    await checkForUpdate(admin({ storage, fetch, now: NOW + CHECK_INTERVAL_MS }));
+    assert.equal(calls.length, 2);
+  }
+  // A record in the storage (another tab's) is the one used.
+  const storage = memoryStorage();
+  await checkForUpdate(admin({ storage, fetch: github(200, answer("1.1.0")).fetch }));
+  storage.setItem("directorlink.update", JSON.stringify({ checkedAt: NOW + HOUR, answeredAt: NOW + HOUR, release: readRelease(answer("1.2.0")) }));
+  assert.equal(savedCheck(storage).checkedAt, NOW + HOUR);
 });
 
 test("Check now asks at once, but never twice within a minute; the 12 hours start again from it", async () => {

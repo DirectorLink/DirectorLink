@@ -760,12 +760,18 @@ select:disabled {
   opacity: 0.5;
 }
 
+/* Off but still focusable (Check now while it waits): looks like a disabled one. */
+.button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 @media (hover: hover) {
-  .button-primary:not(:disabled):hover {
+  .button-primary:not(:disabled):not([aria-disabled="true"]):hover {
     background: color-mix(in srgb, var(--primary) 88%, var(--ink));
   }
-  .button-secondary:not(:disabled):hover,
-  .button-quiet:not(:disabled):hover {
+  .button-secondary:not(:disabled):not([aria-disabled="true"]):hover,
+  .button-quiet:not(:disabled):not([aria-disabled="true"]):hover {
     background: color-mix(in srgb, var(--primary) 8%, var(--card));
   }
 }
@@ -3079,6 +3085,11 @@ input::placeholder {
   display: grid;
   gap: 0;
   margin: 0;
+}
+
+/* Settings → Controller → Updates: why Check now waits, on its own line under it. */
+.update-check-wait {
+  flex-basis: 100%;
 }
 
 .fact {

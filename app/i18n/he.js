@@ -968,6 +968,7 @@ export default {
     availableUndated: "גרסה {version} של DirectorLink זמינה",
     checkFailed: "לא ניתן היה לבדוק אם יש עדכונים (בדיקה אחרונה: {date})",
     checkFailedUndated: "לא ניתן היה לבדוק אם יש עדכונים",
+    checkFailedNow: "לא ניתן היה לבדוק כרגע",
     checkNow: "בדיקה עכשיו",
     checking: "בודק…",
     checkWait: "אפשר לבדוק שוב בעוד דקה",

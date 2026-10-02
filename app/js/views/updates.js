@@ -4,7 +4,7 @@
 // Nothing GitHub writes is shown as markup: only the version, the date and links into the
 // project's releases (checked in js/updates.js).
 
-import { h, iconButton } from "../dom.js";
+import { announce, h, iconButton } from "../dom.js";
 import { formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import {
@@ -23,6 +23,9 @@ import { notify, state } from "../state.js";
 let revealSteps = false;
 // True while Check now waits for GitHub.
 let checking = false;
+// When Check now last got no answer from GitHub (a rate limit, no connection), until it answers
+// again: Settings then says so rather than an older "Up to date".
+let failedAt = null;
 
 function driverVersion() {
   return state.system?.bridge?.version;
@@ -34,9 +37,14 @@ function canCheck() {
 }
 
 // For an admin key with a driver of a known version: { release } (a newer one), { upToDate } or
-// { answeredAt } (the check did not work), from js/updates.js. null: nothing is said at all.
+// { answeredAt } (the check did not work), from js/updates.js, or { failedNow } (Check now got no
+// answer). null: nothing is said at all.
 function knownUpdate() {
-  return updateStatus({ role: state.role, driverVersion: driverVersion(), check: savedCheck() });
+  const check = savedCheck();
+  const known = updateStatus({ role: state.role, driverVersion: driverVersion(), check });
+  // Not "Up to date" from an older answer after Check now failed, until GitHub answers again.
+  if (known?.upToDate && failedAt !== null && !(check.answeredAt > failedAt)) return { failedNow: true };
+  return known;
 }
 
 // After connecting and with each rooms refresh (app.js); js/updates.js decides whether it is time.
@@ -44,15 +52,26 @@ export async function checkUpdates() {
   if (await checkForUpdate({ role: state.role, driverVersion: driverVersion() })) notify();
 }
 
-// Check now in Settings: asks GitHub at once, at most once a minute (js/updates.js).
+// Check now in Settings: asks GitHub at once, at most once a minute (js/updates.js). Pressed
+// within the minute, it only says so.
 export async function checkNow() {
-  if (checking || !canCheck() || manualCheckWait({ check: savedCheck() }) > 0) return;
+  if (checking || !canCheck()) return;
+  // How it went is said to screen readers (cleared first, so the same words are said again).
+  announce("");
+  if (manualCheckWait({ check: savedCheck() }) > 0) {
+    announce(t("updates.checkWait"));
+    return;
+  }
+  const pressed = Date.now();
   checking = true;
   notify();
   try {
     await checkForUpdate({ role: state.role, driverVersion: driverVersion(), force: true });
   } finally {
     checking = false;
+    // GitHub answered when the last answer is from this try (none when offline).
+    failedAt = savedCheck()?.answeredAt >= pressed ? null : pressed;
+    announce(statusText(knownUpdate()));
     notify();
   }
 }
@@ -74,7 +93,9 @@ function availableText(release) {
 }
 
 function statusText(known) {
+  if (!known) return "";
   if (known.release) return availableText(known.release);
+  if (known.failedNow) return t("updates.checkFailedNow");
   if (known.upToDate) return t("updates.upToDate");
   // GitHub has not answered for 3 days (a rate limit, no connection), or never has.
   return known.answeredAt ? t("updates.checkFailed", { date: dayText(known.answeredAt) }) : t("updates.checkFailedUndated");
@@ -94,15 +115,16 @@ export function updateSummary() {
   const known = knownUpdate();
   if (!known) return null;
   if (known.release) return { text: t("updates.availableUndated", { version: known.release.version }), available: true };
+  if (known.failedNow) return { text: t("updates.checkFailedNow"), available: false };
   return { text: known.upToDate ? t("updates.upToDate") : t("updates.checkFailedUndated"), available: false };
 }
 
 // Settings → Controller → Updates, under its facts: Check now, for admins with a driver of a known
-// version. While a minute has not passed since the last try it says so and does nothing; it stays
-// focusable (aria-disabled), so the keyboard is not lost when it is pressed.
+// version. While a minute has not passed since the last try it looks off, says so under it and does
+// nothing; it stays focusable (aria-disabled), so the keyboard is not lost when it is pressed.
 export function updateCheckButton() {
   if (!canCheck()) return null;
-  const waiting = checking || manualCheckWait({ check: savedCheck() }) > 0;
+  const wait = !checking && manualCheckWait({ check: savedCheck() }) > 0;
   return h(
     "div",
     { class: "button-row update-check" },
@@ -111,14 +133,15 @@ export function updateCheckButton() {
       {
         type: "button",
         class: "button button-secondary button-small",
-        "aria-disabled": waiting ? "true" : "false",
-        title: waiting && !checking ? t("updates.checkWait") : undefined,
+        "aria-disabled": checking || wait ? "true" : "false",
+        "aria-describedby": wait ? "update-check-wait" : undefined,
         dataset: { key: "update-check-now" },
         onclick: () => checkNow(),
       },
       icon("refresh"),
       checking ? t("updates.checking") : t("updates.checkNow")
-    )
+    ),
+    wait ? h("p", { class: "field-help update-check-wait", id: "update-check-wait" }, t("updates.checkWait")) : null
   );
 }
 
