@@ -4,6 +4,11 @@
 -- + C4:NetConnect, data in ReceivedFromNetwork, state in OnConnectionStatusChanged (main.lua routes
 -- both here). This module does the HTTP upgrade and the framing: client frames are masked, text
 -- messages may arrive fragmented, pings are answered with pongs.
+--
+-- Director reports a connection's state with no way to tell one connection from the next on the
+-- same binding, so this module keeps Director's view (`linkUp`): an OFFLINE that answers its own
+-- NetDisconnect, and data or an ONLINE left over from a connection it gave up, are not taken for
+-- the connection it is making now (1.5.0, docs/RELAY.md).
 
 local WebSocket = {}
 WebSocket.__index = WebSocket
@@ -21,6 +26,22 @@ local GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 -- ("connection lost"); if it reports nothing, relay.lua gives up on the attempt after
 -- Relay.CONNECT_SECONDS and retries the same way ("no connection within 30 s").
 WebSocket.CA_FILE = "./certs/directorlink-roots.pem"
+
+-- Director's own monitoring of the connection is off (MONITOR_CONNECTION = false). With it on,
+-- Director polls the connection (it calls OnPoll for the driver to send something) and considers
+-- it down when no data comes back in its window. Up to 1.4.0 it was on, with no OnPoll, and real
+-- controllers reported the relay connection OFFLINE ("connection lost") every 10 to 40 minutes;
+-- the relay saw the socket end without a close frame (ADR-045). The relay connection checks itself:
+-- a ping every 25 s, and a connection that hears nothing for 60 s is dropped (relay.lua). TCP
+-- keep-alive stays on, and a poll is answered all the same (Relay.onPoll).
+WebSocket.PORT_OPTIONS = {
+    AUTO_CONNECT = false,
+    MONITOR_CONNECTION = false,
+    KEEP_CONNECTION = false,
+    KEEP_ALIVE = true,
+    VERIFY_MODE = "peer",
+    CACERTFILE = WebSocket.CA_FILE,
+}
 
 local OPCODE_CONTINUATION = 0
 local OPCODE_TEXT = 1
@@ -127,6 +148,10 @@ function WebSocket.new(options)
     self.buffer = ""
     self.fragments = nil
     self.created = false
+    -- Director's view of the connection: up from its ONLINE to its OFFLINE. `echo`: an OFFLINE is
+    -- owed for a connection this module disconnected while it was up.
+    self.linkUp = false
+    self.echo = false
     return self
 end
 
@@ -146,6 +171,17 @@ function WebSocket:rawSend(data)
     return ok
 end
 
+-- Asks Director to close the connection. While Director has it up, the OFFLINE that follows is
+-- this one's answer, not news about the next connection.
+function WebSocket:disconnect()
+    if self.linkUp then
+        self.echo = true
+    end
+    pcall(function()
+        C4:NetDisconnect(self.binding, self.port)
+    end)
+end
+
 -- Opens the TLS connection; the handshake follows in onConnectionStatus("ONLINE").
 function WebSocket:connect()
     self.buffer = ""
@@ -155,15 +191,12 @@ function WebSocket:connect()
         if not self.created then
             C4:CreateNetworkConnection(self.binding, self.host)
             self.created = true
+        elseif self.linkUp and not self.echo then
+            -- Director still has a connection up on this binding that it was never asked to
+            -- close: it goes first.
+            self:disconnect()
         end
-        C4:NetPortOptions(self.binding, self.port, "SSL", {
-            AUTO_CONNECT = false,
-            MONITOR_CONNECTION = true,
-            KEEP_CONNECTION = false,
-            KEEP_ALIVE = true,
-            VERIFY_MODE = "peer",
-            CACERTFILE = WebSocket.CA_FILE,
-        })
+        C4:NetPortOptions(self.binding, self.port, "SSL", WebSocket.PORT_OPTIONS)
         C4:NetConnect(self.binding, self.port)
     end)
     if not ok then
@@ -328,25 +361,42 @@ function WebSocket:send(payload, opcode)
     return self:rawSend(WebSocket.frame(opcode or OPCODE_TEXT, payload, randomBytes(4)))
 end
 
--- Closes the connection. `quiet` skips the close frame (the connection is already gone).
-function WebSocket:close(code, quiet)
+-- Closes the connection. `quiet` skips the close frame (the connection is already gone); `reason`
+-- (a few words) goes in it, for the relay's log.
+function WebSocket:close(code, quiet, reason)
     if not quiet and self.state == "open" then
-        self:send(bigEndian(code or 1000, 2), OPCODE_CLOSE)
+        self:send(bigEndian(code or 1000, 2) .. (reason or ""), OPCODE_CLOSE)
     end
     self.state = "closed"
-    pcall(function()
-        C4:NetDisconnect(self.binding, self.port)
-    end)
+    self.buffer = ""
+    self.fragments = nil
+    self:disconnect()
 end
 
 -- Director callbacks, routed by main.lua for this binding.
 function WebSocket:onConnectionStatus(status)
     status = tostring(status)
     if status == "ONLINE" then
+        self.linkUp = true
+        self.echo = false
         if self.state == "connecting" then
             self:sendHandshake()
+        elseif self.state ~= "handshake" and self.state ~= "open" then
+            -- An attempt given up on (it took too long, or remote access was switched off) came
+            -- up late: Director must not keep it.
+            self:debug("closing a connection that came up after it was given up")
+            self:disconnect()
         end
     elseif status == "OFFLINE" then
+        local echo = self.echo
+        self.linkUp = false
+        self.echo = false
+        if echo then
+            -- Director confirms a connection this module closed; the one it makes now (if any)
+            -- goes on.
+            self:debug("Director closed the connection it was asked to close")
+            return
+        end
         local wasActive = self.state ~= "closed" and self.state ~= "idle"
         self.state = "closed"
         if wasActive then
@@ -356,6 +406,11 @@ function WebSocket:onConnectionStatus(status)
 end
 
 function WebSocket:onData(data)
+    if self.state ~= "handshake" and self.state ~= "open" then
+        -- Left over from a connection given up on: the next one starts clean.
+        self:debug("ignored data from a closed connection", { bytes = #tostring(data or "") })
+        return
+    end
     self.buffer = self.buffer .. tostring(data or "")
     if self.state == "handshake" then
         if not self:handleHandshake() then

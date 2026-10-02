@@ -1,11 +1,14 @@
 // The relay (cloud/) end to end: `wrangler dev --local` runs it (worker.mjs), scripts/relay_smoke.mjs
 // plays the driver and calls the test endpoints.
 //   node --test tests/cloud/relay.test.mjs
-// Its .dev.vars set TEST_TOKEN, and REQUEST_TIMEOUT_MS so the 504 case is quick.
+// Its .dev.vars set TEST_TOKEN, and REQUEST_TIMEOUT_MS and RECONNECT_WAIT_MS so the 504 case and
+// the wait for a reconnecting driver are quick.
 
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { appendFileSync } from "node:fs";
+import path from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -14,6 +17,7 @@ import { STARTUP_MS, startWorker } from "./worker.mjs";
 
 const TOKEN = `test-${randomHex(16)}`;
 const TIMEOUT_MS = 1500; // REQUEST_TIMEOUT_MS for this run (the default is 15000)
+const RECONNECT_WAIT_MS = 2000; // RECONNECT_WAIT_MS for this run (the default is 8000)
 const TEST = { timeout: 30_000 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -21,7 +25,7 @@ let relay;
 const drivers = [];
 
 before(async () => {
-  relay = await startWorker({ devVars: { TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS } });
+  relay = await startWorker({ devVars: { TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS, RECONNECT_WAIT_MS } });
 }, { timeout: STARTUP_MS + 10_000 });
 
 after(async () => {
@@ -97,6 +101,21 @@ function assertRefused(statusCode, code) {
     assert.equal(error.problem?.status, statusCode);
     return true;
   };
+}
+
+// The relay's log lines (one JSON object each) of `event` for `home`, oldest first.
+function logged(event, home) {
+  return relay
+    .output()
+    .split("\n")
+    .map((line) => {
+      try {
+        return JSON.parse(line.slice(line.indexOf("{")));
+      } catch {
+        return null;
+      }
+    })
+    .filter((entry) => entry?.event === event && entry.home === home);
 }
 
 function isoTime(value) {
@@ -434,4 +453,114 @@ test("a driver that disconnects while a request waits gets the caller a 502; the
   assert.ok(isoTime(offline.since) >= started - 1000);
   assert.ok(isoTime(offline.last_seen) >= started - 1000);
   assertProblem(await call(home, "/v1/lights"), 503, "HOME_OFFLINE");
+});
+
+// The driver's connection is cut without a closing handshake (1006), as on real controllers, and
+// the driver connects again within seconds: what is asked meanwhile waits for it.
+test("a request made while the driver reconnects waits for it and goes through", TEST, async () => {
+  const { home, secret } = newHome();
+  const first = await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "first" }) }) });
+  first.destroy();
+  await eventually(async () => !(await status(home)).connected, "the home to show offline");
+  const disconnected = await eventually(() => logged("driver_disconnected", home)[0], "the disconnect in the log");
+  assert.match(disconnected.why, /^closed with 1006/);
+  assert.equal(typeof disconnected.up_s, "number");
+  assert.equal(disconnected.ping_s, null, "this driver never pinged");
+  assert.equal(typeof disconnected.message_s, "number");
+
+  const started = Date.now();
+  const pending = call(home, "/v1/system");
+  await sleep(500);
+  await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "second" }) }) });
+  const result = await pending;
+  const waited = Date.now() - started;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "second" });
+  assert.ok(waited >= 500 && waited < RECONNECT_WAIT_MS + 1000, `answered after ${waited} ms`);
+  const connected = logged("driver_connected", home);
+  assert.equal(connected.length, 2);
+  assert.equal(typeof connected[1].down_ms, "number", "how long the home was away");
+  assert.equal(connected[0].down_ms, null, "a first connection was never away");
+});
+
+test("a driver that does not come back gets the caller a 503 after the wait", TEST, async () => {
+  const { home, secret } = newHome();
+  const connection = await driver({ home, secret });
+  connection.ping();
+  await within(once(connection, "pong"), 5000, "pong");
+  connection.destroy();
+  await eventually(async () => !(await status(home)).connected, "the home to show offline");
+  const disconnected = await eventually(() => logged("driver_disconnected", home)[0], "the disconnect in the log");
+  assert.equal(typeof disconnected.ping_s, "number", "seconds since its last ping was answered");
+
+  const started = Date.now();
+  assertProblem(await call(home, "/v1/lights"), 503, "HOME_OFFLINE");
+  const waited = Date.now() - started;
+  assert.ok(waited >= RECONNECT_WAIT_MS - 100 && waited < RECONNECT_WAIT_MS + 3000, `answered after ${waited} ms`);
+});
+
+// The driver connects again while the relay still holds its old connection, which went dead
+// without a close (the relay's close 4000 is never answered): what was sent over it fails at once.
+test("requests sent over a connection the driver has replaced fail at once", TEST, async () => {
+  const { home, secret } = newHome();
+  let reached = null;
+  const first = await driver({
+    home,
+    secret,
+    onRequest: (request, connection) => {
+      connection.socket.pause();
+      reached = request.id;
+      return null;
+    },
+  });
+  const started = Date.now();
+  const pending = call(home, "/v1/lights");
+  await eventually(() => reached, "the request to reach the first connection");
+  await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "second" }) }) });
+  assertProblem(await pending, 502, "HOME_DISCONNECTED");
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < TIMEOUT_MS, `answered after ${elapsed} ms, not at the ${TIMEOUT_MS} ms timeout`);
+  const next = await call(home, "/v1/system");
+  assert.equal(next.status, 200, next.text);
+  assert.deepEqual(next.json, { by: "second" });
+  first.destroy();
+});
+
+// A deploy restarts every Durable Object and ends its sockets without webSocketClose, so no
+// disconnect is recorded; the drivers come back within seconds. wrangler dev does the same when
+// the Worker's code changes. Last in this file: it drops every connection.
+test("after the relay restarts, a request waits for the driver to come back", { timeout: 90_000 }, async () => {
+  const back = newHome();
+  const gone = newHome();
+  const first = await driver({ ...back, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "first" }) }) });
+  const other = await driver({ ...gone });
+  await eventually(async () => (await status(gone.home)).connected, "both homes connected");
+
+  appendFileSync(path.join(relay.dir, "src", "index.js"), `\n// reloaded by the tests ${Date.now()}\n`);
+  await within(Promise.all([first.closed, other.closed]), 60_000, "the restart to end the connections");
+  await eventually(async () => {
+    try {
+      return (await fetch(`${relay.http}/health`)).ok;
+    } catch {
+      return false;
+    }
+  }, "the relay to answer again", 60_000);
+
+  const pending = call(back.home, "/v1/system");
+  await sleep(500);
+  await driver({ ...back, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "after the restart" }) }) });
+  const result = await pending;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "after the restart" });
+
+  // The other home does not come back: one request waits, the next is answered at once.
+  const started = Date.now();
+  assertProblem(await call(gone.home, "/v1/lights"), 503, "HOME_OFFLINE");
+  assert.ok(Date.now() - started >= RECONNECT_WAIT_MS - 100, "the first request waited");
+  const again = Date.now();
+  assertProblem(await call(gone.home, "/v1/lights"), 503, "HOME_OFFLINE");
+  assert.ok(Date.now() - again < 1000, "the next one did not");
+  const offline = await status(gone.home);
+  assert.equal(offline.connected, false);
+  assert.ok(isoTime(offline.since) <= started, `offline since ${offline.since}`);
 });

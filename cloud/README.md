@@ -24,12 +24,12 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 ## How it works
 
 1. The driver connects: `GET /relay/connect` with `Upgrade: websocket`, `X-DirectorLink-Home: <home_id>` and `Authorization: Bearer <home_secret>`. The Worker checks the headers (400) and passes the request to the home's object.
-2. The object compares the secret's SHA-256 with the one stored for the home (`secret_sha256`, stored by the first connection) and answers 401 if it differs. Otherwise it closes an earlier driver socket with 4000 `replaced`, accepts the new one with the Hibernation API (`ctx.acceptWebSocket(server, ["driver"])`) and answers 101.
+2. The object compares the secret's SHA-256 with the one stored for the home (`secret_sha256`, stored by the first connection) and answers 401 if it differs. Otherwise it closes an earlier driver socket with 4000 `replaced` (requests still waiting on it fail at once with 502), accepts the new one with the Hibernation API (`ctx.acceptWebSocket(server, ["driver"])`) and answers 101.
 3. The app posts a sealed envelope to `/v1/homes/{home_id}/e2e` (or `/v1/join`, or a claim) with the account's session. `homes.js` checks that the account is a member, keeps only the envelope's own fields and hands it to the object's `/message` operation, which sends `{"type":"e2e",...}` over the socket and waits up to 15 s for the reply with the same `id`. The sealed answer goes back to the app as it came; a refusal code becomes Problem Details.
 4. The driver may ask the object too (1.0.0): `invitation` registers an invitation it made in D1 (`registerHomeInvitation`, answered `invitation_result`; at most 20 waiting per home, only for a claimed home, and those missing from the controller's `pending` list are forgotten), and `invitation_cancel` forgets one it revoked or gave up waiting for. Only the socket the home's secret opened can send them.
 5. The home's owner can replace the home's secret (`POST /v1/homes/{home_id}/secret`, below): the object stores the new SHA-256 and closes the driver's socket (4001 `secret replaced`); the driver, which has been keeping the new secret, connects again with it. The driver itself cannot replace it: whoever holds a copy of its data could.
 
-Between requests the object is evicted from memory while the socket stays connected. The driver's `ping` is answered `pong` by the runtime itself (`setWebSocketAutoResponse`), which does not wake the object; `getWebSocketAutoResponseTimestamp` gives the time of the last one for the status. What must outlive an eviction is kept in the socket's attachment (connection id, connect time, version, last message) or in storage (`secret_sha256`, `connected_at`, `disconnected_at`, `last_seen`, `version`). Requests waiting for their answer are kept in memory: while one waits, its caller keeps the object awake.
+Between requests the object is evicted from memory while the socket stays connected. The driver's `ping` is answered `pong` by the runtime itself (`setWebSocketAutoResponse`), which does not wake the object; `getWebSocketAutoResponseTimestamp` gives the time of the last one for the status. What must outlive an eviction is kept in the socket's attachment (connection id, connect time, version, last message) or in storage (`secret_sha256`, `connected_at`, `disconnected_at`, `last_seen`, `version`). Requests waiting for their answer are kept in memory: while one waits, its caller keeps the object awake. So are requests waiting for a driver that has just disconnected: a driver connects again within seconds (1.5.0), and a request that arrives up to 30 s after the disconnect, or after a deploy restarted the object under the connection (no disconnect is recorded then), waits up to 8 s for its `hello` instead of failing with `HOME_OFFLINE` (docs/RELAY.md, *Keeping the connection*).
 
 ## Endpoints
 
@@ -53,7 +53,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 | 405 | `METHOD_NOT_ALLOWED` | anything but GET (`Allow: GET`) |
 | 502 | `HOME_DISCONNECTED` | the driver's connection closed while the request waited |
 | 502 | `INVALID_RESPONSE` | the driver's `response` was malformed (status, body or base64) |
-| 503 | `HOME_OFFLINE` | no driver is connected for this home |
+| 503 | `HOME_OFFLINE` | no driver is connected for this home (after waiting up to 8 s for one that disconnected in the last 30 s, or after a restart) |
 | 503 | `TEST_TOKEN_NOT_SET` | the `TEST_TOKEN` secret is missing |
 | 504 | `HOME_TIMEOUT` | no answer within 15 s |
 | 500 | `INTERNAL_ERROR` | the relay itself failed |
@@ -64,7 +64,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 cd cloud && echo 'TEST_TOKEN=local-test-token' > .dev.vars && npx --yes wrangler@4.143.0 dev --local --port 8787
 ```
 
-`.dev.vars` may also set `REQUEST_TIMEOUT_MS` (default 15000) and `UNUSED_ACCOUNT_DAYS` (default 90: the daily clean-up's wait for accounts nobody can sign in to; the tests set 0 and run it with `wrangler dev --test-scheduled`, `GET /__scheduled`). In another terminal, a fake driver and the test endpoints:
+`.dev.vars` may also set `REQUEST_TIMEOUT_MS` (default 15000), `RECONNECT_WAIT_MS` (default 8000: how long a request waits for a driver that has just disconnected) and `UNUSED_ACCOUNT_DAYS` (default 90: the daily clean-up's wait for accounts nobody can sign in to; the tests set 0 and run it with `wrangler dev --test-scheduled`, `GET /__scheduled`). In another terminal, a fake driver and the test endpoints:
 
 ```bash
 node scripts/relay_smoke.mjs                                            # prints the home id it made up
@@ -85,7 +85,7 @@ npx wrangler@4.143.0 deploy                   # Worker, Durable Object migration
 curl https://api.directorlink.io/health
 ```
 
-`.github/workflows/deploy.yml` does not deploy this folder yet. Logs are in Workers Observability: each event is one JSON line (`home_registered`, `driver_connected`, `driver_hello`, `request_relayed`, `request_timeout`, `driver_disconnected`, `wrong_secret`, `invitation_registered`, `invitation_cancelled`, `home_secret_approved`, `home_secret_replaced`, `signed_out_everywhere`, `sessions_purged`, `join_request_created`, `join_request_decided`, `join_request_withdrawn`, `apple_notification`, `apple_notification_refused`, ...). Secrets and tokens are never logged, nor Apple's id for a person or an email from a notification.
+`.github/workflows/deploy.yml` does not deploy this folder yet. Logs are in Workers Observability: each event is one JSON line (`home_registered`, `driver_connected`, `driver_hello`, `request_relayed`, `request_timeout`, `driver_disconnected`, `wrong_secret`, `invitation_registered`, `invitation_cancelled`, `home_secret_approved`, `home_secret_replaced`, `signed_out_everywhere`, `sessions_purged`, `join_request_created`, `join_request_decided`, `join_request_withdrawn`, `apple_notification`, `apple_notification_refused`, ...). Secrets and tokens are never logged, nor Apple's id for a person or an email from a notification. `driver_disconnected` says how the socket ended (`why`, with the close code: 1006 is a connection cut without a close frame), how long it was up (`up_s`), and how long before the end the runtime last answered the driver's ping (`ping_s`) and the driver last sent a message (`message_s`); `driver_connected` says how long the home was away (`down_ms`).
 
 ## Cost
 
