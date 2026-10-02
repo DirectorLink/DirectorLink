@@ -19,7 +19,7 @@ export default {
     edit: "עריכה",
     loading: "טוען…",
     percent: "{percent}%",
-    retry: "נסה שוב",
+    retry: "נסו שוב",
     save: "שמירה",
     saving: "שומר…",
   },
