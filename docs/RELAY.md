@@ -182,7 +182,8 @@ and DirectorLink cannot prevent them. A deploy of the relay restarts every Durab
 disconnects every driver. Updates of the Workers runtime, and moving an object to another machine,
 shut objects down, which ends their WebSockets. Cloudflare also restarts edge servers when it
 releases new code. None of these has a documented frequency. The driver sees each one as a close
-from the relay or as `connection lost`, and comes back after about a second.
+from the relay or as `connection lost` (`wrangler dev`, reloading the relay as a deploy does, ends
+the sockets without a close frame), and comes back after about a second.
 
 **Director's connection events.** Director reports `ONLINE` and `OFFLINE` for the binding, not
 for one connection. So the driver keeps Director's view of the binding. The `OFFLINE` that answers
@@ -192,8 +193,9 @@ and gets no upgrade request. Data that arrives while no connection is being made
 
 **While the driver reconnects.** A request for the home that finds no driver connection, within
 30 s of the driver's disconnect, waits up to 8 s for the driver's `hello` and then goes through.
-Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for longer still answers
-`503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
+So does the first request after the relay restarted under the connection (a deploy), which
+records no disconnect. Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for
+longer, or that did not come back within the 8 s after a restart, answers `503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
 as before, and so does one sent over a connection the driver has since replaced, at once rather
 than at its 15 s timeout (the relay may not have noticed that connection die). It is never sent
 again, because the controller may have carried it out.

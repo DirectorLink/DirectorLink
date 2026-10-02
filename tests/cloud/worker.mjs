@@ -88,7 +88,8 @@ export async function startWorker({ devVars = {}, migrate = false, scheduled = f
     await stop();
     throw error;
   }
-  return { http: base, ws: `ws://127.0.0.1:${port}`, output, stop };
+  // dir: the Worker's temporary copy (a change to its code reloads it, as a deploy restarts it).
+  return { http: base, ws: `ws://127.0.0.1:${port}`, dir, output, stop };
 }
 
 async function waitForHealth(base, child, output) {

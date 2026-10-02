@@ -29,7 +29,7 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 4. The driver may ask the object too (1.0.0): `invitation` registers an invitation it made in D1 (`registerHomeInvitation`, answered `invitation_result`; at most 20 waiting per home, only for a claimed home, and those missing from the controller's `pending` list are forgotten), and `invitation_cancel` forgets one it revoked or gave up waiting for. Only the socket the home's secret opened can send them.
 5. The home's owner can replace the home's secret (`POST /v1/homes/{home_id}/secret`, below): the object stores the new SHA-256 and closes the driver's socket (4001 `secret replaced`); the driver, which has been keeping the new secret, connects again with it. The driver itself cannot replace it: whoever holds a copy of its data could.
 
-Between requests the object is evicted from memory while the socket stays connected. The driver's `ping` is answered `pong` by the runtime itself (`setWebSocketAutoResponse`), which does not wake the object; `getWebSocketAutoResponseTimestamp` gives the time of the last one for the status. What must outlive an eviction is kept in the socket's attachment (connection id, connect time, version, last message) or in storage (`secret_sha256`, `connected_at`, `disconnected_at`, `last_seen`, `version`). Requests waiting for their answer are kept in memory: while one waits, its caller keeps the object awake. So are requests waiting for a driver that has just disconnected: a driver connects again within seconds (1.5.0), and a request that arrives up to 30 s after the disconnect waits up to 8 s for its `hello` instead of failing with `HOME_OFFLINE` (docs/RELAY.md, *Keeping the connection*).
+Between requests the object is evicted from memory while the socket stays connected. The driver's `ping` is answered `pong` by the runtime itself (`setWebSocketAutoResponse`), which does not wake the object; `getWebSocketAutoResponseTimestamp` gives the time of the last one for the status. What must outlive an eviction is kept in the socket's attachment (connection id, connect time, version, last message) or in storage (`secret_sha256`, `connected_at`, `disconnected_at`, `last_seen`, `version`). Requests waiting for their answer are kept in memory: while one waits, its caller keeps the object awake. So are requests waiting for a driver that has just disconnected: a driver connects again within seconds (1.5.0), and a request that arrives up to 30 s after the disconnect, or after a deploy restarted the object under the connection (no disconnect is recorded then), waits up to 8 s for its `hello` instead of failing with `HOME_OFFLINE` (docs/RELAY.md, *Keeping the connection*).
 
 ## Endpoints
 
@@ -53,7 +53,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 | 405 | `METHOD_NOT_ALLOWED` | anything but GET (`Allow: GET`) |
 | 502 | `HOME_DISCONNECTED` | the driver's connection closed while the request waited |
 | 502 | `INVALID_RESPONSE` | the driver's `response` was malformed (status, body or base64) |
-| 503 | `HOME_OFFLINE` | no driver is connected for this home (after waiting up to 8 s for one that disconnected in the last 30 s) |
+| 503 | `HOME_OFFLINE` | no driver is connected for this home (after waiting up to 8 s for one that disconnected in the last 30 s, or after a restart) |
 | 503 | `TEST_TOKEN_NOT_SET` | the `TEST_TOKEN` secret is missing |
 | 504 | `HOME_TIMEOUT` | no answer within 15 s |
 | 500 | `INTERNAL_ERROR` | the relay itself failed |

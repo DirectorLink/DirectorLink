@@ -7,6 +7,8 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { appendFileSync } from "node:fs";
+import path from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -522,4 +524,43 @@ test("requests sent over a connection the driver has replaced fail at once", TES
   assert.equal(next.status, 200, next.text);
   assert.deepEqual(next.json, { by: "second" });
   first.destroy();
+});
+
+// A deploy restarts every Durable Object and ends its sockets without webSocketClose, so no
+// disconnect is recorded; the drivers come back within seconds. wrangler dev does the same when
+// the Worker's code changes. Last in this file: it drops every connection.
+test("after the relay restarts, a request waits for the driver to come back", { timeout: 90_000 }, async () => {
+  const back = newHome();
+  const gone = newHome();
+  const first = await driver({ ...back, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "first" }) }) });
+  const other = await driver({ ...gone });
+  await eventually(async () => (await status(gone.home)).connected, "both homes connected");
+
+  appendFileSync(path.join(relay.dir, "src", "index.js"), `\n// reloaded by the tests ${Date.now()}\n`);
+  await within(Promise.all([first.closed, other.closed]), 60_000, "the restart to end the connections");
+  await eventually(async () => {
+    try {
+      return (await fetch(`${relay.http}/health`)).ok;
+    } catch {
+      return false;
+    }
+  }, "the relay to answer again", 60_000);
+
+  const pending = call(back.home, "/v1/system");
+  await sleep(500);
+  await driver({ ...back, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "after the restart" }) }) });
+  const result = await pending;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "after the restart" });
+
+  // The other home does not come back: one request waits, the next is answered at once.
+  const started = Date.now();
+  assertProblem(await call(gone.home, "/v1/lights"), 503, "HOME_OFFLINE");
+  assert.ok(Date.now() - started >= RECONNECT_WAIT_MS - 100, "the first request waited");
+  const again = Date.now();
+  assertProblem(await call(gone.home, "/v1/lights"), 503, "HOME_OFFLINE");
+  assert.ok(Date.now() - again < 1000, "the next one did not");
+  const offline = await status(gone.home);
+  assert.equal(offline.connected, false);
+  assert.ok(isoTime(offline.since) <= started, `offline since ${offline.since}`);
 });

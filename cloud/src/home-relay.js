@@ -14,8 +14,8 @@
 //               connected_at, disconnected_at, last_seen, version     for the status (ISO times)
 //
 // A driver whose connection is lost connects again within seconds (1.5.0). A request that arrives
-// meanwhile, up to 30 s after the disconnect, waits up to 8 s for its hello instead of failing with
-// HOME_OFFLINE (liveDriver).
+// meanwhile, up to 30 s after the disconnect or after a restart under the connection, waits up to
+// 8 s for its hello instead of failing with HOME_OFFLINE (liveDriver).
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
@@ -309,19 +309,46 @@ export class HomeRelay extends DurableObject {
     if (ws) {
       return ws;
     }
-    const at = this.disconnectedAt ?? Date.parse((await this.ctx.storage.get("disconnected_at")) ?? "");
-    if (!Number.isFinite(at) || Date.now() - at > RECONNECT_GRACE_MS) {
+    const expected = await this.driverExpected();
+    if (!expected) {
       return null;
     }
-    return new Promise((resolve) => {
-      const resume = (socket) => {
+    const socket = await new Promise((resolve) => {
+      const resume = (found) => {
         clearTimeout(timer);
         this.waiting.delete(resume);
-        resolve(socket);
+        resolve(found);
       };
       const timer = setTimeout(() => resume(null), reconnectWaitMs(this.env));
       this.waiting.add(resume);
     });
+    if (!socket && expected.restarted && !this.driverSocket()) {
+      // It did not come back after the restart: offline since it was last heard from (the
+      // status), and the next requests are answered at once.
+      this.disconnectedAt = 0;
+      await this.ctx.storage.put("disconnected_at", iso(expected.lastSeen));
+    }
+    return socket;
+  }
+
+  // Whether the driver should be back within seconds: it disconnected less than
+  // RECONNECT_GRACE_MS ago, or this object restarted under its connection (a deploy restarts every
+  // object and ends its sockets without webSocketClose, so no disconnect is recorded). Returns
+  // { restarted, lastSeen } or null.
+  async driverExpected() {
+    if (this.disconnectedAt !== undefined) {
+      return Date.now() - this.disconnectedAt <= RECONNECT_GRACE_MS ? { restarted: false } : null;
+    }
+    const stored = await this.ctx.storage.get(["connected_at", "disconnected_at", "last_seen"]);
+    const connectedAt = Date.parse(stored.get("connected_at") ?? "");
+    const disconnectedAt = Date.parse(stored.get("disconnected_at") ?? "");
+    if (Number.isFinite(disconnectedAt) && !(connectedAt > disconnectedAt)) {
+      return Date.now() - disconnectedAt <= RECONNECT_GRACE_MS ? { restarted: false } : null;
+    }
+    if (!Number.isFinite(connectedAt)) {
+      return null; // never connected
+    }
+    return { restarted: true, lastSeen: Date.parse(stored.get("last_seen") ?? "") || connectedAt };
   }
 
   // The live driver socket (the newest, while a replaced one is still closing), or null.
