@@ -45,9 +45,10 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
     holds a relay closed: on door strikes and gate inputs that would leave the door unlocked or
     the gate's button pressed.
   - music (1.5.0, docs/SONOS.md): `{"action": "pause"}` or `{"action": "stop"}`, in `room_id` or
-    the whole home; it names no devices. Every Sonos group with a room there pauses as one (a
-    radio station stops), and counts as ran; with Sonos off in Composer it is skipped
-    (`SONOS_OFF`).
+    the whole home; it names no devices. Every Sonos group with a room there that plays pauses
+    as one (a radio station stops), and counts as ran; a group already paused or stopped is left
+    alone. It is skipped, with the reason, when Sonos is off in Composer (`SONOS_OFF`), no player
+    has been found yet (`NO_PLAYERS`), or no Sonos room is shown in its room (`NO_SONOS_ROOM`).
 - At most 50 scenes. `version` goes up with every change; sent back with a change
   (`PATCH /v1/scenes/{id}`), it makes the change conditional (409 `VERSION_CONFLICT`).
 

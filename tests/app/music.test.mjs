@@ -617,6 +617,21 @@ test("a scene step pauses or stops the music in a room or the whole home", async
   assert.deepEqual(scenes.stepDevices(pause).map((item) => item.id), [KITCHEN]);
 });
 
+test("a scene run says why its music was skipped", async () => {
+  const run = (code) => ({ ran: 0, failed: 0, skipped: 1, problems: [{ step: 0, device_id: 0, outcome: "skipped", code, detail: "" }] });
+  assert.equal(scenes.resultText(run("SONOS_OFF")), "Done — the music was skipped: Sonos is off in Composer");
+  assert.equal(scenes.resultText(run("NO_PLAYERS")), "Done — the music was skipped: no Sonos speakers have been found yet");
+  assert.equal(scenes.resultText(run("NO_SONOS_ROOM")), "Done — the music was skipped: there’s no Sonos speaker in that room");
+  const mixed = { ran: 0, failed: 0, skipped: 2, problems: [run("SONOS_OFF").problems[0], { ...run("FORBIDDEN").problems[0], device_id: 5 }] };
+  assert.equal(scenes.resultText(mixed), "Done — 2 devices were skipped", "different reasons: the count");
+  await setLanguage("he");
+  try {
+    assert.equal(scenes.resultText(run("NO_SONOS_ROOM")), "בוצע — המוזיקה דולגה: אין רמקול Sonos בחדר הזה");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("in Hebrew", async () => {
   home({ role: "member" });
   controller();

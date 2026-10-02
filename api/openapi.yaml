@@ -3482,7 +3482,7 @@ components:
                 description: The step, counted from 1.
               device_id:
                 type: integer
-                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`).
+                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`).
               outcome:
                 type: string
                 enum: [skipped, failed, partial]

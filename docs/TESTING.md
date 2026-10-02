@@ -49,7 +49,7 @@
    - Favorites: a playable one starts; Sonos Radio's shortcuts are greyed out.
 5. **Home** lists each group that plays, with a pause button.
 6. **Spotify Connect:** play from the Spotify app. The card says *Spotify*, with the track if the speaker reports it.
-7. **Scenes.** Add a Music action (Pause, in one room) and run the scene: that room's group pauses. With Sonos `Off`, the run says the step was skipped.
+7. **Scenes.** Add a Music action (Pause, in one room) and run the scene: that room's group pauses; a group already paused is left alone. In a room with no Sonos, the run says *the music was skipped: there's no Sonos speaker in that room*; with Sonos `Off`, *… Sonos is off in Composer*.
 8. **Viewer device:** what plays is shown, but no controls.
 9. **Phone.** 320 and 390 px, English and Hebrew, light and dark: no sideways scroll; the playback buttons stay left to right in Hebrew.
 10. Set **Sonos** to `Off`: Music goes away within a minute, and nothing more is sent to the speakers.
@@ -67,9 +67,10 @@
 
 1. On an admin device, Settings → Controller shows **App version 1.5.0** and the DirectorLink version, then **Updates** with a **Check now** button under the facts. A member or viewer device shows App version, but no Updates line and no button.
 2. Tap **Check now**: the Updates line says *Checking…*, then *Up to date* or *DirectorLink X is available*.
-3. **Check now** again within a minute: the button says *You can check again in a minute* (on hover) and nothing is sent. In DevTools → Network, the first press made one request to `api.github.com`, and the second made none.
-4. After a minute, **Check now** asks again.
-5. Hebrew: *בדיקה עכשיו*, then *בודק…*, right to left.
+3. **Check now** again within a minute: the button is dimmed, *You can check again in a minute* shows under it, and nothing is sent. In DevTools → Network, the first press made one request to `api.github.com`, and the second made none. A screen reader reads the outcome of each check.
+4. With the network off, **Check now** says *Could not check just now* on the Updates line until GitHub answers again.
+5. After a minute, **Check now** asks again.
+6. Hebrew: *בדיקה עכשיו*, then *בודק…*, right to left.
 
 ## 0ze. Backup and restore (1.4.0)
 

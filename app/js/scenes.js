@@ -182,6 +182,10 @@ export function resultText(result) {
     const codes = new Set(problems.filter((problem) => problem.outcome !== "partial").map((problem) => problem.code));
     if (codes.size === 1 && codes.has("FORBIDDEN")) return t("scenes.result.doors");
     if (codes.size === 1 && codes.has("DOOR_CONTROL_DISABLED")) return t("scenes.result.doorControl");
+    // Music steps (1.5.0): the controller says why the music was left as it was.
+    if (codes.size === 1 && codes.has("SONOS_OFF")) return t("scenes.result.sonosOff");
+    if (codes.size === 1 && codes.has("NO_PLAYERS")) return t("scenes.result.noPlayers");
+    if (codes.size === 1 && codes.has("NO_SONOS_ROOM")) return t("scenes.result.noSonosRoom");
     return t("scenes.result.skipped", { count: result.skipped });
   }
   if (problems.length) return t("scenes.result.partial");
