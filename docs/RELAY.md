@@ -140,7 +140,8 @@ Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CI
 `INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `INTERNAL`. The cloud turns them into Problem Details
 for the app (`cloud/src/homes.js`).
 
-If the driver hears nothing (not even `pong`) for 60 s, it drops the connection and reconnects.
+If the driver hears nothing (not even `pong`) for three pings in a row (about 75 s), it drops the
+connection and reconnects.
 The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s.
 
 ## Keeping the connection
@@ -148,8 +149,9 @@ The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer tha
 **What keeps it open.** The driver sends `ping` every 25 s and the relay's runtime answers `pong`
 without waking the home's object. Data then crosses Cloudflare in both directions every 25 s, well
 inside any idle limit (Cloudflare closes a WebSocket that carries nothing in either direction for
-a while, without a documented figure). A connection that hears nothing for 60 s is dropped and
-made again. TCP keep-alive is on as well.
+a while, without a documented figure). A connection that hears nothing for three pings in a row
+(about 75 s; counted in pings, not by the clock, so a clock set back cannot stretch it) is dropped
+and made again. TCP keep-alive is on as well.
 
 **Director's own monitoring is off** (1.5.0, ADR-045). Up to 1.4.0 the driver opened the
 connection with `MONITOR_CONNECTION = true`. Control4 documents that Director then polls the
@@ -158,8 +160,8 @@ down when no data comes back. It does not document how often, or how long it wai
 controllers (CORE-1 on OS 3.4.3, X4 on OS 4.2) reported the connection offline (`connection lost`)
 every 10 to 40 minutes. The relay saw the socket end without a close frame (code 1006), with
 nothing wrong on its side before. Director's monitoring is the likeliest cause on the
-controller's side, and the driver does not need it. Now the driver's ping and its 60 s rule are
-the only checks. If Director polls all the same, `OnPoll` sends a `ping`, so the relay answers at
+controller's side, and the driver does not need it. Now the driver's ping and its silence rule
+are the only checks. If Director polls all the same, `OnPoll` sends a `ping`, so the relay answers at
 once.
 
 **What can end it, and what follows.** The driver's relay log names each one (*Logs*, below).
@@ -167,7 +169,7 @@ once.
 | What happens | Remote Status and log reason | Next attempt |
 | --- | --- | --- |
 | Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute |
-| Nothing heard for 60 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
+| Nothing heard for three pings, about 75 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
 | The relay closes it: `4000 replaced` (another controller with this identity) | `closed by the relay (4000 replaced)` | 30 s |
 | The relay closes it: `4001 secret replaced` (the owner approved a new secret) | `closed by the relay (4001 secret replaced)` | 1 s; refused, then the new secret 1 s later |
 | The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |

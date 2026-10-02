@@ -269,7 +269,10 @@ function tests.keepalive_pings_and_silence_reconnects()
 
         advance(120)
         keepalive.callback()
-        T.eq(connection.disconnects >= 1, true, "a silent connection is dropped")
+        T.eq(connection.disconnects, 0, "two ticks without an answer: not yet")
+        connection.sent = ""
+        keepalive.callback()
+        T.eq(connection.disconnects >= 1, true, "a silent connection is dropped at the third tick")
         local close = clientFrames(connection.sent)[1]
         T.eq(close.opcode, 8, "with a close frame, in case the relay still hears it")
         T.eq(close.payload, bigEndian(1000, 2) .. "no answer", "saying why, for the relay's log")
@@ -279,6 +282,25 @@ function tests.keepalive_pings_and_silence_reconnects()
         T.eq(entry.level, "warn")
         near(entry.data.heard_s, 120, "heard_s")
         T.eq(entry.data.retry_s, 1)
+    end)
+end
+
+-- The silence rule counts keep-alive ticks, not the clock: anything heard starts the count again,
+-- and a controller clock set back an hour does not keep a dead connection for an hour.
+function tests.silence_counts_ticks_not_the_clock()
+    withClock(function(advance)
+        local mock, connection = connected()
+        local keepalive = lastTimer(mock, 25000)
+        keepalive.callback()
+        keepalive.callback()
+        ReceivedFromNetwork(BINDING, 443, serverFrame(10, "ping"))
+        keepalive.callback()
+        keepalive.callback()
+        T.eq(connection.disconnects, 0, "heard something: the count started again")
+
+        advance(-3600)
+        keepalive.callback()
+        T.eq(connection.disconnects >= 1, true, "three ticks with nothing heard, whatever the clock says")
     end)
 end
 

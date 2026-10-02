@@ -88,15 +88,18 @@ function tests.a_port_held_by_another_driver_is_reported_and_asked_for_again()
     check.fired = true
     check.callback()
     T.eq(mock.properties["API Status"], "Port 41999 taken by another driver - retrying every minute")
-    T.eq(creates, 2, "asked again")
+    T.eq(creates, 1, "not asked again yet: an ONLINE that is only slow comes first")
     local taken, count = apiLog("the API port is taken by another driver; asking again every minute")
     T.truthy(taken, "logged")
     T.eq(taken.level, "error")
     T.eq(taken.data.port, 41999)
-    T.eq(mock.servers[41999] ~= nil, true, "the fake keeps what was asked; Director would not")
 
     check = portCheck(mock)
     T.eq(check.delay, 60000, "then every minute")
+    check.fired = true
+    check.callback()
+    T.eq(creates, 2, "asked again")
+    check = portCheck(mock)
     check.fired = true
     check.callback()
     T.eq(creates, 3)
@@ -107,7 +110,53 @@ function tests.a_port_held_by_another_driver_is_reported_and_asked_for_again()
     OnServerStatusChanged(41999, "ONLINE")
     T.eq(mock.properties["API Status"], "Online - port 41999")
     T.eq(portCheck(mock), nil, "no more checks")
-    T.eq(apiLog("API server ONLINE").data.taken_before, 2)
+    T.eq(apiLog("API server ONLINE").data.taken_before, 3)
+end
+
+-- An ONLINE later than the first check: the port is DirectorLink's, and nothing is asked twice.
+function tests.a_slow_online_is_not_asked_for_twice()
+    local creates = 0
+    local mock = Mock.startDriver(nil, nil, nil, function(m)
+        m.portTaken = true
+        local create = C4.CreateServer
+        function C4:CreateServer(port, delimiter, udp)
+            creates = creates + 1
+            return create(self, port, delimiter, udp)
+        end
+    end)
+    local check = portCheck(mock)
+    check.fired = true
+    check.callback()
+    OnServerStatusChanged(41999, "ONLINE")
+    T.eq(mock.properties["API Status"], "Online - port 41999")
+    T.eq(creates, 1)
+    T.eq(portCheck(mock), nil)
+end
+
+-- The port lost after it was DirectorLink's is asked for again; stopping the server is not a loss.
+function tests.a_port_lost_later_is_asked_for_again()
+    local creates = 0
+    local mock = Mock.startDriver(nil, nil, nil, function()
+        local create = C4.CreateServer
+        function C4:CreateServer(port, delimiter, udp)
+            creates = creates + 1
+            return create(self, port, delimiter, udp)
+        end
+    end)
+    T.eq(creates, 1)
+    OnServerStatusChanged(41999, "OFFLINE")
+    local check = portCheck(mock)
+    T.eq(check.delay, 15000)
+    check.fired = true
+    check.callback()
+    T.eq(creates, 2, "asked again")
+    T.eq(mock.properties["API Status"], "Port 41999 taken by another driver - retrying every minute")
+    OnServerStatusChanged(41999, "ONLINE")
+    T.eq(portCheck(mock), nil)
+
+    require("src.api.server").stop()
+    OnServerStatusChanged(41999, "OFFLINE")
+    T.eq(portCheck(mock), nil, "stopped on purpose: not asked for again")
 end
 
 function tests.a_port_given_at_once_is_not_asked_for_again()

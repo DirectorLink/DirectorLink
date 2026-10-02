@@ -16,7 +16,10 @@ Relay.PORT = 443
 Relay.PATH = "/relay/connect"
 Relay.BINDING = 6001
 Relay.KEEPALIVE_MS = 25000
-Relay.SILENCE_SECONDS = 60
+-- A connection that hears nothing (not even a pong) for this many keep-alive ticks in a row is
+-- dropped: about 75 s. Ticks, not the clock, so setting the controller's clock back cannot
+-- delay it.
+Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
 -- A connection that was up for STABLE_SECONDS and is lost is tried again after QUICK_RETRY_SECONDS,
@@ -49,6 +52,7 @@ local state = {
     downSince = nil, -- when the connection was lost
     lastDrop = nil, -- { at, reason }: the last connection lost, for Remote Status
     lastHeard = 0,
+    quietTicks = 0, -- keep-alive ticks since anything was heard
     pingedAt = nil,
     polledAt = nil, -- when Director last polled the connection (OnPoll)
     keepalive = nil,
@@ -249,6 +253,7 @@ end
 
 local function onMessage(text, kind)
     state.lastHeard = os.time()
+    state.quietTicks = 0
     if kind == "pong" or text == "pong" then
         return
     end
@@ -312,7 +317,8 @@ local function startKeepalive()
     cancel(state.keepalive)
     pcall(function()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
-            if os.time() - state.lastHeard > Relay.SILENCE_SECONDS then
+            state.quietTicks = state.quietTicks + 1
+            if state.quietTicks >= Relay.SILENCE_TICKS then
                 local facts = connectionFacts()
                 local retry = quickRetry()
                 dropped("no answer")
@@ -396,6 +402,7 @@ local function onOpen()
     state.connecting = nil
     state.trying = nil
     state.lastHeard = os.time()
+    state.quietTicks = 0
     state.pingedAt = nil
     state.connectedAt = os.time()
     local identity = Relay.identity()

@@ -42,7 +42,8 @@ Server.PORT = 41999
 -- Director gives a port to the first driver that asks for it and tells the next one nothing (its own
 -- log says "attempt to bind ... same port"). Some drivers take a random free port at each start (a
 -- camera driver took 41999 on a real controller), so when the port is not ONLINE this long after
--- asking, DirectorLink says so and asks again every RETRY_SECONDS until it has it.
+-- asking, DirectorLink says so, and asks again every RETRY_SECONDS until it has it: the first time
+-- a minute after saying so, so that an ONLINE that is only slow comes before a second request.
 Server.CHECK_SECONDS = 15
 Server.RETRY_SECONDS = 60
 
@@ -59,6 +60,8 @@ local services = nil
 local connections = {}
 local listening = false
 local portCheck = nil
+-- True from start() to stop(): a port lost meanwhile is asked for again.
+local wanted = false
 -- Times the port was found taken since the last start; the error is logged the first time only.
 local portTaken = 0
 
@@ -367,14 +370,14 @@ local function askForPort()
     end)
 end
 
--- After asking for the port: if it is not ONLINE in `seconds`, another driver holds it. The
--- server is not destroyed first: Director never gave it to this driver, and DestroyServer names
--- only a port.
-local function checkPortIn(seconds)
+-- If the port is not ONLINE in `seconds`, another driver holds it: say so (once), ask for it
+-- again if `ask`, and check again in a minute, asking then. The server is not destroyed first:
+-- Director never gave it to this driver, and DestroyServer names only a port.
+local function checkPortIn(seconds, ask)
     cancelPortCheck()
     portCheck = C4:SetTimer(seconds * 1000, function()
         portCheck = nil
-        if listening then
+        if listening or not wanted then
             return
         end
         portTaken = portTaken + 1
@@ -387,8 +390,10 @@ local function checkPortIn(seconds)
         if services.onServerStatus then
             services.onServerStatus(false, "TAKEN")
         end
-        askForPort()
-        checkPortIn(Server.RETRY_SECONDS)
+        if ask then
+            askForPort()
+        end
+        checkPortIn(Server.RETRY_SECONDS, true)
     end)
 end
 
@@ -402,11 +407,13 @@ function Server.start()
         services.log.error("api", "could not start the API server", { port = Server.PORT, error = tostring(err) })
         return false, tostring(err)
     end
-    checkPortIn(Server.CHECK_SECONDS)
+    wanted = true
+    checkPortIn(Server.CHECK_SECONDS, false)
     return true
 end
 
 function Server.stop()
+    wanted = false
     cancelPortCheck()
     pcall(function()
         C4:DestroyServer(Server.PORT)
@@ -430,6 +437,10 @@ function Server.onStatusChanged(port, status)
         portTaken = 0
     else
         services.log.info("api", "API server " .. tostring(status), { port = Server.PORT })
+        -- Lost after it was ours (Director has not been seen doing it): asked for again.
+        if wanted and not portCheck then
+            checkPortIn(Server.CHECK_SECONDS, true)
+        end
     end
     if services.onServerStatus then
         services.onServerStatus(listening, tostring(status))

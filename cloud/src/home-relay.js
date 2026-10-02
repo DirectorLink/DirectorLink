@@ -303,7 +303,8 @@ export class HomeRelay extends DurableObject {
   }
 
   // The driver's socket; if it has just disconnected, the one it opens next, once it says hello
-  // (null after RECONNECT_WAIT_MS). Null at once when the home has been away longer.
+  // (or, after RECONNECT_WAIT_MS, whichever is connected; null if none). Null at once when the
+  // home has been away longer.
   async liveDriver() {
     const ws = this.driverSocket();
     if (ws) {
@@ -319,7 +320,9 @@ export class HomeRelay extends DurableObject {
         this.waiting.delete(resume);
         resolve(found);
       };
-      const timer = setTimeout(() => resume(null), reconnectWaitMs(this.env));
+      // At the deadline, a socket that passed the secret check but whose hello is still on its
+      // way is used all the same: the driver is back.
+      const timer = setTimeout(() => resume(this.driverSocket()), reconnectWaitMs(this.env));
       this.waiting.add(resume);
     });
     if (!socket && expected.restarted && !this.driverSocket()) {
