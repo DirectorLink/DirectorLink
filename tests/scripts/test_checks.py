@@ -191,6 +191,35 @@ class SonosOnly(unittest.TestCase):
         self.assertNotEqual(loading, handler)
         self.assertIn("loads src/sonos/client.lua", self.refused({**files, "src/api/handlers/music.lua": loading}) or "")
 
+    def test_the_client_is_caught_under_any_name(self):
+        # "\bClient" does not match inside "SonosClient": the name the client has in main.lua.
+        files = driver_sources()
+        for name in ("src/api/handlers/music.lua", "src/core/scenes.lua", "src/main.lua"):
+            for call in ('SonosClient.allow("10.1.2.3", "x")', "Client:allow(ctx.body.address)", "MyClient . allow (ip)"):
+                with self.subTest(name=name, call=call):
+                    self.assertIn("allows a Sonos address", self.refused({**files, name: files[name] + "\n" + call + "\n"}) or "")
+
+    def test_main_only_hands_the_search_events_over(self):
+        files = driver_sources()
+        main = files["src/main.lua"]
+        self.assertIn("SonosClient.onData(", main)
+        self.assertIn("SonosClient.onConnectionStatus(", main)
+        for added in (
+            'SonosClient.call("192.168.1.2", "Play", {}, function() end)',
+            'SonosClient.picture("192.168.1.2", "/getaa", print)',
+            "SonosClient.search(print, print)",
+            "SonosClient.forget(\"topology\")",
+            "local other = SonosClient",
+            'SonosClient["allow"]("10.1.2.3")',
+            'package.loaded["src.sonos.client"].call()',
+            'local Again = require("src.sonos.client")',
+        ):
+            with self.subTest(added=added):
+                printed = self.refused({**files, "src/main.lua": main + "\nlocal function x()\n    " + added + "\nend\n"}) or ""
+                self.assertRegex(printed, r"src/main\.lua (uses .*: of src/sonos/client\.lua it may use only onConnectionStatus, onData|loads src/sonos/client\.lua other than once)")
+        # A comment naming it is not code.
+        self.assertIsNone(self.refused({**files, "src/main.lua": main + "\n-- SonosClient.call(ip, ...) is not for main.lua\n"}))
+
     def test_no_other_action_reaches_a_player(self):
         files = driver_sources()
         protocol = files["src/sonos/protocol.lua"]

@@ -567,6 +567,32 @@ SONOS_ACTIONS = {
 }
 
 
+# main.lua loads the client only to hand it the search's network events (ReceivedFromNetwork,
+# OnConnectionStatusChanged): these two, and nothing else of it.
+SONOS_CLIENT_IN_MAIN = {"onData", "onConnectionStatus"}
+SONOS_CLIENT_REQUIRE = re.compile(r"""\blocal\s+(\w+)\s*=\s*require\s*\(?\s*(["'])src\.sonos\.client\2\s*\)?""")
+
+
+def check_sonos_client_in_main(code):
+    """main.lua may load src/sonos/client.lua once, as a local, and use only SONOS_CLIENT_IN_MAIN
+    of it: no address allowed, no request sent, no other name for it."""
+    name = "src/main.lua"
+    loads = SONOS_CLIENT_REQUIRE.findall(code)
+    if code.count("src.sonos.client") != len(loads) or len(loads) > 1:
+        fail(f"{name} loads {SONOS_CLIENT} other than once as `local X = require(\"src.sonos.client\")`")
+    if not loads:
+        return
+    local = loads[0][0]
+    for use in re.finditer(rf"(?<![\w.:]){re.escape(local)}\b", code):
+        rest = code[use.end():]
+        if re.match(r"\s*=\s*require\b", rest) and code[:use.start()].rstrip().endswith("local"):
+            continue
+        member = re.match(r"\s*[.:]\s*(\w+)", rest)
+        if not member or member.group(1) not in SONOS_CLIENT_IN_MAIN:
+            found = code[use.start():use.start() + 40].split("\n", 1)[0]
+            fail(f"{name} uses {found!r}: of {SONOS_CLIENT} it may use only {', '.join(sorted(SONOS_CLIENT_IN_MAIN))}")
+
+
 def check_sonos(files):
     for name, text in sorted(files.items()):
         if not name.endswith(".lua"):
@@ -576,10 +602,13 @@ def check_sonos(files):
             for call, pattern in NETWORK_CALLS:
                 if pattern.search(code):
                     fail(f"{name} uses {call}: only {SONOS_CLIENT} talks to the Sonos players")
-        if re.search(r"\bClient\.allow\s*\(", code) and name not in ("src/sonos/sonos.lua", SONOS_CLIENT):
+        # Whatever the client is called there (Client, SonosClient, ...).
+        if re.search(r"\b\w*Client\s*[.:]\s*allow\s*\(", code) and name not in ("src/sonos/sonos.lua", SONOS_CLIENT):
             fail(f"{name} allows a Sonos address: only src/sonos/sonos.lua does, from the players' answers and Composer")
-        if "src.sonos.client" in code and name not in ("src/sonos/sonos.lua", "src/main.lua"):
+        if "src.sonos.client" in code and name not in ("src/sonos/sonos.lua", "src/main.lua", SONOS_CLIENT):
             fail(f"{name} loads {SONOS_CLIENT}: requests go through src/sonos/sonos.lua")
+        if name == "src/main.lua":
+            check_sonos_client_in_main(code)
     match = re.search(r"^Protocol\.ACTIONS = \{([^}]*)\}", files.get("src/sonos/protocol.lua", ""), re.M)
     if not match:
         fail("could not read Protocol.ACTIONS in src/sonos/protocol.lua")
