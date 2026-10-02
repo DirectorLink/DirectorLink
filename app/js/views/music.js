@@ -1,6 +1,6 @@
 // Music (js/music.js, ADR-044): each Sonos room's card on its room screen, what plays on Home, and
-// for admins the Sonos rooms with the Control4 room each is shown in (musicRoomsSection, for the
-// Rooms page). A group plays as one: play, pause and skip on any of its rooms work on the group;
+// for admins the Sonos rooms with the Control4 room each is shown in (musicRoomsSection, on Settings
+// → Rooms). A group plays as one: play, pause and skip on any of its rooms work on the group;
 // volume and mute are each room's own. Playback controls stay left to right in Hebrew too.
 
 import { inlineError, slider } from "../components.js";
@@ -276,7 +276,7 @@ export function musicHomeSection() {
 
 // ---- admins: the room of each Sonos room ---------------------------------------------------
 
-// For the Rooms page: every Sonos room with the Control4 room it is shown in, and a choice for
+// For Settings → Rooms (views/settings.js musicSection): every Sonos room with the Control4 room it is shown in, and a choice for
 // those whose name matches none (or the wrong one). Admins only; null otherwise.
 export function musicRoomsSection() {
   if (!musicAvailable() || !can("admin")) return null;
@@ -284,10 +284,11 @@ export function musicRoomsSection() {
   if (!items.length) return null;
   const unplaced = items.filter((item) => item.room_id == null);
   const sorted = [...unplaced, ...items.filter((item) => item.room_id != null)];
+  // A card like Settings' others (views/settings.js card()), so #settings-music.
   return h(
     "section",
-    { class: "home-section music-rooms", "aria-labelledby": "music-rooms-title" },
-    h("div", { class: "section-head" }, h("h2", { id: "music-rooms-title", class: "section-title" }, icon("music"), t("music.rooms.title"))),
+    { class: "card settings-card music-rooms", id: "settings-music", "aria-labelledby": "settings-music-title" },
+    h("h2", { class: "settings-title", id: "settings-music-title" }, icon("music"), t("music.rooms.title")),
     h("p", { class: "field-help" }, t("music.rooms.help")),
     unplaced.length ? h("p", { class: "notice notice-info" }, t("music.rooms.unplaced", { count: unplaced.length })) : null,
     h(

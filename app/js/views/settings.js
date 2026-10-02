@@ -1,7 +1,7 @@
 // Settings (#/settings): appearance and language, then one row per page, each at #/settings/<page>
-// with Back to the list: Controller (its facts, updates, backup, pairing), Rooms (shown, order and
-// names), Shabbat and holidays, People and devices (#/access, views/access.js), Account, App and
-// About.
+// with Back to the list: Controller (its facts, updates, backup, pairing), Rooms (shown, order,
+// names and the Sonos rooms), Shabbat and holidays, People and devices (#/access, views/access.js),
+// Account, App and About.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { calendarOn, loadCalendar, noteCalendarOff, takeCalendarReveal } from "../calendar.js";
@@ -22,6 +22,7 @@ import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { backupPanel } from "./backup.js";
 import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { musicRoomsSection } from "./music.js";
 import { chip, stepper } from "./schedules.js";
 import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./updates.js";
 import { APP_VERSION } from "../version.js";
@@ -304,14 +305,12 @@ function roomNamesSection() {
   );
 }
 
-// ---- Music: the place kept for matching the Sonos players to rooms -----------------------------
+// ---- Music ---------------------------------------------------------------------------------
 
-// The Rooms page ends with this section (settingsView, case "rooms"). The Music feature returns its
-// matching card here, made with card() like the others ("music" as its id, so #settings-music), or
-// null when there is nothing to match; it is drawn again with each redraw, as the cards above are.
-// Until the Music feature fills it in, the Rooms page ends with the room names.
+// The Rooms page ends with the Sonos rooms and the Control4 room each is shown in (admins, when
+// Sonos is on: views/music.js, ADR-044); null otherwise.
 function musicSection() {
-  return null;
+  return musicRoomsSection();
 }
 
 // One room: shown or hidden for this person, and (admins) moved for everyone: dragged by its handle

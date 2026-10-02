@@ -1,8 +1,8 @@
 // Settings' list and its pages (app/js/views/settings.js, 1.5.0): appearance and language on the
 // list with a row per page, who sees which row, the line each row says, the update badge, the Rooms
-// page and its admin parts, Back to the list (and the row it focuses), Settings → Controller with
-// Updates and Backup, the Home notice that opens Settings → Controller at the steps, and sign-in
-// coming back to Settings → Account.
+// page with its admin parts and the Sonos rooms, Back to the list (and the row it focuses),
+// Settings → Controller with Updates and Backup, the Home notice that opens Settings → Controller at
+// the steps, and sign-in coming back to Settings → Account.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -381,10 +381,10 @@ test("Back: in-app history goes back; the list then focuses the row that opened 
   assert.equal(settingsRowKey({ name: "home", tab: "home" }), null);
 });
 
-test("Settings → Rooms: show or hide for everyone; the order and the names for admins; the place kept for Music", () => {
+test("Settings → Rooms: show or hide for everyone; the order and the names for admins", () => {
   home("member");
   let page = settingsView({ page: "rooms" });
-  assert.deepEqual(cards(page), ["settings-rooms", "settings-room-names"], "Music adds its card after the names");
+  assert.deepEqual(cards(page), ["settings-rooms", "settings-room-names"]);
   let keys = keysOf(page);
   for (const room of ROOMS) {
     assert.ok(keys.includes(`room-show:${room.id}`), "each person hides rooms for themselves");
@@ -419,6 +419,36 @@ test("Settings → Rooms: show or hide for everyone; the order and the names for
   page = settingsView({ page: "rooms" });
   assert.deepEqual(cards(page), ["settings-rooms"]);
   assert.match(textOf(page), /Connect to your controller to rename rooms\./);
+});
+
+test("Settings → Rooms ends with the Sonos rooms, for admins when Sonos is on", () => {
+  const sonos = {
+    enabled: true,
+    status: "ok",
+    items: [
+      { id: "RINCON_1", name: "Kitchen", room_id: 10, room_match: "name" },
+      { id: "RINCON_2", name: "Patio", room_id: null, room_match: null },
+    ],
+  };
+  home("admin");
+  state.music = sonos;
+  assert.deepEqual(cards(settingsView({ page: "rooms" })), ["settings-rooms", "settings-room-names"], "Sonos is off in Composer");
+
+  state.system.features.sonos = true;
+  let page = settingsView({ page: "rooms" });
+  assert.deepEqual(cards(page), ["settings-rooms", "settings-room-names", "settings-music"]);
+  const card = page[2].children.at(-1);
+  assert.equal(card.attributes["aria-labelledby"], "settings-music-title");
+  assert.ok(ids(card).includes("settings-music-title"));
+  assert.match(textOf(card), /Sonos rooms/);
+  assert.match(textOf(card), /1 Sonos room isn’t in a room yet\./);
+  assert.ok(byKey(card, "music:RINCON_2:place"), "an admin picks its room");
+
+  home("member");
+  state.system.features.sonos = true;
+  state.music = sonos;
+  assert.deepEqual(cards(settingsView({ page: "rooms" })), ["settings-rooms", "settings-room-names"], "an admin's");
+  state.music = null;
 });
 
 test("Settings → Controller: the controller, then Updates, then Backup for admins", () => {
