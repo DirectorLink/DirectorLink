@@ -14,3 +14,4 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 
 - **Installing driver updates from the app, or automatically.** A driver can only replace itself through a way around Control4's file protection that Control4 does not document. Updates stay in Composer, with the app's guided notice (ADR-035).
 - Editing the Control4 project (Composer programming, its scenes and schedules), and plugins.
+- Changing DirectorLink's Composer settings from the app (built for 1.4.0, withdrawn: they stay in Composer).

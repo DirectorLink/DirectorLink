@@ -159,18 +159,17 @@ in Composer, on the DirectorLink device (0.15.0):
 
 - **Schedules** (On / Paused): pauses every DirectorLink schedule at once, without deleting
   anything — e.g. while troubleshooting. Nothing runs, and nothing is caught up afterwards (except a
-  time due in the last 5 minutes), not even by a restart. The app says the schedules are paused.
-  Admins can also pause and resume them in the app (Settings → Controller → DirectorLink settings,
-  1.4.0, ADR-043): Composer shows it, and a later change in Composer wins.
+  time due in the last 5 minutes), not even by a restart. The app says the schedules are paused by
+  the installer.
 - **Schedule Status** (read-only): e.g. `3 on · next tomorrow 06:45 Good morning · 1 weather rule`,
-  or `Paused - 3 schedules are not running`, or `None`.
+  or `Paused in Composer - 3 schedules are not running`, or `None`.
 - **Last Automation** (read-only): the last scene DirectorLink ran, when, why and what happened,
   e.g. `28 Sep 13:10 Cool the house · heat rule, 31C outside · 22 devices`, or
   `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
 - **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
   and last run) and every scene with its steps and device names and ids to the Lua output.
 - **Jewish Calendar** (Off / On, 1.2.0): Shabbat and holiday times for schedules and the app. Off by
-  default; no restart is needed either way. Admins can also switch it in the app (1.4.0).
+  default; no restart is needed either way.
 - **Calendar Status** (read-only): what the calendar works out, e.g. `Israel (from the location) ·
   candles 20 min before sunset, havdalah 42 min after · next Fri 02 Oct 18:04 to Sat 03 Oct 19:05
   Shabbat, Shmini Atzeret, Simchat Torah`, during a period `Now Shabbat, Shmini Atzeret, Simchat

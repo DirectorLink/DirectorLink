@@ -6,8 +6,9 @@ Updating the driver keeps everything DirectorLink knows. Removing the driver fro
 accident), replacing the controller or rebuilding the project loses it all: Control4 deletes a
 removed driver's data. A backup brings it back. Admins make one in the app (Settings → Controller →
 Backup) and restore it there; the file is locked with a password in the browser, and the controller
-never sees the password or the file. The app shows Backup only with a DirectorLink that has it
-(1.4.0 and newer); with an older one a request answered `404` says to update DirectorLink.
+never sees the password or the file. The app shows Backup only when the controller's DirectorLink
+says it has it (`GET /v1/system`: `features.backup`, 1.4.0 and newer); a request answered `404`
+says to update DirectorLink.
 
 ## What a backup holds
 
@@ -29,9 +30,8 @@ backup either, and none is made for one: restored, it would replace a home that 
 
 **DirectorLink's Composer properties** are listed, never restored: Door Control, Relay Hold,
 Schedules, Jewish Calendar, Alarm Status, Remote Access and Log Level. The restore screen shows how
-each was set when the backup was made and how it is now. An admin sets Schedules, Jewish Calendar
-and Log Level again in the app (Settings → Controller → DirectorLink settings, ADR-043); the
-installer sets the others in Composer. A file must never switch a safety setting on.
+each was set when the backup was made and how it is now, so the installer can set them again in
+Composer. A file must never switch a safety setting on.
 
 ## The file
 
@@ -108,7 +108,7 @@ through the account, sealed, as any of its devices. That is why it goes only in 
 4. The app shows it: first, when the backup looks like another home's, a warning that names it and
    says why; the date and DirectorLink version, how many of each there are, the keys that come back
    by name and role (or that the keys stay as they are now), what was found by name, what matches
-   nothing (and where it was used), remote access, DirectorLink's settings. **Replace everything**,
+   nothing (and where it was used), remote access, the Composer properties. **Replace everything**,
    confirmed with the home's name, sends `{"upload": …, "dry_run": false}`, with `replaces_key` and
    `move_remote` when chosen (below).
 5. The result says what was done; the app reads everything again.
@@ -236,5 +236,6 @@ another's: tick the box once the old controller is off or reset.
 keys kept or restored and "this device is", key records, matching with swaps and doors, schedules,
 invitations, uploads per key and their timer, the remote identity and another home's backup, a store
 not read at start, names cut, a big home), `tests/app/backup.test.mjs` (the file, the strength hint,
-the parts, the Settings panel and its preview), the contract test (`scripts/check_contract.py`), and
-a browser check against the dev server: download, start it again with fresh storage, pair, restore.
+the parts, the Settings panel, when it shows, and its preview), the contract test
+(`scripts/check_contract.py`), and a browser check against the dev server: download, start it again
+with fresh storage, pair, restore.
