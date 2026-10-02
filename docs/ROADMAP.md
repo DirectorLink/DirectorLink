@@ -1,10 +1,11 @@
 # Roadmap
 
-What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.4.1](releases/v1.4.1.md). This page lists only what is still to come.
+What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.5.0](releases/v1.5.0.md). This page lists only what is still to come.
 
 ## Later
 
 - An automatic daily backup to the home's account, locked end to end like remote access.
+- The Sonos room choices in DirectorLink backups.
 - Releases signed on GitHub, the signature checked by the driver in plain Lua (the minimum OS stays 3.3.0).
 - Fans with other than four speeds, from the fan's own speed list.
 - Better diagnostics for devices DirectorLink does not support yet.

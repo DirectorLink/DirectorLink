@@ -25,7 +25,7 @@ languages, set in the app, count too: a Sonos room named "מטבח" shows in the
 "Kitchen" when its Hebrew name is מטבח.
 
 A Sonos room whose name matches no room (or more than one) shows under **No room** until an admin
-picks its room on the app's Rooms page (the Sonos rooms list). The choice is kept on the controller
+picks its room in the app under Settings → Rooms → Sonos rooms. The choice is kept on the controller
 (`PUT /v1/music/{id}/room`); "Same name" goes back to matching by name. Hidden rooms and the room
 order work as for other devices.
 

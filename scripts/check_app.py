@@ -414,7 +414,7 @@ def main():
     require(updates, "CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000", "the app must ask GitHub at most every 12 hours (the privacy page says twice a day)")
     require(updates, "locked: answer.immutable === true", "the update notice must know which releases are immutable, whose files cannot be replaced")
     require(updates, "release.locked === true && compareVersions", "the update notice must offer only immutable releases")
-    # Check now (1.4.1) may ask sooner, but never more than once a minute.
+    # Check now (1.5.0) may ask sooner, but never more than once a minute.
     require(updates, "MANUAL_INTERVAL_MS = 60 * 1000", "Check now must ask GitHub at most once a minute")
     # The app's own version, shown in Settings, is the release's (VERSION).
     release_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
