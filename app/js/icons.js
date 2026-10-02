@@ -69,6 +69,13 @@ const PATHS = {
   // Settings: People and devices, and Backup.
   users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M15.5 4.7a3.5 3.5 0 0 1 0 6.6"/><path d="M18 14.3a6.5 6.5 0 0 1 3.5 5.7"/>',
   archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9"/><path d="M10 13h4"/>',
+  // Music (Sonos). Playback controls are not mirrored in right-to-left layouts.
+  music: '<path d="M9 18V5l11-2v13"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  pause: '<path d="M8 5.5v13M16 5.5v13"/>',
+  skipNext: '<path d="M5.5 5.5v13l9-6.5Z"/><path d="M18.5 5.5v13"/>',
+  skipPrevious: '<path d="M18.5 5.5v13l-9-6.5Z"/><path d="M5.5 5.5v13"/>',
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  volumeOff: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
 };
 
 // Icons that point along the reading direction; CSS mirrors them in right-to-left layouts.

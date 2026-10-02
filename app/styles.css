@@ -2198,6 +2198,210 @@ select:disabled {
   color: var(--errText);
 }
 
+/* ---- Music (Sonos; js/views/music.js) ----------------------------------------------------- */
+
+.music-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.music-art {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--muted);
+}
+
+.music-art.is-small {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.music-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.music-card.is-playing .music-art,
+.music-home-row .music-art {
+  color: var(--primary);
+}
+
+.music-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.music-card .device-name {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.music-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.music-detail {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.music-card.is-unreachable .device-meta {
+  color: var(--errText);
+}
+
+/* Playback controls read left to right in Hebrew too (dir="ltr" on the group). */
+.music-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-block-start: 8px;
+}
+
+.music-controls.is-compact {
+  margin: 0;
+}
+
+.music-button {
+  color: var(--ink);
+}
+
+.music-main-button {
+  width: 52px;
+  height: 52px;
+  background: var(--primary);
+  color: var(--primaryText);
+}
+
+.music-controls.is-compact .music-main-button {
+  width: 44px;
+  height: 44px;
+}
+
+@media (hover: hover) {
+  .icon-button.music-main-button:not(:disabled):hover {
+    background: color-mix(in srgb, var(--primary) 85%, var(--ink));
+    color: var(--primaryText);
+  }
+}
+
+.music-volume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.music-volume .slider-row {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.music-mute.is-muted {
+  color: var(--errText);
+}
+
+.music-favorites {
+  margin-block-start: 8px;
+  padding-block-start: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.music-favorites summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.music-favorites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.music-favorite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  text-align: start;
+}
+
+.music-favorite:disabled {
+  opacity: 0.55;
+}
+
+.music-favorite-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.music-favorite-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.music-home-list,
+.music-rooms-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.music-home-row {
+  padding: 8px 12px;
+}
+
+.music-home-link {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.music-home-row .device-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-room-select {
+  margin-block-start: 8px;
+}
+
+.music-room.is-unplaced {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {

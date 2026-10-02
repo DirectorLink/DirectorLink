@@ -479,6 +479,8 @@ function Mock.install(project)
         proxy = {},
         listeners = {},
         urlRequests = {},
+        -- Answers waiting while mock.httpDeferred is set (Mock.deliverHttp).
+        httpQueue = {},
         deviceEvents = {},
         -- System events registered: { eventId, deviceId }.
         systemEvents = {},
@@ -702,9 +704,14 @@ function Mock.install(project)
         end
     end
 
-    function C4:NetConnect(binding, port)
+    function C4:NetConnect(binding, port, kind)
         local connection = assert(mock.network[binding], "NetConnect before CreateNetworkConnection")
-        assert(connection.port == port, "NetConnect on a port without options")
+        -- UDP (the search for Sonos players) needs no options; TCP and SSL ones have them.
+        if kind == "UDP" then
+            connection.port, connection.kind = port, kind
+        else
+            assert(connection.port == port, "NetConnect on a port without options")
+        end
         connection.connects = connection.connects + 1
     end
 
@@ -715,9 +722,12 @@ function Mock.install(project)
         end
     end
 
-    function C4:SendToNetwork(binding, _port, data)
+    function C4:SendToNetwork(binding, port, data)
         local connection = assert(mock.network[binding], "SendToNetwork before CreateNetworkConnection")
         connection.sent = connection.sent .. data
+        -- Each message apart too (UDP datagrams), with the port it went to.
+        connection.datagrams = connection.datagrams or {}
+        connection.datagrams[#connection.datagrams + 1] = { port = port, data = data }
     end
 
     function C4:Base64Encode(data)
@@ -785,6 +795,43 @@ function Mock.install(project)
         return nil, "Couldn't resolve host"
     end
 
+    -- mock.http(request), when a test sets it, answers first (Sonos players, driver/tests/
+    -- sonos_fake.lua): a response, nil and an error (no answer), or false to leave the request to
+    -- the cameras and the weather. With mock.httpDeferred, answers wait in mock.httpQueue until
+    -- Mock.deliverHttp, as real transfers arrive later.
+    local function answer(transfer, method, url, headers, body)
+        local response, err
+        if mock.http then
+            mock.urlRequests[#mock.urlRequests + 1] = { method = method, url = url, headers = headers, body = body }
+            response, err = mock.http({ method = method, url = url, headers = headers or {}, body = body })
+            if response == false then
+                table.remove(mock.urlRequests)
+                response, err = nil, nil
+            end
+        end
+        if response == nil and err == nil then
+            if method == "GET" then
+                response, err = cameraAnswer(url, headers)
+            else
+                mock.urlRequests[#mock.urlRequests + 1] = { method = method, url = url, headers = headers, body = body }
+                err = "Couldn't connect to server"
+            end
+        end
+        local function deliver()
+            if response then
+                transfer.callback(transfer, { { url = url, code = response.code, headers = response.headers or {}, body = response.body } }, 0, nil)
+            else
+                transfer.callback(transfer, {}, 7, err)
+            end
+        end
+        if mock.httpDeferred then
+            mock.httpQueue[#mock.httpQueue + 1] = { deliver = deliver, url = url, method = method }
+        else
+            deliver()
+        end
+        return transfer
+    end
+
     function C4:url()
         local transfer = { options = {} }
         function transfer:SetOptions(options)
@@ -798,13 +845,10 @@ function Mock.install(project)
             return self
         end
         function transfer:Get(url, headers)
-            local response, err = cameraAnswer(url, headers)
-            if response then
-                self.callback(self, { { url = url, code = response.code, headers = response.headers, body = response.body } }, 0, nil)
-            else
-                self.callback(self, {}, 7, err)
-            end
-            return self
+            return answer(self, "GET", url, headers)
+        end
+        function transfer:Post(url, body, headers)
+            return answer(self, "POST", url, headers, body)
         end
         return transfer
     end
@@ -851,6 +895,18 @@ function Mock.install(project)
         C4SystemEvents[name] = id
     end
     return mock
+end
+
+-- Delivers the answers waiting in mock.httpQueue (mock.httpDeferred), oldest first: `count` of them,
+-- or all, including those asked for while delivering. Returns how many were delivered.
+function Mock.deliverHttp(mock, count)
+    local delivered = 0
+    while #mock.httpQueue > 0 and (count == nil or delivered < count) do
+        local item = table.remove(mock.httpQueue, 1)
+        item.deliver()
+        delivered = delivered + 1
+    end
+    return delivered
 end
 
 -- Runs timers that have not fired yet, including ones they schedule (up to `rounds` passes).

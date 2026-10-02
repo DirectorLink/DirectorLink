@@ -1,6 +1,7 @@
 // Scenes (#/scenes) and the scene editor (#/scene/new, #/scene/<id>; admins). The list runs a
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
-// what (lights, AC, fans, blinds, doors and gates; all of them or chosen ones) and what to do;
+// what (lights, AC, fans, blinds, doors and gates, all of them or chosen ones; the Sonos music)
+// and what to do;
 // "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor. "Copy the
 // house as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
 
@@ -578,7 +579,7 @@ async function deleteDraft(draft) {
 
 function newAdding() {
   // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
-  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50 };
+  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause" };
 }
 
 // Devices of `type` in `room` (null: the whole home).
@@ -687,6 +688,8 @@ function buildSteps(adding, devices) {
     if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
   } else if (adding.type === "fans") set = adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
   else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
+  // Music names no devices: the Sonos rooms in the room, or the whole home.
+  else if (adding.type === "music") return [{ type: "music", room_id: adding.room, device_ids: null, set: { action: adding.music } }];
   else set = { action: "pulse" };
   if (!adding.choose || picked.length === devices.length) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
   const steps = [];
@@ -709,7 +712,7 @@ function nowText(type, device) {
 }
 
 function whichDevices(adding, devices, where) {
-  if (devices.length < 2) return null;
+  if (devices.length < 2 || adding.type === "music") return null;
   const kind = t(`scenes.add.kinds.${adding.type}`);
   if (!adding.choose) {
     return h(
@@ -906,6 +909,14 @@ function doControls(adding, devices) {
             },
           })
         : null,
+    ];
+  }
+  if (adding.type === "music") {
+    return [
+      segments([["pause", t("scenes.do.pauseMusic")], ["stop", t("scenes.do.stopMusic")]], adding.music, "add-music", (value) => {
+        adding.music = value;
+      }),
+      h("p", { class: "field-help" }, t("scenes.add.musicNote")),
     ];
   }
   // Doors and gates: only what their Open button does.

@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -225,9 +226,11 @@ class Client:
             if raw:
                 fail(f"{label}: expected an empty body")
         else:
-            media_type = next(iter(content))
-            if content_type.split(";")[0].strip() != media_type:
-                fail(f"{label}: Content-Type {content_type!r}, spec says {media_type}")
+            # The first declared media type, or another one the operation declares (a picture may
+            # be JPEG or PNG).
+            media_type = content_type.split(";")[0].strip()
+            if media_type not in content:
+                fail(f"{label}: Content-Type {content_type!r}, spec says {' or '.join(content)}")
             if not media_type.endswith("json"):
                 if not raw:
                     fail(f"{label}: expected a {media_type} body")
@@ -248,6 +251,73 @@ class Client:
         self.covered.add((method, template))
         self.checked += 1
         return json.loads(raw) if raw else None
+
+
+KITCHEN, LIVING, BEDROOM, TV = "RINCON_000E58A0000101400", "RINCON_000E58A0000201400", "RINCON_000E58A0000301400", "RINCON_000E58A0000401400"
+
+
+def sonos(client, bridge):
+    """Sonos (1.5.0, ADR-044) with the fake players of tests/sonos/fake-sonos.mjs (Kitchen leads
+    Living Room and plays a track, Bedroom plays the radio, TV Room is paused in Spotify Connect):
+    off as it ships, then on as the installer sets it."""
+    off = client.check("GET", "/v1/music", 200)
+    if off != {"enabled": False, "status": "off", "items": []}:
+        fail(f"GET /v1/music with Sonos Off should say only that: {off}")
+    if client.check("GET", "/v1/system", 200)["features"]["sonos"] is not False:
+        fail("GET /v1/system should say that Sonos is off")
+    if client.check("POST", f"/v1/music/{KITCHEN}/play", 409)["code"] != "SONOS_OFF":
+        fail("a command with Sonos Off should be refused with SONOS_OFF")
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": None, "set": {"action": "pause"}}]})
+
+    bridge.set_property("Sonos", "On")
+    if client.check("GET", "/v1/system", 200)["features"]["sonos"] is not True:
+        fail("GET /v1/system should say that Sonos is on")
+    music = client.check("GET", "/v1/music", 200)
+    rooms = {item["id"]: item for item in music["items"]}
+    if music["status"] != "ok" or sorted(rooms) != sorted([KITCHEN, LIVING, BEDROOM, TV]):
+        fail(f"GET /v1/music should list the four fake Sonos rooms (the search found them): {music}")
+    kitchen = rooms[KITCHEN]
+    if (kitchen["room_id"], kitchen["room_match"], kitchen["state"], kitchen["now_playing"]["title"]) != (10, "name", "playing", "Morning Light"):
+        fail(f"Kitchen should be in the Kitchen and play Morning Light: {kitchen}")
+    if rooms[BEDROOM]["now_playing"]["station"] != "Example FM 99" or rooms[BEDROOM]["room_id"] is not None:
+        fail(f"Bedroom should play Example FM 99 and be in no room: {rooms[BEDROOM]}")
+    client.check("GET", "/v1/music?room_id=10", 200)
+    client.check("GET", "/v1/music?room_id=x", 400)
+    client.check("GET", f"/v1/music/{LIVING}", 200)
+    client.check("GET", "/v1/music/RINCON_0BADF00D", 404)
+    client.check("GET", "/v1/music/192.168.50.11", 400)
+    client.check_sealed(bridge, "GET", "/v1/music", 200)
+    art = client.check("GET", f"/v1/music/{LIVING}/art", 200)
+    if not art.startswith(b"\x89PNG"):
+        fail("the album art should be the fake player's picture")
+    client.check("GET", f"/v1/music/{TV}/art", 404)
+    client.check("POST", f"/v1/music/{LIVING}/pause", 200)
+    client.check("POST", f"/v1/music/{KITCHEN}/play", 200)
+    client.check("POST", f"/v1/music/{KITCHEN}/next", 200)
+    client.check("POST", f"/v1/music/{KITCHEN}/previous", 200)
+    if client.check("POST", f"/v1/music/{BEDROOM}/next", 409)["code"] != "ACTION_NOT_POSSIBLE":
+        fail("the radio cannot skip: ACTION_NOT_POSSIBLE")
+    if client.check("POST", f"/v1/music/{BEDROOM}/pause", 200)["state"] != "stopped":
+        fail("a radio station that cannot pause stops")
+    if client.check("PATCH", f"/v1/music/{LIVING}", 200, body={"volume": 25, "muted": False})["volume"] != 25:
+        fail("PATCH should set Living Room's volume")
+    client.check("PATCH", f"/v1/music/{LIVING}", 400, body={"volume": 101})
+    favorites = client.check("GET", f"/v1/music/{KITCHEN}/favorites", 200)["items"]
+    if [(item["id"], item["playable"]) for item in favorites] != [("10", True), ("11", True), ("12", True), ("1", False)]:
+        fail(f"the fake favorites: three playable and a shortcut: {favorites}")
+    client.check("POST", f"/v1/music/{KITCHEN}/favorites/11/play", 200)
+    if client.check("POST", f"/v1/music/{KITCHEN}/favorites/1/play", 409)["code"] != "FAVORITE_NOT_PLAYABLE":
+        fail("a shortcut cannot be started: FAVORITE_NOT_PLAYABLE")
+    client.check("POST", f"/v1/music/{KITCHEN}/favorites/99/play", 404)
+    placed = client.check("PUT", f"/v1/music/{BEDROOM}/room", 200, body={"room_id": 11})
+    if (placed["room_id"], placed["room_match"]) != (11, "admin"):
+        fail(f"an admin puts Bedroom in the Living Room: {placed}")
+    client.check("PUT", f"/v1/music/{BEDROOM}/room", 400, body={"room_id": 999})
+    client.check("PUT", f"/v1/music/{BEDROOM}/room", 200, body={"room_id": None})
+    ran = client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": 10, "set": {"action": "stop"}}]})
+    if ran["ran"] != 1:
+        fail(f"a music step in the Kitchen should stop one group: {ran}")
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "device_ids": [20], "set": {"action": "pause"}}]})
 
 
 def scenario(client, bridge):
@@ -400,6 +470,8 @@ def scenario(client, bridge):
     if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not True:
         fail("GET /v1/system should say that the alarm status is on")
 
+    sonos(client, bridge)
+
     # Remote access is off on the dev bridge: status, and the refusals that follow from it.
     client.check("GET", "/v1/remote", 200)
     client.check("POST", "/v1/remote/claim", 409)
@@ -538,6 +610,13 @@ def scenario(client, bridge):
     client.check("POST", "/v1/relays/70/pulse", 403)
     if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
         fail("a viewer key must not read the alarm")
+    # Viewers read what plays; members control it, admins place it.
+    client.check("GET", "/v1/music", 200)
+    client.check("GET", f"/v1/music/{KITCHEN}/favorites", 200)
+    client.check("POST", f"/v1/music/{KITCHEN}/pause", 403)
+    client.check("PATCH", f"/v1/music/{KITCHEN}", 403, body={"volume": 5})
+    client.check("POST", f"/v1/music/{KITCHEN}/favorites/10/play", 403)
+    client.check("PUT", f"/v1/music/{KITCHEN}/room", 403, body={"room_id": 10})
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
@@ -683,8 +762,17 @@ def main():
     lua = shutil.which("lua5.1") or shutil.which("lua")
     if not lua:
         fail("Lua 5.1 is required")
+    node = shutil.which("node")
+    if not node:
+        fail("Node.js is required (the fake Sonos players, tests/sonos/fake-sonos.mjs)")
+    # Fake Sonos players on a free port; the driver reaches them through the dev bridge.
+    players = subprocess.Popen([node, "tests/sonos/fake-sonos.mjs", "--port", "0"], cwd=ROOT, stdout=subprocess.PIPE, text=True)
+    started = players.stdout.readline().strip()
+    if not started.startswith("FAKE SONOS "):
+        players.terminate()
+        fail(f"the fake Sonos players did not start: {started!r}")
     spec_json = ROOT / "dist" / "openapi.json"
-    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None)
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]))
     server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
@@ -694,6 +782,7 @@ def main():
     finally:
         server.shutdown()
         bridge.process.terminate()
+        players.terminate()
 
     missing = sorted({(op[0], op[1]) for op in OPERATIONS} - client.covered)
     if missing:

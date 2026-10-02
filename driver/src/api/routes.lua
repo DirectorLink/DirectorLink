@@ -92,6 +92,20 @@ return {
     -- alarm; scripts/check_package.py fails the build if one does.
     { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
 
+    -- Sonos (ADR-044): read by everyone, played by members, placed in a room by admins; nothing while
+    -- the Composer property Sonos is Off. A request names a Sonos room, never an address.
+    { method = "GET", path = "/v1/music", handler = "music.list", role = "viewer" },
+    { method = "GET", path = "/v1/music/{musicId}", handler = "music.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/music/{musicId}", handler = "music.update", role = "member" },
+    { method = "POST", path = "/v1/music/{musicId}/play", handler = "music.play", role = "member" },
+    { method = "POST", path = "/v1/music/{musicId}/pause", handler = "music.pause", role = "member" },
+    { method = "POST", path = "/v1/music/{musicId}/next", handler = "music.next", role = "member" },
+    { method = "POST", path = "/v1/music/{musicId}/previous", handler = "music.previous", role = "member" },
+    { method = "GET", path = "/v1/music/{musicId}/favorites", handler = "music.favorites", role = "viewer" },
+    { method = "POST", path = "/v1/music/{musicId}/favorites/{favoriteId}/play", handler = "music.play_favorite", role = "member" },
+    { method = "GET", path = "/v1/music/{musicId}/art", handler = "music.art", role = "viewer" },
+    { method = "PUT", path = "/v1/music/{musicId}/room", handler = "music.room", role = "admin" },
+
     -- Everything DirectorLink keeps, for admins, only in sealed requests (ADR-042).
     { method = "GET", path = "/v1/backup", handler = "backup.export", role = "admin" },
     { method = "POST", path = "/v1/restore/parts", handler = "backup.part", role = "admin" },

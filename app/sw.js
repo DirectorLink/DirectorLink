@@ -18,6 +18,8 @@ const ASSETS = [
   "/api-client.js",
   "/js/account.js",
   "/js/alarm.js",
+  "/js/music.js",
+  "/js/views/music.js",
   "/js/backup.js",
   "/js/lock.js",
   "/js/cpace.js",

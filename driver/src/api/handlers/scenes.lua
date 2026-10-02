@@ -3,7 +3,8 @@
 -- (POST /v1/scenes/try). A run sends the same commands as the device routes do; doors and gates
 -- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
 -- POST /v1/off (1.3.0, Home's "Turn off all") runs one step of that kind: lights off, AC off or
--- blinds closed, on the devices it names.
+-- blinds closed, on the devices it names. A music step (1.5.0, ADR-044) pauses or stops the Sonos
+-- music in a room or the whole home; it names no devices.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -12,6 +13,7 @@ local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
+local Sonos = require("src.sonos.sonos")
 
 local Handlers = {}
 
@@ -84,6 +86,7 @@ local function validateSet(stepType, set, field)
         fans = { on = true, speed = true },
         blinds = { position = true },
         relays = { action = true },
+        music = { action = true },
     })[stepType]
     for key in pairs(set) do
         if not allowed[key] then
@@ -161,6 +164,12 @@ local function validateSet(stepType, set, field)
         end
         return { position = set.position }
     end
+    if stepType == "music" then
+        if not Scenes.MUSIC_ACTIONS[set.action] then
+            return nil, Problem.invalidField(field .. ".action", 'music takes {"action": "pause"} or {"action": "stop"}')
+        end
+        return { action = set.action }
+    end
     -- A door or gate relay is only pulsed, like its Open button: holding it closed would keep the
     -- door unlocked or the gate's input pressed.
     if set.action ~= "pulse" then
@@ -200,8 +209,8 @@ local function validateStep(registry, item, field)
         end
     end
     local stepType = item.type
-    if type(stepType) ~= "string" or not KINDS[stepType] then
-        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, fans, blinds, relays")
+    if type(stepType) ~= "string" or not (KINDS[stepType] or stepType == "music") then
+        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, fans, blinds, relays, music")
     end
     local roomId = nil
     if item.room_id ~= nil and item.room_id ~= Json.null then
@@ -211,6 +220,9 @@ local function validateStep(registry, item, field)
         roomId = item.room_id
     end
     local deviceIds = nil
+    if stepType == "music" and item.device_ids ~= nil and item.device_ids ~= Json.null then
+        return nil, Problem.invalidField(field .. ".device_ids", "A music step names a room (room_id), or none for the whole home")
+    end
     if item.device_ids ~= nil and item.device_ids ~= Json.null then
         local problem
         deviceIds, problem = validateDeviceIds(registry, item.device_ids, stepType, field .. ".device_ids", Scenes.MAX_DEVICES)
@@ -454,14 +466,25 @@ local function run(ctx, steps)
     end
     for index, step in ipairs(steps) do
         local refusal, why
-        if step.type == "relays" then
+        if step.type == "music" then
+            -- The Sonos groups with a room in the step's room (or every group): each one sent to
+            -- counts as ran; what the players answer is not waited for (src/sonos/sonos.lua).
+            local sent, missing = Sonos.sceneStep(step.room_id, step.set.action)
+            if sent then
+                result.ran = result.ran + #sent
+            elseif missing == "SONOS_OFF" then
+                note("skipped", index, 0, missing, "Sonos is off; turn on the Sonos property of DirectorLink in Composer")
+            else
+                note("skipped", index, 0, missing, "No Sonos players have been found yet")
+            end
+        elseif step.type == "relays" then
             if not Roles.allows(ctx.apiKey.role, "doors") then
                 refusal, why = "FORBIDDEN", "Doors and gates run only for keys with door access"
             elseif not services.doorControlEnabled() then
                 refusal, why = "DOOR_CONTROL_DISABLED", "Door control is off; turn on the Door Control property of DirectorLink in Composer"
             end
         end
-        for _, device in ipairs(stepDevices(services.registry, step)) do
+        for _, device in ipairs(step.type == "music" and {} or stepDevices(services.registry, step)) do
             if device.missing then
                 note("skipped", index, device.id, "NOT_FOUND", "This device is no longer in the project")
             elseif refusal then
