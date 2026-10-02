@@ -2,12 +2,19 @@
 -- metadata and the zone group state. Names are kept without their namespace prefix ("dc:title" is
 -- "title"); text is unescaped. Not a validating parser: it reads well-formed answers and gives up
 -- (nil) on anything too large or too deep.
+--
+-- Any device on the home network can answer the search, so the text is not trusted: every pattern
+-- here takes time in proportion to the text. A pattern that tries again from each character of a
+-- run (an unanchored "%s+$", or ".-" looking for a ">" that never comes) would let one crafted
+-- answer keep Director's single Lua thread busy for minutes.
 
 local Xml = {}
 
 Xml.MAX_BYTES = 512 * 1024
 Xml.MAX_NODES = 5000
 Xml.MAX_DEPTH = 64
+-- One tag, its attributes included: a player's longest (a ZoneGroupMember) is about 1 KB.
+Xml.MAX_TAG = 16 * 1024
 
 local ENTITIES = { lt = "<", gt = ">", amp = "&", quot = '"', apos = "'" }
 
@@ -45,7 +52,8 @@ end
 
 local function attributes(text)
     local result = {}
-    for name, _, value in text:gmatch("([%w_%.:%-]+)%s*=%s*([\"'])(.-)%2") do
+    -- %f: a name is tried only where one starts, not again from each of its characters.
+    for name, _, value in text:gmatch("%f[%w_%.:%-]([%w_%.:%-]+)%s*=%s*([\"'])(.-)%2") do
         result[localName(name)] = Xml.unescape(value)
     end
     return result
@@ -106,22 +114,29 @@ function Xml.parse(text)
             end
             position = finish
         else
-            local name, attrText, empty, finish = text:match("^<([%w_%.:%-]+)(.-)(/?)>()", start)
-            if not name then
+            local name, after = text:match("^<([%w_%.:%-]+)()", start)
+            -- The tag ends at the first ">", found as plain text.
+            local finish = name and text:find(">", after, true)
+            if not finish then
                 return nil, "bad tag"
             end
             nodes = nodes + 1
-            if nodes > Xml.MAX_NODES or #stack > Xml.MAX_DEPTH then
+            if nodes > Xml.MAX_NODES or #stack > Xml.MAX_DEPTH or finish - start > Xml.MAX_TAG then
                 return nil, "too large"
+            end
+            local attrText = text:sub(after, finish - 1)
+            local empty = attrText:sub(-1) == "/"
+            if empty then
+                attrText = attrText:sub(1, -2)
             end
             local node = { name = localName(name), attrs = attributes(attrText), children = {}, parts = {} }
             current.children[#current.children + 1] = node
-            if empty == "/" then
+            if empty then
                 close(node)
             else
                 stack[#stack + 1] = node
             end
-            position = finish
+            position = finish + 1
         end
     end
     for index = #stack, 1, -1 do

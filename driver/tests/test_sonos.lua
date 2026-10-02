@@ -241,6 +241,174 @@ function tests.a_soap_request_is_escaped_and_a_fault_is_its_upnp_error()
     T.same(Protocol.answer("GetVolume", SonosFake.read("real/volume.xml")), { CurrentVolume = "58" })
 end
 
+-- ---- answers made to hold the controller --------------------------------------------------
+
+-- Any device on the home network can answer the search, and is then asked for the household's
+-- rooms: what it answers must not keep Director's single Lua thread busy. `run` is timed (Lua
+-- time); the inputs are as large as the caps let through. Before the fix, patterns that tried
+-- again from each character of a run took time as the square of it: 40 KB of attribute text
+-- 16 s, a 60 KB search answer 12 s, and a 512 KB answer about two hours.
+local function quick(label, run)
+    local started = os.clock()
+    local results = { run() }
+    local took = os.clock() - started
+    T.truthy(took < 1, string.format("%s took %.2f s of Lua time", label, took))
+    return unpack(results)
+end
+
+local function soap(action, inner)
+    return '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><u:' .. action
+        .. 'Response xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">' .. inner .. "</u:" .. action .. "Response></s:Body></s:Envelope>"
+end
+
+local function escaped(text)
+    return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+end
+
+function tests.crafted_answers_are_read_in_time_in_proportion_to_their_size()
+    local Protocol = require("src.sonos.protocol")
+    local Xml = require("src.sonos.xml")
+    -- An answer may be MAX_BYTES, one tag MAX_TAG.
+    local room, tag = Xml.MAX_BYTES - 8192, Xml.MAX_TAG - 64
+    local count = math.floor(room / (tag + 64))
+    local function answer(label, inner)
+        local body = soap("GetTransportInfo", inner .. "<CurrentTransportState>PLAYING</CurrentTransportState>")
+        T.truthy(#body <= Xml.MAX_BYTES, label .. ": " .. #body .. " bytes")
+        local values, why = quick(label, function()
+            return Protocol.answer("GetTransportInfo", body)
+        end)
+        T.eq(values and values.CurrentTransportState, "PLAYING", label .. ": " .. tostring(why))
+    end
+    -- Attribute text: a long run of name characters with no "=", "a=a=a=...", a quote never
+    -- closed, quotes of both kinds, spaces before the "=".
+    for label, attributes in pairs({
+        run = string.rep("b", tag),
+        equals = string.rep("a=", tag / 2),
+        unclosed = "a='" .. string.rep('"', tag - 3),
+        mixed = string.rep([[a="b='c=]], tag / 8),
+        spaces = "a" .. string.rep(" ", tag - 2) .. "=",
+    }) do
+        answer("attributes: " .. label, string.rep("<x " .. attributes .. ">1</x>", count))
+    end
+    -- Text: entities never ended, spaces.
+    answer("entities", "<x>" .. string.rep("&a", room / 2) .. "</x>")
+    answer("numeric entities", "<x>&#" .. string.rep("9", room) .. "</x>")
+    answer("spaces", "<x>a" .. string.rep(" ", room) .. "b</x>")
+    -- A tag never ended, or longer than a tag may be: refused at once.
+    local _, why = quick("a tag never ended", function()
+        return Protocol.answer("GetTransportInfo", "<" .. string.rep("a", room))
+    end)
+    T.eq(why, "bad tag")
+    _, why = quick("a closing tag never ended", function()
+        return Protocol.answer("GetTransportInfo", "<a></" .. string.rep("a", room))
+    end)
+    T.eq(why, "bad closing tag")
+    _, why = quick("a tag too long", function()
+        return Protocol.answer("GetTransportInfo", soap("GetTransportInfo", "<x " .. string.rep("b", room) .. ">"))
+    end)
+    T.eq(why, "too large")
+    -- What plays: a run of spaces in each field of the metadata, as the player sends it (DIDL-Lite
+    -- escaped in the answer), on a station and on a track.
+    local run = "a" .. string.rep(" ", room - 4096) .. "b"
+    local function didl(field, value)
+        return '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/"><item id="-1" parentID="-1"><res>x-sonosapi-stream:s1?sid=254</res><'
+            .. field .. ">" .. value .. "</" .. field .. "><upnp:class>object.item</upnp:class></item></DIDL-Lite>"
+    end
+    for _, uri in ipairs({ "x-sonosapi-stream:s1?sid=254", "x-sonos-spotify:spotify%3atrack%3a1?sid=12" }) do
+        for _, field in ipairs({ "dc:title", "dc:creator", "upnp:album", "r:streamContent", "upnp:albumArtURI" }) do
+            local position = soap("GetPositionInfo", "<TrackMetaData>" .. escaped(didl(field, run)) .. "</TrackMetaData><TrackURI>" .. uri .. "</TrackURI>")
+            local media = soap("GetMediaInfo", "<CurrentURI>" .. uri .. "</CurrentURI><CurrentURIMetaData>" .. escaped(didl("dc:title", run)) .. "</CurrentURIMetaData>")
+            local now = quick(field .. " " .. uri, function()
+                return Protocol.nowPlaying(Protocol.answer("GetPositionInfo", position), Protocol.answer("GetMediaInfo", media), "192.168.50.11")
+            end)
+            for name, value in pairs(now) do
+                T.truthy(#value <= Protocol.MAX_TEXT, name .. " is " .. #value .. " bytes")
+            end
+        end
+    end
+    -- "Artist - Title" of a station, with long runs of spaces and dashes.
+    for label, stream in pairs({ spaces = run, dashes = "a" .. string.rep(" -", room / 2) .. "b" }) do
+        local position = soap("GetPositionInfo", "<TrackMetaData>" .. escaped(didl("r:streamContent", stream)) .. "</TrackMetaData><TrackURI>x-sonosapi-stream:s1</TrackURI>")
+        quick("stream " .. label, function()
+            return Protocol.nowPlaying(Protocol.answer("GetPositionInfo", position), {}, "192.168.50.11")
+        end)
+    end
+    -- Favorites and the household's rooms.
+    local items = {}
+    for index = 1, 20 do
+        items[index] = '<item id="FV:2/' .. index .. '"><dc:title>' .. string.rep(" ", room / 25) .. "x</dc:title></item>"
+    end
+    local favorites = soap("Browse", "<Result>" .. escaped("<DIDL-Lite>" .. table.concat(items) .. "</DIDL-Lite>") .. "</Result>")
+    local list = quick("favorites", function()
+        return Protocol.favorites(Protocol.answer("Browse", favorites).Result)
+    end)
+    T.eq(#list, 20)
+    local members = {}
+    for index = 1, 12 do
+        members[index] = '<ZoneGroup Coordinator="RINCON_' .. index .. '" ' .. string.rep("b", tag / 2) .. '><ZoneGroupMember UUID="RINCON_' .. index
+            .. '" Location="http://192.168.50.' .. index .. ':1400/x" ZoneName="a' .. string.rep(" ", tag / 3) .. 'b"/></ZoneGroup>'
+    end
+    local zones = soap("GetZoneGroupState", "<ZoneGroupState>" .. escaped("<ZoneGroupState><ZoneGroups>" .. table.concat(members) .. "</ZoneGroups></ZoneGroupState>") .. "</ZoneGroupState>")
+    local topology = quick("rooms", function()
+        return Protocol.topology(Protocol.answer("GetZoneGroupState", zones).ZoneGroupState)
+    end)
+    T.eq(#topology.groups, 12)
+    T.eq(#topology.players.RINCON_1.name, Protocol.MAX_NAME)
+    -- Search answers: a run of spaces in a header, in one datagram and in many run together.
+    local reply = SonosFake.read("real/ssdp_response.txt"):gsub("\r?\n", "\r\n")
+    local spaced = "HTTP/1.1 200 OK\r\nX-PAD: a" .. string.rep(" ", 65000) .. "b\r\n" .. reply:gsub("^HTTP/1%.1 200 OK\r\n", "")
+    T.eq(#quick("a datagram", function()
+        return Protocol.searchReplies(spaced)
+    end), 1)
+    quick("datagrams run together", function()
+        return Protocol.searchReplies(string.rep(spaced, 7))
+    end)
+    -- A fault's error code that is no number is not repeated (in the log, in the API's answer).
+    local fault = SonosFake.read("made/fault_701.xml"):gsub("701", string.rep("x ", room / 4))
+    T.eq(select(2, quick("a fault", function()
+        return Protocol.answer("Pause", fault)
+    end)), "fault")
+    T.eq(select(2, Protocol.answer("Pause", SonosFake.read("made/fault_701.xml"))), "701")
+    -- Ordinary attributes are still read.
+    T.same(Xml.parse([[<a x = "1" y='2' p:z="3"/>]]).children[1].attrs, { x = "1", y = "2", z = "3" })
+end
+
+-- The same through the driver: a device answers the search with a datagram made to be slow to
+-- read, then answers GetZoneGroupState with the largest answer taken, made the same way.
+function tests.a_device_on_the_network_cannot_hold_the_lua_thread()
+    local Xml = require("src.sonos.xml")
+    local evil = "192.168.50.66"
+    local tag = Xml.MAX_TAG - 256
+    local members = {}
+    for index = 1, 14 do
+        members[index] = '<ZoneGroup Coordinator="RINCON_' .. index .. '" ' .. string.rep("b", tag) .. '><ZoneGroupMember UUID="RINCON_' .. index
+            .. '" Location="http://' .. evil .. ':1400/x" ' .. string.rep("c", tag) .. "/></ZoneGroup>"
+    end
+    local zones = soap("GetZoneGroupState", "<ZoneGroupState>" .. escaped("<ZoneGroupState><ZoneGroups>" .. table.concat(members) .. "</ZoneGroups></ZoneGroupState>") .. "</ZoneGroupState>")
+    T.truthy(#zones <= Xml.MAX_BYTES and #zones > Xml.MAX_BYTES * 0.8, #zones)
+    local asked = 0
+    local mock = start({ prepare = function(m)
+        local players = m.http
+        m.http = function(request)
+            if tostring(request.url):find("http://" .. evil .. ":1400/", 1, true) then
+                asked = asked + 1
+                return { code = 200, headers = { ["Content-Type"] = "text/xml" }, body = zones }
+            end
+            return players(request)
+        end
+    end })
+    OnConnectionStatusChanged(6100, 1900, "ONLINE")
+    local reply = SonosFake.read("real/ssdp_response.txt"):gsub("\r?\n", "\r\n"):gsub("192%.168%.50%.11", evil)
+    local datagram = "HTTP/1.1 200 OK\r\nX-PAD: a" .. string.rep(" ", 65000) .. "b\r\n" .. reply:gsub("^HTTP/1%.1 200 OK\r\n", "")
+    quick("the search answer", function()
+        ReceivedFromNetwork(6100, 1900, datagram)
+    end)
+    quick("the search's end, and the answer to GetZoneGroupState", function()
+        fire(mock, 4000)
+    end)
+    T.eq(asked, 1)
+end
+
 -- ---- off ----------------------------------------------------------------------------------
 
 function tests.off_by_default_it_looks_for_nothing_and_sends_nothing()

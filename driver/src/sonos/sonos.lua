@@ -86,7 +86,7 @@ end
 
 local function publish(text)
     if #text > Sonos.MAX_STATUS_LENGTH then
-        text = text:sub(1, Sonos.MAX_STATUS_LENGTH - 3):gsub("[\128-\191]*$", ""):gsub("[\192-\255]$", "") .. "..."
+        text = Protocol.cut(text, Sonos.MAX_STATUS_LENGTH - 3) .. "..."
     end
     if text ~= state.shown then
         state.shown = text
