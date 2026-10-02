@@ -31,7 +31,6 @@ import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { resetCalendarSettings, settingsView } from "./js/views/settings.js";
-import { resetDriverSettings } from "./js/driver-settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 
 const view = document.querySelector("#view");
@@ -97,10 +96,7 @@ window.addEventListener("hashchange", () => {
   if (route.name === "access" && previous.name !== "access") resetAccess();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
-  if (route.name === "settings" && previous.name !== "settings") {
-    resetCalendarSettings();
-    resetDriverSettings();
-  }
+  if (route.name === "settings" && previous.name !== "settings") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
   // The Hebrew date on Home (Schedules reads the calendar too).
@@ -258,8 +254,6 @@ function signature() {
     route.name === "settings" ? ui.calendarSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
-    // Settings → Controller → DirectorLink settings (views/driver-settings.js).
-    route.name === "settings" ? ui.driverSettings : 0,
     route.name === "settings" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);

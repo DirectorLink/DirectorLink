@@ -2,10 +2,9 @@
 // DirectorLink keeps as a file locked with a password, and restore from one. The file is opened
 // here, the controller checks it without changing anything, and only once the admin has seen what
 // it holds and confirmed is everything replaced. A DirectorLink before 1.4.0 has no backups: the
-// panel shows only once the controller is known to have them (js/driver-settings.js reads it).
+// panel shows only when GET /v1/system says the controller has them (features.backup).
 
 import { BackupFileError, FILE_EXTENSION, MAX_FILE_BYTES, MIN_PASSWORD, checkBackup, decryptBackup, makeBackup, passwordStrength, readHeader, restoreBackup } from "../backup.js";
-import { driverSettings, keepDriverSettings } from "../driver-settings.js";
 import { h, name } from "../dom.js";
 import { formatDateTime, t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -516,14 +515,14 @@ function donePanel(current) {
   );
 }
 
+// Whether this controller's DirectorLink has backups: GET /v1/system says so from 1.4.0; an older
+// one does not (and would answer 404).
+const hasBackups = () => state.system?.features?.backup === true;
+
 // The panel in the Controller card: for admins, once connected, with a DirectorLink that has
-// backups (1.4.0: the one that has DirectorLink settings; an older one answers 404 there).
+// backups.
 export function backupPanel() {
-  if (!state.loaded || !can("admin")) return null;
-  const settings = driverSettings();
-  keepDriverSettings();
-  if (settings.unsupported) return null;
-  if (!settings.document && !settings.error && !settings.loadedAt) return null;
+  if (!state.loaded || !can("admin") || !hasBackups()) return null;
   const current = panel();
   const content = {
     download: downloadForm,

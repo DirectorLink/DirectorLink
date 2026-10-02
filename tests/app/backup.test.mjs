@@ -131,9 +131,13 @@ const PREVIEW = {
     { name: "Relay Hold", backup: "Not allowed", current: "Not allowed" },
   ],
 };
-// `old`: a DirectorLink before 1.4.0, which has no settings and no backups (404).
+// `old`: a DirectorLink before 1.4.0, which has no backups (404), and GET /v1/system does not say it.
 const controller = { calls: [], document: null, restore: null, parts: [], old: false };
-const SETTINGS = { settings: [{ key: "schedules", property: "Schedules", value: "on", composer_value: "On", choices: ["on", "paused"], changeable: true, set_in: "app_and_composer" }], status: {}, actions: [] };
+// GET /v1/system as a driver of 1.4.0 (`features.backup`) or 1.3.0 answers it.
+const system = (old) => ({
+  driver: { version: old ? "1.3.0" : "1.4.0" },
+  features: old ? { jewish_calendar: false, alarm_status: false } : { jewish_calendar: false, alarm_status: false, backup: true },
+});
 
 function answer(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -151,10 +155,10 @@ globalThis.fetch = async (url, init = {}) => {
 function handle(method, path, body) {
   if (path === "/v1/sealed") return answer(404, { status: 404, code: "NOT_FOUND" });
   if (path === "/v1/api-keys/current") return answer(200, { id: "0a1b2c3d", role: "admin" });
-  if (controller.old && (path === "/v1/settings" || path === "/v1/backup" || path.startsWith("/v1/restore"))) {
+  if (controller.old && (path === "/v1/backup" || path.startsWith("/v1/restore"))) {
     return answer(404, { status: 404, code: "NOT_FOUND", detail: `No API route for ${path}` });
   }
-  if (method === "GET" && path === "/v1/settings") return answer(200, SETTINGS);
+  if (method === "GET" && path === "/v1/system") return answer(200, system(controller.old));
   if (method === "GET" && path === "/v1/backup") return answer(200, controller.document);
   if (method === "POST" && path === "/v1/restore/parts") {
     if (body.index === 0) controller.parts = [];
@@ -243,8 +247,8 @@ const DOCUMENT = {
   },
 };
 
-// Connected to the fake controller as an admin, on Settings (which reads DirectorLink's settings:
-// the Backup panel shows once the controller is known to have it).
+// Connected to the fake controller as an admin, on Settings, with what GET /v1/system said when
+// connecting (`old`: a DirectorLink before 1.4.0).
 async function connect(role = "admin", { old = false } = {}) {
   session.forgetKey();
   await advance(20000, 500);
@@ -252,10 +256,9 @@ async function connect(role = "admin", { old = false } = {}) {
   saved.length = 0;
   confirmed.length = 0;
   confirmAnswer = true;
-  Object.assign(state, { host: HOST, apiKey: KEY, role, status: "connected", loaded: true, notice: null, errors: {}, pending: {}, rooms: [], lights: [], thermostats: [], blinds: [], fans: [], cameras: [], relays: [], doorbells: [], devices: [], scenes: [] });
+  Object.assign(state, { host: HOST, apiKey: KEY, role, status: "connected", loaded: true, system: system(old), notice: null, errors: {}, pending: {}, rooms: [], lights: [], thermostats: [], blinds: [], fans: [], cameras: [], relays: [], doorbells: [], devices: [], scenes: [] });
   ui.backup = { stage: null };
   notify();
-  backupPanel();
   await advance(100);
 }
 
@@ -431,11 +434,11 @@ test("a restore opens the file here, has the controller check it, and replaces n
   for (const words of ["Backup of Home", "DirectorLink 1.4.0", "Scenes12", "Schedules5", "Devices with access3", "This device keeps its access (it was paired after the backup was made).",
     "Keys that come back", "Owner phone — Admin", "Dana phone — Member",
     "Remote access: the home goes back to the backup’s link", "Kitchen Island (Kitchen)", "Thermostat Parents → Parents AC", "Hall Light (Living Room) — scene “Good night”, Dana’s favorites",
-    "1 scene step has nothing left to act on", "DirectorLink settings, not restored", "Door Control", "backup: Enabled · now: Disabled",
-    "set the schedules, the Jewish calendar and the log level again under DirectorLink settings"]) {
+    "1 scene step has nothing left to act on", "Set in Composer, not restored", "Door Control", "backup: Enabled · now: Disabled",
+    "A restore never changes DirectorLink’s properties in Composer", "the installer sets them again if needed"]) {
     assert.ok(preview.includes(words), `the preview says: ${words}\n${preview}`);
   }
-  assert.ok(!preview.includes("the installer sets them again"), "three of them are set in the app now");
+  assert.ok(!preview.includes("DirectorLink settings"), "every property is set in Composer, none in the app");
   assert.ok(!byKey(backupPanel(), "backup-another-home"), "this home's own backup");
 
   confirmAnswer = false;
@@ -514,7 +517,7 @@ test("in Hebrew", async () => {
     await typeInto("backup-open-password", "correct horse battery staple");
     await submit("backup-open-submit");
     const preview = panelText();
-    for (const words of ["מה יש בגיבוי", "סצנות12", "המכשיר הזה שומר על הגישה שלו", "מפתחות שחוזרים", "Owner phone — מנהל", "הסצנה „Good night”", "הגדרות DirectorLink, לא משוחזרות", "החלפת הכול"]) {
+    for (const words of ["מה יש בגיבוי", "סצנות12", "המכשיר הזה שומר על הגישה שלו", "מפתחות שחוזרים", "Owner phone — מנהל", "הסצנה „Good night”", "מוגדר ב-Composer, לא משוחזר", "החלפת הכול"]) {
       assert.ok(preview.includes(words), `the preview says: ${words}\n${preview}`);
     }
   } finally {
@@ -532,9 +535,6 @@ test("forgetting this device's key forgets an opened backup too", async () => {
   session.forgetKey();
   assert.deepEqual(ui.backup, { stage: null });
   Object.assign(state, { apiKey: KEY, loaded: true, role: "admin" });
-  // Another home may be paired next: what it has is read again first.
-  assert.equal(backupPanel(), null);
-  await advance(100);
   assert.ok(byKey(backupPanel(), "backup-restore"), "back to the start: nothing of it is left to restore");
 });
 
@@ -635,11 +635,28 @@ test("another home's backup is named first, and its remote access moves only whe
   assert.ok(text(byKey(backupPanel(), "backup-result-old-controller")).includes("turn Remote Access off on the controller this backup was made on"));
 });
 
-test("a DirectorLink before 1.4.0 shows no Backup, and a route it lacks says to update", async () => {
+// GET /v1/system decides (features.backup, 1.4.0): nothing else is asked for it.
+test("Backup shows only when the controller's DirectorLink says it has backups", async () => {
   await connect("admin", { old: true });
-  assert.equal(backupPanel(), null, "hidden, as DirectorLink settings are");
-  assert.equal(requests("GET", "/v1/backup").length, 0);
-  // Known to have settings, but no backup route (a 404 from the controller): explained, not raw.
+  assert.equal(backupPanel(), null, "a DirectorLink before 1.4.0: hidden");
+  state.system = { ...system(false), features: { ...system(false).features, backup: false } };
+  assert.equal(backupPanel(), null, "false: hidden");
+  state.system = { driver: { version: "1.1.0" } };
+  assert.equal(backupPanel(), null, "no features at all (before 1.2.0): hidden");
+  state.system = null;
+  assert.equal(backupPanel(), null, "not read yet: hidden");
+  assert.equal(controller.calls.length, 0, "nothing asked to find out");
+  // DirectorLink updated in Composer while the app is open: the next GET /v1/system shows it.
+  state.system = system(false);
+  assert.ok(byKey(backupPanel(), "backup-download") && byKey(backupPanel(), "backup-restore"));
+  for (const role of ["member", "viewer", "doors"]) {
+    state.role = role;
+    assert.equal(backupPanel(), null, `${role}: admins only`);
+  }
+});
+
+test("a route the controller lacks says to update DirectorLink", async () => {
+  // Said to have backups, but no backup route (a 404 from the controller): explained, not raw.
   await connect();
   controller.old = true;
   await click("backup-download");

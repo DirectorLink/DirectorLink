@@ -206,8 +206,7 @@ export function schedulesView() {
     staleBanner(),
     scenesNav("schedules"),
     notice(ui.schedulesMessage),
-    // Only admins can turn them back on in the app (DirectorLink settings): the others are told who can.
-    state.schedulesPaused ? h("p", { class: "notice notice-info", role: "status" }, t(admin ? "schedules.paused" : "schedules.pausedMember")) : null,
+    state.schedulesPaused ? h("p", { class: "notice notice-info", role: "status" }, t("schedules.paused")) : null,
     h("p", { class: "muted-note scene-intro" }, admin ? t("schedules.helpAdmin") : t("schedules.help")),
     weatherCard(),
     calendarCard(admin),
