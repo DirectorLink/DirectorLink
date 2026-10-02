@@ -2,7 +2,75 @@
 
 ## Current release
 
-`v1.4.0` — backup and restore (0ze, ADR-042). Update DirectorLink in Composer (no reboot). The cloud is unchanged.
+`v1.5.0` — Sonos (0zi), the remote connection kept up (0zj), DirectorLink's port taken by another driver (0zk), Settings' pages (0zh), and Check now with the app's version (0zg). Deploy the cloud before updating the driver.
+
+## 0zk. DirectorLink's port taken by another driver (1.5.0)
+
+1. After the update, Composer's **API Status** reads *Online - port 41999* within 15 seconds.
+2. If it reads *Port 41999 taken by another driver - retrying every minute*:
+   - `GET /v1/logs?category=api` (through the account) has one error, *the API port is taken by another driver*;
+   - the app still works through the account;
+   - restart the controller. **API Status** then reads *Online - port 41999*, and the log's *API server ONLINE* line has no `taken_before`, or the number of tries if the port came back by itself.
+3. In a controller snapshot, `system_info/dman-diag.txt` → *Server Connections* lists port 41999 under DirectorLink's item id.
+
+## 0zj. The remote connection stays up (1.5.0)
+
+1. Deploy the cloud. Update DirectorLink in Composer, no reboot. Remote Status shows *Connected since HH:MM - home xxxxxxxx*.
+2. After a day, read `GET /v1/logs?category=relay`:
+   - far fewer *relay connection closed* lines than before (before: about one every 10–40 minutes);
+   - for each one, note `reason`, `up_s`, `heard_s`, `ping_s` and `retry_s` (expect 1);
+   - the next *connected to the relay* shows `attempts: 1` and `down_s` around 1–3;
+   - if `polled_s` appears, Director still polls: report it;
+   - `connection lost` with `heard_s` under 25 means the connection was cut between the controller and the relay;
+   - a *no answer* warning means the relay stopped answering pings.
+3. After any drop, Remote Status shows *- last drop HH:MM (reason)*.
+4. Away from home on mobile data, keep the app open for an hour: it never shows the home offline.
+5. In Workers Observability:
+   - count `driver_disconnected` per day for the home, with `why`, `up_s` and `ping_s`;
+   - `driver_connected` `down_ms` is about 1000–3000;
+   - after a deploy, the first request for each home succeeds rather than answering 503.
+
+## 0zi. Sonos (1.5.0)
+
+1. **Off by default.** After the update, **Sonos** is `Off`. `GET /v1/music` answers `"enabled": false`, and the app shows no Music anywhere.
+2. **On.**
+   - Set **Sonos** to `On`. Within a few seconds **Sonos Players** lists the three speakers with their addresses.
+   - If it says *None found*, set **Sonos Address** to one speaker's address and note that the search found nothing.
+3. **Rooms.**
+   - Sonos rooms named like a Control4 room, or like a room's Hebrew name, show on that room's screen.
+   - The others are under **No room**.
+   - Settings → Rooms → **Sonos rooms** (admins) lists them, the unplaced first. Picking a room moves the card there; **Same name** puts it back.
+   - Members and viewers don't see Sonos rooms in Settings.
+4. **Playing.**
+   - On a room's screen, the Music card shows what plays and its art.
+   - Pause and play act on the whole group.
+   - Next and previous, on a queue or playlist (not the radio): note whether the speaker takes them.
+   - The volume and mute change only that room. Note the volume before, and set it back.
+   - Favorites: a playable one starts; Sonos Radio's shortcuts are greyed out.
+5. **Home** lists each group that plays, with a pause button.
+6. **Spotify Connect:** play from the Spotify app. The card says *Spotify*, with the track if the speaker reports it.
+7. **Scenes.** Add a Music action (Pause, in one room) and run the scene: that room's group pauses; a group already paused is left alone. In a room with no Sonos, the run says *the music was skipped: there's no Sonos speaker in that room*; with Sonos `Off`, *… Sonos is off in Composer*.
+8. **Viewer device:** what plays is shown, but no controls.
+9. **Phone.** 320 and 390 px, English and Hebrew, light and dark: no sideways scroll; the playback buttons stay left to right in Hebrew.
+10. Set **Sonos** to `Off`: Music goes away within a minute, and nothing more is sent to the speakers.
+
+## 0zh. Settings' pages (1.5.0)
+
+1. Settings shows Appearance and Language, then a row per page with a short line each: Controller, Rooms, Shabbat and holidays (admins), People and devices (admins), Account, App, About.
+2. Each row opens its page at `#/settings/<page>`. **Back** returns to the list, with that row focused. The browser's Back does the same.
+3. A newer DirectorLink: the Controller row has a badge. The Home notice opens Settings → Controller at the steps.
+4. The connection chip opens Settings → Controller. Schedules → **Change** (Shabbat) opens Shabbat and holidays. Signing in comes back to Account.
+5. Rooms: everyone ticks rooms on and off; admins also move them and rename them.
+6. Phone: 320 and 390 px, English and Hebrew, light and dark: no sideways scroll.
+
+## 0zg. Check now, and the app's version (1.5.0)
+
+1. On an admin device, Settings → Controller shows **App version 1.5.0** and the DirectorLink version, then **Updates** with a **Check now** button under the facts. A member or viewer device shows App version, but no Updates line and no button.
+2. Tap **Check now**: the Updates line says *Checking…*, then *Up to date* or *DirectorLink X is available*.
+3. **Check now** again within a minute: the button is dimmed, *You can check again in a minute* shows under it, and nothing is sent. In DevTools → Network, the first press made one request to `api.github.com`, and the second made none. A screen reader reads the outcome of each check.
+4. With the network off, **Check now** says *Could not check just now* on the Updates line until GitHub answers again.
+5. After a minute, **Check now** asks again.
+6. Hebrew: *בדיקה עכשיו*, then *בודק…*, right to left.
 
 ## 0ze. Backup and restore (1.4.0)
 
@@ -300,7 +368,7 @@ On a Director with these devices (the contributor, @bkwagner, read them on a liv
 
 ## 0j. People and devices
 
-1. On the computer at home (admin key): Settings → Controller → **People and devices**. Devices lists every key, with *This device* for the computer (no Revoke, role fixed) and when each was last used; People lists your account as *Owner* with your devices, and anyone who joined with theirs; Invitations lists the ones waiting.
+1. On the computer at home (admin key): Settings → **People and devices**. Devices lists every key, with *This device* for the computer (no Revoke, role fixed) and when each was last used; People lists your account as *Owner* with your devices, and anyone who joined with theirs; Invitations lists the ones waiting.
 2. Change the role of the iPhone's key to *Member*: the iPhone can still switch lights, and Door Control gates are refused. Set it back to *Admin*.
 3. **Add my other device** makes an invitation that appears under Invitations; **Revoke** it: its link answers "used, revoked or has expired".
 4. Invite a second Google account, accept it on another device, then **Remove** that person: their device shows "Your home does not know this device’s key" (or the account message), and they are gone from People.

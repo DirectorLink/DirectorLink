@@ -55,6 +55,12 @@ export function blindIsOpen(blind) {
   return Number.isFinite(blind.position) && blind.position > 0;
 }
 
+// Sonos rooms (music.js, 1.5.0) as devices of the room they are shown in; none while Sonos is off.
+export function musicDevices() {
+  if (state.system?.features?.sonos !== true || !state.music?.enabled) return [];
+  return state.music.items.map((item) => ({ ...item, room: item.room_id != null ? { id: item.room_id } : null }));
+}
+
 export function devicesInRoom(roomId) {
   const id = Number(roomId);
   const pick = (list) => list.filter((device) => deviceRoomId(device) === id);
@@ -66,6 +72,7 @@ export function devicesInRoom(roomId) {
     cameras: pick(state.cameras),
     relays: pick(state.relays),
     doorbells: pick(state.doorbells),
+    music: pick(musicDevices()),
     // Devices this app cannot control.
     others: state.devices.filter((device) => !device.supported && deviceRoomId(device) === id),
   };
@@ -79,7 +86,8 @@ function controllableCount(group) {
     group.blinds.length +
     group.cameras.length +
     group.relays.length +
-    group.doorbells.length
+    group.doorbells.length +
+    (group.music?.length || 0)
   );
 }
 
@@ -106,6 +114,8 @@ export function visibleRooms() {
     cameras: state.cameras.filter(orphan),
     relays: state.relays.filter(orphan),
     doorbells: state.doorbells.filter(orphan),
+    // A Sonos room whose name matches no room, until an admin picks one.
+    music: musicDevices().filter(orphan),
     others: [],
   };
   if (controllableCount(orphans) > 0) {

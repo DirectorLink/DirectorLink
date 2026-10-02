@@ -27,13 +27,19 @@ class FakeElement extends FakeNode {
   get textContent() {
     return this.children.map((child) => child.textContent).join("");
   }
+  set textContent(text) {
+    this.children = text ? [document.createTextNode(text)] : [];
+  }
 }
 globalThis.Node = FakeNode;
 globalThis.window = globalThis;
 globalThis.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io" };
+// What is added to the page outside the screen (the live region that speaks Check now's outcome).
+const added = [];
 globalThis.document = {
   hidden: false,
   documentElement: {},
+  body: { append: (...elements) => added.push(...elements) },
   addEventListener() {},
   createElement: (tag) => new FakeElement(tag),
   createElementNS: (_namespace, tag) => new FakeElement(tag),
@@ -50,7 +56,7 @@ globalThis.localStorage = {
 const { state } = await import("../../app/js/state.js");
 const { formatDate, setLanguage } = await import("../../app/js/i18n.js");
 const { refreshRooms, whenConnected } = await import("../../app/js/session.js");
-const { checkUpdates, updateBanner, updateFact, updatePanel } = await import("../../app/js/views/updates.js");
+const { checkNow, checkUpdates, updateBanner, updateCheckButton, updateFact, updatePanel, updateSummary } = await import("../../app/js/views/updates.js");
 const { default: en } = await import("../../app/i18n/en.js");
 const { default: he } = await import("../../app/i18n/he.js");
 
@@ -207,4 +213,88 @@ test("a failed GET /v1/system does not stop the rooms refresh", async () => {
   assert.ok(asked.includes("/v1/rooms"));
   assert.deepEqual(state.rooms, [{ id: 1, name: "Kitchen" }], "the rooms are refreshed");
   assert.equal(state.system.bridge.version, "1.0.0", "the version known so far stays");
+});
+
+
+test("Check now in Settings: admins only; it asks GitHub at once, then not again within a minute", async () => {
+  state.role = "member";
+  state.system = { bridge: { version: "1.0.0" } };
+  assert.equal(updateCheckButton(), null, "not for a member");
+  admin("1.0.0");
+  // GitHub said 1.0.0 two hours ago: up to date, and the 12 hours are not over.
+  lastCheck(release("1.0.0"), 2 * HOUR);
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    const tag = "v1.1.0";
+    const body = {
+      tag_name: tag,
+      name: `DirectorLink ${tag}`,
+      draft: false,
+      prerelease: false,
+      immutable: true,
+      published_at: "2026-10-02T08:00:00Z",
+      html_url: `${RELEASES}/tag/${tag}`,
+      assets: [{ name: "DirectorLink.c4z", browser_download_url: `${RELEASES}/download/${tag}/DirectorLink.c4z` }],
+    };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const button = updateCheckButton().children[0];
+  assert.equal(button.dataset.key, "update-check-now", "it keeps focus across redraws");
+  assert.equal(button.attributes["aria-disabled"], "false");
+  assert.equal(button.textContent, "Check now");
+  const pressed = checkNow();
+  assert.deepEqual(updateFact(), ["Updates", "Checking…"]);
+  await pressed;
+  assert.deepEqual(asked, ["https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest"]);
+  assert.match(updateFact()[1], /^DirectorLink 1\.1\.0 is available/);
+  // Within the minute the button looks off and says so under it (no tooltip: phones show none),
+  // stays focusable, and does nothing.
+  const [waiting, why] = updateCheckButton().children;
+  assert.equal(waiting.attributes["aria-disabled"], "true");
+  assert.equal(waiting.attributes.title, undefined);
+  assert.equal(why.textContent, "You can check again in a minute");
+  assert.equal(waiting.attributes["aria-describedby"], why.attributes.id);
+  await checkNow();
+  assert.equal(asked.length, 1, "not twice within a minute");
+});
+
+test("Check now that gets no answer says so, not Up to date; screen readers hear how it went", async () => {
+  admin("1.0.0");
+  // GitHub said 1.0.0 two hours ago: up to date.
+  lastCheck(release("1.0.0"), 2 * HOUR);
+  assert.deepEqual(updateFact(), ["Updates", "Up to date"]);
+  let status = 403;
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    asked.push(String(url));
+    const body =
+      status === 200
+        ? { tag_name: "v1.0.0", name: "DirectorLink v1.0.0", immutable: true, html_url: `${RELEASES}/tag/v1.0.0`, assets: [{ name: "DirectorLink.c4z", browser_download_url: `${RELEASES}/download/v1.0.0/DirectorLink.c4z` }] }
+        : { message: "API rate limit exceeded" };
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  };
+  await checkNow();
+  assert.equal(asked.length, 1);
+  assert.deepEqual(updateFact(), ["Updates", "Could not check just now"], "not the older Up to date");
+  assert.equal(updateSummary().text, "Could not check just now", "the Controller row on Settings' list too");
+  // A polite live region outside the screen, which redraws replace, says it.
+  const region = added.find((element) => element.attributes.role === "status");
+  assert.ok(region, "a live region");
+  assert.equal(region.className, "visually-hidden");
+  assert.equal(region.textContent, "Could not check just now");
+  // Pressed again within the minute: it says why nothing happens.
+  await checkNow();
+  assert.equal(asked.length, 1);
+  assert.equal(region.textContent, "You can check again in a minute");
+  // A minute later GitHub answers: Up to date again, and said so.
+  status = 200;
+  lastCheck(release("1.0.0"), 2 * HOUR, 2 * 60 * 1000);
+  await checkNow();
+  assert.equal(asked.length, 2);
+  assert.deepEqual(updateFact(), ["Updates", "Up to date"]);
+  assert.equal(region.textContent, "Up to date");
+  assert.equal(added.length, 1, "one live region, made once");
+  // In Hebrew too.
+  assert.match(he.updates.checkFailedNow, /^[א-ת]/);
 });

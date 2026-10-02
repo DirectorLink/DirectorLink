@@ -233,7 +233,8 @@ local function stepText(step, registry)
         target = table.concat(names, ", ")
     else
         local room = step.room_id and (registry.rooms or {})[step.room_id]
-        target = "all " .. step.type .. " in " .. (step.room_id and ((room and room.name or "a removed room") .. " (" .. step.room_id .. ")") or "the whole home")
+        target = (step.type == "music" and "the Sonos music" or ("all " .. step.type)) .. " in "
+            .. (step.room_id and ((room and room.name or "a removed room") .. " (" .. step.room_id .. ")") or "the whole home")
     end
     local set, action = step.set, nil
     if step.type == "lights" then
@@ -260,6 +261,8 @@ local function stepText(step, registry)
         action = set.on == false and "off" or set.speed and ("speed " .. set.speed .. " of " .. Scenes.MAX_FAN_SPEED) or "on"
     elseif step.type == "blinds" then
         action = set.position .. "% open"
+    elseif step.type == "music" then
+        action = set.action
     else
         action = "pulse (skipped when a schedule runs it)"
     end

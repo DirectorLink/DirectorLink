@@ -11,10 +11,12 @@ import {
   ANSWER_FRESH_MS,
   CHECK_INTERVAL_MS,
   LATEST_RELEASE_URL,
+  MANUAL_INTERVAL_MS,
   checkForUpdate,
   compareVersions,
   dismissUpdate,
   dismissedVersion,
+  manualCheckWait,
   newerRelease,
   parseVersion,
   readRelease,
@@ -341,8 +343,72 @@ test("blocked storage is not an error", async () => {
   };
   const { fetch } = github(200, answer("1.1.0"));
   assert.equal(await checkForUpdate(admin({ storage: blocked, fetch })), true);
-  assert.equal(savedCheck(blocked), null);
+  // Kept in this tab instead (below).
+  assert.deepEqual(savedCheck(blocked), { checkedAt: NOW, answeredAt: NOW, release: readRelease(answer("1.1.0")) });
   assert.doesNotThrow(() => dismissUpdate("1.1.0", blocked));
   assert.equal(dismissedVersion(blocked), null);
   assert.equal(savedCheck(null), null);
+});
+
+test("with site data blocked, Check now's minute and the 12 hours still hold in this tab", async () => {
+  const blocked = {
+    getItem() {
+      throw new DOMException("blocked", "SecurityError");
+    },
+    setItem() {
+      throw new DOMException("blocked", "SecurityError");
+    },
+  };
+  // No localStorage at all (reading it throws): browserStorage() gives null.
+  for (const storage of [blocked, null]) {
+    const { fetch, calls } = github(200, answer("1.1.0"));
+    for (let press = 0; press < 5; press++) await checkForUpdate(admin({ storage, fetch, now: NOW + press * 1000, force: true }));
+    assert.equal(calls.length, 1, "Check now pressed 5 times in 5 s: asked once");
+    assert.equal(manualCheckWait({ check: savedCheck(storage), now: NOW + 5000 }), MANUAL_INTERVAL_MS - 5000);
+    // The rooms refresh, once a minute, asks again only after 12 hours.
+    for (let minute = 1; minute <= 5; minute++) await checkForUpdate(admin({ storage, fetch, now: NOW + minute * 60000 }));
+    assert.equal(calls.length, 1, "not at every rooms refresh");
+    await checkForUpdate(admin({ storage, fetch, now: NOW + CHECK_INTERVAL_MS }));
+    assert.equal(calls.length, 2);
+  }
+  // A record in the storage (another tab's) is the one used.
+  const storage = memoryStorage();
+  await checkForUpdate(admin({ storage, fetch: github(200, answer("1.1.0")).fetch }));
+  storage.setItem("directorlink.update", JSON.stringify({ checkedAt: NOW + HOUR, answeredAt: NOW + HOUR, release: readRelease(answer("1.2.0")) }));
+  assert.equal(savedCheck(storage).checkedAt, NOW + HOUR);
+});
+
+test("Check now asks at once, but never twice within a minute; the 12 hours start again from it", async () => {
+  const storage = memoryStorage();
+  const { fetch, calls } = github(200, answer("1.1.0"));
+  assert.equal(await checkForUpdate(admin({ storage, fetch })), true);
+  assert.equal(calls.length, 1);
+  // An hour later the schedule does not ask; Check now does.
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR })), false);
+  assert.equal(calls.length, 1, "without Check now the 12 hours still hold");
+  await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR, force: true }));
+  assert.equal(calls.length, 2, "Check now asks at once");
+  // Pressed again 30 seconds later: it waits.
+  assert.equal(manualCheckWait({ check: savedCheck(storage), now: NOW + HOUR + 30000 }), MANUAL_INTERVAL_MS - 30000);
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: NOW + HOUR + 30000, force: true })), false);
+  assert.equal(calls.length, 2, "not twice within a minute");
+  // A minute after the last try it may ask again, and the 12 hours count from that try.
+  const later = NOW + HOUR + MANUAL_INTERVAL_MS;
+  assert.equal(manualCheckWait({ check: savedCheck(storage), now: later }), 0);
+  await checkForUpdate(admin({ storage, fetch, now: later, force: true }));
+  assert.equal(calls.length, 3);
+  assert.equal(savedCheck(storage).checkedAt, later);
+  assert.equal(await checkForUpdate(admin({ storage, fetch, now: later + CHECK_INTERVAL_MS - 1 })), false);
+  assert.equal(calls.length, 3);
+});
+
+test("Check now is only for admin keys, with a driver of a known version", async () => {
+  const { fetch, calls } = github(200, answer("1.1.0"));
+  for (const options of [{ role: "member" }, { role: "viewer" }, { driverVersion: "dev" }, { driverVersion: undefined }]) {
+    assert.equal(await checkForUpdate(admin({ storage: memoryStorage(), fetch, force: true, ...options })), false, JSON.stringify(options));
+  }
+  assert.equal(calls.length, 0);
+  // Never checked, or a clock that went back: Check now may ask.
+  assert.equal(manualCheckWait({ check: null, now: NOW }), 0);
+  assert.equal(manualCheckWait({ check: { checkedAt: NOW + HOUR }, now: NOW }), 0);
 });

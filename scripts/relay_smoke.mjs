@@ -12,7 +12,8 @@
 //
 //   --home and --secret default to new random values, printed so they can be reused. --once exits
 //   after the first request has been answered. Otherwise a lost connection is retried like the
-//   real driver does (5 s, 10 s, 30 s, then every 60 s); being replaced (close 4000) ends the run.
+//   real driver does: after 1 s when it had been up a minute, else 5 s, 10 s, 30 s, then every 60 s;
+//   being replaced (close 4000) ends the run.
 //
 // Client mode: calls the version 0 test endpoints.
 //
@@ -43,6 +44,8 @@ export const DEFAULT_VERSION = "0.9.0-smoke";
 export const PING_INTERVAL_MS = 25_000;
 export const SILENCE_TIMEOUT_MS = 60_000;
 export const RECONNECT_DELAYS_S = [5, 10, 30, 60];
+export const QUICK_RETRY_S = 1; // after a connection that was up STABLE_MS
+export const STABLE_MS = 60_000;
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const HANDSHAKE_TIMEOUT_MS = 15_000;
@@ -837,6 +840,7 @@ async function runDriver(values) {
   let failures = 0;
   for (;;) {
     let answered = false;
+    let quick = false;
     try {
       current = await connectDriver({
         url: values.url ?? DEFAULT_URL,
@@ -854,8 +858,12 @@ async function runDriver(values) {
           return null;
         },
       });
-      failures = 0;
+      const openedAt = Date.now();
       const result = await current.closed;
+      if (Date.now() - openedAt >= STABLE_MS) {
+        failures = 0;
+        quick = true;
+      }
       if (values.once) {
         return answered ? 0 : 1;
       }
@@ -876,8 +884,8 @@ async function runDriver(values) {
         return 1;
       }
     }
-    const delay = RECONNECT_DELAYS_S[Math.min(failures, RECONNECT_DELAYS_S.length - 1)];
-    failures += 1;
+    const delay = quick ? QUICK_RETRY_S : RECONNECT_DELAYS_S[Math.min(failures, RECONNECT_DELAYS_S.length - 1)];
+    failures += quick ? 0 : 1;
     print(`reconnecting in ${delay} s`);
     await new Promise((resolve) => setTimeout(resolve, delay * 1000));
     if (stopping) {

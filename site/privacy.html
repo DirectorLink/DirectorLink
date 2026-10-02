@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 30 September 2026</p>
+      <p class="updated">Last updated 2 October 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -45,6 +45,12 @@
         (language, theme, favorites, the rooms you hide), scenes and schedules are kept on your
         controller, shared by your own devices.
       </p>
+      <p>
+        If your installer turns on Sonos, your controller also talks to your Sonos speakers, on your
+        home network only: it asks them what plays and passes on your commands. DirectorLink uses no
+        Sonos account and tells Sonos nothing. Away from home, what plays travels locked end to end,
+        like everything else.
+      </p>
 
       <h2>The weather</h2>
       <p>
@@ -58,7 +64,7 @@
 
       <h2>Update checks</h2>
       <p>
-        On devices with an admin key, the app asks GitHub (api.github.com) about twice a day which
+        On devices with an admin key, the app asks GitHub (api.github.com) about twice a day, and when an admin taps Check now (at most once a minute), which
         DirectorLink version is the newest, to say when an update is out. That request goes from the
         device straight to GitHub, not through our servers: GitHub sees that device's IP address, and
         nothing about your home is sent. Devices with other access never ask.

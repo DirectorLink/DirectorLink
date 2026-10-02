@@ -2,7 +2,7 @@
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
 // "/v1/lights", "/v1/thermostats", "/v1/fans", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
-// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/auth/pair" —
+// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/music" (Sonos), "/v1/auth/pair" —
 // device changes use method: "PATCH" and are confirmed by re-reading.
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
@@ -16,6 +16,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
+import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
@@ -30,7 +31,7 @@ import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
-import { resetCalendarSettings, settingsView } from "./js/views/settings.js";
+import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 
 const view = document.querySelector("#view");
@@ -67,8 +68,12 @@ function parseRoute() {
   if (parts[0] === "schedules") {
     return { name: "schedules", tab: "scenes" };
   }
-  if (["scenes", "cameras", "climate", "settings"].includes(parts[0])) {
+  if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
+  }
+  // Settings' list, or one of its pages (#/settings/rooms); an unknown page is the list.
+  if (parts[0] === "settings") {
+    return { name: "settings", page: SETTINGS_PAGES.includes(parts[1]) ? parts[1] : null, tab: "settings" };
   }
   if (parts[0] === "access") {
     return { name: "access", tab: "settings" };
@@ -96,16 +101,27 @@ window.addEventListener("hashchange", () => {
   if (route.name === "access" && previous.name !== "access") resetAccess();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
-  if (route.name === "settings" && previous.name !== "settings") resetCalendarSettings();
+  // Shabbat and holidays opens with the controller's settings.
+  if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
   // The Hebrew date on Home (Schedules reads the calendar too).
   if (route.name === "home" && previous.name !== "home") loadCalendar();
+  // Sonos: Home and a room are read every 5 s while shown.
+  musicRouteChanged(route);
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
-  // Move focus to the new screen's heading for keyboard and screen-reader users.
-  view.querySelector(".page-title")?.focus({ preventScroll: true });
+  // Back on Settings' list from one of its pages, the row that opened it has the focus; otherwise
+  // the new screen's heading, for keyboard and screen-reader users.
+  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : null;
+  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey) : null;
+  if (row) {
+    row.scrollIntoView({ block: "center" });
+    row.focus({ preventScroll: true });
+  } else {
+    view.querySelector(".page-title")?.focus({ preventScroll: true });
+  }
 });
 
 // ---- dialogs -------------------------------------------------------------------------------
@@ -196,6 +212,8 @@ function signature() {
     state.doorbells,
     // The alarm (read-only), and the seconds an entry or exit delay has left.
     alarmSignature(),
+    // The Sonos rooms, their pictures and favorites (js/music.js).
+    musicSignature(),
     // Rings stop being recent, and "3 minutes ago" moves on, without new data.
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
@@ -254,7 +272,8 @@ function signature() {
     route.name === "settings" ? ui.calendarSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
-    route.name === "settings" ? state.lastUpdated?.getTime() : 0,
+    // "Last update", on Settings → Controller only: the other pages are not redrawn by every poll.
+    route.name === "settings" && route.page === "controller" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
   ]);
 }
@@ -282,6 +301,7 @@ function screen() {
       return accessView(actions);
     case "settings":
       return settingsView({
+        page: route.page,
         navigate,
         onPalette: (palette) => {
           setPalette(palette);
@@ -398,6 +418,8 @@ whenConnected(loadSchedules);
 whenConnected(startAlarm);
 // The Jewish calendar, while it is on in Composer: read now, then every 10 minutes (js/calendar.js).
 whenConnected(keepCalendar);
+// Sonos, while an installer turned it on: every room now, then the screen shown every 5 s.
+whenConnected(() => startMusic(route));
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
 // Opened on Schedules (a reload): the weather once connected.

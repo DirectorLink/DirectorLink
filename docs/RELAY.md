@@ -52,8 +52,8 @@ invitations and claim token, and connects as a new home, which the owner links a
 controller: the one it replaces is kept until the relay accepts the backup's, and comes back if the
 relay refuses it (401, or 400 for an identity it does not take). Another home's identity moves only
 when the admin asks. The relay lets one connection carry a home: a second controller with the same
-identity replaces the first (4000 `replaced`), and the two push each other off every few seconds,
-so the controller the backup was made on must be off, or have Remote Access off, first.
+identity replaces the first (4000 `replaced`), and the two push each other off every 30 seconds
+or so, so the controller the backup was made on must be off, or have Remote Access off, first.
 
 ## Connecting
 
@@ -75,7 +75,8 @@ User-Agent: DirectorLink/<driver version>
 - `400` — missing or malformed headers; `401` — wrong secret for this `home_id`. Problem Details
   JSON (`application/problem+json`) with a `code`.
 
-The driver reconnects after a lost connection with backoff: 5 s, 10 s, 30 s, then every 60 s. An
+The driver reconnects after a lost connection: after 1 s when the connection had been up for a
+minute, then with backoff, 5 s, 10 s, 30 s, then every 60 s (*Keeping the connection*, below). An
 attempt that has not opened within 30 s (no TLS connection, or no answer to the upgrade) counts as
 lost too.
 
@@ -118,7 +119,7 @@ same holds the other way for what the driver asks the relay (`invitation`).
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| driver → relay | `ping` (plain text) | Keep-alive, every 25 s. |
+| driver → relay | `ping` (plain text) | Keep-alive, every 25 s (and if Director polls the connection). |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
 | driver → relay | `{"type":"hello","home":"<home_id>","version":"0.11.0"}` | First message after connecting. |
 | driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
@@ -139,8 +140,90 @@ Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CI
 `INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `INTERNAL`. The cloud turns them into Problem Details
 for the app (`cloud/src/homes.js`).
 
-If the driver hears nothing (not even `pong`) for 60 s, it drops the connection and reconnects.
+If the driver hears nothing (not even `pong`) for three pings in a row (about 75 s), it drops the
+connection and reconnects.
 The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s.
+
+## Keeping the connection
+
+**What keeps it open.** The driver sends `ping` every 25 s and the relay's runtime answers `pong`
+without waking the home's object. Data then crosses Cloudflare in both directions every 25 s, well
+inside any idle limit (Cloudflare closes a WebSocket that carries nothing in either direction for
+a while, without a documented figure). A connection that hears nothing for three pings in a row
+(about 75 s; counted in pings, not by the clock, so a clock set back cannot stretch it) is dropped
+and made again. TCP keep-alive is on as well.
+
+**Director's own monitoring is off** (1.5.0, ADR-045). Up to 1.4.0 the driver opened the
+connection with `MONITOR_CONNECTION = true`. Control4 documents that Director then polls the
+connection (it calls the driver's `OnPoll`, which DirectorLink did not define) and considers it
+down when no data comes back. It does not document how often, or how long it waits. Real
+controllers (CORE-1 on OS 3.4.3, X4 on OS 4.2) reported the connection offline (`connection lost`)
+every 10 to 40 minutes. The relay saw the socket end without a close frame (code 1006), with
+nothing wrong on its side before. Director's monitoring is the likeliest cause on the
+controller's side, and the driver does not need it. Now the driver's ping and its silence rule
+are the only checks. If Director polls all the same, `OnPoll` sends a `ping`, so the relay answers at
+once.
+
+**What can end it, and what follows.** The driver's relay log names each one (*Logs*, below).
+
+| What happens | Remote Status and log reason | Next attempt |
+| --- | --- | --- |
+| Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute |
+| Nothing heard for three pings, about 75 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
+| The relay closes it: `4000 replaced` (another controller with this identity) | `closed by the relay (4000 replaced)` | 30 s |
+| The relay closes it: `4001 secret replaced` (the owner approved a new secret) | `closed by the relay (4001 secret replaced)` | 1 s; refused, then the new secret 1 s later |
+| The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |
+| An attempt that does not open within 30 s, or fails | `no connection within 30 s`, `connection lost` | backoff |
+| The relay refuses the upgrade: `401` / other | `refused: <code>` | 300 s / backoff |
+
+A connection lost less than a minute after it opened goes on with the backoff (5 s, 10 s, 30 s,
+then every 60 s), so one that fails as soon as it opens is not tried every second.
+
+**Cloudflare's part.** Cloudflare documents three cases where it closes WebSockets on its side,
+and DirectorLink cannot prevent them. A deploy of the relay restarts every Durable Object and
+disconnects every driver. Updates of the Workers runtime, and moving an object to another machine,
+shut objects down, which ends their WebSockets. Cloudflare also restarts edge servers when it
+releases new code. None of these has a documented frequency. The driver sees each one as a close
+from the relay or as `connection lost` (`wrangler dev`, reloading the relay as a deploy does, ends
+the sockets without a close frame), and comes back after about a second.
+
+**Director's connection events.** Director reports `ONLINE` and `OFFLINE` for the binding, not
+for one connection. So the driver keeps Director's view of the binding. The `OFFLINE` that answers
+the driver's own `NetDisconnect` is not taken for the failure of the next attempt, even when it
+arrives after that attempt started. A connection given up on that comes up late is closed again,
+and gets no upgrade request. Data that arrives while no connection is being made is dropped.
+
+**While the driver reconnects.** A request for the home that finds no driver connection, within
+30 s of the driver's disconnect, waits up to 8 s for the driver's `hello` and then goes through.
+So does the first request after the relay restarted under the connection (a deploy), which
+records no disconnect. Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for
+longer, or that did not come back within the 8 s after a restart, answers `503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
+as before, and so does one sent over a connection the driver has since replaced, at once rather
+than at its 15 s timeout (the relay may not have noticed that connection die). It is never sent
+again, because the controller may have carried it out.
+
+**Logs.** On the controller, `GET /v1/logs?category=relay` gives one line per event:
+- `relay connection closed` (info): an open connection was lost. It carries the `reason`, the
+  number of the `attempt` that follows, and `retry_s`, the wait until that attempt. It also says
+  how long the connection was up (`up_s`) and how long before the end the relay was last heard
+  (`heard_s`) and pinged (`ping_s`). `polled_s` appears only if Director polled.
+- `relay connection attempt failed` (info): the same, for an attempt that never opened.
+- `no answer from the relay; reconnecting` (warn), and the 30 s and refusal lines, also carry
+  `attempt` and `retry_s`.
+- `connected to the relay` (info) says how many attempts it took (`attempts`) and how long the
+  home was away (`down_s`).
+
+Remote Status keeps the last loss after it reconnects: `Connected since 14:23 - home 3f9a1c2e -
+last drop 14:22 (connection lost)`. In the relay's own log (Workers Observability) the same loss
+is `driver_disconnected`, with `why` (the close code), `up_s`, `ping_s` (seconds since the runtime
+last answered the driver's ping) and `message_s`. The next `driver_connected` has `down_ms`, how
+long the home was away.
+
+**What this does not fix.** A cut connection still takes the driver about a second to replace,
+plus its TLS handshake. A request already on its way then fails. The app asks again 2 s later, and
+that request waits for the driver. If drops go on after 1.5.0, the logs above show which side ended
+the connection. If `heard_s` was under 25 s and the relay saw 1006, the connection was cut between
+the two: by the home's network, the internet provider or Cloudflare's edge.
 
 ## What a relayed request may do
 

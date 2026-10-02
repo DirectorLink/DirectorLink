@@ -12,6 +12,10 @@
 //   storage     secret_sha256                                         SHA-256 hex of the home_secret,
 //                                                                     trusted on first use
 //               connected_at, disconnected_at, last_seen, version     for the status (ISO times)
+//
+// A driver whose connection is lost connects again within seconds (1.5.0). A request that arrives
+// meanwhile, up to 30 s after the disconnect or after a restart under the connection, waits up to
+// 8 s for its hello instead of failing with HOME_OFFLINE (liveDriver).
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
@@ -22,6 +26,11 @@ const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
 const DEFAULT_TIMEOUT_MS = 15000;
 const NULL_BODY_STATUS = new Set([204, 205, 304]);
+// A request that finds no driver within RECONNECT_GRACE_MS of its disconnect waits up to
+// RECONNECT_WAIT_MS for it to connect again (it does within seconds: docs/RELAY.md), rather than
+// failing with HOME_OFFLINE. Longer gone, the home is offline and the answer is immediate.
+const RECONNECT_GRACE_MS = 30000;
+const DEFAULT_RECONNECT_WAIT_MS = 8000;
 
 export class HomeRelay extends DurableObject {
   constructor(ctx, env) {
@@ -31,6 +40,9 @@ export class HomeRelay extends DurableObject {
     // while a request waits, its caller's fetch keeps the object awake, so hibernation never
     // drops this map with anything in it.
     this.pending = new Map();
+    // Requests waiting for the driver to connect again (liveDriver): each is called with the new
+    // socket at its hello. Kept in memory for the same reason as `pending`.
+    this.waiting = new Set();
     // Work on which account uses which key runs one step after another, in the order of the
     // driver's frames (member-keys.js); `announced` is its last list of key ids.
     this.keyWork = Promise.resolve();
@@ -89,9 +101,17 @@ export class HomeRelay extends DurableObject {
       return problem(401, "WRONG_HOME_SECRET", "This home_id is registered with a different home_secret");
     }
 
-    // One driver connection per home: a new one replaces the previous.
+    // One driver connection per home: a new one replaces the previous. Requests sent over the
+    // previous one fail now rather than at their timeout: a driver that connects again has lost
+    // that connection, often without the relay noticing (the old socket never answers the close).
     let replaced = 0;
     for (const old of this.ctx.getWebSockets(DRIVER)) {
+      const { conn } = old.deserializeAttachment() ?? {};
+      for (const [id, entry] of this.pending) {
+        if (entry.conn === conn) {
+          this.settle(id, { failed: "The home connected again before it answered" });
+        }
+      }
       try {
         old.close(4000, "replaced");
         replaced += 1;
@@ -102,12 +122,17 @@ export class HomeRelay extends DurableObject {
 
     const now = Date.now();
     const version = cleanVersion(request.headers.get("X-DirectorLink-Version"));
+    // How long the home was away, when its last disconnect was recorded.
+    const before = await this.ctx.storage.get(["connected_at", "disconnected_at"]);
+    const lastConnect = Date.parse(before.get("connected_at") ?? "");
+    const lastDisconnect = Date.parse(before.get("disconnected_at") ?? "");
+    const downMs = replaced === 0 && lastDisconnect >= (lastConnect || 0) ? now - lastDisconnect : null;
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server, [DRIVER]);
     server.serializeAttachment({ conn: crypto.randomUUID(), home: homeId, connectedAt: now, version, lastSeen: now });
     const at = iso(now);
     await this.ctx.storage.put({ connected_at: at, last_seen: at, version });
-    log("driver_connected", { home: homeId, version, replaced });
+    log("driver_connected", { home: homeId, version, replaced, down_ms: Number.isFinite(downMs) ? downMs : null });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -134,7 +159,11 @@ export class HomeRelay extends DurableObject {
         if (data.home !== attachment.home) {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
         }
-        log("driver_hello", { home: attachment.home, version: attachment.version });
+        log("driver_hello", { home: attachment.home, version: attachment.version, waiting: this.waiting.size });
+        // The driver is ready: requests that waited for it go now.
+        for (const resume of [...this.waiting]) {
+          resume(ws);
+        }
         return;
       case "keys": {
         // The home's key ids after a change: members whose keys are all revoked leave it. The list
@@ -258,8 +287,71 @@ export class HomeRelay extends DurableObject {
       log("driver_replaced", { home: attachment.home, why }); // a newer connection took over
       return;
     }
-    await this.ctx.storage.put({ disconnected_at: iso(Date.now()), last_seen: iso(this.lastSeen(ws)) });
-    log("driver_disconnected", { home: attachment.home, why });
+    const now = Date.now();
+    this.disconnectedAt = now;
+    await this.ctx.storage.put({ disconnected_at: iso(now), last_seen: iso(this.lastSeen(ws)) });
+    // How long the connection was up, and how long before the end the driver last pinged and last
+    // sent a message: pings answered until the end mean the connection itself was cut.
+    const ping = autoResponseTime(this.ctx, ws);
+    log("driver_disconnected", {
+      home: attachment.home,
+      why,
+      up_s: seconds(now, attachment.connectedAt),
+      ping_s: seconds(now, ping),
+      message_s: seconds(now, attachment.lastSeen),
+    });
+  }
+
+  // The driver's socket; if it has just disconnected, the one it opens next, once it says hello
+  // (or, after RECONNECT_WAIT_MS, whichever is connected; null if none). Null at once when the
+  // home has been away longer.
+  async liveDriver() {
+    const ws = this.driverSocket();
+    if (ws) {
+      return ws;
+    }
+    const expected = await this.driverExpected();
+    if (!expected) {
+      return null;
+    }
+    const socket = await new Promise((resolve) => {
+      const resume = (found) => {
+        clearTimeout(timer);
+        this.waiting.delete(resume);
+        resolve(found);
+      };
+      // At the deadline, a socket that passed the secret check but whose hello is still on its
+      // way is used all the same: the driver is back.
+      const timer = setTimeout(() => resume(this.driverSocket()), reconnectWaitMs(this.env));
+      this.waiting.add(resume);
+    });
+    if (!socket && expected.restarted && !this.driverSocket()) {
+      // It did not come back after the restart: offline since it was last heard from (the
+      // status), and the next requests are answered at once.
+      this.disconnectedAt = 0;
+      await this.ctx.storage.put("disconnected_at", iso(expected.lastSeen));
+    }
+    return socket;
+  }
+
+  // Whether the driver should be back within seconds: it disconnected less than
+  // RECONNECT_GRACE_MS ago, or this object restarted under its connection (a deploy restarts every
+  // object and ends its sockets without webSocketClose, so no disconnect is recorded). Returns
+  // { restarted, lastSeen } or null.
+  async driverExpected() {
+    if (this.disconnectedAt !== undefined) {
+      return Date.now() - this.disconnectedAt <= RECONNECT_GRACE_MS ? { restarted: false } : null;
+    }
+    const stored = await this.ctx.storage.get(["connected_at", "disconnected_at", "last_seen"]);
+    const connectedAt = Date.parse(stored.get("connected_at") ?? "");
+    const disconnectedAt = Date.parse(stored.get("disconnected_at") ?? "");
+    if (Number.isFinite(disconnectedAt) && !(connectedAt > disconnectedAt)) {
+      return Date.now() - disconnectedAt <= RECONNECT_GRACE_MS ? { restarted: false } : null;
+    }
+    if (!Number.isFinite(connectedAt)) {
+      return null; // never connected
+    }
+    return { restarted: true, lastSeen: Date.parse(stored.get("last_seen") ?? "") || connectedAt };
   }
 
   // The live driver socket (the newest, while a replaced one is still closing), or null.
@@ -286,8 +378,7 @@ export class HomeRelay extends DurableObject {
   // (those never reach webSocketMessage).
   lastSeen(ws) {
     const { lastSeen = 0 } = ws.deserializeAttachment() ?? {};
-    const ping = this.ctx.getWebSocketAutoResponseTimestamp(ws);
-    return Math.max(lastSeen, ping ? ping.getTime() : 0);
+    return Math.max(lastSeen, autoResponseTime(this.ctx, ws) ?? 0);
   }
 
   // --- Test endpoints ------------------------------------------------------------------------
@@ -309,7 +400,7 @@ export class HomeRelay extends DurableObject {
   }
 
   async forward(path, homeId) {
-    const ws = this.driverSocket();
+    const ws = await this.liveDriver();
     if (!ws) {
       return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
     }
@@ -348,7 +439,7 @@ export class HomeRelay extends DurableObject {
     if (!message || !["e2e", "join", "claim"].includes(message.type)) {
       return problem(400, "INVALID_MESSAGE", "Only e2e, join and claim messages are relayed");
     }
-    const ws = this.driverSocket();
+    const ws = await this.liveDriver();
     if (!ws) {
       return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
     }
@@ -442,6 +533,25 @@ function decodeBase64(text) {
 function requestTimeoutMs(env) {
   const value = Number(env.REQUEST_TIMEOUT_MS);
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
+}
+
+function reconnectWaitMs(env) {
+  const value = Number(env.RECONNECT_WAIT_MS);
+  return Number.isInteger(value) && value >= 0 ? value : DEFAULT_RECONNECT_WAIT_MS;
+}
+
+// When the runtime last answered this socket's "ping" (milliseconds), or null.
+function autoResponseTime(ctx, ws) {
+  try {
+    return ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Whole seconds from `since` (milliseconds) to `now`, or null.
+function seconds(now, since) {
+  return Number.isFinite(since) && since > 0 ? Math.round((now - since) / 1000) : null;
 }
 
 function cleanVersion(value) {

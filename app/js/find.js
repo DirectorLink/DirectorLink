@@ -41,7 +41,7 @@ export function findSupported(nav = globalThis.navigator) {
   return /\bChrom(e|ium)\/\d/.test(nav.userAgent || "");
 }
 
-// "192.168.1" for 192.168.1.201; null for a name or anything but an IPv4 address.
+// "192.168.1" for 192.168.1.50; null for a name or anything but an IPv4 address.
 export function networkOf(host) {
   const parts = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host || "");
   if (!parts || parts.slice(1).some((part) => Number(part) > 255)) return null;

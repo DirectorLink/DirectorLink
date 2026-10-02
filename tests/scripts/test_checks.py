@@ -1,9 +1,9 @@
 """The release checks themselves (scripts/build.py, check_package.py, check_repo.py and
 check_app.py): the relay's CA file holds exactly the pinned roots however its blocks are written,
 nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
-what is staged, the door switches, the Jewish calendar and the alarm's status in driver.xml ship
-off, the alarm stays read-only, and the app names every month, holiday and weekly reading the
-calendar API can send.
+what is staged, the door switches, the Jewish calendar, the alarm's status and Sonos in driver.xml
+ship off, the alarm stays read-only, one file talks to the Sonos players, and the app names every
+month, holiday and weekly reading the calendar API can send.
 
     python -m unittest discover -s tests/scripts
 """
@@ -157,6 +157,76 @@ class DriverXml(unittest.TestCase):
         printed = refusal(check_package.check_driver_xml, shipped_on, "0")
         self.assertIn("Alarm Status must default to Off", printed or "", "an alarm status that ships on passed")
 
+    def test_sonos_ships_off(self):
+        # Off: DirectorLink looks for no Sonos player and sends nothing to one (1.5.0, ADR-044).
+        source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
+        shipped_on, count = re.subn(r"(<name>Sonos</name>.*?<default>)Off(</default>)", r"\1On\2", source, count=1, flags=re.S)
+        self.assertEqual(count, 1, "driver.xml has a Sonos property that defaults to Off")
+        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+        self.assertIn("Sonos must default to Off", printed or "", "a Sonos switch that ships on passed")
+
+
+class SonosOnly(unittest.TestCase):
+    """check_package.py: one file talks to the Sonos players, only with the actions listed, and only
+    src/sonos/sonos.lua allows an address (1.5.0, ADR-044)."""
+
+    def refused(self, files):
+        return refusal(check_package.check_sonos, files)
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(driver_sources()))
+
+    def test_only_the_client_talks_to_players(self):
+        files = driver_sources()
+        for name in ("src/sonos/sonos.lua", "src/api/handlers/music.lua", "src/sonos/protocol.lua"):
+            with self.subTest(name=name):
+                talking = files[name] + '\nlocal function x() C4:url():Get("http://192.168.1.2:1400/") end\n'
+                self.assertIn("only src/sonos/client.lua talks to the Sonos players", self.refused({**files, name: talking}) or "")
+
+    def test_no_handler_allows_an_address(self):
+        files = driver_sources()
+        handler = files["src/api/handlers/music.lua"]
+        self.assertIn("allows a Sonos address", self.refused({**files, "src/api/handlers/music.lua": handler + "\nClient.allow(ctx.body.address)\n"}) or "")
+        loading = handler.replace('local Sonos = require("src.sonos.sonos")', 'local Sonos = require("src.sonos.sonos")\nlocal Client = require("src.sonos.client")')
+        self.assertNotEqual(loading, handler)
+        self.assertIn("loads src/sonos/client.lua", self.refused({**files, "src/api/handlers/music.lua": loading}) or "")
+
+    def test_the_client_is_caught_under_any_name(self):
+        # "\bClient" does not match inside "SonosClient": the name the client has in main.lua.
+        files = driver_sources()
+        for name in ("src/api/handlers/music.lua", "src/core/scenes.lua", "src/main.lua"):
+            for call in ('SonosClient.allow("10.1.2.3", "x")', "Client:allow(ctx.body.address)", "MyClient . allow (ip)"):
+                with self.subTest(name=name, call=call):
+                    self.assertIn("allows a Sonos address", self.refused({**files, name: files[name] + "\n" + call + "\n"}) or "")
+
+    def test_main_only_hands_the_search_events_over(self):
+        files = driver_sources()
+        main = files["src/main.lua"]
+        self.assertIn("SonosClient.onData(", main)
+        self.assertIn("SonosClient.onConnectionStatus(", main)
+        for added in (
+            'SonosClient.call("192.168.1.2", "Play", {}, function() end)',
+            'SonosClient.picture("192.168.1.2", "/getaa", print)',
+            "SonosClient.search(print, print)",
+            "SonosClient.forget(\"topology\")",
+            "local other = SonosClient",
+            'SonosClient["allow"]("10.1.2.3")',
+            'package.loaded["src.sonos.client"].call()',
+            'local Again = require("src.sonos.client")',
+        ):
+            with self.subTest(added=added):
+                printed = self.refused({**files, "src/main.lua": main + "\nlocal function x()\n    " + added + "\nend\n"}) or ""
+                self.assertRegex(printed, r"src/main\.lua (uses .*: of src/sonos/client\.lua it may use only onConnectionStatus, onData|loads src/sonos/client\.lua other than once)")
+        # A comment naming it is not code.
+        self.assertIsNone(self.refused({**files, "src/main.lua": main + "\n-- SonosClient.call(ip, ...) is not for main.lua\n"}))
+
+    def test_no_other_action_reaches_a_player(self):
+        files = driver_sources()
+        protocol = files["src/sonos/protocol.lua"]
+        grouping = protocol.replace('    Browse = "ContentDirectory",\n', '    Browse = "ContentDirectory",\n    BecomeCoordinatorOfStandaloneGroup = "AVTransport",\n')
+        self.assertNotEqual(grouping, protocol)
+        self.assertIn("the actions sent to Sonos players must be exactly", self.refused({**files, "src/sonos/protocol.lua": grouping}) or "")
+
 
 def driver_sources():
     """The driver's Lua files as the package names them (src/...)."""
@@ -212,7 +282,7 @@ class AlarmReadOnly(unittest.TestCase):
     def test_no_scene_step_reaches_the_alarm(self):
         files = driver_sources()
         for name, old, new in (
-            ("src/core/scenes.lua", "relays = true }", "relays = true, alarm = true }"),
+            ("src/core/scenes.lua", "music = true }", "music = true, alarm = true }"),
             ("src/api/handlers/scenes.lua", 'relays = "relay" }', 'relays = "relay", partitions = "alarm" }'),
         ):
             with self.subTest(name=name):

@@ -414,6 +414,13 @@ def main():
     require(updates, "CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000", "the app must ask GitHub at most every 12 hours (the privacy page says twice a day)")
     require(updates, "locked: answer.immutable === true", "the update notice must know which releases are immutable, whose files cannot be replaced")
     require(updates, "release.locked === true && compareVersions", "the update notice must offer only immutable releases")
+    # Check now (1.5.0) may ask sooner, but never more than once a minute.
+    require(updates, "MANUAL_INTERVAL_MS = 60 * 1000", "Check now must ask GitHub at most once a minute")
+    # The app's own version, shown in Settings, is the release's (VERSION).
+    release_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    app_version = re.search(r'APP_VERSION = "([^"]+)"', (APP / "js" / "version.js").read_text(encoding="utf-8"))
+    if not app_version or app_version.group(1) != release_version:
+        fail(f"app/js/version.js must say APP_VERSION = \"{release_version}\" (the VERSION file)")
     for path in (APP / "js" / "updates.js", APP / "js" / "views" / "updates.js"):
         if re.search(r"\.body\b|innerHTML", path.read_text(encoding="utf-8")):
             fail(f"app/{path.relative_to(APP).as_posix()} must not use a release's body: its text is not the app's to show")

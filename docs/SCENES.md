@@ -22,7 +22,7 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 - `name` (1–64 characters), `icon` (`moon`, `sun`, `leave`, `movie`, `bulb`, `climate`, `blinds`,
   `home`), `show_on_home` (a Run button at the top of Home), and up to 40 `steps`, run in order.
 - A step sets devices of one `type`: `lights`, `climate`, `fans` (1.2.0), `blinds` or `relays`
-  (doors and gates).
+  (doors and gates), or the Sonos music (`music`, 1.5.0).
   - With `device_ids`, those devices (`room_id` is then only the room they were picked in).
   - Without, every device of that type in `room_id`, or in the whole home when `room_id` is null.
     This is worked out each time the scene runs, so a light added to the room later is included.
@@ -44,6 +44,11 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
   - relays: `{"action": "pulse"}` — what the door's or gate's Open button does. A scene never
     holds a relay closed: on door strikes and gate inputs that would leave the door unlocked or
     the gate's button pressed.
+  - music (1.5.0, docs/SONOS.md): `{"action": "pause"}` or `{"action": "stop"}`, in `room_id` or
+    the whole home; it names no devices. Every Sonos group with a room there that plays pauses
+    as one (a radio station stops), and counts as ran; a group already paused or stopped is left
+    alone. It is skipped, with the reason, when Sonos is off in Composer (`SONOS_OFF`), no player
+    has been found yet (`NO_PLAYERS`), or no Sonos room is shown in its room (`NO_SONOS_ROOM`).
 - At most 50 scenes. `version` goes up with every change; sent back with a change
   (`PATCH /v1/scenes/{id}`), it makes the change conditional (409 `VERSION_CONFLICT`).
 

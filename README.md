@@ -44,7 +44,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
-- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, and the alarm's status (security partitions: read-only, off by default)
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, docs/SONOS.md)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
@@ -55,7 +55,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 ## Installation
 
-DirectorLink itself does not depend on Composer Pro during normal operation. Composer is only one way to install the `DirectorLink.c4z` driver into a Control4 project.
+You need **Composer Pro**, Control4's setup tool, to add DirectorLink to your Control4 project, and later to update it. After that, DirectorLink runs on its own: the app, scenes and schedules never need Composer. Its settings, such as Remote Access for using the app away from home, are set in Composer too.
 
 ### 1. Download DirectorLink
 
@@ -63,15 +63,13 @@ Download DirectorLink from **[GitHub Releases](https://github.directorlink.io/re
 
 Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, and SHA-256 checksums so users can upgrade or downgrade to a specific version.
 
-### 2. Install Composer Pro
+### 2. Get Composer Pro
 
-If you need Composer Pro for the initial driver installation, this project currently provides the following Control4-hosted installer link:
+DirectorLink is installed like any other Control4 driver: with Composer Pro, on a Windows computer on the same network as your controller.
 
-**Composer Pro 2026.3.18.506**
-
-https://update2.control4.com/release/2026.3.18.506-res+Composer/win/ComposerPro-2026.3.18.506-res.exe
-
-DirectorLink does not depend on this specific Composer version after the driver has been installed.
+- **You need an active Control4 account with access to Composer Pro.** Composer asks you to sign in with it, and it can't connect to your controller without it. Control4 gives these accounts to its dealers and installers.
+- **Download Composer Pro from https://composer.directorlink.io.** It lists the Composer installers on Control4's own servers, newest first. Choose the newest **Composer Pro** release and install it.
+- **No Composer Pro account?** Ask your Control4 installer to add DirectorLink for you and to set what you want on (Remote Access, Sonos and the others in step 3). It takes a few minutes and needs no reboot.
 
 ### 3. Add the driver to Composer
 
@@ -89,7 +87,7 @@ A successful install shows:
 
 - **Status:** `Ready`
 - **Version:** the installed DirectorLink release
-- **API Status:** `Online - port 41999`
+- **API Status:** `Online - port 41999`. If it says `Port 41999 taken by another driver`, another driver took the port when the controller started: restart the controller (DirectorLink also asks for the port again every minute)
 - **Pairing Code:** 8 digits shown as `1234 5678`, with **Pairing Status** `Ready until HH:MM - works once`
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app
@@ -97,6 +95,7 @@ A successful install shows:
 - **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows members and admins in the app (never viewers) whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
 - **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
+- **Sonos:** `Off`, so DirectorLink looks for no Sonos speaker. `On` shows each Sonos room in the app, in the Control4 room of the same name, with play, pause, skip, volume and the Sonos favorites; **Sonos Address** (optional) names one player when the search finds none, and **Sonos Players** shows what was found ([`docs/SONOS.md`](docs/SONOS.md))
 - **Jewish Calendar:** `Off`, so DirectorLink works out no Shabbat or holiday times. `On` gives schedules and the app Shabbat and holiday times, the Hebrew date and the weekly reading, from the project's location; **Calendar Status** shows what it works out
 - **Log Level** and **Inventory** (rooms and devices found)
 
@@ -135,7 +134,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
   -d '{"brightness": 40}'
 ```
 
-Resources: system, rooms, devices, lights, thermostats, fans, blinds, cameras, relays (doors and gates), doorbells, the alarm (read-only, sealed requests only), scenes, schedules and the weather, the calendar (Shabbat and holiday times), profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
+Resources: system, rooms, devices, lights, thermostats, fans, blinds, cameras, relays (doors and gates), doorbells, the alarm (read-only, sealed requests only), music (Sonos), scenes, schedules and the weather, the calendar (Shabbat and holiday times), profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
 A script's key travels in the clear on the home network (plain HTTP); give each script its own key with the least role it needs. The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
 

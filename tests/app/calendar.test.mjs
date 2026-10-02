@@ -188,6 +188,13 @@ function keysOf(nodes) {
 function textOf(nodes) {
   return [nodes].flat(Infinity).filter(Boolean).map((node) => node.textContent).join(" | ");
 }
+function byKey(nodes, key) {
+  let found = null;
+  walk(nodes, (node) => {
+    if (!found && node.dataset?.key === key) found = node;
+  });
+  return found;
+}
 function byClass(nodes, name) {
   let found = null;
   walk(nodes, (node) => {
@@ -600,8 +607,12 @@ test("Home, Schedules and Settings show the calendar only when it is on", () => 
     const card = byClass(schedulesView(), "calendar-card");
     assert.equal(Boolean(card), on, `${label}: Schedules`);
     if (on) assert.ok(keysOf(card).includes("calendar-change"), "admins can change how the times are worked out");
+    if (on) assert.equal(byKey(card, "calendar-change").attributes.href, "#/settings/calendar", "Change opens Settings → Shabbat and holidays");
     resetCalendarSettings();
-    const settings = settingsView({});
+    // Settings' list has a row for it, which opens Settings → Shabbat and holidays.
+    assert.equal(keysOf(settingsView({})).includes("settings-row:calendar"), on, `${label}: the row on Settings' list`);
+    assert.ok(!keysOf(settingsView({})).includes("settings-calendar"), "the card is on its own page");
+    const settings = settingsView({ page: "calendar" });
     assert.equal(keysOf(settings).includes("settings-calendar"), on, `${label}: Settings`);
     if (on) {
       const keys = keysOf(settings);
@@ -618,7 +629,10 @@ test("Home, Schedules and Settings show the calendar only when it is on", () => 
   state.calendar = EXAMPLES.Calendar.ok.value;
   const card = byClass(schedulesView(), "calendar-card");
   assert.ok(card && !keysOf(card).includes("calendar-change"));
-  assert.ok(!keysOf(settingsView({})).includes("settings-calendar"));
+  assert.ok(!keysOf(settingsView({})).includes("settings-row:calendar"));
+  const page = settingsView({ page: "calendar" });
+  assert.ok(!keysOf(page).includes("settings-calendar"));
+  assert.match(textOf(page), /Only an admin can change these settings/, "a link kept from an admin device says why");
   state.calendar = null;
 });
 

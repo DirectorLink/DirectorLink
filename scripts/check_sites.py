@@ -29,13 +29,14 @@ GITHUB_LINK = ROOT / "github-link"
 GITHUB = "https://github.directorlink.io"
 # The repository's own address. People only ever see the short link above; the long one stays
 # where a machine needs it: the short link's target, and the app's check that GitHub's release
-# answers point into this project (app/js/updates.js and its tests).
+# answers point into this project (app/js/updates.js and the tests that hold such answers).
 REPOSITORY = "https://github.com/IsraelCIL/DirectorLink"
 REPOSITORY_ALLOWED = {
     "github-link/worker.js",
     "app/js/updates.js",
     "tests/app/updates.test.mjs",
     "tests/app/update-notice.test.mjs",
+    "tests/app/settings-pages.test.mjs",
     "scripts/check_sites.py",
 }
 NOT_AFFILIATED = "not affiliated with Control4 or Snap One"

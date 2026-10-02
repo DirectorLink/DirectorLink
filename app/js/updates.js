@@ -12,6 +12,8 @@ export const LATEST_RELEASE_URL = "https://api.github.com/repos/IsraelCIL/Direct
 // About twice a day: GitHub allows 60 requests an hour per address without a token, and the privacy
 // page (site/privacy.html) says how often the app asks.
 export const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+// "Check now" in Settings asks at once, but at most once a minute; the 12 hours start again from it.
+export const MANUAL_INTERVAL_MS = 60 * 1000;
 // "Up to date" is said only this long after GitHub's last answer. After that Settings says the
 // check did not work; a newer release already known is still offered.
 export const ANSWER_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
@@ -132,13 +134,20 @@ function save(storage, key, value) {
   }
 }
 
+// The last check saved in this tab, per storage, for when the storage keeps nothing (site data
+// blocked): Check now's minute and the 12 hours still hold until the app is closed.
+const kept = new WeakMap();
+const NO_STORAGE = {};
+
 // The last check: { checkedAt, answeredAt, release }, or null. checkedAt is the last try,
 // answeredAt the last time GitHub answered with a complete release, and release that answer (both
 // null until GitHub has answered once). A record without answeredAt, kept before there was one,
-// may hold an answer of any age: it counts as none, so GitHub is asked again.
+// may hold an answer of any age: it counts as none, so GitHub is asked again. Without a record in
+// the storage, the one kept in this tab.
 export function savedCheck(storage = browserStorage()) {
   try {
     const saved = JSON.parse(load(storage, CHECK_KEY) || "null");
+    if (saved === null) return kept.get(storage || NO_STORAGE) || null;
     const checkedAt = Number(saved?.checkedAt);
     const answeredAt = saved?.answeredAt === null ? null : Number(saved?.answeredAt);
     if (!Number.isFinite(checkedAt) || (answeredAt !== null && !Number.isFinite(answeredAt))) return null;
@@ -149,6 +158,7 @@ export function savedCheck(storage = browserStorage()) {
 }
 
 function saveCheck(storage, check) {
+  kept.set(storage || NO_STORAGE, check);
   save(storage, CHECK_KEY, JSON.stringify(check));
 }
 
@@ -165,11 +175,19 @@ export function dismissUpdate(version, storage = browserStorage()) {
 // ---- asking GitHub ---------------------------------------------------------------------------
 
 // Only admin keys ask, only with a driver of a known version, and only 12 hours after the last
-// try. A clock that went back (a saved time in the future) asks again.
-export function checkDue({ role, driverVersion, check, now }) {
+// try (a minute when asked with Check now: force). A clock that went back (a saved time in the
+// future) asks again.
+export function checkDue({ role, driverVersion, check, now, force = false }) {
   if (role !== "admin" || !parseVersion(driverVersion)) return false;
   const at = Number(check?.checkedAt);
-  return !Number.isFinite(at) || now - at >= CHECK_INTERVAL_MS || now < at;
+  return !Number.isFinite(at) || now - at >= (force ? MANUAL_INTERVAL_MS : CHECK_INTERVAL_MS) || now < at;
+}
+
+// How long until Check now may ask again: 0 when it may now.
+export function manualCheckWait({ check, now = Date.now() }) {
+  const at = Number(check?.checkedAt);
+  if (!Number.isFinite(at) || now < at) return 0;
+  return Math.max(0, MANUAL_INTERVAL_MS - (now - at));
 }
 
 async function latestRelease(fetchRelease) {
@@ -200,7 +218,7 @@ let running = null;
 // show may have changed. Failures are silent: a 404, a rate limit, an answer that is not a complete
 // release or no connection keep the last answer and its time, and the next try is 12 hours later,
 // so a device without internet does not ask every minute. The try is saved before asking, so
-// another tab does not ask as well.
+// another tab does not ask as well. force (Check now) asks a minute after the last try.
 export function checkForUpdate({
   role,
   driverVersion,
@@ -208,10 +226,11 @@ export function checkForUpdate({
   fetch: fetchRelease = globalThis.fetch,
   now = Date.now(),
   online = globalThis.navigator?.onLine !== false,
+  force = false,
 } = {}) {
   if (running) return running;
   const before = savedCheck(storage);
-  if (!online || typeof fetchRelease !== "function" || !checkDue({ role, driverVersion, check: before, now })) {
+  if (!online || typeof fetchRelease !== "function" || !checkDue({ role, driverVersion, check: before, now, force })) {
     return Promise.resolve(false);
   }
   saveCheck(storage, { checkedAt: now, answeredAt: before?.answeredAt ?? null, release: before?.release ?? null });

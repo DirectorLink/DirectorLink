@@ -159,6 +159,28 @@
         <readonly>true</readonly>
       </property>
       <property>
+        <name>Sonos</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+        <tooltip>On: DirectorLink finds the Sonos players on the home network and shows each Sonos room in the app, in the Control4 room of the same name; members play, pause, skip and set the volume. Off: DirectorLink does not look for or talk to any Sonos.</tooltip>
+      </property>
+      <property>
+        <name>Sonos Address</name>
+        <type>STRING</type>
+        <default></default>
+        <tooltip>Optional. One Sonos player's IP address, if DirectorLink does not find the players by itself: that player lists the others.</tooltip>
+      </property>
+      <property>
+        <name>Sonos Players</name>
+        <default>Off</default>
+        <type>STRING</type>
+        <readonly>true</readonly>
+      </property>
+      <property>
         <name>Log Level</name>
         <type>LIST</type>
         <items>

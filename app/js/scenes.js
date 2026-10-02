@@ -1,19 +1,20 @@
 // Scenes (docs/SCENES.md): the home's one-tap actions, kept on the controller. Everyone sees them,
 // members run them, admins make and change them (views/scenes.js). A step sets devices of one
 // type: the ones it names, or all of them in a room or the whole home. Doors and gates only get
-// a pulse, what their Open button does.
+// a pulse, what their Open button does. A music step (1.5.0) pauses or stops the Sonos music in a
+// room or the whole home.
 
 import { sceneSet } from "./fans.js";
 import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
-import { deviceRoomId, fanLabel, fanSpeedLabel, modeLabel, roomById, roomName, shownBrightness } from "./model.js";
+import { deviceRoomId, fanLabel, fanSpeedLabel, modeLabel, musicDevices, roomById, roomName, shownBrightness } from "./model.js";
 import { api, errorText, noteForbidden, refreshDevices } from "./session.js";
 import { isDual } from "./setpoints.js";
 import { scenePosition } from "./shades.js";
 import { can, notify, state, ui } from "./state.js";
 
 export const SCENE_ICONS = ["bulb", "moon", "sun", "leave", "movie", "climate", "blinds", "home"];
-export const STEP_TYPES = ["lights", "climate", "fans", "blinds", "relays"];
-export const STEP_ICONS = { lights: "bulb", climate: "climate", fans: "fan", blinds: "blinds", relays: "door" };
+export const STEP_TYPES = ["lights", "climate", "fans", "blinds", "relays", "music"];
+export const STEP_ICONS = { lights: "bulb", climate: "climate", fans: "fan", blinds: "blinds", relays: "door", music: "music" };
 export const MAX_STEPS = 40;
 export const MAX_DEVICE_IDS = 100;
 // The temperatures a scene step takes (driver/src/core/scenes.lua), in °C.
@@ -24,6 +25,8 @@ const RESULT_MS = 4000;
 const CONFIRM_MS = 5000;
 
 export function devicesOfType(type) {
+  // Sonos rooms, in the room they are shown in (none while Sonos is off).
+  if (type === "music") return musicDevices();
   return state[LISTS[type]] || [];
 }
 
@@ -131,6 +134,7 @@ export function stepAction(step) {
     if (set.position <= 0) return t("scenes.do.close");
     return t("scenes.do.position", { percent: set.position });
   }
+  if (step.type === "music") return set.action === "stop" ? t("scenes.do.stopMusic") : t("scenes.do.pauseMusic");
   return t("scenes.do.pulse");
 }
 
@@ -178,6 +182,10 @@ export function resultText(result) {
     const codes = new Set(problems.filter((problem) => problem.outcome !== "partial").map((problem) => problem.code));
     if (codes.size === 1 && codes.has("FORBIDDEN")) return t("scenes.result.doors");
     if (codes.size === 1 && codes.has("DOOR_CONTROL_DISABLED")) return t("scenes.result.doorControl");
+    // Music steps (1.5.0): the controller says why the music was left as it was.
+    if (codes.size === 1 && codes.has("SONOS_OFF")) return t("scenes.result.sonosOff");
+    if (codes.size === 1 && codes.has("NO_PLAYERS")) return t("scenes.result.noPlayers");
+    if (codes.size === 1 && codes.has("NO_SONOS_ROOM")) return t("scenes.result.noSonosRoom");
     return t("scenes.result.skipped", { count: result.skipped });
   }
   if (problems.length) return t("scenes.result.partial");

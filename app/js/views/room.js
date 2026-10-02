@@ -19,6 +19,7 @@ import { icon } from "../icons.js";
 import { NO_ROOM, climateIsOn, fanIsOn, lightIsOn, roomById, roomGroup, roomName } from "../model.js";
 import { can } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
+import { musicCards } from "./music.js";
 
 export function roomView(roomId, { openCamera }) {
   const id = Number(roomId);
@@ -79,6 +80,10 @@ export function roomView(roomId, { openCamera }) {
   // Doorbells (DoorBird), on drivers that have /v1/doorbells; their camera shows here, not twice.
   if (group.doorbells.length) {
     sections.push(section("doorbells", "bell", t("sections.doorbells"), group.doorbells.map((doorbell) => doorbellCard(doorbell, { openCamera }))));
+  }
+  // Sonos rooms shown here (1.5.0, ADR-044), with an installer's Sonos On.
+  if (group.music.length) {
+    sections.push(section("music", "music", t("sections.music"), musicCards(group.music)));
   }
   // Doors and gates (relays), on drivers that have /v1/relays.
   if (group.relays.length) {

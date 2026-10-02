@@ -760,12 +760,18 @@ select:disabled {
   opacity: 0.5;
 }
 
+/* Off but still focusable (Check now while it waits): looks like a disabled one. */
+.button[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
+
 @media (hover: hover) {
-  .button-primary:not(:disabled):hover {
+  .button-primary:not(:disabled):not([aria-disabled="true"]):hover {
     background: color-mix(in srgb, var(--primary) 88%, var(--ink));
   }
-  .button-secondary:not(:disabled):hover,
-  .button-quiet:not(:disabled):hover {
+  .button-secondary:not(:disabled):not([aria-disabled="true"]):hover,
+  .button-quiet:not(:disabled):not([aria-disabled="true"]):hover {
     background: color-mix(in srgb, var(--primary) 8%, var(--card));
   }
 }
@@ -2198,6 +2204,223 @@ select:disabled {
   color: var(--errText);
 }
 
+/* ---- Music (Sonos; js/views/music.js) ----------------------------------------------------- */
+
+.music-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+}
+
+.music-art {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  flex: none;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--muted);
+}
+
+.music-art.is-small {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+}
+
+.music-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.music-card.is-playing .music-art,
+.music-home-row .music-art {
+  color: var(--primary);
+}
+
+.music-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.music-card .device-name {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.music-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.music-detail {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.music-card.is-unreachable .device-meta {
+  color: var(--errText);
+}
+
+/* Playback controls read left to right in Hebrew too (dir="ltr" on the group). */
+.music-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-block-start: 8px;
+}
+
+.music-controls.is-compact {
+  margin: 0;
+}
+
+.music-button {
+  color: var(--ink);
+}
+
+.music-main-button {
+  width: 52px;
+  height: 52px;
+  background: var(--primary);
+  color: var(--primaryText);
+}
+
+.music-controls.is-compact .music-main-button {
+  width: 44px;
+  height: 44px;
+}
+
+@media (hover: hover) {
+  .icon-button.music-main-button:not(:disabled):hover {
+    background: color-mix(in srgb, var(--primary) 85%, var(--ink));
+    color: var(--primaryText);
+  }
+}
+
+.music-volume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.music-volume .slider-row {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.music-mute.is-muted {
+  color: var(--errText);
+}
+
+.music-favorites {
+  margin-block-start: 8px;
+  padding-block-start: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.music-favorites summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+/* Favorites that could not be read: the speaker's answer and Retry. */
+.music-favorites-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-block: 4px 8px;
+}
+
+.music-favorites-error .inline-error {
+  margin: 0;
+}
+
+.music-favorites-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.music-favorite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  text-align: start;
+}
+
+.music-favorite:disabled {
+  opacity: 0.55;
+}
+
+.music-favorite-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.music-favorite-name {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.music-home-list,
+.music-rooms-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.music-home-row {
+  padding: 8px 12px;
+}
+
+.music-home-link {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  color: inherit;
+  text-decoration: none;
+}
+
+.music-home-row .device-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-room-select {
+  margin-block-start: 8px;
+}
+
+.music-room.is-unplaced {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {
@@ -2556,18 +2779,13 @@ input::placeholder {
 
 /* ---- Settings ------------------------------------------------------------------------------ */
 
-/* Settings → Controller → Backup (js/views/backup.js). */
+/* Settings → Controller → Backup, a card of its own (js/views/backup.js). */
 .backup,
 .backup-form,
 .backup-preview {
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.backup {
-  padding-block-start: 16px;
-  border-top: 1px solid var(--line);
 }
 
 .backup input[type="file"] {
@@ -2642,6 +2860,117 @@ input::placeholder {
 
 .settings-title .icon {
   color: var(--primary);
+}
+
+/* Settings' pages: a long title wraps rather than being cut (Shabbat and holidays at 390 px). */
+.settings-page-header .page-title {
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/* Settings' list: a row for each of its pages, with a line of how things are (views/settings.js).
+   On wide screens the two groups sit side by side, under Appearance and Language. */
+.settings-pages {
+  display: grid;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (min-width: 1000px) {
+  .settings-pages {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.settings-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.settings-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 64px;
+  padding: 12px 16px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* The line between two rows starts after the icon. */
+.settings-rows > li + li > .settings-row::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 66px 0;
+  border-block-start: 1px solid var(--line);
+}
+
+.settings-row:focus-visible {
+  outline-offset: -3px;
+}
+
+@media (hover: hover) {
+  .settings-row:hover {
+    background: color-mix(in srgb, var(--ink) 5%, transparent);
+  }
+}
+
+.settings-row-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.settings-row-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-row-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.settings-row-status {
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+/* A newer DirectorLink is out (the Controller row). */
+.settings-row-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primaryText);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-row-chevron {
+  flex: none;
+  color: var(--muted);
 }
 
 .radio-group {
@@ -2756,6 +3085,11 @@ input::placeholder {
   display: grid;
   gap: 0;
   margin: 0;
+}
+
+/* Settings → Controller → Updates: why Check now waits, on its own line under it. */
+.update-check-wait {
+  flex-basis: 100%;
 }
 
 .fact {

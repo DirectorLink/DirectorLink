@@ -8,7 +8,7 @@ info:
     **Direct to Director. End-to-end integration. Open source.**
 
     DirectorLink runs as a driver inside the Control4 controller (Director) and serves this API on
-    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, scenes, schedules, the weather, the calendar, profiles, invitations. Control4
+    the home LAN. Resources use logical names — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, the alarm, music (Sonos), scenes, schedules, the weather, the calendar, profiles, invitations. Control4
     command names, proxy IDs and variable numbers never appear in the API.
 
     **Authentication.** Every operation except health, this API description, pairing and
@@ -19,8 +19,8 @@ info:
 
     **Roles.** Every API key has a role, and each role can do everything the ones before it
     can: `viewer` reads everything (including camera pictures) but the alarm, `member` also controls
-    lights, thermostats, fans and blinds, runs scenes and reads the alarm's status, `doors` also opens doors and gates, `admin` also
-    manages API keys, rooms, scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
+    lights, thermostats, fans, blinds and music, runs scenes and reads the alarm's status, `doors` also opens doors and gates, `admin` also
+    manages API keys, rooms (and the room of a Sonos room), scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
     a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
     property of DirectorLink in Composer set to Enabled.
 
@@ -94,6 +94,12 @@ tags:
       Whether the home's alarm is armed, read-only (ADR-038). Off until an installer turns on
       **Alarm Status** in Composer; then for members and admins, in sealed requests only. Nothing
       in this API arms or disarms.
+  - name: Music
+    description: |
+      Sonos rooms on the home network (ADR-044, docs/SONOS.md): what each plays, its volume and
+      mute, play, pause, skip and the Sonos favorites. Off until an installer sets the **Sonos**
+      property of DirectorLink in Composer to On. DirectorLink talks to the players itself, with the
+      local protocol the Sonos app uses (UPnP/SOAP on port 1400), which Sonos does not document.
   - name: Backup
     description: |
       Everything DirectorLink keeps on the controller, to download and restore (ADR-042,
@@ -1923,6 +1929,355 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/music:
+    get:
+      tags: [Music]
+      operationId: listMusic
+      x-directorlink-role: viewer
+      summary: List the Sonos rooms and what they play
+      description: |
+        Each Sonos room (a player Sonos shows as a room; a stereo pair or a home theater is one),
+        with what its group plays, its own volume and mute, and the Control4 room it is shown in:
+        the room of the same name (without regard to case or spaces, or one of the room's names in
+        other languages), or the one an admin picked (`PUT /v1/music/{musicId}/room`). Rooms in a
+        Sonos group play as one: play, pause and skip go to the group, as Sonos groups them.
+
+        Off by default: until an installer sets the **Sonos** property of DirectorLink in Composer
+        to On, the answer is `{"enabled": false, "status": "off", "items": []}` and DirectorLink
+        looks for no player. While it is on, it finds the players itself (SSDP, or the player at
+        **Sonos Address**, which lists the others) and reads them: the rooms asked for (all of them
+        without `room_id`) every few seconds for a while after each request, the others once a
+        minute. The answer is what was read last; ask again every few seconds to follow it.
+      parameters:
+        - $ref: "#/components/parameters/RoomIdQuery"
+      responses:
+        "200":
+          description: The Sonos rooms, sorted by name; none while Sonos is Off.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/music/{musicId}:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    get:
+      tags: [Music]
+      operationId: getMusicRoom
+      x-directorlink-role: viewer
+      summary: Get a Sonos room
+      responses:
+        "200":
+          description: The Sonos room as last read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicRoom"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    patch:
+      tags: [Music]
+      operationId: updateMusicRoom
+      x-directorlink-role: member
+      summary: Set a Sonos room's volume or mute
+      description: |
+        This room's own speaker, in a group too (the other rooms keep theirs). Answered once the
+        player has taken it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicUpdate"
+            example:
+              volume: 25
+      responses:
+        "200":
+          description: Done. The room with its new volume and mute.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicRoom"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/play:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: playMusic
+      x-directorlink-role: member
+      summary: Play
+      description: Plays the room's group (what it played last). Answered once the player has taken it.
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/pause:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: pauseMusic
+      x-directorlink-role: member
+      summary: Pause
+      description: Pauses the room's group; a radio station, which Sonos cannot pause, is stopped.
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/next:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: nextTrack
+      x-directorlink-role: member
+      summary: Next track
+      description: The group's next track; a radio station cannot skip (409 `ACTION_NOT_POSSIBLE`, see `can_skip`).
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/previous:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: previousTrack
+      x-directorlink-role: member
+      summary: Previous track
+      description: The group's previous track (or the start of this one, as Sonos decides).
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/favorites:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    get:
+      tags: [Music]
+      operationId: listMusicFavorites
+      x-directorlink-role: viewer
+      summary: List the Sonos favorites
+      description: |
+        The household's Sonos favorites (My Sonos), in Sonos's order, read from this room's player
+        and kept a minute. Shortcuts that only the Sonos app can start (Sonos Radio's, for one)
+        have `playable` false.
+      responses:
+        "200":
+          description: The favorites.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicFavoriteList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/favorites/{favoriteId}/play:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+      - name: favoriteId
+        in: path
+        required: true
+        description: A favorite's `id`, as the favorites list gives it.
+        schema:
+          type: string
+          pattern: "^[0-9]{1,9}$"
+    post:
+      tags: [Music]
+      operationId: playMusicFavorite
+      x-directorlink-role: member
+      summary: Start a Sonos favorite
+      description: |
+        Starts the favorite on the room's group: a radio station as it is; a playlist, an album or
+        a track in place of the group's queue (as the Sonos app's Play now). A favorite with
+        `playable` false is refused with 409 `FAVORITE_NOT_PLAYABLE`.
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/art:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    get:
+      tags: [Music]
+      operationId: getMusicArt
+      x-directorlink-role: viewer
+      summary: Get the album art of what plays
+      description: |
+        The picture the player has for what its group plays (album art, a station's logo),
+        fetched on the controller from the player itself (the app's page is HTTPS, the player
+        plain HTTP on the home network). Pictures a music service keeps elsewhere are not fetched:
+        DirectorLink contacts no host but the players. 404 `NO_ART` when there is none.
+        `now_playing.art_key` changes when the picture does.
+      responses:
+        "200":
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+            image/png:
+              schema:
+                type: string
+                contentMediaType: image/png
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
+  /v1/music/{musicId}/room:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    put:
+      tags: [Music]
+      operationId: placeMusicRoom
+      x-directorlink-role: admin
+      summary: Pick the Control4 room of a Sonos room
+      description: |
+        For a Sonos room whose name matches no Control4 room, or the wrong one. Kept on the
+        controller; `null` goes back to the room of the same name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicPlacement"
+            example:
+              room_id: 12
+      responses:
+        "200":
+          description: Saved. The Sonos room, in its room.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MusicRoom"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/backup:
     get:
       tags: [Backup]
@@ -2293,6 +2648,15 @@ components:
       schema:
         type: string
         pattern: "^[0-9a-f]{8}$"
+    MusicId:
+      name: musicId
+      in: path
+      required: true
+      description: A Sonos room's `id`, as `GET /v1/music` lists it (never an address).
+      schema:
+        type: string
+        pattern: "^RINCON_[0-9A-Fa-f]+$"
+        maxLength: 40
 
   headers:
     RetryAfter:
@@ -2314,13 +2678,13 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     NotFound:
-      description: The resource does not exist (`NOT_FOUND`).
+      description: The resource does not exist (`NOT_FOUND`), or a Sonos room plays nothing with a picture (`NO_ART`).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`), or needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
       content:
         application/problem+json:
           schema:
@@ -2335,13 +2699,13 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     CommandFailed:
-      description: The controller or device failed the request (`CONTROLLER_COMMAND_FAILED`, `CAMERA_UNREACHABLE`, `CAMERA_LOGIN_FAILED`).
+      description: The controller or device failed the request (`CONTROLLER_COMMAND_FAILED`, `CAMERA_UNREACHABLE`, `CAMERA_LOGIN_FAILED`, `PLAYER_UNREACHABLE`).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     Busy:
-      description: Too many requests of this kind are waiting (`CAMERA_BUSY`); retry after `Retry-After` seconds.
+      description: Too many requests of this kind are waiting (`CAMERA_BUSY`, `PLAYER_BUSY`); retry after `Retry-After` seconds.
       headers:
         Retry-After:
           schema:
@@ -2366,6 +2730,12 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    MusicCommand:
+      description: Done; the player took it. The room as it is now (what plays may take a moment to follow).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/MusicRoom"
 
   schemas:
     Problem:
@@ -2533,11 +2903,11 @@ components:
         features:
           type: object
           description: |
-            Optional parts of DirectorLink: `jewish_calendar` and `alarm_status` an installer
-            switches on in Composer; `backup` is the driver's own (1.4.0). Clients show none of a
-            feature that is false or missing, and none at all when `features` is missing (drivers
-            before 1.2.0).
-          required: [jewish_calendar, alarm_status, backup]
+            Optional parts of DirectorLink: `jewish_calendar`, `alarm_status` and `sonos` an
+            installer switches on in Composer; `backup` is the driver's own (1.4.0). Clients show
+            none of a feature that is false or missing, and none at all when `features` is missing
+            (drivers before 1.2.0).
+          required: [jewish_calendar, alarm_status, backup, sonos]
           properties:
             jewish_calendar:
               type: boolean
@@ -2548,6 +2918,9 @@ components:
             backup:
               type: boolean
               description: "Always true since 1.4.0: admins can make and restore backups (`GET /v1/backup`, `POST /v1/restore`, ADR-042). Missing before 1.4.0, so clients show no backup."
+            sonos:
+              type: boolean
+              description: "The **Sonos** property is On (1.5.0, ADR-044): `/v1/music` lists the Sonos rooms. Missing before 1.5.0."
 
     PairRequest:
       oneOf:
@@ -2896,11 +3269,12 @@ components:
       description: |
         One step: devices of one type, and what to set. `device_ids` names the devices (with
         `room_id` as the room they were picked in); without it, every device of the type in
-        `room_id`, or in the whole home when `room_id` is null.
+        `room_id`, or in the whole home when `room_id` is null. A `music` step (1.5.0) names no
+        devices: it pauses or stops the Sonos groups with a room in `room_id`, or every group.
       properties:
         type:
           type: string
-          enum: [lights, climate, fans, blinds, relays]
+          enum: [lights, climate, fans, blinds, relays, music]
         room_id:
           type: [integer, "null"]
           minimum: 1
@@ -2919,7 +3293,9 @@ components:
             out where a unit does not have it), and with `mode: off` nothing else; fans (1.2.0)
             `{"on": true|false}` or `{"speed": 1-4}` (1 low to 4 high); blinds
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
-            door or gate relay is never held closed by a scene).
+            door or gate relay is never held closed by a scene); music `{"action": "pause"}` or
+            `{"action": "stop"}` (a radio station, which cannot pause, stops; a group pauses as
+            one).
             climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
             `target_temperature` (cool above heat): dual-setpoint thermostats take them as their
             setpoints (left out where they come closer than the thermostat's deadband);
@@ -2963,7 +3339,7 @@ components:
               maximum: 100
             action:
               type: string
-              enum: [pulse]
+              enum: [pulse, pause, stop]
 
     SceneIcon:
       type: string
@@ -3085,7 +3461,7 @@ components:
           pattern: "^[0-9a-f]{8}$"
         ran:
           type: integer
-          description: Devices whose commands were handed to the controller.
+          description: Devices whose commands were handed to the controller (and Sonos groups told to pause or stop).
         skipped:
           type: integer
           description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project).
@@ -3106,6 +3482,7 @@ components:
                 description: The step, counted from 1.
               device_id:
                 type: integer
+                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`).
               outcome:
                 type: string
                 enum: [skipped, failed, partial]
@@ -4010,6 +4387,166 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Doorbell"
+
+    MusicList:
+      type: object
+      required: [enabled, status, items]
+      properties:
+        enabled:
+          type: boolean
+          description: The **Sonos** property of DirectorLink is On in Composer.
+        status:
+          type: string
+          enum: ["off", searching, ok, not_found, unreachable]
+          description: |
+            `off` (Sonos is Off), `searching` (looking for players), `ok`, `not_found` (no player
+            found: set **Sonos Address** in Composer) or `unreachable` (none answers).
+        items:
+          type: array
+          description: Sorted by name. Empty while Sonos is Off.
+          items:
+            $ref: "#/components/schemas/MusicRoom"
+
+    MusicRoom:
+      type: object
+      description: A Sonos room, as last read.
+      required: [id, name, room_id, room_match, group, state, volume, muted, now_playing, can_skip, reachable, updated_at]
+      properties:
+        id:
+          type: string
+          description: The Sonos room's id (its player's).
+          example: RINCON_000E58A0000101400
+        name:
+          type: string
+          description: The room's name in Sonos.
+          example: Kitchen
+        room_id:
+          type: [integer, "null"]
+          description: The Control4 room it is shown in; null when no room has its name and no admin picked one.
+        room_match:
+          oneOf:
+            - type: string
+              enum: [name, admin]
+            - type: "null"
+          description: How the room was found, by its name or an admin's pick.
+        group:
+          type: object
+          description: The Sonos group it plays in (each room on its own is a group of one).
+          required: [id, coordinator, rooms]
+          properties:
+            id:
+              type: string
+              description: The group's coordinator, which play, pause and skip go to.
+            coordinator:
+              type: boolean
+              description: This room leads the group.
+            rooms:
+              type: array
+              description: The group's rooms, its coordinator first.
+              items:
+                type: object
+                required: [id, name]
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+        state:
+          type: string
+          enum: [playing, paused, stopped, transitioning, unknown]
+          description: The group's, as last read.
+        volume:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: This room's own volume.
+        muted:
+          type: [boolean, "null"]
+        now_playing:
+          oneOf:
+            - type: object
+              required: [kind, title, artist, album, station, source, art_href, art_key]
+              properties:
+                kind:
+                  type: string
+                  enum: [music, radio, connect, tv, line_in]
+                  description: |
+                    `music` (the queue: a track, a playlist), `radio`, `connect` (another app plays
+                    through the speaker: Spotify Connect, AirPlay), `tv` or `line_in`.
+                title:
+                  type: [string, "null"]
+                artist:
+                  type: [string, "null"]
+                album:
+                  type: [string, "null"]
+                station:
+                  type: [string, "null"]
+                  description: The radio station's name.
+                source:
+                  type: [string, "null"]
+                  description: The app playing through the speaker (`connect`), e.g. Spotify.
+                art_href:
+                  type: [string, "null"]
+                  description: "`GET` it for the picture (`/v1/music/{musicId}/art`); null when the player has none."
+                art_key:
+                  type: [string, "null"]
+                  description: Changes when the picture does.
+            - type: "null"
+          description: What the group plays; null when nothing is known or set.
+        can_skip:
+          type: boolean
+          description: Next and previous work (not on the radio).
+        reachable:
+          type: boolean
+          description: False while its player does not answer.
+        updated_at:
+          type: [string, "null"]
+          format: date-time
+          description: When it was last read.
+
+    MusicUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
+        muted:
+          type: boolean
+
+    MusicPlacement:
+      type: object
+      required: [room_id]
+      additionalProperties: false
+      properties:
+        room_id:
+          type: [integer, "null"]
+          minimum: 1
+          description: A room of the project, or null for the room of the same name.
+
+    MusicFavoriteList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, title, description, playable]
+            properties:
+              id:
+                type: string
+                pattern: "^[0-9]{1,9}$"
+              title:
+                type: string
+              description:
+                type: [string, "null"]
+                description: What Sonos says it is (`TuneIn Station`, `Spotify Playlist`).
+              playable:
+                type: boolean
+                description: False for shortcuts only the Sonos app starts.
 
     AlarmStatus:
       type: object

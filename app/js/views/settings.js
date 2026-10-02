@@ -1,5 +1,7 @@
-// Settings: appearance, language, room names, Shabbat and holidays, controller, account, app and
-// about.
+// Settings (#/settings): appearance and language, then one row per page, each at #/settings/<page>
+// with Back to the list: Controller (its facts, updates, backup, pairing), Rooms (shown, order,
+// names and the Sonos rooms), Shabbat and holidays, People and devices (#/access, views/access.js),
+// Account, App and About.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { calendarOn, loadCalendar, noteCalendarOff, takeCalendarReveal } from "../calendar.js";
@@ -19,27 +21,150 @@ import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.j
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { backupPanel } from "./backup.js";
-import { offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { musicRoomsSection } from "./music.js";
 import { chip, stepper } from "./schedules.js";
-import { updateFact, updatePanel } from "./updates.js";
+import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./updates.js";
+import { APP_VERSION } from "../version.js";
 
-export function settingsView({ onPalette, onTheme, onLanguage, navigate }) {
-  return [
-    pageHeader({ title: t("settings.title") }),
-    offlineBanner(),
+// The pages under Settings (#/settings/<page>); app.js routes them.
+export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "app", "about"];
+
+// `page`: one of SETTINGS_PAGES, or null for the main list.
+export function settingsView({ page = null, onPalette, onTheme, onLanguage, navigate }) {
+  switch (page) {
+    case "controller":
+      return subpage(t("settings.controller.title"), controllerSection(navigate), updatesSection(), backupPanel());
+    case "rooms":
+      return subpage(t("settings.rooms.title"), roomsSection(), roomNamesSection(), musicSection());
+    case "calendar":
+      return subpage(t("calendar.settings.title"), calendarSection() || calendarUnavailable());
+    case "account":
+      return subpage(t("settings.account.title"), accountSection());
+    case "app":
+      return subpage(t("settings.app.title"), appSection());
+    case "about":
+      return subpage(t("settings.about.title"), aboutSection());
+    default:
+      return [
+        pageHeader({ title: t("settings.title") }),
+        offlineBanner(),
+        h("div", { class: "settings" }, appearanceSection(onPalette, onTheme), languageSection(onLanguage), pageRows()),
+      ];
+  }
+}
+
+// One of Settings' pages: Back leads to the list (or back in history, views/common.js). A long
+// title (Shabbat and holidays) wraps rather than being cut.
+function subpage(title, ...sections) {
+  const header = pageHeader({ title, back: "#/settings" });
+  header.className = `${header.className} settings-page-header`;
+  return [header, offlineBanner(), h("div", { class: "settings" }, ...sections)];
+}
+
+// ---- the list of pages ------------------------------------------------------------------------
+
+// The data-key of the row on Settings' list that opens `route` (a page of Settings, or People and
+// devices): app.js focuses it when Back leads from there to the list. null for other screens.
+export function settingsRowKey(route) {
+  const page = route?.name === "access" ? "access" : route?.name === "settings" ? route.page : null;
+  return page ? `settings-row:${page}` : null;
+}
+
+// A row that opens a page: its icon, title, one line of how things are, and a chevron. `badge`: a
+// word that stands out (an update); the line says the same, so screen readers skip it.
+function pageRow({ page, href = `#/settings/${page}`, iconName, title, status, badge = null }) {
+  return h(
+    "li",
+    {},
     h(
-      "div",
-      { class: "settings" },
-      appearanceSection(onPalette, onTheme),
-      languageSection(onLanguage),
-      roomsSection(),
-      calendarSection(),
-      controllerSection(navigate),
-      accountSection(),
-      appSection(),
-      aboutSection()
-    ),
-  ];
+      "a",
+      { class: "settings-row", href, dataset: { key: `settings-row:${page}` } },
+      h("span", { class: "settings-row-icon", "aria-hidden": "true" }, icon(iconName)),
+      h(
+        "span",
+        { class: "settings-row-text" },
+        h("span", { class: "settings-row-title" }, title, badge ? h("span", { class: "settings-row-badge", "aria-hidden": "true" }, badge) : null),
+        status ? h("span", { class: "settings-row-status" }, status) : null
+      ),
+      icon("chevronForward", "settings-row-chevron")
+    )
+  );
+}
+
+// The home's pages, then the person's and the app's.
+function pageRows() {
+  return h(
+    "nav",
+    { class: "settings-pages", "aria-label": t("settings.rows.label") },
+    h("ul", { class: "card settings-rows" }, controllerRow(), roomsRow(), calendarRow(), accessRow()),
+    h("ul", { class: "card settings-rows" }, accountRow(), appRow(), aboutRow())
+  );
+}
+
+// The connection, then (admins) whether DirectorLink is up to date; a newer one has a badge.
+function controllerRow() {
+  const update = updateSummary();
+  const connection = state.status === "connected" && state.transport === "remote" ? t("status.connectedRemote") : t(`status.${state.status}`);
+  const version = state.system?.bridge?.version;
+  const status = update?.available
+    ? update.text
+    : [connection, update ? update.text : version ? t("settings.rows.driverVersion", { version }) : null].filter(Boolean).join(" · ");
+  return pageRow({ page: "controller", iconName: "controller", title: t("settings.controller.title"), status, badge: update?.available ? t("settings.rows.updateBadge") : null });
+}
+
+function roomsRow() {
+  let status = t("settings.rows.roomsConnect");
+  if (state.loaded && state.rooms.length) {
+    const rooms = t("settings.rows.roomCount", { count: state.rooms.length });
+    const hidden = state.profile ? state.rooms.filter((room) => hiddenRoomIds().has(room.id)).length : 0;
+    status = hidden ? t("settings.rows.roomsHidden", { rooms, count: hidden }) : rooms;
+  }
+  return pageRow({ page: "rooms", iconName: "rooms", title: t("settings.rooms.title"), status });
+}
+
+// Admins, while the Jewish calendar is on in Composer (as its card, below): the minutes.
+function calendarRow() {
+  if (!state.loaded || !can("admin") || !calendarOn()) return null;
+  const settings = state.calendar?.enabled ? state.calendar.settings : null;
+  if (!settings) return null;
+  const status = t("settings.rows.calendar", { candles: settings.candle_lighting_minutes, havdalah: settings.havdalah_minutes });
+  return pageRow({ page: "calendar", iconName: "candles", title: t("calendar.settings.title"), status });
+}
+
+// Admins manage who has access: devices, invitations and, for the owner, people.
+function accessRow() {
+  if (!state.loaded || !can("admin")) return null;
+  // While this device is not linked, People and devices finds the home in GET /v1/remote's answer,
+  // which This home (Settings → Account) asks for a signed-in admin at home: asked here too, as it
+  // was when Settings was one page.
+  if (state.account.status === "signed-in" && !savedRemote() && !IS_IOS && state.status === "connected" && state.transport === "lan" && !state.remoteInfo) {
+    loadRemoteInfo();
+  }
+  return pageRow({ page: "access", href: "#/access", iconName: "users", title: t("access.open"), status: t("settings.rows.access") });
+}
+
+function accountRow() {
+  const account = state.account;
+  const status =
+    account.status === "signed-in"
+      ? t("settings.rows.signedIn", { email: account.user?.email || "" })
+      : account.status === "unknown" || account.status === "loading"
+        ? t("common.loading")
+        : account.status === "unavailable"
+          ? t("settings.rows.accountUnavailable")
+          : t("settings.rows.signedOut");
+  return pageRow({ page: "account", iconName: "user", title: t("settings.account.title"), status });
+}
+
+// Whether it can be installed, else whether it opens without internet.
+function appRow() {
+  const status = state.canInstall ? t("settings.rows.canInstall") : t(`settings.app.offline.${state.offlineCopy}`);
+  return pageRow({ page: "app", iconName: "download", title: t("settings.app.title"), status });
+}
+
+function aboutRow() {
+  return pageRow({ page: "about", iconName: "info", title: t("settings.about.title"), status: t("settings.rows.about", { version: APP_VERSION }) });
 }
 
 function card(id, iconName, title, ...content) {
@@ -145,9 +270,11 @@ function languageSection(onLanguage) {
 
 // ---- rooms ---------------------------------------------------------------------------------
 
+// Settings → Rooms: which rooms this person sees and (admins) the home's order; then the rooms'
+// names; then Music.
 function roomsSection() {
   if (!state.loaded || !state.rooms.length) {
-    return card("rooms", "rooms", t("settings.rooms.title"), h("p", { class: "muted-note" }, t("settings.rooms.connectFirst")));
+    return card("rooms", "rooms", t("settings.rooms.listTitle"), h("p", { class: "muted-note" }, t("settings.rooms.connectFirst")));
   }
   const admin = can("admin");
   const personal = Boolean(state.profile);
@@ -157,17 +284,33 @@ function roomsSection() {
   return card(
     "rooms",
     "rooms",
-    t("settings.rooms.title"),
+    t("settings.rooms.listTitle"),
     h("p", { class: "field-help" }, personal ? (admin ? t("settings.rooms.orderHelpAdmin") : t("settings.rooms.orderHelp")) : t("settings.rooms.updateForHiding")),
     admin ? h("p", { class: "visually-hidden", id: "room-order-keys" }, t("settings.rooms.moveKeys")) : null,
     ui.roomOrderMessage ? h("p", { class: `notice notice-${ui.roomOrderMessage.kind}`, role: "alert" }, ui.roomOrderMessage.text) : null,
-    h("ul", { class: "room-order-list" }, state.rooms.map((room, index) => roomRow(room, index, hidden, { admin, personal }))),
-    h("h3", { class: "settings-subtitle" }, t("settings.rooms.namesTitle")),
+    h("ul", { class: "room-order-list" }, state.rooms.map((room, index) => roomRow(room, index, hidden, { admin, personal })))
+  );
+}
+
+function roomNamesSection() {
+  if (!state.loaded || !state.rooms.length) return null;
+  return card(
+    "room-names",
+    "edit",
+    t("settings.rooms.namesTitle"),
     // Renaming rooms (PATCH /v1/rooms/{id}) needs an admin key.
-    admin
+    can("admin")
       ? [h("p", { class: "field-help" }, t("settings.rooms.help")), h("div", { class: "room-editor-list" }, state.rooms.map(roomEditor))]
       : h("p", { class: "notice notice-info" }, t("settings.rooms.askAdmin", { role: roleLabel(state.role) }))
   );
+}
+
+// ---- Music ---------------------------------------------------------------------------------
+
+// The Rooms page ends with the Sonos rooms and the Control4 room each is shown in (admins, when
+// Sonos is on: views/music.js, ADR-044); null otherwise.
+function musicSection() {
+  return musicRoomsSection();
 }
 
 // One room: shown or hidden for this person, and (admins) moved for everyone: dragged by its handle
@@ -701,7 +844,7 @@ function calendarSection() {
   if (!state.loaded || !can("admin")) return null;
   if (!calendarOn()) {
     const message = ui.calendarSettings?.message;
-    return message?.off ? card("calendar", "candles", t("calendar.settings.title"), h("p", { class: "notice notice-error", role: "alert" }, message.text)) : null;
+    return message?.off ? card("calendar", "candles", t("calendar.settings.cardTitle"), h("p", { class: "notice notice-error", role: "alert" }, message.text)) : null;
   }
   const settings = state.calendar?.enabled ? state.calendar.settings : null;
   if (!settings) return null;
@@ -717,7 +860,7 @@ function calendarSection() {
   const section = card(
     "calendar",
     "candles",
-    t("calendar.settings.title"),
+    t("calendar.settings.cardTitle"),
     radioGroup({
       legend: t("calendar.settings.holidays"),
       groupName: "calendar-holidays",
@@ -745,7 +888,7 @@ function calendarSection() {
     ),
     h("p", { class: "field-help" }, t("calendar.settings.disclaimer"))
   );
-  // Schedules → Change leads here: the card comes into view once app.js has scrolled to the top.
+  // Schedules → Change leads here: the card takes the focus once app.js has focused the title.
   section.setAttribute("tabindex", "-1");
   section.dataset.key = "settings-calendar";
   if (takeCalendarReveal()) {
@@ -756,6 +899,13 @@ function calendarSection() {
     }, 0);
   }
   return section;
+}
+
+// Settings → Shabbat and holidays for anyone else (a link kept from an admin device), or with the
+// calendar off: why there is nothing to change.
+function calendarUnavailable() {
+  if (!state.loaded) return notReadyState() || h("p", { class: "field-help", role: "status" }, t("common.loading"));
+  return h("p", { class: "notice notice-info" }, t("calendar.settings.unavailable"));
 }
 
 // ---- controller ----------------------------------------------------------------------------
@@ -802,9 +952,6 @@ function controllerSection(navigate) {
     [t("settings.controller.status"), t(`status.${state.status}`)],
     state.role ? [t("settings.controller.access"), roleLabel(state.role)] : null,
     state.lastUpdated && state.loaded ? [t("settings.controller.updated"), formatTime(state.lastUpdated)] : null,
-    system?.bridge?.version ? [t("settings.controller.bridgeVersion"), system.bridge.version] : null,
-    // Admins: whether a newer DirectorLink is out (views/updates.js).
-    updateFact(),
     system?.controller?.model ? [t("settings.controller.model"), system.controller.model] : null,
     system?.controller?.os_version ? [t("settings.controller.os"), system.controller.os_version] : null,
     system?.inventory
@@ -831,7 +978,7 @@ function controllerSection(navigate) {
   return card(
     "controller",
     "controller",
-    t("settings.controller.title"),
+    t("settings.controller.connection"),
     // iPhone and iPad cannot use the home-network connection (docs/ACCOUNTS.md).
     IS_IOS
       ? null
@@ -848,12 +995,7 @@ function controllerSection(navigate) {
           h("p", { class: "field-help" }, t("connect.hostHelp"))
         ),
     ui.controllerMessage ? h("p", { class: `notice notice-${ui.controllerMessage.kind}`, role: "alert" }, ui.controllerMessage.text) : null,
-    h(
-      "dl",
-      { class: "facts" },
-      rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", { dir: "auto" }, value)))
-    ),
-    updatePanel(),
+    facts(rows),
     state.role && !can("member") ? h("p", { class: "notice notice-info" }, t("roles.viewOnly")) : null,
     state.status === "unreachable" && state.notice ? h("p", { class: "notice notice-error" }, state.notice.text) : null,
     h(
@@ -861,10 +1003,6 @@ function controllerSection(navigate) {
       { class: "button-row" },
       state.status === "unreachable"
         ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "settings-retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry"))
-        : null,
-      // Admins manage who has access: devices, invitations and, for the owner, people.
-      state.loaded && can("admin")
-        ? h("a", { class: "button button-secondary", href: "#/access", dataset: { key: "settings-access" } }, icon("user"), t("access.open"))
         : null,
       state.apiKey
         ? h(
@@ -901,9 +1039,31 @@ function controllerSection(navigate) {
             t("settings.controller.forget")
           )
         : null
-    ),
-    // Admins: everything DirectorLink keeps, as a file locked with a password (ADR-042).
-    backupPanel()
+    )
+  );
+}
+
+function facts(rows) {
+  return h(
+    "dl",
+    { class: "facts" },
+    rows.map(([label, value]) => h("div", { class: "fact" }, h("dt", {}, label), h("dd", { dir: "auto" }, value)))
+  );
+}
+
+// Settings → Controller, under the controller: the app's and DirectorLink's versions and, for
+// admins, whether a newer DirectorLink is out, Check now and how to update (views/updates.js).
+// Admins then find Backup under it: everything DirectorLink keeps, as a file locked with a
+// password (ADR-042, views/backup.js).
+function updatesSection() {
+  const version = state.system?.bridge?.version;
+  return card(
+    "updates",
+    "refresh",
+    t("updates.label"),
+    facts([[t("settings.controller.appVersion"), APP_VERSION], version ? [t("settings.controller.bridgeVersion"), version] : null, updateFact()].filter(Boolean)),
+    updateCheckButton(),
+    updatePanel()
   );
 }
 
@@ -1205,13 +1365,13 @@ function accountSection() {
           provider === "apple"
             ? h(
                 "button",
-                { type: "button", class: "button button-apple", dataset: { key: "account-add-apple" }, "aria-describedby": "account-add-apple-help", disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+                { type: "button", class: "button button-apple", dataset: { key: "account-add-apple" }, "aria-describedby": "account-add-apple-help", disabled: account.busy, onclick: () => signIn("#/settings/account", provider, { link: true }) },
                 icon("apple"),
                 t("connect.continueApple")
               )
             : h(
                 "button",
-                { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings", provider, { link: true }) },
+                { type: "button", class: "button button-secondary", dataset: { key: `account-add-${provider}` }, disabled: account.busy, onclick: () => signIn("#/settings/account", provider, { link: true }) },
                 icon("user"),
                 t("settings.account.addProvider", { provider: t(`settings.account.provider.${provider}`) })
               )
@@ -1262,7 +1422,7 @@ function accountSection() {
         "div",
         { class: "button-row" },
         // Side by side and the same size (Apple's no smaller than Google's).
-        h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/settings", key: "account-sign-in" })),
+        h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/settings/account", key: "account-sign-in" })),
         account.status === "unavailable"
           ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-retry" }, onclick: loadAccount }, icon("refresh"), t("common.retry"))
           : null
@@ -1272,7 +1432,7 @@ function accountSection() {
   return card(
     "account",
     "user",
-    t("settings.account.title"),
+    t("settings.account.cardTitle"),
     notice,
     ...body,
     h("p", { class: "field-help" }, h("a", { href: "https://directorlink.io/privacy", target: "_blank", rel: "noopener" }, t("settings.account.privacy")))
@@ -1316,7 +1476,7 @@ function appSection() {
   return card(
     "app",
     "download",
-    t("settings.app.title"),
+    t("settings.app.cardTitle"),
     h(
       "dl",
       { class: "facts" },
@@ -1346,7 +1506,7 @@ function aboutSection() {
   return card(
     "about",
     "info",
-    t("settings.about.title"),
+    t("settings.about.cardTitle"),
     h("p", { class: "about-slogan" }, t("settings.about.slogan")),
     h("p", {}, t("settings.about.text")),
     h("p", { class: "field-help" }, t("settings.about.independent")),

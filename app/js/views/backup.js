@@ -519,7 +519,7 @@ function donePanel(current) {
 // one does not (and would answer 404).
 const hasBackups = () => state.system?.features?.backup === true;
 
-// The panel in the Controller card: for admins, once connected, with a DirectorLink that has
+// Settings → Controller's Backup card: for admins, once connected, with a DirectorLink that has
 // backups.
 export function backupPanel() {
   if (!state.loaded || !can("admin") || !hasBackups()) return null;
@@ -531,9 +531,9 @@ export function backupPanel() {
     done: donePanel,
   }[current.stage];
   return h(
-    "div",
-    { class: "backup", id: "settings-backup" },
-    h("h3", { class: "settings-subtitle" }, t("backup.title")),
+    "section",
+    { class: "card settings-card backup", id: "settings-backup", "aria-labelledby": "settings-backup-title" },
+    h("h2", { class: "settings-title", id: "settings-backup-title" }, icon("archive"), t("backup.title")),
     current.stage ? null : h("p", { class: "field-help" }, t("backup.intro")),
     current.message
       ? h("p", { class: `notice notice-${current.message.kind}`, role: current.message.kind === "error" ? "alert" : "status", dataset: { key: "backup-message" } }, current.message.text)

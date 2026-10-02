@@ -209,8 +209,8 @@ another's: tick the box once the old controller is off or reset.
 - **Two controllers must not run with one identity.** When the identity moves here from a backup
   made on another controller (or one that cannot be told), the preview warns: turn Remote Access off
   on the controller the backup was made on, or remove DirectorLink from it, before restoring. The
-  relay lets one connection carry a home, so two controllers would push each other off every few
-  seconds, and the family would reach one or the other.
+  relay lets one connection carry a home, so two controllers would push each other off about every
+  30 seconds, and the family would reach one or the other.
 - A device linked to the other home through the account: the app points it at the backup's home.
 - Pending invitations and a claim token made before the restore are revoked.
 

@@ -131,7 +131,7 @@ function planNextRead() {
   }, wait);
 }
 
-// Schedules → Change (admins): Settings then brings the calendar's card into view.
+// Schedules → Change (admins): Settings → Shabbat and holidays then focuses the calendar's card.
 let revealSettings = false;
 
 export function showCalendarSettings() {

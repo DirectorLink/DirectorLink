@@ -58,3 +58,15 @@ export function iconButton(iconName, label, props = {}) {
 export function clear(element) {
   element.replaceChildren();
 }
+
+// Says `text` to screen readers, politely, from a live region outside the screen (#view), which
+// every redraw replaces. The first call makes it: call it with "" before there is anything to say,
+// so that it is in the page when it speaks.
+let liveRegion = null;
+export function announce(text) {
+  if (!liveRegion) {
+    liveRegion = h("p", { class: "visually-hidden", role: "status" });
+    document.body?.append(liveRegion);
+  }
+  liveRegion.textContent = text;
+}
