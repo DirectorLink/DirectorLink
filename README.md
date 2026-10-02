@@ -87,7 +87,7 @@ A successful install shows:
 
 - **Status:** `Ready`
 - **Version:** the installed DirectorLink release
-- **API Status:** `Online - port 41999`
+- **API Status:** `Online - port 41999`. If it says `Port 41999 taken by another driver`, another driver took the port when the controller started: restart the controller (DirectorLink also asks for the port again every minute)
 - **Pairing Code:** 8 digits shown as `1234 5678`, with **Pairing Status** `Ready until HH:MM - works once`
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app

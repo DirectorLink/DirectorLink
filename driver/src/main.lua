@@ -275,7 +275,14 @@ local services = {
         updateProperty("Log Level", COMPOSER_LEVEL[level] or "Info")
     end,
     onServerStatus = function(online, status)
-        updateProperty("API Status", online and ("Online - port " .. Api.PORT) or ("Offline (" .. status .. ")"))
+        if online then
+            updateProperty("API Status", "Online - port " .. Api.PORT)
+        elseif status == "TAKEN" then
+            -- Another driver holds the port (api/server.lua); remote access still works.
+            updateProperty("API Status", "Port " .. Api.PORT .. " taken by another driver - retrying every minute")
+        else
+            updateProperty("API Status", "Offline (" .. status .. ")")
+        end
     end,
 }
 

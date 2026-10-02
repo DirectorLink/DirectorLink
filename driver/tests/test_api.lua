@@ -50,6 +50,72 @@ function tests.driver_starts_the_api_and_reports_ready()
     end
 end
 
+-- The API server's port check (api/server.lua): the next one not fired yet.
+local function portCheck(mock)
+    for _, timer in ipairs(mock.timers) do
+        if not timer.fired and not timer.cancelled and timer.source:find("src/api/server.lua", 1, true) then
+            return timer
+        end
+    end
+end
+
+local function apiLog(message)
+    local found, count = nil, 0
+    for _, entry in ipairs(require("src.core.log").query({ category = "api" })) do
+        if entry.message == message then
+            found, count = entry, count + 1
+        end
+    end
+    return found, count
+end
+
+-- Seen on a real controller: a camera driver took port 41999 at boot, and Director refused the
+-- port to DirectorLink without telling it. DirectorLink says so and asks again every minute.
+function tests.a_port_held_by_another_driver_is_reported_and_asked_for_again()
+    local creates = 0
+    local mock = Mock.startDriver(nil, nil, nil, function(m)
+        m.portTaken = true
+        local create = C4.CreateServer
+        function C4:CreateServer(port, delimiter, udp)
+            creates = creates + 1
+            return create(self, port, delimiter, udp)
+        end
+    end)
+    T.eq(mock.properties["API Status"], "Starting...")
+    T.eq(creates, 1)
+    local check = portCheck(mock)
+    T.eq(check.delay, 15000, "checked 15 s after asking")
+    check.fired = true
+    check.callback()
+    T.eq(mock.properties["API Status"], "Port 41999 taken by another driver - retrying every minute")
+    T.eq(creates, 2, "asked again")
+    local taken, count = apiLog("the API port is taken by another driver; asking again every minute")
+    T.truthy(taken, "logged")
+    T.eq(taken.level, "error")
+    T.eq(taken.data.port, 41999)
+    T.eq(mock.servers[41999] ~= nil, true, "the fake keeps what was asked; Director would not")
+
+    check = portCheck(mock)
+    T.eq(check.delay, 60000, "then every minute")
+    check.fired = true
+    check.callback()
+    T.eq(creates, 3)
+    local _, again = apiLog("the API port is taken by another driver; asking again every minute")
+    T.eq(again, count, "the error is logged once")
+
+    -- The other driver lets go: Director gives the port at the next try.
+    OnServerStatusChanged(41999, "ONLINE")
+    T.eq(mock.properties["API Status"], "Online - port 41999")
+    T.eq(portCheck(mock), nil, "no more checks")
+    T.eq(apiLog("API server ONLINE").data.taken_before, 2)
+end
+
+function tests.a_port_given_at_once_is_not_asked_for_again()
+    local mock = Mock.startDriver()
+    T.eq(portCheck(mock), nil, "the check ends when the port is ONLINE")
+    T.eq(apiLog("API server ONLINE").data.taken_before, nil)
+end
+
 function tests.health_and_api_description_are_public()
     local mock = Mock.startDriver()
     local health = T.http(mock, "GET", "/v1/health")

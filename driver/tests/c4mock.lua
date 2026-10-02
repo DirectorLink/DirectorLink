@@ -950,7 +950,10 @@ function Mock.startDriver(project, specText, initType, prepare)
     require("src.main")
     OnDriverInit(initType or "DIT_STARTUP")
     OnDriverLateInit(initType or "DIT_STARTUP")
-    OnServerStatusChanged(41999, "ONLINE")
+    -- Director gives the port; a test sets mock.portTaken in `prepare` for one held by another driver.
+    if not mock.portTaken then
+        OnServerStatusChanged(41999, "ONLINE")
+    end
     return mock
 end
 
