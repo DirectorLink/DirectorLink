@@ -98,7 +98,9 @@ const PREVIEW = {
 };
 // The controller's automatic backups, and the account's.
 const controller = { calls: [], status: null, runs: 0, old: false, runRefusal: null };
-const account = { calls: [], items: [], data: new Map(), damaged: false };
+// adminsOnly: the account refuses the list (ADMINS_ONLY) until this device's key is told to it
+// through the account (a sealed request: checkedIn), or for good ("always").
+const account = { calls: [], items: [], data: new Map(), damaged: false, adminsOnly: false, checkedIn: false };
 
 const offStatus = () => ({ enabled: false, key: null, time: null, running: false, last: null, remote: { enabled: true, connected: true, linked: true } });
 const system = (old) => ({
@@ -125,7 +127,14 @@ globalThis.fetch = async (url, init = {}) => {
 
 function handleAccount(method, path) {
   if (method === "GET" && path === "/v1/homes") return answer(200, { items: [{ home_id: HOME, owner: true, added_at: "2026-09-01T00:00:00Z", connected: true }] });
-  if (method === "GET" && path === `/v1/homes/${HOME}/backups`) return answer(200, { items: account.items, keep: 7, max_bytes: 5000000 });
+  if (method === "POST" && path === `/v1/homes/${HOME}/e2e`) {
+    account.checkedIn = true;
+    return answer(503, { status: 503, code: "HOME_OFFLINE" });
+  }
+  if (method === "GET" && path === `/v1/homes/${HOME}/backups`) {
+    if (account.adminsOnly === "always" || (account.adminsOnly && !account.checkedIn)) return answer(403, { status: 403, code: "ADMINS_ONLY" });
+    return answer(200, { items: account.items, keep: 7, max_bytes: 5000000 });
+  }
   const one = new RegExp(`^/v1/homes/${HOME}/backups/([0-9a-f]{32})$`).exec(path);
   if (method === "GET" && one) {
     const item = account.items.find((entry) => entry.id === one[1]);
@@ -174,6 +183,7 @@ const cpace = await import("../../app/js/cpace.js");
 const cloud = await import("../../app/js/cloud-backup.js");
 const { backupPanel } = await import("../../app/js/views/backup.js");
 const { sizeText } = await import("../../app/js/views/cloud-backup.js");
+const { saveRemote } = await import("../../app/js/remote.js");
 
 async function settle() {
   for (let index = 0; index < 8; index += 1) await new Promise((resolve) => setImmediate(resolve));
@@ -228,7 +238,7 @@ async function connect({ old = false, signedIn = true } = {}) {
   session.forgetKey();
   await advance(20000, 500);
   Object.assign(controller, { calls: [], status: offStatus(), runs: 0, old, runRefusal: null });
-  Object.assign(account, { calls: [], items: [], data: new Map(), damaged: false });
+  Object.assign(account, { calls: [], items: [], data: new Map(), damaged: false, adminsOnly: false, checkedIn: false });
   confirmed.length = 0;
   confirmAnswer = true;
   Object.assign(state, { host: HOST, apiKey: KEY, role: "admin", status: "connected", loaded: true, system: system(old), notice: null, errors: {}, pending: {}, rooms: [], lights: [], thermostats: [], blinds: [], fans: [], cameras: [], relays: [], doorbells: [], devices: [], scenes: [] });
@@ -345,6 +355,74 @@ test("Back up now says why it cannot, and a backup that failed says why", async 
   controller.runRefusal = "REMOTE_OFFLINE";
   await click("auto-backup-now");
   assert.ok(message().includes("not connected to DirectorLink’s servers"));
+  assert.ok(!message().includes("tries again"), "Back up now is not tried again");
+});
+
+test("why the last backup was not made: the account's limits, a stop, and a retry only at night", async () => {
+  await connect();
+  const lastLine = async (code, why) => {
+    controller.status = { ...offStatus(), enabled: true, time: "04:12", key: { key_id: "1".repeat(16) }, last: { at: "2026-10-03T01:12:00Z", ok: false, size: null, code, why } };
+    ui.autoBackup = null;
+    backupPanel();
+    await advance(100);
+    return text(byKey(backupPanel(), "auto-backup-last"));
+  };
+  assert.match(await lastLine("BACKUP_LIMIT", "now"), /was not made: backed up too often today\. You can back up again tomorrow; the nightly backup still runs\.$/);
+  assert.match(await lastLine("ACCOUNT_BACKUPS_FULL", "daily"), /was not made: no room in your account for this backup \(25 MB for all your homes together\)\. Delete another home’s backups, or download a backup file instead\.$/);
+  assert.match(await lastLine("KEY_CHANGED", "now"), /was not made: it was stopped when the backup password changed\.$/);
+  assert.match(await lastLine("AUTOMATIC_BACKUP_OFF", "daily"), /was not made: it was stopped when automatic backups were turned off\.$/);
+  // Only the nightly backup is tried again.
+  assert.match(await lastLine("REMOTE_OFFLINE", "daily"), /not connected to DirectorLink’s servers\. It tries again\.$/);
+  assert.match(await lastLine("REMOTE_OFFLINE", "now"), /not connected to DirectorLink’s servers\.$/);
+  // After Back up now, as the controller tells how it went.
+  controller.status = { ...offStatus(), enabled: true, time: "04:12", key: { key_id: "1".repeat(16) } };
+  ui.autoBackup = null;
+  backupPanel();
+  await advance(100);
+  await click("auto-backup-now");
+  controller.status = { ...controller.status, running: false, last: { at: "2026-10-03T08:00:04Z", ok: false, size: null, code: "BACKUP_LIMIT", why: "now" } };
+  await advance(3500);
+  assert.equal(message(), "The backup was not made: backed up too often today. You can back up again tomorrow; the nightly backup still runs.");
+  await setLanguage("he");
+  try {
+    assert.match(await lastLine("KEY_CHANGED", "now"), /לא נעשה: הוא נעצר כי סיסמת הגיבוי שונתה\.$/);
+    assert.match(await lastLine("REMOTE_OFFLINE", "now"), /DirectorLink\.$/);
+    assert.match(await lastLine("REMOTE_OFFLINE", "daily"), /DirectorLink\. הוא ינסה שוב\.$/);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("the account's backups of this device's home: its key told to the account and asked again, or said why not", async () => {
+  await connect();
+  saveRemote({ home: HOME, keyId: "0a1b2c3d" });
+  try {
+    account.items = [{ id: "9".repeat(32), created_at: "2026-10-03T00:27:00Z", size: 2000, key_id: "1".repeat(16) }];
+    account.adminsOnly = true;
+    const listed = () => account.calls.filter((call) => call.method === "GET" && call.path === `/v1/homes/${HOME}/backups`).length;
+    const before = listed();
+    ui.autoBackup = null;
+    backupPanel();
+    // The sealed request is made with WebCrypto, in real time.
+    const read = async () => {
+      for (let index = 0; index < 20000 && !ui.autoBackup?.loaded; index += 1) await new Promise((resolve) => setImmediate(resolve));
+      await advance(100);
+    };
+    await read();
+    assert.ok(account.checkedIn, "a sealed request through the account in between");
+    assert.equal(listed() - before, 2, "asked once more");
+    assert.ok(byKey(backupPanel(), `auto-backup-item-${"9".repeat(32)}`), "then listed");
+
+    // Refused still: said, not hidden.
+    account.adminsOnly = "always";
+    ui.autoBackup = null;
+    backupPanel();
+    await read();
+    assert.equal(text(byKey(backupPanel(), "auto-backup-admins-only")), "Only the home’s admins see its backups in the account.");
+    assert.equal(byKey(backupPanel(), `auto-backup-delete-${HOME}`), null);
+  } finally {
+    localStorage.removeItem("directorlink.remote");
+  }
 });
 
 test("a backup in the account is opened with its password and goes to the same check and preview", async () => {

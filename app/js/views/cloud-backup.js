@@ -11,7 +11,7 @@ import { h } from "../dom.js";
 import { formatDateTime, formatNumber, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { deleteHomeBackups, listAccountHomes, listHomeBackups, RemoteError, savedRemote } from "../remote.js";
-import { errorText, whenForgotten } from "../session.js";
+import { checkInThroughAccount, errorText, whenForgotten } from "../session.js";
 import { notify, state, ui } from "../state.js";
 
 // While a backup is being made the controller is asked how it went this often, this many times.
@@ -45,8 +45,9 @@ function say(kind, text) {
   notify();
 }
 
-// Why a backup was not made, or Back up now refused.
-function reasonText(code) {
+// Why a backup was not made, or Back up now refused. `why`: the backup's ("daily" or "now"), when
+// known; only the nightly one is tried again when the account could not be reached.
+function reasonText(code, why) {
   const key = {
     REMOTE_ACCESS_OFF: "remoteOff",
     REMOTE_OFFLINE: "offline",
@@ -56,8 +57,14 @@ function reasonText(code) {
     BACKUP_TOO_LARGE: "tooLarge",
     BACKUP_RUNNING: "running",
     PROJECT_NOT_READY: "notReady",
+    BACKUP_LIMIT: "limit",
+    ACCOUNT_BACKUPS_FULL: "accountFull",
+    KEY_CHANGED: "keyChanged",
+    AUTOMATIC_BACKUP_OFF: "turnedOff",
   }[code];
-  return key ? t(`backup.automatic.reasons.${key}`) : t("backup.automatic.reasons.other", { code: code || "?" });
+  if (!key) return t("backup.automatic.reasons.other", { code: code || "?" });
+  const text = t(`backup.automatic.reasons.${key}`);
+  return key === "offline" && why === "daily" ? `${text} ${t("backup.automatic.reasons.retries")}` : text;
 }
 
 const errorOf = (error) => (error?.code && error?.status ? reasonText(error.code) : errorText(error));
@@ -66,6 +73,28 @@ export function sizeText(bytes) {
   if (!Number.isFinite(bytes)) return "";
   if (bytes < 1000000) return t("backup.automatic.kilobytes", { size: formatNumber(Math.max(1, Math.round(bytes / 1000))) });
   return t("backup.automatic.megabytes", { size: formatNumber(Math.round(bytes / 100000) / 10) });
+}
+
+// One home's backups in the account. The account lets in only the home's admins, which it knows
+// by the key each device uses: told through the account (a sealed request), maybe not yet for
+// this device's home. Then told, and asked once more; still refused, that is said.
+async function homeBackups(homeId, linked) {
+  try {
+    const answer = await listHomeBackups(homeId);
+    return { homeId, items: Array.isArray(answer?.items) ? answer.items : [] };
+  } catch (error) {
+    if (error?.code === "ADMINS_ONLY" && homeId === linked) {
+      await checkInThroughAccount(true);
+      try {
+        const answer = await listHomeBackups(homeId);
+        return { homeId, items: Array.isArray(answer?.items) ? answer.items : [] };
+      } catch (again) {
+        return again?.code === "ADMINS_ONLY" ? { homeId, items: [], adminsOnly: true } : { homeId, error: again };
+      }
+    }
+    // Not an admin there, or an account service before 1.6.0.
+    return ["ADMINS_ONLY", "NOT_A_MEMBER", "OWNER_ONLY", "NOT_FOUND"].includes(error?.code) ? null : { homeId, error };
+  }
 }
 
 // The home's backups in the account: the account's homes (this device's link first), each one the
@@ -79,15 +108,7 @@ async function accountBackups() {
   }
   const linked = savedRemote()?.home;
   if (linked) ids = [linked, ...ids.filter((id) => id !== linked)];
-  const lists = await Promise.all(
-    ids.map((homeId) =>
-      listHomeBackups(homeId).then(
-        (answer) => ({ homeId, items: Array.isArray(answer?.items) ? answer.items : [] }),
-        // Not an admin there, or an account service before 1.6.0.
-        (error) => (["ADMINS_ONLY", "NOT_A_MEMBER", "OWNER_ONLY", "NOT_FOUND"].includes(error?.code) ? null : { homeId, error })
-      )
-    )
-  );
+  const lists = await Promise.all(ids.map((homeId) => homeBackups(homeId, linked)));
   return { lists: lists.filter(Boolean) };
 }
 
@@ -134,7 +155,7 @@ function watchBackup() {
       polling = null;
       section().busy = false;
       if (status?.last?.ok) say("success", t("backup.automatic.uploaded"));
-      else if (status?.last) say("error", t("backup.automatic.notMade", { reason: reasonText(status.last.code) }));
+      else if (status?.last) say("error", t("backup.automatic.notMade", { reason: reasonText(status.last.code, status.last.why) }));
       await loadAutomatic();
     }, POLL_MS);
   next();
@@ -363,35 +384,37 @@ function backupList(list, many) {
     h("h4", { class: "backup-heading" }, many ? t("backup.automatic.listOf", { home: list.homeId.slice(0, 8) }) : t("backup.automatic.list")),
     list.error
       ? h("p", { class: "notice notice-error" }, errorText(list.error))
-      : list.items.length
-        ? h(
-            "ul",
-            { class: "auto-backup-items" },
-            list.items.map((item) =>
-              h(
-                "li",
-                { dataset: { key: `auto-backup-item-${item.id}` } },
-                h("span", {}, formatDateTime(new Date(item.created_at)), " · ", sizeText(item.size), isOlderKey(item) ? ` · ${t("backup.automatic.earlier")}` : ""),
-                " ",
+      : list.adminsOnly
+        ? h("p", { class: "field-help", dataset: { key: "auto-backup-admins-only" } }, t("backup.automatic.adminsOnly"))
+        : list.items.length
+          ? h(
+              "ul",
+              { class: "auto-backup-items" },
+              list.items.map((item) =>
                 h(
-                  "button",
-                  {
-                    type: "button",
-                    class: "button button-quiet",
-                    dataset: { key: `auto-backup-restore-${item.id}` },
-                    disabled: Boolean(current.busy),
-                    onclick: () => {
-                      forgetSecrets();
-                      Object.assign(section(), { stage: "restore", restore: { homeId: list.homeId, item }, message: null });
-                      notify();
+                  "li",
+                  { dataset: { key: `auto-backup-item-${item.id}` } },
+                  h("span", {}, formatDateTime(new Date(item.created_at)), " · ", sizeText(item.size), isOlderKey(item) ? ` · ${t("backup.automatic.earlier")}` : ""),
+                  " ",
+                  h(
+                    "button",
+                    {
+                      type: "button",
+                      class: "button button-quiet",
+                      dataset: { key: `auto-backup-restore-${item.id}` },
+                      disabled: Boolean(current.busy),
+                      onclick: () => {
+                        forgetSecrets();
+                        Object.assign(section(), { stage: "restore", restore: { homeId: list.homeId, item }, message: null });
+                        notify();
+                      },
                     },
-                  },
-                  t("backup.automatic.restore")
+                    t("backup.automatic.restore")
+                  )
                 )
               )
             )
-          )
-        : h("p", { class: "field-help" }, t("backup.automatic.none")),
+          : h("p", { class: "field-help" }, t("backup.automatic.none")),
     !list.error && list.items.length
       ? h(
           "div",
@@ -417,7 +440,7 @@ function statusLines(status) {
     lines.push(
       last.ok
         ? h("p", { class: "field-help", dataset: { key: "auto-backup-last" } }, t("backup.automatic.last", { date, size: sizeText(last.size) }))
-        : h("p", { class: "notice notice-error", dataset: { key: "auto-backup-last" } }, t("backup.automatic.lastFailed", { date, reason: reasonText(last.code) }))
+        : h("p", { class: "notice notice-error", dataset: { key: "auto-backup-last" } }, t("backup.automatic.lastFailed", { date, reason: reasonText(last.code, last.why) }))
     );
   }
   if (status.enabled && status.remote && !status.remote.enabled) {
