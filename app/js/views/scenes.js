@@ -805,21 +805,35 @@ function chosenSet(adding, targets) {
   return { action: "pulse" };
 }
 
+// The devices an action being changed named, picked as they were, in its own place and kind: it
+// keeps naming them, even when they are every one of the kind there now (copied from the house,
+// or the other door removed since).
+function namedAsBefore(adding, picked) {
+  const editing = adding.editing;
+  if (!editing?.ids.length || !adding.choose || adding.type !== editing.type || adding.room !== editing.room) return false;
+  return picked.length === editing.ids.length && editing.ids.every((id) => picked.includes(id));
+}
+
 // The steps the choices describe: one, or several when more than 100 devices are picked; none
 // while chosen devices are wanted and none is picked. All of them picked is "all" (so devices
-// added to the room later are included). Auto on thermostats with heat and cool setpoints sets
-// both setpoints instead of a target. `others`: ids an action being changed names that are not
-// among `devices` (moved to another room, or gone from the project); ticked, they stay in it.
+// added to the room later are included), except for doors and gates, which open only the ones
+// picked, and an action being changed whose devices are picked as they were. Auto on thermostats
+// with heat and cool setpoints sets both setpoints instead of a target. `others`: ids an action
+// being changed names that are not among `devices` (moved to another room, or gone from the
+// project); ticked, they stay in it.
 function buildSteps(adding, devices, others = []) {
   const here = [...devices.map((device) => device.id), ...others];
   // An action being changed keeps the order it named its devices in; new ones come after.
   const picked = unique([...(adding.editing?.ids || []), ...here]).filter((id) => here.includes(id) && adding.picked.includes(id));
   if (adding.choose && !picked.length) return [];
+  const asBefore = namedAsBefore(adding, picked);
+  // Nothing changed: the action exactly as it was (all its parts, when it was split).
+  if (asBefore && keptSet(adding)) return [...adding.editing.steps];
   const elsewhere = devicesOfType(adding.type).filter((device) => others.includes(device.id));
   const set = keptSet(adding) ?? chosenSet(adding, adding.choose ? [...devices, ...elsewhere].filter((device) => picked.includes(device.id)) : devices);
   // Music names no devices: the Sonos rooms in the room, or the whole home.
   if (adding.type === "music") return [{ type: "music", room_id: adding.room, device_ids: null, set }];
-  const everyOne = picked.length === devices.length && !others.some((id) => picked.includes(id));
+  const everyOne = adding.type !== "relays" && !asBefore && picked.length === devices.length && !others.some((id) => picked.includes(id));
   if (!adding.choose || everyOne) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
   const steps = [];
   for (let start = 0; start < picked.length; start += MAX_DEVICE_IDS) {
