@@ -39,6 +39,7 @@ ADR-047) are in *6. Alerts* below.
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
 | The backup password | while typed | **never** | **never** (only its public key) |
+| DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
@@ -398,6 +399,7 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   signing out everywhere (also Apple ending the account's only sign-in), or the push service saying
   the browser is gone. The home's Durable Object keeps the admin key ids the controller last
   listed.
+- `stats` (1.7.0, ADR-052, `migrations/0010`): three totals and when each was last counted (below).
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 
@@ -406,6 +408,23 @@ After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie fo
 app, on this device or on every device. Expired sessions and unfinished sign-ins are deleted every
 day. Deleting the account deletes its sessions, memberships, owned homes, invitations and requests
 to join.
+
+### What is public: DirectorLink in numbers (1.7.0, ADR-052)
+
+Once an hour the cloud counts three totals, and anyone may read them at
+`GET https://api.directorlink.io/v1/stats` (no cookie; the website shows them from 25 homes):
+
+- **homes**: homes linked to an account (claimed, their owner's account still there);
+- **people**: accounts someone can sign in to (deleted accounts are gone; one Apple's notices left
+  without a sign-in is not counted);
+- **downloads**: how often `DirectorLink.c4z` was downloaded, all GitHub releases together, from
+  GitHub's public releases list.
+
+Totals only, with when the oldest of them was counted: nothing about any one home or account, and
+nothing new from the homes (no device counts, no versions). As they change at most once an hour,
+nobody can watch a home or an account appear; with few homes, a total that changed between two hours
+says only that some home was linked or left, or some account was made or deleted, in that hour.
+The website asks for them from the visitor's browser, without cookies.
 
 ## Relay protocol, version 1
 
@@ -526,3 +545,6 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
 12. (1.6.0, ADR-047) Admins may get Web Push alerts (home offline 10 minutes, a schedule failed),
     encrypted for their browsers and naming nothing; the controller tells the cloud which key ids
     are admin keys.
+13. (1.7.0, ADR-052) Three totals are public, counted once an hour: homes linked to an account,
+    people with an account, driver downloads. Nothing about any one home; the homes send nothing
+    for them.
