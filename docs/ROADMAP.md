@@ -5,7 +5,7 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 ## Next: 1.7.0
 
 - Samsung refrigerators (the DirectorLink Samsung Refrigerator driver for Control4): temperatures, doors and the water filter in the app; Power Cool, Power Freeze, Ice Maker and Sabbath Mode as controls, in scenes and in Shabbat schedules.
-- The number of homes on the website: the account service counts homes linked to an account once an hour and gives the total only (never anything about one home); directorlink.io shows it once it reaches 25. Nothing new leaves a home: no device counts.
+- DirectorLink in numbers on the website: homes and people using an account, and driver downloads. The account service counts them once an hour and gives totals only (never anything about one home); directorlink.io shows them once there are 25 homes. Nothing new leaves a home: no device counts.
 - Scene links: a private link per scene for the phone's own automations (iPhone Shortcuts "when I arrive home", Android automation apps, Siri, NFC tags). Scenes that open doors or gates get none; links can be revoked, and every run is in History.
 
 ## Later
