@@ -355,9 +355,13 @@ end
 
 -- A refrigerator's door has been open longer than its driver's Door Open Alert (ADR-049): once per
 -- opening, from the driver's Door Left Open event (src/adapters/refrigerator.lua). It goes into the
--- history. The push alert (ADR-050) belongs here too, telling the cloud nothing but its kind and time.
+-- history, and to the members and admins who chose the alert, sealed to each one's key (ADR-050).
 Refrigerator.onDoorLeftOpen(function(device)
     Activity.record("door", "left_open", { what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
+    local ok, err = pcall(Alerts.fridgeDoor, device)
+    if not ok then
+        Log.warn("alerts", "refrigerator alert failed", { device_id = device.id, error = tostring(err) })
+    end
 end)
 
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
@@ -600,8 +604,18 @@ function OnDriverLateInit(driverInitType)
     })
     -- Alerts the controller makes, sealed to each device's key (ADR-050): doorbells rang, doors
     -- and gates opened (as the history has them), schedules that failed; the refrigerator's door
-    -- left open calls Alerts.fridgeDoor.
-    Alerts.start({ relay = Relay, remote = Remote, keys = Keys, registry = Registry, adapters = AdapterManager, activity = Activity })
+    -- left open calls Alerts.fridgeDoor (above), and members are offered it in a home with one.
+    Alerts.start({
+        relay = Relay,
+        remote = Remote,
+        keys = Keys,
+        registry = Registry,
+        adapters = AdapterManager,
+        activity = Activity,
+        hasFridge = function()
+            return next(Registry.refrigeratorList()) ~= nil
+        end,
+    })
     if Properties and Properties["Remote Access"] == "On" then
         Relay.start()
     else

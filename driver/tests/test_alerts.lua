@@ -376,6 +376,37 @@ function tests.the_refrigerator_door_reaches_members_and_admins()
     T.eq(Alerts.fridgeDoor(fridge), 2)
 end
 
+-- The integration (src/main.lua): the refrigerator driver's Door Left Open goes to the history and
+-- to the members who chose it, and a home with a refrigerator offers it to members by itself.
+function tests.a_refrigerator_door_left_open_alerts_through_the_integration()
+    local mock = Mock.startDriver(Mock.withRefrigerator(Mock.project()))
+    local _, connection = Harness.connected({ mock = mock })
+    local admin = T.pair(mock, "Chrome on Windows")
+    local created = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Kids phone", role = "member" } })
+    T.eq(created.status, 201, created.body)
+    local member = created.json
+    T.eq(T.http(mock, "GET", "/v1/alerts/choices", { key = member.key }).json.kinds.fridge_door, true, "offered with a refrigerator")
+    T.eq(T.http(mock, "PUT", "/v1/alerts/choices", { key = member.key, body = { on = true } }).status, 200)
+    -- The admin wants doors opened only, not the refrigerator.
+    local adminId = T.http(mock, "GET", "/v1/api-keys/current", { key = admin }).json.id
+    T.eq(T.http(mock, "PUT", "/v1/alerts/choices", { key = admin, body = { on = true, kinds = { door_opened = true, fridge_door = false } } }).status, 200)
+    sent(connection)
+
+    Mock.setRefrigerator(mock, 140, { DOOR_OPEN = "1" })
+    Mock.fireDeviceEvent(mock, 140, 15)
+    local messages = ofType(sent(connection), "notify")
+    T.eq(#messages, 1)
+    local home = require("src.cloud.relay").identity().home_id
+    local detail = open(member.key, home, member.id, messages[1].message["for"][member.id])
+    T.eq(detail.kind, "fridge_door")
+    T.eq(detail.id, 141)
+    T.eq(detail.name, "Refrigerator")
+    T.eq(detail.room, "Kitchen")
+    -- Not a door or gate opened: the admin, who chose doors and not the refrigerator, gets nothing.
+    T.eq(count(messages[1].message["for"]), 1)
+    T.eq(messages[1].message["for"][adminId], nil)
+end
+
 -- ---- schedules ----------------------------------------------------------------------------------
 
 function tests.a_schedule_that_fails_tells_its_admins_sealed_and_names_nothing_in_the_clear()

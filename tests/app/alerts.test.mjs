@@ -545,7 +545,10 @@ test("a controller that does not know this device has alerts on is told: switche
   browser.subscription = subscription(PUBLIC_KEY);
   localStorage.setItem("directorlink.alerts", JSON.stringify({ home: HOME, endpoint: browser.subscription.endpoint }));
   notify();
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  // Until the controller is told (a fixed 100 ms was too short on a busy machine), at most 2 s.
+  for (let waited = 0; waited < 2000 && toHome("PUT", "/v1/alerts/choices").length === 0; waited += 20) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
   assert.equal(toHome("GET", "/v1/alerts/choices").length, 1);
   assert.deepEqual(toHome("PUT", "/v1/alerts/choices").map((request) => request.body), [{ on: true }]);
   assert.equal(home.choices.on, true);
