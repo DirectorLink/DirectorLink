@@ -2,7 +2,74 @@
 
 ## Current release
 
-`v1.5.0` — Sonos (0zi), the remote connection kept up (0zj), DirectorLink's port taken by another driver (0zk), Settings' pages (0zh), and Check now with the app's version (0zg). Deploy the cloud before updating the driver.
+`v1.6.0` — History (0zn), alerts (0zo), automatic backups to the account and the Sonos rooms in backups (0zp), changing a scene action (0zl), and the remote connection checked every 10 s (0zm). Deploy the cloud (two migrations, the VAPID secret) before updating the driver.
+
+## 0zp. Automatic backups to the account, and the Sonos rooms in backups (1.6.0)
+
+1. `GET /v1/system` shows `automatic_backup: true`. A signed-in admin sees "Automatic backups to your account" in Settings → Controller → Backup; signed out, the sign-in line.
+2. Set the backup password: the lost-password warning shows. In the console, `GET /v1/backup/automatic` shows public_key, salt and iterations 600000, never the password. A `PUT` in the clear gets 403 `SEALED_REQUEST_REQUIRED`.
+3. With Remote Access on and the home linked, the first backup runs at once: "Backed up to your account", and the list shows today's (about 100–200 KB).
+   - The log's `backup uploaded`: note `seal_ms` and `total_ms`.
+   - The app controls lights normally while it runs.
+   - History shows "Backed up to your account" with who pressed it.
+4. The next morning there is a backup from between 03:00 and 05:00, with `why: daily` in the log and "Backed up to your account · DirectorLink" in History.
+5. Back up now twice: the list keeps one backup for today.
+6. Restore:
+   - a wrong password says "Wrong password" and sends nothing;
+   - the right one shows the preview, including Sonos players with a chosen room;
+   - then Cancel, or Replace everything on a test controller.
+7. Change backup password, then Back up now: the older backup is marked "earlier password" and opens only with the old password.
+8. Turn off: the list stays. "Delete these backups" empties it.
+9. With Remote Access off, the card says so, and History has one "Couldn't back up to your account · Remote Access is off in Composer" for the night.
+10. A second admin, signed in to another account that joined the home, sees the same list. A member doesn't.
+11. Sonos: choose a room for a player, download a backup file and restore it: the choice comes back. A 1.5.0 backup file restores and keeps the current choices.
+
+## 0zo. Alerts (1.6.0)
+
+1. On a computer (Chrome, Edge or Firefox), signed in as an admin on a linked device: Settings → Controller → Alerts on this device → allow. It says "Alerts are on for this device". In Hebrew, the card is in Hebrew.
+2. Turn Remote Access Off in Composer for 2 minutes, then On: no notification.
+3. Turn it Off for 11 minutes: one notification, "Your home – DirectorLink has not reached it since HH:MM…", and no second one for the same absence. Tapping it opens History.
+4. Unplug the controller's network for 11 minutes (a connection that dies silently): one notification. Plug it back in; it reconnects.
+5. On an iPhone in Safari, the card shows the Home Screen hint. From the Home Screen app (iOS 16.4+) the switch works and step 3 notifies.
+6. A member key's device sees no card. An admin made a member stops getting alerts.
+7. Switch off, sign out, or Sign out everywhere: no more alerts on that device.
+8. Schedule failed: when a device refuses a scheduled command (DirectorLink log "schedule ran" with failed > 0), the alert says "Your home – a schedule had a problem at HH:MM…", and History shows which one.
+9. Workers Observability shows `alert_sent` (kind, devices, delivered, gone) and never a push address.
+
+## 0zn. History (1.6.0)
+
+1. Update the driver: History starts with "DirectorLink updated to 1.6.0", then "DirectorLink started" after a controller restart.
+2. Run a scene from the app: your name and device, and "Ran on N devices". A scene with a door shows a door entry "by the scene …".
+3. Open the gate from a doors key: History → Doors shows who.
+4. Make a time schedule for the next minute with "only if hotter than 40°": "Didn't run …: the weather didn't match its conditions".
+5. In Composer set Schedules to Paused at a schedule's minute: "Schedules set to Paused" and "Not run: schedules are paused in Composer". Set it back.
+6. In Composer delete a test button (or rename a device): within seconds, History → Changes in Composer lists it by name and room.
+7. Change a key's role and revoke a key in People and devices: both under Access.
+8. Make a backup file: "Made a backup", and the file has no history in it.
+9. Turn the router off for 2 minutes: once remote access is back, an entry says it was down for about 2 min.
+10. Open `#/settings/history` with a member key: Settings opens instead. Check the page in Hebrew, at phone width, and dark.
+
+## 0zm. The remote connection checked every 10 seconds (1.6.0)
+
+1. With Remote Access On, Remote Status shows "Connected since …". In Workers Observability, `driver_hello` has `interval_s: 10`.
+2. Use the app through the account over a busy evening.
+   - **Relay log:** a `driver_stale` (ping_s ≥ 25) is followed within seconds by `driver_connected` with `replaced: 1`, with no failed requests between, apart from ones already sent.
+   - **Driver's relay log:** `relay connection closed` shows `heard_s` of about 10 or less.
+3. Block the controller's internet for about 40 s with the app open through the account.
+   - Within about 25 s the account's home list shows the home offline.
+   - A request waits about 8 s, then says offline.
+   - After unblocking, it reconnects within seconds and the next request works.
+4. GitHub checks: a pull request shows five jobs and takes about 4 minutes. The three "Driver tests (part N of 3)" counts add up to the full suite's.
+
+## 0zl. Changing a scene action (1.6.0)
+
+1. As an admin, open a scene with a few actions. Each row has up, down, Edit (pencil) and remove; on a phone the four sit 2×2.
+2. Tap Edit, or the row's text, on a lights action of chosen lights: "Edit action" opens with its room, the lights ticked and its level.
+3. Untick one light, change the level, then Save action. The row changes in place and keeps the focus. Save the scene, run it, and check only those lights change.
+4. Edit another action, change something, then Cancel or Back: nothing changes.
+5. After Copy the house in a home with more than 100 lights alike, edit either of the two parts: both open as one ("…2 actions in a row"); Save replaces both.
+6. Remove a device in Composer that a scene names: editing that action lists it as "Removed device", ticked. Untick it and save.
+7. Repeat 2–4 in Hebrew, at 320 and 390 px, light and dark, and with a keyboard (Tab to Edit, Enter, Esc/Back).
 
 ## 0zk. DirectorLink's port taken by another driver (1.5.0)
 

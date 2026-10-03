@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also opens the app when a doorbell notification is clicked, and shows alerts (push).
 
-const CACHE_NAME = "directorlink-shell-v38";
+const CACHE_NAME = "directorlink-shell-v39";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
