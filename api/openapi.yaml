@@ -105,6 +105,12 @@ tags:
       Everything DirectorLink keeps on the controller, to download and restore (ADR-042,
       docs/BACKUP.md). For admins, in sealed requests only: a backup holds every key's hash and lock
       key and the home's remote identity. The app encrypts it with a password before saving it.
+  - name: Activity
+    description: |
+      What the controller did and noticed (ADR-046, docs/HISTORY.md): scenes and schedules run or
+      skipped and why, doors and gates opened, keys and invitations, changes made in Composer,
+      backups, restores and driver updates. Kept on the controller (the newest 500 entries, 30 days
+      at most); through the account only sealed, like every request. For admins.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -2439,6 +2445,52 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+
+  /v1/activity:
+    get:
+      tags: [Activity]
+      operationId: listActivity
+      x-directorlink-role: admin
+      summary: Read the controller's activity history
+      description: |
+        Newest first. Each entry says when, who (a key's device and person, a schedule, Composer or
+        DirectorLink itself), what by the names the controller had then, and how it went. Ask for
+        the entries before the last one received with `before` (the answer's `next_before`). Like
+        the log it may be read in the clear; the app sends it sealed.
+      parameters:
+        - name: kind
+          in: query
+          description: Only entries of these kinds, separated by commas, e.g. `scene,schedule`.
+          schema:
+            type: string
+            example: scene,schedule
+        - name: before
+          in: query
+          description: Only entries recorded before the entry with this id (the previous answer's `next_before`).
+          schema:
+            type: integer
+            minimum: 1
+        - name: limit
+          in: query
+          description: Maximum number of entries.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Matching entries, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/logs:
     get:
@@ -4963,6 +5015,170 @@ components:
       properties:
         level:
           $ref: "#/components/schemas/LogLevel"
+
+    ActivityList:
+      type: object
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityEntry"
+        next_before:
+          type: [integer, "null"]
+          description: Pass it as `before` for the entries that came before these; null when there are no more.
+
+    ActivityEntry:
+      type: object
+      description: |
+        One thing that happened. `kind` and `action`:
+        - `scene`: `run` (a scene run from an app or the API), `off` (Home's Turn off all; `note`
+          says lights, climate or blinds).
+        - `schedule`: `run`, with `outcome` ran, skipped (`reason`) or failed; `note` is `late` for
+          a run caught up after a restart, `no_weather` for one that ran without the weather, or the
+          weather that started it (`heat`, `wind`, `rain`).
+        - `door`: `pulse` (opened; `via` names the scene that did it), `hold` (a relay held closed,
+          its door held open), `release`, `doorbell` (the gate wired to a doorbell opened).
+        - `access`: `paired`, `created`, `role_changed` (`from`, `to`), `revoked`, `forgotten` (a
+          device removed its own key), `expired`, `joined` (an invitation accepted), `all_revoked`
+          (Composer's Revoke All API Keys; `count`).
+        - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
+          `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
+        - `system`: `backup`, `restore` (`from`: when the backup was made), `remote_away` (the remote
+          connection was away for `seconds`, more than a minute; recorded when it is back),
+          `driver_updated` (`from`, `to`), `driver_started` (the controller or the driver restarted),
+          `driver_added`.
+      required: [id, at, kind, action, who]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Increases with every entry; the cursor for `before`.
+        at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [scene, schedule, door, composer, access, system]
+        action:
+          type: string
+          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, project, setting, backup, restore, remote_away, driver_updated, driver_started, driver_added]
+        who:
+          $ref: "#/components/schemas/ActivityWho"
+        what:
+          type: string
+          description: The scene, device, key or setting, by the name it had then.
+        room:
+          type: string
+          description: The device's room in the Control4 project, by the name it had then.
+        via:
+          type: string
+          description: The scene that opened the door.
+        outcome:
+          type: string
+          enum: [ran, skipped, failed]
+          description: For scenes and schedules. A run that failed on a device is `failed`; one that sent nothing is `skipped`.
+        reason:
+          type: string
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error]
+          description: |
+            Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
+            `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
+            and holidays, and the Jewish calendar is off or has no location), `only_if` (its weather
+            conditions were not met), `no_weather` (no weather data, and it skips without),
+            `scene_gone`, `error`.
+        note:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        count:
+          type: integer
+        seconds:
+          type: integer
+        more:
+          type: integer
+          description: Changes not listed in `changes` (it lists 20).
+        counts:
+          type: object
+          required: [ran, skipped, failed]
+          properties:
+            ran:
+              type: integer
+            skipped:
+              type: integer
+            failed:
+              type: integer
+        ids:
+          type: object
+          properties:
+            scene_id:
+              type: string
+            schedule_id:
+              type: string
+            device_id:
+              type: integer
+            room_id:
+              type: integer
+            key_id:
+              type: string
+            invitation_id:
+              type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityChange"
+
+    ActivityWho:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [key, schedule, composer, controller]
+          description: A key (an app, a device, a script), a schedule, Composer, or DirectorLink itself.
+        key_id:
+          type: string
+        name:
+          type: string
+          description: The key's name (its device), as it was then.
+        profile:
+          type: string
+          description: The person the key belongs to, as named then.
+        remote:
+          type: boolean
+          description: True when the request came through the account, away from home.
+        schedule_id:
+          type: string
+        trigger:
+          $ref: "#/components/schemas/ScheduleTrigger"
+        days:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 6
+
+    ActivityChange:
+      type: object
+      required: [change, type, name]
+      properties:
+        change:
+          type: string
+          enum: [removed, added, renamed, moved]
+        type:
+          type: string
+          enum: [device, room]
+        name:
+          type: string
+          description: The name now (the name it had, for one removed).
+        room:
+          type: string
+          description: A device's room (the one it moved to).
+        from:
+          type: string
+          description: The name before (renamed), or the room before (moved).
 
     Backup:
       type: object

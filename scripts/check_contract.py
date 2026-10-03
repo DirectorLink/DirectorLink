@@ -619,6 +619,7 @@ def scenario(client, bridge):
     client.check("PUT", f"/v1/music/{KITCHEN}/room", 403, body={"room_id": 10})
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
+    client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
     client.check("GET", "/v1/profile", 200)
     client.check("GET", "/v1/scenes", 200)
@@ -717,6 +718,28 @@ def scenario(client, bridge):
     if restored["dry_run"] is not False or not restored.get("restored_at"):
         fail(f"POST /v1/restore with dry_run false should restore: {restored}")
     client.check("GET", "/v1/scenes", 200)
+
+    # The history (1.6.0, ADR-046): what this scenario did, newest first, for admins; in pages, by
+    # kind, in the clear (the console) and sealed (the app).
+    history = client.check("GET", "/v1/activity?limit=200", 200)
+    kinds = {item["kind"] for item in history["items"]}
+    if not {"scene", "door", "access", "composer", "system"} <= kinds:
+        fail(f"GET /v1/activity should have scenes, doors, keys, Composer settings and the backup: {sorted(kinds)}")
+    restored = next((item for item in history["items"] if item["action"] == "restore"), None)
+    if not restored or restored["who"]["type"] != "key" or restored.get("from") != document["created_at"]:
+        fail(f"GET /v1/activity should say who restored which backup: {restored}")
+    page = client.check("GET", "/v1/activity?kind=door,scene&limit=2", 200)
+    if len(page["items"]) != 2 or not page["next_before"] or {item["kind"] for item in page["items"]} - {"door", "scene"}:
+        fail(f"GET /v1/activity?kind=door,scene&limit=2 should give two of them and where to go on: {page}")
+    after = client.check("GET", f"/v1/activity?kind=door,scene&limit=2&before={page['next_before']}", 200)
+    if after["items"][0]["id"] >= page["items"][-1]["id"]:
+        fail(f"the next page should start before the last entry shown: {after}")
+    client.check("GET", "/v1/activity?kind=lights", 400)
+    client.check("GET", "/v1/activity?before=0", 400)
+    client.check("GET", "/v1/activity", 401, auth=False)
+    sealed = client.check_sealed(bridge, "GET", "/v1/activity?kind=access&limit=5", 200)
+    if not sealed["items"] or {item["kind"] for item in sealed["items"]} != {"access"}:
+        fail(f"a sealed GET /v1/activity?kind=access should list keys paired and changed: {sealed}")
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.

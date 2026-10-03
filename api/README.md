@@ -290,6 +290,17 @@ curl -X PATCH http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400   -
 - `POST /v1/restore {"upload": "<id>"}` checks it and changes nothing (`dry_run` is true unless sent false); `{"upload": "<id>", "dry_run": false}` replaces every store, or none (`500 RESTORE_FAILED`). A small document can go as `{"document": {...}}` instead of an upload. The answer, `restore`, says whether the backup looks like another home's (`origin`: `another_home` and its `reasons`), what there is after it (`counts`), what is left out (`left_out`), the keys (`keys.action`: `restore`, the backup's come back, listed in `items` by name and role, only when no key but the sender's is paired and the sender's is not in the backup; or `kept`, every key as it is now), the remote identity (`same`; `restore`: the backup's home from two seconds after the answer, unless the relay refuses it; `kept`: another home's, not moved; `none`: the backup has none; and `old_controller`), the rooms and devices found by id, by name (`by_name`), renamed and not found (`unmatched`, with `used_in`, and `now` for a door or gate that is not moved), and `composer` (the backup's value and the current one). With the restore, `replaces_key` makes the sending key take the place of one of the backup's keys (its profile and role; that key is not restored), and `move_remote: true` brings another home's remote identity here.
 - Refused: `422 BACKUP_INVALID` (not a backup, or a section missing or of the wrong shape, with `errors`), `409 BACKUP_TOO_NEW` (made by a newer DirectorLink), `409 UPLOAD_INCOMPLETE`, `409 KEYS_KEPT` (`replaces_key` while the keys are kept), `409 LAST_ADMIN` (it would leave no admin), `404 UPLOAD_NOT_FOUND`, `503 PROJECT_NOT_READY` (the project is not read yet), `503 UNAVAILABLE` (a store could not be read when DirectorLink started, with `store`: a restore would overwrite it; restart the driver).
 
+## History
+
+`GET /v1/activity` (since 1.6.0, ADR-046, [`docs/HISTORY.md`](../docs/HISTORY.md)) is what the controller did and noticed, newest first, for `admin` keys: scenes and schedules run or skipped and why, doors and gates opened, keys and invitations, changes made in Composer, backups, restores and driver updates. Each entry has `id`, `at`, `kind` (`scene`, `schedule`, `door`, `composer`, `access`, `system`), `action`, `who` (`type` `key` with the key's `name` and the person's `profile`, `schedule` with its `trigger` and `days`, `composer` or `controller`), `what` and `room` by the names they had then, and as it applies `outcome` (`ran`, `skipped`, `failed`), `reason`, `counts`, `from`/`to`, `changes` and `ids`. The controller keeps the newest 450 to 500, none older than 30 days, across restarts and updates; not in backups.
+
+```bash
+curl "http://<controller-ip>:41999/v1/activity?kind=scene,schedule&limit=20" -H "Authorization: Bearer ak_..."
+curl "http://<controller-ip>:41999/v1/activity?before=1234&limit=20" -H "Authorization: Bearer ak_..."
+```
+
+`next_before` in the answer is the `before` for the entries that came before these (null when there are no more). An unknown `kind`, or `before`/`limit` out of range, is `400 INVALID_PARAMETER`.
+
 ## Debugging
 
 `GET /v1/logs` returns the bridge's last 500 log entries (API requests, device commands, state changes, errors). Poll it with `after=<last_seq>` to follow new entries, and switch to `debug` with `PATCH /v1/logs/settings` while investigating. Secrets are never logged.

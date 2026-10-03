@@ -43,6 +43,7 @@ local suites = {
     "test_alarm",
     "test_backup",
     "test_sonos",
+    "test_activity",
 }
 
 -- About how many seconds each suite takes (all of them in one run on a PC, 2026-10-03; CI takes
@@ -57,6 +58,7 @@ local SECONDS = {
     test_discovery = 5,
     test_shades = 25,
     test_relay = 9,
+    test_activity = 7,
     test_lock = 1,
     test_remote = 18,
     test_profiles = 3,

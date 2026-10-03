@@ -12,6 +12,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Backup = require("src.core.backup")
+local Activity = require("src.core.activity")
 
 local Handlers = {}
 
@@ -50,6 +51,7 @@ function Handlers.export(ctx)
         controller_known = document.controller_id ~= Json.null,
         remote_identity = document.sections.remote_identity.linked == true,
     })
+    Activity.record("system", "backup", { by = ctx.apiKey })
     return 200, document
 end
 
@@ -131,6 +133,7 @@ function Handlers.restore(ctx)
     if body.upload ~= nil then
         Backup.forget(ctx.apiKey.id, tostring(body.upload))
     end
+    Activity.record("system", "restore", { by = ctx.apiKey, from = plan.preview.backup.created_at })
     if services.onRestored then
         pcall(services.onRestored, { switching = plan.switching })
     end

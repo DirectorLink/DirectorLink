@@ -64,6 +64,7 @@ const ASSETS = [
   "/js/views/common.js",
   "/js/views/connect.js",
   "/js/views/find.js",
+  "/js/views/history.js",
   "/js/views/home.js",
   "/js/views/room.js",
   "/js/views/settings.js",

@@ -8,6 +8,7 @@ local Random = require("src.core.random")
 local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
+local Activity = require("src.core.activity")
 
 local Relay = {}
 
@@ -417,6 +418,10 @@ local function onOpen()
         .. (drop and (" - last drop " .. os.date("%H:%M", drop.at) .. " (" .. drop.reason .. ")") or "")
         .. (state.backupRefused and " (the relay refused the backup's home)" or ""))
     log("info", "connected to the relay", { home_id = identity.home_id, attempts = state.tries, down_s = ago(state.downSince) })
+    -- The history (ADR-046): only a connection away for more than a minute, once it is back.
+    if (ago(state.downSince) or 0) > Activity.AWAY_SECONDS then
+        Activity.record("system", "remote_away", { seconds = ago(state.downSince) })
+    end
     state.tries = 0
     state.downSince = nil
 end

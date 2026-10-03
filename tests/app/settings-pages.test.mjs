@@ -459,7 +459,8 @@ test("Settings → Rooms ends with the Sonos rooms, for admins when Sonos is on"
 test("Settings → Controller: the controller, then Updates, then Backup for admins", () => {
   home("admin");
   let page = settingsView({ page: "controller", navigate() {} });
-  assert.deepEqual(cards(page), ["settings-controller", "settings-updates", "settings-backup"]);
+  // History (1.6.0, ADR-046) is a link to its own page, after the controller's card.
+  assert.deepEqual(cards(page), ["settings-controller", "settings-history", "settings-updates", "settings-backup"]);
   let keys = keysOf(page);
   for (const key of ["settings-host", "settings-host-save", "settings-pair-again", "settings-forget", "update-check-now", "backup-download", "backup-restore"]) assert.ok(keys.includes(key), key);
   const labels = (card) => {
@@ -468,8 +469,8 @@ test("Settings → Controller: the controller, then Updates, then Backup for adm
     return list;
   };
   assert.deepEqual(labels(page[2].children[0]), ["Status", "Access", "Last update"]);
-  assert.deepEqual(labels(page[2].children[1]), ["App version", "DirectorLink version", "Updates"]);
-  assert.match(textOf(page[2].children[1]), new RegExp(`App version${APP_VERSION.replace(/\./g, "\\.")}`));
+  assert.deepEqual(labels(page[2].children[2]), ["App version", "DirectorLink version", "Updates"]);
+  assert.match(textOf(page[2].children[2]), new RegExp(`App version${APP_VERSION.replace(/\./g, "\\.")}`));
   // People and devices has its own row now.
   assert.ok(!keys.includes("settings-access"));
 

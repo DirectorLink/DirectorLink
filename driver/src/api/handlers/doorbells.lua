@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Activity = require("src.core.activity")
 
 local Doorbells = {}
 
@@ -59,6 +60,7 @@ function Doorbells.open(ctx)
         key_id = ctx.apiKey and ctx.apiKey.id or Json.null,
         client = ctx.client and ctx.client.ip or Json.null,
     })
+    Activity.record("door", "doorbell", { by = ctx.apiKey, what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
     return 202, Views.doorbell(ctx.services.registry, device)
 end
 
