@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 3 October 2026</p>
+      <p class="updated">Last updated 4 October 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -110,6 +110,7 @@
         <li>Your account: your Google and/or Apple account ID, email address and name, and when you signed in.</li>
         <li>Sessions: a random identifier, kept only as a hash, for 30 days or until you sign out. Expired ones are deleted every day.</li>
         <li>Homes: which homes your account owns or belongs to, and since when, and the ids (never the keys themselves) of the access keys your account uses at each home.</li>
+        <li>Three totals, counted once an hour: how many homes are linked to an account, how many accounts can sign in, and how often the driver was downloaded. Nothing about any one home or person.</li>
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
         <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
         <li>Automatic backups, if an admin turns them on: each one encrypted on your controller so that only your backup password opens it, with its size, when it arrived, and which backup password it is for. We cannot open them. The last 7 days are kept, one a day.</li>
@@ -152,6 +153,16 @@
         home's. The push service sees that an alert went to the device, when, and how large it was.
         To know whether a schedule failed, your controller tells our servers only the time it
         happened. The words you see are the app's, on your device.
+      </p>
+
+      <h2>DirectorLink in numbers</h2>
+      <p>
+        Once an hour our servers count how many homes are linked to an account, how many accounts can
+        sign in, and how often the driver was downloaded (from GitHub's public list of releases). Only
+        these three totals are kept, and anyone can read them at api.directorlink.io/v1/stats. Nothing
+        about any one home or person is in them, and your controller sends nothing for them. When this
+        website's home page opens, it asks for the totals, without cookies or anything about you, and
+        shows them once there are 25 homes.
       </p>
 
       <h2>Cookies</h2>

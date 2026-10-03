@@ -13,6 +13,7 @@
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/site.css" />
+    <script type="module" src="/numbers.js"></script>
     <title>DirectorLink — Direct to Director</title>
   </head>
   <body>
@@ -163,6 +164,26 @@
             <p>Rooms, lights, climate, blinds, cameras, doors, scenes and schedules as REST resources, described by OpenAPI 3.1, with a key and a role for every app.</p>
           </li>
         </ul>
+      </section>
+
+      <!-- Shown by /numbers.js only from 25 homes, when the totals came (ADR-052). -->
+      <section class="numbers" id="numbers" aria-labelledby="numbers-title" hidden>
+        <h2 id="numbers-title">DirectorLink in numbers</h2>
+        <dl class="number-list">
+          <div>
+            <dt>homes linked to an account</dt>
+            <dd data-total="homes"></dd>
+          </div>
+          <div>
+            <dt>people with an account</dt>
+            <dd data-total="people"></dd>
+          </div>
+          <div>
+            <dt>driver downloads</dt>
+            <dd data-total="downloads"></dd>
+          </div>
+        </dl>
+        <p class="numbers-note">Counted once an hour. Totals only: nothing about any one home.</p>
       </section>
     </main>
 

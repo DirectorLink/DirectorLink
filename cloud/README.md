@@ -14,13 +14,14 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/backups.js` — automatic backups (1.6.0, ADR-048): the controller's sealed backup, received in chunks over its socket and kept in D1 (one a day, the last 7, 5 MB a home, 25 MB an owner's homes, 4 starts a home a day besides the nightly one); listed, downloaded and deleted by the home's admins
 - `src/alerts.js` — alerts to a home's admins (ADR-047): their browsers' push subscriptions, who is an admin, the offline alarm and the controller's `alert` messages
 - `src/web-push.js` — Web Push: the message encrypted for the browser (RFC 8291) and the VAPID signature (RFC 8292), with WebCrypto
+- `src/stats.js` — DirectorLink in numbers (1.7.0, ADR-052): the hourly count of three totals and the public `GET /v1/stats`
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
 - `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account, and accounts left without a sign-in
 - `src/google.js` — Google's authorization-code flow with PKCE
 - `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret, and the check of Apple's notifications
 - `src/apple-notifications.js` — Apple's server-to-server notifications about its accounts (ADR-041)
 - `src/jwt.js` — ID token checks shared by both (signature, issuer, audience, expiry, nonce), and Apple's and Google's signing keys, cached
-- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0006` `push_subscriptions` (alerts, 1.6.0); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0)
+- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0006` `push_subscriptions` (alerts, 1.6.0); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0); `0010` `stats` (DirectorLink in numbers; 1.7.0)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -107,6 +108,24 @@ Logs: `alerts_subscribed`, `alerts_unsubscribed`, `alerts_refused`, `alerts_stop
 Cost: a home with a subscribed admin costs up to 144 alarms a day while its driver is connected (each a Durable Object request and a row written, about 4,300 of each a month), 24 D1 reads a day, and the few seconds each wake keeps the object in memory; each alert, one D1 read and one request per browser to its push service. Homes without one cost nothing more.
 
 Tests: `web-push.test.mjs` (in Node: RFC 8291's test vector, the padding, the VAPID header, the settings check, which addresses and keys are taken, redirects, `scripts/vapid_key.mjs`), `alerts-alarm.test.mjs` (in Node, with a fake storage and a fake D1 that fails: tries again, asking D1 again, stopping) and `alerts.test.mjs` (end to end, with a fake push service, `fake-push.mjs`, that checks each push's VAPID signature and opens it with the browser's key, and can fail or redirect).
+
+## DirectorLink in numbers (1.7.0, ADR-052)
+
+Three totals for the website, counted once an hour (`src/stats.js`; docs/ACCOUNTS.md, *What is public*):
+
+| Request | Answer |
+| --- | --- |
+| `GET /v1/stats` | `{"homes", "people", "downloads", "updated"}`: homes linked to an account, accounts someone can sign in to, downloads of `DirectorLink.c4z` over all GitHub releases, and when the oldest of the three was counted (ISO time). No cookie, no key; `Cache-Control: public, max-age=300`; CORS without credentials for `SITE_ORIGINS`. 503 `STATS_NOT_COUNTED` until all three have been counted once, 503 `STATS_UNAVAILABLE` when D1 cannot be read; 405 for anything but GET (and OPTIONS) |
+
+The second cron trigger, `47 * * * *` (`STATS_CRON` in `src/stats.js`, which must match `wrangler.jsonc` character for character: `scheduled` tells the hourly count from the daily housekeeping by `event.cron`), counts homes and people in one D1 batch and asks GitHub's releases list (`/repos/IsraelCIL/DirectorLink/releases?per_page=100&page=N`, at most 10 pages, with a User-Agent) for the downloads. Each total is kept in `stats` (migration `0010`) with its time; a part that fails (D1, or GitHub unreachable, refusing, limited, or answering something else) leaves its total and time as they were. The website (`site/numbers.js`) shows the totals only from 25 homes.
+
+Settings: `SITE_ORIGINS` (a var: the website's origins, `https://directorlink.io,https://www.directorlink.io`). Optional: `GITHUB_TOKEN` (a secret: GitHub allows 60 requests an hour per address without one, and Workers share addresses; a fine-grained token with no permissions is enough), `GITHUB_API_URL` (`.dev.vars` only: a fake GitHub for `wrangler dev` and the tests). Locally, with `wrangler dev --test-scheduled`: `curl "http://localhost:8787/__scheduled?cron=47+*+*+*+*"`.
+
+Logs: `stats_counted` (`homes`, `people`, `downloads`; `null` for a total not counted this hour), `stats_not_counted` (`totals`, `error`, and GitHub's `status`, `page` and `rate_limit_remaining`), `stats_unavailable`.
+
+Cost: 24 runs a day, each two or three requests to GitHub and two D1 writes; one D1 read of three rows per answer (browsers keep it 5 minutes).
+
+Tests: `stats-count.test.mjs` (in Node: the sum over pages and only the package, failures keeping the totals, the answer, CORS and caching) and `stats.test.mjs` (end to end with a fake GitHub: claimed homes only, deleted accounts and accounts without a sign-in not counted, the hourly and daily triggers apart).
 
 ## Deploying (by hand for now)
 
