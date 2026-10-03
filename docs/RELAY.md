@@ -115,13 +115,13 @@ staged file the same way.
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a
 `type`. Every message the relay sends has an `id`; the driver's reply carries the same `id`. The
-same holds the other way for what the driver asks the relay (`invitation`).
+same holds the other way for what the driver asks the relay (`invitation`, `backup_chunk`).
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| driver → relay | `ping` (plain text) | Keep-alive, every 25 s (and if Director polls the connection). |
+| driver → relay | `ping` (plain text) | Keep-alive, every 10 s (25 s before 1.6.0), and if Director polls the connection. |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"0.11.0"}` | First message after connecting. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"1.6.0","ping_s":10}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). |
 | driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
 | relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
 | driver → relay | `{"type":"e2e","id":"…","envelope":{…}}` | The sealed answer; or `{"type":"e2e","id":"…","code":"…"}` when the request is refused. |
@@ -132,6 +132,10 @@ same holds the other way for what the driver asks the relay (`invitation`).
 | driver → relay | `{"type":"invitation","id":"…","invitation_id":"<8 hex>","email":"…","expires_at":"<ISO time>","pending":["<8 hex>", …]}` | Registers an invitation the controller made for an admin (`POST /v1/invitations` with `email`), binding it to that email. `pending`: the ids of every invitation still waiting on the controller (this one included); the relay forgets the others it registered for the home. Since 1.0.0. |
 | relay → driver | `{"type":"invitation_result","id":"…","ok":true}` | Registered; or `"ok":false` with `INVALID_REQUEST`, `INVITATION_EXISTS` (an id is bound to its email once), `INVITATION_LIMIT_REACHED` (20 waiting), `NOT_CLAIMED` (no account has claimed the home) or `INTERNAL`: the driver revokes the invitation and answers the admin `502` with that code. With no answer within 10 s, or while not connected, it revokes it and answers `503 REMOTE_OFFLINE`. |
 | driver → relay | `{"type":"invitation_cancel","invitation_id":"<8 hex>"}` | The driver revoked the invitation, or gave up waiting for `invitation_result`: the relay forgets it if it took it. No answer. Since 1.0.0. |
+| driver → relay | `{"type":"backup_chunk","id":"…","index":0,"count":3,"size":174000,"key_id":"<16 hex>","why":"daily","data":"…"}`, then `{"type":"backup_chunk","id":"…","backup":"<32 hex>","index":1,"data":"…"}` | An automatic backup (ADR-048, `docs/BACKUP.md`), sealed to the backup password's public key: its text, printable ASCII only (JSON around base64), in chunks of at most 65,536 bytes (the driver sends 60,000), each sent once the one before is answered. The first says how many there are, the whole size in bytes (at most 3,000,000), which password's key it is sealed to, and `why`: `daily` for the nightly backup, `now` for Back up now. Since 1.6.0. |
+| relay → driver | `{"type":"backup_result","id":"…","ok":true,"backup":"<32 hex>","complete":false}` | Kept (`complete` after the last); or `"ok":false` with `INVALID_REQUEST` (also for a character that is not printable ASCII), `NOT_CLAIMED` (no account has claimed the home), `BACKUP_TOO_LARGE`, `BACKUP_LIMIT` (the home started 4 backups this UTC day; its first `daily` one goes besides), `ACCOUNT_BACKUPS_FULL` (the backups that must stay in the owner's account, with this one, would pass 25 MB), `SIZE_MISMATCH`, `OUT_OF_ORDER`, `UPLOAD_NOT_FOUND` or `INTERNAL`: the driver stops and logs why. With no answer within 30 s it stops too. |
+| driver → relay | `{"type":"keys","ids":[…],"admins":["<key id>", …]}` | Since 1.6.0 `keys` also says which of the ids are admin keys: only accounts that use one get the home's alerts (ADR-047) and may list, download and delete the account's backups of the home (ADR-048), the owner too. Without `admins` (drivers before 1.6.0) the cloud knows no admin: nobody can switch alerts on, and only the home's owner sees its backups. |
+| driver → relay | `{"type":"alert","kind":"schedule_failed","at":"<ISO time>"}` | A scheduled scene failed at `at` (a device refused, or it could not run): the cloud alerts the home's admins, at most three times an hour. Nothing names the schedule, the scene or a device. Sent only while connected; no answer. Since 1.6.0 (ADR-047). |
 | relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. |
 
 Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CIPHERTEXT`, `BAD_REQUEST`, `STALE`
@@ -140,18 +144,26 @@ Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CI
 `INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `INTERNAL`. The cloud turns them into Problem Details
 for the app (`cloud/src/homes.js`).
 
-If the driver hears nothing (not even `pong`) for three pings in a row (about 75 s), it drops the
+If the driver hears nothing (not even `pong`) for three pings in a row (about 30 s), it drops the
 connection and reconnects.
 The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s.
 
 ## Keeping the connection
 
-**What keeps it open.** The driver sends `ping` every 25 s and the relay's runtime answers `pong`
-without waking the home's object. Data then crosses Cloudflare in both directions every 25 s, well
-inside any idle limit (Cloudflare closes a WebSocket that carries nothing in either direction for
-a while, without a documented figure). A connection that hears nothing for three pings in a row
-(about 75 s; counted in pings, not by the clock, so a clock set back cannot stretch it) is dropped
-and made again. TCP keep-alive is on as well.
+**What keeps it open.** The driver sends `ping` every 10 s (25 s up to 1.5.0) and the relay's
+runtime answers `pong` without waking the home's object. Data then crosses Cloudflare in both
+directions every 10 s, well inside any idle limit (Cloudflare closes a WebSocket that carries
+nothing in either direction for a while, without a documented figure). A connection that hears
+nothing for three pings in a row (about 30 s; counted in pings, not by the clock, so a clock set
+back cannot stretch it) is dropped and made again. TCP keep-alive is on as well.
+
+**What a ping costs.** Nothing. The relay sets the answer with `setWebSocketAutoResponse`, and
+Cloudflare documents that such an answer is sent "without waking WebSockets in hibernation and
+incurring billable duration charges" ([Durable Object State](https://developers.cloudflare.com/durable-objects/api/state/))
+and that auto-response messages "will not incur additional wall-clock time, and so they will not
+be charged" ([Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)).
+So pinging every 10 s rather than 25 s costs the relay nothing, and the controller one small
+timer.
 
 **Director's own monitoring is off** (1.5.0, ADR-045). Up to 1.4.0 the driver opened the
 connection with `MONITOR_CONNECTION = true`. Control4 documents that Director then polls the
@@ -169,7 +181,7 @@ once.
 | What happens | Remote Status and log reason | Next attempt |
 | --- | --- | --- |
 | Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute |
-| Nothing heard for three pings, about 75 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
+| Nothing heard for three pings, about 30 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
 | The relay closes it: `4000 replaced` (another controller with this identity) | `closed by the relay (4000 replaced)` | 30 s |
 | The relay closes it: `4001 secret replaced` (the owner approved a new secret) | `closed by the relay (4001 secret replaced)` | 1 s; refused, then the new secret 1 s later |
 | The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |
@@ -193,8 +205,22 @@ the driver's own `NetDisconnect` is not taken for the failure of the next attemp
 arrives after that attempt started. A connection given up on that comes up late is closed again,
 and gets no upgrade request. Data that arrives while no connection is being made is dropped.
 
+**A connection that dies without a close** (1.6.0). On the owner's network the connection also
+died silently every 20 to 60 minutes at busy times: Cloudflare saw no close, so the relay kept the
+socket and went on sending requests into it, and the driver found out only at its next ping, which
+Director refused at once (`connection lost` with `heard_s` about one interval and `ping_s` 0). Its
+new connection then replaced the old one, and what had been sent meanwhile failed. With a ping
+every 10 s that window is at most 10 s. And the relay no longer trusts a socket on which the
+driver has gone quiet: once nothing has been heard on it (no ping answered, no message) for 2.5 of
+the intervals the `hello` announced (25 s; about 62 s for drivers before 1.6.0, which announce
+none and ping every 25 s), the socket is *stale*. Nothing is sent into it, requests wait for the
+driver's next connection as below, and the status says offline since the driver was last heard.
+The relay logs `driver_stale` once for the socket. If the pings come through again, the socket is
+used again; normally the driver's silence rule replaces it a few seconds later.
+
 **While the driver reconnects.** A request for the home that finds no driver connection, within
-30 s of the driver's disconnect, waits up to 8 s for the driver's `hello` and then goes through.
+30 s of the driver's disconnect, or whose driver's socket went stale within the last 30 s, waits
+up to 8 s for the driver's `hello` and then goes through.
 So does the first request after the relay restarted under the connection (a deploy), which
 records no disconnect. Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for
 longer, or that did not come back within the 8 s after a restart, answers `503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
@@ -217,13 +243,16 @@ Remote Status keeps the last loss after it reconnects: `Connected since 14:23 - 
 last drop 14:22 (connection lost)`. In the relay's own log (Workers Observability) the same loss
 is `driver_disconnected`, with `why` (the close code), `up_s`, `ping_s` (seconds since the runtime
 last answered the driver's ping) and `message_s`. The next `driver_connected` has `down_ms`, how
-long the home was away.
+long the home was away. A socket the driver went quiet on is `driver_stale`, with `interval_s` (from
+the `hello`), `up_s`, `ping_s` and `message_s`.
 
 **What this does not fix.** A cut connection still takes the driver about a second to replace,
 plus its TLS handshake. A request already on its way then fails. The app asks again 2 s later, and
-that request waits for the driver. If drops go on after 1.5.0, the logs above show which side ended
-the connection. If `heard_s` was under 25 s and the relay saw 1006, the connection was cut between
-the two: by the home's network, the internet provider or Cloudflare's edge.
+that request waits for the driver. A request sent into a connection that died without a close
+fails too, in the seconds until the driver's next ping finds it dead (at most 10 s). If drops go
+on, the logs above show which side ended the connection. If `heard_s` was under 10 s (25 s before
+1.6.0) and the relay saw 1006, the connection was cut between the two: by the home's network, the
+internet provider or Cloudflare's edge.
 
 ## What a relayed request may do
 

@@ -105,6 +105,12 @@ tags:
       Everything DirectorLink keeps on the controller, to download and restore (ADR-042,
       docs/BACKUP.md). For admins, in sealed requests only: a backup holds every key's hash and lock
       key and the home's remote identity. The app encrypts it with a password before saving it.
+  - name: Activity
+    description: |
+      What the controller did and noticed (ADR-046, docs/HISTORY.md): scenes and schedules run or
+      skipped and why, doors and gates opened, keys and invitations, changes made in Composer,
+      backups, restores and driver updates. Kept on the controller (the newest 500 entries, 30 days
+      at most); through the account only sealed, like every request. For admins.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -2286,9 +2292,10 @@ paths:
       summary: Everything DirectorLink keeps, as one document
       description: |
         Keys (their hashes and lock keys, never a key), profiles, room names and the room order,
-        scenes, schedules (without what they ran), the calendar's settings and the home's remote
-        identity (only one the relay has accepted, marked `linked`; none is made for a backup),
-        one section per store as the store keeps it; how DirectorLink's Composer properties are set
+        scenes, schedules (without what they ran), the calendar's settings, the home's remote
+        identity (only one the relay has accepted, marked `linked`; none is made for a backup) and
+        the rooms an admin chose for Sonos players (1.6.0), one section per store as the store
+        keeps it; how DirectorLink's Composer properties are set
         (listed when restoring, never restored); the names of the rooms and devices the sections
         refer to, so that a restore can match a project whose ids changed; and which controller
         made it (`controller_id`). Pending invitations are not in it.
@@ -2435,6 +2442,159 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "503":
           description: DirectorLink has not read the project yet (`PROJECT_NOT_READY`), or could not read one of its stores when it started (`UNAVAILABLE`, with `store`; a restore would overwrite it; restart the driver).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /v1/activity:
+    get:
+      tags: [Activity]
+      operationId: listActivity
+      x-directorlink-role: admin
+      summary: Read the controller's activity history
+      description: |
+        Newest first. Each entry says when, who (a key's device and person, a schedule, Composer or
+        DirectorLink itself), what by the names the controller had then, and how it went. Ask for
+        the entries before the last one received with `before` (the answer's `next_before`). Like
+        the log it may be read in the clear; the app sends it sealed.
+      parameters:
+        - name: kind
+          in: query
+          description: Only entries of these kinds, separated by commas, e.g. `scene,schedule`.
+          schema:
+            type: string
+            example: scene,schedule
+        - name: before
+          in: query
+          description: Only entries recorded before the entry with this id (the previous answer's `next_before`).
+          schema:
+            type: integer
+            minimum: 1
+        - name: limit
+          in: query
+          description: Maximum number of entries.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        "200":
+          description: Matching entries, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/backup/automatic:
+    get:
+      tags: [Backup]
+      operationId: getAutomaticBackup
+      x-directorlink-role: admin
+      summary: Automatic backups to the account
+      description: |
+        Whether automatic backups are on (1.6.0, ADR-048): the backup password's key, the
+        controller's time they are made at (the home's own minute between 03:00 and 04:59), whether
+        one is being made, how the last one went, and whether remote access can take them now. The
+        password itself is never on the controller. The key's public key, salt and iterations, as
+        the app set them, are in sealed requests only: with them a guessed password can be checked
+        offline. In the clear (a Bearer key) the key has its `key_id` and `set_at` only.
+      responses:
+        "200":
+          description: How automatic backups are set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticBackup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Backup]
+      operationId: setAutomaticBackup
+      x-directorlink-role: admin
+      summary: Set the backup password's key
+      description: |
+        Turns automatic backups on, or changes the backup password: the X25519 public key the app
+        made from the password with PBKDF2-SHA-256, the salt and the iterations. Each day's backup
+        is sealed to this key, so only someone who types the password can open it; backups made
+        before a change still need the password they were made with. Sealed requests only, so that
+        nobody on the network can put their own key in its place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AutomaticBackupKey"
+      responses:
+        "200":
+          description: Set.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutomaticBackup"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [Backup]
+      operationId: turnOffAutomaticBackup
+      x-directorlink-role: admin
+      summary: Turn automatic backups off
+      description: The key goes; no more backups are made. The backups in the account stay until they are deleted there. Sealed requests only.
+      responses:
+        "204":
+          description: Turned off.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/backup/automatic/run:
+    post:
+      tags: [Backup]
+      operationId: runAutomaticBackup
+      x-directorlink-role: admin
+      summary: Back up now
+      description: |
+        Starts a backup to the account now; `GET /v1/backup/automatic` says when it is done
+        (`running`, `last`). The account keeps one a day, the newest.
+      responses:
+        "202":
+          description: Started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [started, status]
+                properties:
+                  started:
+                    const: true
+                  status:
+                    $ref: "#/components/schemas/AutomaticBackup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Automatic backups are off (`AUTOMATIC_BACKUP_OFF`), one is being made (`BACKUP_RUNNING`), Remote Access is off (`REMOTE_ACCESS_OFF`) or the relay has not accepted the home yet (`HOME_NOT_LINKED`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "503":
+          description: Not connected to the relay now (`REMOTE_OFFLINE`), the lock failed its self-test (`LOCK_UNAVAILABLE`), or the project is not read yet (`PROJECT_NOT_READY`).
           content:
             application/problem+json:
               schema:
@@ -2921,6 +3081,9 @@ components:
             sonos:
               type: boolean
               description: "The **Sonos** property is On (1.5.0, ADR-044): `/v1/music` lists the Sonos rooms. Missing before 1.5.0."
+            automatic_backup:
+              type: boolean
+              description: "Always true since 1.6.0: admins can set automatic backups to the account (`/v1/backup/automatic`, ADR-048). Missing before 1.6.0."
 
     PairRequest:
       oneOf:
@@ -4964,6 +5127,184 @@ components:
         level:
           $ref: "#/components/schemas/LogLevel"
 
+    ActivityList:
+      type: object
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityEntry"
+        next_before:
+          type: [integer, "null"]
+          description: Pass it as `before` for the entries that came before these; null when there are no more.
+
+    ActivityEntry:
+      type: object
+      description: |
+        One thing that happened. `kind` and `action`:
+        - `scene`: `run` (a scene run from an app or the API), `off` (Home's Turn off all; `note`
+          says lights, climate or blinds).
+        - `schedule`: `run`, with `outcome` ran, skipped (`reason`) or failed; `note` is `late` for
+          a run caught up after a restart, `no_weather` for one that ran without the weather, or the
+          weather that started it (`heat`, `wind`, `rain`).
+        - `door`: `pulse` (opened; `via` names the scene that did it), `hold` (a relay held closed,
+          its door held open), `release`, `doorbell` (the gate wired to a doorbell opened).
+        - `access`: `paired`, `created`, `role_changed` (`from`, `to`), `revoked`, `forgotten` (a
+          device removed its own key), `expired`, `joined` (an invitation accepted), `all_revoked`
+          (Composer's Revoke All API Keys; `count`).
+        - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
+          `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
+        - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
+          automatic backup to the account, 1.6.0: `outcome` ran or failed, with `reason`; `who` is
+          the key that asked for it with Back up now, or DirectorLink for the daily one, which is
+          listed once a night when it fails, with `note` `retry` when it is tried again that night),
+          `remote_away` (the remote connection was away for `seconds`, more than a minute; recorded
+          when it is back), `driver_updated` (`from`, `to`), `driver_started` (the controller or the
+          driver restarted), `driver_added`.
+      required: [id, at, kind, action, who]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          description: Increases with every entry; the cursor for `before`.
+        at:
+          type: string
+          format: date-time
+        kind:
+          type: string
+          enum: [scene, schedule, door, composer, access, system]
+        action:
+          type: string
+          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
+        who:
+          $ref: "#/components/schemas/ActivityWho"
+        what:
+          type: string
+          description: The scene, device, key or setting, by the name it had then.
+        room:
+          type: string
+          description: The device's room in the Control4 project, by the name it had then.
+        via:
+          type: string
+          description: The scene that opened the door.
+        outcome:
+          type: string
+          enum: [ran, skipped, failed]
+          description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`.
+        reason:
+          type: string
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped]
+          description: |
+            Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
+            `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
+            and holidays, and the Jewish calendar is off or has no location), `only_if` (its weather
+            conditions were not met), `no_weather` (no weather data, and it skips without),
+            `scene_gone`, `error`.
+
+            Why a backup to the account (`cloud_backup`) was not made: `remote_off` (Remote Access
+            is off in Composer), `account_unreachable` (the controller was not connected to
+            DirectorLink's servers, the account service did not answer within 30 seconds, or it
+            failed on its side), `not_linked` (the home is not in an account), `too_large` (larger
+            than the account takes), `limit` (backed up too often today: the account starts 4 a
+            UTC day per home, besides the first nightly one), `account_full` (the owner's homes
+            have no room left in the account, 25 MB in all), `stopped` (automatic backups were
+            turned off, or the backup password changed, while it was being made), `error`
+            (anything else; the log and `GET /v1/backup/automatic`'s `last.code` say what).
+        note:
+          type: string
+          description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).
+        from:
+          type: string
+        to:
+          type: string
+        count:
+          type: integer
+        seconds:
+          type: integer
+        more:
+          type: integer
+          description: Changes not listed in `changes` (it lists 20).
+        counts:
+          type: object
+          required: [ran, skipped, failed]
+          properties:
+            ran:
+              type: integer
+            skipped:
+              type: integer
+            failed:
+              type: integer
+        ids:
+          type: object
+          properties:
+            scene_id:
+              type: string
+            schedule_id:
+              type: string
+            device_id:
+              type: integer
+            room_id:
+              type: integer
+            key_id:
+              type: string
+            invitation_id:
+              type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/ActivityChange"
+
+    ActivityWho:
+      type: object
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [key, schedule, composer, controller]
+          description: A key (an app, a device, a script), a schedule, Composer, or DirectorLink itself.
+        key_id:
+          type: string
+        name:
+          type: string
+          description: The key's name (its device), as it was then.
+        profile:
+          type: string
+          description: The person the key belongs to, as named then.
+        remote:
+          type: boolean
+          description: True when the request came through the account, away from home.
+        schedule_id:
+          type: string
+        trigger:
+          $ref: "#/components/schemas/ScheduleTrigger"
+        days:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 6
+
+    ActivityChange:
+      type: object
+      required: [change, type, name]
+      properties:
+        change:
+          type: string
+          enum: [removed, added, renamed, moved]
+        type:
+          type: string
+          enum: [device, room]
+        name:
+          type: string
+          description: The name now (the name it had, for one removed).
+        room:
+          type: string
+          description: A device's room (the one it moved to).
+        from:
+          type: string
+          description: The name before (renamed), or the room before (moved).
+
     Backup:
       type: object
       description: |
@@ -5082,6 +5423,106 @@ components:
                         pattern: "^[0-9a-f]{64}$"
                       at:
                         type: integer
+            sonos_rooms:
+              type: object
+              description: The rooms an admin chose for Sonos players (1.6.0); a backup without them leaves the choices on the controller as they are.
+              required: [version, rooms]
+              properties:
+                version:
+                  type: integer
+                rooms:
+                  type: object
+                  description: Player id to the room's id and the player's name.
+                  additionalProperties:
+                    type: object
+                    required: [room_id]
+                    properties:
+                      room_id:
+                        type: integer
+                      name:
+                        type: [string, "null"]
+
+    AutomaticBackupKey:
+      type: object
+      additionalProperties: false
+      required: [public_key, salt, iterations, kdf]
+      properties:
+        public_key:
+          type: string
+          description: The X25519 public key made from the backup password, 32 bytes in base64.
+        salt:
+          type: string
+          description: The 16 random bytes PBKDF2 used, in base64.
+        iterations:
+          type: integer
+          minimum: 100000
+          maximum: 5000000
+        kdf:
+          const: PBKDF2-SHA-256
+
+    AutomaticBackup:
+      type: object
+      required: [enabled, key, time, running, last, remote]
+      properties:
+        enabled:
+          type: boolean
+        key:
+          type: [object, "null"]
+          description: The backup password's key, as the app set it; null while off. `public_key`, `salt`, `iterations` and `kdf` only in sealed requests.
+          required: [key_id, set_at]
+          properties:
+            key_id:
+              type: string
+              pattern: "^[0-9a-f]{16}$"
+              description: The public key's first 8 bytes in hex; the account lists each backup with it.
+            public_key:
+              type: string
+            salt:
+              type: string
+            iterations:
+              type: integer
+            kdf:
+              type: string
+            set_at:
+              type: [string, "null"]
+              format: date-time
+        time:
+          type: [string, "null"]
+          pattern: "^[0-9]{2}:[0-9]{2}$"
+          description: When the daily backup is made, in the controller's time; null while off.
+        running:
+          type: boolean
+        last:
+          type: [object, "null"]
+          description: How the last backup went, or the last day's that could not be made.
+          required: [at, ok, size, code, why]
+          properties:
+            at:
+              type: string
+              format: date-time
+            ok:
+              type: boolean
+            size:
+              type: [integer, "null"]
+              description: Bytes sent to the account.
+            code:
+              type: [string, "null"]
+              description: Why it was not made (`REMOTE_OFFLINE`, `REMOTE_ACCESS_OFF`, `NOT_CLAIMED`, ...).
+            why:
+              type: [string, "null"]
+              enum: [daily, now, null]
+        remote:
+          type: object
+          required: [enabled, connected, linked]
+          properties:
+            enabled:
+              type: boolean
+              description: Remote Access is On in Composer.
+            connected:
+              type: boolean
+            linked:
+              type: boolean
+              description: The relay has accepted the home's identity.
 
     BackupList:
       type: object
@@ -5227,6 +5668,9 @@ components:
               description: Rooms with names of DirectorLink's own.
             room_order:
               type: integer
+            sonos_rooms:
+              type: [integer, "null"]
+              description: Sonos players with a room an admin chose (1.6.0); null when the backup has none, and the choices stay as they are.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).
@@ -5380,10 +5824,10 @@ components:
                       properties:
                         section:
                           type: string
-                          enum: [scenes, profiles, room_names, room_order]
+                          enum: [scenes, profiles, room_names, room_order, sonos_rooms]
                         name:
                           type: [string, "null"]
-                          description: The scene's or profile's name.
+                          description: The scene's or profile's name, or the Sonos player's.
             unmatched_count:
               type: integer
         composer:

@@ -14,6 +14,7 @@ local Views = require("src.api.views")
 local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local Sonos = require("src.sonos.sonos")
+local Activity = require("src.core.activity")
 
 local Handlers = {}
 
@@ -458,8 +459,9 @@ end
 
 -- Runs `steps` in order and reports what happened to each device: sent (ran), not for this key or
 -- not possible (skipped), or refused by the controller (failed). A device that ran with a setting
--- left out is listed in `problems` as "partial" (it counts as ran).
-local function run(ctx, steps)
+-- left out is listed in `problems` as "partial" (it counts as ran). `via`: the scene's name, for the
+-- history of the doors it opens.
+local function run(ctx, steps, via)
     local services = ctx.services
     local result = { ran = 0, skipped = 0, failed = 0, problems = Json.array() }
     local function note(outcome, index, deviceId, code, detail)
@@ -527,6 +529,7 @@ local function run(ctx, steps)
                                 key_id = ctx.apiKey.id,
                                 client = ctx.client and ctx.client.ip or Json.null,
                             })
+                            Activity.record("door", "pulse", { by = ctx.apiKey, what = device.name, room = device.room_name, via = via, ids = { device_id = device.id, room_id = device.room_id } })
                         end
                     end
                 end
@@ -648,8 +651,9 @@ function Handlers.run(ctx)
     if not scene then
         return problem
     end
-    local result = run(ctx, scene.steps)
+    local result = run(ctx, scene.steps, scene.name)
     result.scene_id = scene.id
+    Activity.record("scene", "run", { by = ctx.apiKey, what = scene.name, counts = result, ids = { scene_id = scene.id } })
     -- Shown to the installer in Composer (Last Automation), with the device that ran it.
     if ctx.services.onAutomation then
         local key = ctx.services.keys and ctx.services.keys.find and ctx.services.keys.find(ctx.apiKey.id)
@@ -701,6 +705,7 @@ function Handlers.off(ctx)
         return problem
     end
     local result = run(ctx, { { type = offType, device_ids = deviceIds, set = OFF[offType] } })
+    Activity.record("scene", "off", { by = ctx.apiKey, note = offType, counts = result })
     ctx.services.log.info("scenes", "turned off", {
         type = offType, devices = #deviceIds, by = ctx.apiKey.id, ran = result.ran, skipped = result.skipped, failed = result.failed,
     })

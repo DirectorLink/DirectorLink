@@ -2832,6 +2832,34 @@ input::placeholder {
   text-align: start;
 }
 
+/* Its automatic backups to the account (js/views/cloud-backup.js): below a line; each backup in
+   the account with its date and size, and Restore at the end of the line. */
+.auto-backup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.backup-references ul.auto-backup-items {
+  gap: 2px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.auto-backup-items li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 8px;
+}
+
+.auto-backup-items li .button {
+  margin-inline-start: auto;
+}
+
 .settings {
   display: grid;
   gap: 16px;
@@ -2971,6 +2999,152 @@ input::placeholder {
 .settings-row-chevron {
   flex: none;
   color: var(--muted);
+}
+
+/* ---- Settings → Controller → History (views/history.js) ------------------------------------ */
+
+.history {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.history-help {
+  margin: 0;
+}
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-day {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-day-title {
+  margin: 8px 4px 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  align-items: start;
+  padding: 12px 16px;
+}
+
+.history-item + .history-item {
+  border-block-start: 1px solid var(--line);
+}
+
+.history-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.history-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.history-item.is-skipped .history-icon {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.history-item.is-failed .history-icon {
+  background: var(--errBg);
+  color: var(--errText);
+}
+
+.history-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-line,
+.history-outcome {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Its own direction: a name at its end never runs into who did it. */
+.history-title {
+  font-weight: 600;
+  margin-inline-end: 6px;
+  unicode-bidi: isolate;
+}
+
+.history-who {
+  color: var(--muted);
+}
+
+.history-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.history-outcome .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-block-start: 2px;
+}
+
+.history-outcome.is-skipped {
+  color: var(--onText);
+}
+
+.history-outcome.is-failed {
+  color: var(--errText);
+}
+
+.history-changes {
+  margin: 2px 0 0;
+  padding-inline-start: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.history-time {
+  padding-block-start: 1px;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-more {
+  display: flex;
+  justify-content: center;
+}
+
+.history-status:empty {
+  display: none;
 }
 
 .radio-group {
@@ -3513,11 +3687,31 @@ a.scene-name:hover {
   font-size: 14px;
 }
 
+/* Tapping an action's text changes it, as its Edit button does. */
+.step-open {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .step-text.step-open:hover .step-what {
+    text-decoration: underline;
+  }
+}
+
+/* Phones: up and down in one column, edit and remove in the next, so the text keeps its width. */
 .step-tools {
-  display: inline-flex;
+  display: grid;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-flow: column;
   grid-column: 3;
   grid-row: 1 / span 2;
-  gap: 2px;
+  gap: 0 2px;
+}
+
+@media (min-width: 480px) {
+  .step-tools {
+    display: inline-flex;
+  }
 }
 
 @media (min-width: 640px) {
@@ -3693,6 +3887,15 @@ a.scene-name:hover {
   padding-block: 6px;
 }
 
+/* A device an action names that is no longer in the project (changing an action). */
+.pick-item.is-gone .device-name {
+  color: var(--muted);
+}
+
+.pick-item.is-gone .device-meta {
+  color: var(--errText);
+}
+
 .segment.is-active {
   border-color: var(--primary);
   background: var(--primary);
@@ -3804,6 +4007,18 @@ a.scene-name:hover {
 .schedule-toggle {
   display: flex;
   gap: 12px;
+}
+
+/* Settings → Controller → Alerts on this device. */
+.alerts-toggle {
+  display: flex;
+  gap: 12px;
+}
+
+/* Off but still focusable (busy, or not usable here: the hint says why). */
+.alerts-toggle .switch[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .schedule-summary .add-summary {

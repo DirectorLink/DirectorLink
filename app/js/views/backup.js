@@ -2,7 +2,9 @@
 // DirectorLink keeps as a file locked with a password, and restore from one. The file is opened
 // here, the controller checks it without changing anything, and only once the admin has seen what
 // it holds and confirmed is everything replaced. A DirectorLink before 1.4.0 has no backups: the
-// panel shows only when GET /v1/system says the controller has them (features.backup).
+// panel shows only when GET /v1/system says the controller has them (features.backup). Automatic
+// backups to the account (1.6.0, ADR-048) are a section of it (views/cloud-backup.js), restored
+// through the same check and preview.
 
 import { BackupFileError, FILE_EXTENSION, MAX_FILE_BYTES, MIN_PASSWORD, checkBackup, decryptBackup, makeBackup, passwordStrength, readHeader, restoreBackup } from "../backup.js";
 import { h, name } from "../dom.js";
@@ -11,6 +13,7 @@ import { icon } from "../icons.js";
 import { saveRemote, savedRemote } from "../remote.js";
 import { connect, errorText, roleLabel, whenForgotten } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
+import { automaticSection } from "./cloud-backup.js";
 
 // What is typed and chosen: the passwords, the file and the opened backup stay in this module,
 // never in storage or in `ui` (the redraw signature), and go when the panel closes. The file input
@@ -265,6 +268,7 @@ function kindText(kind) {
 
 function whereText(use) {
   if (use.section === "scenes") return t("backup.where.scene", { name: use.name || "" });
+  if (use.section === "sonos_rooms") return t("backup.where.sonosRoom", { name: use.name || "" });
   if (use.section === "profiles") return t("backup.where.profile", { name: use.name || "" });
   return t(`backup.where.${use.section === "room_order" ? "roomOrder" : "roomNames"}`);
 }
@@ -318,6 +322,8 @@ function summary(preview, { result = false } = {}) {
     ["profiles", counts.profiles],
     ["roomNames", counts.room_names],
     ["roomOrder", counts.room_order],
+    // A backup before 1.6.0 has no Sonos rooms (null): the choices made here stay.
+    ...(Number.isInteger(counts.sonos_rooms) ? [["sonosRooms", counts.sonos_rooms]] : []),
   ];
   const back = Array.isArray(keys.items) ? keys.items : [];
   const unmatched = references.unmatched || [];
@@ -515,6 +521,16 @@ function donePanel(current) {
   );
 }
 
+// A backup opened from the account (views/cloud-backup.js): the controller checks it, and it is
+// shown as a file's would be.
+async function checkDocument(document) {
+  const { upload, preview } = await checkBackup(document);
+  forgetSecrets();
+  secrets.document = document;
+  secrets.upload = upload;
+  show("preview", { preview, fileName: null, replaces: "", moveRemote: false });
+}
+
 // Whether this controller's DirectorLink has backups: GET /v1/system says so from 1.4.0; an older
 // one does not (and would answer 404).
 const hasBackups = () => state.system?.features?.backup === true;
@@ -543,6 +559,7 @@ export function backupPanel() {
       : buttons(
           h("button", { type: "button", class: "button button-secondary", dataset: { key: "backup-download" }, onclick: () => (forgetSecrets(), show("download")) }, icon("download"), t("backup.download")),
           h("button", { type: "button", class: "button button-secondary", dataset: { key: "backup-restore" }, onclick: () => (forgetSecrets(), show("restore")) }, icon("refresh"), t("backup.restore"))
-        )
+        ),
+    current.stage ? null : automaticSection({ check: checkDocument, errorOf: backupError })
   );
 }

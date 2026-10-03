@@ -229,6 +229,25 @@ function answerBlob(answer) {
   return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
 }
 
+// The account's homes: { items: [{ home_id, owner, added_at, connected }] }.
+export function listAccountHomes() {
+  return send("GET", "/v1/homes");
+}
+
+// The home's automatic backups in the account (ADR-048): { items: [{ id, created_at, size,
+// key_id }] }, for its admins (ADMINS_ONLY otherwise); one with its sealed text; and deleting them.
+export function listHomeBackups(homeId) {
+  return send("GET", `/v1/homes/${homeId}/backups`);
+}
+
+export function getHomeBackup(homeId, backupId) {
+  return send("GET", `/v1/homes/${homeId}/backups/${backupId}`, undefined, 60000);
+}
+
+export function deleteHomeBackups(homeId) {
+  return send("DELETE", `/v1/homes/${homeId}/backups`);
+}
+
 // The home's accounts, each with the key ids it uses (the owner only; OWNER_ONLY otherwise).
 export function listMembers(homeId) {
   return send("GET", `/v1/homes/${homeId}/members`);

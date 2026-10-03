@@ -27,7 +27,11 @@
   // is APPLE_PRIVATE_KEY (the Sign in with Apple key's .p8 file): Apple sign-in stays off until it
   // is set. The Apple ids are public: the Services ID signs in on the web, the Team ID and Key ID
   // name the key, and Apple's notifications are addressed to the primary App ID (ADR-041).
+  // Alerts (ADR-047): VAPID_PUBLIC_KEY is the public half of the key pair scripts/vapid_key.mjs
+  // makes, which pipes the private half into `secret put VAPID_PRIVATE_KEY` (README.md); alerts are
+  // off while either is missing.
   "vars": {
+    "VAPID_PUBLIC_KEY": "BMvqqdAc8jZJwC-v7ZrwEeuMDZaPEaIt-sl4DFOykkz1ZBq7EY1xx8HBP0_NlDYT67Z1eADNnBFatwdjASvuH6w",
     "GOOGLE_CLIENT_ID": "1034749624411-vfj1im8dc42utkvl6lfiv3hs49mcna2s.apps.googleusercontent.com",
     "APPLE_SERVICES_ID": "io.directorlink.signin",
     "APPLE_TEAM_ID": "VA4Q88T4RC",

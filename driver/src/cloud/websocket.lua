@@ -32,7 +32,7 @@ WebSocket.CA_FILE = "./certs/directorlink-roots.pem"
 -- it down when no data comes back in its window. Up to 1.4.0 it was on, with no OnPoll, and real
 -- controllers reported the relay connection OFFLINE ("connection lost") every 10 to 40 minutes;
 -- the relay saw the socket end without a close frame (ADR-045). The relay connection checks itself:
--- a ping every 25 s, and a connection that hears nothing for 3 pings is dropped (relay.lua). TCP
+-- a ping every 10 s, and a connection that hears nothing for 3 pings is dropped (relay.lua). TCP
 -- keep-alive stays on, and a poll is answered all the same (Relay.onPoll).
 WebSocket.PORT_OPTIONS = {
     AUTO_CONNECT = false,

@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 2 October 2026</p>
+      <p class="updated">Last updated 3 October 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -112,6 +112,8 @@
         <li>Homes: which homes your account owns or belongs to, and since when, and the ids (never the keys themselves) of the access keys your account uses at each home.</li>
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
         <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
+        <li>Automatic backups, if an admin turns them on: each one encrypted on your controller so that only your backup password opens it, with its size, when it arrived, and which backup password it is for. We cannot open them. The last 7 days are kept, one a day.</li>
+        <li>Alerts, if an admin switches them on for a device: that browser's push address and the keys its alerts are encrypted with, which account registered it, for which home, and since when; and which of the home's access keys are admin keys (their ids only). A device's registration is deleted when its alerts are turned off, it signs out, the account leaves the home or is deleted, or you sign out everywhere.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
@@ -128,6 +130,30 @@
         home, when, and how much data.
       </p>
 
+      <h2>Automatic backups</h2>
+      <p>
+        An admin can turn on automatic backups in the app (Settings → Controller → Backup) and set a
+        backup password. Your controller then sends a backup of what DirectorLink keeps (scenes,
+        schedules, preferences, room names, which devices have access, the link to your account)
+        to our servers every night, through the remote access connection. It is encrypted on your
+        controller with a key made from the backup password in your browser; the password itself
+        never leaves your browser, and neither our servers nor your controller can open the backup.
+        We keep the encrypted backup, its size and its date: the last 7 days, one a day, at most 5 MB
+        a home. If the backup password is lost, nobody can open them, DirectorLink included.
+      </p>
+
+      <h2>Alerts</h2>
+      <p>
+        A home's admins can switch on alerts for a device: a notification when the home has been
+        offline for 10 minutes, or when a schedule had a problem. They are sent through the push service
+        of the device's browser (Google, Mozilla, Apple or Microsoft), encrypted so that only that
+        browser can read them. An alert says only which of the two happened, at which home (by its
+        id) and when: never the name of a room, device, scene, schedule or person, and not even the
+        home's. The push service sees that an alert went to the device, when, and how large it was.
+        To know whether a schedule failed, your controller tells our servers only the time it
+        happened. The words you see are the app's, on your device.
+      </p>
+
       <h2>Cookies</h2>
       <p>
         api.directorlink.io sets one cookie that keeps you signed in, and one for ten minutes while
@@ -138,7 +164,9 @@
       <p>
         Signing out ends the session on that device; <strong>Sign out everywhere</strong> ends it on
         all your devices. <strong>Settings → Account → Delete account</strong>
-        in the app deletes your account and signs out all your devices.
+        in the app deletes your account and signs out all your devices. An admin deletes a home's
+        automatic backups in <strong>Settings → Controller → Backup</strong>; they also go when the
+        home's owner deletes their account.
       </p>
 
       <h2>Contact</h2>

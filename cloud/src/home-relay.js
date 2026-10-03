@@ -8,7 +8,9 @@
 // object; getWebSocketAutoResponseTimestamp() tells when the last one was answered. What has to
 // survive hibernation lives in the socket's attachment or in storage:
 //
-//   attachment  { conn, home, connectedAt, version, lastSeen }        per socket (milliseconds)
+//   attachment  { conn, home, connectedAt, version, lastSeen,         per socket (milliseconds)
+//                 pingS, stale }                                      ping interval from the hello;
+//                                                                     when it was found quiet
 //   storage     secret_sha256                                         SHA-256 hex of the home_secret,
 //                                                                     trusted on first use
 //               connected_at, disconnected_at, last_seen, version     for the status (ISO times)
@@ -16,11 +18,21 @@
 // A driver whose connection is lost connects again within seconds (1.5.0). A request that arrives
 // meanwhile, up to 30 s after the disconnect or after a restart under the connection, waits up to
 // 8 s for its hello instead of failing with HOME_OFFLINE (liveDriver).
+//
+// A connection can also die without the relay seeing a close: the socket stays open here while
+// nothing reaches the driver. The driver pings every 10 s (1.6.0; its hello says so in ping_s,
+// older drivers ping every 25 s), so a socket whose pings stopped for 2.5 intervals is taken as
+// gone (stale): requests wait for the driver's next connection as after a disconnect, and the
+// status says offline.
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
+import { receiveBackupChunk } from "./backups.js";
+// Alerts to the home's admins (ADR-047): this object tells alerts.js when the driver connects and
+// disconnects, the admin key ids and the controller's "alert" messages, and runs its alarms.
+import { HomeAlerts } from "./alerts.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -31,6 +43,10 @@ const NULL_BODY_STATUS = new Set([204, 205, 304]);
 // failing with HOME_OFFLINE. Longer gone, the home is offline and the answer is immediate.
 const RECONNECT_GRACE_MS = 30000;
 const DEFAULT_RECONNECT_WAIT_MS = 8000;
+// A socket on which the driver has not been heard (a ping answered, or a message) for
+// STALE_PINGS of its ping intervals is stale. Drivers before 1.6.0 announce no interval: 25 s.
+const STALE_PINGS = 2.5;
+const DEFAULT_PING_S = 25;
 
 export class HomeRelay extends DurableObject {
   constructor(ctx, env) {
@@ -47,6 +63,7 @@ export class HomeRelay extends DurableObject {
     // driver's frames (member-keys.js); `announced` is its last list of key ids.
     this.keyWork = Promise.resolve();
     this.announced = undefined;
+    this.alerts = new HomeAlerts(this);
   }
 
   // Queues `work` behind the key work already waiting; returns when it is done.
@@ -78,6 +95,8 @@ export class HomeRelay extends DurableObject {
         return this.message(await request.json(), homeId, request.headers.get("X-DirectorLink-User"));
       case "/secret":
         return this.replaceSecret(await request.json(), homeId);
+      case "/alerts":
+        return json(await this.alerts.request(await request.json(), homeId));
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -132,6 +151,7 @@ export class HomeRelay extends DurableObject {
     server.serializeAttachment({ conn: crypto.randomUUID(), home: homeId, connectedAt: now, version, lastSeen: now });
     const at = iso(now);
     await this.ctx.storage.put({ connected_at: at, last_seen: at, version });
+    await this.alerts.connected(homeId);
     log("driver_connected", { home: homeId, version, replaced, down_ms: Number.isFinite(downMs) ? downMs : null });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -150,6 +170,7 @@ export class HomeRelay extends DurableObject {
     const type = data?.type;
     if (type === "hello") {
       attachment.version = cleanVersion(data.version) ?? attachment.version ?? null;
+      attachment.pingS = pingSeconds(data.ping_s);
     }
     ws.serializeAttachment(attachment);
 
@@ -159,7 +180,7 @@ export class HomeRelay extends DurableObject {
         if (data.home !== attachment.home) {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
         }
-        log("driver_hello", { home: attachment.home, version: attachment.version, waiting: this.waiting.size });
+        log("driver_hello", { home: attachment.home, version: attachment.version, interval_s: attachment.pingS, waiting: this.waiting.size });
         // The driver is ready: requests that waited for it go now.
         for (const resume of [...this.waiting]) {
           resume(ws);
@@ -176,7 +197,12 @@ export class HomeRelay extends DurableObject {
         this.announced = new Set(ids);
         await this.queueKeyWork(async () => {
           await this.ctx.storage.put("key_ids", ids);
-          await syncKeys(this.env, attachment.home, ids);
+          try {
+            await syncKeys(this.env, attachment.home, ids);
+          } finally {
+            // The admin list counts even when D1 failed above (alerts and backups read it).
+            await this.alerts.keys(attachment.home, ids, data.admins);
+          }
         }, attachment.home);
         return;
       }
@@ -211,6 +237,18 @@ export class HomeRelay extends DurableObject {
         this.reply(ws, { type: "invitation_result", id: data.id, ...result });
         return;
       }
+      case "backup_chunk": {
+        // A chunk of the day's sealed backup (backups.js); the next waits for this answer.
+        let result;
+        try {
+          result = await receiveBackupChunk(this.env, attachment.home, data, this.ctx.storage);
+        } catch (error) {
+          log("backup_chunk_failed", { home: attachment.home, error: String(error?.message ?? error) });
+          result = { ok: false, code: "INTERNAL" };
+        }
+        this.reply(ws, { type: "backup_result", id: data.id, ...result });
+        return;
+      }
       case "invitation_cancel":
         // It gave up waiting for invitation_result: nothing to answer.
         try {
@@ -218,6 +256,10 @@ export class HomeRelay extends DurableObject {
         } catch (error) {
           log("invitation_cancel_failed", { home: attachment.home, error: String(error?.message ?? error) });
         }
+        return;
+      case "alert":
+        // A schedule failed at home: the admins are alerted, without names (alerts.js).
+        await this.alerts.fromHome(data, attachment.home);
         return;
       case "response":
       case "claim_result":
@@ -290,6 +332,7 @@ export class HomeRelay extends DurableObject {
     const now = Date.now();
     this.disconnectedAt = now;
     await this.ctx.storage.put({ disconnected_at: iso(now), last_seen: iso(this.lastSeen(ws)) });
+    await this.alerts.disconnected(now);
     // How long the connection was up, and how long before the end the driver last pinged and last
     // sent a message: pings answered until the end mean the connection itself was cut.
     const ping = autoResponseTime(this.ctx, ws);
@@ -302,15 +345,15 @@ export class HomeRelay extends DurableObject {
     });
   }
 
-  // The driver's socket; if it has just disconnected, the one it opens next, once it says hello
-  // (or, after RECONNECT_WAIT_MS, whichever is connected; null if none). Null at once when the
-  // home has been away longer.
+  // The driver's socket; if it has just disconnected or gone quiet (stale), the one it opens next,
+  // once it says hello (or, after RECONNECT_WAIT_MS, whichever is connected and heard; null if
+  // none). Null at once when the home has been away longer. Nothing is sent into a stale socket.
   async liveDriver() {
     const ws = this.driverSocket();
-    if (ws) {
+    if (ws && !this.stale(ws)) {
       return ws;
     }
-    const expected = await this.driverExpected();
+    const expected = ws ? this.staleExpected(ws) : await this.driverExpected();
     if (!expected) {
       return null;
     }
@@ -322,7 +365,7 @@ export class HomeRelay extends DurableObject {
       };
       // At the deadline, a socket that passed the secret check but whose hello is still on its
       // way is used all the same: the driver is back.
-      const timer = setTimeout(() => resume(this.driverSocket()), reconnectWaitMs(this.env));
+      const timer = setTimeout(() => resume(this.heardDriverSocket()), reconnectWaitMs(this.env));
       this.waiting.add(resume);
     });
     if (!socket && expected.restarted && !this.driverSocket()) {
@@ -354,6 +397,45 @@ export class HomeRelay extends DurableObject {
     return { restarted: true, lastSeen: Date.parse(stored.get("last_seen") ?? "") || connectedAt };
   }
 
+  // Whether the driver should be back within seconds from a stale socket: its silence rule drops
+  // the connection three pings after it last heard the relay (2.5 intervals is just before that)
+  // and connects again a second later. Waited for as after a disconnect, up to RECONNECT_GRACE_MS
+  // after the socket went stale; { restarted: false } or null.
+  staleExpected(ws) {
+    const quietMs = Date.now() - this.lastSeen(ws) - staleAfterMs(ws);
+    return quietMs <= RECONNECT_GRACE_MS ? { restarted: false } : null;
+  }
+
+  // Whether the driver has gone quiet on this socket: nothing heard (no ping answered, no message)
+  // for STALE_PINGS of its ping intervals, so the connection died without the relay seeing a
+  // close. Logged once per socket (driver_stale); the mark is kept in its attachment, which
+  // outlives an eviction.
+  stale(ws) {
+    const now = Date.now();
+    if (now - this.lastSeen(ws) <= staleAfterMs(ws)) {
+      return false;
+    }
+    const attachment = ws.deserializeAttachment() ?? {};
+    if (!attachment.stale) {
+      attachment.stale = now;
+      ws.serializeAttachment(attachment);
+      log("driver_stale", {
+        home: attachment.home,
+        interval_s: attachment.pingS ?? null,
+        up_s: seconds(now, attachment.connectedAt),
+        ping_s: seconds(now, autoResponseTime(this.ctx, ws)),
+        message_s: seconds(now, attachment.lastSeen),
+      });
+    }
+    return true;
+  }
+
+  // The driver's socket while the driver is heard on it, else null.
+  heardDriverSocket() {
+    const ws = this.driverSocket();
+    return ws && !this.stale(ws) ? ws : null;
+  }
+
   // The live driver socket (the newest, while a replaced one is still closing), or null.
   driverSocket({ except } = {}) {
     let newest = null;
@@ -381,13 +463,26 @@ export class HomeRelay extends DurableObject {
     return Math.max(lastSeen, autoResponseTime(this.ctx, ws) ?? 0);
   }
 
+  // Alerts' alarms (alerts.js): whether the home has been away long enough to alert.
+  async alarm() {
+    try {
+      await this.alerts.alarm();
+    } catch (error) {
+      log("alert_alarm_failed", { error: String(error?.message ?? error) });
+    }
+  }
+
   // --- Test endpoints ------------------------------------------------------------------------
 
   async status() {
     const ws = this.driverSocket();
     if (ws) {
       const { connectedAt, version } = ws.deserializeAttachment() ?? {};
-      return { connected: true, since: iso(connectedAt), version: version ?? null, last_seen: iso(this.lastSeen(ws)) };
+      const lastSeen = iso(this.lastSeen(ws));
+      // A stale socket: offline since the driver was last heard on it.
+      return this.stale(ws)
+        ? { connected: false, since: lastSeen, version: version ?? null, last_seen: lastSeen }
+        : { connected: true, since: iso(connectedAt), version: version ?? null, last_seen: lastSeen };
     }
     const stored = await this.ctx.storage.get(["connected_at", "disconnected_at", "last_seen", "version"]);
     const connectedAt = stored.get("connected_at");
@@ -533,6 +628,18 @@ function decodeBase64(text) {
 function requestTimeoutMs(env) {
   const value = Number(env.REQUEST_TIMEOUT_MS);
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
+}
+
+// The interval the driver's hello announced (ping_s, seconds; 1.6.0), or null: none, or not a
+// number from 1 to 300.
+function pingSeconds(value) {
+  return typeof value === "number" && value >= 1 && value <= 300 ? value : null;
+}
+
+// How long the driver may go unheard on `ws` before it is stale (milliseconds).
+function staleAfterMs(ws) {
+  const { pingS } = ws.deserializeAttachment() ?? {};
+  return STALE_PINGS * (pingS ?? DEFAULT_PING_S) * 1000;
 }
 
 function reconnectWaitMs(env) {

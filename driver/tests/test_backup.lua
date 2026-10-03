@@ -1436,6 +1436,122 @@ function tests.through_the_account_a_backup_comes_sealed_end_to_end()
     end
 end
 
+-- ---- The Sonos room choices (1.6.0, ADR-048) ------------------------------------------------------
+
+local KITCHEN_AMP = "RINCON_000E58A0B1C201400"
+local LOUNGE_AMP = "RINCON_000E58A0B1C201401"
+
+-- Rooms an admin chose for two Sonos players, as src/sonos/rooms.lua keeps them.
+local function withSonosRooms(rooms)
+    return function(mock)
+        mock.persist["directorlink_sonos_rooms"] = "json:" .. Json.encode({ version = 1, rooms = rooms })
+    end
+end
+
+local CHOSEN = {
+    [KITCHEN_AMP] = { room_id = 10, name = "Kitchen Amp" },
+    [LOUNGE_AMP] = { room_id = 11, name = "Lounge" },
+}
+
+function tests.the_sonos_room_choices_go_into_a_backup_and_come_back()
+    local old = start(nil, withSonosRooms(CHOSEN))
+    local document = export(old)
+    T.same(document.sections.sonos_rooms, { version = 1, rooms = CHOSEN }, "as the store keeps them")
+    T.eq(document.references.rooms["11"].name, "Living Room", "with the rooms' names, to match them")
+    local s = start()
+    local done, preview = replace(s, document)
+    T.eq(preview.counts.sonos_rooms, 2)
+    T.eq(done.counts.sonos_rooms, 2)
+    T.same(stored(s.mock, "directorlink_sonos_rooms").rooms, CHOSEN)
+    local Rooms = require("src.sonos.rooms")
+    T.eq(Rooms.choice(KITCHEN_AMP), 10, "in use at once")
+    T.eq(Rooms.choice(LOUNGE_AMP), 11)
+    Mock.updateDriver(s.mock)
+    T.eq(require("src.sonos.rooms").choice(LOUNGE_AMP), 11, "and after the next start")
+end
+
+function tests.a_sonos_room_follows_its_name_and_one_that_is_gone_is_listed()
+    local document = export(start(nil, withSonosRooms(CHOSEN)))
+    -- The project was rebuilt: the kitchen and the living room swapped ids.
+    local s = start(swappedRooms())
+    local done = replace(s, document)
+    T.eq(done.counts.sonos_rooms, 2)
+    local Rooms = require("src.sonos.rooms")
+    T.eq(Rooms.choice(KITCHEN_AMP), 11, "the kitchen by its name")
+    T.eq(Rooms.choice(LOUNGE_AMP), 10)
+    -- A room that is not in the project any more (its devices moved to the kitchen).
+    local project = Mock.project()
+    for id, device in pairs(project.devices) do
+        if device.roomId == 11 then
+            Mock.moveDevice(project, id, 10)
+        end
+    end
+    Mock.removeRoom(project, 11)
+    local other = start(project)
+    local result = replace(other, document)
+    T.eq(result.counts.sonos_rooms, 1)
+    T.eq(require("src.sonos.rooms").choice(LOUNGE_AMP), nil, "shown in the room of its own name again")
+    local listed
+    for _, entry in ipairs(result.references.unmatched) do
+        if entry.kind == "room" and entry.id == 11 then
+            listed = entry
+        end
+    end
+    T.truthy(listed, "the room is listed")
+    T.same(listed.used_in, { { section = "sonos_rooms", name = "Lounge" } }, "with the player that used it")
+end
+
+-- A backup made by 1.5.0 has no Sonos rooms: it restores as before, and the choices made on this
+-- controller stay.
+function tests.a_backup_from_before_1_6_0_restores_and_keeps_the_sonos_rooms()
+    local newer = export(start(nil, withSonosRooms(CHOSEN)))
+    local document = export(start())
+    document.driver_version = "1.5.0"
+    document.sections.sonos_rooms = nil
+    local s = start(nil, withSonosRooms({ [KITCHEN_AMP] = { room_id = 11, name = "Kitchen Amp" } }))
+    local before = s.mock.persist["directorlink_sonos_rooms"]
+    local done, preview = replace(s, document)
+    T.eq(tostring(preview.counts.sonos_rooms), "null", "none in the backup")
+    T.eq(done.counts.scenes, 0)
+    T.eq(s.mock.persist["directorlink_sonos_rooms"], before, "not written")
+    T.eq(require("src.sonos.rooms").choice(KITCHEN_AMP), 11)
+    -- Nor do they stop a restore when they could not be read at start.
+    local unread = start(nil, function(mock)
+        withSonosRooms(CHOSEN)(mock)
+        local get = C4.PersistGetValue
+        C4.PersistGetValue = function(self, name, encrypted)
+            if name == "directorlink_sonos_rooms" then
+                error("database is locked")
+            end
+            return get(self, name, encrypted)
+        end
+    end)
+    T.eq(restore(unread, { document = document }).status, 200)
+    local refused = restore(unread, { document = newer })
+    T.eq(refused.status, 503, "a backup with Sonos rooms would overwrite those not read")
+    T.eq(refused.json.store, "sonos_rooms")
+end
+
+function tests.a_failed_write_of_the_sonos_rooms_puts_every_store_back()
+    local document = export(start(nil, withSonosRooms(CHOSEN)))
+    local s = start(nil, withSonosRooms({ [KITCHEN_AMP] = { room_id = 11, name = "Kitchen Amp" } }))
+    local mine = T.http(s.mock, "POST", "/v1/scenes", { key = s.key, body = { name = "Mine", steps = {} } })
+    T.eq(mine.status, 201)
+    local write = C4.PersistSetValue
+    C4.PersistSetValue = function(self, name, value, encrypted)
+        if name == "directorlink_sonos_rooms" then
+            error("storage full")
+        end
+        return write(self, name, value, encrypted)
+    end
+    local failed = restore(s, { document = document, dry_run = false })
+    C4.PersistSetValue = write
+    T.eq(failed.status, 500)
+    T.eq(failed.json.store, "sonos_rooms")
+    T.eq(list(s.mock, s.key, "/v1/scenes").items[1].name, "Mine", "the scenes from before")
+    T.eq(require("src.sonos.rooms").choice(KITCHEN_AMP), 11)
+end
+
 function tests.a_restore_waits_for_the_project()
     -- Director could not list the devices at start: nothing can be matched yet.
     local s = start(nil, function()

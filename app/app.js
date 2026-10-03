@@ -7,6 +7,7 @@
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
 import { alarmSignature, startAlarm } from "./js/alarm.js";
+import { alertsSignature } from "./js/alerts.js";
 import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
@@ -18,6 +19,7 @@ import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
 import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
+import { HISTORY_ROW_KEY, historyAllowed, historyView, resetHistory } from "./js/views/history.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
@@ -29,7 +31,7 @@ import { camerasView } from "./js/views/cameras.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
-import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
+import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
@@ -60,7 +62,8 @@ function parseRoute() {
     return { name: "room", id: Number(parts[1]), tab: "home" };
   }
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
-    return { name: "scene", id: parts[1], adding: parts[2] === "add", tab: "scenes" };
+    const editing = parts[2] === "edit" && /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : null;
+    return { name: "scene", id: parts[1], adding: parts[2] === "add", editing, tab: "scenes" };
   }
   if (parts[0] === "schedule" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     return { name: "schedule", id: parts[1], tab: "scenes" };
@@ -70,6 +73,10 @@ function parseRoute() {
   }
   if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
+  }
+  // Settings → Controller → History (ADR-046); alert notifications open it too.
+  if (parts[0] === "settings" && parts[1] === "history") {
+    return { name: "history", tab: "settings" };
   }
   // Settings' list, or one of its pages (#/settings/rooms); an unknown page is the list.
   if (parts[0] === "settings") {
@@ -99,6 +106,7 @@ window.addEventListener("hashchange", () => {
   ui.cameFrom = previous.name;
   // People and devices loads fresh each time it is opened; a scene opens as it was saved.
   if (route.name === "access" && previous.name !== "access") resetAccess();
+  if (route.name === "history" && previous.name !== "history") resetHistory();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
   // Shabbat and holidays opens with the controller's settings.
@@ -112,10 +120,16 @@ window.addEventListener("hashchange", () => {
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
-  // Back on Settings' list from one of its pages, the row that opened it has the focus; otherwise
-  // the new screen's heading, for keyboard and screen-reader users.
-  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : null;
-  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey) : null;
+  // Back on Settings' list from one of its pages, the row that opened it has the focus (from
+  // History, its link on the Controller page; in the scene editor, the action just changed);
+  // otherwise the new screen's heading, for keyboard and screen-reader users.
+  const rowKey =
+    route.name === "settings" && !route.page
+      ? settingsRowKey(previous)
+      : route.page === "controller" && previous.name === "history"
+        ? HISTORY_ROW_KEY
+        : sceneReturnKey(previous, route);
+  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey && !item.disabled) : null;
   if (row) {
     row.scrollIntoView({ block: "center" });
     row.focus({ preventScroll: true });
@@ -227,6 +241,8 @@ function signature() {
     state.transport,
     state.remoteInfo,
     savedRemote(),
+    // Alerts on this device (js/alerts.js): on, possible, being switched, what it said.
+    alertsSignature(),
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),
@@ -269,9 +285,12 @@ function signature() {
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
+    route.name === "history" ? ui.history : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
+    // Its automatic backups to the account (passwords in views/cloud-backup.js, not in `ui`).
+    route.name === "settings" ? ui.autoBackup : 0,
     // "Last update", on Settings → Controller only: the other pages are not redrawn by every poll.
     route.name === "settings" && route.page === "controller" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
@@ -290,7 +309,7 @@ function screen() {
     case "schedule":
       return scheduleEditorView(route.id, actions);
     case "scene":
-      return sceneEditorView(route.id, route.adding, actions);
+      return sceneEditorView(route.id, route.adding, actions, route.editing);
     case "cameras":
       return camerasView(actions);
     case "climate":
@@ -299,6 +318,9 @@ function screen() {
       return joinView(actions);
     case "access":
       return accessView(actions);
+    case "history":
+      if (historyAllowed()) return historyView(actions);
+    // falls through: anyone but an admin (a notification may open it) gets Settings' list.
     case "settings":
       return settingsView({
         page: route.page,

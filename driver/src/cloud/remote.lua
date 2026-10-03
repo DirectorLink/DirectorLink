@@ -15,6 +15,7 @@ local Http = require("src.api.http")
 local Clock = require("src.core.clock")
 local Lock = require("src.cloud.lock")
 local Store = require("src.core.store")
+local Activity = require("src.core.activity")
 
 local Remote = {}
 
@@ -361,6 +362,7 @@ local function handleJoin(message, send)
         pcall(state.services.onKeysChanged)
     end
     log("info", "an invitation was accepted", { invitation = invitationId, key_id = record.id, role = record.role })
+    Activity.record("access", "joined", { by = record.id, what = record.name, to = record.role, ids = { key_id = record.id, invitation_id = invitationId } })
     local body = Json.encode({ key = record.secret, id = record.id, name = record.name, role = record.role, created_at = record.created_at })
     local envelope = sealAnswer(invitation.lock, state.homeId(), invitationId, request, 201, "application/json; charset=utf-8", body)
     send({ type = "join_result", id = message.id, ok = true, key_id = record.id, envelope = envelope })

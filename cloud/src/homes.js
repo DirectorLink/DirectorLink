@@ -14,11 +14,15 @@
 //   DELETE /v1/join/{home_id}/{invitation_id}       withdraws that request
 //   GET    /v1/homes/{home_id}/join-requests        requests waiting for the owner (the owner only)
 //   POST   /v1/homes/{home_id}/join-requests/{id}   { decision: approve | refuse } (the owner only)
+//   GET    /v1/homes/{home_id}/backups[/{id}], DELETE /v1/homes/{home_id}/backups   (backups.js)
+//   GET, POST, DELETE /v1/homes/{home_id}/alerts    this browser's alerts (admins; alerts.js)
 //
 // All need the session cookie; they answer CORS with credentials only for the app's origins, and
 // refuse changes from any other origin.
 
 import { appOrigins, currentUser } from "./accounts.js";
+import { BACKUP_ROUTES } from "./backups.js";
+import { handleHomeAlerts, homesChanged } from "./alerts.js";
 import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 import { validKeyId } from "./member-keys.js";
@@ -175,8 +179,10 @@ async function claim(request, env, user) {
   if (!existing) {
     statements.push(env.DB.prepare("INSERT INTO homes (id, owner_id, claimed_at) VALUES (?, ?, ?)").bind(homeId, user.id, now));
   } else if (transferred) {
-    // Whoever holds an admin key at home controls the home: the new owner starts with no one else.
+    // Whoever holds an admin key at home controls the home: the new owner starts with no one else,
+    // and the others' browsers get no more of its alerts.
     statements.push(
+      env.DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
       env.DB.prepare("UPDATE homes SET owner_id = ?, claimed_at = ? WHERE id = ?").bind(user.id, now, homeId),
       env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
       env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
@@ -184,7 +190,10 @@ async function claim(request, env, user) {
     );
   }
   statements.push(env.DB.prepare("INSERT OR IGNORE INTO members (home_id, user_id, added_at) VALUES (?, ?, ?)").bind(homeId, user.id, now));
-  await env.DB.batch(statements);
+  const [first] = await env.DB.batch(statements);
+  if (transferred && first.meta?.changes) {
+    await homesChanged(env, [homeId]);
+  }
   log("home_claimed", { home: homeId, user: user.id, transferred });
   return json({ home_id: homeId, owner: true, transferred });
 }
@@ -638,10 +647,15 @@ async function removeMember(env, user, homeId, userId) {
   if (self && row.owner_id === user.id) {
     return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; another account can claim the home at home instead");
   }
-  const [{ meta }] = await env.DB.batch([
+  // Its browsers' subscriptions go with the membership.
+  const [alerts, { meta }] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
     env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
     env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
   ]);
+  if (alerts.meta?.changes) {
+    await homesChanged(env, [homeId]);
+  }
   if (!meta.changes) {
     return problem(404, "NOT_FOUND", "That account does not belong to the home");
   }
@@ -662,6 +676,9 @@ const ROUTES = [
   [/^\/v1\/join\/([0-9a-f]{32})\/([0-9a-f]{8})$/, { GET: (r, env, user, m) => myJoinRequest(env, user, m[1], m[2]), DELETE: (r, env, user, m) => withdrawJoinRequest(env, user, m[1], m[2]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests$/, { GET: (r, env, user, m) => listJoinRequests(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests\/([0-9a-f]{32})$/, { POST: (r, env, user, m) => decideJoinRequest(r, env, user, m[1], m[2]) }],
+  ...BACKUP_ROUTES,
+  // Alerts on admins' devices (ADR-047, alerts.js).
+  [/^\/v1\/homes\/([0-9a-f]{32})\/alerts$/, Object.fromEntries(["GET", "POST", "DELETE"].map((method) => [method, (r, env, user, m) => handleHomeAlerts(r, env, user, m[1])]))],
 ];
 
 function cors(request, env) {

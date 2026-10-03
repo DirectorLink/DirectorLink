@@ -133,8 +133,9 @@ admins control. See [`api/README.md`](../api/README.md) and `api/openapi.yaml`.
 - Volume and mute are per room; there is no group volume.
 - Album art only from the speaker itself (most music services' art comes through it).
 - Starting a playlist, album or track favorite replaces the group's queue.
-- The Sonos room choices are not in DirectorLink backups yet: after a restore, an admin picks them
-  again.
+- The Sonos room choices go into DirectorLink backups since 1.6.0 (ADR-048), and a restore brings
+  them back, each matched to the project's rooms like a scene's room; a backup made before 1.6.0
+  leaves the choices on the controller as they are.
 - Read against the owner's players (three Sonos Amps, software 97.1, S2): their answers, anonymised,
   are the test fixtures in `tests/sonos/real/`. Grouped rooms, a stereo pair, a home theater, a
   track from the queue, the radio and playable favorites were made in the same shapes

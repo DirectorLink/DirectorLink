@@ -12,6 +12,7 @@ The Jewish calendar is called while it is off (as it ships) and then on, as the 
 """
 
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -21,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -619,6 +621,7 @@ def scenario(client, bridge):
     client.check("PUT", f"/v1/music/{KITCHEN}/room", 403, body={"room_id": 10})
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
+    client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
     client.check("GET", "/v1/profile", 200)
     client.check("GET", "/v1/scenes", 200)
@@ -717,6 +720,60 @@ def scenario(client, bridge):
     if restored["dry_run"] is not False or not restored.get("restored_at"):
         fail(f"POST /v1/restore with dry_run false should restore: {restored}")
     client.check("GET", "/v1/scenes", 200)
+
+    # The history (1.6.0, ADR-046): what this scenario did, newest first, for admins; in pages, by
+    # kind, in the clear (the console) and sealed (the app).
+    history = client.check("GET", "/v1/activity?limit=200", 200)
+    kinds = {item["kind"] for item in history["items"]}
+    if not {"scene", "door", "access", "composer", "system"} <= kinds:
+        fail(f"GET /v1/activity should have scenes, doors, keys, Composer settings and the backup: {sorted(kinds)}")
+    restored = next((item for item in history["items"] if item["action"] == "restore"), None)
+    if not restored or restored["who"]["type"] != "key" or restored.get("from") != document["created_at"]:
+        fail(f"GET /v1/activity should say who restored which backup: {restored}")
+    page = client.check("GET", "/v1/activity?kind=door,scene&limit=2", 200)
+    if len(page["items"]) != 2 or not page["next_before"] or {item["kind"] for item in page["items"]} - {"door", "scene"}:
+        fail(f"GET /v1/activity?kind=door,scene&limit=2 should give two of them and where to go on: {page}")
+    after = client.check("GET", f"/v1/activity?kind=door,scene&limit=2&before={page['next_before']}", 200)
+    if after["items"][0]["id"] >= page["items"][-1]["id"]:
+        fail(f"the next page should start before the last entry shown: {after}")
+    client.check("GET", "/v1/activity?kind=lights", 400)
+    client.check("GET", "/v1/activity?before=0", 400)
+    client.check("GET", "/v1/activity", 401, auth=False)
+    sealed = client.check_sealed(bridge, "GET", "/v1/activity?kind=access&limit=5", 200)
+    if not sealed["items"] or {item["kind"] for item in sealed["items"]} != {"access"}:
+        fail(f"a sealed GET /v1/activity?kind=access should list keys paired and changed: {sealed}")
+
+    # Automatic backups to the account (1.6.0, ADR-048): the backup password's public key, set and
+    # read in sealed requests only; Back up now needs Remote Access, which is off here, and so does
+    # the night's backup, which the history then lists as not made.
+    if client.check("GET", "/v1/system", 200)["features"].get("automatic_backup") is not True:
+        fail("GET /v1/system should say features.automatic_backup true: the app shows the section only then")
+    if client.check("GET", "/v1/backup/automatic", 200)["enabled"] is not False:
+        fail("automatic backups should be off until a backup password is set")
+    backup_key = {"public_key": base64.b64encode(x25519_public(os.urandom(32))).decode(), "salt": base64.b64encode(os.urandom(16)).decode(), "iterations": 600000, "kdf": "PBKDF2-SHA-256"}
+    client.check("PUT", "/v1/backup/automatic", 403, body=backup_key)
+    client.check_sealed(bridge, "PUT", "/v1/backup/automatic", 400, body=dict(backup_key, iterations=10))
+    automatic = client.check_sealed(bridge, "PUT", "/v1/backup/automatic", 200, body=backup_key)
+    if not automatic["enabled"] or automatic["key"]["public_key"] != backup_key["public_key"]:
+        fail(f"PUT /v1/backup/automatic should turn automatic backups on with the key: {automatic}")
+    clear = client.check("GET", "/v1/backup/automatic", 200)
+    if not clear["enabled"] or clear["key"]["key_id"] != automatic["key"]["key_id"] or {"public_key", "salt", "iterations", "kdf"} & set(clear["key"]):
+        fail(f"GET /v1/backup/automatic in the clear should give the key's id, never what checks a guessed password: {clear['key']}")
+    if client.check_sealed(bridge, "GET", "/v1/backup/automatic", 200)["key"] != automatic["key"]:
+        fail("a sealed GET /v1/backup/automatic should give the whole key, as PUT does")
+    if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "REMOTE_ACCESS_OFF":
+        fail("Back up now with Remote Access off should be REMOTE_ACCESS_OFF")
+    hour, minute = (int(part) for part in automatic["time"].split(":"))
+    bridge.tick(time.mktime(datetime.datetime.now().replace(hour=hour, minute=minute, second=30, microsecond=0).timetuple()))
+    night = client.check("GET", "/v1/activity?kind=system&limit=5", 200)["items"][0]
+    if (night["action"], night.get("outcome"), night.get("reason"), night["who"]["type"]) != ("cloud_backup", "failed", "remote_off", "controller"):
+        fail(f"GET /v1/activity should list the night's backup as not made, with Remote Access off: {night}")
+    if client.check("GET", "/v1/backup/automatic", 200)["last"]["code"] != "REMOTE_ACCESS_OFF":
+        fail("GET /v1/backup/automatic should say why the night's backup was not made")
+    client.check("DELETE", "/v1/backup/automatic", 403)
+    client.check_sealed(bridge, "DELETE", "/v1/backup/automatic", 204)
+    if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "AUTOMATIC_BACKUP_OFF":
+        fail("Back up now with automatic backups off should be AUTOMATIC_BACKUP_OFF")
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.

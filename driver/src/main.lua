@@ -27,6 +27,8 @@ local Invitations = require("src.auth.invitations")
 local Sonos = require("src.sonos.sonos")
 local SonosClient = require("src.sonos.client")
 local SonosRooms = require("src.sonos.rooms")
+local Activity = require("src.core.activity")
+local AutoBackup = require("src.cloud.auto_backup")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -110,8 +112,16 @@ local function keysExpired(removed)
     for _, key in ipairs(removed) do
         Invitations.revokeCreatedBy(key.id)
         Log.info("auth", "API key expired and was removed", { key_id = key.id, name = key.name })
+        Activity.record("access", "expired", { what = key.name, ids = { key_id = key.id } })
     end
     keysChanged()
+end
+
+-- A key's device name and person, for the history (src/core/activity.lua).
+local function keyInfo(id)
+    local key = Keys.find(id)
+    local profile = key and key.profile and Profiles.find(key.profile)
+    return key and { name = key.name, profile = profile and profile.name or nil } or nil
 end
 
 -- Keys from before 0.12.0 (or whose profile is gone) each get a profile of their own.
@@ -367,6 +377,7 @@ local function discover(reason)
         changes.devices = counts.devices
         changes.supported = counts.supported
         Log.info("discovery", "project rediscovered", changes)
+        Activity.record("composer", "project", Registry.changeList(previousDevices, previousRooms))
         -- The project's location may have changed with it, and with it the next sunrise or sunset
         -- a schedule waits for, and Shabbat and holiday times.
         shownScheduleStatus, shownCalendarStatus = nil, nil
@@ -437,6 +448,10 @@ function OnDriverLateInit(driverInitType)
         return
     end
 
+    -- What happens from now on goes into the history (ADR-046), with the names keys have then.
+    local activityCount = Activity.load({ keyInfo = keyInfo })
+    Activity.started(Version.BRIDGE_VERSION, driverInitType)
+    Log.info("activity", "history loaded", { entries = activityCount })
     Keys.onExpired(keysExpired)
     local keyCount, keysStoredAs, oldKeysStoredAs = Keys.load()
     Log.info("auth", "keys loaded", { count = keyCount, stored_as = keysStoredAs, old_store = oldKeysStoredAs })
@@ -450,6 +465,7 @@ function OnDriverLateInit(driverInitType)
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
     SonosRooms.load()
+    AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
         assignProfiles()
@@ -516,11 +532,18 @@ function OnDriverLateInit(driverInitType)
         paused = schedulesPaused,
         calendar = JewishCalendar,
         onRun = automationRan,
+        -- A schedule that failed: the account service alerts the home's admins (ADR-047). Only
+        -- the time leaves the controller, never which schedule or scene.
+        onFailed = function(at)
+            Relay.tell({ type = "alert", kind = "schedule_failed", at = Clock.iso(at) })
+        end,
         onTick = function(now)
             refreshScheduleStatus(now)
             refreshCalendarStatus(now)
             -- Keys that expired go within a minute, with their invitations, even when nothing asks.
             Keys.count()
+            -- The day's automatic backup, at the home's minute (ADR-048).
+            AutoBackup.tick(now)
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil
@@ -544,6 +567,15 @@ function OnDriverLateInit(driverInitType)
         onStatus = function(text)
             updateProperty("Remote Status", text)
         end,
+    })
+    -- Automatic backups go to the account over the relay connection (ADR-048).
+    AutoBackup.configure({
+        registry = Registry,
+        ready = function()
+            return STATE.status == "ok"
+        end,
+        remoteEnabled = services.remote.enabled,
+        lockAvailable = Remote.available,
     })
     if Properties and Properties["Remote Access"] == "On" then
         Relay.start()
@@ -588,10 +620,26 @@ function ExecuteCommand(command, params)
         Remote.clearClaim()
         keysChanged()
         Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
+        Activity.record("access", "all_revoked", { who = Activity.COMPOSER, count = count })
     end
 end
 
+-- Composer settings whose changes go into the history (ADR-046): what decides whether automation
+-- runs and doors open, and what DirectorLink reaches.
+local HISTORY_SETTINGS = {
+    ["Remote Access"] = true,
+    ["Schedules"] = true,
+    ["Jewish Calendar"] = true,
+    ["Door Control"] = true,
+    ["Relay Hold"] = true,
+    [Alarm.PROPERTY] = true,
+    [Sonos.PROPERTY] = true,
+}
+
 function OnPropertyChanged(name)
+    if HISTORY_SETTINGS[name] and Properties then
+        Activity.record("composer", "setting", { what = name, to = Properties[name] })
+    end
     if name == "Remote Access" and Properties then
         if Properties[name] == "On" then
             Relay.start()
@@ -689,6 +737,7 @@ function OnDriverDestroyed(driverInitType)
     persistSet(LIFECYCLE_KEYS.last_destroy_type, tostring(driverInitType or "nil"))
     persistSet(LIFECYCLE_KEYS.last_destroy_time, os.date("%Y-%m-%d %H:%M:%S"))
     Log.info("lifecycle", "driver destroyed", { init_type = tostring(driverInitType) })
+    Activity.flush()
     Relay.stop()
     Sonos.shutdown()
     Api.stop()

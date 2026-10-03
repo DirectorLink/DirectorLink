@@ -6,13 +6,13 @@
 --
 -- A restore checks the whole document first, then replaces every store together or none: when a
 -- write fails, the values from before are put back. What refers to the project's devices and rooms
--- by id (scene steps, favorites, hidden rooms, room names and the room order) is matched to the
--- project as it is now: by id, else by the same name in the same room; what matches nothing is left
--- out and listed. Doors and gates are never moved to another device. The backup's keys come back
--- only onto a controller where nothing but the restoring device is paired; otherwise every key
--- stays as it is. Another home's backup is told apart, and its remote identity moves here only
--- when the admin asks. Composer properties are never restored, only listed: a file must never
--- switch a safety setting on.
+-- by id (scene steps, favorites, hidden rooms, room names, the room order and the rooms chosen for
+-- Sonos players) is matched to the project as it is now: by id, else by the same name in the same
+-- room; what matches nothing is left out and listed. Doors and gates are never moved to another
+-- device. The backup's keys come back only onto a controller where nothing but the restoring
+-- device is paired; otherwise every key stays as it is. Another home's backup is told apart, and
+-- its remote identity moves here only when the admin asks. Composer properties are never restored,
+-- only listed: a file must never switch a safety setting on.
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -27,6 +27,7 @@ local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local JewishCalendar = require("src.core.jewish_calendar")
 local Relay = require("src.cloud.relay")
+local SonosRooms = require("src.sonos.rooms")
 
 local Backup = {}
 
@@ -46,7 +47,8 @@ Backup.MAX_LISTED = 100
 Backup.COMPOSER = { "Door Control", "Relay Hold", "Schedules", "Jewish Calendar", "Alarm Status", "Remote Access", "Log Level" }
 
 -- Each section: the newest version of its store this driver reads (an older one is read as an
--- update reads it), and what it is.
+-- update reads it), and what it is. An `optional` one may be missing (a backup made before it
+-- existed): then what this controller has stays as it is.
 local SECTIONS = {
     keys = { version = Keys.STORE_VERSION, list = "keys" },
     profiles = { version = 1, list = "profiles" },
@@ -56,6 +58,8 @@ local SECTIONS = {
     schedules = { version = 1, list = "schedules" },
     calendar = { version = 1, object = "settings" },
     remote_identity = { version = 1 },
+    -- The Sonos room choices (src/sonos/rooms.lua), from 1.6.0 (ADR-048).
+    sonos_rooms = { version = 1, object = "rooms", optional = true },
 }
 
 -- Scene step types and favorites ("kind:id") name the kinds of the project's devices so.
@@ -180,6 +184,12 @@ local function eachReference(sections, visit)
             visit("room", tonumber(id))
         end
     end
+    local sonos = sections.sonos_rooms and sections.sonos_rooms.rooms
+    for _, choice in pairs(isObject(sonos) and sonos or {}) do
+        if isObject(choice) and tonumber(choice.room_id) then
+            visit("room", tonumber(choice.room_id))
+        end
+    end
 end
 
 -- The names of the rooms and devices the sections name, as the project has them now: what a
@@ -244,6 +254,7 @@ function Backup.export(registry)
         schedules = Schedules.backup(),
         calendar = JewishCalendar.backup(),
         remote_identity = Relay.backupIdentity(),
+        sonos_rooms = SonosRooms.backup(),
     }
     return {
         format = Backup.FORMAT,
@@ -492,7 +503,9 @@ local function validate(document)
     for name, rule in pairs(SECTIONS) do
         local section = sections[name]
         local field = "sections." .. name
-        if not isObject(section) then
+        if rule.optional and absent(section) then
+            sections[name] = nil
+        elseif not isObject(section) then
             errors[#errors + 1] = { field = field, message = "The backup has no " .. name }
         elseif not isWhole(section.version, 1, math.huge) then
             errors[#errors + 1] = { field = field .. ".version", message = name .. " has no version" }
@@ -823,6 +836,26 @@ local function matchRoomNames(m, names)
     return rooms, count
 end
 
+-- The Sonos room choices matched to the project: a player whose room matches nothing is left out
+-- (listed), and is shown in the room of its own name again, as before an admin chose one.
+local function matchSonosRooms(m, rooms)
+    local players = {}
+    for playerId in pairs(rooms) do
+        players[#players + 1] = playerId
+    end
+    table.sort(players)
+    local result, count = {}, 0
+    for _, playerId in ipairs(players) do
+        local choice = rooms[playerId]
+        local newId = resolve(m, "room", choice.room_id, { section = "sonos_rooms", name = choice.name })
+        if newId then
+            result[playerId] = { room_id = newId, name = choice.name }
+            count = count + 1
+        end
+    end
+    return result, count
+end
+
 local function matchRoomOrder(m, order)
     local result, seen = Json.array(), {}
     for _, id in ipairs(order) do
@@ -1045,6 +1078,8 @@ local READ_AT_START = {
     { name = "scenes", complete = Scenes.complete },
     { name = "schedules", complete = Schedules.complete },
     { name = "calendar", complete = JewishCalendar.complete },
+    -- Only written when the backup has them.
+    { name = "sonos_rooms", complete = SonosRooms.complete, optional = true },
 }
 
 -- Checks `document` against this controller and works out everything a restore writes, without
@@ -1058,7 +1093,7 @@ function Backup.plan(document, context)
         return nil, problem
     end
     for _, store in ipairs(READ_AT_START) do
-        if store.complete() == false then
+        if store.complete() == false and (not store.optional or document.sections[store.name] ~= nil) then
             return nil, {
                 status = 503,
                 code = "UNAVAILABLE",
@@ -1136,6 +1171,11 @@ function Backup.plan(document, context)
     local roomNames, namedRooms = matchRoomNames(m, RoomNames.read(sections.room_names))
     local order = matchRoomOrder(m, RoomLayout.read(sections.room_order))
     local calendar = JewishCalendar.read(sections.calendar)
+    -- A backup made before 1.6.0 has no Sonos rooms: the choices made here stay.
+    local sonosRooms, sonosCount = nil, nil
+    if sections.sonos_rooms ~= nil then
+        sonosRooms, sonosCount = matchSonosRooms(m, SonosRooms.read(sections.sonos_rooms))
+    end
 
     local current = Relay.storedIdentity()
     local from = origin(document, { controller = context.controller, homeName = homeName(context.registry) }, m, current)
@@ -1172,6 +1212,7 @@ function Backup.plan(document, context)
             schedules = #keptSchedules,
             room_names = namedRooms,
             room_order = #order,
+            sonos_rooms = nullable(sonosCount),
         },
         left_out = counts,
         keys = keyInfo,
@@ -1205,6 +1246,7 @@ function Backup.plan(document, context)
             schedules = { version = 1, schedules = keptSchedules },
             calendar = { version = 1, settings = calendar },
             remote_identity = identity,
+            sonos_rooms = sonosRooms and { version = 1, rooms = sonosRooms } or nil,
         },
     }
 end
@@ -1234,6 +1276,8 @@ local PARTS = {
         end,
         write = Relay.restoreIdentity,
     },
+    -- Only when the backup has them (1.6.0 and later).
+    { name = "sonos_rooms", take = SonosRooms.backup, write = SonosRooms.restore, optional = true },
 }
 
 local function write(part, data, now)
@@ -1249,11 +1293,17 @@ function Backup.apply(plan, now)
     for index, part in ipairs(PARTS) do
         before[index] = part.take()
     end
+    local function skipped(part)
+        return part.optional and plan.sections[part.name] == nil
+    end
     for index, part in ipairs(PARTS) do
-        if not write(part, plan.sections[part.name], now) then
+        if not skipped(part) and not write(part, plan.sections[part.name], now) then
             for back = index, 1, -1 do
                 local previous = PARTS[back]
-                local ok, restored = pcall(previous.putBack or previous.write, before[back], now)
+                local ok, restored = true, true
+                if not skipped(previous) then
+                    ok, restored = pcall(previous.putBack or previous.write, before[back], now)
+                end
                 if not (ok and restored == true) then
                     Log.error("backup", "a store could not be put back after a failed restore", { store = previous.name })
                 end
@@ -1271,6 +1321,7 @@ function Backup.apply(plan, now)
         profiles = counts.profiles,
         scenes = counts.scenes,
         schedules = counts.schedules,
+        sonos_rooms = counts.sonos_rooms,
         remote = plan.preview.remote.action,
         another_home = plan.preview.origin.another_home,
         unmatched = plan.preview.references.unmatched_count,

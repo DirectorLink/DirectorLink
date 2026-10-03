@@ -10,6 +10,7 @@ local Random = require("src.core.random")
 local X25519 = require("src.core.x25519")
 local CpacePairing = require("src.auth.cpace_pairing")
 local Keys = require("src.auth.keys")
+local Activity = require("src.core.activity")
 
 local Auth = {}
 
@@ -186,6 +187,7 @@ local function cpaceFinish(ctx, body)
         return createProblem
     end
     ctx.services.log.info("auth", "paired a new client", { key_id = record.id, name = record.name, role = record.role, client = ip, cpace = true })
+    Activity.record("access", "paired", { by = record.id, what = record.name, to = record.role, ids = { key_id = record.id } })
     ctx.services.onKeysChanged()
     local sealedOk, sealed = pcall(Lock.seal, Lock.cpaceKey(Base64.toHex(isk)), "pair", "pair", "res", Json.encode(Views.newApiKey(record)))
     if not sealedOk then
@@ -261,6 +263,7 @@ function Auth.pair(ctx)
         return createProblem
     end
     ctx.services.log.info("auth", "paired a new client", { key_id = record.id, name = record.name, role = record.role, client = ctx.client.ip, sealed = appPublic ~= nil })
+    Activity.record("access", "paired", { by = record.id, what = record.name, to = record.role, ids = { key_id = record.id } })
     ctx.services.onKeysChanged()
     if not appPublic then
         return 201, Views.newApiKey(record)
@@ -321,6 +324,7 @@ function Auth.create_key(ctx)
         return createProblem
     end
     ctx.services.log.info("auth", "API key created", { key_id = record.id, name = record.name, role = record.role, by = ctx.apiKey.id })
+    Activity.record("access", "created", { by = ctx.apiKey, what = record.name, to = record.role, ids = { key_id = record.id } })
     ctx.services.onKeysChanged()
     return 201, Views.newApiKey(record, ctx.apiKey.id)
 end
@@ -336,6 +340,8 @@ end
 -- Any key may revoke itself ("forget this device"), whatever its role.
 function Auth.revoke_current_key(ctx)
     local id = ctx.apiKey.id
+    -- Before it goes, while its name and person are known.
+    Activity.record("access", "forgotten", { by = ctx.apiKey, what = ctx.apiKey.name, ids = { key_id = id } })
     ctx.services.keys.revoke(id)
     if ctx.services.invitations then
         ctx.services.invitations.revokeCreatedBy(id)
@@ -374,6 +380,7 @@ function Auth.update_key(ctx)
     end
 
     local id = ctx.params.keyId
+    local before = ctx.services.keys.find(id)
     local record, failure = ctx.services.keys.update(id, changes)
     if not record then
         if failure == "NOT_FOUND" then
@@ -389,12 +396,16 @@ function Auth.update_key(ctx)
         ctx.services.invitations.revokeCreatedBy(id)
     end
     ctx.services.log.info("auth", "API key changed", { key_id = id, name = record.name, role = record.role, by = ctx.apiKey.id })
+    if before and before.role ~= record.role then
+        Activity.record("access", "role_changed", { by = ctx.apiKey, what = record.name, from = before.role, to = record.role, ids = { key_id = id } })
+    end
     ctx.services.onKeysChanged()
     return 200, Views.apiKey(record, ctx.apiKey.id)
 end
 
 function Auth.delete_key(ctx)
     local id = ctx.params.keyId
+    local revoked = ctx.services.keys.find(id)
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)
     end
@@ -402,6 +413,7 @@ function Auth.delete_key(ctx)
         ctx.services.invitations.revokeCreatedBy(id)
     end
     ctx.services.log.info("auth", "API key revoked", { key_id = id, by = ctx.apiKey.id })
+    Activity.record("access", "revoked", { by = ctx.apiKey, what = revoked and revoked.name, ids = { key_id = id } })
     ctx.services.onKeysChanged()
     return 204, nil
 end

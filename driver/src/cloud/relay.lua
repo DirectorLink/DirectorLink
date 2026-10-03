@@ -8,6 +8,7 @@ local Random = require("src.core.random")
 local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
+local Activity = require("src.core.activity")
 
 local Relay = {}
 
@@ -15,9 +16,12 @@ Relay.HOST = "api.directorlink.io"
 Relay.PORT = 443
 Relay.PATH = "/relay/connect"
 Relay.BINDING = 6001
-Relay.KEEPALIVE_MS = 25000
+-- A ping every 10 s (25 s up to 1.5.0): a connection that died without a word is found within
+-- seconds, at the next ping. The hello says how often (ping_s), so the relay holds requests for a
+-- driver whose pings have stopped instead of sending them into a dead connection (ADR-045).
+Relay.KEEPALIVE_MS = 10000
 -- A connection that hears nothing (not even a pong) for this many keep-alive ticks in a row is
--- dropped: about 75 s. Ticks, not the clock, so setting the controller's clock back cannot
+-- dropped: about 30 s. Ticks, not the clock, so setting the controller's clock back cannot
 -- delay it.
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
@@ -262,9 +266,9 @@ local function onMessage(text, kind)
         log("debug", "ignored a relay message that is not JSON")
         return
     end
-    -- Answers to what the driver asked (Relay.ask).
+    -- Answers to what the driver asked (Relay.ask): an invitation registered, a backup's chunk kept.
     local waiting = type(message.id) == "string" and state.asked[message.id]
-    if waiting and message.type == "invitation_result" then
+    if waiting and (message.type == "invitation_result" or message.type == "backup_result") then
         state.asked[message.id] = nil
         waiting(message)
         return
@@ -346,8 +350,9 @@ function Relay.onPoll(binding)
     end
 end
 
--- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway). The cloud
--- keeps which account uses which key; a member whose keys are all revoked leaves the home.
+-- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway), and which
+-- are admin keys. The cloud keeps which account uses which key; a member whose keys are all revoked
+-- leaves the home.
 function Relay.announceKeys()
     if not state.socket or not state.services or not state.services.keys then
         return
@@ -358,11 +363,15 @@ function Relay.announceKeys()
         log("warn", "key ids not announced: the key store could not be read")
         return
     end
-    local ids = Json.array()
+    local ids, admins = Json.array(), Json.array()
     for _, key in ipairs(state.services.keys.list()) do
         ids[#ids + 1] = key.id
+        -- Which of them are admin keys (1.6.0): only their accounts get the home's alerts (ADR-047).
+        if key.role == "admin" then
+            admins[#admins + 1] = key.id
+        end
     end
-    send({ type = "keys", ids = ids })
+    send({ type = "keys", ids = ids, admins = admins })
 end
 
 local function onOpen()
@@ -406,7 +415,7 @@ local function onOpen()
     state.pingedAt = nil
     state.connectedAt = os.time()
     local identity = Relay.identity()
-    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION })
+    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000) })
     Relay.announceKeys()
     startKeepalive()
     local drop = state.lastDrop
@@ -414,6 +423,10 @@ local function onOpen()
         .. (drop and (" - last drop " .. os.date("%H:%M", drop.at) .. " (" .. drop.reason .. ")") or "")
         .. (state.backupRefused and " (the relay refused the backup's home)" or ""))
     log("info", "connected to the relay", { home_id = identity.home_id, attempts = state.tries, down_s = ago(state.downSince) })
+    -- The history (ADR-046): only a connection away for more than a minute, once it is back.
+    if (ago(state.downSince) or 0) > Activity.AWAY_SECONDS then
+        Activity.record("system", "remote_away", { seconds = ago(state.downSince) })
+    end
     state.tries = 0
     state.downSince = nil
 end

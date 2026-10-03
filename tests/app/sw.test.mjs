@@ -108,13 +108,15 @@ class FakeCacheStorage {
   }
 }
 
-async function startWorker({ oldCaches = [], windows = [], opened = [] } = {}) {
+async function startWorker({ oldCaches = [], windows = [], opened = [], shown = [] } = {}) {
   const listeners = {};
   const network = makeNetwork();
   const storage = new FakeCacheStorage();
   for (const name of oldCaches) await storage.open(name);
   const self = {
     location: { origin: ORIGIN },
+    // Notifications the worker shows: { title, options }.
+    registration: { showNotification: async (title, options) => shown.push({ title, options }) },
     addEventListener: (type, listener) => (listeners[type] = listener),
     skipWaiting: async () => {},
     clients: {
@@ -164,7 +166,14 @@ async function startWorker({ oldCaches = [], windows = [], opened = [] } = {}) {
     await pending;
     return closed;
   };
-  return { network, storage, request, notificationClick };
+  // A push (ADR-047): `message` is what the browser decrypted (an object), or raw text.
+  const push = async (message) => {
+    let pending;
+    const data = message === undefined ? null : { json: () => (typeof message === "string" ? JSON.parse(message) : message), text: () => String(message) };
+    listeners.push({ data, waitUntil: (promise) => (pending = promise) });
+    await pending;
+  };
+  return { network, storage, request, notificationClick, push };
 }
 
 async function textOf(response) {
@@ -191,7 +200,7 @@ test("install saves every page under each path, without redirects", async () => 
 
 test("activate removes caches from older versions", async () => {
   const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v32"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v38"]);
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v39"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -265,4 +274,53 @@ test("a doorbell notification click brings the open app to Home, or opens it", a
   windows.length = 0;
   await notificationClick({ url: "/#/" });
   assert.deepEqual(opened, [`${ORIGIN}/#/`], "with no window left, the app is opened");
+});
+
+// Alerts (ADR-047): a push holds only { kind, home, at }; the words are the app's, kept by
+// js/alerts.js in its language. Every push shows a notification, which opens the home's history.
+const HOME = "0123456789abcdef0123456789abcdef";
+const AT = "2026-10-03T05:00:00.000Z";
+// The alert's time as the worker shows it, on this machine's clock.
+const clock = (lang) => new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(AT));
+
+test("a pushed alert shows a notification in the app's words, with its time, and opens the history", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  const texts = await storage.open("directorlink-alerts");
+  await texts.put("/alert-texts.json", new Response(JSON.stringify({
+    lang: "he",
+    dir: "rtl",
+    title: "DirectorLink",
+    offline: "הבית שלכם – ל-DirectorLink אין קשר אליו מאז {time}.",
+    schedule_failed: "הבית שלכם – תזמון נתקל בבעיה ב-{time}.",
+    other: "הבית שלכם – משהו דורש את תשומת לבכם.",
+  })));
+  await push({ kind: "schedule_failed", home: HOME, at: AT });
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].title, "DirectorLink");
+  assert.equal(shown[0].options.body, `הבית שלכם – תזמון נתקל בבעיה ב-${clock("he")}.`);
+  assert.equal(shown[0].options.lang, "he");
+  assert.equal(shown[0].options.dir, "rtl");
+  assert.equal(shown[0].options.tag, `alert-schedule_failed-${HOME}`);
+
+  await notificationClick(shown[0].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/settings/history`], "tapping it opens Settings → Controller → History");
+});
+
+test("without the app's words an alert is in English, and an unreadable push still shows one", async () => {
+  const shown = [];
+  const { push } = await startWorker({ shown });
+  await push({ kind: "offline", home: HOME, at: AT });
+  assert.equal(shown[0].options.body, `Your home – DirectorLink has not reached it since ${clock("en")}. Check the home’s internet connection and the controller.`);
+  await push("not json");
+  await push(undefined);
+  await push({ kind: "door_opened", home: "x", at: AT });
+  assert.deepEqual(shown.slice(1).map((item) => item.options.body), Array(3).fill("Your home – something needs your attention. Open the app to see what happened."));
+  assert.deepEqual(shown.slice(1).map((item) => item.options.tag), Array(3).fill("alert-other-"));
+});
+
+test("a new version keeps the alerts' words", async () => {
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-alerts"] });
+  assert.deepEqual((await storage.keys()).sort(), ["directorlink-alerts", /CACHE_NAME = "([^"]+)"/.exec(SOURCE)[1]]);
 });
