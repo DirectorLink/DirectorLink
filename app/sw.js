@@ -27,6 +27,8 @@ const ASSETS = [
   "/js/views/cloud-backup.js",
   "/js/lock.js",
   "/js/cpace.js",
+  "/js/device-join.js",
+  "/js/views/device-join.js",
   "/js/platform.js",
   "/js/qr.js",
   "/js/remote.js",

@@ -101,6 +101,14 @@
         you asked, with a six-digit code that you read out to them.
       </p>
       <p>
+        If a new device of yours asks to join your home from another device (for example the app on
+        your iPhone's Home Screen), our servers pass between your two devices what the new device
+        calls itself (such as "Safari on iPhone"), a public key from each, and the invitation your
+        other device makes for it, encrypted so that only the new device can open it. We cannot read
+        the invitation. A request works for 10 minutes; it is deleted once used, declined or
+        withdrawn, and otherwise within a day.
+      </p>
+      <p>
         A device that has never signed in does not contact our account service until you tap
         <strong>Sign in</strong> or open an invitation link. It then asks which ways to sign in are
         available, without sending anything about you or your home.
@@ -114,6 +122,7 @@
         <li>Three totals, counted once an hour: how many homes are linked to an account, how many accounts can sign in, and how often the driver was downloaded. Nothing about any one home or person.</li>
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
         <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
+        <li>Requests from a new device of yours to join your home: what the device calls itself, the public keys of the two devices, and the encrypted invitation, which we cannot open. A request works for 10 minutes and is deleted once used, declined or withdrawn, otherwise within a day.</li>
         <li>Automatic backups, if an admin turns them on: each one encrypted on your controller so that only your backup password opens it, with its size, when it arrived, and which backup password it is for. We cannot open them. The last 7 days are kept, one a day.</li>
         <li>Alerts, if an admin switches them on for a device: that browser's push address and the keys its alerts are encrypted with, which account registered it, for which home, and since when; and which of the home's access keys are admin keys (their ids only). A device's registration is deleted when its alerts are turned off, it signs out, the account leaves the home or is deleted, or you sign out everywhere.</li>
       </ul>
