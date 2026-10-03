@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test, { after } from "node:test";
 
+// What was given the keyboard (element.focus()).
+const focused = [];
 class FakeNode {}
 class FakeElement extends FakeNode {
   constructor(tag) {
@@ -32,6 +34,9 @@ class FakeElement extends FakeNode {
   }
   append(...children) {
     this.children.push(...children);
+  }
+  focus(options) {
+    focused.push({ key: this.dataset.key, options });
   }
   get textContent() {
     return this.children.map((child) => child.textContent).join("");
@@ -242,7 +247,7 @@ test("entries newest first, a section a day, an icon per kind, who and what in o
   assert.equal(outcome(rows[2]), "Not run: it skips Shabbat and holidays", "skipped, and why, in plain words");
   assert.ok(hasClass(rows[2], "is-skipped"));
   assert.equal(line(rows[3]), "Removed UI Key - Status button (סלון), Composer", "one change: in the line itself");
-  assert.ok(byClass(rows[3], "history-title")[0].textContent.includes("\u2068UI Key - Status button (סלון)\u2069"), "the name isolated");
+  assert.ok(byClass(rows[3], "history-title")[0].textContent.includes("\u2068UI Key - Status button\u2069 (\u2068סלון\u2069)"), "the name and the room isolated");
   assert.equal(line(rows[4]), "5 changes in the project, Composer");
   assert.deepEqual(byClass(rows[4], "history-changes")[0].children.map((item) => plain(item.textContent)), [
     "Renamed Kitchen Island to Island",
@@ -256,8 +261,8 @@ test("entries newest first, a section a day, an icon per kind, who and what in o
   assert.equal(line(rows[7]), "Remote access was down for 3 min, DirectorLink");
   assert.equal(line(rows[8]), "Schedules set to Paused, Composer");
   // Names from Control4 keep their own direction; the time is the home's.
-  const nameSpan = find(rows[1], (node) => node.tagName === "SPAN" && node.attributes.dir === "auto" && node.textContent.startsWith("Main Door"));
-  assert.ok(nameSpan, "the door's name is isolated");
+  assert.equal(byClass(rows[1], "history-title")[0].textContent, "Opened \u2068Main Door\u2069 (\u2068Entrance\u2069)", "the door's name and its room isolated");
+  assert.ok(find(rows[0], (node) => node.tagName === "SPAN" && node.attributes.dir === "auto" && node.textContent === "Good night"), "the scene's name keeps its own direction");
   const time = find(rows[0], (node) => node.tagName === "TIME");
   assert.equal(time.attributes.datetime, ENTRIES[0].at);
   assert.match(time.textContent, /^\d\d:\d\d$/);
@@ -394,6 +399,76 @@ test("a failed read says so, with Retry", async () => {
   assert.ok(byKey(view, "history-retry"));
 });
 
+test("a Hebrew name in the English page keeps its place: who, a door and its room, the scene it ran through", async () => {
+  home("admin");
+  const daily = { type: "schedule", schedule_id: "5c4ed01e", trigger: { type: "time", at: "07:00" }, days: [0, 1, 2, 3, 4, 5, 6] };
+  controller({
+    items: [
+      { id: 2, at: iso(NOW - 60 * 1000), kind: "door", action: "pulse", who: { type: "key", key_id: "c3d4e5f6", name: "iPhone", profile: "דנה", remote: true }, what: "שער", room: "Garden", ids: { device_id: 71 } },
+      { id: 1, at: iso(NOW - 2 * 60 * 1000), kind: "schedule", action: "run", who: daily, what: "Morning", outcome: "ran", counts: { ran: 3, skipped: 0, failed: 0 }, via: "יציאה (2)" },
+    ],
+  });
+  const rows = items(await open());
+  const who = byClass(rows[0], "history-who")[0];
+  assert.equal(who.attributes.dir, undefined, "the line is in the page's language, not the first name's");
+  assert.equal(who.textContent, "\u2068דנה\u2069 · \u2068iPhone\u2069, away from home");
+  assert.equal(byClass(rows[0], "history-title")[0].textContent, "Opened \u2068שער\u2069 (\u2068Garden\u2069)");
+  assert.equal(byClass(rows[1], "history-outcome")[0].textContent, "Ran on 3 devices · by the scene \u2068יציאה (2)\u2069");
+});
+
+test("Load more keeps the keyboard while it loads; after the last page, the first entry it brought has it", async () => {
+  home("admin");
+  const many = Array.from({ length: 70 }, (_, index) => ({ ...ENTRIES[0], id: 70 - index, at: iso(NOW - index * 60 * 1000) }));
+  const asked = controller({ items: many });
+  let drawn = await open();
+  document.querySelector = (selector) => byKey(drawn, /data-key="([^"]+)"/.exec(selector)?.[1]);
+  focused.length = 0;
+  try {
+    document.activeElement = byKey(drawn, "history-more");
+    document.activeElement.dispatch("click");
+    drawn = history.historyView();
+    const button = byKey(drawn, "history-more");
+    assert.equal(button.attributes["aria-disabled"], "true", "looks off while it loads");
+    assert.equal("disabled" in button.attributes, false, "and stays focusable");
+    button.dispatch("click");
+    await settle();
+    assert.equal(asked.filter((path) => path.includes("before=")).length, 1, "pressed again: nothing more asked");
+    drawn = history.historyView();
+    assert.equal(items(drawn).length, 70);
+    assert.equal(byKey(drawn, "history-more"), null, "nothing more: Load more goes");
+    await settle();
+    assert.deepEqual(focused, [{ key: "history-20", options: { preventScroll: true } }], "the first entry the last page brought");
+    assert.equal(byKey(drawn, "history-20").attributes.tabindex, "-1");
+    assert.equal(byKey(drawn, "history-21").attributes.tabindex, undefined);
+    history.historyView();
+    await settle();
+    assert.equal(focused.length, 1, "once");
+  } finally {
+    document.querySelector = () => null;
+    delete document.activeElement;
+  }
+});
+
+test("made a member on another device: the role changes at once, and Settings no longer links to History", async () => {
+  const forbidden = () => new Response(JSON.stringify({ status: 403, code: "FORBIDDEN", detail: "This API key has the member role", role: "member", required_role: "admin" }), { status: 403, headers: { "Content-Type": "application/json" } });
+  home("admin");
+  globalThis.fetch = async () => forbidden();
+  await open();
+  assert.equal(state.role, "member");
+  assert.equal(history.historyAllowed(), false, "app.js draws Settings instead");
+  assert.equal(byKey(settingsView({ page: "controller" }), history.HISTORY_ROW_KEY), null);
+
+  // The same when it happens on Load more.
+  home("admin");
+  const many = Array.from({ length: 60 }, (_, index) => ({ ...ENTRIES[0], id: 60 - index, at: iso(NOW - index * 60 * 1000) }));
+  controller({ items: many });
+  const view = await open();
+  globalThis.fetch = async () => forbidden();
+  byKey(view, "history-more").dispatch("click");
+  await settle();
+  assert.equal(state.role, "member");
+});
+
 test("in Hebrew", async () => {
   await setLanguage("he");
   try {
@@ -408,6 +483,12 @@ test("in Hebrew", async () => {
     assert.equal(line(rows[3]), "הסרת UI Key - Status button (סלון), Composer");
     assert.equal(line(rows[4]), "5 שינויים בפרויקט, Composer");
     assert.equal(line(rows[6]), "שינוי ההרשאה של Kitchen tablet מ„חבר בית” ל„חבר בית + דלתות”, Dana · Chrome on Windows");
+    assert.equal(line(rows[7]), "הגישה מרחוק נותקה למשך 3 דק׳, DirectorLink");
+    // A duration in words, without a hyphen before it; Load more in full.
+    controller({ items: Array.from({ length: 60 }, (_, index) => ({ ...ENTRIES[7], id: 60 - index, at: iso(NOW - index * 60 * 1000), seconds: 5400 })) });
+    const more = await open();
+    assert.equal(line(items(more)[0]), "הגישה מרחוק נותקה למשך שעה וחצי, DirectorLink");
+    assert.equal(byKey(more, "history-more").textContent, "טעינת עוד");
     assert.deepEqual(find(view, (node) => hasClass(node, "history-filters")).children.map((chip) => chip.textContent), ["הכול", "סצנות ותזמונים", "דלתות", "שינויים ב-Composer", "גישה"]);
     home("admin");
     assert.match(byKey(settingsView({ page: "controller" }), history.HISTORY_ROW_KEY).textContent, /היסטוריה/);

@@ -529,6 +529,131 @@ test("a changed action keeps the scene within 40 actions", () => {
   assert.deepEqual([draft().steps[0].set, draft().steps[1].set, draft().steps[0].device_ids.length, draft().steps[1].device_ids.length], [{ on: true }, { on: true }, 100, 5]);
 });
 
+// ---- naming every device of its kind -------------------------------------------------------------
+
+const add = () => sceneEditorView(KEY, true, actions);
+
+// Opens action `index`, checks it names its devices, and saves it without a change.
+function saveUnchanged(index, steps) {
+  const nodes = edit(index);
+  assert.doesNotMatch(summary(nodes), /: All /, "named, not all");
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps, steps);
+  assert.equal(draft().dirty, false);
+}
+
+test("a door action naming the only door there is, saved unchanged, still opens only that door", () => {
+  // The other door was removed in Composer since.
+  const door = [{ type: "relays", room_id: null, device_ids: [501], set: { action: "pulse" } }];
+  home(door);
+  state.relays = [structuredClone(RELAYS[0])];
+  saveUnchanged(0, door);
+});
+
+test("all the shades closed, copied from the house, stay these shades when saved unchanged or changed", () => {
+  const shades = [{ type: "blinds", room_id: null, device_ids: [401, 402], set: { position: 0 } }];
+  home(shades);
+  saveUnchanged(0, shades);
+  // Another setting: the same shades, still by name.
+  let nodes = edit(0);
+  press(nodes, "add-blind:open");
+  nodes = edit(0);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps[0], { type: "blinds", room_id: null, device_ids: [401, 402], set: { position: 100 } });
+});
+
+test("22 ACs off at night, copied from the house, stay as they were when saved unchanged", () => {
+  const night = [{ type: "climate", room_id: null, device_ids: ids(2000, 22), set: { mode: "off" } }];
+  home(night);
+  state.thermostats = Array.from({ length: 22 }, (_, index) => ({ ...THERMOSTATS[1], id: 2000 + index, name: `AC ${index + 1}` }));
+  assert.match(textOf(edit(0)), /22 of 22 picked/);
+  saveUnchanged(0, night);
+});
+
+test("every light of a room by name: kept while picked as it was; Use all is all of them", () => {
+  const room = [{ type: "lights", room_id: 11, device_ids: [101, 102, 103], set: { on: false } }];
+  home(room);
+  saveUnchanged(0, room);
+  // Unticked and ticked again: as it was.
+  let nodes = edit(0);
+  untick(nodes, 103);
+  tick(nodes, 103);
+  nodes = edit(0);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps, room);
+  // "Use all" is the choice of all of them, those added later too.
+  nodes = edit(0);
+  press(nodes, "add-use-all");
+  nodes = edit(0);
+  assert.equal(summary(nodes), "Changes it to: All lights (Living Room): Off");
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps[0], { type: "lights", room_id: 11, device_ids: null, set: { on: false } });
+});
+
+test("a split run naming every light, saved unchanged, stays exactly as it was", () => {
+  // 130 lights in the home, copied all off: kept as 100 + 30.
+  const more = Array.from({ length: 15 }, (_, index) => ({ id: 3000 + index, name: `Garden ${index + 1}`, room: at(12), dimmable: false, on: false }));
+  const lights = [...LIGHTS, ...MANY, ...more];
+  const all = lights.map((light) => light.id);
+  const run = [
+    { type: "lights", room_id: null, device_ids: all.slice(0, 100), set: { on: false } },
+    { type: "lights", room_id: null, device_ids: all.slice(100), set: { on: false } },
+  ];
+  home(run, { lights });
+  for (const index of [0, 1]) {
+    const nodes = edit(index);
+    assert.match(textOf(nodes), /130 of 130 picked/);
+    assert.match(textOf(nodes), /The scene keeps this as 2 actions in a row/);
+    press(nodes, "add-confirm");
+    assert.deepEqual(draft().steps, run);
+    assert.equal(draft().dirty, false);
+  }
+  // Another setting: still the same 100 + 30.
+  let nodes = edit(1);
+  press(nodes, "add-light:on");
+  nodes = edit(1);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.map((step) => [step.device_ids, step.set]), [
+    [all.slice(0, 100), { on: true }],
+    [all.slice(100), { on: true }],
+  ]);
+  // One unticked: 100 + 29.
+  nodes = edit(0);
+  untick(nodes, 3014);
+  nodes = edit(0);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.map((step) => step.device_ids.length), [100, 29]);
+});
+
+test("doors and gates open only the ones picked, unless all of them is the choice", () => {
+  home();
+  // The Kitchen's other door ticked: both, by name.
+  let nodes = edit(5);
+  tick(nodes, 502);
+  nodes = edit(5);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps[5], { type: "relays", room_id: 12, device_ids: [501, 502], set: { action: "pulse" } });
+  // Added with Choose, every door ticked: by name too.
+  nodes = add();
+  press(nodes, "add-room:12");
+  nodes = add();
+  press(nodes, "add-kind:relays");
+  nodes = add();
+  press(nodes, "add-choose");
+  nodes = add();
+  tick(nodes, 501);
+  tick(nodes, 502);
+  nodes = add();
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1), { type: "relays", room_id: 12, device_ids: [501, 502], set: { action: "pulse" } });
+  // "Use all": all of them.
+  nodes = edit(5);
+  press(nodes, "add-use-all");
+  nodes = edit(5);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps[5], { type: "relays", room_id: 12, device_ids: null, set: { action: "pulse" } });
+});
+
 // ---- Hebrew ------------------------------------------------------------------------------------
 
 test("in Hebrew", async () => {

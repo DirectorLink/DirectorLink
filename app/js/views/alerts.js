@@ -32,6 +32,11 @@ export function alertsPanel() {
   const linked = Boolean(savedRemote());
   const on = alertsOn();
   const hint = obstacle(support, linked);
+  // What the last tap led to, unless the hint already says it (the permission refused: blocked).
+  const message = alertsUi.message ? t(`alerts.settings.${alertsUi.message.key}`) : null;
+  // Off while it cannot be used or is busy, but focusable (aria-disabled): the keyboard stays on
+  // it while it works, and its new state, or why it is off, is read on it.
+  const off = Boolean(hint) || alertsUi.busy;
   return h(
     "section",
     { class: "card settings-card", id: "settings-alerts", "aria-labelledby": "settings-alerts-title" },
@@ -53,16 +58,20 @@ export function alertsPanel() {
           class: "switch",
           "aria-checked": String(on),
           "aria-labelledby": "alerts-switch-label",
-          "aria-describedby": "alerts-switch-help",
+          "aria-describedby": hint ? "alerts-switch-help alerts-hint" : "alerts-switch-help",
           "aria-busy": alertsUi.busy ? "true" : null,
-          disabled: Boolean(hint) || alertsUi.busy,
+          "aria-disabled": off ? "true" : null,
           dataset: { key: "alerts-switch" },
-          onclick: () => (on ? turnAlertsOff() : turnAlertsOn()),
+          onclick: () => {
+            if (off) return;
+            if (on) turnAlertsOff();
+            else turnAlertsOn();
+          },
         },
         h("span", { class: "switch-thumb" })
       )
     ),
-    hint ? h("p", { class: "notice notice-info", dataset: { key: "alerts-hint" } }, hint) : null,
-    alertsUi.message ? h("p", { class: `notice notice-${alertsUi.message.kind}`, role: "status", dataset: { key: "alerts-message" } }, t(`alerts.settings.${alertsUi.message.key}`)) : null
+    hint ? h("p", { class: "notice notice-info", id: "alerts-hint", role: message === hint ? "status" : null, dataset: { key: "alerts-hint" } }, hint) : null,
+    message && message !== hint ? h("p", { class: `notice notice-${alertsUi.message.kind}`, role: "status", dataset: { key: "alerts-message" } }, message) : null
   );
 }

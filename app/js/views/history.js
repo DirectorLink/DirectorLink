@@ -10,7 +10,7 @@ import { currentLanguage, formatClock, formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { formatOffset, homeZone, whenText } from "../schedules.js";
-import { api, errorText, roleLabel } from "../session.js";
+import { api, errorText, noteForbidden, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
 
@@ -35,6 +35,8 @@ const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "arc
 let generation = 0;
 let refreshTimer = null;
 let refreshing = false;
+// The entry to give the keyboard to once drawn (after the last Load more).
+let focusLanding = null;
 
 // Admins only. Before this key's role is known (not connected yet) the page says why it waits.
 export function historyAllowed() {
@@ -45,6 +47,7 @@ export function historyAllowed() {
 export function resetHistory() {
   generation += 1;
   ui.history = null;
+  focusLanding = null;
   window.clearTimeout(refreshTimer);
   refreshTimer = null;
   // The live region screen readers hear the list's size from is in the page before it speaks.
@@ -59,6 +62,8 @@ function query(filter, before) {
 }
 
 function failure(error) {
+  // Made a member on another device: the role changes here at once (Settings drops the link).
+  noteForbidden(error);
   // A DirectorLink before 1.6.0 keeps no history.
   return error?.status === 404 || error?.status === 405 ? { unsupported: true } : { error: errorText(error) };
 }
@@ -89,11 +94,14 @@ function shownText(history) {
   return [t("history.shown", { count: history.items.length }), history.next ? "" : t("history.end")].filter(Boolean).join(" ");
 }
 
-// The next page, after the entries shown.
+// The next page, after the entries shown. Load more stays where it is (and keeps the keyboard)
+// while it loads; when the last page came and it goes, the keyboard goes to the first entry that
+// page brought.
 export async function loadMore() {
   const current = ui.history;
   if (!current || current.busy || !current.next) return;
   const mine = generation;
+  const focused = document.activeElement?.dataset?.key === "history-more";
   ui.history = { ...current, busy: true, moreError: null };
   notify();
   try {
@@ -101,10 +109,14 @@ export async function loadMore() {
     if (mine !== generation) return;
     const known = new Set(current.items.map((item) => item.id));
     const items = [...current.items, ...(page?.items || []).filter((item) => !known.has(item.id))];
-    ui.history = { ...ui.history, items, next: page?.next_before ?? null, busy: false };
+    const next = page?.next_before ?? null;
+    const landing = focused && !next ? (items[current.items.length]?.id ?? null) : null;
+    ui.history = { ...ui.history, items, next, busy: false, landing };
+    focusLanding = landing;
     announce(shownText(ui.history));
   } catch (error) {
     if (mine !== generation) return;
+    noteForbidden(error);
     ui.history = { ...ui.history, busy: false, moreError: errorText(error) };
   }
   notify();
@@ -156,6 +168,11 @@ function withName(key, value, params = {}) {
   return [before, name(value || t("history.unnamed")), after];
 }
 
+// A name from Control4 (or a person's) inside a sentence, isolated (first-strong): "Gate Intercom"
+// stays in one piece inside Hebrew, and a Hebrew name inside English.
+const isolate = (text) => `\u2068${text ?? ""}\u2069`;
+
+// Who did it, in the app's language, with the person's and the device's names isolated.
 function who(entry) {
   const by = entry.who || {};
   if (by.type === "schedule") {
@@ -164,24 +181,21 @@ function who(entry) {
   }
   if (by.type === "composer") return t("history.who.composer");
   if (by.type !== "key") return t("history.who.controller");
-  const device = by.name || t("history.who.unknownDevice");
-  const text = by.profile && by.profile !== by.name ? t("history.who.person", { person: by.profile, device }) : device;
+  const device = by.name ? isolate(by.name) : t("history.who.unknownDevice");
+  const text = by.profile && by.profile !== by.name ? t("history.who.person", { person: isolate(by.profile), device }) : device;
   return by.remote ? t("history.who.away", { who: text }) : text;
 }
 
-// Where a device is: its room as the app names it now, else as the controller named it then.
+// A device and where it is: its room as the app names it now, else as the controller named it
+// then; each isolated, in a sentence of the app's language.
 function placed(entry, nameText) {
   const room = entry.ids?.room_id ? roomName({ id: entry.ids.room_id, name: entry.room }) : entry.room;
-  return room ? t("history.inRoom", { name: nameText, room }) : nameText;
+  return room ? t("history.inRoom", { name: isolate(nameText), room: isolate(room) }) : isolate(nameText);
 }
-
-// A name from Control4 inside a sentence, isolated (first-strong): "Gate Intercom (Kitchen)" stays
-// in one piece inside Hebrew, and a Hebrew name inside English.
-const isolate = (text) => `\u2068${text ?? ""}\u2069`;
 
 function changeText(change) {
   const room = change.type === "room";
-  const named = isolate(change.room && !room ? t("history.inRoom", { name: change.name, room: change.room }) : change.name);
+  const named = change.room && !room ? t("history.inRoom", { name: isolate(change.name), room: isolate(change.room) }) : isolate(change.name);
   switch (change.change) {
     case "removed":
       return t(room ? "history.change.roomRemoved" : "history.change.removed", { name: named });
@@ -215,7 +229,7 @@ function title(entry) {
     case "door.hold":
     case "door.release":
     case "door.doorbell":
-      return withName(`history.door.${entry.action}`, placed(entry, what || t("history.unnamed")));
+      return t(`history.door.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
     case "access.paired":
     case "access.created":
     case "access.joined":
@@ -286,7 +300,7 @@ export function outcomeText(entry) {
   }
   if (entry.kind === "schedule" && entry.note === "late") parts.push(t("history.note.late"));
   if (entry.kind === "schedule" && entry.note === "no_weather") parts.push(t("history.note.noWeather"));
-  if (entry.via) parts.push(t("history.via", { scene: entry.via }));
+  if (entry.via) parts.push(t("history.via", { scene: isolate(entry.via) }));
   return parts.join(" · ");
 }
 
@@ -343,14 +357,15 @@ export function groupByDay(items, now = new Date()) {
   return days;
 }
 
-function entryRow(entry) {
+// `landing`: the entry the keyboard went to after the last Load more (it can take the focus).
+function entryRow(entry, landing) {
   const outcome = outcomeText(entry);
   const at = new Date(entry.at);
   const changes = entry.kind === "composer" && entry.action === "project" && (entry.changes || []).length + (entry.more || 0) > 1 ? entry.changes : null;
   const tone = entry.outcome === "failed" ? "failed" : entry.outcome === "skipped" ? "skipped" : "ok";
   return h(
     "li",
-    { class: `history-item is-${tone}`, dataset: { key: `history-${entry.id}` } },
+    { class: `history-item is-${tone}`, tabindex: entry.id === landing ? "-1" : null, dataset: { key: `history-${entry.id}` } },
     h("span", { class: `history-icon history-icon-${entry.kind}`, "aria-hidden": "true" }, icon(iconOf(entry))),
     h(
       "div",
@@ -360,7 +375,7 @@ function entryRow(entry) {
         { class: "history-line" },
         h("span", { class: "history-title" }, title(entry)),
         h("span", { class: "visually-hidden" }, ", "),
-        h("span", { class: "history-who", dir: "auto" }, who(entry))
+        h("span", { class: "history-who" }, who(entry))
       ),
       outcome ? h("p", { class: `history-outcome is-${tone}` }, tone === "ok" ? null : icon(tone === "failed" ? "close" : "minus"), h("span", {}, outcome)) : null,
       changes
@@ -439,6 +454,12 @@ export function historyView() {
     return [header, offlineBanner(), h("div", { class: "history" }, h("p", { class: "notice notice-info" }, t("history.updateDriver")))];
   }
   const days = groupByDay(history.items || []);
+  if (focusLanding != null) {
+    // Once app.js has drawn the page (the entry keeps it over later redraws: data-key).
+    const key = `history-${focusLanding}`;
+    focusLanding = null;
+    window.setTimeout(() => document.querySelector(`[data-key="${key}"]`)?.focus({ preventScroll: true }), 0);
+  }
   const status = history.busy
     ? t("common.loading")
     : history.error
@@ -470,7 +491,7 @@ export function historyView() {
           "section",
           { class: "history-day", "aria-labelledby": `history-day-${day.key}` },
           h("h2", { class: "history-day-title", id: `history-day-${day.key}` }, day.title),
-          h("ul", { class: "card history-list" }, day.items.map(entryRow))
+          h("ul", { class: "card history-list" }, day.items.map((entry) => entryRow(entry, history.landing)))
         )
       ),
       history.moreError ? h("p", { class: "notice notice-error", role: "alert" }, history.moreError) : null,
@@ -478,9 +499,10 @@ export function historyView() {
         ? h(
             "div",
             { class: "history-more" },
+            // While it loads it looks off and does nothing, but keeps the keyboard (aria-disabled).
             h(
               "button",
-              { type: "button", class: "button button-secondary", disabled: Boolean(history.busy), dataset: { key: "history-more" }, onclick: () => loadMore() },
+              { type: "button", class: "button button-secondary", "aria-disabled": history.busy ? "true" : null, dataset: { key: "history-more" }, onclick: () => loadMore() },
               t("history.loadMore")
             )
           )

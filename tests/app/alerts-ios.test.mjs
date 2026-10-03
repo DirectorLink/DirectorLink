@@ -78,7 +78,7 @@ test("on iPhone and iPad the card says to add the app to the Home Screen, or whi
   saveRemote({ home: "0123456789abcdef0123456789abcdef", keyId: "0a1b2c3d" });
 
   const tab = alertsPanel();
-  assert.ok("disabled" in byKey(tab, "alerts-switch").attributes, "the switch cannot be used in a Safari tab");
+  assert.equal(byKey(tab, "alerts-switch").attributes["aria-disabled"], "true", "the switch cannot be used in a Safari tab");
   assert.equal(byKey(tab, "alerts-hint").textContent, "On iPhone and iPad, alerts work only in the app on the Home Screen (iOS 16.4 or later): tap Share, then Add to Home Screen, open DirectorLink from there and switch them on.");
 
   standalone = true;
@@ -90,5 +90,5 @@ test("on iPhone and iPad the card says to add the app to the Home Screen, or whi
   globalThis.Notification = { permission: "default", requestPermission: async () => "granted" };
   const ready = alertsPanel();
   assert.equal(byKey(ready, "alerts-hint"), null);
-  assert.equal("disabled" in byKey(ready, "alerts-switch").attributes, false);
+  assert.equal(byKey(ready, "alerts-switch").attributes["aria-disabled"], undefined);
 });

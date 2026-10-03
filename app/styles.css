@@ -4015,8 +4015,10 @@ a.scene-name:hover {
   gap: 12px;
 }
 
-.alerts-toggle .switch:disabled {
+/* Off but still focusable (busy, or not usable here: the hint says why). */
+.alerts-toggle .switch[aria-disabled="true"] {
   opacity: 0.5;
+  cursor: default;
 }
 
 .schedule-summary .add-summary {
