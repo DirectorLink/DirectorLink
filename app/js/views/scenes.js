@@ -1,7 +1,7 @@
 // Scenes (#/scenes) and the scene editor (#/scene/new, #/scene/<id>; admins). The list runs a
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
-// what (lights, AC, fans, blinds, doors and gates, all of them or chosen ones; the Sonos music)
-// and what to do;
+// what (lights, AC, fans, blinds, doors and gates, refrigerators, all of them or chosen ones; the
+// Sonos music) and what to do;
 // "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor; so has
 // changing one (#/scene/<id>/edit/<index>, 1.6.0), the same screen filled in from the action.
 // "Copy the house as it is now" makes the actions from the current state; "Try it now" runs them
@@ -12,7 +12,8 @@ import { h, iconButton, name } from "../dom.js";
 import { formatNumber, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { fanSpeeds } from "../fans.js";
-import { blindStateLabel, deviceRoomId, fanLabel, fanSpeedLabel, fanStateLabel, modeLabel, roomById, roomName, shownBrightness, targetText } from "../model.js";
+import { FEATURE_ICONS, featuresOf, stepFeature, stepSet } from "../refrigerators.js";
+import { blindStateLabel, deviceRoomId, fanLabel, fanSpeedLabel, fanStateLabel, fridgeStateLabel, modeLabel, roomById, roomName, shownBrightness, targetText } from "../model.js";
 import {
   MAX_DEVICE_IDS,
   MAX_STEPS,
@@ -596,8 +597,9 @@ async function deleteDraft(draft) {
 
 function newAdding() {
   // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
-  // `screen`: the screen these choices belong to ("add", or "edit:<index>").
-  return { screen: "add", editing: null, room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause" };
+  // `screen`: the screen these choices belong to ("add", or "edit:<index>"). `fridgeFeature` and
+  // `fridgeOn`: which refrigerator feature, on or off.
+  return { screen: "add", editing: null, room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause", fridgeFeature: "sabbath_mode", fridgeOn: true };
 }
 
 // The choices that make the setting of each kind of action; the others say where and which devices.
@@ -608,6 +610,7 @@ const SETTING_CHOICES = {
   blinds: ["blind", "position"],
   relays: [],
   music: ["music"],
+  refrigerators: ["fridgeFeature", "fridgeOn"],
 };
 
 function settingOf(adding) {
@@ -667,6 +670,10 @@ function editAdding(steps, index) {
     else Object.assign(adding, { blind: "set", position: Math.round(position) });
   } else if (step.type === "music") {
     adding.music = set.action === "stop" ? "stop" : "pause";
+  } else if (step.type === "refrigerators") {
+    // A step the API made with several features shows its first; it stays as it was unless changed.
+    const first = stepFeature(set);
+    if (first) Object.assign(adding, { fridgeFeature: first.feature, fridgeOn: first.on });
   }
   // `setting`: the setting choices as first shown (settingOf), filled in then.
   adding.editing = { index, start, count, type: step.type, room: adding.room, ids: ids || [], set, setting: null, steps: steps.slice(start, start + count) };
@@ -770,6 +777,10 @@ function settle(adding, devices) {
   if (!devices.length) return;
   if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
   if (adding.type === "blinds" && !sceneBlindChoices(devices).includes(adding.blind)) adding.blind = adding.position >= 50 ? "open" : "close";
+  if (adding.type === "refrigerators") {
+    const features = featuresOf(devices);
+    if (features.length && !features.includes(adding.fridgeFeature)) adding.fridgeFeature = features.includes("sabbath_mode") ? "sabbath_mode" : features[0];
+  }
   if (adding.type === "climate") {
     const { modes, min, max, fans, dual, gap } = climateChoices(devices);
     if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
@@ -802,6 +813,7 @@ function chosenSet(adding, targets) {
   if (adding.type === "fans") return adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
   if (adding.type === "blinds") return { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
   if (adding.type === "music") return { action: adding.music };
+  if (adding.type === "refrigerators") return stepSet(adding.fridgeFeature, adding.fridgeOn);
   return { action: "pulse" };
 }
 
@@ -851,6 +863,7 @@ function nowText(type, device) {
   }
   if (type === "fans") return fanStateLabel(device);
   if (type === "blinds") return blindStateLabel(device);
+  if (type === "refrigerators") return fridgeStateLabel(device);
   return "";
 }
 
@@ -1080,6 +1093,37 @@ function doControls(adding, devices) {
             },
           })
         : null,
+    ];
+  }
+  if (adding.type === "refrigerators") {
+    // Which feature (the ones these refrigerators have), then on or off.
+    const features = featuresOf(devices.length ? devices : devicesOfType("refrigerators"));
+    return [
+      h(
+        "div",
+        { class: "chip-row", role: "group", "aria-label": t("scenes.add.feature") },
+        features.map((feature) =>
+          h(
+            "button",
+            {
+              type: "button",
+              class: `chip chip-with-icon ${adding.fridgeFeature === feature ? "is-active" : ""}`,
+              "aria-pressed": String(adding.fridgeFeature === feature),
+              dataset: { key: `add-fridge-feature:${feature}` },
+              onclick: () => {
+                adding.fridgeFeature = feature;
+                notify();
+              },
+            },
+            icon(FEATURE_ICONS[feature]),
+            h("span", {}, t(`refrigerators.features.${feature}`))
+          )
+        )
+      ),
+      segments([["on", t("scenes.add.switchOn")], ["off", t("scenes.add.switchOff")]], adding.fridgeOn ? "on" : "off", "add-fridge-on", (value) => {
+        adding.fridgeOn = value === "on";
+      }),
+      h("p", { class: "field-help" }, t("scenes.add.fridgeNote")),
     ];
   }
   if (adding.type === "music") {

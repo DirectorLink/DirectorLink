@@ -21,8 +21,8 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 
 - `name` (1–64 characters), `icon` (`moon`, `sun`, `leave`, `movie`, `bulb`, `climate`, `blinds`,
   `home`), `show_on_home` (a Run button at the top of Home), and up to 40 `steps`, run in order.
-- A step sets devices of one `type`: `lights`, `climate`, `fans` (1.2.0), `blinds` or `relays`
-  (doors and gates), or the Sonos music (`music`, 1.5.0).
+- A step sets devices of one `type`: `lights`, `climate`, `fans` (1.2.0), `blinds`, `relays`
+  (doors and gates) or `refrigerators` (1.7.0), or the Sonos music (`music`, 1.5.0).
   - With `device_ids`, those devices (`room_id` is then only the room they were picked in).
   - Without, every device of that type in `room_id`, or in the whole home when `room_id` is null.
     This is worked out each time the scene runs, so a light added to the room later is included.
@@ -49,6 +49,13 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
     as one (a radio station stops), and counts as ran; a group already paused or stopped is left
     alone. It is skipped, with the reason, when Sonos is off in Composer (`SONOS_OFF`), no player
     has been found yet (`NO_PLAYERS`), or no Sonos room is shown in its room (`NO_SONOS_ROOM`).
+  - refrigerators (1.7.0, ADR-049): any of `power_cool`, `power_freeze`, `sabbath_mode` and
+    `ice_maker`, `true` (on) or `false` (off), at least one: `{"sabbath_mode": true}`. Each goes to
+    the refrigerator's driver as its own command, through Samsung's cloud; the step counts as ran
+    once the commands are handed over (the refrigerator confirms seconds later). A feature a
+    refrigerator does not have (its driver says which it has) is left out on it (`partial`), or the
+    refrigerator is skipped with `NOT_SUPPORTED` when none is left. A member may run it, so
+    schedules do: Sabbath Mode on before Shabbat and off after it.
 - At most 50 scenes. `version` goes up with every change; sent back with a change
   (`PATCH /v1/scenes/{id}`), it makes the change conditional (409 `VERSION_CONFLICT`).
 
@@ -71,7 +78,7 @@ one is left out (`partial`), and the rest of the step, such as its mode, still g
 
 Steps without `device_ids` take the devices DirectorLink supports when the scene runs. So when an
 update adds a device family (1.1.0: the older Light proxy and thermostats with heat and cool
-setpoints; 1.2.0: fans), room and whole-home steps, and the schedules that run them, include
+setpoints; 1.2.0: fans; 1.7.0: refrigerators), room and whole-home steps, and the schedules that run them, include
 those devices from then on.
 
 The rest of the scene still runs when a device is skipped or fails. Doors and gates opened by a
@@ -79,7 +86,10 @@ scene are logged like any other relay command, with the key that ran it. In the 
 opens doors or gates asks for a second tap, like their Open button.
 
 Stored scenes are checked again when the driver starts: steps that are not valid are left out
-(and logged). If the stored scenes cannot be read at start, changes are refused (503) until a
+(and logged). DirectorLink 1.6.0 does not know refrigerator steps: it leaves them out (the rest of
+the scene runs), and its next save of any scene drops them. 1.7.0 also keeps them apart, under
+`directorlink_scene_steps`, which 1.6.0 does not read, and puts them back in their places when a
+scene comes back without them (ADR-049). If the stored scenes cannot be read at start, changes are refused (503) until a
 restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
@@ -95,10 +105,12 @@ off all" in the app.
   Cool the house) that opens the editor filled in.
 - The editor: the name and an icon; **What happens** (the actions, which can be moved, changed and
   removed); **Add an action** — where (a room or the whole home), what (lights, AC, fans, blinds,
-  doors and gates, with how many there are) and what to do (fans: Off, On or a speed); **Choose**
+  doors and gates, refrigerators, with how many there are) and what to do (fans: Off, On or a
+  speed; refrigerators: Power Cool, Power Freeze, Sabbath mode or Ice maker, the ones they have,
+  On or Off); **Choose**
   picks single devices ("only the reading lamp of the six"); **Copy the house as it is now** makes
-  the actions from the current state of every light, AC, fan and blind (doors and gates are never
-  copied); **Show on Home**; **Try it now**; **Save scene**. The ideas All off and Leaving home
+  the actions from the current state of every light, AC, fan and blind (doors and gates, and
+  refrigerators, are never copied); **Show on Home**; **Try it now**; **Save scene**. The ideas All off and Leaving home
   turn fans off too (1.2.0).
 - Auto for thermostats with heat and cool setpoints (1.1.0) offers a Heat and a Cool stepper, kept
   at least the largest deadband of the chosen thermostats apart; copying the house keeps both

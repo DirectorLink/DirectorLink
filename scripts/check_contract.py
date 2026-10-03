@@ -439,6 +439,22 @@ def scenario(client, bridge):
     client.check("POST", "/v1/relays/70/pulse", 202)
     client.check("POST", "/v1/relays/99/pulse", 404)
 
+    # A Samsung refrigerator (1.7.0, Mock.withRefrigerator): the driver 140, the refrigerator 141.
+    # The dev bridge's refrigerator confirms a feature 4 seconds later, as through Samsung's cloud.
+    client.check("GET", "/v1/refrigerators", 200)
+    client.check("GET", "/v1/refrigerators?room_id=10", 200)
+    fridge = client.check("GET", "/v1/refrigerators/141", 200)
+    if (fridge["fridge_temperature"], fridge["online"], fridge["features_reported"]) != (3, True, False):
+        fail(f"GET /v1/refrigerators/141 should show the fake refrigerator: {fridge}")
+    client.check("GET", "/v1/refrigerators/142", 404)
+    client.check("GET", "/v1/refrigerators/abc", 400)
+    client.check("PATCH", "/v1/refrigerators/141", 202, body={"sabbath_mode": True, "ice_maker": False})
+    client.check("PATCH", "/v1/refrigerators/141", 400, body={"sabbath_mode": "on"})
+    client.check("PATCH", "/v1/refrigerators/141", 400, body={"door_open": True})
+    client.check("PATCH", "/v1/refrigerators/99", 404, body={"power_cool": True})
+    if bridge.report_variable(140, 1006, "1") != 1 or bridge.fire_event(140, 15) != 1:
+        fail("the refrigerator's door and its driver's Door Left Open should be watched")
+
     client.check("GET", "/v1/doorbells", 200)
     client.check("GET", "/v1/doorbells/93", 200)
     client.check("GET", "/v1/doorbells/92", 404)
@@ -511,6 +527,7 @@ def scenario(client, bridge):
             {"type": "relays", "device_ids": [70], "set": {"action": "pulse"}},
             {"type": "fans", "room_id": 11, "set": {"speed": 1}},
             {"type": "fans", "device_ids": [42], "set": {"on": False}},
+            {"type": "refrigerators", "device_ids": [141], "set": {"sabbath_mode": True}},
         ],
     }
     scene = client.check("POST", "/v1/scenes", 201, body=night)
@@ -529,6 +546,8 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
+    client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "refrigerators", "room_id": 10, "set": {"power_cool": True}}]})
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "refrigerators", "set": {}}]})
     # Home's "Turn off all" (1.3.0): lights, AC or blinds it names, never doors.
     off = client.check("POST", "/v1/off", 202, body={"type": "lights", "device_ids": [20, 22]})
     if (off["ran"], off["failed"], off["skipped"]) != (2, 0, 0):
@@ -609,6 +628,8 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
     client.check("GET", "/v1/fans", 200)
     client.check("PATCH", "/v1/fans/41", 403, body={"on": False})
+    client.check("GET", "/v1/refrigerators/141", 200)
+    client.check("PATCH", "/v1/refrigerators/141", 403, body={"sabbath_mode": False})
     client.check("POST", "/v1/relays/70/pulse", 403)
     if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
         fail("a viewer key must not read the alarm")
@@ -727,6 +748,8 @@ def scenario(client, bridge):
     kinds = {item["kind"] for item in history["items"]}
     if not {"scene", "door", "access", "composer", "system"} <= kinds:
         fail(f"GET /v1/activity should have scenes, doors, keys, Composer settings and the backup: {sorted(kinds)}")
+    if not any(item["action"] == "left_open" for item in history["items"]):
+        fail("GET /v1/activity should list the refrigerator door left open")
     restored = next((item for item in history["items"] if item["action"] == "restore"), None)
     if not restored or restored["who"]["type"] != "key" or restored.get("from") != document["created_at"]:
         fail(f"GET /v1/activity should say who restored which backup: {restored}")

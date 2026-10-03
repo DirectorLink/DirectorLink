@@ -9,6 +9,7 @@ local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
 local DoorBird = require("src.adapters.doorbird")
 local Alarm = require("src.adapters.alarm")
+local Refrigerator = require("src.adapters.refrigerator")
 
 local Manager = {}
 
@@ -23,13 +24,15 @@ local adapters = {
     KnxRelay,
     DoorBird,
     Alarm,
+    Refrigerator,
 }
 
 local attached = {}
--- Device whose events belong to another device (a DoorBird driver's events -> its doorbell).
+-- Device whose events (and variables) belong to another device: a DoorBird driver's events -> its
+-- doorbell, a Samsung Refrigerator driver's variables and events -> its refrigerator.
 local eventTargets = {}
 local registry = nil
-local initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
+local initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0, refrigerator = 0 }
 
 local function log(message)
     Log.info("adapters", tostring(message))
@@ -80,7 +83,7 @@ function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
     eventTargets = {}
-    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0, refrigerator = 0 }
     local refreshing = previous ~= nil and next(previous) ~= nil
 
     pcall(function()
@@ -157,11 +160,13 @@ function Manager.counts()
         relay = initializedCounts.relay,
         doorbell = initializedCounts.doorbell,
         alarm = initializedCounts.alarm,
+        refrigerator = initializedCounts.refrigerator,
     }
 end
 
 function Manager.onVariableChanged(deviceId, variableId, value)
     deviceId = tonumber(deviceId)
+    deviceId = eventTargets[deviceId] or deviceId
     local adapter = attached[deviceId]
     if not adapter or not registry then
         return false
@@ -277,7 +282,7 @@ function Manager.shutdown()
     attached = {}
     eventTargets = {}
     registry = nil
-    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0 }
+    initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0, refrigerator = 0 }
 
     for _, adapter in ipairs(adapters) do
         if adapter.reset then

@@ -17,7 +17,7 @@ Scenes.MAX_SCENES = 50
 Scenes.MAX_STEPS = 40
 Scenes.MAX_DEVICES = 100
 Scenes.ICONS = { moon = true, sun = true, leave = true, movie = true, bulb = true, climate = true, blinds = true, home = true }
-Scenes.TYPES = { lights = true, climate = true, fans = true, blinds = true, relays = true, music = true }
+Scenes.TYPES = { lights = true, climate = true, fans = true, blinds = true, relays = true, music = true, refrigerators = true }
 -- Music (1.5.0, ADR-044): a step pauses or stops the Sonos music in a room, or in the whole home.
 Scenes.MUSIC_ACTIONS = { pause = true, stop = true }
 Scenes.MODES = { off = true, heat = true, cool = true, auto = true }
@@ -26,9 +26,17 @@ Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = 
 Scenes.MAX_FAN_SPEED = 4
 Scenes.MIN_TEMPERATURE = 5
 Scenes.MAX_TEMPERATURE = 40
+-- Refrigerators (1.7.0, ADR-049): their features on (true) or off (false), at least one a step.
+Scenes.REFRIGERATOR_FEATURES = { power_cool = true, power_freeze = true, sabbath_mode = true, ice_maker = true }
+-- Step types DirectorLink 1.6.0 does not know. It leaves them out when it loads the scenes, and its
+-- next save drops them; so they are also kept under EXTRAS_KEY, where it does not look, and put back
+-- when the scenes come back without them (Scenes.load).
+Scenes.NEWER_TYPES = { refrigerators = true }
+local EXTRAS_KEY = "directorlink_scene_steps"
 
 -- `complete` is false after the stored scenes could not be read: saving then would overwrite them.
-local state = { scenes = {}, complete = true }
+-- `extras`: EXTRAS_KEY holds steps (or held them), so a save writes it again.
+local state = { scenes = {}, complete = true, extras = false }
 
 local function randomHex(length)
     return Random.hex(length)
@@ -113,6 +121,15 @@ function Scenes.cleanSet(stepType, set)
         return set.action == "pulse" and { action = "pulse" } or nil
     elseif stepType == "music" then
         return Scenes.MUSIC_ACTIONS[set.action] and { action = set.action } or nil
+    elseif stepType == "refrigerators" then
+        local result = {}
+        for key, value in pairs(set) do
+            if not Scenes.REFRIGERATOR_FEATURES[key] or type(value) ~= "boolean" then
+                return nil
+            end
+            result[key] = value
+        end
+        return next(result) ~= nil and result or nil
     end
     return nil
 end
@@ -155,6 +172,26 @@ local function copy(scene)
     }
 end
 
+-- The steps of NEWER_TYPES, by scene id, each with its place in the scene.
+local function saveExtras()
+    local scenes, any = {}, false
+    for _, scene in ipairs(state.scenes) do
+        local kept = Json.array()
+        for index, step in ipairs(scene.steps) do
+            if Scenes.NEWER_TYPES[step.type] then
+                kept[#kept + 1] = { index = index, step = copyStep(step) }
+            end
+        end
+        if #kept > 0 then
+            scenes[scene.id] = kept
+            any = true
+        end
+    end
+    if (any or state.extras) and Store.write(EXTRAS_KEY, { version = 1, scenes = scenes }, false) then
+        state.extras = any
+    end
+end
+
 local function save()
     local records = Json.array()
     for _, scene in ipairs(state.scenes) do
@@ -163,6 +200,8 @@ local function save()
     local ok = Store.write(STORE_KEY, { version = 1, scenes = records }, false)
     if not ok then
         Log.error("scenes", "could not save the scenes")
+    else
+        saveExtras()
     end
     return ok
 end
@@ -239,14 +278,50 @@ function Scenes.read(data)
     return scenes, dropped, droppedScenes
 end
 
+-- Puts back the steps of NEWER_TYPES that a scene lost while DirectorLink 1.6.0 ran (it saved the
+-- scenes without them): in their places, in a scene that has none of them now. Returns how many.
+local function putBackExtras(scenes)
+    local data = Store.read(EXTRAS_KEY, false)
+    if type(data) ~= "table" then
+        return 0
+    end
+    state.extras = true
+    local kept = type(data.scenes) == "table" and data.scenes or {}
+    local putBack = 0
+    for _, scene in ipairs(scenes) do
+        local has = false
+        for _, step in ipairs(scene.steps) do
+            has = has or Scenes.NEWER_TYPES[step.type] == true
+        end
+        local items = not has and type(kept[scene.id]) == "table" and Store.items(kept[scene.id]) or {}
+        for _, item in ipairs(items) do
+            local step = type(item) == "table" and loadStep(item.step) or nil
+            local index = type(item) == "table" and tonumber(item.index) or nil
+            if step and Scenes.NEWER_TYPES[step.type] and index and #scene.steps < Scenes.MAX_STEPS then
+                table.insert(scene.steps, math.max(1, math.min(math.floor(index), #scene.steps + 1)), step)
+                putBack = putBack + 1
+            end
+        end
+    end
+    return putBack
+end
+
 -- Returns how many scenes there are and how the store came back ("json", "missing", "unreadable").
 function Scenes.load()
     local data, form = Store.read(STORE_KEY, false)
     state.complete = form ~= "unreadable"
+    state.extras = false
     local dropped
     state.scenes, dropped = Scenes.read(data)
     if dropped > 0 then
         Log.warn("scenes", "stored scene steps that are not valid were left out", { steps = dropped })
+    end
+    if state.complete then
+        local putBack = putBackExtras(state.scenes)
+        if putBack > 0 then
+            Log.warn("scenes", "scene steps an older DirectorLink left out were put back", { steps = putBack })
+            save()
+        end
     end
     return #state.scenes, form
 end

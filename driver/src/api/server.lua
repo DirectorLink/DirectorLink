@@ -23,6 +23,7 @@ local HANDLERS = {
     cameras = require("src.api.handlers.cameras"),
     relays = require("src.api.handlers.relays"),
     doorbells = require("src.api.handlers.doorbells"),
+    refrigerators = require("src.api.handlers.refrigerators"),
     alarm = require("src.api.handlers.alarm"),
     music = require("src.api.handlers.music"),
     logs = require("src.api.handlers.logs"),

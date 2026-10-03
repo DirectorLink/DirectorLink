@@ -41,6 +41,12 @@ const PATHS = {
   download: '<path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z"/><path d="M10 20.5a2 2 0 0 0 4 0"/><path d="M12 3v2"/>',
   door: '<path d="M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17"/><path d="M4 21h16"/><path d="M14 12h.01"/>',
+  // Refrigerators: the refrigerator, and its features (Sabbath mode is the candles).
+  fridge: '<rect x="5.5" y="2.5" width="13" height="19" rx="2"/><path d="M5.5 9.5h13"/><path d="M9 5.5v1.5M9 12.5v3"/>',
+  coolFast: '<path d="M9 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0Z"/><path d="M7 11v6"/><path d="M17 4v11"/><path d="m13.5 11.5 3.5 3.5 3.5-3.5"/>',
+  snowflake: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="m9.5 4.5 2.5 2 2.5-2M9.5 19.5l2.5-2 2.5 2"/>',
+  ice: '<path d="M12 3.5 19.5 7.5v9L12 20.5l-7.5-4v-9Z"/><path d="M4.5 7.5 12 11.5l7.5-4M12 11.5v9"/>',
+  drop: '<path d="M12 3.5c3 3.7 6 7 6 10.5a6 6 0 0 1-12 0c0-3.5 3-6.8 6-10.5Z"/>',
   // The alarm (read-only): its partitions, and one in alarm.
   shield: '<path d="M12 3 4.5 6v5.5c0 4.4 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5.1 7.5-9.5V6Z"/>',
   siren: '<path d="M7 18v-6a5 5 0 0 1 10 0v6"/><path d="M5 18h14v3H5Z"/><path d="M12 3v2M4.6 6.6l1.4 1.4M19.4 6.6 18 8"/>',
