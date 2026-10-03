@@ -2500,10 +2500,12 @@ paths:
       x-directorlink-role: admin
       summary: Automatic backups to the account
       description: |
-        Whether automatic backups are on (1.6.0, ADR-048): the backup password's public key, salt
-        and iterations as the app set them, the controller's time they are made at (the home's
-        own minute between 03:00 and 04:59), whether one is being made, how the last one went, and
-        whether remote access can take them now. The password itself is never on the controller.
+        Whether automatic backups are on (1.6.0, ADR-048): the backup password's key, the
+        controller's time they are made at (the home's own minute between 03:00 and 04:59), whether
+        one is being made, how the last one went, and whether remote access can take them now. The
+        password itself is never on the controller. The key's public key, salt and iterations, as
+        the app set them, are in sealed requests only: with them a guessed password can be checked
+        offline. In the clear (a Bearer key) the key has its `key_id` and `set_at` only.
       responses:
         "200":
           description: How automatic backups are set.
@@ -5153,10 +5155,13 @@ components:
           (Composer's Revoke All API Keys; `count`).
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
-        - `system`: `backup`, `restore` (`from`: when the backup was made), `remote_away` (the remote
-          connection was away for `seconds`, more than a minute; recorded when it is back),
-          `driver_updated` (`from`, `to`), `driver_started` (the controller or the driver restarted),
-          `driver_added`.
+        - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
+          automatic backup to the account, 1.6.0: `outcome` ran or failed, with `reason`; `who` is
+          the key that asked for it with Back up now, or DirectorLink for the daily one, which is
+          listed once a night when it fails, with `note` `retry` when it is tried again that night),
+          `remote_away` (the remote connection was away for `seconds`, more than a minute; recorded
+          when it is back), `driver_updated` (`from`, `to`), `driver_started` (the controller or the
+          driver restarted), `driver_added`.
       required: [id, at, kind, action, who]
       properties:
         id:
@@ -5171,7 +5176,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, project, setting, backup, restore, remote_away, driver_updated, driver_started, driver_added]
+          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:
@@ -5186,18 +5191,27 @@ components:
         outcome:
           type: string
           enum: [ran, skipped, failed]
-          description: For scenes and schedules. A run that failed on a device is `failed`; one that sent nothing is `skipped`.
+          description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`.
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, stopped]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
             and holidays, and the Jewish calendar is off or has no location), `only_if` (its weather
             conditions were not met), `no_weather` (no weather data, and it skips without),
             `scene_gone`, `error`.
+
+            Why a backup to the account (`cloud_backup`) was not made: `remote_off` (Remote Access
+            is off in Composer), `account_unreachable` (the controller was not connected to
+            DirectorLink's servers, the account service did not answer within 30 seconds, or it
+            failed on its side), `not_linked` (the home is not in an account), `too_large` (larger
+            than the account takes), `stopped` (automatic backups were turned off, or the backup
+            password changed, while it was being made), `error` (anything else; the log and
+            `GET /v1/backup/automatic`'s `last.code` say what).
         note:
           type: string
+          description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).
         from:
           type: string
         to:
@@ -5452,8 +5466,8 @@ components:
           type: boolean
         key:
           type: [object, "null"]
-          description: The backup password's key, as the app set it; null while off.
-          required: [key_id, public_key, salt, iterations, kdf, set_at]
+          description: The backup password's key, as the app set it; null while off. `public_key`, `salt`, `iterations` and `kdf` only in sealed requests.
+          required: [key_id, set_at]
           properties:
             key_id:
               type: string

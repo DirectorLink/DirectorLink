@@ -12,6 +12,7 @@ The Jewish calendar is called while it is off (as it ships) and then on, as the 
 """
 
 import base64
+import datetime
 import hashlib
 import hmac
 import json
@@ -21,6 +22,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -741,8 +743,9 @@ def scenario(client, bridge):
     if not sealed["items"] or {item["kind"] for item in sealed["items"]} != {"access"}:
         fail(f"a sealed GET /v1/activity?kind=access should list keys paired and changed: {sealed}")
 
-    # Automatic backups to the account (1.6.0, ADR-048): the backup password's public key, set in
-    # sealed requests only; Back up now needs Remote Access, which is off here.
+    # Automatic backups to the account (1.6.0, ADR-048): the backup password's public key, set and
+    # read in sealed requests only; Back up now needs Remote Access, which is off here, and so does
+    # the night's backup, which the history then lists as not made.
     if client.check("GET", "/v1/system", 200)["features"].get("automatic_backup") is not True:
         fail("GET /v1/system should say features.automatic_backup true: the app shows the section only then")
     if client.check("GET", "/v1/backup/automatic", 200)["enabled"] is not False:
@@ -753,8 +756,20 @@ def scenario(client, bridge):
     automatic = client.check_sealed(bridge, "PUT", "/v1/backup/automatic", 200, body=backup_key)
     if not automatic["enabled"] or automatic["key"]["public_key"] != backup_key["public_key"]:
         fail(f"PUT /v1/backup/automatic should turn automatic backups on with the key: {automatic}")
+    clear = client.check("GET", "/v1/backup/automatic", 200)
+    if not clear["enabled"] or clear["key"]["key_id"] != automatic["key"]["key_id"] or {"public_key", "salt", "iterations", "kdf"} & set(clear["key"]):
+        fail(f"GET /v1/backup/automatic in the clear should give the key's id, never what checks a guessed password: {clear['key']}")
+    if client.check_sealed(bridge, "GET", "/v1/backup/automatic", 200)["key"] != automatic["key"]:
+        fail("a sealed GET /v1/backup/automatic should give the whole key, as PUT does")
     if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "REMOTE_ACCESS_OFF":
         fail("Back up now with Remote Access off should be REMOTE_ACCESS_OFF")
+    hour, minute = (int(part) for part in automatic["time"].split(":"))
+    bridge.tick(time.mktime(datetime.datetime.now().replace(hour=hour, minute=minute, second=30, microsecond=0).timetuple()))
+    night = client.check("GET", "/v1/activity?kind=system&limit=5", 200)["items"][0]
+    if (night["action"], night.get("outcome"), night.get("reason"), night["who"]["type"]) != ("cloud_backup", "failed", "remote_off", "controller"):
+        fail(f"GET /v1/activity should list the night's backup as not made, with Remote Access off: {night}")
+    if client.check("GET", "/v1/backup/automatic", 200)["last"]["code"] != "REMOTE_ACCESS_OFF":
+        fail("GET /v1/backup/automatic should say why the night's backup was not made")
     client.check("DELETE", "/v1/backup/automatic", 403)
     client.check_sealed(bridge, "DELETE", "/v1/backup/automatic", 204)
     if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "AUTOMATIC_BACKUP_OFF":

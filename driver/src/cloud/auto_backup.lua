@@ -29,10 +29,27 @@ local STORE_KEY = "directorlink_auto_backup"
 -- The home's minute is one of these 120 (03:00 to 04:59), picked at random once.
 AutoBackup.FIRST_MINUTE = 3 * 60
 AutoBackup.WINDOW_MINUTES = 120
--- A daily backup that could not be made (the relay was offline) is tried again this often, until
--- 06:00; then that day has none.
+-- A daily backup that could not be made for a reason that may pass (RETRY) is tried again this
+-- often, until 06:00; then that day has none.
 AutoBackup.RETRY_MINUTES = 15
 AutoBackup.LAST_MINUTE = 6 * 60
+-- What 15 minutes may change: the relay offline or not answering, the account service's own error,
+-- the project still being read. Anything else (Remote Access off, the home not in an account, too
+-- large, the password changed, any other refusal or failure) is not tried again that night.
+AutoBackup.RETRY = { REMOTE_OFFLINE = true, RELAY_TIMEOUT = true, INTERNAL = true, PROJECT_NOT_READY = true }
+-- Why a backup was not made, as the history says it (GET /v1/activity's `reason`, docs/HISTORY.md):
+-- these few; "error" for the rest. The log and GET /v1/backup/automatic have the code itself.
+AutoBackup.HISTORY_REASONS = {
+    REMOTE_ACCESS_OFF = "remote_off",
+    REMOTE_OFFLINE = "account_unreachable",
+    RELAY_TIMEOUT = "account_unreachable",
+    INTERNAL = "account_unreachable",
+    HOME_NOT_LINKED = "not_linked",
+    NOT_CLAIMED = "not_linked",
+    BACKUP_TOO_LARGE = "too_large",
+    AUTOMATIC_BACKUP_OFF = "stopped",
+    KEY_CHANGED = "stopped",
+}
 -- Each chunk is at most this many characters of the sealed backup's text (the account service
 -- takes 65536), and the whole at most MAX_BYTES (cloud/src/backups.js).
 AutoBackup.CHUNK_BYTES = 60000
@@ -48,8 +65,10 @@ AutoBackup.MAX_ITERATIONS = 5000000
 
 -- config: { version, key = { public_key, salt, iterations, kdf, key_id, set_at, set_by } or nil,
 -- minute (of the day), daily (the local date whose backup was made), last = { at, ok, size,
--- code, why } }. complete: the stored config was read (or there was none).
-local state = { config = { version = 1 }, complete = true, job = nil, timer = nil, retryAt = nil, warnedDay = nil, options = {} }
+-- code, why } }. complete: the stored config was read (or there was none). retryAt: when the
+-- night's backup is tried again; warnedDay: the night whose failure the history has; overDay: the
+-- night whose backup is not tried again.
+local state = { config = { version = 1 }, complete = true, job = nil, timer = nil, retryAt = nil, warnedDay = nil, overDay = nil, options = {} }
 
 local function save()
     return Store.write(STORE_KEY, state.config, false)
@@ -109,8 +128,9 @@ local function homeMinute()
     return state.config.minute
 end
 
--- What GET /v1/backup/automatic answers.
-function AutoBackup.status()
+-- What GET /v1/backup/automatic answers. The public key, salt and iterations only when `full` (a
+-- sealed request): with them a password can be guessed offline, so they never go in the clear.
+function AutoBackup.status(full)
     local key, last = state.config.key, state.config.last
     local minute = state.config.minute or AutoBackup.FIRST_MINUTE
     local options = state.options
@@ -119,10 +139,10 @@ function AutoBackup.status()
         enabled = key ~= nil,
         key = key and {
             key_id = key.key_id,
-            public_key = key.public_key,
-            salt = key.salt,
-            iterations = key.iterations,
-            kdf = key.kdf,
+            public_key = full and key.public_key or nil,
+            salt = full and key.salt or nil,
+            iterations = full and key.iterations or nil,
+            kdf = full and key.kdf or nil,
             set_at = key.set_at and Clock.iso(key.set_at) or Json.null,
         } or Json.null,
         -- The controller's time, from when the password is set.
@@ -185,7 +205,7 @@ function AutoBackup.setKey(body, keyId, now)
         return nil, { status = 500, code = "PERSIST_FAILED", detail = "The backup password's key could not be saved" }
     end
     Log.info("backup", changed and "backup password changed" or "automatic backups turned on", { key_id = state.config.key.key_id, by = keyId })
-    return AutoBackup.status()
+    return AutoBackup.status(true)
 end
 
 -- Turns automatic backups off (the key goes). Returns true, or nil and a problem.
@@ -230,6 +250,36 @@ local function later(step)
     end
 end
 
+-- The history's entry (ADR-046) for a backup not made: why, in a few words, and "retry" when the
+-- night's backup is tried again.
+local function recordFailed(code, by, retry)
+    Activity.record("system", "cloud_backup", {
+        by = by,
+        outcome = "failed",
+        reason = AutoBackup.HISTORY_REASONS[code] or "error",
+        note = retry and "retry" or nil,
+    })
+end
+
+-- The night's backup (the local date `day`) was not made (`code`), tried at `at`: it is tried again
+-- RETRY_MINUTES later when that may help and is before LAST_MINUTE, else not that night. The
+-- history says so once a night, at the first failure (a backup made later that night is listed as
+-- made); the log every time. Returns whether it is tried again.
+local function nightFailed(day, at, code)
+    local retryDay, retryMinute = localDay(at + AutoBackup.RETRY_MINUTES * 60)
+    local retry = AutoBackup.RETRY[code] == true and retryDay == day and retryMinute < AutoBackup.LAST_MINUTE
+    if retry then
+        state.retryAt = at + AutoBackup.RETRY_MINUTES * 60
+    else
+        state.retryAt, state.overDay = nil, day
+    end
+    if state.warnedDay ~= day then
+        state.warnedDay = day
+        recordFailed(code, nil, retry)
+    end
+    return retry
+end
+
 local function finish(job, ok, code, size)
     cancelTimer()
     state.job = nil
@@ -248,16 +298,28 @@ local function finish(job, ok, code, size)
             seal_ms = job.sealMs,
             total_ms = Clock.millis() - job.started,
         })
+        -- The history: who asked (Back up now) or the controller (every night).
+        Activity.record("system", "cloud_backup", { by = job.by, outcome = "ran" })
+    elseif job.why == "daily" then
+        -- From when it started (the scheduler's minute).
+        local retry = nightFailed(job.day, job.at, code)
+        Log.warn("backup", "automatic backup not made", { why = job.why, code = code, step = job.phase, retry = retry })
     else
-        if job.why == "daily" then
-            -- From when it started (the scheduler's minute).
-            state.retryAt = job.at + AutoBackup.RETRY_MINUTES * 60
-        end
         Log.warn("backup", "automatic backup not made", { why = job.why, code = code, step = job.phase })
+        recordFailed(code, job.by, false)
     end
-    -- The history (ADR-046): who asked (Back up now) or the controller (every night), and how it went.
-    Activity.record("system", "cloud_backup", { by = job.by, outcome = ok and "ran" or "failed", reason = not ok and code or nil })
     save()
+end
+
+-- What stops a backup under way: automatic backups turned off, or the password changed (it was
+-- being made for the old one). Nil while it may go on.
+local function stopped(job)
+    if not state.config.key then
+        return "AUTOMATIC_BACKUP_OFF"
+    elseif state.config.key.key_id ~= job.key.key_id then
+        return "KEY_CHANGED"
+    end
+    return nil
 end
 
 -- Why a backup cannot start now; nil when it can.
@@ -291,6 +353,13 @@ local function sendChunk(job, index)
         return
     end
     job.phase = "upload"
+    -- Turned off or the password changed while it uploads: nothing more goes (the account service
+    -- drops the unfinished upload).
+    local halt = stopped(job)
+    if halt then
+        finish(job, false, halt)
+        return
+    end
     local data = job.text:sub(index * AutoBackup.CHUNK_BYTES + 1, (index + 1) * AutoBackup.CHUNK_BYTES)
     local message = { type = "backup_chunk", index = index, data = data }
     if index == 0 then
@@ -344,10 +413,12 @@ local function advance(job)
         return
     end
     -- The password changed or automatic backups were turned off meanwhile.
-    if not state.config.key or state.config.key.key_id ~= job.key.key_id then
-        finish(job, false, "KEY_CHANGED")
+    local halt = stopped(job)
+    if halt then
+        finish(job, false, halt)
         return
     end
+    local tooLarge = false
     local ok, err = pcall(function()
         if job.phase == "document" then
             job.document = Backup.export(state.options.registry)
@@ -355,6 +426,12 @@ local function advance(job)
         elseif job.phase == "json" then
             job.plaintext = Json.encode(job.document)
             job.document = nil
+            -- Larger sealed than the account takes: not sealed at all.
+            if BackupSeal.size(job.key, #job.plaintext) > AutoBackup.MAX_BYTES then
+                tooLarge = true
+                job.plaintext = nil
+                return
+            end
             job.seal = BackupSeal.start(job.key, job.plaintext)
             job.phase = "seal"
         elseif job.phase == "seal" then
@@ -371,6 +448,9 @@ local function advance(job)
     if not ok then
         Log.error("backup", "an automatic backup failed", { step = job.phase, error = tostring(err) })
         finish(job, false, "FAILED")
+        return
+    elseif tooLarge then
+        finish(job, false, "BACKUP_TOO_LARGE")
         return
     end
     if job.phase == "sealed" then
@@ -412,14 +492,14 @@ function AutoBackup.runNow(keyId, now)
 end
 
 -- Every minute (the scheduler's tick): the day's backup at the home's minute, and again every
--- RETRY_MINUTES until LAST_MINUTE while it could not be made.
+-- RETRY_MINUTES until LAST_MINUTE while it could not be made for a reason that may pass.
 function AutoBackup.tick(now)
     now = now or Clock.now()
     if not state.config.key or not state.complete or state.job then
         return false
     end
     local day, minute = localDay(now)
-    if state.config.daily == day or minute < homeMinute() or minute >= AutoBackup.LAST_MINUTE then
+    if state.config.daily == day or state.overDay == day or minute < homeMinute() or minute >= AutoBackup.LAST_MINUTE then
         return false
     end
     if state.retryAt and now < state.retryAt then
@@ -427,14 +507,13 @@ function AutoBackup.tick(now)
     end
     local ok, code = start("daily", now)
     if not ok then
-        state.retryAt = now + AutoBackup.RETRY_MINUTES * 60
         state.config.last = { at = now, ok = false, code = code, why = "daily" }
         save()
-        -- Once a day in the log: Remote Access may be off for good.
-        if state.warnedDay ~= day then
-            state.warnedDay = day
-            Log.warn("backup", "automatic backup not made", { why = "daily", code = code })
-            Activity.record("system", "cloud_backup", { outcome = "failed", reason = code })
+        -- Once a night in the log too: Remote Access may be off for good.
+        local first = state.warnedDay ~= day
+        local retry = nightFailed(day, now, code)
+        if first then
+            Log.warn("backup", "automatic backup not made", { why = "daily", code = code, retry = retry })
         end
     end
     return ok == true
@@ -443,7 +522,7 @@ end
 -- Test support: forget everything (a fresh driver instance).
 function AutoBackup.reset()
     cancelTimer()
-    state.config, state.complete, state.job, state.retryAt, state.warnedDay, state.options = { version = 1 }, true, nil, nil, nil, {}
+    state.config, state.complete, state.job, state.retryAt, state.warnedDay, state.overDay, state.options = { version = 1 }, true, nil, nil, nil, nil, {}
 end
 
 return AutoBackup

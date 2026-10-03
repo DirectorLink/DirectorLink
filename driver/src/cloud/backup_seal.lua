@@ -12,6 +12,7 @@
 -- holds Director's Lua thread long. tests/vectors/cloud_backup.json is shared with the app.
 
 local Base64 = require("src.core.base64")
+local Json = require("src.core.json")
 local Random = require("src.core.random")
 local X25519 = require("src.core.x25519")
 
@@ -122,6 +123,27 @@ function BackupSeal.start(key, plaintext, options)
         return sealed
     end
     return job
+end
+
+-- How many characters the sealed backup's JSON text has for a plaintext of `length` bytes sealed to
+-- `key`, before sealing it (a backup larger than the account takes is not sealed at all): the
+-- fields as result() has them, and the ciphertext's base64 (AES-CBC pads to whole blocks).
+function BackupSeal.size(key, length)
+    local ct = 4 * math.ceil((math.floor(length / 16) + 1) * 16 / 3)
+    local fields = Json.encode({
+        format = BackupSeal.FORMAT,
+        version = BackupSeal.VERSION,
+        cipher = BackupSeal.CIPHER,
+        kdf = BackupSeal.KDF,
+        iterations = key.iterations,
+        salt = key.salt,
+        key_id = key.key_id,
+        epk = string.rep("A", 44),
+        iv = string.rep("A", 24),
+        ct = "",
+        mac = string.rep("A", 44),
+    })
+    return #fields + ct
 end
 
 -- The whole sealing at once (tests and the self-test).

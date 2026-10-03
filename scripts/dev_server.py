@@ -138,6 +138,11 @@ class Bridge:
         """A device of the fake project reports a variable; returns how many listeners heard it."""
         return int(self._ask(f"variable {int(device_id)} {int(variable_id)} {str(value).encode().hex()}", "VARIABLE"))
 
+    def tick(self, at=None):
+        """Runs the scheduler's minute (schedules, automatic backups) now, or at the Unix time `at`;
+        returns how many schedules ran."""
+        return int(self._ask("tick" if at is None else f"tick {int(at)}", "TICKED"))
+
     def seal(self, key, key_id, request):
         """The envelope the app would send to POST /v1/sealed for `request` ({method, path, body})."""
         asked = json.dumps({"key": key, "key_id": key_id, "request": request})
