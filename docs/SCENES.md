@@ -93,7 +93,7 @@ off all" in the app.
 - **Scenes** tab: every scene with a Run button (members and above); admins tap a name to change
   it, make a **New scene**, or start from an idea (All off, Good night, Good morning, Leaving home,
   Cool the house) that opens the editor filled in.
-- The editor: the name and an icon; **What happens** (the actions, which can be moved and
+- The editor: the name and an icon; **What happens** (the actions, which can be moved, changed and
   removed); **Add an action** — where (a room or the whole home), what (lights, AC, fans, blinds,
   doors and gates, with how many there are) and what to do (fans: Off, On or a speed); **Choose**
   picks single devices ("only the reading lamp of the six"); **Copy the house as it is now** makes
@@ -106,5 +106,20 @@ off all" in the app.
   (5–40 °C) and the thermostat's own range, as brightness and positions do: a setpoint set on the
   thermostat itself below that (40 °F is 4.4 °C) is copied as the lowest the thermostat takes, and
   a pair left with cool not above heat is not copied.
+- Changing an action (1.6.0): its **Edit** button, or tapping its text, opens Add an action filled in
+  from it (`#/scene/<id>/edit/<index>`): its place, kind, devices (all, or the chosen ones ticked)
+  and setting. Ticking and unticking devices, choosing all or some, another place or another
+  setting, then **Save action**, puts the changed action where it was; Cancel and Back change
+  nothing, and the action has the focus again. Its setting stays exactly as saved until one of the
+  setting's choices is changed (a copied AC can have no mode, or setpoints the app would push
+  apart). Devices it names that are in another room now are listed with their room, and ones no
+  longer in the project as "Removed device" with their ID, ticked: they leave the action only when
+  unticked (saving the scene still leaves out what is gone, and says so). An action whose devices
+  or room are all gone can still be changed or removed. Actions split from one choice of more than
+  100 devices (in a row, with the same kind, place and setting, each but the last naming 100) are
+  changed together, as one; the result takes their place, split again when it still names more
+  than 100 devices, within the 40 actions a scene has. As when adding, every device of the place
+  ticked becomes "all" of them. The scene is then saved as before (`PATCH /v1/scenes/{id}` with its
+  steps), so this works with any driver that has scenes.
 - **Home** shows the scenes marked Show on Home, with one-tap Run, above the favorites.
 - Saving leaves out devices and rooms that are no longer in the project, and says so.

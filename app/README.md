@@ -39,7 +39,7 @@ Shabbat and holiday times, the Hebrew date and the week's reading, worked out on
 
 ## Scenes
 
-The **Scenes** tab (`js/views/scenes.js`, `js/scenes.js`, `docs/SCENES.md`) lists the home's scenes from `GET /v1/scenes` with a Run button (`POST /v1/scenes/{id}/run`, members and above). Admins make and change them in the editor (`#/scene/new`, `#/scene/{id}`): name and icon, the actions (Add an action: where, what, which devices, what to do), **Copy the house as it is now**, **Show on Home**, **Try it now** (`POST /v1/scenes/try`) and Save (`POST`/`PATCH /v1/scenes`, with `version`). Scenes marked Show on Home are on Home, above the favorites. Drivers older than 0.13.0 answer 404: the tab says to update the driver.
+The **Scenes** tab (`js/views/scenes.js`, `js/scenes.js`, `docs/SCENES.md`) lists the home's scenes from `GET /v1/scenes` with a Run button (`POST /v1/scenes/{id}/run`, members and above). Admins make and change them in the editor (`#/scene/new`, `#/scene/{id}`): name and icon, the actions (Add an action at `#/scene/{id}/add`: where, what, which devices, what to do; since 1.6.0 an action's Edit button, or its text, opens the same screen filled in from it at `#/scene/{id}/edit/{index}`, and Save action puts it back in its place), **Copy the house as it is now**, **Show on Home**, **Try it now** (`POST /v1/scenes/try`) and Save (`POST`/`PATCH /v1/scenes`, with `version`). Scenes marked Show on Home are on Home, above the favorites. Drivers older than 0.13.0 answer 404: the tab says to update the driver.
 
 ## Turn off all
 
