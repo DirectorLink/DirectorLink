@@ -1,4 +1,4 @@
-/* directorlink.io: one page, no scripts, no external requests. The app's graphite palette; Sora
+/* directorlink.io: a few static pages, no scripts, no external requests. The app's graphite palette; Sora
    and IBM Plex are used when installed, otherwise the system fonts. */
 
 :root {
@@ -150,6 +150,10 @@ main:focus {
 .nav a:hover {
   color: var(--ink);
   text-decoration: underline;
+}
+
+.nav a[aria-current="page"] {
+  color: var(--ink);
 }
 
 /* ---- Content ------------------------------------------------------------------------------- */
@@ -432,6 +436,233 @@ main {
   font-size: 19px;
 }
 
+/* Homepage: the line about the drivers. */
+.more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  margin-block-start: 40px;
+  padding: 22px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.more h2 {
+  margin-block-end: 6px;
+  font-size: 22px;
+}
+
+.more p {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+/* Drivers (/drivers/ and one page per driver). */
+.page-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-block: 40px 32px;
+}
+
+.page-intro h1 {
+  max-width: 24ch;
+  font-size: clamp(32px, 5vw, 48px);
+}
+
+.page-intro h1 span,
+.driver-card h2 span {
+  color: var(--muted);
+}
+
+.page-intro .lead {
+  max-width: 62ch;
+  color: var(--muted);
+  font-size: 19px;
+}
+
+.pledge {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.crumbs a {
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.drivers .note {
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.drivers code {
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.driver-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0 0 48px;
+  padding: 0;
+  list-style: none;
+}
+
+.driver-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 22px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.driver-card h2 {
+  font-size: 22px;
+}
+
+.driver-card h2 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.driver-card h2 a:hover {
+  text-decoration: underline;
+}
+
+.driver-card > p:not(.driver-kicker) {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.driver-card .actions {
+  margin-block-start: auto;
+  padding-block-start: 4px;
+}
+
+.driver-card-soon {
+  background: transparent;
+  box-shadow: none;
+}
+
+.driver-kicker {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tags li {
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.tags .tag-soon {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+  color: var(--accent);
+}
+
+.drivers-how h2,
+.drivers-notes h2,
+.driver-section h2 {
+  margin-block-end: 16px;
+  font-size: 26px;
+}
+
+.drivers-notes,
+.driver-section + .driver-section {
+  margin-block-start: 40px;
+}
+
+.drivers-how .steps,
+.driver-section .steps {
+  margin-block-end: 16px;
+}
+
+.steps-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.table-wrap {
+  margin-block-end: 16px;
+  overflow-x: auto;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.feature-table {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.feature-table th,
+.feature-table td {
+  padding: 12px 16px;
+  border-block-end: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+}
+
+.feature-table thead th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.feature-table tbody th {
+  font-weight: 600;
+}
+
+.feature-table td {
+  color: var(--muted);
+}
+
+.feature-table tbody tr:last-child th,
+.feature-table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.plain-list {
+  max-width: 72ch;
+  margin: 0;
+  padding-inline-start: 22px;
+}
+
+.plain-list li + li {
+  margin-block-start: 8px;
+}
+
 .footer {
   display: flex;
   flex-direction: column;
@@ -443,9 +674,17 @@ main {
   text-align: center;
 }
 
+@media (max-width: 960px) {
+  .steps-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 800px) {
   .steps,
-  .feature-list {
+  .steps-4,
+  .feature-list,
+  .driver-list {
     grid-template-columns: minmax(0, 1fr);
   }
   .hero {

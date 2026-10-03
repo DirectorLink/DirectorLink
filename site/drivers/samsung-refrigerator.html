@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · Samsung Refrigerator for Control4: a free, open-source driver for Samsung Wi-Fi refrigerators. Power Cool, Power Freeze, Sabbath Mode, the ice maker, temperatures, doors and the water filter."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · Samsung Refrigerator for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · Samsung Refrigerator <span>for Control4</span></h1>
+        <p class="lead">
+          Free, open-source Control4 driver for Samsung Wi-Fi refrigerators. It works through Samsung's
+          SmartThings cloud, with no extra hardware and no subscription.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/samsung-refrigerator/download">Download the driver</a>
+          <a class="button button-secondary" href="/drivers/samsung-refrigerator/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/samsung-refrigerator/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">Control4 app</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Refrigerator status</th>
+                <td>Tile: green when fine, amber when a door is open, red on a problem. Tap to refresh.</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Power Cool (fast cooling)</th>
+                <td>Tile, tap to switch</td>
+                <td>On, Off, Toggle; events; conditionals</td>
+              </tr>
+              <tr>
+                <th scope="row">Power Freeze (fast freezing)</th>
+                <td>Tile, tap to switch</td>
+                <td>On, Off, Toggle; events; conditionals</td>
+              </tr>
+              <tr>
+                <th scope="row">Sabbath Mode</th>
+                <td>Tile, tap to switch</td>
+                <td>On, Off, Toggle; events; conditionals</td>
+              </tr>
+              <tr>
+                <th scope="row">Ice maker</th>
+                <td>Tile, tap to switch</td>
+                <td>On, Off, Toggle; events; conditionals</td>
+              </tr>
+              <tr>
+                <th scope="row">Fridge and freezer setpoints</th>
+                <td>–</td>
+                <td>Set commands, variables</td>
+              </tr>
+              <tr>
+                <th scope="row">Temperatures, doors, FlexZone</th>
+                <td>–</td>
+                <td>Door Opened, Door Closed and Door Left Open events; variables</td>
+              </tr>
+              <tr>
+                <th scope="row">Water filter</th>
+                <td>–</td>
+                <td>Needs Replacement event, Reset command</td>
+              </tr>
+              <tr>
+                <th scope="row">Power, energy, online</th>
+                <td>–</td>
+                <td>Offline and Online events, variables</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          The driver checks each feature on your refrigerator. What your model does not offer shows as
+          <em>Not available</em>, and its tile is greyed out. Commands go through Samsung's cloud: the
+          driver shows a change as done only once the refrigerator confirms it, usually within a few
+          seconds, and fires Command Failed if it does not.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Samsung refrigerator on Wi-Fi, added to the SmartThings app.</li>
+          <li>A Control4 controller with internet access, on OS 3.3 or newer (tested on 4.2.1), and Composer Pro.</li>
+          <li>Tested live on an RF85T901335ML (SmartThings model TP2X_REF_20K). The offline tests also cover TP1X, Family Hub, one-door and older dongle-based models.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in four steps</h2>
+        <ol class="steps steps-4">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Add the driver</h3>
+            <p>In Composer Pro: Driver → Add or Update Driver or Agent, and select <code>DirectorLink-Samsung-Refrigerator.c4z</code>. On the Search tab, tick Local, search for <strong>Samsung Refrigerator</strong> and add it to the kitchen.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Give it a token, once</h3>
+            <p>Make a Personal Access Token at <a href="https://account.smartthings.com/tokens" rel="noreferrer">account.smartthings.com/tokens</a> with every box under Devices, Locations and Apps ticked, and paste it into the driver. It is used only to set up the driver's own sign-in.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Sign in once</h3>
+            <p>Run the actions Create OAuth App and Show Authorization URL, sign in with the refrigerator's Samsung account, and paste the address you land on into Authorization Code. The driver renews its access from then on.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">4</span>
+            <h3>Show the tiles</h3>
+            <p>One refrigerator is picked by itself; with more, choose it in Select Refrigerator. Make the tiles you want visible in the room's Navigator settings.</p>
+          </li>
+        </ol>
+        <p class="note">
+          Each step, and what each message means, is on the driver's Documentation tab in Composer and in
+          the <a href="/drivers/samsung-refrigerator/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Big grocery run</h3>
+            <p>A keypad button turns Power Cool on before the shopping goes in.</p>
+          </li>
+          <li>
+            <h3>Door left open</h3>
+            <p>On Door Left Open (after 5 minutes by default), send a push notification.</p>
+          </li>
+          <li>
+            <h3>Keypad lights</h3>
+            <p>Bind keypad buttons to a feature: their LEDs follow its state.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to Samsung's SmartThings service, with the access you grant it. It sends nothing to DirectorLink and collects no usage data.</li>
+          <li>Updating: download the new release, mind the file name, and run Add or Update Driver again. Settings and sign-in are kept.</li>
+          <li>Community-supported, best effort. <a href="/drivers/samsung-refrigerator/issues" rel="noreferrer">Report a problem</a> with the Composer properties Driver Version, Model, Supported Features and Driver Status. Never post tokens or the Client Secret.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by Samsung. Samsung and SmartThings are trademarks of their owner.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

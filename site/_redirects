@@ -1,0 +1,7 @@
+# Links people see stay on directorlink.io; these send them on to each driver's GitHub repository.
+# Only /drivers/<slug>/(download|releases|issues|source), only to github.com/IsraelCIL/DirectorLink-*
+# (scripts/check_sites.py checks both). 302, so a driver can move without browsers remembering.
+/drivers/samsung-refrigerator/download https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/releases/latest/download/DirectorLink-Samsung-Refrigerator.c4z 302
+/drivers/samsung-refrigerator/releases https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/releases 302
+/drivers/samsung-refrigerator/issues https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/issues 302
+/drivers/samsung-refrigerator/source https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator 302

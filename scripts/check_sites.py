@@ -29,10 +29,12 @@ GITHUB_LINK = ROOT / "github-link"
 GITHUB = "https://github.directorlink.io"
 # The repository's own address. People only ever see the short link above; the long one stays
 # where a machine needs it: the short link's target, and the app's check that GitHub's release
-# answers point into this project (app/js/updates.js and the tests that hold such answers).
+# answers point into this project (app/js/updates.js and the tests that hold such answers), and
+# the website's redirects to the drivers' own repositories (their names start with the same text).
 REPOSITORY = "https://github.com/IsraelCIL/DirectorLink"
 REPOSITORY_ALLOWED = {
     "github-link/worker.js",
+    "site/_redirects",
     "app/js/updates.js",
     "tests/app/updates.test.mjs",
     "tests/app/update-notice.test.mjs",
@@ -57,7 +59,10 @@ REQUIRED = {
     SITE: [
         "index.html",
         "privacy.html",
+        "drivers/index.html",
+        "drivers/samsung-refrigerator.html",
         "site.css",
+        "_redirects",
         "icons/icon.svg",
         "_headers",
         ".assetsignore",
@@ -249,7 +254,7 @@ def check_common(folder):
                 if retired in text:
                     fail(f"{rel(path)} still mentions {retired!r}; since 0.8.0 devices pair with a code from Composer")
 
-    pages = sorted(path.name for path in folder.glob("*.html"))
+    pages = sorted(path.relative_to(folder).as_posix() for path in folder.rglob("*.html"))
     index = None
     for page_name in pages:
         page = parse(folder / page_name)
@@ -416,6 +421,57 @@ def check_site():
             fail(f"site/index.html loads a stylesheet from elsewhere ({stylesheet}); the site makes no external requests")
     headers = (SITE / "_headers").read_text(encoding="utf-8")
     require(headers, "script-src 'none'", "site/_headers CSP must forbid scripts (the page has none)")
+    check_drivers()
+
+
+# DirectorLink Drivers: /drivers/ lists them, /drivers/<slug> is a driver's page, and its download,
+# releases, issues and source links are redirects in site/_redirects to the driver's own repository.
+DRIVER_REDIRECT = re.compile(
+    r"^/drivers/([a-z0-9]+(?:-[a-z0-9]+)*)/(download|releases|issues|source) "
+    r"https://github\.com/IsraelCIL/DirectorLink-[A-Za-z0-9-]+(/[^\s]*)? 302$"
+)
+
+
+def check_drivers():
+    redirects = {}
+    for number, line in enumerate((SITE / "_redirects").read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        match = DRIVER_REDIRECT.match(line)
+        if not match:
+            fail(f"site/_redirects line {number}: only /drivers/<slug>/(download|releases|issues|source) "
+                 "to github.com/IsraelCIL/DirectorLink-<driver>, as 302")
+        source = line.split()[0]
+        if source in redirects:
+            fail(f"site/_redirects sends {source} twice")
+        if not (SITE / "drivers" / f"{match.group(1)}.html").is_file():
+            fail(f"site/_redirects has links for {match.group(1)}, which has no page site/drivers/{match.group(1)}.html")
+        redirects[source] = line.split()[1]
+    for slug in {source.split("/")[2] for source in redirects}:
+        if f"/drivers/{slug}/download" not in redirects:
+            fail(f"site/_redirects: {slug} needs a /drivers/{slug}/download link")
+    for path in sorted(SITE.rglob("*.html")):
+        page = parse(path)
+        if "/drivers/" not in page.links:
+            fail(f"{rel(path)} must link to /drivers/ (in the header)")
+        for link in page.links:
+            if not link.startswith("/drivers/") or link == "/drivers/":
+                continue
+            if link in redirects:
+                continue
+            if not (SITE / (link.strip("/") + ".html")).is_file():
+                fail(f"{rel(path)} links to {link}, which is neither a driver page nor in site/_redirects")
+    for path in sorted((SITE / "drivers").glob("*.html")):
+        if path.name == "index.html":
+            continue
+        html = path.read_text(encoding="utf-8")
+        slug = path.stem
+        if f"/drivers/{slug}/download" not in html:
+            fail(f"{rel(path)} must offer its download (/drivers/{slug}/download)")
+        text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html))
+        for line in ("Free. No subscription, no license key, no account with us.", "DirectorLink is not required"):
+            require(text, line, f"{rel(path)} must say: {line}")
+        require(parse(path).title, "DirectorLink · ", f"{rel(path)}: the title is the driver's full name, DirectorLink · <product>")
 
 
 def png_size(path):
