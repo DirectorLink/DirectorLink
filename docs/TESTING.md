@@ -13,7 +13,7 @@
    - The app controls lights normally while it runs.
    - History shows "Backed up to your account" with who pressed it.
 4. The next morning there is a backup from between 03:00 and 05:00, with `why: daily` in the log and "Backed up to your account · DirectorLink" in History.
-5. Back up now twice: the list keeps one backup for today.
+5. Back up now twice: the list keeps one backup for today. A fifth Back up now the same day says the account's daily limit was reached; the nightly backup still arrives.
 6. Restore:
    - a wrong password says "Wrong password" and sends nothing;
    - the right one shows the preview, including Sonos players with a chosen room;
@@ -69,7 +69,8 @@
 4. Edit another action, change something, then Cancel or Back: nothing changes.
 5. After Copy the house in a home with more than 100 lights alike, edit either of the two parts: both open as one ("…2 actions in a row"); Save replaces both.
 6. Remove a device in Composer that a scene names: editing that action lists it as "Removed device", ticked. Untick it and save.
-7. Repeat 2–4 in Hebrew, at 320 and 390 px, light and dark, and with a keyboard (Tab to Edit, Enter, Esc/Back).
+7. Edit an action and Save action without changing anything: the scene shows no change. In a door action, tick every door: it is saved by name, not as "all doors".
+8. Repeat 2–4 in Hebrew, at 320 and 390 px, light and dark, and with a keyboard (Tab to Edit, Enter, Esc/Back).
 
 ## 0zk. DirectorLink's port taken by another driver (1.5.0)
 

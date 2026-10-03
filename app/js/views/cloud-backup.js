@@ -51,6 +51,8 @@ function reasonText(code, why) {
   const key = {
     REMOTE_ACCESS_OFF: "remoteOff",
     REMOTE_OFFLINE: "offline",
+    RELAY_TIMEOUT: "offline",
+    INTERNAL: "offline",
     HOME_NOT_LINKED: "notLinked",
     NOT_CLAIMED: "notLinked",
     LOCK_UNAVAILABLE: "noLock",

@@ -118,8 +118,10 @@ off all" in the app.
   or room are all gone can still be changed or removed. Actions split from one choice of more than
   100 devices (in a row, with the same kind, place and setting, each but the last naming 100) are
   changed together, as one; the result takes their place, split again when it still names more
-  than 100 devices, within the 40 actions a scene has. As when adding, every device of the place
-  ticked becomes "all" of them. The scene is then saved as before (`PATCH /v1/scenes/{id}` with its
+  than 100 devices, within the 40 actions a scene has. Its devices stay named as they are while
+  they are picked as they were, and an action saved unchanged stays exactly as it was; Use all makes
+  it all of them. Doors and gates are always named, one by one, so a scene never opens more of them
+  than were picked. The scene is then saved as before (`PATCH /v1/scenes/{id}` with its
   steps), so this works with any driver that has scenes.
 - **Home** shows the scenes marked Show on Home, with one-tap Run, above the favorites.
 - Saving leaves out devices and rooms that are no longer in the project, and says so.

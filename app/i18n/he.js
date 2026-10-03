@@ -989,7 +989,7 @@ export default {
       only_if: "לא הופעל: מזג האוויר לא התאים לתנאים",
       no_weather: "לא הופעל: לא היו נתוני מזג אוויר",
       scene_gone: "לא הופעל: הסצנה כבר לא קיימת",
-      error: "הבקר לא הצליח להפעיל",
+      error: "הבקר לא הצליח להפעיל אותו",
       remote_off: "Remote Access כבוי ב-Composer",
       account_unreachable: "לא הייתה גישה לחשבון",
       not_linked: "הבית לא מקושר לחשבון",
