@@ -775,6 +775,36 @@ def scenario(client, bridge):
     if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "AUTOMATIC_BACKUP_OFF":
         fail("Back up now with automatic backups off should be AUTOMATIC_BACKUP_OFF")
 
+    # Scene links (ADR-051): admins make one per scene, shown once; never for a scene that opens
+    # doors or gates; only with Remote Access on and the home linked (the dev bridge marks it so).
+    if client.check("GET", "/v1/system", 200)["features"].get("scene_links") is not True:
+        fail("GET /v1/system should say features.scene_links true: the app shows scene links only then")
+    arriving = client.check("POST", "/v1/scenes", 201, body={"name": "Arriving", "steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
+    link_path = f"/v1/scenes/{arriving['id']}/link"
+    links = client.check("GET", "/v1/scene-links", 200)
+    if links["remote_access"] or links["home_linked"] or links["items"]:
+        fail(f"GET /v1/scene-links should say Remote Access is off and the home not linked, with no links: {links}")
+    if client.check("POST", link_path, 409, body={"label": "Arriving home"})["code"] != "REMOTE_ACCESS_OFF":
+        fail("a scene link with Remote Access off should be REMOTE_ACCESS_OFF")
+    client.check("GET", link_path, 404)
+    client.check("DELETE", link_path, 404)
+    home_id = bridge.link_home()
+    made = client.check("POST", link_path, 201, body={"label": "Arriving home"})
+    if made["url"] != f"https://api.directorlink.io/run/{home_id}.{made['link_id']}#{made['secret']}" or made["replaced"]:
+        fail(f"POST {link_path} should give the link's address with the secret after #: {made}")
+    if client.check("POST", link_path, 201)["replaced"] is not True:
+        fail(f"POST {link_path} again should replace the link")
+    if made["secret"] in json.dumps(client.check("GET", "/v1/scene-links", 200)) or "secret" in client.check("GET", link_path, 200):
+        fail("a scene link's secret is shown only when it is made")
+    client.check("POST", link_path, 400, body={"secret": made["secret"]})
+    gate = client.check("POST", "/v1/scenes", 201, body={"name": "Gate", "steps": [{"type": "relays", "device_ids": [70], "set": {"action": "pulse"}}]})
+    if client.check("POST", f"/v1/scenes/{gate['id']}/link", 409)["code"] != "SCENE_OPENS_DOORS":
+        fail("a scene that opens doors or gates should never get a link")
+    client.check("POST", "/v1/scenes/deadbeef/link", 404)
+    client.check("DELETE", link_path, 204)
+    client.check("GET", "/v1/scene-links", 401, auth=False)
+    bridge.set_property("Remote Access", "Off")
+
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
     info = client.check("GET", "/v1/sealed", 200, auth=False)

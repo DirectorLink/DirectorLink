@@ -127,7 +127,19 @@
         reach your home through it. Every request and answer is also locked end to end, with keys that
         only your devices and your controller hold: our servers pass them along but cannot read or
         change them, and store none of them. What our servers do see is which account talks to which
-        home, when, and how much data.
+        home, when, and how much data. Scene links, below, are the one exception.
+      </p>
+
+      <h2>Scene links</h2>
+      <p>
+        An admin can give a scene a private link, so that a phone's own automations (iPhone Shortcuts,
+        an Android app, an NFC tag) can run it. Such a request cannot be locked end to end: the phone
+        sends the link and its secret to our servers over HTTPS, and they pass them to your controller,
+        which checks them and runs that one scene. So our servers see the link and its secret each time
+        it is used, with when and whether the scene ran, but never which scene it is: they have no
+        names. We keep neither the secret nor the runs, and the secret is never in our logs. Whoever
+        has a link can run its scene until an admin removes or replaces it. A scene that opens doors or
+        gates can never have a link, and homes without links send nothing of the kind.
       </p>
 
       <h2>Automatic backups</h2>

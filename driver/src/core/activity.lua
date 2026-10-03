@@ -41,9 +41,10 @@ local STORE_VERSION = 1
 local TEXTS = { "what", "room", "via", "outcome", "reason", "note", "from", "to" }
 local NUMBERS = { "count", "seconds", "more" }
 local COUNTS = { "ran", "skipped", "failed" }
-local IDS = { "scene_id", "schedule_id", "device_id", "key_id", "room_id", "invitation_id" }
+local IDS = { "scene_id", "schedule_id", "device_id", "key_id", "room_id", "invitation_id", "link_id" }
 local CHANGE_TEXTS = { "change", "type", "name", "room", "from" }
-local WHO_TYPES = { key = true, schedule = true, composer = true, controller = true }
+-- `link` (1.7.0, ADR-051): a scene run by its link, from a phone's automation.
+local WHO_TYPES = { key = true, schedule = true, composer = true, controller = true, link = true }
 local OUTCOMES = { ran = true, skipped = true, failed = true }
 
 local state = {
@@ -127,6 +128,10 @@ local function whoOf(kind, fields)
                     who.days[#who.days + 1] = number(day)
                 end
             end
+        elseif given.type == "link" then
+            -- The link's id, and the label an admin gave it (if any), as it was then.
+            who.link_id = cut(given.link_id, 16)
+            who.name = cut(given.name, Activity.MAX_TEXT)
         end
         return who
     end

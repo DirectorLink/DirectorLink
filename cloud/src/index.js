@@ -13,6 +13,7 @@
 //   POST /auth/apple/notifications     Apple's notifications about its accounts (apple-notifications.js)
 //   /v1/homes/..., /v1/join            homes, members, invitations, sealed requests (homes.js)
 //   /v1/homes/{home_id}/backups        the home's automatic backups, sealed (backups.js)
+//   GET, POST /run/{home_id}.{link_id} a scene's link, from a phone's automation (scene-links.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
@@ -20,6 +21,7 @@ import { handleAccounts, purgeAccountsWithoutSignIn } from "./accounts.js";
 import { handleAppleNotification } from "./apple-notifications.js";
 import { purgeBackupUploads } from "./backups.js";
 import { handleHomes } from "./homes.js";
+import { handleSceneLink } from "./scene-links.js";
 import { HomeRelay } from "./home-relay.js";
 import { purgeInvitations } from "./invitations.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
@@ -54,6 +56,10 @@ export default {
       }
       if (url.pathname === "/auth/apple/notifications") {
         return await handleAppleNotification(request, env);
+      }
+      const link = await handleSceneLink(request, env);
+      if (link) {
+        return link;
       }
       const account = await handleAccounts(request, env);
       if (account) {

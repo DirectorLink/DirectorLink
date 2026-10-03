@@ -38,6 +38,8 @@ import { sceneBlindChoices } from "../shades.js";
 import { can, notify, state, ui } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { scenesNav } from "./schedules.js";
+import { confirmLinkLoss, deleteQuestion, doorLinkWarning, linksRow, sceneLinkSection } from "./scene-links.js";
+import { linksSupported, loadLinks } from "../scene-links.js";
 
 const MAX_SCENES = 50;
 const MESSAGE_MS = 6000;
@@ -110,6 +112,8 @@ export function scenesView({ navigate }) {
       ? h("ul", { class: "scene-list" }, scenes.map((scene) => h("li", {}, sceneCard(scene, admin))))
       : emptyState("scene", t("scenes.emptyTitle"), admin ? t("scenes.emptyText") : t("scenes.emptyTextMember")),
     admin ? newScene(navigate, scenes.length) : null,
+    // Links for the phone's own automations (ADR-051).
+    admin ? linksRow() : null,
   ];
 }
 
@@ -304,6 +308,7 @@ export function sceneEditorView(key, adding, { navigate }, editing = null) {
       stepsSection(draft, navigate),
       copySection(draft),
       homeToggle(draft),
+      sceneLinkSection(draft),
       notice(draft.message),
       editorActions(draft)
     ),
@@ -546,6 +551,8 @@ async function saveDraft(draft) {
     if (problem === "needName") document.querySelector("#scene-name")?.focus();
     return;
   }
+  // A linked scene that would open doors or gates loses its link (ADR-051): asked first.
+  if (!confirmLinkLoss(draft, sending ? sending.steps : draft.steps)) return;
   draft.busy = true;
   draft.message = null;
   notify();
@@ -557,6 +564,7 @@ async function saveDraft(draft) {
     draft.busy = false;
     draft.dirty = false;
     flash(sending?.changed ? t("scenes.savedPruned", { name: sceneName }) : t("scenes.saved", { name: sceneName }));
+    if (linksSupported() && can("admin")) loadLinks();
     await loadScenes();
     leave("#/scenes", draft.cameFrom);
     return;
@@ -570,7 +578,7 @@ async function saveDraft(draft) {
 }
 
 async function deleteDraft(draft) {
-  if (draft.busy || !window.confirm(t("scenes.editor.deleteConfirm", { name: draft.name }))) return;
+  if (draft.busy || !window.confirm(deleteQuestion(draft))) return;
   draft.busy = true;
   notify();
   try {
@@ -588,6 +596,7 @@ async function deleteDraft(draft) {
   draft.busy = false;
   draft.dirty = false;
   flash(t("scenes.deleted", { name: draft.name }));
+  if (linksSupported() && can("admin")) loadLinks();
   await loadScenes();
   leave("#/scenes", draft.cameFrom);
 }
@@ -1090,8 +1099,8 @@ function doControls(adding, devices) {
       h("p", { class: "field-help" }, t("scenes.add.musicNote")),
     ];
   }
-  // Doors and gates: only what their Open button does.
-  return [h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote"))];
+  // Doors and gates: only what their Open button does. A linked scene would lose its link.
+  return [h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote")), doorLinkWarning(ui.sceneEditor)];
 }
 
 // Auto on thermostats with heat and cool setpoints: a Heat and a Cool stepper. Each pushes the

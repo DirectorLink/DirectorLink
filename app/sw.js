@@ -36,6 +36,8 @@ const ASSETS = [
   "/js/views/access.js",
   "/js/views/scenes.js",
   "/js/scenes.js",
+  "/js/views/scene-links.js",
+  "/js/scene-links.js",
   "/js/views/schedules.js",
   "/js/schedules.js",
   "/js/calendar.js",

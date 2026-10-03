@@ -15,6 +15,7 @@ local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local Sonos = require("src.sonos.sonos")
 local Activity = require("src.core.activity")
+local SceneLinks = require("src.core.scene_links")
 
 local Handlers = {}
 
@@ -610,6 +611,8 @@ function Handlers.update(ctx)
         return storeProblem(failure, "saved")
     end
     ctx.services.log.info("scenes", "scene changed", { scene = scene.id, by = ctx.apiKey.id })
+    -- A scene that now opens doors or gates loses its link (ADR-051); the app warns before saving.
+    SceneLinks.sceneChanged(updated, ctx.apiKey)
     return 200, view(updated)
 end
 
@@ -634,6 +637,8 @@ function Handlers.delete(ctx)
         return storeProblem(failure, "deleted")
     end
     ctx.services.log.info("scenes", "scene deleted", { scene = scene.id, by = ctx.apiKey.id })
+    -- Its link goes with it (ADR-051).
+    SceneLinks.sceneDeleted(scene.id, scene.name, ctx.apiKey)
     return 204
 end
 

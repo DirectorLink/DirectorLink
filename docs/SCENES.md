@@ -1,7 +1,8 @@
 # Scenes
 
 **Status: built in DirectorLink 0.13.0.** Schedules (0.14.0, `docs/SCHEDULES.md`) run them by
-time, sun and weather.
+time, sun and weather; since 1.7.0 the phone's own automations run them by a link (ADR-051, *Links
+for automations* below).
 
 A scene is one tap that sets several things: "all lights off, the bedroom AC to 24°, the
 living-room blinds closed". Scenes belong to the home and are kept on the controller
@@ -15,7 +16,7 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 | viewer | sees them |
 | member | also runs them |
 | doors | also runs their doors and gates |
-| admin | also makes, changes, tries and deletes them |
+| admin | also makes, changes, tries and deletes them, and gives them links for automations (1.7.0) |
 
 ## A scene
 
@@ -87,6 +88,63 @@ restart reads them, so they are never overwritten by an empty list.
 `POST /v1/off` with `type` (lights, climate, blinds) and `device_ids` runs one step on those devices
 (members, 1.3.0): lights off, AC off or blinds closed, and answers the same way. It is Home's "Turn
 off all" in the app.
+
+## Links for automations (1.7.0, ADR-051)
+
+A scene can have one private link that the phone's own automations call: iPhone Shortcuts (when you
+arrive home, with Siri, from an NFC tag), Android automation apps (HTTP Shortcuts, Tasker,
+MacroDroid), or an NFC tag opened in a browser. Whoever has the link can run that scene, and nothing
+else, from anywhere; every run is in History.
+
+- **Admins** make, replace and remove it: the scene editor's *Link for automations* opens the
+  scene's link screen (`#/scene/<id>/link`); Scenes → *Links for automations* (`#/links`) lists the
+  linked scenes. In the API: `POST`, `GET`, `DELETE /v1/scenes/{id}/link` and `GET /v1/scene-links`
+  (admins). `POST` takes an optional `label` (up to 64 characters), shown in History with each run.
+- **The secret is shown once**, in the answer that makes the link (`secret`, 160 random bits as 40
+  hex digits, and `url`); the controller keeps only its SHA-256, as it keeps API keys. Lost? Make a
+  new link: the old one stops working at once. Composer's action **Remove All Scene Links** removes
+  every one; Reset Remote Identity does too (the addresses name the home).
+- **Never doors or gates.** A scene with a doors-and-gates step gets no link (`409
+  SCENE_OPENS_DOORS`); adding such a step to a linked scene removes its link (the app warns and asks
+  before saving), and so does deleting the scene. A run checks again and runs the scene as a
+  member's key would (as schedules do), which never opens a door or gate.
+- **What it needs:** Remote Access on in Composer and the home linked to an account (`409
+  REMOTE_ACCESS_OFF`, `HOME_NOT_LINKED` when making one; the app says which).
+
+**Using it.** The address is `https://api.directorlink.io/run/<home_id>.<link_id>`; the secret never
+goes in it.
+
+| From | How |
+| --- | --- |
+| iPhone Shortcuts | An automation (Arrive, NFC, a time) or a shortcut for Siri, with the action **Get Contents of URL**: the address as its URL; then Method **POST**, Request Body **JSON**, Add new field → Text, key `secret`, the secret as its text. For an automation, Run Immediately. |
+| Android (HTTP Shortcuts, Tasker, MacroDroid) | An HTTP request: method POST, to the address, with the secret as its body: on its own as text, or as a form field `secret`. |
+| An NFC tag or a browser | The whole link, with the secret after `#`: `https://api.directorlink.io/run/<home_id>.<link_id>#<secret>`. Opening it shows a page with one Run button; the browser never sends what follows `#`, the page's script posts it. Write it to a tag with an NFC app (NFC Tools, for example). |
+
+A POST takes `{"secret": "…"}` as JSON, `secret=…` as a form (url-encoded or multipart), or the
+secret alone as text; the whole link in place of the secret works too. Answers:
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"result": "ran", "message": "The scene ran."}` | `ran`: everything ran; `partly`: some devices were skipped or did not respond; `failed`: none ran |
+| 400 | `SECRET_REQUIRED` | no secret in the body |
+| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, and a DirectorLink before 1.7.0 |
+| 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home |
+| 503 | `HOME_OFFLINE` | the home is not connected |
+| 502, 504 | `HOME_DISCONNECTED`, `HOME_FAILED`, `HOME_TIMEOUT` | the home did not answer |
+
+A GET never runs anything (link previews in Messages, WhatsApp and Slack fetch links): it is the
+page with the Run button, the same for every address.
+
+**Who sees what.** The account service sees the link and its secret when a phone uses it, never which
+scene it runs (it has no names), and keeps neither (docs/ACCOUNTS.md, "Who knows what"). The secret
+is never logged, on the controller or in the cloud.
+
+**Backups** hold each link's hash (section `scene_links`, docs/BACKUP.md): a restore brings back the
+links whose scene comes back without doors or gates and that name the home identity in use after it.
+
+**Going back to 1.6.0:** it does not read the links' store (it stays), and the relay sends it no runs
+(its hello lists no `scene_links`), so phones get 404. A scene changed there to open doors or gates
+loses its link at the next start of 1.7.0.
 
 ## The app
 

@@ -42,6 +42,12 @@ return {
     { method = "PATCH", path = "/v1/scenes/{sceneId}", handler = "scenes.update", role = "admin" },
     { method = "DELETE", path = "/v1/scenes/{sceneId}", handler = "scenes.delete", role = "admin" },
     { method = "POST", path = "/v1/scenes/{sceneId}/run", handler = "scenes.run", role = "member" },
+    -- A private link per scene for the phone's own automations (ADR-051): admins only, never a
+    -- scene that opens doors or gates.
+    { method = "GET", path = "/v1/scene-links", handler = "scene_links.list", role = "admin" },
+    { method = "GET", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.get", role = "admin" },
+    { method = "POST", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.create", role = "admin" },
+    { method = "DELETE", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.delete", role = "admin" },
     -- Home's "Turn off all": lights, AC or blinds only, never doors (handlers/scenes.lua).
     { method = "POST", path = "/v1/off", handler = "scenes.off", role = "member" },
 

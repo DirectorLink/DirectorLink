@@ -39,12 +39,23 @@ ADR-047) are in *6. Alerts* below.
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
 | The backup password | while typed | **never** | **never** (only its public key) |
+| Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran or failed; it keeps neither the secret nor the runs; which scene it runs, **never** | the link's id, a hash of its secret and its scene; every run in History |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
 which home (and, with alerts, admins' push addresses). It cannot open a door, read a light's state
 or show a picture, and the backups it holds open only with their backup password, which only the
 family knows.
+
+**Scene links (1.7.0, ADR-051) are the one thing that is not sealed.** A phone's automation (iPhone
+Shortcuts, an Android app, an NFC tag) cannot seal a request, so it sends a link's secret in the
+clear to the account service, over HTTPS, which passes it to the home. So: whoever holds a link can
+run that one scene, from anywhere, until an admin removes or replaces it; and the account service
+sees the link and its secret in transit each time it is used (not which scene: it has no names).
+It keeps no secret (no table, never in its logs: the secret is in the request's body, not its
+address). Someone who could read the account service's traffic could run the linked scenes they saw;
+a scene that opens doors or gates can never have a link, so that is at most lights, AC, fans, blinds
+and music. Everything else stays sealed. Homes without links are as before.
 
 ## Keys
 
@@ -308,6 +319,18 @@ Turning the switch off, signing out or forgetting the key on that device, signin
 claiming the home, and deleting the account all end that browser's alerts; the home then stops
 watching for them once no admin's browser is left.
 
+### 7. Scene links (1.7.0, ADR-051)
+
+An admin makes a link for a scene (docs/SCENES.md); the controller shows its secret once and keeps
+a hash of it. A phone's automation posts the secret to `https://api.directorlink.io/run/<home_id>.<link_id>`
+(in the body, never in the address; a browser gets it after `#` and posts it from the page). The
+account service checks that an account has claimed the home, lets at most 30 runs a minute reach
+it, and passes the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks
+the hash in constant time, runs the scene as a member's key would and records the run in History;
+the phone gets `ran`, `partly` or `failed`, and an unknown home, link or secret all get the same 404.
+No account and no session is involved: the link is the permission. Removing or replacing the link
+ends it at once; so do Composer's Remove All Scene Links and Reset Remote Identity.
+
 ## Google and Apple
 
 Both are OpenID Connect sign-ins run by `api.directorlink.io` (`google.js`, `apple.js`, the shared
@@ -451,8 +474,12 @@ device's key.
   internet with a certificate one of those authorities issued for any other name could pose as the
   relay, take the home secret from the connection and keep the home offline; sealed requests stay
   unreadable to them.
+- **Scene links** (1.7.0, ADR-051): not sealed. Whoever holds one runs its scene; the account
+  service, and Cloudflare beneath it, see its secret when a phone uses it. Never a scene with doors
+  or gates; remove or replace a link that may have leaked.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
-  a home was offline or a schedule failed, and which key ids are admin keys. An alert's words are
+  a home was offline or a schedule failed, and which key ids are admin keys. With scene links
+  (1.7.0), when a home's linked scenes run and whether they ran. An alert's words are
   the app's, never the cloud's: whoever could send pushes in DirectorLink's name could only choose
   among its own sentences and a time.
 
@@ -526,3 +553,6 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
 12. (1.6.0, ADR-047) Admins may get Web Push alerts (home offline 10 minutes, a schedule failed),
     encrypted for their browsers and naming nothing; the controller tells the cloud which key ids
     are admin keys.
+13. (1.7.0, ADR-051) A scene may have a private link for the phone's own automations: its secret
+    passes the account service in the clear when used (never which scene), the controller keeps
+    its hash, and a scene that opens doors or gates never has one.

@@ -180,6 +180,8 @@ function who(entry) {
     return when ? t("history.who.schedule", { when }) : t("history.who.scheduleGone");
   }
   if (by.type === "composer") return t("history.who.composer");
+  // A scene's link, from a phone's automation (1.7.0, ADR-051), by the label an admin gave it.
+  if (by.type === "link") return by.name ? t("history.who.link", { name: isolate(by.name) }) : t("history.who.linkUnnamed");
   if (by.type !== "key") return t("history.who.controller");
   const device = by.name ? isolate(by.name) : t("history.who.unknownDevice");
   const text = by.profile && by.profile !== by.name ? t("history.who.person", { person: isolate(by.profile), device }) : device;
@@ -242,6 +244,12 @@ function title(entry) {
       return withName(`history.access.${entry.action}`, what);
     case "access.all_revoked":
       return t("history.access.all_revoked", { count: entry.count ?? 0 });
+    case "access.link_created":
+    case "access.link_replaced":
+    case "access.link_removed":
+      return withName(`history.access.${entry.action}`, what || t("history.sceneGone"));
+    case "access.links_removed":
+      return t("history.access.links_removed", { count: entry.count ?? 0 });
     case "composer.project": {
       const changes = entry.changes || [];
       const count = changes.length + (entry.more || 0);
@@ -277,6 +285,11 @@ const BACKUP_REASONS = ["remote_off", "account_unreachable", "not_linked", "too_
 // nothing to add.
 export function outcomeText(entry) {
   const counts = entry.counts;
+  // Scene links (1.7.0): why one went without an admin removing it, and its label.
+  if (entry.kind === "access" && /^links?_/.test(entry.action || "")) {
+    const reason = entry.reason === "scene_gone" ? t("history.linkGone") : ["doors", "other_home", "new_identity"].includes(entry.reason) ? t(`history.reason.${entry.reason}`) : null;
+    return [reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
+  }
   if (entry.kind === "schedule" && entry.outcome === "skipped") {
     return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);
   }
