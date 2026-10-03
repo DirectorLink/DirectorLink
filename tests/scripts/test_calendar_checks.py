@@ -109,6 +109,40 @@ class DriverTestRunner(unittest.TestCase):
         self.assertIn("unknown suite test_no_such_suite", result.stdout)
         self.assertNotIn("passed", result.stdout, "nothing ran")
 
+    # CI runs the suites in three parts at once (.github/workflows/validate.yml).
+    def test_the_parts_run_every_suite_once(self):
+        source = (ROOT / "driver" / "tests" / "run.lua").read_text(encoding="utf-8")
+        start = source.index("local suites = {")
+        listed = re.findall(r'^    "(test_\w+)",$', source[start:source.index("}", start)], re.M)
+        parts = []
+        for index in (1, 2, 3):
+            result = self.run_suites("--shard", f"{index}/3", "--list")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            parts.append(result.stdout.split())
+        self.assertTrue(all(parts), parts)
+        self.assertEqual(sorted(name for part in parts for name in part), sorted(listed))
+
+    def test_a_part_of_the_named_suites_runs_only_those(self):
+        result = self.run_suites("--shard", "1/2", "test_json", "test_http", "test_router")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("part 1/2: test_json test_router\n", result.stdout)
+        counts = sum(
+            len(re.findall(r"^function tests\.", (ROOT / "driver" / "tests" / f"{name}.lua").read_text(encoding="utf-8"), re.M))
+            for name in ("test_json", "test_router")
+        )
+        self.assertIn(f"{counts} passed, 0 failed", result.stdout)
+        result = self.run_suites("--shard", "2/2", "--list", "test_json", "test_http", "test_router")
+        self.assertEqual(result.stdout.split(), ["test_http"])
+
+    def test_a_bad_part_fails(self):
+        for part in ("0/3", "4/3", "1", "a/b"):
+            result = self.run_suites("--shard", part)
+            self.assertEqual(result.returncode, 1, part)
+            self.assertIn("--shard takes K/N", result.stdout)
+            self.assertNotIn("passed", result.stdout, "nothing ran")
+        result = self.run_suites("--shard")
+        self.assertEqual(result.returncode, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,8 @@
 -- Runs the driver test suites under plain Lua 5.1. From the repository root:
 --   lua5.1 driver/tests/run.lua                             (every suite)
 --   lua5.1 driver/tests/run.lua test_sun test_holy_times    (only these, in this order)
+--   lua5.1 driver/tests/run.lua --shard 2/3                 (the second of three parts, as CI runs them)
+--   lua5.1 driver/tests/run.lua --shard 2/3 --list          (which suites that part runs)
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -43,18 +45,130 @@ local suites = {
     "test_sonos",
 }
 
-if #arg > 0 then
+-- About how many seconds each suite takes (all of them in one run on a PC, 2026-10-03; CI takes
+-- about 1.7 times as long),
+-- for --shard to split them into parts of about equal time. A suite not listed counts as
+-- DEFAULT_SECONDS: add it here once measured (lua5.1 driver/tests/run.lua <suite>).
+local SECONDS = {
+    test_json = 1,
+    test_http = 1,
+    test_router = 1,
+    test_api = 16,
+    test_discovery = 5,
+    test_shades = 25,
+    test_relay = 9,
+    test_lock = 1,
+    test_remote = 18,
+    test_profiles = 3,
+    test_scenes = 8,
+    test_schedules = 8,
+    test_calendar = 16,
+    test_hebrew_date = 1,
+    test_holidays = 1,
+    test_parasha = 1,
+    test_sun = 1,
+    test_holy_times = 1,
+    test_x25519 = 1,
+    test_cpace = 1,
+    test_cpace_pairing = 12,
+    test_key_expiry = 5,
+    test_security = 7,
+    test_light_v1 = 1,
+    test_thermostat_v2_heat = 6,
+    test_thermostat_proxy = 1,
+    test_dual_thermostat = 6,
+    test_fans = 6,
+    test_alarm = 41,
+    test_backup = 93,
+    test_sonos = 14,
+}
+local DEFAULT_SECONDS = 5
+
+-- The suites of part `index` of `count`: longest first, each goes to the part with the least time
+-- so far (the first of equals), so every suite is in exactly one part. Each part keeps the order.
+local function shard(list, index, count)
+    local order = {}
+    for position, suiteName in ipairs(list) do
+        order[#order + 1] = { name = suiteName, position = position, seconds = SECONDS[suiteName] or DEFAULT_SECONDS }
+    end
+    table.sort(order, function(a, b)
+        if a.seconds ~= b.seconds then
+            return a.seconds > b.seconds
+        end
+        return a.position < b.position
+    end)
+    local totals, mine = {}, {}
+    for part = 1, count do
+        totals[part] = 0
+    end
+    for _, suite in ipairs(order) do
+        local least = 1
+        for part = 2, count do
+            if totals[part] < totals[least] then
+                least = part
+            end
+        end
+        totals[least] = totals[least] + suite.seconds
+        if least == index then
+            mine[suite.name] = true
+        end
+    end
+    local result = {}
+    for _, suiteName in ipairs(list) do
+        if mine[suiteName] then
+            result[#result + 1] = suiteName
+        end
+    end
+    return result
+end
+
+local named, shardIndex, shardCount, listOnly = {}, nil, nil, false
+local position = 1
+while position <= #arg do
+    local value = arg[position]
+    if value == "--shard" then
+        local index, count = tostring(arg[position + 1]):match("^(%d+)/(%d+)$")
+        shardIndex, shardCount = tonumber(index), tonumber(count)
+        if not shardIndex or shardIndex < 1 or shardIndex > shardCount then
+            print("--shard takes K/N: the K-th of N parts, such as 1/3")
+            os.exit(1)
+        end
+        position = position + 2
+    elseif value == "--list" then
+        listOnly = true
+        position = position + 1
+    else
+        named[#named + 1] = value
+        position = position + 1
+    end
+end
+
+if #named > 0 then
     local known = {}
     for _, suiteName in ipairs(suites) do
         known[suiteName] = true
     end
-    for _, suiteName in ipairs(arg) do
+    for _, suiteName in ipairs(named) do
         if not known[suiteName] then
             print("unknown suite " .. suiteName .. " (driver/tests/run.lua lists them)")
             os.exit(1)
         end
     end
-    suites = arg
+    suites = named
+end
+
+if shardIndex then
+    suites = shard(suites, shardIndex, shardCount)
+    if not listOnly then
+        print(string.format("part %d/%d: %s", shardIndex, shardCount, table.concat(suites, " ")))
+    end
+end
+
+if listOnly then
+    for _, suiteName in ipairs(suites) do
+        print(suiteName)
+    end
+    os.exit(0)
 end
 
 local passed, failed = 0, 0

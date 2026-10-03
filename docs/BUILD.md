@@ -10,11 +10,16 @@ A C4Z is a ZIP-based Control4 driver package. DirectorLink packages `driver.xml`
 
 ## Everything CI runs
 
-From the repository root:
+From the repository root. CI (`.github/workflows/validate.yml`) runs the same in parallel jobs,
+about 4 minutes in all: the driver tests in three parts (`lua5.1 driver/tests/run.lua --shard 1/3`,
+`2/3`, `3/3`, split by the times listed in `driver/tests/run.lua`; every suite is in one part), the
+time-zone runs, the build and checks, and the app and cloud tests. The last job, `validate`, passes
+only when all of them passed.
 
 ```bash
 find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
 lua5.1 driver/tests/run.lua                                    # driver tests (fake Director)
+TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times     # and TZ=America/New_York
 python -m unittest discover -s tests/scripts                   # the build and check scripts themselves
 python scripts/check_repo.py                                   # no local tool configuration or secrets tracked
 python scripts/check_api.py                                    # spec is valid and matches the driver routes
@@ -26,9 +31,8 @@ python scripts/check_app.py                                    # the app
 python scripts/check_sites.py                                  # console and landing page
 find app console cloud -name '*.js' -print0 | xargs -0 -n1 node --check   # JavaScript syntax
 node --test tests/app/*.test.mjs                               # app: lock, sealed requests, pairing code, offline mode, …
+node --test tests/cloud/*.test.mjs                             # account service and relay under `wrangler dev`, local D1
 ```
-
-Not in CI (they start `wrangler dev`): `node --test tests/cloud/*.test.mjs`, the account service and relay against a local D1.
 
 ## Package layout
 

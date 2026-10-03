@@ -8,8 +8,51 @@ on:
 permissions:
   contents: read
 
+# The work runs in parallel jobs (about 4 minutes; one job took 13). The last one, "validate",
+# passes only when every other job passed: it is the one check to require.
 jobs:
-  validate:
+  driver-tests:
+    name: Driver tests (part ${{ matrix.part }} of 3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      # driver/tests/run.lua splits the suites into three parts of about equal time (by the times
+      # it lists); every suite is in exactly one part. The first line of the output names them.
+      - name: Run driver tests
+        run: lua5.1 driver/tests/run.lua --shard ${{ matrix.part }}/3
+
+  time-zones:
+    name: Calendar and schedule tests in other time zones
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
+      # Shabbat times are moments, schedules minutes of the local day: again where the clocks
+      # change on a Friday (Israel) and where they change on another day (the US).
+      - name: Run the calendar and schedule tests in Israel's and New York's time zones
+        run: |
+          TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+          TZ=America/New_York lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
+
+  checks:
+    name: Build and checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,16 +78,6 @@ jobs:
 
       - name: Check Lua syntax
         run: find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
-
-      - name: Run driver tests
-        run: lua5.1 driver/tests/run.lua
-
-      # Shabbat times are moments, schedules minutes of the local day: again where the clocks
-      # change on a Friday (Israel) and where they change on another day (the US).
-      - name: Run the calendar and schedule tests in Israel's and New York's time zones
-        run: |
-          TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
-          TZ=America/New_York lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times
 
       - name: Test the build and check scripts
         run: python -m unittest discover -s tests/scripts
@@ -76,6 +109,25 @@ jobs:
       - name: Check JavaScript syntax (app, console and relay)
         run: find app console cloud github-link -name '*.js' -print0 | xargs -0 -n1 node --check
 
+  app-and-cloud:
+    name: App and cloud tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      # The app's CPace test runs the driver's Lua code too (driver/tests/cpace_cli.lua), and
+      # skips that part without Lua.
+      - name: Install Lua 5.1
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.1
+
       - name: Run app tests (offline service worker)
         run: node --test tests/app/*.test.mjs
 
@@ -88,3 +140,20 @@ jobs:
       - name: Run cloud tests
         timeout-minutes: 20
         run: node --test tests/cloud/*.test.mjs
+
+  # Fails unless every job above passed; one that failed, was cancelled or was skipped fails it
+  # too (a check that is merely skipped would count as passed).
+  validate:
+    if: always()
+    needs: [driver-tests, time-zones, checks, app-and-cloud]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$NEEDS"
+          for result in $RESULTS; do
+            [ "$result" = "success" ] || exit 1
+          done
