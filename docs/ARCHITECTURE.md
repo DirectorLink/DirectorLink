@@ -45,7 +45,7 @@ driver/     the DriverWorks driver
   src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end
                   lock (lock.lua) and sealed requests, claims and joins (remote.lua); automatic
                   backups to the account, sealed to the backup password's key (auto_backup.lua,
-                  backup_seal.lua; ADR-048)
+                  backup_seal.lua; ADR-048); alerts sealed to each device's key (alerts.lua; ADR-050)
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
                   again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);

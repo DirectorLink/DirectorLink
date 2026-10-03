@@ -14,6 +14,11 @@ KnxRelay.PULSE_MS = 500
 local OPENED_EVENT = 1 + 2 * KnxRelay.RELAY
 local CLOSED_EVENT = 2 + 2 * KnxRelay.RELAY
 
+-- Whether `eventId` is the relay closing: a door or gate opening (a pulse closes it for a moment).
+function KnxRelay.closedEvent(eventId)
+    return tonumber(eventId) == CLOSED_EVENT
+end
+
 local tracked = {}
 -- The timers that release a pulsed relay, kept until they fire: DriverWorks cancels a timer whose
 -- object is garbage-collected, and a door relay must never stay closed. A project refresh keeps

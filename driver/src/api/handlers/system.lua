@@ -107,12 +107,14 @@ function System.info(ctx)
         -- before 1.4.0 do not say it, and the app shows them no Backup.
         -- sonos: the Sonos property, /v1/music (1.5.0, ADR-044).
         -- automatic_backup: /v1/backup/automatic (1.6.0, ADR-048), always there.
+        -- alert_choices: sealed alerts and /v1/alerts/choices (1.7.0, ADR-050), always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
             backup = true,
             sonos = services.sonosEnabled ~= nil and services.sonosEnabled() == true,
             automatic_backup = true,
+            alert_choices = true,
         },
     }
 end

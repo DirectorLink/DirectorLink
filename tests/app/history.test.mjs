@@ -497,6 +497,13 @@ test("in Hebrew", async () => {
   }
 });
 
+test("a door or gate opened without DirectorLink is said to be Control4's (ADR-050)", async () => {
+  home("admin");
+  controller({ items: [{ id: 1, at: iso(NOW - 60 * 1000), kind: "door", action: "pulse", who: { type: "control4" }, what: "Main Door", room: "Entrance", ids: { device_id: 70, room_id: 99 } }] });
+  const rows = items(await open());
+  assert.equal(line(rows[0]), "Opened Main Door (Entrance), In Control4");
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

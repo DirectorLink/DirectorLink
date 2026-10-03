@@ -111,6 +111,12 @@ tags:
       skipped and why, doors and gates opened, keys and invitations, changes made in Composer,
       backups, restores and driver updates. Kept on the controller (the newest 500 entries, 30 days
       at most); through the account only sealed, like every request. For admins.
+  - name: Alerts
+    description: |
+      Which alerts each device gets (1.7.0, ADR-050): a doorbell rang, a door or gate was opened, the
+      refrigerator's door was left open, a schedule failed. The controller sends them through
+      DirectorLink's servers sealed to each device's own key, so the servers learn only which key
+      ids an alert is for and when (docs/RELAY.md, `notify`). Each key reads and sets its own choices.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -2493,6 +2499,55 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /v1/alerts/choices:
+    get:
+      tags: [Alerts]
+      operationId: getAlertChoices
+      x-directorlink-role: viewer
+      summary: This key's alert choices
+      description: |
+        Whether this key's device switched alerts on, and which of the kinds its role may get, of
+        those this home has, it wants. Until it chooses: every kind but `door_opened`. A doorbell
+        goes to every role, `fridge_door` to members and up, `door_opened` and `schedule_failed` to
+        admins.
+      responses:
+        "200":
+          description: This key's choices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChoices"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags: [Alerts]
+      operationId: setAlertChoices
+      x-directorlink-role: viewer
+      summary: Change this key's alert choices
+      description: |
+        `on` when its device switches alerts on or off (the app also registers the browser with the
+        account service), `kinds` for what it wants; what is left out stays as it was. A kind its
+        role may not get is not kept.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertChoicesUpdate"
+      responses:
+        "200":
+          description: Changed; this key's choices now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertChoices"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/backup/automatic:
     get:
       tags: [Backup]
@@ -3084,6 +3139,9 @@ components:
             automatic_backup:
               type: boolean
               description: "Always true since 1.6.0: admins can set automatic backups to the account (`/v1/backup/automatic`, ADR-048). Missing before 1.6.0."
+            alert_choices:
+              type: boolean
+              description: "Always true since 1.7.0: alerts are sealed to each device's key, and every key chooses its own (`/v1/alerts/choices`, ADR-050). Missing before 1.7.0, whose alerts go to admins only."
 
     PairRequest:
       oneOf:
@@ -5127,6 +5185,47 @@ components:
         level:
           $ref: "#/components/schemas/LogLevel"
 
+    AlertChoices:
+      type: object
+      required: ["on", kinds]
+      properties:
+        "on":
+          type: boolean
+          description: This key's device switched alerts on.
+        kinds:
+          type: object
+          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one), each wanted or not.
+          properties:
+            doorbell:
+              type: boolean
+            door_opened:
+              type: boolean
+            fridge_door:
+              type: boolean
+            schedule_failed:
+              type: boolean
+          additionalProperties: false
+
+    AlertChoicesUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        "on":
+          type: boolean
+        kinds:
+          type: object
+          additionalProperties: false
+          properties:
+            doorbell:
+              type: boolean
+            door_opened:
+              type: boolean
+            fridge_door:
+              type: boolean
+            schedule_failed:
+              type: boolean
+
     ActivityList:
       type: object
       required: [items, next_before]
@@ -5149,7 +5248,9 @@ components:
           a run caught up after a restart, `no_weather` for one that ran without the weather, or the
           weather that started it (`heat`, `wind`, `rain`).
         - `door`: `pulse` (opened; `via` names the scene that did it), `hold` (a relay held closed,
-          its door held open), `release`, `doorbell` (the gate wired to a doorbell opened).
+          its door held open), `release`, `doorbell` (the gate wired to a doorbell opened). Since
+          1.7.0 also `pulse` and `doorbell` with `who` `control4`: a door or gate that the device
+          reported opened without DirectorLink (ADR-050).
         - `access`: `paired`, `created`, `role_changed` (`from`, `to`), `revoked`, `forgotten` (a
           device removed its own key), `expired`, `joined` (an invitation accepted), `all_revoked`
           (Composer's Revoke All API Keys; `count`).
@@ -5261,8 +5362,8 @@ components:
       properties:
         type:
           type: string
-          enum: [key, schedule, composer, controller]
-          description: A key (an app, a device, a script), a schedule, Composer, or DirectorLink itself.
+          enum: [key, schedule, composer, controller, control4]
+          description: A key (an app, a device, a script), a schedule, Composer, DirectorLink itself, or Control4 (1.7.0, ADR-050) for a door or gate that opened without DirectorLink (its app, a keypad, its programming, the DoorBird's own app).
         key_id:
           type: string
         name:

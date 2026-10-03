@@ -30,8 +30,8 @@ import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
 import { receiveBackupChunk } from "./backups.js";
-// Alerts to the home's admins (ADR-047): this object tells alerts.js when the driver connects and
-// disconnects, the admin key ids and the controller's "alert" messages, and runs its alarms.
+// Alerts (ADR-047, ADR-050): this object tells alerts.js when the driver connects and disconnects,
+// the admin key ids and the controller's "alert" and "notify" messages, and runs its alarms.
 import { HomeAlerts } from "./alerts.js";
 
 const DRIVER = "driver";
@@ -258,8 +258,12 @@ export class HomeRelay extends DurableObject {
         }
         return;
       case "alert":
-        // A schedule failed at home: the admins are alerted, without names (alerts.js).
+        // A schedule failed at home (drivers before 1.7.0): the admins are alerted, without names (alerts.js).
         await this.alerts.fromHome(data, attachment.home);
+        return;
+      case "notify":
+        // An alert sealed to some of the home's keys (1.7.0, ADR-050): to their browsers (alerts.js).
+        await this.alerts.notify(data, attachment.home);
         return;
       case "response":
       case "claim_result":

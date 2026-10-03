@@ -43,7 +43,8 @@ local NUMBERS = { "count", "seconds", "more" }
 local COUNTS = { "ran", "skipped", "failed" }
 local IDS = { "scene_id", "schedule_id", "device_id", "key_id", "room_id", "invitation_id" }
 local CHANGE_TEXTS = { "change", "type", "name", "room", "from" }
-local WHO_TYPES = { key = true, schedule = true, composer = true, controller = true }
+-- control4: a door or gate opened that DirectorLink did not open (1.7.0, ADR-050).
+local WHO_TYPES = { key = true, schedule = true, composer = true, controller = true, control4 = true }
 local OUTCOMES = { ran = true, skipped = true, failed = true }
 
 local state = {
@@ -55,6 +56,7 @@ local state = {
     timer = nil,
     keyInfo = nil, -- function(keyId) -> { name, profile } or nil (Activity.load)
     driver = nil, -- the DirectorLink version that last started
+    listener = nil, -- function(entry), told of each entry (Activity.onRecord)
 }
 
 -- `value` as text without control characters, at most `limit` bytes and never half a character
@@ -309,7 +311,7 @@ end
 
 -- Records what happened: `kind` (Activity.KINDS), `action` (what it was), and `fields` (by: the key
 -- that did it, its id or the API's ctx.apiKey; or who: { type = "schedule" | "composer" |
--- "controller", ... }; what, room, via, outcome, reason, note, from, to; count, seconds; counts
+-- "controller" | "control4", ... }; what, room, via, outcome, reason, note, from, to; count, seconds; counts
 -- { ran, skipped, failed }; ids; changes { { change, type, name, room, from } }). No fields: nothing
 -- happened, and nothing is recorded. Returns the entry, or nil.
 function Activity.record(kind, action, fields)
@@ -333,7 +335,19 @@ function Activity.record(kind, action, fields)
     page.items[#page.items + 1] = entry
     state.dirty[page.slot] = true
     saveSoon()
+    if state.listener then
+        local told, err = pcall(state.listener, entry)
+        if not told then
+            Log.warn("activity", "an entry's listener failed", { kind = kind, action = tostring(action), error = tostring(err) })
+        end
+    end
     return entry
+end
+
+-- `listener(entry)` is told of every entry recorded from now on (alerts: a door opened, ADR-050).
+-- What it does never reaches the code that recorded the entry.
+function Activity.onRecord(listener)
+    state.listener = listener
 end
 
 -- Writes what waits to be written (the driver stops).
