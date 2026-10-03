@@ -278,6 +278,35 @@ function tests.sealed_requests_read_it_too()
     T.eq(items[1].action, "paired")
 end
 
+-- A console key (ADR-040) that expired a minute ago, before the scheduler's minute removed it, goes
+-- when the history looks up who ran a scene with another key: that "expired" entry is recorded
+-- while the scene's is built, and each gets an id of its own, in the order of the pages.
+function tests.an_entry_recorded_while_another_is_built_gets_its_own_id()
+    withClock(function(advance)
+        local mock, admin = start()
+        local sceneId = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Good night", steps = { { type = "lights", device_ids = { 20 }, set = { on = false } } } } }).json.id
+        T.truthy(require("src.auth.keys").create("API console", "admin", nil, os.time() + 60))
+        advance(120)
+        T.eq(T.http(mock, "POST", "/v1/scenes/" .. sceneId .. "/run", { key = admin }).status, 202)
+        local items = history(mock, admin, "?limit=200")
+        T.eq(items[1].action, "run")
+        T.eq(items[2].action, "expired")
+        T.eq(items[2].what, "API console")
+        local seen = {}
+        for index, item in ipairs(items) do
+            T.eq(seen[item.id], nil, "id " .. item.id .. " once")
+            seen[item.id] = true
+            if index > 1 then
+                T.truthy(item.id < items[index - 1].id, "newest first, by id")
+            end
+        end
+        -- A page that ends on the scene run goes on with the key that expired.
+        local first, answer = history(mock, admin, "?limit=1")
+        T.eq(first[1].action, "run")
+        T.eq(history(mock, admin, "?limit=1&before=" .. answer.next_before)[1].action, "expired")
+    end)
+end
+
 -- ---- what goes in ---------------------------------------------------------------------------------
 
 function tests.scenes_run_from_the_app_say_who_and_how_it_went()
