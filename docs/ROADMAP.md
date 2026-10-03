@@ -7,6 +7,10 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 - Samsung refrigerators (the DirectorLink Samsung Refrigerator driver for Control4): temperatures, doors and the water filter in the app; Power Cool, Power Freeze, Ice Maker and Sabbath Mode as controls, in scenes and in Shabbat schedules.
 - DirectorLink in numbers on the website: homes and people using an account, and driver downloads. The account service counts them once an hour and gives totals only (never anything about one home); directorlink.io shows them once there are 25 homes. Nothing new leaves a home: no device counts.
 - Scene links: a private link per scene for the phone's own automations (iPhone Shortcuts "when I arrive home", Android automation apps, Siri, NFC tags). Scenes that open doors or gates get none; links can be revoked, and every run is in History.
+- A new device joins by approval: the app added to an iPhone's Home Screen asks to join, and a device of the same account taps Approve (no link to open). Also "Paste invitation link".
+- Doorbell rings as notifications with the app closed.
+- More alerts, each chosen per device: a refrigerator door left open, and, for admins who want it, a door or gate opened and by whom. What an alert says stays sealed end to end: the account service does not learn which door or who.
+- CI pinned to Ubuntu 24.04 before GitHub moves `ubuntu-latest` to 26.04 on 19 October.
 
 ## Later
 
