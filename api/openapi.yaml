@@ -5194,7 +5194,7 @@ components:
           description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`.
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, stopped]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
@@ -5206,9 +5206,11 @@ components:
             is off in Composer), `account_unreachable` (the controller was not connected to
             DirectorLink's servers, the account service did not answer within 30 seconds, or it
             failed on its side), `not_linked` (the home is not in an account), `too_large` (larger
-            than the account takes), `stopped` (automatic backups were turned off, or the backup
-            password changed, while it was being made), `error` (anything else; the log and
-            `GET /v1/backup/automatic`'s `last.code` say what).
+            than the account takes), `limit` (backed up too often today: the account starts 4 a
+            UTC day per home, besides the first nightly one), `account_full` (the owner's homes
+            have no room left in the account, 25 MB in all), `stopped` (automatic backups were
+            turned off, or the backup password changed, while it was being made), `error`
+            (anything else; the log and `GET /v1/backup/automatic`'s `last.code` say what).
         note:
           type: string
           description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).

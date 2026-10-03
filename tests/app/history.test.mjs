@@ -272,6 +272,13 @@ test("automatic backups to the account: made, or not and why", () => {
   assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "not_linked" })), "The home isn’t linked to an account");
   assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "too_large" })), "The backup is larger than the account keeps");
   assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "stopped" })), "Stopped: automatic backups were turned off or their password changed");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "account_full" })), "No room in your account (25 MB for all your homes)");
+  // The account's limit of backups a day: Back up now leaves the nightly backup its own.
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "limit" })), "Backed up too often today");
+  assert.equal(
+    history.outcomeText(entry({ outcome: "failed", reason: "limit", who: { type: "key", name: "Kitchen tablet" } })),
+    "Backed up too often today; the nightly backup still runs"
+  );
   assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "error" })), "Something went wrong; DirectorLink’s log says what");
   assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "SOMETHING_NEW" })), "Something went wrong; DirectorLink’s log says what");
   // "It tries again later" only when the controller says it will: a night's backup, before 06:00.

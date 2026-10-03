@@ -328,6 +328,7 @@ function tests.back_up_now_seals_the_backup_and_sends_it_in_chunks_one_at_a_time
     T.eq(chunks[1].count, #chunks)
     T.eq(chunks[1].size, #text)
     T.eq(chunks[1].key_id, vectors().key.key_id)
+    T.eq(chunks[1].why, "now", "the account counts Back up now apart from the nightly backup")
     T.eq(chunks[1].backup, nil)
     for index, chunk in ipairs(chunks) do
         T.eq(chunk.index, index - 1)
@@ -335,6 +336,7 @@ function tests.back_up_now_seals_the_backup_and_sends_it_in_chunks_one_at_a_time
         if index > 1 then
             T.eq(chunk.backup, string.rep("b", 32), "the backup the account named")
             T.eq(chunk.count, nil)
+            T.eq(chunk.why, nil)
         end
     end
     -- Only the password's private key opens it.
@@ -528,6 +530,7 @@ function tests.the_daily_backup_runs_at_the_home_s_minute_once_a_day_and_is_trie
     T.eq(tick(at(0, minute)), true, "the scheduler's minute starts it")
     local chunks = upload(s, connection)
     T.truthy(#chunks >= 1)
+    T.eq(chunks[1].why, "daily", "the account lets the nightly backup through besides Back up now")
     T.eq(status(s).last.why, "daily")
     T.eq(tick(at(0, minute + 1)), false, "once a day")
     T.eq(tick(at(0, 23 * 60)), false)
@@ -603,20 +606,24 @@ function tests.a_night_of_failures_is_one_history_entry_and_a_refusal_is_not_tri
     T.eq(entries[1].reason, "not_linked")
     T.eq(entries[1].note, nil, "not tried again tonight")
     T.eq(entries[1].who.type, "controller")
-    -- Any other refusal of the account's (BACKUP_LIMIT, an older or newer account service): the same.
-    T.eq(night(1, "BACKUP_LIMIT"), 1)
-    T.eq(#backups(), 2)
-    T.eq(backups()[1].reason, "error")
+    -- The account's limits (backups started today, the owner's space), and any other refusal of
+    -- the account's (an older or newer account service): the same.
+    for day, case in ipairs({ { "BACKUP_LIMIT", "limit" }, { "ACCOUNT_BACKUPS_FULL", "account_full" }, { "OUT_OF_ORDER", "error" } }) do
+        T.eq(night(day, case[1]), 1, case[1])
+        T.eq(#backups(), day + 1)
+        T.eq(backups()[1].reason, case[2])
+        T.eq(backups()[1].note, nil)
+    end
     -- The account service's own error may pass: tried again every 15 minutes until 06:00, and the
     -- history says it once, with "retry".
-    local tries = night(2, "INTERNAL")
+    local tries = night(4, "INTERNAL")
     T.eq(tries, math.floor((6 * 60 - 1 - minute) / 15) + 1, "every 15 minutes until 06:00")
     entries = backups()
-    T.eq(#entries, 3, "once a night")
+    T.eq(#entries, 5, "once a night")
     T.eq(entries[1].reason, "account_unreachable")
     T.eq(entries[1].note, "retry")
     -- No answer the first time, then made: the failure once, then that it was made.
-    Scheduler.tick(at(3, minute))
+    Scheduler.tick(at(5, minute))
     T.eq(status(s).running, true)
     runSteps(s.mock)
     T.eq(#chunksSent(connection), 1)
@@ -627,22 +634,22 @@ function tests.a_night_of_failures_is_one_history_entry_and_a_refusal_is_not_tri
         end
     end
     T.eq(status(s).last.code, "RELAY_TIMEOUT")
-    Scheduler.tick(at(3, minute + 15))
+    Scheduler.tick(at(5, minute + 15))
     T.truthy(#upload(s, connection) >= 1)
     T.eq(status(s).last.ok, true)
     entries = backups()
-    T.eq(#entries, 5)
+    T.eq(#entries, 7)
     T.eq(entries[1].outcome, "ran")
     T.eq(entries[1].who.type, "controller")
     T.eq(entries[2].reason, "account_unreachable")
     T.eq(entries[2].note, "retry")
     -- Tried for the first time less than 15 minutes before 06:00 (the controller was off until
     -- then): not "retry".
-    T.eq(require("src.cloud.auto_backup").tick(at(4, 6 * 60 - 10)), true)
+    T.eq(require("src.cloud.auto_backup").tick(at(6, 6 * 60 - 10)), true)
     upload(s, connection, function()
         return { ok = false, code = "INTERNAL" }
     end)
-    T.eq(#backups(), 6)
+    T.eq(#backups(), 8)
     T.eq(backups()[1].reason, "account_unreachable")
     T.eq(backups()[1].note, nil, "06:00 comes first")
 end

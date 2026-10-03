@@ -257,7 +257,7 @@ function title(entry) {
 }
 
 // Why a backup to the account was not made (GET /v1/activity's reasons for cloud_backup).
-const BACKUP_REASONS = ["remote_off", "account_unreachable", "not_linked", "too_large", "stopped"];
+const BACKUP_REASONS = ["remote_off", "account_unreachable", "not_linked", "too_large", "limit", "account_full", "stopped"];
 
 // How it went, in plain words: what ran, what was skipped and why, what failed. "" when there is
 // nothing to add.
@@ -267,7 +267,9 @@ export function outcomeText(entry) {
     return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);
   }
   if (entry.kind === "system" && entry.action === "cloud_backup" && entry.outcome === "failed") {
-    const reason = t(`history.reason.${BACKUP_REASONS.includes(entry.reason) ? entry.reason : "backupError"}`);
+    // Back up now refused for today: the account still takes the nightly backup.
+    const key = entry.reason === "limit" && entry.who?.type === "key" ? "limitNow" : BACKUP_REASONS.includes(entry.reason) ? entry.reason : "backupError";
+    const reason = t(`history.reason.${key}`);
     // Only a night's backup that is tried again that night says so.
     return entry.note === "retry" ? `${reason} · ${t("history.note.retry")}` : reason;
   }

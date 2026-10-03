@@ -283,8 +283,8 @@ the account keeps backups only of a home an account has claimed (`NOT_CLAIMED` o
 backup that could not be made for a reason that may pass (the relay offline or not answering within
 30 s, the account service's own error, the project not read yet) is tried again every 15 minutes
 until 06:00, then that day has none. Any other reason (Remote Access off, the home not in an
-account, too large, any other refusal of the account's, a failure on the controller, the password
-changed) is not tried again that night, since each try seals the backup again: the next night's
+account, too large, the account's limits of backups a day or of space, any other refusal of the
+account's, a failure on the controller, the password changed) is not tried again that night, since each try seals the backup again: the next night's
 goes as usual. Turning automatic backups off or changing the password stops a backup being made,
 also between two chunks (`AUTOMATIC_BACKUP_OFF`, `KEY_CHANGED`); the account service drops the
 unfinished upload. The log says `backup uploaded` (with its size, chunks and times) or `automatic

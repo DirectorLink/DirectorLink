@@ -35,7 +35,8 @@ AutoBackup.RETRY_MINUTES = 15
 AutoBackup.LAST_MINUTE = 6 * 60
 -- What 15 minutes may change: the relay offline or not answering, the account service's own error,
 -- the project still being read. Anything else (Remote Access off, the home not in an account, too
--- large, the password changed, any other refusal or failure) is not tried again that night.
+-- large, the account's limits of backups a day and of space, the password changed, any other
+-- refusal or failure) is not tried again that night.
 AutoBackup.RETRY = { REMOTE_OFFLINE = true, RELAY_TIMEOUT = true, INTERNAL = true, PROJECT_NOT_READY = true }
 -- Why a backup was not made, as the history says it (GET /v1/activity's `reason`, docs/HISTORY.md):
 -- these few; "error" for the rest. The log and GET /v1/backup/automatic have the code itself.
@@ -47,6 +48,8 @@ AutoBackup.HISTORY_REASONS = {
     HOME_NOT_LINKED = "not_linked",
     NOT_CLAIMED = "not_linked",
     BACKUP_TOO_LARGE = "too_large",
+    BACKUP_LIMIT = "limit",
+    ACCOUNT_BACKUPS_FULL = "account_full",
     AUTOMATIC_BACKUP_OFF = "stopped",
     KEY_CHANGED = "stopped",
 }
@@ -364,6 +367,9 @@ local function sendChunk(job, index)
     local message = { type = "backup_chunk", index = index, data = data }
     if index == 0 then
         message.count, message.size, message.key_id = job.count, #job.text, job.key.key_id
+        -- The account starts a few backups a day per home, and the night's first besides: Back up
+        -- now never uses up the nightly backup.
+        message.why = job.why
     else
         message.backup = job.backup
     end
