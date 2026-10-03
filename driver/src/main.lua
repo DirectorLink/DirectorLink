@@ -532,6 +532,11 @@ function OnDriverLateInit(driverInitType)
         paused = schedulesPaused,
         calendar = JewishCalendar,
         onRun = automationRan,
+        -- A schedule that failed: the account service alerts the home's admins (ADR-047). Only
+        -- the time leaves the controller, never which schedule or scene.
+        onFailed = function(at)
+            Relay.tell({ type = "alert", kind = "schedule_failed", at = Clock.iso(at) })
+        end,
         onTick = function(now)
             refreshScheduleStatus(now)
             refreshCalendarStatus(now)

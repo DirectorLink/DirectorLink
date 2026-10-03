@@ -12,13 +12,15 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/invitations.js` — tombstones for invitations whose email or creator goes, and the daily purge
 - `src/member-keys.js` — which account uses which key id; the controller's `keys` list ends the membership of accounts whose keys are all revoked
 - `src/backups.js` — automatic backups (1.6.0, ADR-048): the controller's sealed backup, received in chunks over its socket and kept in D1 (one a day, the last 7, 5 MB a home); listed, downloaded and deleted by the home's admins
+- `src/alerts.js` — alerts to a home's admins (ADR-047): their browsers' push subscriptions, who is an admin, the offline alarm and the controller's `alert` messages
+- `src/web-push.js` — Web Push: the message encrypted for the browser (RFC 8291) and the VAPID signature (RFC 8292), with WebCrypto
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
 - `src/accounts.js` — accounts (docs/ACCOUNTS.md): sign-in, sessions, sign-out, deleting the account, and accounts left without a sign-in
 - `src/google.js` — Google's authorization-code flow with PKCE
 - `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret, and the check of Apple's notifications
 - `src/apple-notifications.js` — Apple's server-to-server notifications about its accounts (ADR-041)
 - `src/jwt.js` — ID token checks shared by both (signature, issuer, audience, expiry, nonce), and Apple's and Google's signing keys, cached
-- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0)
+- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0006` `push_subscriptions` (alerts, 1.6.0); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -78,11 +80,39 @@ node scripts/relay_smoke.mjs get "/v1/lights?room_id=10" --home <home_id> --toke
 
 Tests: `node --test tests/cloud/*.test.mjs` (CI runs them too, `.github/workflows/validate.yml`). `frames.test.mjs` checks the smoke script's WebSocket code against a fake relay, and `jwt.test.mjs` the signing-key cache, in Node. `relay.test.mjs` (and the accounts, Apple, homes and backups tests) run the Worker end to end in `wrangler dev` on a free port, from a temporary copy of this folder with its own `.dev.vars`, so your `.dev.vars` and `.wrangler/` are left alone; its first run needs network access for `npx`.
 
+## Alerts (1.6.0, ADR-047)
+
+Web Push notifications to a home's admins, for two things only: the home has been offline for 10 minutes, or a schedule failed (`src/alerts.js`, `src/web-push.js`; docs/ACCOUNTS.md, *6. Alerts*). Session, CORS and origin rules as for Homes, below.
+
+| Request | Answer |
+| --- | --- |
+| `GET /v1/homes/{home_id}/alerts` | members: `{"public_key"}`, the VAPID key browsers subscribe with; 503 `ALERTS_NOT_CONFIGURED` until the key pair is set, or when its two halves do not belong together |
+| `POST /v1/homes/{home_id}/alerts` | `{ endpoint, keys: { p256dh, auth } }` (the browser's `PushSubscription.toJSON()`): 201 `{"alerts": true}`, this browser gets the home's alerts. 403 `ADMIN_ONLY` (the account uses none of the home's admin keys, as far as the cloud knows), 403 `NOT_A_MEMBER`, 409 `ROLES_UNKNOWN` (the controller has not listed its admin keys: DirectorLink before 1.6.0), 400 `INVALID_SUBSCRIPTION` (not a push service's https address, or not a P-256 key and a 16-byte secret) |
+| `DELETE /v1/homes/{home_id}/alerts` | `{ endpoint }`: 204, it no longer does |
+
+How it works: the controller's `keys` message lists its admin key ids (`admins`), which the home's Durable Object keeps; an account that uses one of them (`member_keys`) is an admin there. A browser's subscription (`push_subscriptions`, migration `0006`) goes with the account's membership, the account, signing out everywhere, and a 404 or 410 from the push service. Only while an admin's browser is subscribed does the object set alarms: 10 minutes after the driver disconnects, and every 10 minutes while it is connected, to see that it is still heard (a socket that went quiet counts as away since the driver was last heard). One offline alert per absence; a driver back within the 10 minutes ends it. A deploy records no disconnect: the absence then counts from the first alarm that finds no driver. The controller's `{"type":"alert","kind":"schedule_failed","at"}` goes to the admins at most three times an hour. Each alert is `{kind, home, at}`, encrypted for each browser (RFC 8291, aes128gcm) and signed with the VAPID key (RFC 8292, ES256); the words are the app's (`app/sw.js`).
+
+Settings: `VAPID_PUBLIC_KEY` (a var in `wrangler.jsonc`), `VAPID_PRIVATE_KEY` (a secret: the private key as a JWK), optionally `VAPID_SUBJECT` (a var: the contact push services see; `https://directorlink.io` by default). Make the pair once, from this folder; the script writes the private key only into the pipe (it refuses a terminal) and shows the public key:
+
+```bash
+node ../scripts/vapid_key.mjs | npx wrangler@4.143.0 secret put VAPID_PRIVATE_KEY
+```
+
+Then put the public key it printed in `wrangler.jsonc` (`vars.VAPID_PUBLIC_KEY`), apply the migration and deploy. Alerts stay off while either half is missing. Browsers subscribe with the public key, so a new pair later means every device subscribes again; the app does it by itself the next time it opens, signed in.
+
+For `wrangler dev` and the tests, `.dev.vars` may set `OFFLINE_ALERT_MINUTES` (default 10; the tests use 0.1), `ALERT_SILENCE_SECONDS` (default 60: how long a driver may go unheard on its socket before it counts as away, where the relay has no stale rule of its own) and `PUSH_TEST_URL` (the tests' fake push service, accepted besides the real ones; never set in production).
+
+Logs: `alerts_subscribed`, `alerts_unsubscribed`, `alerts_refused`, `alert_sent` (`kind`, `at`, `devices`, `delivered`, `gone`, and the other statuses as `failed`), `alert_not_sent`, `alert_limited`, `alert_ignored`, `alert_failed`, `alerts_not_configured`, `alert_alarm_failed`. A push address is never logged, only its service's host name.
+
+Cost: a home with a subscribed admin costs up to 144 alarms a day while its driver is connected (each a Durable Object request and a row written, about 4,300 of each a month) and the few seconds each wake keeps the object in memory; each alert, one D1 read and one request per browser to its push service. Homes without one cost nothing more.
+
+Tests: `web-push.test.mjs` (in Node: RFC 8291's test vector, the VAPID header, the settings check, which addresses and keys are taken, `scripts/vapid_key.mjs`) and `alerts.test.mjs` (end to end, with a fake push service, `fake-push.mjs`, that checks each push's VAPID signature and opens it with the browser's key).
+
 ## Deploying (by hand for now)
 
 ```bash
 cd cloud
-npx wrangler@4.143.0 d1 migrations apply directorlink --remote   # new tables first (1.6.0: 0007_cloud_backups)
+npx wrangler@4.143.0 d1 migrations apply directorlink --remote   # new tables first (1.6.0: 0006_push_subscriptions, 0007_cloud_backups)
 npx wrangler@4.143.0 deploy                   # Worker, Durable Object migration v1, custom domain api.directorlink.io
 curl https://api.directorlink.io/health
 ```

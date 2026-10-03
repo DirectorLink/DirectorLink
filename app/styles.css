@@ -4009,6 +4009,16 @@ a.scene-name:hover {
   gap: 12px;
 }
 
+/* Settings → Controller → Alerts on this device. */
+.alerts-toggle {
+  display: flex;
+  gap: 12px;
+}
+
+.alerts-toggle .switch:disabled {
+  opacity: 0.5;
+}
+
 .schedule-summary .add-summary {
   font-size: 15px;
 }

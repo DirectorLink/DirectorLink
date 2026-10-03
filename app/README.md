@@ -110,9 +110,18 @@ DoorBird doorstations come from `GET /v1/doorbells`, polled with the other devic
 - **Open gate** — doors and admin keys, on doorbells with `can_open`: a second tap within 5 s sends `POST /v1/doorbells/{id}/open` (Opening… → Sent). `403 DOOR_CONTROL_DISABLED` explains the Composer switch.
 - **Room** — the picture (tap for the full view), "Last ring: 3 minutes ago · Motion: …", "Not responding" after a communication failure, the last five events with relative times (`Intl.RelativeTimeFormat`), and Open gate.
 - **Favorites** — a starred doorbell shows its last ring and opens its room; it is highlighted while ringing.
-- **Notifications** — Settings → App → **Turn on doorbell notifications** is the only place that asks for the permission. A ring then notifies (through the service worker when there is one) while the app is open but not in front; in the background only `/v1/doorbells` is polled. There is no push yet, so a closed app cannot notify. Clicking the notification brings the app to Home.
+- **Notifications** — Settings → App → **Turn on doorbell notifications** asks for the permission (so does Alerts, below). A ring then notifies (through the service worker when there is one) while the app is open but not in front; in the background only `/v1/doorbells` is polled. Rings are not pushed, so a closed app does not notify of them. Clicking the notification brings the app to Home.
 
 Controls change the screen at once, send the command, then re-read the device until the controller confirms it; a failed command reverts and shows a short error on the device. Device state refreshes every 10 s while the page is visible.
+
+## Alerts
+
+Admins can get a notification with the app closed (Web Push, 1.6.0, ADR-047) when the home has been offline for 10 minutes or a schedule had a problem: "Your home – a schedule had a problem at 08:00. Open the app to see what happened." Tapping it opens Settings → Controller → History (`#/settings/history`).
+
+- **The switch** — Settings → Controller → **Alerts on this device** (`js/views/alerts.js`), for admins signed in to an account on a device linked to the home (else it says to link it). Turned on, it asks for the permission (the only other place that does is doorbell notifications), subscribes the browser with the account service's public key (`GET /v1/homes/{home_id}/alerts`, `pushManager.subscribe` with `userVisibleOnly`) and registers it (`POST`). Off unregisters it (`DELETE`) and drops the subscription. The account service refuses an account that uses none of the home's admin keys (`ADMIN_ONLY`: the app first tells it this device's key with one sealed request through the account, then asks again) and a controller before 1.6.0 (`ROLES_UNKNOWN`: update DirectorLink). Signing out, Sign out everywhere, deleting the account and forgetting the key end this browser's alerts too.
+- **iPhone and iPad** — only the app added to the Home Screen gets them, on iOS 16.4 or later. In Safari the card says how (Share → Add to Home Screen); added on an older iOS, which version it needs.
+- **Each start** — signed in, the app registers again (`js/alerts.js`): the browser may have a new subscription, the account service a new key (the app then subscribes again), or the device may no longer be allowed (the switch turns off and says why).
+- **The words** — an alert carries only its kind, the home id and a time. The service worker (`sw.js`, `push`) shows it with the app's own sentences in the app's language, which `js/alerts.js` keeps for it in Cache Storage (`directorlink-alerts`, kept across versions) and writes again when the language changes; the time is this device's. Without them, English. Every push shows a notification.
 
 ## Updates
 

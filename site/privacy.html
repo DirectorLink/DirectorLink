@@ -113,6 +113,7 @@
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
         <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
         <li>Automatic backups, if an admin turns them on: each one encrypted on your controller so that only your backup password opens it, with its size, when it arrived, and which backup password it is for. We cannot open them. The last 7 days are kept, one a day.</li>
+        <li>Alerts, if an admin switches them on for a device: that browser's push address and the keys its alerts are encrypted with, which account registered it, for which home, and since when; and which of the home's access keys are admin keys (their ids only). A device's registration is deleted when its alerts are turned off, it signs out, the account leaves the home or is deleted, or you sign out everywhere.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
@@ -139,6 +140,18 @@
         never leaves your browser, and neither our servers nor your controller can open the backup.
         We keep the encrypted backup, its size and its date: the last 7 days, one a day, at most 5 MB
         a home. If the backup password is lost, nobody can open them, DirectorLink included.
+      </p>
+
+      <h2>Alerts</h2>
+      <p>
+        A home's admins can switch on alerts for a device: a notification when the home has been
+        offline for 10 minutes, or when a schedule had a problem. They are sent through the push service
+        of the device's browser (Google, Mozilla, Apple or Microsoft), encrypted so that only that
+        browser can read them. An alert says only which of the two happened, at which home (by its
+        id) and when: never the name of a room, device, scene, schedule or person, and not even the
+        home's. The push service sees that an alert went to the device, when, and how large it was.
+        To know whether a schedule failed, your controller tells our servers only the time it
+        happened. The words you see are the app's, on your device.
       </p>
 
       <h2>Cookies</h2>

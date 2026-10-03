@@ -506,7 +506,11 @@ async function logout(request, env, headers) {
       refused.headers.set("Set-Cookie", clearSession());
       return refused;
     }
-    await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id).run();
+    // The account's devices stop getting its homes' alerts too (ADR-047): one may be lost.
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id),
+      env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ?").bind(session.user_id),
+    ]);
     log("signed_out_everywhere", { user: session.user_id });
   }
   if (hash) {

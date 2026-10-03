@@ -30,6 +30,9 @@ import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
 import { receiveBackupChunk } from "./backups.js";
+// Alerts to the home's admins (ADR-047): this object tells alerts.js when the driver connects and
+// disconnects, the admin key ids and the controller's "alert" messages, and runs its alarms.
+import { HomeAlerts } from "./alerts.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -60,6 +63,7 @@ export class HomeRelay extends DurableObject {
     // driver's frames (member-keys.js); `announced` is its last list of key ids.
     this.keyWork = Promise.resolve();
     this.announced = undefined;
+    this.alerts = new HomeAlerts(this);
   }
 
   // Queues `work` behind the key work already waiting; returns when it is done.
@@ -91,6 +95,8 @@ export class HomeRelay extends DurableObject {
         return this.message(await request.json(), homeId, request.headers.get("X-DirectorLink-User"));
       case "/secret":
         return this.replaceSecret(await request.json(), homeId);
+      case "/alerts":
+        return json(await this.alerts.request(await request.json(), homeId));
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -145,6 +151,7 @@ export class HomeRelay extends DurableObject {
     server.serializeAttachment({ conn: crypto.randomUUID(), home: homeId, connectedAt: now, version, lastSeen: now });
     const at = iso(now);
     await this.ctx.storage.put({ connected_at: at, last_seen: at, version });
+    await this.alerts.connected(homeId);
     log("driver_connected", { home: homeId, version, replaced, down_ms: Number.isFinite(downMs) ? downMs : null });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -191,6 +198,7 @@ export class HomeRelay extends DurableObject {
         await this.queueKeyWork(async () => {
           await this.ctx.storage.put("key_ids", ids);
           await syncKeys(this.env, attachment.home, ids);
+          await this.alerts.keys(attachment.home, ids, data.admins);
         }, attachment.home);
         return;
       }
@@ -244,6 +252,10 @@ export class HomeRelay extends DurableObject {
         } catch (error) {
           log("invitation_cancel_failed", { home: attachment.home, error: String(error?.message ?? error) });
         }
+        return;
+      case "alert":
+        // A schedule failed at home: the admins are alerted, without names (alerts.js).
+        await this.alerts.fromHome(data, attachment.home);
         return;
       case "response":
       case "claim_result":
@@ -316,6 +328,7 @@ export class HomeRelay extends DurableObject {
     const now = Date.now();
     this.disconnectedAt = now;
     await this.ctx.storage.put({ disconnected_at: iso(now), last_seen: iso(this.lastSeen(ws)) });
+    await this.alerts.disconnected(now);
     // How long the connection was up, and how long before the end the driver last pinged and last
     // sent a message: pings answered until the end mean the connection itself was cut.
     const ping = autoResponseTime(this.ctx, ws);
@@ -444,6 +457,15 @@ export class HomeRelay extends DurableObject {
   lastSeen(ws) {
     const { lastSeen = 0 } = ws.deserializeAttachment() ?? {};
     return Math.max(lastSeen, autoResponseTime(this.ctx, ws) ?? 0);
+  }
+
+  // Alerts' alarms (alerts.js): whether the home has been away long enough to alert.
+  async alarm() {
+    try {
+      await this.alerts.alarm();
+    } catch (error) {
+      log("alert_alarm_failed", { error: String(error?.message ?? error) });
+    }
   }
 
   // --- Test endpoints ------------------------------------------------------------------------
