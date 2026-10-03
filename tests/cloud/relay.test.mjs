@@ -542,6 +542,125 @@ test("requests sent over a connection the driver has replaced fail at once", TES
   first.destroy();
 });
 
+// A connection can die without a close the relay sees: the socket stays open, but nothing reaches
+// the driver and its pings stop. Once 2.5 of the intervals its hello announced (ping_s, 1.6.0)
+// have passed without a ping, nothing is sent into that socket: requests wait for the driver's
+// next connection, and the home shows offline.
+async function quietDriver(home, secret, sent) {
+  const connection = await driver({
+    home,
+    secret,
+    helloPingS: 1,
+    onRequest: (request) => {
+      sent.push(request.path);
+      return null;
+    },
+  });
+  const pong = once(connection, "pong");
+  connection.ping();
+  await within(pong, 5000, "pong");
+  return connection;
+}
+
+async function offline(home) {
+  return eventually(async () => {
+    const value = await status(home);
+    return value.connected ? null : value;
+  }, "the home to show offline", 8000);
+}
+
+test("a request to a home whose driver stopped pinging waits for its next connection", TEST, async () => {
+  const { home, secret } = newHome();
+  const sent = [];
+  const first = await quietDriver(home, secret, sent);
+  const quiet = await offline(home);
+  assert.equal(first.isOpen, true, "the socket is still open");
+  assert.equal(quiet.since, quiet.last_seen, "offline since it was last heard");
+  const [stale] = logged("driver_stale", home);
+  assert.equal(stale.interval_s, 1);
+  assert.ok(stale.ping_s >= 2, `ping_s ${stale.ping_s}`);
+
+  const started = Date.now();
+  const pending = call(home, "/v1/system");
+  await sleep(500);
+  await driver({ home, secret, onRequest: () => ({ status: 200, body: JSON.stringify({ by: "second" }) }) });
+  const result = await pending;
+  const waited = Date.now() - started;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "second" });
+  assert.ok(waited >= 500 && waited < RECONNECT_WAIT_MS + 1000, `answered after ${waited} ms`);
+  assert.deepEqual(sent, [], "nothing was sent into the quiet socket");
+  assert.equal(logged("driver_stale", home).length, 1, "logged once for the socket");
+  assert.equal((await status(home)).connected, true);
+});
+
+test("a home whose driver stopped pinging and does not come back answers 503 after the wait", TEST, async () => {
+  const { home, secret } = newHome();
+  const sent = [];
+  const first = await quietDriver(home, secret, sent);
+  await offline(home);
+
+  const started = Date.now();
+  assertProblem(await call(home, "/v1/lights"), 503, "HOME_OFFLINE");
+  const waited = Date.now() - started;
+  assert.ok(waited >= RECONNECT_WAIT_MS - 100 && waited < RECONNECT_WAIT_MS + 3000, `answered after ${waited} ms`);
+  assert.deepEqual(sent, [], "nothing was sent into the quiet socket");
+
+  // Its pings come through again (the connection was slow, not dead): it is connected again.
+  const pong = once(first, "pong");
+  first.ping();
+  await within(pong, 5000, "pong");
+  assert.equal((await status(home)).connected, true);
+  assert.equal(logged("driver_stale", home).length, 1);
+});
+
+// Real time: a 1.6.0 driver (10 s pings) is stale after 25 s, one before 1.6.0 (no ping_s in its
+// hello, 25 s pings) only after about 62 s; 30 s after a socket went stale, the driver is not
+// waited for any more. A driver that goes on pinging and sends nothing else is never stale: the
+// runtime's answers keep counting while the object is evicted between requests.
+test("how long a driver may be quiet depends on the interval its hello announced", { timeout: 60_000 }, async () => {
+  const current = newHome();
+  const old = newHome();
+  const fast = newHome();
+  const pinging = newHome();
+  const answer = (by) => () => ({ status: 200, body: JSON.stringify({ by }) });
+  const connections = await Promise.all([
+    driver({ ...current, helloPingS: 10 }),
+    driver({ ...old, onRequest: answer("old") }),
+    driver({ ...fast, helloPingS: 1 }),
+    driver({ ...pinging, helloPingS: 1, pingIntervalMs: 500, onRequest: answer("pinging") }),
+  ]);
+  await Promise.all(
+    connections.map(async (connection) => {
+      const pong = once(connection, "pong");
+      connection.ping();
+      await within(pong, 5000, "pong");
+    })
+  );
+  const quietSince = Date.now();
+
+  await sleep(quietSince + 27_000 - Date.now());
+  assert.equal((await status(current.home)).connected, false, "10 s pings: stale after 25 s");
+  assert.equal(logged("driver_stale", current.home)[0]?.interval_s, 10);
+  const started = Date.now();
+  const result = await call(old.home, "/v1/system");
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(result.json, { by: "old" });
+  assert.ok(Date.now() - started < 1000, "sent at once");
+  assert.equal((await status(old.home)).connected, true, "no ping_s: 25 s pings, not stale yet");
+  assert.deepEqual(logged("driver_stale", old.home), []);
+  const pinged = await call(pinging.home, "/v1/system");
+  assert.equal(pinged.status, 200, pinged.text);
+  assert.deepEqual(pinged.json, { by: "pinging" });
+  assert.equal((await status(pinging.home)).connected, true);
+  assert.deepEqual(logged("driver_stale", pinging.home), []);
+
+  await sleep(quietSince + 34_000 - Date.now());
+  const again = Date.now();
+  assertProblem(await call(fast.home, "/v1/lights"), 503, "HOME_OFFLINE");
+  assert.ok(Date.now() - again < 1000, "stale for over 30 s: answered at once");
+});
+
 // A deploy restarts every Durable Object and ends its sockets without webSocketClose, so no
 // disconnect is recorded; the drivers come back within seconds. wrangler dev does the same when
 // the Worker's code changes. Last in this file: it drops every connection.

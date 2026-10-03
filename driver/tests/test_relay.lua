@@ -155,6 +155,8 @@ function tests.handshake_sends_the_home_identity_and_hello_follows()
     T.eq(message.type, "hello")
     T.eq(message.home, home)
     T.truthy(message.version, "driver version")
+    T.eq(message.ping_s, 10, "how often it pings, so the relay knows when its pings are overdue")
+    T.contains(hello[1].payload, '"ping_s":10', "a whole number")
     local keys = Json.decode(hello[2].payload)
     T.eq(keys.type, "keys")
     T.eq(#keys.ids, 0, "no keys yet")
@@ -258,11 +260,12 @@ local function online(connection)
     connection.sent = ""
 end
 
+-- A ping every 10 s (25 s up to 1.5.0), and silence for three of them (about 30 s) drops it.
 function tests.keepalive_pings_and_silence_reconnects()
     withClock(function(advance)
         local mock, connection = connected()
-        local keepalive = lastTimer(mock, 25000)
-        T.truthy(keepalive and keepalive.repeating, "a repeating 25 s keep-alive")
+        local keepalive = lastTimer(mock, 10000)
+        T.truthy(keepalive and keepalive.repeating, "a repeating 10 s keep-alive")
         keepalive.callback()
         T.eq(clientFrames(connection.sent)[1].payload, "ping")
         connection.sent = ""
@@ -290,7 +293,7 @@ end
 function tests.silence_counts_ticks_not_the_clock()
     withClock(function(advance)
         local mock, connection = connected()
-        local keepalive = lastTimer(mock, 25000)
+        local keepalive = lastTimer(mock, 10000)
         keepalive.callback()
         keepalive.callback()
         ReceivedFromNetwork(BINDING, 443, serverFrame(10, "ping"))

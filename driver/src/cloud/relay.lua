@@ -15,9 +15,12 @@ Relay.HOST = "api.directorlink.io"
 Relay.PORT = 443
 Relay.PATH = "/relay/connect"
 Relay.BINDING = 6001
-Relay.KEEPALIVE_MS = 25000
+-- A ping every 10 s (25 s up to 1.5.0): a connection that died without a word is found within
+-- seconds, at the next ping. The hello says how often (ping_s), so the relay holds requests for a
+-- driver whose pings have stopped instead of sending them into a dead connection (ADR-045).
+Relay.KEEPALIVE_MS = 10000
 -- A connection that hears nothing (not even a pong) for this many keep-alive ticks in a row is
--- dropped: about 75 s. Ticks, not the clock, so setting the controller's clock back cannot
+-- dropped: about 30 s. Ticks, not the clock, so setting the controller's clock back cannot
 -- delay it.
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
@@ -406,7 +409,7 @@ local function onOpen()
     state.pingedAt = nil
     state.connectedAt = os.time()
     local identity = Relay.identity()
-    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION })
+    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000) })
     Relay.announceKeys()
     startKeepalive()
     local drop = state.lastDrop
