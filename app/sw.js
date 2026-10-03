@@ -2,7 +2,7 @@
 // Same-origin GET requests are network-first with a short timeout and fall back to the cache,
 // so the app still opens when the internet is down but the home LAN (and the controller) is up.
 // Requests to the controller are cross-origin and are never intercepted.
-// It also opens the app when a doorbell notification is clicked.
+// It also opens the app when a doorbell notification is clicked, and shows alerts (push).
 
 const CACHE_NAME = "directorlink-shell-v38";
 const NETWORK_TIMEOUT_MS = 3000;
@@ -17,6 +17,8 @@ const ASSETS = [
   "/app.js",
   "/api-client.js",
   "/js/account.js",
+  "/js/alerts.js",
+  "/js/views/alerts.js",
   "/js/alarm.js",
   "/js/music.js",
   "/js/views/music.js",
@@ -172,13 +174,75 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME && key !== ALERT_TEXTS_CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
 
+// Alerts (ADR-047): a push from api.directorlink.io says only what happened, at which home and when,
+// { kind: "offline" | "schedule_failed", home, at }, encrypted for this browser. The words are the
+// app's, in its language (js/alerts.js keeps them here); English when there are none. Every push
+// shows a notification, which opens the home's history.
+const ALERT_TEXTS_CACHE = "directorlink-alerts";
+const ALERT_TEXTS_PATH = "/alert-texts.json";
+const ALERT_TEXTS = {
+  lang: "en",
+  dir: "ltr",
+  title: "DirectorLink",
+  offline: "Your home – DirectorLink has not reached it since {time}. Check the home’s internet connection and the controller.",
+  schedule_failed: "Your home – a schedule had a problem at {time}. Open the app to see what happened.",
+  other: "Your home – something needs your attention. Open the app to see what happened.",
+};
+
+async function alertTexts() {
+  try {
+    const saved = await (await caches.open(ALERT_TEXTS_CACHE)).match(ALERT_TEXTS_PATH);
+    const texts = saved ? await saved.json() : null;
+    if (texts && typeof texts === "object") return { ...ALERT_TEXTS, ...texts };
+  } catch {
+    // English, then.
+  }
+  return ALERT_TEXTS;
+}
+
+// The alert's time on this device's clock, 24-hour.
+function alertTime(at, lang) {
+  const date = new Date(at);
+  if (!Number.isFinite(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat(lang, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  } catch {
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+}
+
+async function showAlert(data) {
+  let alert = null;
+  try {
+    alert = data ? data.json() : null;
+  } catch {
+    alert = null;
+  }
+  const texts = await alertTexts();
+  const kind = alert?.kind === "offline" || alert?.kind === "schedule_failed" ? alert.kind : "other";
+  const home = /^[0-9a-f]{32}$/.test(alert?.home ?? "") ? alert.home : "";
+  await self.registration.showNotification(texts.title, {
+    body: String(texts[kind]).replace("{time}", kind === "other" ? "" : alertTime(alert.at, texts.lang)),
+    tag: `alert-${kind}-${home}`,
+    renotify: true,
+    lang: texts.lang,
+    dir: texts.dir,
+    icon: "/icons/icon-192.png",
+    data: { url: "/#/settings/history" },
+  });
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil(showAlert(event.data));
+});
+
 // A doorbell notification (shown while the app is open): bring the app to the front on Home,
-// or open it when no window is left.
+// or open it when no window is left. An alert's: the home's history.
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = new URL(event.notification.data?.url || "/#/", self.location.origin).href;

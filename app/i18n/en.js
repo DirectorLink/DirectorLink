@@ -856,6 +856,32 @@ export default {
     emptyTitle: "No cameras",
     emptyText: "DirectorLink did not find cameras in this project.",
   },
+  // Alerts on this device (js/alerts.js, ADR-047). The service worker shows offline, scheduleFailed
+  // and other with {time} filled in: the alert never names the home, so it is “your home”.
+  alerts: {
+    title: "DirectorLink",
+    yourHome: "Your home",
+    offline: "{home} – DirectorLink has not reached it since {time}. Check the home’s internet connection and the controller.",
+    scheduleFailed: "{home} – a schedule had a problem at {time}. Open the app to see what happened.",
+    other: "{home} – something needs your attention. Open the app to see what happened.",
+    settings: {
+      title: "Alerts",
+      label: "Alerts on this device",
+      help: "A notification when the home has been offline for 10 minutes, or when a schedule had a problem. For admins; an alert never names a room, device or schedule.",
+      turnedOn: "Alerts are on for this device.",
+      turnedOff: "Alerts are off for this device.",
+      homeScreen: "On iPhone and iPad, alerts work only in the app on the Home Screen (iOS 16.4 or later): tap Share, then Add to Home Screen, open DirectorLink from there and switch them on.",
+      iosVersion: "Alerts need iOS 16.4 or later on this device.",
+      blocked: "Notifications are blocked for DirectorLink. Allow them in the browser’s or the device’s settings, then try again.",
+      unsupported: "This browser can’t show alerts.",
+      notLinked: "Link this device to your account first (Settings → Account), on the home network.",
+      adminOnly: "Only the home’s admins get alerts.",
+      needsUpdate: "Alerts need DirectorLink 1.6.0 or later on the controller, with Remote Access on. Update it in Composer.",
+      notAvailable: "Alerts aren’t available yet. Try again later.",
+      signIn: "Sign in again to switch alerts on.",
+      failed: "Alerts could not be switched on. Check the connection and try again.",
+    },
+  },
   roles: {
     viewer: "View only",
     member: "Member",

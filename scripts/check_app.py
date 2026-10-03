@@ -322,8 +322,11 @@ def main():
     for path in modules:
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(APP).as_posix()
-        if "requestPermission" in text and relative != "js/doorbells.js":
-            fail(f"app/{relative} asks for notification permission; only Settings → Doorbell notifications may")
+        # Only Settings asks: Doorbell notifications, and Alerts on this device (ADR-047).
+        if "requestPermission" in text and relative not in ("js/doorbells.js", "js/alerts.js"):
+            fail(f"app/{relative} asks for notification permission; only Settings → Doorbell notifications and Alerts may")
+        if "pushManager.subscribe(" in text and relative != "js/alerts.js":
+            fail(f"app/{relative} subscribes to push; only Settings → Alerts on this device may")
         if "enableNotifications(" in text and relative not in ("js/doorbells.js", "js/views/settings.js"):
             fail(f"app/{relative} turns on notifications; only the Settings button may")
     for path in ('"/v1/system"', '"/v1/rooms"', '"/v1/devices"', '"/v1/lights"', '"/v1/thermostats"'):
@@ -434,6 +437,10 @@ def main():
     for asset in ("/index.html", "/api-client.js", "/theme-boot.js"):
         require(service_worker, f'"{asset}"', f"the service worker must cache {asset}")
     require(service_worker, 'addEventListener("notificationclick"', "a doorbell notification click must open the app")
+    # Alerts (ADR-047): every push shows a notification (browsers revoke a subscription that does not).
+    require(service_worker, 'addEventListener("push"', "the service worker must show the alerts that are pushed")
+    require(service_worker, "self.registration.showNotification(", "every push must show a notification")
+    require((APP / "js" / "alerts.js").read_text(encoding="utf-8"), "userVisibleOnly: true", "alerts must subscribe to push with userVisibleOnly")
     for special in ("/_redirects", "/_headers"):
         if f'"{special}"' in service_worker:
             fail(f"the service worker must not cache {special}: Cloudflare reads it, it is not served")

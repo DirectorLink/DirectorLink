@@ -7,6 +7,7 @@
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
 import { alarmSignature, startAlarm } from "./js/alarm.js";
+import { alertsSignature } from "./js/alerts.js";
 import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
@@ -227,6 +228,8 @@ function signature() {
     state.transport,
     state.remoteInfo,
     savedRemote(),
+    // Alerts on this device (js/alerts.js): on, possible, being switched, what it said.
+    alertsSignature(),
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),

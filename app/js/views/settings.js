@@ -4,6 +4,7 @@
 // Account, App and About.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
+import { turnAlertsOff } from "../alerts.js";
 import { calendarOn, loadCalendar, noteCalendarOff, takeCalendarReveal } from "../calendar.js";
 import { IS_IOS } from "../platform.js";
 import { qrCanvas } from "../qr.js";
@@ -20,6 +21,7 @@ import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAn
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
+import { alertsPanel } from "./alerts.js";
 import { backupPanel } from "./backup.js";
 import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { musicRoomsSection } from "./music.js";
@@ -34,7 +36,7 @@ export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "ap
 export function settingsView({ page = null, onPalette, onTheme, onLanguage, navigate }) {
   switch (page) {
     case "controller":
-      return subpage(t("settings.controller.title"), controllerSection(navigate), updatesSection(), backupPanel());
+      return subpage(t("settings.controller.title"), controllerSection(navigate), alertsPanel(), updatesSection(), backupPanel());
     case "rooms":
       return subpage(t("settings.rooms.title"), roomsSection(), roomNamesSection(), musicSection());
     case "calendar":
@@ -1344,7 +1346,7 @@ function accountSection() {
       h(
         "div",
         { class: "button-row" },
-        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: () => signOut() }, t("settings.account.signOut")),
+        h("button", { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out" }, disabled: account.busy, onclick: () => turnAlertsOff({ quiet: true }).finally(() => signOut()) }, t("settings.account.signOut")),
         h(
           "button",
           {
@@ -1353,7 +1355,7 @@ function accountSection() {
             dataset: { key: "account-sign-out-everywhere" },
             disabled: account.busy,
             onclick: () => {
-              if (window.confirm(t("settings.account.signOutEverywhereConfirm"))) signOut({ everywhere: true });
+              if (window.confirm(t("settings.account.signOutEverywhereConfirm"))) turnAlertsOff({ quiet: true }).finally(() => signOut({ everywhere: true }));
             },
           },
           t("settings.account.signOutEverywhere")
@@ -1403,7 +1405,7 @@ function accountSection() {
             dataset: { key: "account-delete" },
             disabled: account.busy,
             onclick: () => {
-              if (window.confirm(t("settings.account.deleteConfirm"))) deleteAccount();
+              if (window.confirm(t("settings.account.deleteConfirm"))) turnAlertsOff({ quiet: true }).finally(() => deleteAccount());
             },
           },
           t("settings.account.delete")
