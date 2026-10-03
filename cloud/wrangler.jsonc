@@ -31,7 +31,7 @@
   // makes, which pipes the private half into `secret put VAPID_PRIVATE_KEY` (README.md); alerts are
   // off while either is missing.
   "vars": {
-    "VAPID_PUBLIC_KEY": "",
+    "VAPID_PUBLIC_KEY": "BMvqqdAc8jZJwC-v7ZrwEeuMDZaPEaIt-sl4DFOykkz1ZBq7EY1xx8HBP0_NlDYT67Z1eADNnBFatwdjASvuH6w",
     "GOOGLE_CLIENT_ID": "1034749624411-vfj1im8dc42utkvl6lfiv3hs49mcna2s.apps.googleusercontent.com",
     "APPLE_SERVICES_ID": "io.directorlink.signin",
     "APPLE_TEAM_ID": "VA4Q88T4RC",
