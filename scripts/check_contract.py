@@ -638,6 +638,15 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
     client.check("GET", "/v1/calendar", 200)
     client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
+    # Each key its own alert choices (1.7.0, ADR-050): a viewer may get doorbells only.
+    choices = client.check("GET", "/v1/alerts/choices", 200)
+    if choices != {"on": False, "kinds": {"doorbell": True}}:
+        fail(f"a viewer's alert choices should be off, with the doorbell only: {choices}")
+    choices = client.check("PUT", "/v1/alerts/choices", 200, body={"on": True, "kinds": {"door_opened": True}})
+    if choices != {"on": True, "kinds": {"doorbell": True}}:
+        fail(f"a viewer cannot choose the doors opened: {choices}")
+    client.check("PUT", "/v1/alerts/choices", 400, body={"kinds": {"lights": True}})
+    client.check("PUT", "/v1/alerts/choices", 400, body={})
     client.check("DELETE", "/v1/api-keys/current", 204)
     client.check("GET", "/v1/lights", 401)
     client.key = admin_key
@@ -746,6 +755,12 @@ def scenario(client, bridge):
     # Automatic backups to the account (1.6.0, ADR-048): the backup password's public key, set and
     # read in sealed requests only; Back up now needs Remote Access, which is off here, and so does
     # the night's backup, which the history then lists as not made.
+    if client.check("GET", "/v1/system", 200)["features"].get("alert_choices") is not True:
+        fail("GET /v1/system should say features.alert_choices true: the app offers alert choices only then")
+    choices = client.check_sealed(bridge, "PUT", "/v1/alerts/choices", 200, body={"on": True, "kinds": {"door_opened": True}})
+    if not choices["on"] or choices["kinds"].get("door_opened") is not True or choices["kinds"].get("schedule_failed") is not True:
+        fail(f"an admin chooses the doors opened, and keeps schedules: {choices}")
+    client.check("GET", "/v1/alerts/choices", 401, auth=False)
     if client.check("GET", "/v1/system", 200)["features"].get("automatic_backup") is not True:
         fail("GET /v1/system should say features.automatic_backup true: the app shows the section only then")
     if client.check("GET", "/v1/backup/automatic", 200)["enabled"] is not False:

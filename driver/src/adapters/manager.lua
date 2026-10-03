@@ -1,3 +1,4 @@
+local Clock = require("src.core.clock")
 local Log = require("src.core.log")
 local LightV2 = require("src.adapters.light_v2")
 local LightV1 = require("src.adapters.light_v1")
@@ -26,6 +27,11 @@ local adapters = {
 }
 
 local attached = {}
+-- Told of each device event an adapter took (alerts: a doorbell's ring, a door opened elsewhere).
+local eventListener = nil
+-- When DirectorLink last sent each device a command that worked (Clock.now()): what the device
+-- reports soon after is that command's doing.
+local commanded = {}
 -- Device whose events belong to another device (a DoorBird driver's events -> its doorbell).
 local eventTargets = {}
 local registry = nil
@@ -197,7 +203,23 @@ function Manager.onDeviceEvent(deviceId, eventId)
         log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
+    if changed == true and eventListener then
+        local told, err = pcall(eventListener, device, eventId)
+        if not told then
+            log("event listener failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
+        end
+    end
     return changed == true
+end
+
+-- `listener(device, eventId)` is told of each event an adapter took, after it did.
+function Manager.onEvent(listener)
+    eventListener = listener
+end
+
+-- When DirectorLink last sent `deviceId` a command that worked (Clock.now()), or nil.
+function Manager.commandedAt(deviceId)
+    return commanded[tonumber(deviceId)]
 end
 
 function Manager.execute(deviceId, action, params)
@@ -237,6 +259,7 @@ function Manager.execute(deviceId, action, params)
         return false, result
     end
 
+    commanded[deviceId] = Clock.now()
     return true, result
 end
 

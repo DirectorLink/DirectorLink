@@ -4021,6 +4021,16 @@ a.scene-name:hover {
   cursor: default;
 }
 
+/* What to alert about: a switch per kind, under the device's switch. */
+.alerts-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block-start: 14px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
 .schedule-summary .add-summary {
   font-size: 15px;
 }

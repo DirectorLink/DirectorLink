@@ -30,7 +30,7 @@
 
     <main id="main" tabindex="-1" class="document">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 3 October 2026</p>
+      <p class="updated">Last updated 4 October 2026</p>
       <p class="lead">
         DirectorLink keeps your home's data between your own devices and your controller. This page
         lists exactly what reaches DirectorLink's servers.
@@ -113,7 +113,7 @@
         <li>Invitations waiting to be accepted: the invited email, the expiry date, and who registered it (your controller, or the home's owner). A used invitation is deleted when it is accepted, an expired one a day after it expires.</li>
         <li>Requests to join a home with an invitation sent to another email address: the account asking, the invitation, the six-digit code, and whether the owner approved or refused. They are deleted with the invitation, or when either account is deleted.</li>
         <li>Automatic backups, if an admin turns them on: each one encrypted on your controller so that only your backup password opens it, with its size, when it arrived, and which backup password it is for. We cannot open them. The last 7 days are kept, one a day.</li>
-        <li>Alerts, if an admin switches them on for a device: that browser's push address and the keys its alerts are encrypted with, which account registered it, for which home, and since when; and which of the home's access keys are admin keys (their ids only). A device's registration is deleted when its alerts are turned off, it signs out, the account leaves the home or is deleted, or you sign out everywhere.</li>
+        <li>Alerts, if someone switches them on for a device: that browser's push address and the keys its alerts are encrypted with, which account registered it, the id of the access key the device uses, for which home, since when, and whether it wants the offline alert; which of the home's access keys are admin keys (their ids only); and when the home last sent alerts, to count them. A device's registration is deleted when its alerts are turned off, it signs out, its access key is removed, the account leaves the home or is deleted, or you sign out everywhere.</li>
       </ul>
       <p>
         Our servers run on Cloudflare, which keeps short-lived technical logs (time, IP address, path
@@ -144,14 +144,19 @@
 
       <h2>Alerts</h2>
       <p>
-        A home's admins can switch on alerts for a device: a notification when the home has been
-        offline for 10 minutes, or when a schedule had a problem. They are sent through the push service
-        of the device's browser (Google, Mozilla, Apple or Microsoft), encrypted so that only that
-        browser can read them. An alert says only which of the two happened, at which home (by its
-        id) and when: never the name of a room, device, scene, schedule or person, and not even the
-        home's. The push service sees that an alert went to the device, when, and how large it was.
-        To know whether a schedule failed, your controller tells our servers only the time it
-        happened. The words you see are the app's, on your device.
+        Anyone with access to a home can switch on alerts for a device: a notification when someone
+        rings at the door, when the refrigerator door is left open, and, for admins, when a door or
+        gate is opened (if they choose), when a schedule had a problem, or when the home has been
+        offline for 10 minutes. Each device chooses which. Your controller decides who gets what, and
+        encrypts what happened (which doorbell, which door and who opened it, which schedule)
+        separately for each of those devices, with a key only that device and your controller hold:
+        our servers pass it on without being able to read it, and learn only which devices' keys an
+        alert is for, when, and whether it is a doorbell's, which is kept for a minute only. The
+        offline alert is our servers' own: it says only that, at which home (by its id) and when.
+        Alerts are sent through the push service of the device's browser (Google, Mozilla, Apple or
+        Microsoft), encrypted so that only that browser can read them. The push service sees that an
+        alert went to the device, when, how long it may keep it, and its size, which is the same for
+        every alert. The words you see are the app's, on your device.
       </p>
 
       <h2>Cookies</h2>

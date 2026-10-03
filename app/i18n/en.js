@@ -869,18 +869,38 @@ export default {
     emptyTitle: "No cameras",
     emptyText: "DirectorLink did not find cameras in this project.",
   },
-  // Alerts on this device (js/alerts.js, ADR-047). The service worker shows offline, scheduleFailed
-  // and other with {time} filled in: the alert never names the home, so it is “your home”.
+  // Alerts on this device (js/alerts.js, ADR-047, ADR-050). The service worker shows these with
+  // {time} and the names the controller sealed for this device filled in; the home itself is never
+  // named, so it is “your home”.
   alerts: {
     title: "DirectorLink",
     yourHome: "Your home",
     offline: "{home} – DirectorLink has not reached it since {time}. Check the home’s internet connection and the controller.",
     scheduleFailed: "{home} – a schedule had a problem at {time}. Open the app to see what happened.",
+    scheduleFailedNamed: "{home} – the schedule for {name} had a problem at {time}. Open the app to see what happened.",
     other: "{home} – something needs your attention. Open the app to see what happened.",
+    doorbell: "{name} rang at {time}.",
+    doorOpened: "{name} was opened by {who} at {time}.",
+    doorOpenedScene: "{name} was opened by {who}, with the scene {scene}, at {time}.",
+    doorOpenedControl4: "{name} was opened in Control4 at {time}.",
+    doorHeld: "{name} was held open by {who} at {time}.",
+    who: "{person} ({device})",
+    fridgeDoor: "{name} – the door has been open for {minutes} minutes ({time}).",
+    fridgeDoorNow: "{name} – the door was left open ({time}).",
     settings: {
       title: "Alerts",
       label: "Alerts on this device",
-      help: "A notification when the home has been offline for 10 minutes, or when a schedule had a problem. For admins; an alert never names a room, device or schedule.",
+      help: "A notification on this device, also when the app is closed. What it says is sealed for this device: DirectorLink’s servers can’t read it.",
+      helpAdmins: "A notification when the home has been offline for 10 minutes, or when a schedule had a problem. For admins; an alert never names a room, device or schedule.",
+      kindsTitle: "What to alert about",
+      kinds: {
+        offline: "The home is offline for 10 minutes",
+        doorbell: "Someone rings at the door",
+        door_opened: "A door or gate is opened",
+        fridge_door: "The refrigerator door is left open",
+        schedule_failed: "A schedule has a problem",
+      },
+      choicesFailed: "Couldn’t save that. Check the connection and try again.",
       turnedOn: "Alerts are on for this device.",
       turnedOff: "Alerts are off for this device.",
       homeScreen: "On iPhone and iPad, alerts work only in the app on the Home Screen (iOS 16.4 or later): tap Share, then Add to Home Screen, open DirectorLink from there and switch them on.",
@@ -937,6 +957,7 @@ export default {
       scheduleGone: "A schedule",
       composer: "Composer",
       controller: "DirectorLink",
+      control4: "In Control4",
     },
     scene: {
       run: "Ran the scene {name}",

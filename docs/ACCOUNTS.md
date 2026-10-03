@@ -23,8 +23,8 @@ app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay p
 - Roles stay those of API keys (`viewer`, `member`, `doors`, `admin`), enforced by the controller.
 - Using the app on the home network without an account keeps working.
 
-Not part of this design: local HTTPS, native apps, billing. Alerts to the home's admins (1.6.0,
-ADR-047) are in *6. Alerts* below.
+Not part of this design: local HTTPS, native apps, billing. Alerts (1.6.0, ADR-047; sealed to each
+device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 
 ## Who knows what
 
@@ -33,8 +33,10 @@ ADR-047) are in *6. Alerts* below.
 | Account: email, name, sign-in provider | yes | yes | no |
 | Which homes the account belongs to | yes | yes | — |
 | Which key ids are admin keys (1.6.0) | its own role | yes (ids only) | yes |
-| Alerts (1.6.0): this browser's push subscription | its own | its push address and keys, for admins who switched alerts on | no |
-| Alerts (1.6.0): what an alert says | its kind, home id and time | its kind, home id and time; which schedule failed **never** | yes |
+| Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
+| Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule | what happened and where, opened with its own alert key | **never** what, not even the kind: only which key ids one is for, when, and whether it is brief (a ring) | yes |
+| A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
@@ -278,35 +280,45 @@ membership.
 Pair with a code (CPace: the code is never sent) and use the LAN API; the app seals its requests
 there too (*On the home network*). No cloud is involved.
 
-### 6. Alerts (1.6.0, ADR-047)
+### 6. Alerts (1.6.0, ADR-047; 1.7.0, ADR-050)
 
-The home's admins can get a notification on their phones and computers, with the app closed, for
-two things only: the home has been unreachable for 10 minutes, or a schedule had a problem.
+Anyone with a key at the home can get notifications on their phones and computers, with the app
+closed: a doorbell rang, a door or gate was opened (admins, if they choose), the refrigerator's
+door was left open (members and admins), a schedule had a problem (admins), and the home has been
+unreachable for 10 minutes (admins). Before 1.7.0 on the controller, only the last two, for admins.
 
-1. On Settings → Controller, an admin signed in to an account, on a device linked to the home,
+1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
    switches on **Alerts on this device**. The browser asks for permission and makes a push
-   subscription with the cloud's public key (VAPID); the app registers it
-   (`POST /v1/homes/{home_id}/alerts`). On iPhone and iPad only the app added to the Home Screen
-   can (iOS 16.4 or later).
-2. The cloud takes it only from an account that uses one of the home's admin keys. Which keys are
-   admin keys the controller says with its key ids (`{"type":"keys","ids":[…],"admins":[…]}`,
-   `docs/RELAY.md`); which account uses which key the cloud already knows. The same check is made
-   for every alert, so a key made a member or revoked stops its account's alerts at once.
-3. *Offline*: the home's Durable Object alerts once the driver has been away for 10 minutes, or
-   silent on a socket that never closed, once per absence. *Schedule failed*: the controller sends
-   `{"type":"alert","kind":"schedule_failed","at":…}` when a scheduled scene had a device refuse or
-   could not run, without saying which; at most three an hour reach the admins.
-4. An alert is encrypted for each browser (RFC 8291) and carries only `{kind, home, at}`, padded
-   so that every alert is the same size. The push service (Google, Mozilla, Apple or Microsoft) sees
-   that an alert went to the browser and when, not which alert nor what it says. The app's service
-   worker shows it with the app's own words in its language ("Your home – a schedule had a problem
-   at 08:00. Open the app to see what happened."): the cloud knows no names, not even the home's.
-   Tapping it opens Settings → Controller → History.
+   subscription with the cloud's public key (VAPID); the app registers it with its device's key id
+   (`POST /v1/homes/{home_id}/alerts`) and tells the controller (`PUT /v1/alerts/choices`, sealed).
+   A switch per kind follows; the controller keeps them, per key. On iPhone and iPad only the app
+   added to the Home Screen can (iOS 16.4 or later).
+2. The cloud takes a registration with a key id only from an account that uses that key at the home
+   (`member_keys`). One without (an app before 1.7.0) only from an account that uses one of the
+   home's admin keys, which the controller lists (`{"type":"keys","ids":[…],"admins":[…]}`,
+   `docs/RELAY.md`). The same checks are made for every alert, so a key revoked, or made a member,
+   stops what it may no longer get at once.
+3. *What the controller alerts about* it decides and seals: for each key whose role may get it,
+   whose device switched alerts on and which chose it, the details sealed with that key's alert key
+   (`HMAC-SHA256(lock key, "DirectorLink alert v1")`), in one `{"type":"notify"}` that names only the
+   key ids (`docs/RELAY.md`). The cloud pushes each part, at once, to the browsers registered with
+   that key id by an account that uses it, and to nobody else; it learns which keys and when, never
+   what. *Offline*: the home's Durable Object alerts once the driver has been away for 10 minutes,
+   or silent on a socket that never closed, once per absence, to admin keys' browsers that want it
+   and to the admins' browsers registered before 1.7.0.
+4. A push is encrypted for each browser (RFC 8291), padded so that every push is the same size. The
+   push service (Google, Mozilla, Apple or Microsoft) sees that something went to the browser, when,
+   and how long it may keep it (a ring a minute), not what. The app's service worker opens a sealed
+   alert with this device's alert key, which the app keeps for it (never the lock key or the API
+   key), and shows it with the app's own words in its language ("Front gate rang at 08:00.", "Main
+   door was opened by Dana (Dana's iPhone) at 08:01."); the cloud's offline alert, and anything it
+   cannot open, in general words ("Your home – …"): the home's name is never sent. Tapping a ring
+   opens Home, a refrigerator's alert its room, the others Settings → Controller → History.
 
 Turning the switch off, signing out or forgetting the key on that device, signing out everywhere
-(or Apple ending the account's only sign-in), leaving the home or being removed, another account
-claiming the home, and deleting the account all end that browser's alerts; the home then stops
-watching for them once no admin's browser is left.
+(or Apple ending the account's only sign-in), leaving the home or being removed, the key being
+revoked, another account claiming the home, and deleting the account all end that browser's
+alerts; the home then stops watching for the offline alert once no admin's browser wants it.
 
 ## Google and Apple
 
@@ -394,10 +406,11 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   most 5 MB a home and 25 MB an owner's homes; they go with the home (its owner's account deleted),
   when an admin deletes them, and an upload that never finished after an hour (daily cron).
 - `push_subscriptions` (1.6.0): home, the browser's push address, its public key and secret, the
-  account that registered it, when (`migrations/0006`). They go with the membership, the account,
-  signing out everywhere (also Apple ending the account's only sign-in), or the push service saying
-  the browser is gone. The home's Durable Object keeps the admin key ids the controller last
-  listed.
+  account that registered it, when (`migrations/0006`); since 1.7.0 the key id its device uses at
+  the home and whether it wants the offline alert (`migrations/0008`). They go with the membership,
+  the account, the key, signing out everywhere (also Apple ending the account's only sign-in), or
+  the push service saying the browser is gone. The home's Durable Object keeps the admin key ids
+  the controller last listed, and when it last notified (60 an hour at most).
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 
@@ -452,9 +465,13 @@ device's key.
   relay, take the home secret from the connection and keep the home offline; sealed requests stay
   unreadable to them.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
-  a home was offline or a schedule failed, and which key ids are admin keys. An alert's words are
-  the app's, never the cloud's: whoever could send pushes in DirectorLink's name could only choose
-  among its own sentences and a time.
+  a home was offline, and which key ids are admin keys. Since 1.7.0, when the home notified which
+  key ids, and whether the notice was brief: never its kind or what it names, though the keys and
+  the brevity hint at it (only rings are brief, and only rings reach viewers' keys; a notice for
+  admin keys only is a door or a schedule). An alert's words are the app's, never the cloud's:
+  whoever could send pushes in DirectorLink's name could only choose among its own sentences and a
+  time, and could not seal a detail a device would open; the cloud could send a sealed alert again
+  to the same device, which shows its own time.
 
 ## iPhone and iPad
 
@@ -526,3 +543,6 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
 12. (1.6.0, ADR-047) Admins may get Web Push alerts (home offline 10 minutes, a schedule failed),
     encrypted for their browsers and naming nothing; the controller tells the cloud which key ids
     are admin keys.
+13. (1.7.0, ADR-050) What the controller alerts about (doorbells, doors opened, the refrigerator,
+    schedules) it seals to each key that gets it, and each key chooses; the cloud delivers each part
+    to that key's browsers only, knowing which keys and when, not what.

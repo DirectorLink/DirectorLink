@@ -35,6 +35,7 @@ local HANDLERS = {
     sealed = require("src.api.handlers.sealed"),
     backup = require("src.api.handlers.backup"),
     activity = require("src.api.handlers.activity"),
+    alerts = require("src.api.handlers.alerts"),
 }
 
 local Server = {}

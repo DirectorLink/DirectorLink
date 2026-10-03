@@ -1,0 +1,34 @@
+{
+  "about": "Test vectors for sealed alert details (ADR-050), computed with Node's crypto. A device's alert key is HMAC-SHA256(its lock key, \"DirectorLink alert v1\"); its enc and mac keys are HMAC-SHA256(alert key, \"enc\" / \"mac\"); a detail is AES-256-CBC with enc, then an HMAC-SHA256 with mac over \"alert v1|\" + home + \"|\" + key + \"|\" + iv + \"|\" + ct (base64). The driver (Lua) seals them, the app derives the alert key and its service worker opens them.",
+  "device": {
+    "api_key": "ak_0123456789abcdef0123456789abcdef0123456789abcdef",
+    "lock_key_hex": "97293ed4b9cfe6157e256417c3ee23af62127b00759ac19a7f89030aa5c9946e",
+    "alert_key_hex": "3584da6f82af3d5de712280a4d396f1761bbf45e1642121f1340f42a9a3cec92",
+    "enc_key_hex": "8a786a70a7ee815af64d2241fa58ef022df02286c39d5fd62f6648ca323d23cc",
+    "mac_key_hex": "38d9f6ae455e664e89b20ca353eb6e6d6a344c05263adc091263a8461682301d"
+  },
+  "home": "00112233445566778899aabbccddeeff",
+  "key": "4fde46cc",
+  "details": [
+    {
+      "name": "doorbell",
+      "plaintext": "{\"at\":\"2026-10-03T05:00:00Z\",\"id\":93,\"kind\":\"doorbell\",\"name\":\"שער הכניסה\",\"room\":\"Entrance\",\"room_id\":10,\"v\":1}",
+      "iv_hex": "000102030405060708090a0b0c0d0e0f",
+      "sealed": {
+        "iv": "AAECAwQFBgcICQoLDA0ODw==",
+        "ct": "p2fBdf+NogbVYW+HfeqDrftnNUXQ9lcqlN/FsgPp/Z6wZpfO0acRp4kAInYOM96r1g/PvnoNSDcvyHbPfTFRflmAiT4MHdEl6iBHcw61LlQZLqLrtsfFbaiwA2y2lJZwORfTWCOiEV+Q1apTRPoL5BeJUxzqApeWp9xR0hqZ/l0=",
+        "mac": "NKdwS36uhQpAdf57MDjh9kLEd5HSQ3es4Gssz6Hy9jE="
+      }
+    },
+    {
+      "name": "door_opened",
+      "plaintext": "{\"action\":\"pulse\",\"at\":\"2026-10-03T05:01:00Z\",\"id\":70,\"kind\":\"door_opened\",\"name\":\"Main Door\",\"room\":\"Kitchen\",\"room_id\":10,\"v\":1,\"via\":\"Good night\",\"who\":{\"name\":\"Dana's iPhone\",\"profile\":\"Dana\",\"type\":\"key\"}}",
+      "iv_hex": "f0e1d2c3b4a5968778695a4b3c2d1e0f",
+      "sealed": {
+        "iv": "8OHSw7Sllod4aVpLPC0eDw==",
+        "ct": "OPT3Iafx89YhV+8RlKs/qCu+mqWgTynVEqmLHp3D8aYpr9tJQCmlNlXcIVI3kTto0f25TZpWhD+iPPKVT3BidLTtdq8BHU4hjJPYyphi49vm9dl/1xS2UQqaJUcN0SzQmYMNmigU2zurXuqnQXV7uNxPHjp/t37WbwIyuuPPQs0AErfor05Q5UtFdrLjPyNjreclJuc1O6jl00ScGydc/avLkK7VSpm508+TEABtfQz+KcNfVdfGaOGbQELWPGeeBfA9Jrau5VIXEBrfUjrFDbkf1UugQvch2FwcribLhbY=",
+        "mac": "KlzfzLabP4UDhoxtGazc/ApYegj0B3tpv0zfcj8tWbA="
+      }
+    }
+  ]
+}

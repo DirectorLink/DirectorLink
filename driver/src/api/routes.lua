@@ -116,6 +116,10 @@ return {
     { method = "DELETE", path = "/v1/backup/automatic", handler = "backup.clear_automatic", role = "admin" },
     { method = "POST", path = "/v1/backup/automatic/run", handler = "backup.run_automatic", role = "admin" },
 
+    -- Which alerts this device gets (ADR-050): each key its own.
+    { method = "GET", path = "/v1/alerts/choices", handler = "alerts.get", role = "viewer" },
+    { method = "PUT", path = "/v1/alerts/choices", handler = "alerts.put", role = "viewer" },
+
     -- What the controller did and noticed (ADR-046), for admins; in the clear too, like the log.
     { method = "GET", path = "/v1/activity", handler = "activity.list", role = "admin" },
 

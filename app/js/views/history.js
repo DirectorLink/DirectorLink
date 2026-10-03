@@ -180,6 +180,8 @@ function who(entry) {
     return when ? t("history.who.schedule", { when }) : t("history.who.scheduleGone");
   }
   if (by.type === "composer") return t("history.who.composer");
+  // A door or gate opened without DirectorLink (1.7.0, ADR-050).
+  if (by.type === "control4") return t("history.who.control4");
   if (by.type !== "key") return t("history.who.controller");
   const device = by.name ? isolate(by.name) : t("history.who.unknownDevice");
   const text = by.profile && by.profile !== by.name ? t("history.who.person", { person: isolate(by.profile), device }) : device;

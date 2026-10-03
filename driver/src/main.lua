@@ -29,6 +29,7 @@ local SonosClient = require("src.sonos.client")
 local SonosRooms = require("src.sonos.rooms")
 local Activity = require("src.core.activity")
 local AutoBackup = require("src.cloud.auto_backup")
+local Alerts = require("src.cloud.alerts")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -103,6 +104,9 @@ end
 -- cloud's list of key ids.
 local function keysChanged()
     Profiles.prune(Keys.list())
+    if Keys.complete() then
+        Alerts.prune(Keys.list())
+    end
     publishKeyCount()
     Relay.announceKeys()
 end
@@ -532,11 +536,8 @@ function OnDriverLateInit(driverInitType)
         paused = schedulesPaused,
         calendar = JewishCalendar,
         onRun = automationRan,
-        -- A schedule that failed: the account service alerts the home's admins (ADR-047). Only
-        -- the time leaves the controller, never which schedule or scene.
-        onFailed = function(at)
-            Relay.tell({ type = "alert", kind = "schedule_failed", at = Clock.iso(at) })
-        end,
+        -- A schedule that failed: the home's admins are alerted, sealed to their keys (ADR-050).
+        onFailed = Alerts.scheduleFailed,
         onTick = function(now)
             refreshScheduleStatus(now)
             refreshCalendarStatus(now)
@@ -577,6 +578,10 @@ function OnDriverLateInit(driverInitType)
         remoteEnabled = services.remote.enabled,
         lockAvailable = Remote.available,
     })
+    -- Alerts the controller makes, sealed to each device's key (ADR-050): doorbells rang, doors
+    -- and gates opened (as the history has them), schedules that failed; the refrigerator's door
+    -- left open calls Alerts.fridgeDoor.
+    Alerts.start({ relay = Relay, remote = Remote, keys = Keys, registry = Registry, adapters = AdapterManager, activity = Activity })
     if Properties and Properties["Remote Access"] == "On" then
         Relay.start()
     else
