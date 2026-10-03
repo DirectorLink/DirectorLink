@@ -45,8 +45,8 @@ test("every alert is padded to the same size, so its length does not say which i
     const home = "0123456789abcdef0123456789abcdef";
     const at = "2026-10-03T05:00:00.000Z";
     const sizes = [];
-    // The cloud's own alerts, and the largest one the controller seals (ADR-050): a detail of 500
-    // bytes is 512 encrypted, 684 characters of base64.
+    // The cloud's own alerts, and one the controller seals (ADR-050): every detail is padded to 496
+    // bytes, 512 encrypted, 684 characters of base64.
     const sealed = { kind: "sealed", home, key: "0a1b2c3d", at, sealed: { iv: "A".repeat(22) + "==", ct: "A".repeat(684), mac: "A".repeat(43) + "=" } };
     for (const kind of ["offline", "schedule_failed", "sealed"]) {
       const message = JSON.stringify(kind === "sealed" ? sealed : { kind, home, at });

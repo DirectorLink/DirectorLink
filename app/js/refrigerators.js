@@ -2,7 +2,8 @@
 // door, the water filter, and four features switched on and off. A command goes through Samsung's
 // cloud: the controller answers at once, and the refrigerator confirms a few seconds later (its
 // driver gives up after about a minute), so the app shows the switch as waiting until the feature
-// reports the change, or for CONFIRM_MS at most.
+// reports the change, or for CONFIRM_MS at most; then it keeps reading quietly for LATE_MS, so that
+// a change confirmed later still shows.
 // No imports, so the rules can be tested under Node (tests/app/refrigerators.test.mjs).
 
 // The features, in the order the card and the scene editor show them.
@@ -10,9 +11,14 @@ export const FEATURES = ["power_cool", "power_freeze", "sabbath_mode", "ice_make
 export const FEATURE_ICONS = { power_cool: "coolFast", power_freeze: "snowflake", sabbath_mode: "candles", ice_maker: "ice" };
 
 // How long a command may take to show (the refrigerator confirms through Samsung's cloud,
-// typically within 4 s), and how often the app reads the refrigerator meanwhile.
-export const CONFIRM_MS = 40000;
+// typically within 4 s; its driver reads it again about 3, 10, 25 and 55 s after the command), and
+// how often the app reads the refrigerator meanwhile. After that, the driver may still see the change
+// at its next poll (every 2 minutes by default): the app reads every LATE_POLL_MS for LATE_MS more,
+// and shows the change if it comes.
+export const CONFIRM_MS = 65000;
 export const CONFIRM_POLL_MS = 2000;
+export const LATE_MS = 120000;
+export const LATE_POLL_MS = 5000;
 
 // The features this refrigerator has (the ones PATCH takes), in FEATURES order.
 export function fridgeFeatures(fridge) {

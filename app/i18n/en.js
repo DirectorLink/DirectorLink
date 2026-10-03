@@ -984,7 +984,7 @@ export default {
     doorOpenedControl4: "{name} was opened in Control4 at {time}.",
     doorHeld: "{name} was held open by {who} at {time}.",
     who: "{person} ({device})",
-    fridgeDoor: "{name} – the door has been open for {minutes} minutes ({time}).",
+    fridgeDoor: "{name} – the door has been open for at least {minutes} min ({time}).",
     fridgeDoorNow: "{name} – the door was left open ({time}).",
     settings: {
       title: "Alerts",
@@ -1007,6 +1007,7 @@ export default {
       blocked: "Notifications are blocked for DirectorLink. Allow them in the browser’s or the device’s settings, then try again.",
       unsupported: "This browser can’t show alerts.",
       notLinked: "Link this device to your account first (Settings → Account), on the home network.",
+      unreachable: "Your home couldn’t be reached to confirm this device. Check that it’s online, then try again.",
       adminOnly: "Only the home’s admins get alerts.",
       needsUpdate: "Alerts need DirectorLink 1.6.0 or later on the controller, with Remote Access on. Update it in Composer.",
       notAvailable: "Alerts aren’t available yet. Try again later.",

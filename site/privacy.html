@@ -173,9 +173,13 @@
         offline for 10 minutes. Each device chooses which. Your controller decides who gets what, and
         encrypts what happened (which doorbell, which door and who opened it, which schedule)
         separately for each of those devices, with a key only that device and your controller hold:
-        our servers pass it on without being able to read it, and learn only which devices' keys an
-        alert is for, when, and whether it is a doorbell's, which is kept for a minute only. The
-        offline alert is our servers' own: it says only that, at which home (by its id) and when.
+        our servers pass it on without being able to read it. They learn which devices' keys an
+        alert is for, when, and whether it is a doorbell's, which is kept for a minute only. Every
+        alert has the same size, but whom it is for can tell its kind: our servers know which keys
+        are admins', so an alert that is not a doorbell's and is for someone who is not an admin can
+        only be the refrigerator's. They never learn which doorbell, door or refrigerator, who opened
+        a door, or which schedule. The offline alert is our servers' own: it says only that, at which
+        home (by its id) and when.
         Alerts are sent through the push service of the device's browser (Google, Mozilla, Apple or
         Microsoft), encrypted so that only that browser can read them. The push service sees that an
         alert went to the device, when, how long it may keep it, and its size, which is the same for

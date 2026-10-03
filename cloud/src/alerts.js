@@ -68,7 +68,8 @@ const SCHEDULE_ALERTS_PER_HOUR = 3;
 // and keys one may name.
 export const NOTIFY_PER_HOUR = 60;
 const NOTIFY_MAX_KEYS = 50;
-// A sealed part's ciphertext, in base64 characters: the controller seals at most 500 bytes.
+// A sealed part's ciphertext, in base64 characters: the controller pads every detail to 496 bytes,
+// which seal to 512 (684 characters).
 const SEALED_MAX_CT = 700;
 // How long a push service keeps an alert for a device that is off; a doorbell's ("brief") only a
 // minute: a ring heard later is no use.
@@ -318,7 +319,10 @@ export class HomeAlerts {
   async subscribe(input, homeId) {
     const keyId = input.key_id ?? null;
     if (keyId) {
-      // Any role: the controller decides what each key gets. The account must use that key here.
+      // Any role: the controller decides what each key gets. The account must use that key here;
+      // a request it just sealed with the key is recorded after its answer (home-relay.js, "e2e"),
+      // so the key work still queued is waited for first, as the app registers again right after.
+      await this.relay.keyWork;
       const uses = await this.env.DB.prepare("SELECT 1 AS found FROM member_keys WHERE home_id = ? AND key_id = ? AND user_id = ?").bind(homeId, keyId, input.user).first();
       if (!uses) {
         log("alerts_refused", { home: homeId, user: input.user, why: "not this account's key" });

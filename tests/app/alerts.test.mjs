@@ -351,8 +351,10 @@ test("refused: the permission, an account that is not an admin, a controller tha
   cloud.calls.length = 0;
   // Not an admin as far as the account service knows: the device's key is told to it through the
   // account (a sealed request), and it is asked once more.
+  home.online = true;
   cloud.posts.push([403, { code: "ADMIN_ONLY" }], [403, { code: "ADMIN_ONLY" }]);
   await press();
+  home.online = false;
   assert.equal(callsTo("POST").length, 2);
   assert.ok(cloud.calls.some((call) => call.path.endsWith("/e2e")), "a sealed request through the account in between");
   assert.equal(isOn(), false);
@@ -531,6 +533,19 @@ test("an account that has not used its key at the home yet uses it once through 
   assert.ok(toHome("GET", "/v1/api-keys/current").length >= 1, "a sealed request through the account in between");
   assert.equal(isOn(), true);
   await turnAlertsOff();
+});
+
+test("when that request cannot reach the home, it says the home could not be reached, not that the device is not linked", async () => {
+  await turnAlertsOff();
+  withChoices("member");
+  home.online = false;
+  cloud.posts.push([403, { code: "KEY_NOT_LINKED" }]);
+  await press();
+  assert.equal(isOn(), false);
+  assert.equal(callsTo("POST").length, 1, "not registered again in vain");
+  assert.equal(shown(), "Your home couldn’t be reached to confirm this device. Check that it’s online, then try again.");
+  assert.equal(browser.subscription, null, "the subscription goes again");
+  home.online = true;
 });
 
 test("a controller that does not know this device has alerts on is told: switched on by an app before 1.7.0, or restored", async () => {

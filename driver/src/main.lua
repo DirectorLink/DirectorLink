@@ -355,10 +355,11 @@ end
 
 -- A refrigerator's door has been open longer than its driver's Door Open Alert (ADR-049): once per
 -- opening, from the driver's Door Left Open event (src/adapters/refrigerator.lua). It goes into the
--- history, and to the members and admins who chose the alert, sealed to each one's key (ADR-050).
-Refrigerator.onDoorLeftOpen(function(device)
+-- history, and to the members and admins who chose the alert, sealed to each one's key (ADR-050),
+-- saying for how many minutes at least, when DirectorLink saw the door open (`seconds`).
+Refrigerator.onDoorLeftOpen(function(device, seconds)
     Activity.record("door", "left_open", { what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
-    local ok, err = pcall(Alerts.fridgeDoor, device)
+    local ok, err = pcall(Alerts.fridgeDoor, device, seconds)
     if not ok then
         Log.warn("alerts", "refrigerator alert failed", { device_id = device.id, error = tostring(err) })
     end

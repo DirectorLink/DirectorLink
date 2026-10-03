@@ -1,8 +1,9 @@
 // Samsung refrigerators in the app (DirectorLink 1.7.0, ADR-049): the rules of
 // app/js/refrigerators.js; a feature switched from the card (controls.js with session.js) against a
 // fake controller under fake time — shown at once as waiting, confirmed once the refrigerator
-// reports it (through Samsung's cloud, seconds later), put back with a word when it does not within
-// 40 s or is refused, two at once; the card for members and viewers, offline, a door open, a model
+// reports it (through Samsung's cloud, seconds later, or up to its driver's last read about 55 s
+// after), put back with a word when it does not within 65 s or is refused, then shown if it confirms
+// late, two at once; the card for members and viewers, offline, a door open, a model
 // without some features; where refrigerators appear (rooms, favorites); the scene action; Hebrew.
 //   node --test tests/app/
 
@@ -121,7 +122,7 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 const fridgeRules = await import("../../app/js/refrigerators.js");
-const { CONFIRM_MS, FEATURES, featuresOf, fridgeChangeConfirmed, fridgeFeatures, optimisticFridge, stepFeature, stepSet, zones } = fridgeRules;
+const { CONFIRM_MS, FEATURES, LATE_MS, featuresOf, fridgeChangeConfirmed, fridgeFeatures, optimisticFridge, stepFeature, stepSet, zones } = fridgeRules;
 const { state, ui, notify } = await import("../../app/js/state.js");
 const controls = await import("../../app/js/controls.js");
 const session = await import("../../app/js/session.js");
@@ -241,7 +242,8 @@ test("features: the ones a refrigerator has, in a fixed order; all four when its
   assert.deepEqual(stepSet("sabbath_mode", true), { sabbath_mode: true });
   assert.deepEqual(stepFeature({ ice_maker: false, power_cool: true }), { feature: "power_cool", on: true }, "the first in order");
   assert.equal(stepFeature({ action: "pulse" }), null);
-  assert.ok(CONFIRM_MS >= 30000, "longer than the refrigerator's usual few seconds through the cloud");
+  assert.ok(CONFIRM_MS >= 60000, "longer than the refrigerator driver's last read, about 55 s after the command");
+  assert.ok(LATE_MS >= 120000, "then up to its next poll, every 2 minutes by default");
 });
 
 // ---- commands ----------------------------------------------------------------------------------
@@ -273,21 +275,59 @@ test("a switch moves at once, says it waits, and holds once the refrigerator con
   assert.doesNotMatch(textOf(card), /Turning/);
 });
 
-test("not confirmed within 40 s: back to what the refrigerator reports, and it says so", async () => {
+test("confirmed at the refrigerator driver's last read, about 55 s after: still waiting, then held", async () => {
+  await connect();
+  controller.lag = 55000;
+  const sending = controls.setRefrigerator(fridgeNow(), { sabbath_mode: true });
+  await settle();
+  await advance(50000, 500);
+  assert.equal(fridgeNow().sabbath_mode, true, "still waiting after 50 s");
+  assert.deepEqual(controls.changesOnTheirWay("refrigerator", 141), { sabbath_mode: true });
+  await advance(8000, 500);
+  await sending;
+  assert.equal(fridgeNow().sabbath_mode, true);
+  assert.equal(state.errors["refrigerator:141"], undefined, "no word that it did not confirm");
+  assert.deepEqual(controls.changesOnTheirWay("refrigerator", 141), {});
+});
+
+test("not confirmed within 65 s: back to what the refrigerator reports, and it says so", async () => {
   await connect();
   controller.reports = false;
   const sending = controls.setRefrigerator(fridgeNow(), { power_freeze: true });
   await settle();
   assert.equal(fridgeNow().power_freeze, true);
-  await advance(30000, 500);
-  assert.equal(fridgeNow().power_freeze, true, "still waiting after 30 s");
+  await advance(60000, 500);
+  assert.equal(fridgeNow().power_freeze, true, "still waiting after 60 s");
   assert.deepEqual(controls.changesOnTheirWay("refrigerator", 141), { power_freeze: true });
-  await advance(11000, 500);
+  await advance(7000, 500);
   await sending;
   assert.equal(fridgeNow().power_freeze, false, "as the refrigerator reports it");
   assert.equal(state.errors["refrigerator:141"]?.text, "The refrigerator didn’t confirm this. It may be offline; try again.");
-  assert.ok(reads().length >= 18 && reads().length <= 21, `every 2 s: ${reads().length}`);
+  assert.ok(reads().length >= 31 && reads().length <= 34, `every 2 s: ${reads().length}`);
   assert.match(textOf(refrigeratorCard(fridgeNow())), /didn’t confirm/);
+  // Then it reads quietly, every 5 s for 2 minutes, and stops.
+  const before = reads().length;
+  await advance(LATE_MS + 10000, 1000);
+  assert.ok(reads().length - before >= 23 && reads().length - before <= 25, `every 5 s: ${reads().length - before}`);
+  assert.equal(fridgeNow().power_freeze, false);
+  const after = reads().length;
+  await advance(30000, 1000);
+  assert.equal(reads().length, after, "no more reads");
+});
+
+test("confirmed after the message: the change shows, and the word that it did not confirm goes", async () => {
+  await connect();
+  controller.lag = 69000;
+  const sending = controls.setRefrigerator(fridgeNow(), { ice_maker: true });
+  await settle();
+  await advance(67000, 500);
+  await sending;
+  assert.equal(fridgeNow().ice_maker, false);
+  assert.match(state.errors["refrigerator:141"]?.text ?? "", /didn’t confirm/);
+  await advance(5000, 500);
+  assert.equal(fridgeNow().ice_maker, true, "shown once the refrigerator reports it");
+  assert.equal(state.errors["refrigerator:141"], undefined, "and no longer said not confirmed");
+  assert.doesNotMatch(textOf(refrigeratorCard(fridgeNow())), /didn’t confirm/);
 });
 
 test("two features at once: the one confirmed first does not hide the other", async () => {

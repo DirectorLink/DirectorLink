@@ -30,9 +30,13 @@ Scenes.MAX_TEMPERATURE = 40
 Scenes.REFRIGERATOR_FEATURES = { power_cool = true, power_freeze = true, sabbath_mode = true, ice_maker = true }
 -- Step types DirectorLink 1.6.0 does not know. It leaves them out when it loads the scenes, and its
 -- next save drops them; so they are also kept under EXTRAS_KEY, where it does not look, and put back
--- when the scenes come back without them (Scenes.load).
+-- when the scenes come back without them (Scenes.load). The scenes record 1.7.0 writes says so
+-- (STEPS_KEPT), a field 1.6.0 drops when it saves: steps are put back only into scenes an older
+-- version wrote, never into scenes 1.7.0 saved without them (a step removed, even when the copy
+-- under EXTRAS_KEY could not be written then).
 Scenes.NEWER_TYPES = { refrigerators = true }
 local EXTRAS_KEY = "directorlink_scene_steps"
+local STEPS_KEPT = "steps_kept"
 
 -- `complete` is false after the stored scenes could not be read: saving then would overwrite them.
 -- `extras`: EXTRAS_KEY holds steps (or held them), so a save writes it again.
@@ -187,8 +191,12 @@ local function saveExtras()
             any = true
         end
     end
-    if (any or state.extras) and Store.write(EXTRAS_KEY, { version = 1, scenes = scenes }, false) then
-        state.extras = any
+    if any or state.extras then
+        if Store.write(EXTRAS_KEY, { version = 1, scenes = scenes }, false) then
+            state.extras = any
+        else
+            Log.warn("scenes", "could not keep the newer scene steps apart; going back to an older DirectorLink may lose them", { key = EXTRAS_KEY })
+        end
     end
 end
 
@@ -197,7 +205,7 @@ local function save()
     for _, scene in ipairs(state.scenes) do
         records[#records + 1] = copy(scene)
     end
-    local ok = Store.write(STORE_KEY, { version = 1, scenes = records }, false)
+    local ok = Store.write(STORE_KEY, { version = 1, scenes = records, [STEPS_KEPT] = true }, false)
     if not ok then
         Log.error("scenes", "could not save the scenes")
     else
@@ -279,13 +287,18 @@ function Scenes.read(data)
 end
 
 -- Puts back the steps of NEWER_TYPES that a scene lost while DirectorLink 1.6.0 ran (it saved the
--- scenes without them): in their places, in a scene that has none of them now. Returns how many.
-local function putBackExtras(scenes)
+-- scenes without them, and without STEPS_KEPT): in their places, in a scene that has none of them
+-- now. `written`: the scenes record has STEPS_KEPT (1.7.0 wrote it), so nothing is put back.
+-- Returns how many.
+local function putBackExtras(scenes, written)
     local data = Store.read(EXTRAS_KEY, false)
     if type(data) ~= "table" then
         return 0
     end
     state.extras = true
+    if written then
+        return 0
+    end
     local kept = type(data.scenes) == "table" and data.scenes or {}
     local putBack = 0
     for _, scene in ipairs(scenes) do
@@ -317,7 +330,7 @@ function Scenes.load()
         Log.warn("scenes", "stored scene steps that are not valid were left out", { steps = dropped })
     end
     if state.complete then
-        local putBack = putBackExtras(state.scenes)
+        local putBack = putBackExtras(state.scenes, type(data) == "table" and data[STEPS_KEPT] == true)
         if putBack > 0 then
             Log.warn("scenes", "scene steps an older DirectorLink left out were put back", { steps = putBack })
             save()

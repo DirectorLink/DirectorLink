@@ -1,4 +1,5 @@
 local Classifier = require("src.adapters.classifier")
+local Clock = require("src.core.clock")
 local DeviceEvents = require("src.control4.device_events")
 local Log = require("src.core.log")
 local Units = require("src.adapters.thermostat_units")
@@ -55,12 +56,16 @@ local NOT_WATCHED = { POWER_W = true }
 local REQUIRED = { "POWER_COOL", "POWER_FREEZE", "SABBATH_MODE", "ICE_MAKER", "ONLINE" }
 
 local tracked = {}
--- Doors left open whose handler ran (protocol id -> true), until they close. Kept through a project
--- refresh (reset() leaves it), so the handler runs once per opening.
+-- Doors left open whose handler ran (protocol id -> true), until they close; and when DOOR_OPEN
+-- turned "1" (protocol id -> Clock.now(): at the driver's poll after the door opened, so the door
+-- has been open at least since then). Both kept through a project refresh (reset() leaves them), so
+-- the handler runs once per opening; a door already open when DirectorLink starts has no time.
 local leftOpen = {}
+local openedAt = {}
 local doorLeftOpenHandler = nil
 
--- handler(device): a refrigerator's door has been open longer than its driver's Door Open Alert.
+-- handler(device, seconds): a refrigerator's door has been open longer than its driver's Door Open
+-- Alert; `seconds`: for at least this long (since DOOR_OPEN turned "1"), nil when not known.
 function Refrigerator.onDoorLeftOpen(handler)
     doorLeftOpenHandler = handler
 end
@@ -174,6 +179,7 @@ local function update(device, info)
     -- The door closed: the next time it is left open is a new opening.
     if state.door_open ~= true then
         leftOpen[info.protocol] = nil
+        openedAt[info.protocol] = nil
     end
 end
 
@@ -291,8 +297,12 @@ function Refrigerator.onVariableChanged(device, variableId, value)
     if not name then
         return false
     end
+    local wasOpen = type(device.state) == "table" and device.state.door_open == true
     info.values[name] = value
     update(device, info)
+    if device.state.door_open == true and not wasOpen and not openedAt[info.protocol] then
+        openedAt[info.protocol] = Clock.now()
+    end
     Log.debug("refrigerator_state", "refrigerator variable changed", { device_id = device.id, variable = name, value = value })
     return true
 end
@@ -307,9 +317,11 @@ function Refrigerator.onDeviceEvent(device, eventId)
         return false
     end
     leftOpen[info.protocol] = true
-    Log.info("refrigerator", "a refrigerator door was left open", { device_id = device.id })
+    local since = openedAt[info.protocol]
+    local seconds = since and math.max(0, Clock.now() - since) or nil
+    Log.info("refrigerator", "a refrigerator door was left open", { device_id = device.id, seconds = seconds })
     if doorLeftOpenHandler then
-        local ok, err = pcall(doorLeftOpenHandler, device)
+        local ok, err = pcall(doorLeftOpenHandler, device, seconds)
         if not ok then
             Log.error("refrigerator", "door left open handler failed", { device_id = device.id, error = tostring(err) })
         end

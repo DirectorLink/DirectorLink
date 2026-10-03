@@ -349,6 +349,47 @@ function tests.the_hook_runs_once_per_opening_with_the_refrigerator()
     Mock.fireDeviceEvent(mock, 140, 15)
 end
 
+-- The hook says for how long at least the door has been open: since its DOOR_OPEN turned "1" (read
+-- at the refrigerator driver's poll), kept through a project refresh; not known for a door that was
+-- already open when DirectorLink started.
+function tests.the_hook_says_since_when_the_door_has_been_open()
+    local mock, key = start()
+    local Clock = require("src.core.clock")
+    local now = os.time()
+    Clock.now = function()
+        return now
+    end
+    local calls = {}
+    local function listen()
+        require("src.adapters.refrigerator").onDoorLeftOpen(function(_, seconds)
+            calls[#calls + 1] = seconds or "unknown"
+        end)
+    end
+    listen()
+    Mock.setRefrigerator(mock, 140, { DOOR_OPEN = "1" })
+    now = now + 300
+    Mock.setRefrigerator(mock, 140, { FRIDGE_TEMP = "5", DOOR_OPEN = "1" })
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    now = now + 90
+    Mock.fireDeviceEvent(mock, 140, 15)
+    T.same(calls, { 390 })
+
+    -- Closed, then open again: from the new opening.
+    Mock.setRefrigerator(mock, 140, { DOOR_OPEN = "0" })
+    now = now + 60
+    Mock.setRefrigerator(mock, 140, { DOOR_OPEN = "1" })
+    now = now + 400
+    Mock.fireDeviceEvent(mock, 140, 15)
+    T.same(calls, { 390, 400 })
+
+    -- Open when DirectorLink starts (a driver update): since when is not known.
+    local updated = Mock.updateDriver(mock, mock.project)
+    T.eq(T.http(updated, "GET", "/v1/refrigerators/141", { key = key }).json.door_open, true)
+    listen()
+    Mock.fireDeviceEvent(updated, 140, 15)
+    T.same(calls, { 390, 400, "unknown" })
+end
+
 function tests.scenes_switch_refrigerator_features()
     local mock, key = start()
     local before = #mock.commands
@@ -487,6 +528,7 @@ function tests.refrigerator_steps_come_back_after_a_downgrade()
         { type = "climate", device_ids = { 30 }, set = { mode = "off" } },
     } } }).json
     T.truthy(mock.persist.directorlink_scene_steps, "kept apart too")
+    T.eq(storedScenes(mock).steps_kept, true, "the scenes say 1.7.0 wrote them")
 
     -- What 1.6.0 does, with its own scenes module: the step is left out as it loads.
     local Scenes = require("src.core.scenes")
@@ -494,10 +536,11 @@ function tests.refrigerator_steps_come_back_after_a_downgrade()
     local loaded = Scenes.read(storedScenes(mock))
     Scenes.TYPES.refrigerators = true
     T.eq(#loaded[1].steps, 2, "1.6.0 runs the other steps")
-    -- Its next save (any scene changed) writes them without it.
+    -- Its next save (any scene changed) writes them without it, as { version, scenes } only.
     local data = storedScenes(mock)
     table.remove(data.scenes[1].steps, 2)
     data.scenes[1].name = "Shabbat (changed in 1.6.0)"
+    data.steps_kept = nil
     mock.persist.directorlink_scenes = "json:" .. Json.encode(data)
 
     local updated = Mock.updateDriver(mock, mock.project)
@@ -508,6 +551,7 @@ function tests.refrigerator_steps_come_back_after_a_downgrade()
     T.eq(back.steps[2].type, "refrigerators", "in its place")
     T.same(back.steps[2].set, { sabbath_mode = true })
     T.eq(#storedScenes(updated).scenes[1].steps, 3, "and saved again")
+    T.eq(storedScenes(updated).steps_kept, true)
     T.contains(table.concat(updated.debugLog, "\n"), "put back")
 
     -- Removed in 1.7.0, it does not come back.
@@ -516,6 +560,37 @@ function tests.refrigerator_steps_come_back_after_a_downgrade()
     } } }).status, 200)
     local again = Mock.updateDriver(updated, updated.project)
     T.eq(#T.http(again, "GET", "/v1/scenes/" .. scene.id, { key = key2 }).json.steps, 1)
+end
+
+-- A step removed in 1.7.0 stays removed when the copy kept apart could not be written then: the
+-- scenes record 1.7.0 wrote says so, and only one an older version wrote gets steps back.
+function tests.a_refrigerator_step_removed_stays_removed_when_its_copy_could_not_be_written()
+    local mock, key = start()
+    local scene = T.http(mock, "POST", "/v1/scenes", { key = key, body = { name = "Evening", steps = {
+        { type = "lights", device_ids = { 20 }, set = { on = false } },
+        { type = "refrigerators", device_ids = { 141 }, set = { sabbath_mode = true } },
+    } } }).json
+    local kept = mock.persist.directorlink_scene_steps
+    local write = C4.PersistSetValue
+    C4.PersistSetValue = function(self, name, value, encrypted)
+        if name == "directorlink_scene_steps" then
+            error("persist failed")
+        end
+        return write(self, name, value, encrypted)
+    end
+    local ok, patched = pcall(T.http, mock, "PATCH", "/v1/scenes/" .. scene.id, { key = key, body = { steps = {
+        { type = "lights", device_ids = { 20 }, set = { on = false } },
+    } } })
+    C4.PersistSetValue = write
+    T.truthy(ok, patched)
+    T.eq(patched.status, 200, patched.body)
+    T.eq(mock.persist.directorlink_scene_steps, kept, "the copy still has the step")
+    T.contains(table.concat(mock.debugLog, "\n"), "could not keep the newer scene steps apart")
+
+    local restarted = Mock.updateDriver(mock, mock.project)
+    local steps = T.http(restarted, "GET", "/v1/scenes/" .. scene.id, { key = key }).json.steps
+    T.eq(#steps, 1, "not put back")
+    T.eq(steps[1].type, "lights")
 end
 
 function tests.a_home_without_refrigerator_steps_keeps_nothing_apart()

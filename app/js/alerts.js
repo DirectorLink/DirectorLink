@@ -11,7 +11,7 @@
 // Cache Storage, the words in this device's language and this device's alert key, which opens what
 // was sealed to it and nothing else: never the lock key or the API key. With an older controller,
 // alerts are for admins only, and say only their kind and time (ADR-047). Tapping one opens the
-// doorbell on Home, or Settings → Controller → History.
+// doorbell on Home, the refrigerator's room, or Settings → Controller → History (sw.js).
 
 import { ACCOUNTS_API } from "./account.js";
 import { currentLanguage, languageInfo, t } from "./i18n.js";
@@ -228,17 +228,19 @@ function register(home, subscription, keyId, offline = true) {
 }
 
 // Registered; when the account service did not know yet that this account uses the key (it
-// learns it from a request sealed through the account), after one such request, again.
+// learns it from a request sealed through the account), after one such request, again. When that
+// request did not reach the home (offline, Remote Access off), the refusal says so (`unreachable`).
 async function registered(home, subscription, keyId, offline) {
   let result = await register(home, subscription, keyId, offline);
   if (result.status === 403 && (result.data?.code === "KEY_NOT_LINKED" || result.data?.code === "ADMIN_ONLY")) {
-    await checkInThroughAccount(true);
+    if ((await checkInThroughAccount(true)) === false) return { ...result, unreachable: true };
     result = await register(home, subscription, keyId, offline);
   }
   return result;
 }
 
 function refusal(result) {
+  if (result?.unreachable) return "unreachable";
   switch (result?.data?.code) {
     case "ADMIN_ONLY":
       return "adminOnly";

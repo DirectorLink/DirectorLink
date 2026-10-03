@@ -52,15 +52,22 @@ function KnxRelay.initialize(device, _registry, before)
     return true
 end
 
+-- True when the relay's state changed; a report of the state it already had changes nothing.
 function KnxRelay.onDeviceEvent(device, eventId)
     eventId = tonumber(eventId)
+    local reported
     if eventId == OPENED_EVENT then
-        device.state.relay = "open"
+        reported = "open"
     elseif eventId == CLOSED_EVENT then
-        device.state.relay = "closed"
+        reported = "closed"
     else
         return false
     end
+    if device.state.relay == reported then
+        Log.debug("relay", "relay reported its state again", { device_id = device.id, state = reported })
+        return false
+    end
+    device.state.relay = reported
     Log.debug("relay", "relay state changed", { device_id = device.id, state = device.state.relay })
     return true
 end

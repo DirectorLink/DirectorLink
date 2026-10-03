@@ -90,7 +90,10 @@ Stored scenes are checked again when the driver starts: steps that are not valid
 (and logged). DirectorLink 1.6.0 does not know refrigerator steps: it leaves them out (the rest of
 the scene runs), and its next save of any scene drops them. 1.7.0 also keeps them apart, under
 `directorlink_scene_steps`, which 1.6.0 does not read, and puts them back in their places when a
-scene comes back without them (ADR-049). If the stored scenes cannot be read at start, changes are refused (503) until a
+scene comes back without them from a save by 1.6.0 (ADR-049). The scenes 1.7.0 saves say so
+(`steps_kept`, which 1.6.0 drops when it saves), so a step removed in 1.7.0 never comes back. A
+backup restored while 1.6.0 runs is such a save: back on 1.7.0, its scenes get the refrigerator
+steps the controller had before the restore, in scenes with the same id. If the stored scenes cannot be read at start, changes are refused (503) until a
 restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".

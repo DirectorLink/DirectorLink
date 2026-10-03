@@ -45,10 +45,12 @@ Alerts.PER_HOUR = 60
 -- A door or doorbell reporting an opening this soon after DirectorLink's own command to it was
 -- opened by that command (already in the history, with who did it).
 Alerts.OWN_SECONDS = 15
--- Names in a detail are cut to this many bytes (whole characters), and a detail is never larger
--- than MAX_DETAIL bytes: every push is padded to one size (cloud/src/web-push.js).
+-- Names in a detail are cut to this many bytes (whole characters). Every detail is padded with
+-- spaces to DETAIL_BYTES before it is sealed, so that every part's ciphertext has the same size
+-- (512 bytes, 684 in base64) whatever its kind and names; one larger has its names shortened. Every
+-- push is padded to one size too (cloud/src/web-push.js).
 Alerts.MAX_NAME = 60
-Alerts.MAX_DETAIL = 500
+Alerts.DETAIL_BYTES = 496
 
 local STORE_KEY = "directorlink_alert_choices"
 local STORE_VERSION = 1
@@ -316,6 +318,39 @@ local function lastHour(list, now)
     return kept
 end
 
+-- The names a detail may hold: { field } of the detail, or { "who", field }.
+local NAMES = { { "name" }, { "room" }, { "via" }, { "who", "name" }, { "who", "profile" } }
+
+-- `detail` as the text sealed: its JSON padded with spaces to DETAIL_BYTES. Quotes and backslashes
+-- in names take two bytes each in JSON: a detail still larger has its names shortened together,
+-- the longest first (whole characters), until it fits; nil only if it never does.
+function Alerts.plaintext(detail)
+    local text = Json.encode(detail)
+    if #text > Alerts.DETAIL_BYTES then
+        local names = {}
+        for _, path in ipairs(NAMES) do
+            local holder = #path == 1 and detail or detail[path[1]]
+            local field = path[#path]
+            if type(holder) == "table" and type(holder[field]) == "string" then
+                names[#names + 1] = { holder = holder, field = field, value = holder[field] }
+            end
+        end
+        for limit = Alerts.MAX_NAME - 1, 0, -1 do
+            for _, item in ipairs(names) do
+                item.holder[item.field] = cut(item.value, limit)
+            end
+            text = Json.encode(detail)
+            if #text <= Alerts.DETAIL_BYTES then
+                break
+            end
+        end
+        if #text > Alerts.DETAIL_BYTES then
+            return nil
+        end
+    end
+    return text .. string.rep(" ", Alerts.DETAIL_BYTES - #text)
+end
+
 -- Whether `name` ("kind:id") was alerted less than `seconds` ago; if not, it is now.
 local function tooSoon(name, seconds, now)
     local last = state.last[name]
@@ -351,8 +386,8 @@ local function send(detail, now, brief, at)
     end
     detail.v = 1
     detail.at = type(at) == "string" and at or Clock.iso(at or now)
-    local plaintext = Json.encode(detail)
-    if #plaintext > Alerts.MAX_DETAIL then
+    local plaintext = Alerts.plaintext(detail)
+    if not plaintext then
         return nil, "too large"
     end
     local recipients, count = {}, 0
@@ -439,8 +474,10 @@ function Alerts.doorOpened(entry, now)
 end
 
 -- The refrigerator `device` ({ id, name, room_name, room_id }, as the registry has it) has had its
--- door open for `seconds` (optional): members and admins who chose it, at most once a refrigerator
--- in FRIDGE_SECONDS. The refrigerator's driver calls this when the door is left open (ADR-049).
+-- door open for at least `seconds` (optional: since DirectorLink saw it open, which its driver reads
+-- at its poll): members and admins who chose it, at most once a refrigerator in FRIDGE_SECONDS, with
+-- the whole minutes (rounded down; none under one). The refrigerator's integration calls this when
+-- the door is left open (ADR-049, main.lua).
 function Alerts.fridgeDoor(device, seconds, now)
     now = now or Clock.now()
     if type(device) ~= "table" then
@@ -450,7 +487,7 @@ function Alerts.fridgeDoor(device, seconds, now)
         return sent("fridge_door", nil, "too soon")
     end
     local detail = deviceDetail("fridge_door", device)
-    if type(seconds) == "number" and seconds > 0 then
+    if type(seconds) == "number" and seconds >= 60 then
         detail.minutes = math.floor(seconds / 60)
     end
     return sent("fridge_door", send(detail, now))
@@ -481,12 +518,15 @@ function Alerts.recorded(entry)
     end
 end
 
--- A device's event that its adapter took (src/adapters/manager.lua): a doorbell's ring, or a door
--- or gate opened that DirectorLink did not open (in Control4: its app, a keypad, its programming,
--- the DoorBird's own app), which goes into the history and from there to the admins.
+-- A device's event that its adapter took (src/adapters/manager.lua; `before`: the device's state
+-- before it): a doorbell's ring, or a door or gate opened that DirectorLink did not open (in
+-- Control4: its app, a keypad, its programming, the DoorBird's own app), which goes into the
+-- history, at most once a door in DOOR_SECONDS, and from there to the admins. A relay counts only
+-- when it closes from open as last reported: a relay that reports "closed" again (a status read
+-- after a restart, a cyclic report) or whose state is not known yet opened nothing.
 -- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; relayClosed(eventId);
 -- commandedAt(deviceId) (DirectorLink's last command to it); record(kind, action, fields).
-function Alerts.deviceEvent(device, eventId)
+function Alerts.deviceEvent(device, eventId, before)
     local options = state.options
     if not options or type(device) ~= "table" then
         return
@@ -501,7 +541,7 @@ function Alerts.deviceEvent(device, eventId)
         end
         opened = event == "opened" and "doorbell" or nil
     elseif device.kind == "relay" and options.relayClosed and options.relayClosed(eventId) then
-        opened = "pulse"
+        opened = type(before) == "table" and before.relay == "open" and "pulse" or nil
     end
     if not opened then
         return
@@ -509,6 +549,9 @@ function Alerts.deviceEvent(device, eventId)
     local commanded = options.commandedAt and options.commandedAt(device.id)
     if commanded and now - commanded <= Alerts.OWN_SECONDS and now >= commanded then
         return -- DirectorLink's own command: the history has it already, with who
+    end
+    if tooSoon("control4:" .. tostring(device.id), Alerts.DOOR_SECONDS, now) then
+        return
     end
     if options.record then
         options.record("door", opened, {

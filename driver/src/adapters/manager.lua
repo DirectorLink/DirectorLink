@@ -203,13 +203,18 @@ function Manager.onDeviceEvent(deviceId, eventId)
     if not device then
         return false
     end
+    -- The state as it was, for the listener (a relay closing from open is a door opened).
+    local before = {}
+    for key, value in pairs(type(device.state) == "table" and device.state or {}) do
+        before[key] = value
+    end
     local ok, changed = pcall(adapter.onDeviceEvent, device, eventId)
     if not ok then
         log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
     if changed == true and eventListener then
-        local told, err = pcall(eventListener, device, eventId)
+        local told, err = pcall(eventListener, device, eventId, before)
         if not told then
             log("event listener failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
         end
@@ -217,7 +222,8 @@ function Manager.onDeviceEvent(deviceId, eventId)
     return changed == true
 end
 
--- `listener(device, eventId)` is told of each event an adapter took, after it did.
+-- `listener(device, eventId, before)` is told of each event an adapter took, after it did (`before`:
+-- a copy of the device's state before).
 function Manager.onEvent(listener)
     eventListener = listener
 end

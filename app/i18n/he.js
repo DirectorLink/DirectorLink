@@ -970,7 +970,7 @@ export default {
     doorOpenedControl4: "פתיחה של {name} דרך Control4 ב-{time}.",
     doorHeld: "החזקה במצב פתוח של {name} על ידי {who} ב-{time}.",
     who: "{person} ({device})",
-    fridgeDoor: "{name} – הדלת פתוחה כבר {minutes} דקות ({time}).",
+    fridgeDoor: "{name} – הדלת פתוחה כבר לפחות {minutes} דק׳ ({time}).",
     fridgeDoorNow: "{name} – הדלת נשארה פתוחה ({time}).",
     settings: {
       title: "התראות",
@@ -993,6 +993,7 @@ export default {
       blocked: "ההתראות חסומות עבור DirectorLink. אשרו אותן בהגדרות הדפדפן או המכשיר ונסו שוב.",
       unsupported: "הדפדפן הזה לא יכול להציג התראות.",
       notLinked: "קשרו קודם את המכשיר לחשבון (הגדרות ← חשבון), ברשת הביתית.",
+      unreachable: "לא ניתן היה להגיע לבית כדי לאשר את המכשיר הזה. בדקו שהוא מחובר ונסו שוב.",
       adminOnly: "רק מנהלי הבית מקבלים התראות.",
       needsUpdate: "התראות דורשות DirectorLink 1.6.0 ומעלה בבקר, עם גישה מרחוק פעילה. עדכנו את הדרייבר ב-Composer.",
       notAvailable: "התראות עדיין לא זמינות. נסו שוב מאוחר יותר.",

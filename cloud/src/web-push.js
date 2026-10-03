@@ -17,8 +17,8 @@ const JWT_SECONDS = 12 * 3600;
 const RECORD_SIZE = 4096;
 // Every message is padded to this many bytes (with its delimiter), so that its size does not tell
 // the push service which alert it is: the cloud's own alerts are about 100 bytes of JSON, one sealed
-// by the controller (ADR-050) at most about 900 (a detail of at most 500 bytes, in base64, with its
-// IV, MAC, key id, home id and time). Web Push takes some 3,990.
+// by the controller (ADR-050) about 900 (every detail is padded to 496 bytes, 512 sealed, 684 in
+// base64, with its IV, MAC, key id, home id and time). Web Push takes some 3,990.
 export const MESSAGE_BYTES = 1024;
 const SEND_TIMEOUT_MS = 10000;
 

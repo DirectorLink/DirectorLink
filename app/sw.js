@@ -216,7 +216,7 @@ const ALERT_TEXTS = {
   door_held: "{name} was held open by {who} at {time}.",
   who: "{person} ({device})",
   unknown_device: "a removed device",
-  fridge_door: "{name} – the door has been open for {minutes} minutes ({time}).",
+  fridge_door: "{name} – the door has been open for at least {minutes} min ({time}).",
   fridge_door_now: "{name} – the door was left open ({time}).",
 };
 const HISTORY_URL = "/#/settings/history";

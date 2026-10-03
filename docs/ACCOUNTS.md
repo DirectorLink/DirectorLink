@@ -36,7 +36,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Which key ids are admin keys (1.6.0) | its own role | yes (ids only) | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
-| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule | what happened and where, opened with its own alert key | **never** what, not even the kind: only which key ids one is for, when, and whether it is brief (a ring) | yes |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring, one that is not brief for a key that is not an admin key is the refrigerator | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
@@ -49,9 +49,9 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
-which home (and, with alerts, admins' push addresses). It cannot open a door, read a light's state
-or show a picture, and the backups it holds open only with their backup password, which only the
-family knows.
+which home (and, with alerts, the push addresses of the browsers that switched them on: admins'
+before 1.7.0, any role's since). It cannot open a door, read a light's state or show a picture, and
+the backups it holds open only with their backup password, which only the family knows.
 
 **Scene links (1.7.0, ADR-051) are the one thing that is not sealed.** A phone's automation (iPhone
 Shortcuts, an Android app, an NFC tag) cannot seal a request, so it sends a link's secret in the
@@ -360,9 +360,10 @@ unreachable for 10 minutes (admins). Before 1.7.0 on the controller, only the la
    (`HMAC-SHA256(lock key, "DirectorLink alert v1")`), in one `{"type":"notify"}` that names only the
    key ids (`docs/RELAY.md`). The cloud pushes each part, at once, to the browsers registered with
    that key id by an account that uses it, and to nobody else; it learns which keys and when, never
-   what. *Offline*: the home's Durable Object alerts once the driver has been away for 10 minutes,
-   or silent on a socket that never closed, once per absence, to admin keys' browsers that want it
-   and to the admins' browsers registered before 1.7.0.
+   what (every detail is padded to one size before it is sealed; *Metadata* below says what the
+   keys tell). *Offline*: the home's Durable Object alerts once the driver has been away for 10
+   minutes, or silent on a socket that never closed, once per absence, to admin keys' browsers that
+   want it and to the admins' browsers registered before 1.7.0.
 4. A push is encrypted for each browser (RFC 8291), padded so that every push is the same size. The
    push service (Google, Mozilla, Apple or Microsoft) sees that something went to the browser, when,
    and how long it may keep it (a ring a minute), not what. The app's service worker opens a sealed
@@ -562,14 +563,17 @@ device's key.
   or gates; remove or replace a link that may have leaked.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
   a home was offline, and which key ids are admin keys. Since 1.7.0, when the home notified which
-  key ids, and whether the notice was brief: never its kind or what it names, though the keys and
-  the brevity hint at it (only rings are brief, and only rings reach viewers' keys; a notice for
-  admin keys only is a door or a schedule). With requests from new devices (1.7.0), also the
-  kind of device and browser that asked, and when. With scene links (1.7.0), when a
-  home's linked scenes run and whether they ran. An alert's words are the app's, never the cloud's:
-  whoever could send pushes in DirectorLink's name could only choose among its own sentences and a
-  time, and could not seal a detail a device would open; the cloud could send a sealed alert again
-  to the same device, which shows its own time.
+  key ids, and whether the notice was brief; every sealed part has the same size, and none names
+  anything the cloud can read. The keys and the brevity tell some kinds for certain: a brief notice
+  is a doorbell's ring (only rings are brief); one that is not brief and reaches a key that is not
+  an admin key is the refrigerator's door left open (doors opened and schedules that failed go to
+  admin keys only); one for admin keys only is a door or gate opened, a schedule that failed or the
+  refrigerator. Never which doorbell, door or refrigerator, who opened it, or which schedule.
+  With requests from new devices (1.7.0), also the kind of device and browser that asked, and
+  when. With scene links (1.7.0), when a home's linked scenes run and whether they ran. An alert's
+  words are the app's, never the cloud's: whoever could send pushes in DirectorLink's name could
+  only choose among its own sentences and a time, and could not seal a detail a device would open;
+  the cloud could send a sealed alert again to the same device, which shows its own time.
 
 ## iPhone and iPad
 
@@ -645,7 +649,8 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
     are admin keys.
 13. (1.7.0, ADR-050) What the controller alerts about (doorbells, doors opened, the refrigerator,
     schedules) it seals to each key that gets it, and each key chooses; the cloud delivers each part
-    to that key's browsers only, knowing which keys and when, not what.
+    to that key's browsers only, knowing which keys and when, not what (though a brief one is a
+    ring, and one for a key that is not an admin key that is not brief is the refrigerator).
 14. (1.7.0, ADR-051) A scene may have a private link for the phone's own automations: its secret
     passes the account service in the clear when used (never which scene), the controller keeps
     its hash, and a scene that opens doors or gates never has one.

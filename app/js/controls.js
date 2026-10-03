@@ -2,11 +2,19 @@
 // (answered 202 with the last reported state), then re-reads the device until the controller
 // confirms it. A failed command reverts the change and shows a short error on the device.
 // Blinds follow their move instead, which takes far longer (see the blinds section). A refrigerator
-// confirms through Samsung's cloud: it is read every 2 s for up to 40 s (refrigerators.js).
+// confirms through Samsung's cloud: it is read every 2 s for up to 65 s, then quietly every 5 s for
+// 2 minutes more, so that a late confirmation still shows (refrigerators.js).
 
 import { fanChangeConfirmed, optimisticFan } from "./fans.js";
 import { t } from "./i18n.js";
-import { CONFIRM_MS as FRIDGE_CONFIRM_MS, CONFIRM_POLL_MS as FRIDGE_POLL_MS, fridgeChangeConfirmed, optimisticFridge } from "./refrigerators.js";
+import {
+  CONFIRM_MS as FRIDGE_CONFIRM_MS,
+  CONFIRM_POLL_MS as FRIDGE_POLL_MS,
+  LATE_MS as FRIDGE_LATE_MS,
+  LATE_POLL_MS as FRIDGE_LATE_POLL_MS,
+  fridgeChangeConfirmed,
+  optimisticFridge,
+} from "./refrigerators.js";
 import { api, errorText, handleUnauthorized, keyGeneration, keyInUse, noteForbidden, whenForgotten } from "./session.js";
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
 import { MOVE_POLL_MS, REPORT_GAP_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
@@ -82,6 +90,32 @@ async function waitForConfirmation(kind, id, change, since = keyGeneration()) {
   return { device: last, confirmed: false };
 }
 
+// A refrigerator that did not confirm in time may still do so (its driver sees the change at its
+// next poll): read quietly for a while longer, and once it reports the change, show it and take back
+// the word that it did not confirm. Stops when the key is forgotten, or being forgotten.
+async function followLateConfirmation(kind, id, change, since) {
+  const key = deviceKey(kind, id);
+  const said = state.errors[key]?.stamp;
+  const deadline = Date.now() + FRIDGE_LATE_MS;
+  while (Date.now() < deadline) {
+    await sleep(FRIDGE_LATE_POLL_MS);
+    if (since !== keyGeneration()) return;
+    let device;
+    try {
+      device = await api(`${KINDS[kind].path}/${id}`);
+    } catch {
+      continue;
+    }
+    if (since !== keyGeneration()) return;
+    if (CONFIRMERS[kind](device, change)) {
+      replaceDevice(kind, othersOnTheirWay(kind, device, key, change));
+      if (said !== undefined && state.errors[key]?.stamp === said) clearError(key);
+      notify();
+      return;
+    }
+  }
+}
+
 // Lights keep the name the tests look for.
 export function waitForLightConfirmation(lightId, change) {
   return waitForConfirmation("light", lightId, change);
@@ -138,6 +172,7 @@ export async function sendChange(kind, id, change, { before } = {}) {
         // Its driver changes a feature only once the refrigerator confirms: what it reports is so.
         replaceDevice(kind, othersOnTheirWay(kind, device, key, change));
         setError(key, t("refrigerators.notConfirmed"));
+        followLateConfirmation(kind, id, change, since);
       } else if (!confirmed) {
         // Sent, but not reported back yet: keep what was sent and say so.
         setError(key, t("errors.notConfirmed"));

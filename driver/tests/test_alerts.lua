@@ -123,6 +123,9 @@ function tests.details_are_sealed_as_the_shared_vectors_say()
     for _, detail in ipairs(vector.details) do
         local sealed = Alerts.seal(vector.device.lock_key_hex, vector.home, vector.key, detail.plaintext, detail.iv_hex)
         T.same(sealed, detail.sealed, detail.name)
+        -- The detail as the driver writes it: its JSON padded with spaces to one size.
+        T.eq(Alerts.plaintext(Json.decode(detail.plaintext)), detail.plaintext, detail.name .. ": padded")
+        T.eq(#detail.plaintext, Alerts.DETAIL_BYTES)
     end
     -- Another key, another home: another seal.
     local detail = vector.details[1]
@@ -286,14 +289,16 @@ function tests.doors_opened_reach_the_admins_who_chose_it_saying_which_and_who()
         who = { name = "Gate phone", profile = "Gate phone", type = "key" },
     })
 
-    -- The relay then reports that it closed: DirectorLink's own pulse, nothing more.
+    -- The relay then reports that it closed and opened again: DirectorLink's own pulse, nothing more.
     home.clock.now = home.clock.now + 1
     T.eq(Mock.fireDeviceEvent(home.mock, 70, 4), 1)
+    Mock.fireDeviceEvent(home.mock, 70, 3)
     T.eq(#home.notified(), 0)
 
     -- Opened in Control4 (its app, a keypad): in the history, and to the admins, as Control4's.
     home.clock.now = home.clock.now + 120
     Mock.fireDeviceEvent(home.mock, 70, 4)
+    Mock.fireDeviceEvent(home.mock, 70, 3)
     local outside = home.notified()
     T.eq(#outside, 1)
     detail = open(home.admin, home.home, home.adminId, outside[1].message["for"][home.adminId])
@@ -304,10 +309,16 @@ function tests.doors_opened_reach_the_admins_who_chose_it_saying_which_and_who()
     T.eq(history[1].what, "Main Door")
     T.eq(#history, 2, "and DirectorLink's own pulse once")
 
-    -- Opened again within the minute: in the history, one alert a door a minute.
+    -- Opened again within the minute: one alert, and one entry, a door a minute.
     home.clock.now = home.clock.now + 30
     Mock.fireDeviceEvent(home.mock, 70, 4)
+    Mock.fireDeviceEvent(home.mock, 70, 3)
     T.eq(#home.notified(), 0)
+    T.eq(#T.http(home.mock, "GET", "/v1/activity?kind=door", { key = home.admin }).json.items, 2)
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 70, 4)
+    Mock.fireDeviceEvent(home.mock, 70, 3)
+    T.eq(#home.notified(), 1)
     T.eq(#T.http(home.mock, "GET", "/v1/activity?kind=door", { key = home.admin }).json.items, 3)
 
     -- The gate at a doorbell, opened from the DoorBird's own app: the same.
@@ -333,6 +344,107 @@ function tests.doors_opened_reach_the_admins_who_chose_it_saying_which_and_who()
     home.clock.now = home.clock.now + 120
     T.eq(T.http(home.mock, "PATCH", "/v1/relays/70", { key = home.admin, body = { state = "open" } }).status, 202)
     T.eq(#home.notified(), 0)
+end
+
+-- A relay that reports "closed" again without opening in between (a status read after a restart, a
+-- report its KNX driver repeats), or whose state is not known yet, opened nothing.
+function tests.a_relay_that_says_closed_again_opened_nothing()
+    local home = home(function()
+        Properties["Door Control"] = "Enabled"
+        Properties["Relay Hold"] = "Allowed"
+    end)
+    home.on("admin", { door_opened = true })
+    home.notified()
+    local function entries()
+        return #T.http(home.mock, "GET", "/v1/activity?kind=door", { key = home.admin }).json.items
+    end
+
+    -- Its first report after the driver started: what it was before is not known.
+    home.clock.now = home.clock.now + 100
+    T.eq(Mock.fireDeviceEvent(home.mock, 70, 4), 1)
+    T.eq(#home.notified(), 0)
+    T.eq(entries(), 0)
+    Mock.fireDeviceEvent(home.mock, 70, 3)
+
+    -- Held open from the app (the relay closes), then "closed" again, twice: one opening, the hold.
+    home.clock.now = home.clock.now + 100
+    T.eq(T.http(home.mock, "PATCH", "/v1/relays/70", { key = home.admin, body = { state = "closed" } }).status, 202)
+    Mock.fireDeviceEvent(home.mock, 70, 4)
+    T.eq(#home.notified(), 1, "the hold")
+    for _ = 1, 2 do
+        home.clock.now = home.clock.now + 100
+        Mock.fireDeviceEvent(home.mock, 70, 4)
+    end
+    T.eq(#home.notified(), 0, "the same state again is no opening")
+    T.eq(entries(), 1)
+    T.eq(T.http(home.mock, "GET", "/v1/relays/70", { key = home.admin }).json.state, "closed")
+end
+
+-- Every part is sealed at one size, whatever its kind and names: the cloud cannot tell a ring from
+-- a door, a refrigerator or a schedule by its length.
+function tests.every_alert_is_sealed_at_one_size()
+    local home = home(function()
+        Properties["Door Control"] = "Enabled"
+    end)
+    home.on("admin", { door_opened = true })
+    home.notified()
+    local Alerts = require("src.cloud.alerts")
+    local sizes = {}
+    local function look(what)
+        local notified = home.notified()
+        T.eq(#notified, 1, what)
+        local part = notified[1].message["for"][home.adminId]
+        sizes[#sizes + 1] = #part.ct
+        local detail, plaintext = open(home.admin, home.home, home.adminId, part)
+        T.eq(#plaintext, Alerts.DETAIL_BYTES, what .. ": padded")
+        T.truthy(plaintext:match("}%s+$"), what .. ": with spaces")
+        return detail
+    end
+
+    home.clock.now = home.clock.now + 100
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(look("a ring").kind, "doorbell")
+    home.clock.now = home.clock.now + 100
+    T.eq(T.http(home.mock, "POST", "/v1/relays/70/pulse", { key = home.admin }).status, 202)
+    T.eq(look("a door opened by a key").who.type, "key")
+    home.clock.now = home.clock.now + 100
+    Mock.fireDeviceEvent(home.mock, 70, 3)
+    Mock.fireDeviceEvent(home.mock, 70, 4)
+    T.eq(look("a door opened in Control4").who.type, "control4")
+    home.clock.now = home.clock.now + 100
+    Alerts.fridgeDoor({ id = 500, name = "Refrigerator", room_name = "Kitchen", room_id = 10 }, 400)
+    T.eq(look("the refrigerator").minutes, 6)
+    home.clock.now = home.clock.now + 100
+    Alerts.scheduleFailed(home.clock.now, { what = "Morning blinds" })
+    T.eq(look("a schedule").name, "Morning blinds")
+    T.same(sizes, { 684, 684, 684, 684, 684 }, "512 bytes, in base64")
+end
+
+-- Names that take more room in JSON (a quote or a backslash takes two bytes) are shortened, whole
+-- characters at a time and the longest first, until the detail fits: the alert is never dropped.
+function tests.a_detail_too_large_has_its_names_shortened()
+    local home = home()
+    home.on("admin", { door_opened = true })
+    home.notified()
+    local Alerts = require("src.cloud.alerts")
+    local quotes = string.rep('"', 30) .. string.rep("x", 30)
+    local hebrew = string.rep("\215\169", 30) -- 30 letters, 60 bytes
+    T.eq(Alerts.doorOpened({
+        kind = "door", action = "pulse", what = quotes, room = hebrew, via = quotes,
+        who = { type = "key", name = quotes, profile = "Dana", remote = true },
+        ids = { device_id = 7001, room_id = 9001 },
+    }, home.clock.now + 100), 1)
+    local part = home.notified()[1].message["for"][home.adminId]
+    T.eq(#part.ct, 684)
+    local detail, plaintext = open(home.admin, home.home, home.adminId, part)
+    T.eq(#plaintext, Alerts.DETAIL_BYTES)
+    for _, item in ipairs({ { detail.name, quotes }, { detail.room, hebrew }, { detail.via, quotes }, { detail.who.name, quotes } }) do
+        T.truthy(#item[1] < 60, "shortened")
+        T.eq(item[2]:sub(1, #item[1]), item[1], "from its start")
+    end
+    T.eq(#detail.room % 2, 0, "whole letters")
+    T.eq(detail.who.profile, "Dana", "a short name is kept whole")
+    T.eq(detail.kind, "door_opened")
 end
 
 -- ---- the refrigerator ---------------------------------------------------------------------------
@@ -392,7 +504,13 @@ function tests.a_refrigerator_door_left_open_alerts_through_the_integration()
     T.eq(T.http(mock, "PUT", "/v1/alerts/choices", { key = admin, body = { on = true, kinds = { door_opened = true, fridge_door = false } } }).status, 200)
     sent(connection)
 
+    local Clock = require("src.core.clock")
+    local now = os.time()
+    Clock.now = function()
+        return now
+    end
     Mock.setRefrigerator(mock, 140, { DOOR_OPEN = "1" })
+    now = now + 7 * 60 + 59
     Mock.fireDeviceEvent(mock, 140, 15)
     local messages = ofType(sent(connection), "notify")
     T.eq(#messages, 1)
@@ -402,6 +520,7 @@ function tests.a_refrigerator_door_left_open_alerts_through_the_integration()
     T.eq(detail.id, 141)
     T.eq(detail.name, "Refrigerator")
     T.eq(detail.room, "Kitchen")
+    T.eq(detail.minutes, 7, "open at least since DirectorLink saw it open, in whole minutes")
     -- Not a door or gate opened: the admin, who chose doors and not the refrigerator, gets nothing.
     T.eq(count(messages[1].message["for"]), 1)
     T.eq(messages[1].message["for"][adminId], nil)

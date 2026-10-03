@@ -453,14 +453,17 @@ test("Apple's consent-revoked and account-deleted end the account's alerts, as s
 
 // --- Alerts sealed to keys (ADR-050) ---------------------------------------------------------------
 
-// A detail sealed to the key of `apiKey`, as the driver seals it (tests/vectors/alert.json).
+// A detail sealed to the key of `apiKey`, as the driver seals it (tests/vectors/alert.json): its
+// JSON padded with spaces to 496 bytes, so every part is 684 characters of base64.
 function sealedFor(apiKey, homeId, keyId, detail) {
   const alertKey = createHmac("sha256", lockKey(apiKey)).update("DirectorLink alert v1").digest();
   const enc = createHmac("sha256", alertKey).update("enc").digest();
   const mac = createHmac("sha256", alertKey).update("mac").digest();
   const ivBytes = randomBytes(16);
   const cipher = createCipheriv("aes-256-cbc", enc, ivBytes);
-  const ct = Buffer.concat([cipher.update(JSON.stringify(detail), "utf8"), cipher.final()]).toString("base64");
+  const text = JSON.stringify(detail);
+  const padded = text + " ".repeat(Math.max(0, 496 - Buffer.byteLength(text)));
+  const ct = Buffer.concat([cipher.update(padded, "utf8"), cipher.final()]).toString("base64");
   const iv = ivBytes.toString("base64");
   return { iv, ct, mac: createHmac("sha256", mac).update(`alert v1|${homeId}|${keyId}|${iv}|${ct}`).digest("base64") };
 }
