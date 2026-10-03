@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink Drivers: free, open-source Control4 drivers made by DirectorLink. No subscription, no license key. Each works on its own."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink Drivers — free, open-source Control4 drivers</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="drivers-title">
+        <h1 id="drivers-title">DirectorLink Drivers</h1>
+        <p class="lead">
+          Free, open-source Control4 drivers, made by DirectorLink. Each one works on its own:
+          DirectorLink is not required.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+      </section>
+
+      <ul class="driver-list" aria-label="Drivers">
+        <li class="driver-card">
+          <p class="driver-kicker">Kitchen · through Samsung SmartThings</p>
+          <h2><a href="/drivers/samsung-refrigerator">DirectorLink · Samsung Refrigerator <span>for Control4</span></a></h2>
+          <p>
+            Power Cool, Power Freeze, Sabbath Mode and the ice maker as Control4 tiles and in
+            programming. Temperatures, setpoints, doors and the water filter as variables and events,
+            including a door left open.
+          </p>
+          <ul class="tags" aria-label="Details">
+            <li>Released</li>
+            <li>Control4 OS 3.3+</li>
+            <li>Apache-2.0</li>
+          </ul>
+          <div class="actions">
+            <a class="button button-primary" href="/drivers/samsung-refrigerator">Details and setup</a>
+            <a class="button button-secondary" href="/drivers/samsung-refrigerator/download">Download</a>
+          </div>
+        </li>
+        <li class="driver-card driver-card-soon">
+          <p class="driver-kicker">Cameras · on your home network</p>
+          <h2>DirectorLink · Hikvision <span>for Control4</span></h2>
+          <p>
+            Hikvision IP cameras and NVRs: every camera on the network added to the project at once,
+            named and ready, with detections and alerts.
+          </p>
+          <ul class="tags" aria-label="Details">
+            <li class="tag-soon">Coming soon</li>
+          </ul>
+        </li>
+      </ul>
+
+      <section class="drivers-how" aria-labelledby="install-title">
+        <h2 id="install-title">Installing any of them</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Download</h3>
+            <p>Get the driver's <code>.c4z</code> from its page. Each release lists a SHA-256 checksum next to the file.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Add it in Composer Pro</h3>
+            <p>Driver → Add or Update Driver or Agent, then select the file. On the Search tab, tick Local and search for <strong>DirectorLink</strong>.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Keep the file name</h3>
+            <p>Composer knows a driver by its file name. A second download saved as <code>… (1).c4z</code> installs as a separate driver instead of updating: delete older downloads first.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section class="drivers-notes" aria-labelledby="notes-title">
+        <h2 id="notes-title">Good to know</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Open source</h3>
+            <p>Apache License 2.0: use, change and share them, in commercial installations too. The source of each is on GitHub.</p>
+          </li>
+          <li>
+            <h3>Nothing comes to us</h3>
+            <p>A driver talks only to its device, or to the maker's own cloud where the device needs it. It sends nothing to DirectorLink and collects no usage data.</p>
+          </li>
+          <li>
+            <h3>Community support</h3>
+            <p>Best effort, in the open: report a problem from the driver's page. Each driver's page says what it was tested on.</p>
+          </li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by Samsung or Hikvision. Product names are trademarks of their owners.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>
