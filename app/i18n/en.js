@@ -1307,6 +1307,8 @@ export default {
       olderPassword: "This backup was made before the backup password was last changed: type the password it was made with.",
       opening: "Opening the backup…",
       wrongPassword: "Wrong password. Type the backup password this backup was made with.",
+      gone: "That backup is no longer in your account: a newer one may have replaced it. Choose one from the list.",
+      damaged: "That backup is not whole in your account. Choose another one.",
       delete: "Delete these backups",
       deleteConfirm: "Delete every backup of this home in your account? This cannot be undone.",
       deleted: "The backups in your account are deleted.",

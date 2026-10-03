@@ -98,7 +98,7 @@ const PREVIEW = {
 };
 // The controller's automatic backups, and the account's.
 const controller = { calls: [], status: null, runs: 0, old: false, runRefusal: null };
-const account = { calls: [], items: [], data: new Map() };
+const account = { calls: [], items: [], data: new Map(), damaged: false };
 
 const offStatus = () => ({ enabled: false, key: null, time: null, running: false, last: null, remote: { enabled: true, connected: true, linked: true } });
 const system = (old) => ({
@@ -129,6 +129,7 @@ function handleAccount(method, path) {
   const one = new RegExp(`^/v1/homes/${HOME}/backups/([0-9a-f]{32})$`).exec(path);
   if (method === "GET" && one) {
     const item = account.items.find((entry) => entry.id === one[1]);
+    if (item && account.damaged) return answer(500, { status: 500, code: "BACKUP_DAMAGED" });
     return item ? answer(200, { ...item, data: account.data.get(item.id) }) : answer(404, { status: 404, code: "NOT_FOUND" });
   }
   if (method === "DELETE" && path === `/v1/homes/${HOME}/backups`) {
@@ -227,7 +228,7 @@ async function connect({ old = false, signedIn = true } = {}) {
   session.forgetKey();
   await advance(20000, 500);
   Object.assign(controller, { calls: [], status: offStatus(), runs: 0, old, runRefusal: null });
-  Object.assign(account, { calls: [], items: [], data: new Map() });
+  Object.assign(account, { calls: [], items: [], data: new Map(), damaged: false });
   confirmed.length = 0;
   confirmAnswer = true;
   Object.assign(state, { host: HOST, apiKey: KEY, role: "admin", status: "connected", loaded: true, system: system(old), notice: null, errors: {}, pending: {}, rooms: [], lights: [], thermostats: [], blinds: [], fans: [], cameras: [], relays: [], doorbells: [], devices: [], scenes: [] });
@@ -375,6 +376,43 @@ test("a backup in the account is opened with its password and goes to the same c
   assert.ok(preview.includes("the Sonos player “Lounge Amp”"), "and where a room that is gone was used");
   assert.ok(byKey(backupPanel(), "backup-replace"));
   for (const call of [...controller.calls, ...account.calls]) assert.ok(!call.raw.includes(key.password), "the password never leaves the browser");
+});
+
+test("a backup gone from the account since the list was read says so, and the list is read again", async () => {
+  await connect();
+  const { key, seal } = VECTORS;
+  const [older, newer] = ["7".repeat(32), "8".repeat(32)];
+  controller.status = { ...offStatus(), enabled: true, time: "03:27", key: { key_id: key.key_id } };
+  account.items = [
+    { id: newer, created_at: "2026-10-03T00:27:30Z", size: 100, key_id: key.key_id },
+    { id: older, created_at: "2026-09-26T00:27:30Z", size: 100, key_id: key.key_id },
+  ];
+  account.data.set(newer, JSON.stringify(seal.sealed));
+  ui.autoBackup = null;
+  backupPanel();
+  await advance(100);
+  await click(`auto-backup-restore-${older}`);
+  // The nightly backup pushed the oldest out meanwhile.
+  account.items = account.items.slice(0, 1);
+  const lists = () => account.calls.filter((call) => call.method === "GET" && call.path === `/v1/homes/${HOME}/backups`).length;
+  const before = lists();
+  await typeInto("auto-backup-open", key.password);
+  await submit("auto-backup-open-submit");
+  assert.equal(message(), "That backup is no longer in your account: a newer one may have replaced it. Choose one from the list.");
+  assert.ok(!message().includes("Try again"));
+  assert.equal(byKey(backupPanel(), "auto-backup-open"), null, "its form is closed");
+  assert.equal(lists(), before + 1, "the list is read again");
+  assert.equal(byKey(backupPanel(), `auto-backup-item-${older}`), null);
+  assert.ok(byKey(backupPanel(), `auto-backup-item-${newer}`));
+  assert.equal(requests("POST", "/v1/restore").length, 0);
+
+  // Not whole in the account: said, and another one can be chosen.
+  account.damaged = true;
+  await click(`auto-backup-restore-${newer}`);
+  await typeInto("auto-backup-open", key.password);
+  await submit("auto-backup-open-submit");
+  assert.equal(message(), "That backup is not whole in your account. Choose another one.");
+  assert.ok(byKey(backupPanel(), `auto-backup-restore-${newer}`));
 });
 
 test("changing the password says older backups keep theirs; turning off asks first and keeps the account's", async () => {

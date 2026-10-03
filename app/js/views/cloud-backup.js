@@ -10,7 +10,7 @@ import { automaticStatus, backUpNow, openAccountBackup, setBackupPassword, turnO
 import { h } from "../dom.js";
 import { formatDateTime, formatNumber, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { deleteHomeBackups, listAccountHomes, listHomeBackups, savedRemote } from "../remote.js";
+import { deleteHomeBackups, listAccountHomes, listHomeBackups, RemoteError, savedRemote } from "../remote.js";
 import { errorText, whenForgotten } from "../session.js";
 import { notify, state, ui } from "../state.js";
 
@@ -291,6 +291,15 @@ function wrongPassword(error) {
   return null;
 }
 
+// The account's answer about the backup asked for (its HTTP status is the error's httpStatus): no
+// longer there (a newer one replaced it, or another admin deleted them) or not whole. Trying again
+// does not help: the list is read again instead.
+function notInAccount(error) {
+  if (!(error instanceof RemoteError)) return null;
+  if (error.code === "BACKUP_DAMAGED") return t("backup.automatic.damaged");
+  return error.httpStatus === 404 ? t("backup.automatic.gone") : null;
+}
+
 function restoreForm(current, { check, errorOf: checkError }) {
   const { homeId, item } = current.restore;
   const older = isOlderKey(item);
@@ -301,14 +310,20 @@ function restoreForm(current, { check, errorOf: checkError }) {
     current.busy = true;
     current.message = { kind: "info", text: t("backup.automatic.opening") };
     notify();
+    let opened = false;
     try {
       const document = await openAccountBackup(homeId, item.id, secrets.open);
+      opened = true;
       say("info", t("backup.restoreForm.checking"));
       await check(document);
       close();
     } catch (error) {
       current.busy = false;
-      if (ui.autoBackup === current) say("error", wrongPassword(error) || checkError(error));
+      if (ui.autoBackup !== current) return;
+      const gone = opened ? null : notInAccount(error);
+      if (!gone) return say("error", wrongPassword(error) || checkError(error));
+      close({ kind: "error", text: gone });
+      await loadAutomatic();
     }
   }
   return h(
