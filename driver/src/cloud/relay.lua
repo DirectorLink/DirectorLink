@@ -346,8 +346,9 @@ function Relay.onPoll(binding)
     end
 end
 
--- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway). The cloud
--- keeps which account uses which key; a member whose keys are all revoked leaves the home.
+-- Which API keys exist, as key ids only (the cloud sees them in every envelope anyway), and which
+-- are admin keys. The cloud keeps which account uses which key; a member whose keys are all revoked
+-- leaves the home.
 function Relay.announceKeys()
     if not state.socket or not state.services or not state.services.keys then
         return
@@ -358,11 +359,15 @@ function Relay.announceKeys()
         log("warn", "key ids not announced: the key store could not be read")
         return
     end
-    local ids = Json.array()
+    local ids, admins = Json.array(), Json.array()
     for _, key in ipairs(state.services.keys.list()) do
         ids[#ids + 1] = key.id
+        -- Which of them are admin keys (1.6.0): only their accounts get the home's alerts (ADR-047).
+        if key.role == "admin" then
+            admins[#admins + 1] = key.id
+        end
     end
-    send({ type = "keys", ids = ids })
+    send({ type = "keys", ids = ids, admins = admins })
 end
 
 local function onOpen()
