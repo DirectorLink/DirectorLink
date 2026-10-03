@@ -59,7 +59,7 @@
    - Within about 25 s the account's home list shows the home offline.
    - A request waits about 8 s, then says offline.
    - After unblocking, it reconnects within seconds and the next request works.
-4. GitHub checks: a pull request shows five jobs and takes about 4 minutes. The three "Driver tests (part N of 3)" counts add up to the full suite's.
+4. GitHub checks: a pull request shows seven checks (three driver test parts, the time zones, the checks, app and cloud, and `validate`) and takes about 4 minutes. The three "Driver tests (part N of 3)" counts add up to the full suite's.
 
 ## 0zl. Changing a scene action (1.6.0)
 
