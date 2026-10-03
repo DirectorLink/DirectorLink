@@ -517,6 +517,42 @@ function tests.schedules_say_when_they_ran_and_why_they_did_not()
     T.eq(off.reason, "calendar_off")
 end
 
+-- Paused in Composer for days: each schedule's skip is listed once for the pause, not once a run,
+-- so that two weeks away with many daily schedules leave the rest of the history in place.
+function tests.a_schedule_skipped_while_paused_is_listed_once_a_pause()
+    local monday = Helpers.epoch("2026-10-05T05:00:00Z") -- no holiday that week
+    local mock, clock, Scheduler = startCalendar(monday)
+    local admin = T.pair(mock)
+    local sceneId = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Morning", steps = { { type = "lights", device_ids = { 20 }, set = { on = true } } } } }).json.id
+    local due = monday + 3600
+    local created = T.http(mock, "POST", "/v1/schedules", { key = admin, body = { scene_id = sceneId, trigger = { type = "time", at = os.date("%H:%M", due) }, days = { 0, 1, 2, 3, 4, 5, 6 } } })
+    T.eq(created.status, 201, created.body)
+    Properties["Schedules"] = "Paused"
+    OnPropertyChanged("Schedules")
+    for day = 0, 2 do
+        clock.set(due + day * DAY + 30)
+        T.eq(Scheduler.tick(), 0)
+    end
+    local entries = all(mock, admin, "schedule")
+    T.eq(#entries, 1, "once for the pause")
+    T.eq(entries[1].reason, "paused")
+    -- Resumed, it runs; paused again, its next skip is listed again.
+    Properties["Schedules"] = "On"
+    OnPropertyChanged("Schedules")
+    clock.set(due + 3 * DAY + 30)
+    T.eq(Scheduler.tick(), 1)
+    Properties["Schedules"] = "Paused"
+    OnPropertyChanged("Schedules")
+    clock.set(due + 4 * DAY + 30)
+    Scheduler.tick()
+    clock.set(due + 5 * DAY + 30)
+    Scheduler.tick()
+    entries = all(mock, admin, "schedule")
+    T.eq(#entries, 3)
+    T.eq(entries[1].reason, "paused")
+    T.eq(entries[2].outcome, "ran")
+end
+
 function tests.a_schedule_caught_up_after_a_restart_says_so()
     local friday, saturday = 739891, 739892
     local mock = startCalendar(Helpers.localAt(friday, 12, 0))
