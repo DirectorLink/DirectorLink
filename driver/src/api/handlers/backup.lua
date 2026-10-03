@@ -7,7 +7,8 @@
 --                           "replaces_key": this device is that key of the backup's, "move_remote":
 --                           another home's remote identity moves here
 -- Automatic backups to the account (ADR-048, src/cloud/auto_backup.lua):
---   GET    /v1/backup/automatic      whether they are on, the backup password's public key, the last
+--   GET    /v1/backup/automatic      whether they are on, the backup password's key (its public key,
+--                                    salt and iterations only sealed), how the last one went
 --   PUT    /v1/backup/automatic      the backup password's public key, salt and iterations (sealed)
 --   DELETE /v1/backup/automatic      turns them off (sealed)
 --   POST   /v1/backup/automatic/run  Back up now
@@ -24,8 +25,12 @@ local Handlers = {}
 
 -- Sealed requests carry their key as principal (src/cloud/remote.lua); a request with an
 -- Authorization header came as plain HTTP.
+local function sealed(ctx)
+    return (ctx.request and ctx.request.principal) and true or false
+end
+
 local function inTheClear(ctx)
-    if ctx.request and ctx.request.principal then
+    if sealed(ctx) then
         return nil
     end
     return Problem.new(403, "SEALED_REQUEST_REQUIRED",
@@ -146,8 +151,10 @@ function Handlers.restore(ctx)
     return 200, { dry_run = false, restore = plan.preview, restored_at = Clock.iso(now) }
 end
 
+-- GET /v1/backup/automatic: the backup password's public key, salt and iterations only in sealed
+-- requests (with them a password can be guessed offline); in the clear, what the status needs.
 function Handlers.automatic(ctx)
-    return 200, AutoBackup.status()
+    return 200, AutoBackup.status(sealed(ctx))
 end
 
 -- PUT /v1/backup/automatic {"public_key", "salt", "iterations", "kdf"}: sealed only, so that nobody
@@ -200,7 +207,7 @@ function Handlers.run_automatic(ctx)
         local answer = NOT_NOW[code] or { 500, "The backup could not start" }
         return Problem.new(answer[1], code, answer[2])
     end
-    return 202, { started = true, status = AutoBackup.status() }
+    return 202, { started = true, status = AutoBackup.status(sealed(ctx)) }
 end
 
 return Handlers

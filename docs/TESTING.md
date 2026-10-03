@@ -7,7 +7,7 @@
 ## 0zp. Automatic backups to the account, and the Sonos rooms in backups (1.6.0)
 
 1. `GET /v1/system` shows `automatic_backup: true`. A signed-in admin sees "Automatic backups to your account" in Settings → Controller → Backup; signed out, the sign-in line.
-2. Set the backup password: the lost-password warning shows. In the console, `GET /v1/backup/automatic` shows public_key, salt and iterations 600000, never the password. A `PUT` in the clear gets 403 `SEALED_REQUEST_REQUIRED`.
+2. Set the backup password: the lost-password warning shows. In the console, `GET /v1/backup/automatic` shows `key` with only `key_id` and `set_at` (no public_key, salt or iterations; the app's sealed requests get the whole key), never the password. A `PUT` in the clear gets 403 `SEALED_REQUEST_REQUIRED`.
 3. With Remote Access on and the home linked, the first backup runs at once: "Backed up to your account", and the list shows today's (about 100–200 KB).
    - The log's `backup uploaded`: note `seal_ms` and `total_ms`.
    - The app controls lights normally while it runs.

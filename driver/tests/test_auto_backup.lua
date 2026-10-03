@@ -189,6 +189,12 @@ function tests.the_seal_reproduces_the_shared_vectors()
     -- The private key opens it; a byte changed does not.
     local document = open(Json.encode(result), bytes(v.key.private_hex))
     T.eq(document.home.name, "בית Home")
+    -- Its length is known before sealing (a backup too large for the account is not sealed).
+    T.eq(BackupSeal.size(key, #v.seal.plaintext), #Json.encode(result))
+    for _, length in ipairs({ 0, 15, 16, 17, 47, 48 }) do
+        local plaintext = string.rep("x", length)
+        T.eq(BackupSeal.size(key, length), #Json.encode(BackupSeal.seal(key, plaintext, { ephemeral = ephemeral, iv = v.seal.iv_hex })), "length " .. length)
+    end
     local changed = Json.decode(Json.encode(result))
     changed.iterations = 600000
     T.truthy(not pcall(open, Json.encode(changed), bytes(v.key.private_hex)), "the MAC covers how to open it")
@@ -265,6 +271,18 @@ function tests.admins_set_the_backup_password_s_key_in_sealed_requests_only()
     T.eq(on.enabled, true)
     T.eq(on.key.key_id, vectors().key.key_id)
     T.eq(on.key.iterations, 600000)
+    -- In the clear, nothing to check a guessed password with: the key's id and when it was set.
+    local clearly = status(s)
+    T.eq(clearly.enabled, true)
+    T.eq(clearly.key.key_id, on.key.key_id)
+    T.eq(clearly.key.set_at, on.key.set_at)
+    T.eq(clearly.time, on.time)
+    for _, field in ipairs({ "public_key", "salt", "iterations", "kdf" }) do
+        T.eq(clearly.key[field], nil, field .. " is not in the clear")
+    end
+    local inside = sealed(s, { method = "GET", path = "/v1/backup/automatic" })
+    T.eq(inside.status, 200)
+    T.same(inside.json.key, on.key, "sealed, all of it")
     local hour, minute = on.time:match("^(%d%d):(%d%d)$")
     local at = tonumber(hour) * 60 + tonumber(minute)
     T.truthy(at >= 180 and at < 300, "the home's minute is between 03:00 and 04:59: " .. on.time)
@@ -310,6 +328,7 @@ function tests.back_up_now_seals_the_backup_and_sends_it_in_chunks_one_at_a_time
     T.eq(chunks[1].count, #chunks)
     T.eq(chunks[1].size, #text)
     T.eq(chunks[1].key_id, vectors().key.key_id)
+    T.eq(chunks[1].why, "now", "the account counts Back up now apart from the nightly backup")
     T.eq(chunks[1].backup, nil)
     for index, chunk in ipairs(chunks) do
         T.eq(chunk.index, index - 1)
@@ -317,6 +336,7 @@ function tests.back_up_now_seals_the_backup_and_sends_it_in_chunks_one_at_a_time
         if index > 1 then
             T.eq(chunk.backup, string.rep("b", 32), "the backup the account named")
             T.eq(chunk.count, nil)
+            T.eq(chunk.why, nil)
         end
     end
     -- Only the password's private key opens it.
@@ -401,8 +421,12 @@ function tests.a_refused_or_unanswered_chunk_ends_the_backup()
     local limit = AutoBackup.MAX_BYTES
     AutoBackup.MAX_BYTES = 1000
     T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
-    T.eq(#upload(s, connection), 0)
+    local chunks, _, steps = upload(s, connection)
+    T.eq(#chunks, 0)
+    T.eq(steps, 2, "the document and its JSON: not sealed")
     T.eq(status(s).last.code, "BACKUP_TOO_LARGE")
+    T.eq(logged(s, "automatic backup not made")[1].data.step, "json")
+    T.eq((require("src.core.activity").list({ kinds = { system = true } }))[1].reason, "too_large")
     AutoBackup.MAX_BYTES = limit
     T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
     local chunks = upload(s, connection, function()
@@ -417,7 +441,9 @@ function tests.a_refused_or_unanswered_chunk_ends_the_backup()
     local failed = (require("src.core.activity").list({ kinds = { system = true } }))[1]
     T.eq(failed.action, "cloud_backup")
     T.eq(failed.outcome, "failed")
-    T.eq(failed.reason, "NOT_CLAIMED", "the history says why")
+    T.eq(failed.reason, "not_linked", "the history says why, in a few words")
+    T.eq(failed.note, nil, "Back up now is not tried again")
+    T.eq(failed.who.type, "key")
     -- No answer: the backup ends when the relay's wait does.
     T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
     runSteps(s.mock)
@@ -430,6 +456,9 @@ function tests.a_refused_or_unanswered_chunk_ends_the_backup()
     end
     T.eq(status(s).last.code, "RELAY_TIMEOUT")
     T.eq(status(s).running, false)
+    local unanswered = (require("src.core.activity").list({ kinds = { system = true } }))[1]
+    T.eq(unanswered.reason, "account_unreachable")
+    T.eq(unanswered.note, nil, "Back up now is not tried again")
     -- The password changed while a backup was being made: it stops, made with the old one.
     T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
     local other = keyBody()
@@ -438,6 +467,46 @@ function tests.a_refused_or_unanswered_chunk_ends_the_backup()
     runSteps(s.mock)
     T.eq(#chunksSent(connection), 0)
     T.eq(status(s).last.code, "KEY_CHANGED")
+    T.eq((require("src.core.activity").list({ kinds = { system = true } }))[1].reason, "stopped")
+end
+
+-- Turned off, or the password changed, while a backup is being uploaded: no more chunks go, and the
+-- account gets no backup sealed to a key that is no longer wanted.
+function tests.turning_off_or_a_new_password_stops_an_upload_under_way()
+    local s = start()
+    local _, connection = Harness.connected({ mock = s.mock })
+    setKey(s)
+    require("src.cloud.auto_backup").CHUNK_BYTES = 500
+    local other = keyBody()
+    other.public_key = Base64.encode(require("src.core.x25519").publicKey(string.rep(string.char(5), 32)))
+    for _, case in ipairs({
+        { code = "AUTOMATIC_BACKUP_OFF", change = function()
+            T.eq(sealed(s, { method = "DELETE", path = "/v1/backup/automatic" }).status, 204)
+        end },
+        { code = "KEY_CHANGED", change = function()
+            setKey(s, other)
+        end },
+    }) do
+        if not status(s).enabled then
+            setKey(s)
+        end
+        T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
+        local chunks = upload(s, connection, function(chunk, sent)
+            if chunk.index == 1 then
+                case.change()
+            end
+            return nil
+        end)
+        T.eq(#chunks, 2, case.code .. ": the chunk under way is answered, and nothing more goes")
+        T.truthy(chunks[1].count > 2, "it had more to send")
+        local last = status(s).last
+        T.eq(last.ok, false)
+        T.eq(last.code, case.code)
+        local entry = (require("src.core.activity").list({ kinds = { system = true } }))[1]
+        T.eq(entry.action, "cloud_backup")
+        T.eq(entry.outcome, "failed")
+        T.eq(entry.reason, "stopped")
+    end
 end
 
 -- ---- Every day ----------------------------------------------------------------------------------------
@@ -461,6 +530,7 @@ function tests.the_daily_backup_runs_at_the_home_s_minute_once_a_day_and_is_trie
     T.eq(tick(at(0, minute)), true, "the scheduler's minute starts it")
     local chunks = upload(s, connection)
     T.truthy(#chunks >= 1)
+    T.eq(chunks[1].why, "daily", "the account lets the nightly backup through besides Back up now")
     T.eq(status(s).last.why, "daily")
     T.eq(tick(at(0, minute + 1)), false, "once a day")
     T.eq(tick(at(0, 23 * 60)), false)
@@ -494,6 +564,125 @@ function tests.the_daily_backup_runs_at_the_home_s_minute_once_a_day_and_is_trie
     local again = Mock.updateDriver(s.mock)
     s.mock = again
     T.eq(require("src.cloud.auto_backup").tick(at(1, minute + 45)), false)
+end
+
+-- The history keeps 500 entries: a night whose backup fails says so once, and a refusal that 15
+-- minutes will not change is not tried again (each try seals the backup again).
+function tests.a_night_of_failures_is_one_history_entry_and_a_refusal_is_not_tried_again()
+    local s = start()
+    local _, connection = Harness.connected({ mock = s.mock })
+    local hour, min = setKey(s).time:match("^(%d%d):(%d%d)$")
+    local minute = tonumber(hour) * 60 + tonumber(min)
+    local Scheduler = require("src.core.scheduler")
+    local Activity = require("src.core.activity")
+    local function backups()
+        local found = {}
+        for _, entry in ipairs(Activity.list({ kinds = { system = true }, limit = 200 })) do
+            if entry.action == "cloud_backup" then
+                found[#found + 1] = entry
+            end
+        end
+        return found
+    end
+    -- Every minute of the night, the account refusing each backup as `code`: how many it tried.
+    local function night(day, code)
+        local tries = 0
+        for m = minute, 6 * 60 + 5 do
+            Scheduler.tick(at(day, m))
+            if status(s).running then
+                tries = tries + 1
+                upload(s, connection, function()
+                    return { ok = false, code = code }
+                end)
+            end
+        end
+        return tries
+    end
+    -- The home is not in an account any more (NOT_CLAIMED): one try, one entry.
+    T.eq(night(0, "NOT_CLAIMED"), 1)
+    local entries = backups()
+    T.eq(#entries, 1)
+    T.eq(entries[1].outcome, "failed")
+    T.eq(entries[1].reason, "not_linked")
+    T.eq(entries[1].note, nil, "not tried again tonight")
+    T.eq(entries[1].who.type, "controller")
+    -- The account's limits (backups started today, the owner's space), and any other refusal of
+    -- the account's (an older or newer account service): the same.
+    for day, case in ipairs({ { "BACKUP_LIMIT", "limit" }, { "ACCOUNT_BACKUPS_FULL", "account_full" }, { "OUT_OF_ORDER", "error" } }) do
+        T.eq(night(day, case[1]), 1, case[1])
+        T.eq(#backups(), day + 1)
+        T.eq(backups()[1].reason, case[2])
+        T.eq(backups()[1].note, nil)
+    end
+    -- The account service's own error may pass: tried again every 15 minutes until 06:00, and the
+    -- history says it once, with "retry".
+    local tries = night(4, "INTERNAL")
+    T.eq(tries, math.floor((6 * 60 - 1 - minute) / 15) + 1, "every 15 minutes until 06:00")
+    entries = backups()
+    T.eq(#entries, 5, "once a night")
+    T.eq(entries[1].reason, "account_unreachable")
+    T.eq(entries[1].note, "retry")
+    -- No answer the first time, then made: the failure once, then that it was made.
+    Scheduler.tick(at(5, minute))
+    T.eq(status(s).running, true)
+    runSteps(s.mock)
+    T.eq(#chunksSent(connection), 1)
+    for _, timer in ipairs(s.mock.timers) do
+        if not timer.fired and not timer.cancelled and timer.delay == 30000 and timer.source:find("cloud/relay", 1, true) then
+            timer.fired = true
+            timer.callback()
+        end
+    end
+    T.eq(status(s).last.code, "RELAY_TIMEOUT")
+    Scheduler.tick(at(5, minute + 15))
+    T.truthy(#upload(s, connection) >= 1)
+    T.eq(status(s).last.ok, true)
+    entries = backups()
+    T.eq(#entries, 7)
+    T.eq(entries[1].outcome, "ran")
+    T.eq(entries[1].who.type, "controller")
+    T.eq(entries[2].reason, "account_unreachable")
+    T.eq(entries[2].note, "retry")
+    -- Tried for the first time less than 15 minutes before 06:00 (the controller was off until
+    -- then): not "retry".
+    T.eq(require("src.cloud.auto_backup").tick(at(6, 6 * 60 - 10)), true)
+    upload(s, connection, function()
+        return { ok = false, code = "INTERNAL" }
+    end)
+    T.eq(#backups(), 8)
+    T.eq(backups()[1].reason, "account_unreachable")
+    T.eq(backups()[1].note, nil, "06:00 comes first")
+end
+
+-- A start that is refused is said once a night too, and only what may pass is tried again.
+function tests.a_backup_that_cannot_start_is_tried_again_only_when_that_may_help()
+    local s = start()
+    local hour, min = setKey(s).time:match("^(%d%d):(%d%d)$")
+    local minute = tonumber(hour) * 60 + tonumber(min)
+    local AutoBackup = require("src.cloud.auto_backup")
+    local Activity = require("src.core.activity")
+    -- Remote Access off (as it ships): not tried again that night.
+    T.eq(AutoBackup.tick(at(0, minute)), false)
+    local entry = Activity.list({ kinds = { system = true } })[1]
+    T.eq(entry.action, "cloud_backup")
+    T.eq(entry.reason, "remote_off")
+    T.eq(entry.note, nil)
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    T.eq(AutoBackup.tick(at(0, minute + 15)), false)
+    T.eq(status(s).last.code, "REMOTE_ACCESS_OFF", "not tried again")
+    -- Remote Access on, the relay not connected: tried again, said once.
+    T.eq(AutoBackup.tick(at(1, minute)), false)
+    T.eq(status(s).last.code, "REMOTE_OFFLINE")
+    entry = Activity.list({ kinds = { system = true } })[1]
+    T.eq(entry.reason, "account_unreachable")
+    T.eq(entry.note, "retry")
+    local count = Activity.count()
+    T.eq(AutoBackup.tick(at(1, minute + 14)), false)
+    T.eq(status(s).last.at, require("src.core.clock").iso(at(1, minute)), "not before 15 minutes")
+    T.eq(AutoBackup.tick(at(1, minute + 15)), false)
+    T.eq(status(s).last.at, require("src.core.clock").iso(at(1, minute + 15)), "tried again")
+    T.eq(Activity.count(), count, "said once")
 end
 
 return tests

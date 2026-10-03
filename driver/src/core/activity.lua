@@ -133,8 +133,10 @@ local function whoOf(kind, fields)
     return { type = kind == "composer" and "composer" or "controller" }
 end
 
+-- The entry without its id: finding who did it may record an entry of its own first (a key that
+-- just expired goes when it is looked up), and that one must not get the same id.
 local function build(kind, action, fields)
-    local entry = { id = state.nextId, at = Clock.now(), kind = kind, action = cut(action, 32), who = whoOf(kind, fields) }
+    local entry = { at = Clock.now(), kind = kind, action = cut(action, 32), who = whoOf(kind, fields) }
     for _, field in ipairs(TEXTS) do
         entry[field] = cut(fields[field], Activity.MAX_TEXT)
     end
@@ -319,6 +321,8 @@ function Activity.record(kind, action, fields)
         Log.warn("activity", "could not record an entry", { kind = kind, action = tostring(action), error = tostring(entry) })
         return nil
     end
+    -- Only now: an entry recorded while this one was built has taken the id before it.
+    entry.id = state.nextId
     state.nextId = state.nextId + 1
     local now = entry.at
     prune(now)

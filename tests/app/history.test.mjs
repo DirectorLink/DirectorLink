@@ -268,10 +268,24 @@ test("entries newest first, a section a day, an icon per kind, who and what in o
 test("automatic backups to the account: made, or not and why", () => {
   const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "system", action: "cloud_backup", who: { type: "controller" }, ...fields });
   assert.equal(history.outcomeText(entry({ outcome: "ran" })), "");
-  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "REMOTE_ACCESS_OFF" })), "Remote Access is off in Composer");
-  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "RELAY_TIMEOUT" })), "The account couldn’t be reached; it tries again later");
-  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "HOME_NOT_LINKED" })), "The home isn’t linked to an account");
-  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "KEY_CHANGED" })), "The controller couldn’t run it");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "remote_off" })), "Remote Access is off in Composer");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "not_linked" })), "The home isn’t linked to an account");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "too_large" })), "The backup is larger than the account keeps");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "stopped" })), "Stopped: automatic backups were turned off or their password changed");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "account_full" })), "No room in your account (25 MB for all your homes)");
+  // The account's limit of backups a day: Back up now leaves the nightly backup its own.
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "limit" })), "Backed up too often today");
+  assert.equal(
+    history.outcomeText(entry({ outcome: "failed", reason: "limit", who: { type: "key", name: "Kitchen tablet" } })),
+    "Backed up too often today; the nightly backup still runs"
+  );
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "error" })), "Something went wrong; DirectorLink’s log says what");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "SOMETHING_NEW" })), "Something went wrong; DirectorLink’s log says what");
+  // "It tries again later" only when the controller says it will: a night's backup, before 06:00.
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "account_unreachable", note: "retry" })), "The account couldn’t be reached · It tries again later");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "account_unreachable" })), "The account couldn’t be reached");
+  const backUpNow = entry({ outcome: "failed", reason: "account_unreachable", who: { type: "key", name: "Kitchen tablet" } });
+  assert.doesNotMatch(history.outcomeText(backUpNow), /again/);
 });
 
 test("days: today, yesterday, then the date, in the home's time zone", () => {

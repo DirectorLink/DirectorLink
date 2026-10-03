@@ -280,10 +280,18 @@ backups. The sealed text goes to the account over the relay connection in chunks
 characters (`backup_chunk`, docs/RELAY.md), each sent once the one before is answered. Only while
 Remote Access is on, the relay has accepted the home's identity and the lock passed its self-test;
 the account keeps backups only of a home an account has claimed (`NOT_CLAIMED` otherwise). A daily
-backup that could not be made (the relay offline) is tried again every 15 minutes until 06:00, then
-that day has none; Remote Access off is logged once a day. The log says `backup uploaded` (with its
-size, chunks and times: the line a history of what happened can show) or `automatic backup not
-made` with why; `GET /v1/backup/automatic` gives the last one's time, size and outcome.
+backup that could not be made for a reason that may pass (the relay offline or not answering within
+30 s, the account service's own error, the project not read yet) is tried again every 15 minutes
+until 06:00, then that day has none. Any other reason (Remote Access off, the home not in an
+account, too large, the account's limits of backups a day or of space, any other refusal of the
+account's, a failure on the controller, the password changed) is not tried again that night, since each try seals the backup again: the next night's
+goes as usual. Turning automatic backups off or changing the password stops a backup being made,
+also between two chunks (`AUTOMATIC_BACKUP_OFF`, `KEY_CHANGED`); the account service drops the
+unfinished upload. The log says `backup uploaded` (with its size, chunks and times) or `automatic
+backup not made` with why (once a night for a daily one that could not start);
+`GET /v1/backup/automatic` gives the last one's time, size and outcome. History lists a night whose
+backup failed once, with why and whether it is tried again, and a backup made later that night
+(docs/HISTORY.md).
 
 ### In the account
 
@@ -294,8 +302,9 @@ its size, when it came and its `key_id`: nothing about the home. The sealed text
 at most 5 MB a home in all: above that the oldest go first, and the newest always stays. The homes
 of one account's owner hold at most 25 MB together: above that the oldest go first, whichever home
 they are of, and each home's newest stays. A single backup is at most 3,000,000 bytes (the largest
-backup, 2 MiB of JSON, is about 2.8 MB sealed; a big home's is about 175 KB): a larger one is not
-sent, and the log says `BACKUP_TOO_LARGE` (download a backup file instead). They go when an admin
+backup, 2 MiB of JSON, is about 2.8 MB sealed; a big home's is about 175 KB): the controller knows
+the sealed size from the document's JSON, so a larger one is neither sealed nor sent, and the log
+says `BACKUP_TOO_LARGE` (download a backup file instead). They go when an admin
 deletes them, and with the home when its owner deletes their account; an upload that never finished
 goes after an hour.
 

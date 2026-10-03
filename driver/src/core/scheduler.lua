@@ -41,7 +41,7 @@ Scheduler.RAIN_EXPECTED_CHANCE = 50
 
 -- `firstTick`: the first minute after start, which catches up (CATCH_UP_SECONDS). `stopped`: Shabbat
 -- automation could not run when last looked at (Scheduler.switchesChanged). `pausedSkips`: schedule id
--- -> the run the history says was skipped while paused (once a run).
+-- -> the run the history says was skipped while paused (once a pause, until the schedules run again).
 local state = { services = nil, timer = nil, firstTick = false, stopped = false, pausedSkips = {} }
 
 -- The history: a schedule ran (`fields.counts`, `note`), failed or was skipped (`reason`), with its
@@ -402,9 +402,11 @@ local function dueShabbat(schedule, calendar, now, catchUp)
     return nil
 end
 
--- While the schedules are paused in Composer: the history says which time, sun and Shabbat runs did
--- not happen because of it, once a run, when it comes due (and not one that would not have run
--- anyway, on Shabbat). Nothing is remembered as done: resumed within its 5 minutes, it still runs.
+-- While the schedules are paused in Composer: the history says which time, sun and Shabbat schedules
+-- did not run because of it, once a schedule for the pause, when its first run comes due (and not one
+-- that would not have run anyway, on Shabbat). The pause itself is an entry too (a Composer setting),
+-- and two weeks away with many daily schedules would otherwise push everything else out of the
+-- history (ADR-046). Nothing is remembered as done: resumed within its 5 minutes, it still runs.
 local function notePaused(now)
     local calendar = calendarService()
     local info = Scheduler.localTime(now)
@@ -416,7 +418,7 @@ local function notePaused(now)
             else
                 key, at = dueRun(schedule, info, now, nil)
             end
-            if key and key ~= Schedules.runtime(schedule.id).last_fired and key ~= state.pausedSkips[schedule.id]
+            if key and key ~= Schedules.runtime(schedule.id).last_fired and state.pausedSkips[schedule.id] == nil
                 and (schedule.updated_epoch or 0) <= at and shabbatAllows(schedule, calendar, at) then
                 state.pausedSkips[schedule.id] = key
                 remember(schedule, { outcome = "skipped", reason = "paused" })
@@ -442,6 +444,10 @@ function Scheduler.tick(now)
     if state.services and state.services.paused and state.services.paused() then
         notePaused(now)
         return 0
+    end
+    -- Running again: the next pause is listed again.
+    if next(state.pausedSkips) then
+        state.pausedSkips = {}
     end
     local calendar = calendarService()
     local info = Scheduler.localTime(now)

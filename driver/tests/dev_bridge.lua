@@ -9,7 +9,8 @@
 --        out: "SEALED <hex JSON envelope>\n"
 --   in:  "open <hex JSON { key, envelope }>\n" opens a sealed answer; out: "OPENED <hex JSON>\n"
 --        (with "isk" in hex instead of "key": the answer of a pairing with CPace)
---   in:  "tick\n" runs the schedules' minute now (the fake Director runs no timers); out: "TICKED <ran>\n"
+--   in:  "tick\n" runs the schedules' minute now (the fake Director runs no timers), "tick <unix time>\n"
+--        the minute of that time (the home's minute of automatic backups); out: "TICKED <ran>\n"
 --   in:  "remove <device id>\n" removes a device from the project in Composer, then Refresh Project;
 --        out: "REMOVED\n"
 -- With a second argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
@@ -265,8 +266,9 @@ local function command(line)
         local envelope = Lock.seal(Lock.deviceKey(asked.key), Remote.LAN_HOME, asked.key_id, "req", Json.encode(request))
         return "SEALED " .. toHex(Json.encode(envelope))
     end
-    if line == "tick" then
-        return "TICKED " .. tostring(require("src.core.scheduler").tick())
+    local tick = line:match("^tick ?(%d*)$")
+    if tick then
+        return "TICKED " .. tostring(require("src.core.scheduler").tick(tonumber(tick)))
     end
     local removed = line:match("^remove (%d+)$")
     if removed then
