@@ -1485,6 +1485,148 @@ select:disabled {
   min-width: 0;
 }
 
+/* A refrigerator (1.7.0): its door open stands out; offline, its last values are dimmed. */
+.device.fridge.is-door-open .device-icon {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.device.fridge.is-door-open .device-meta {
+  color: var(--onText);
+  font-weight: 600;
+}
+
+.device.fridge.is-offline .fridge-zones,
+.device.fridge.is-offline .fridge-filter {
+  opacity: 0.6;
+}
+
+.fridge-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.fridge-zones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-block-start: 10px;
+}
+
+.fridge-zone {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--coolBg);
+  color: var(--coolText);
+}
+
+.fridge-zone-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.fridge-zone-temperature {
+  font-family: var(--font-head);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.fridge-zone-setpoint {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.fridge-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.fridge-filter .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.fridge-features {
+  display: flex;
+  flex-direction: column;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fridge-feature {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  border-block-start: 1px solid var(--line);
+}
+
+.fridge-feature-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--muted);
+}
+
+.fridge-feature-icon .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.fridge-feature.is-on .fridge-feature-icon {
+  background: var(--coolBg);
+  color: var(--coolText);
+}
+
+.fridge-feature-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fridge-feature-name {
+  font-weight: 500;
+}
+
+.fridge-feature-state {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.fridge-feature-state.is-waiting {
+  color: var(--primary);
+}
+
+.fridge-feature .switch[aria-checked="true"] {
+  background: var(--coolText);
+}
+
+.fav-tile.is-door-open {
+  background: var(--onBg);
+  border-color: transparent;
+  color: var(--onText);
+}
+
+.fav-tile.is-door-open .fav-icon,
+.fav-tile.is-door-open .fav-room,
+.fav-tile.is-door-open .fav-state {
+  color: var(--onText);
+}
+
 .device-name {
   font-weight: 600;
   overflow-wrap: anywhere;
@@ -1711,6 +1853,19 @@ select:disabled {
   border-color: transparent;
   color: var(--coolText);
   font-weight: 600;
+}
+
+/* A choice with its icon (a refrigerator's feature in the scene editor). */
+.chip.chip-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip-with-icon .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 /* Blinds Close / Stop / Open */

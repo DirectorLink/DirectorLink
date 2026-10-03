@@ -66,8 +66,8 @@ local SECTIONS = {
 }
 
 -- Scene step types and favorites ("kind:id") name the kinds of the project's devices so.
-local STEP_KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay" }
-local FAVORITE_KINDS = { light = "light", thermostat = "climate", fan = "fan", blind = "blind", camera = "camera", relay = "relay", doorbell = "doorbell" }
+local STEP_KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay", refrigerators = "refrigerator" }
+local FAVORITE_KINDS = { light = "light", thermostat = "climate", fan = "fan", blind = "blind", camera = "camera", relay = "relay", doorbell = "doorbell", refrigerator = "refrigerator" }
 -- What opens doors and gates: kept only on the device (or room) with the same id and the same
 -- name, never moved to another one, which would open the wrong door.
 local DOOR_KINDS = { relay = true, doorbell = true }

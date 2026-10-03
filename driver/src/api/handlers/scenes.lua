@@ -4,7 +4,8 @@
 -- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
 -- POST /v1/off (1.3.0, Home's "Turn off all") runs one step of that kind: lights off, AC off or
 -- blinds closed, on the devices it names. A music step (1.5.0, ADR-044) pauses or stops the Sonos
--- music in a room or the whole home; it names no devices.
+-- music in a room or the whole home; it names no devices. A refrigerators step (1.7.0, ADR-049)
+-- switches features of Samsung refrigerators on or off: Sabbath Mode in a Shabbat schedule.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -19,8 +20,10 @@ local SceneLinks = require("src.core.scene_links")
 
 local Handlers = {}
 
-local KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay" }
-local LISTS = { lights = "lightList", climate = "climateList", fans = "fanList", blinds = "blindList", relays = "relayList" }
+local KINDS = { lights = "light", climate = "climate", fans = "fan", blinds = "blind", relays = "relay", refrigerators = "refrigerator" }
+local LISTS = { lights = "lightList", climate = "climateList", fans = "fanList", blinds = "blindList", relays = "relayList", refrigerators = "refrigeratorList" }
+-- A refrigerators step's features, in the order their commands go out.
+local REFRIGERATOR_FEATURES = { "power_cool", "power_freeze", "sabbath_mode", "ice_maker" }
 local MAX_PROBLEMS = 50
 -- Why a music step did nothing (src/sonos/sonos.lua, Sonos.sceneStep): a problem with device_id 0.
 local MUSIC_SKIPPED = {
@@ -95,6 +98,7 @@ local function validateSet(stepType, set, field)
         blinds = { position = true },
         relays = { action = true },
         music = { action = true },
+        refrigerators = Scenes.REFRIGERATOR_FEATURES,
     })[stepType]
     for key in pairs(set) do
         if not allowed[key] then
@@ -172,6 +176,21 @@ local function validateSet(stepType, set, field)
         end
         return { position = set.position }
     end
+    if stepType == "refrigerators" then
+        local result = {}
+        for _, feature in ipairs(REFRIGERATOR_FEATURES) do
+            if set[feature] ~= nil then
+                if type(set[feature]) ~= "boolean" then
+                    return nil, Problem.invalidField(field .. "." .. feature, feature .. " must be true (on) or false (off)")
+                end
+                result[feature] = set[feature]
+            end
+        end
+        if next(result) == nil then
+            return nil, Problem.invalidField(field, "Set at least one of power_cool, power_freeze, sabbath_mode, ice_maker")
+        end
+        return result
+    end
     if stepType == "music" then
         if not Scenes.MUSIC_ACTIONS[set.action] then
             return nil, Problem.invalidField(field .. ".action", 'music takes {"action": "pause"} or {"action": "stop"}')
@@ -218,7 +237,7 @@ local function validateStep(registry, item, field)
     end
     local stepType = item.type
     if type(stepType) ~= "string" or not (KINDS[stepType] or stepType == "music") then
-        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, fans, blinds, relays, music")
+        return nil, Problem.invalidField(field .. ".type", "type must be one of lights, climate, fans, blinds, relays, music, refrigerators")
     end
     local roomId = nil
     if item.room_id ~= nil and item.room_id ~= Json.null then
@@ -435,6 +454,15 @@ local function deviceCommands(step, device)
     elseif step.type == "blinds" then
         -- Checked first: a shade that only opens and closes fully is skipped for a position between.
         return { { action = "set_position", params = { position = set.position }, check = true } }
+    elseif step.type == "refrigerators" then
+        -- Checked first: a feature the refrigerator does not have is left out, the others still go.
+        local commands = {}
+        for _, feature in ipairs(REFRIGERATOR_FEATURES) do
+            if set[feature] ~= nil then
+                commands[#commands + 1] = { action = "set_feature", params = { feature = feature, on = set[feature] }, check = true }
+            end
+        end
+        return commands
     end
     return { { action = "pulse" } }
 end

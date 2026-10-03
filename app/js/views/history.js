@@ -30,6 +30,8 @@ export const FILTERS = {
 };
 
 const ICONS = { scene: "scene", door: "door", composer: "controller", access: "key" };
+// A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
+const ACTION_ICONS = { left_open: "fridge" };
 const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
 
 let generation = 0;
@@ -233,6 +235,7 @@ function title(entry) {
     case "door.hold":
     case "door.release":
     case "door.doorbell":
+    case "door.left_open":
       return t(`history.door.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
     case "access.paired":
     case "access.created":
@@ -328,7 +331,7 @@ function iconOf(entry) {
     return "clock";
   }
   if (entry.kind === "system") return SYSTEM_ICONS[entry.action] || "info";
-  return ICONS[entry.kind] || "info";
+  return ACTION_ICONS[entry.action] || ICONS[entry.kind] || "info";
 }
 
 // ---- the page ----------------------------------------------------------------------------------

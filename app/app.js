@@ -235,6 +235,7 @@ function signature() {
     state.cameras,
     state.relays,
     state.doorbells,
+    state.refrigerators,
     // The alarm (read-only), and the seconds an entry or exit delay has left.
     alarmSignature(),
     // The Sonos rooms, their pictures and favorites (js/music.js).

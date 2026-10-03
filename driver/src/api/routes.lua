@@ -94,6 +94,11 @@ return {
     { method = "GET", path = "/v1/doorbells/{doorbellId}", handler = "doorbells.get", role = "viewer" },
     { method = "POST", path = "/v1/doorbells/{doorbellId}/open", handler = "doorbells.open", role = "doors" },
 
+    -- Samsung refrigerators (ADR-049): read by everyone, their features switched by members.
+    { method = "GET", path = "/v1/refrigerators", handler = "refrigerators.list", role = "viewer" },
+    { method = "GET", path = "/v1/refrigerators/{refrigeratorId}", handler = "refrigerators.get", role = "viewer" },
+    { method = "PATCH", path = "/v1/refrigerators/{refrigeratorId}", handler = "refrigerators.update", role = "member" },
+
     -- Read-only, and never for viewers (ADR-038): no route arms, disarms or sends anything to the
     -- alarm; scripts/check_package.py fails the build if one does.
     { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },

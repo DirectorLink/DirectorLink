@@ -15,6 +15,10 @@ setpoint); two fans (one on at Medium, one off), which follow their commands; tw
 cameras and a door relay.
 Two more shades report their movement as KNX blinds do (one of them only opens and closes fully),
 and every blind moves over some seconds, reported while the requests come in.
+A Samsung refrigerator in the kitchen (its driver is device 140, with the variables of the
+Samsung Refrigerator (DirectorLink) driver 1.0.0) follows its feature commands 4 seconds later, as
+the refrigerator confirms them through Samsung's cloud; "var 140 1006 1" opens its door and
+"event 140 15" is its driver's Door Left Open.
 An alarm panel has two partitions (House, disarmed with a zone open; Garage, armed away) and a third
 it does not use; Alarm Status is On in this fake home. Type "alarm off" or "alarm on" to switch it
 as in Composer, and "var <device id> <variable id> <value>" for a partition to report a change
@@ -138,6 +142,10 @@ class Bridge:
         """A device of the fake project reports a variable; returns how many listeners heard it."""
         return int(self._ask(f"variable {int(device_id)} {int(variable_id)} {str(value).encode().hex()}", "VARIABLE"))
 
+    def fire_event(self, device_id, event_id):
+        """A device of the fake project fires an event; returns how many registrations heard it."""
+        return int(self._ask(f"event {int(device_id)} {int(event_id)}", "EVENT"))
+
     def tick(self, at=None):
         """Runs the scheduler's minute (schedules, automatic backups) now, or at the Unix time `at`;
         returns how many schedules ran."""
@@ -215,7 +223,7 @@ def main():
             print(f"Sonos: On (fake players on port {args.sonos})")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>".')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>".')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
@@ -231,6 +239,8 @@ def main():
                 elif len(words) == 2 and words[0] == "sonos" and words[1] in ("on", "off"):
                     bridge.set_property("Sonos", words[1].capitalize())
                     print(f"Sonos: {words[1].capitalize()}")
+                elif len(words) == 3 and words[0] == "event" and words[1].isdigit() and words[2].isdigit():
+                    print(f"Delivered to {bridge.fire_event(words[1], words[2])} registration(s)")
                 elif len(words) >= 3 and words[0] == "var" and words[1].isdigit() and words[2].isdigit():
                     value = line.split(None, 3)[3].strip() if len(words) > 3 else ""
                     print(f"Reported to {bridge.report_variable(words[1], words[2], value)} listener(s)")

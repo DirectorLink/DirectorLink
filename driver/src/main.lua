@@ -6,6 +6,7 @@ local Normalize = require("src.control4.normalize")
 local ProjectEvents = require("src.control4.project_events")
 local AdapterManager = require("src.adapters.manager")
 local Alarm = require("src.adapters.alarm")
+local Refrigerator = require("src.adapters.refrigerator")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
@@ -342,12 +343,22 @@ local function publishInventory()
         counts.supported_relays,
         counts.supported_doorbells
     )
+    if counts.supported_refrigerators > 0 then
+        text = text .. string.format(", %d refrigerators", counts.supported_refrigerators)
+    end
     if Alarm.enabled() then
         text = text .. string.format(", %d alarm partitions", counts.alarm_partitions)
     end
     updateProperty("Inventory", text)
     return counts
 end
+
+-- A refrigerator's door has been open longer than its driver's Door Open Alert (ADR-049): once per
+-- opening, from the driver's Door Left Open event (src/adapters/refrigerator.lua). It goes into the
+-- history. The push alert (ADR-050) belongs here too, telling the cloud nothing but its kind and time.
+Refrigerator.onDoorLeftOpen(function(device)
+    Activity.record("door", "left_open", { what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
+end)
 
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
 -- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps

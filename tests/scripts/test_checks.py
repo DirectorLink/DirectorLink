@@ -284,8 +284,8 @@ class AlarmReadOnly(unittest.TestCase):
     def test_no_scene_step_reaches_the_alarm(self):
         files = driver_sources()
         for name, old, new in (
-            ("src/core/scenes.lua", "music = true }", "music = true, alarm = true }"),
-            ("src/api/handlers/scenes.lua", 'relays = "relay" }', 'relays = "relay", partitions = "alarm" }'),
+            ("src/core/scenes.lua", "refrigerators = true }", "refrigerators = true, alarm = true }"),
+            ("src/api/handlers/scenes.lua", 'refrigerators = "refrigerator" }', 'refrigerators = "refrigerator", partitions = "alarm" }'),
         ):
             with self.subTest(name=name):
                 self.assertIn(old, files[name])
