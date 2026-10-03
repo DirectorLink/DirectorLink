@@ -3,7 +3,7 @@
 //
 // Driver mode (the default): a fake DirectorLink driver. It speaks WebSocket byte by byte over
 // node:net (ws://) or node:tls (wss://) exactly as RELAY.md describes: the handshake headers, a
-// hello, "ping" every 25 s, and a canned JSON answer (an echo of the request) to every relayed
+// hello, "ping" every 10 s, and a canned JSON answer (an echo of the request) to every relayed
 // request. It prints what happens.
 //
 //   node scripts/relay_smoke.mjs [--url ws://127.0.0.1:8787] [--home <32 hex>] [--secret <64 hex>]
@@ -41,8 +41,8 @@ import { parseArgs } from "node:util";
 
 export const DEFAULT_URL = "ws://127.0.0.1:8787";
 export const DEFAULT_VERSION = "0.9.0-smoke";
-export const PING_INTERVAL_MS = 25_000;
-export const SILENCE_TIMEOUT_MS = 60_000;
+export const PING_INTERVAL_MS = 10_000;
+export const SILENCE_TIMEOUT_MS = 30_000; // three pings, as the driver (1.6.0)
 export const RECONNECT_DELAYS_S = [5, 10, 30, 60];
 export const QUICK_RETRY_S = 1; // after a connection that was up STABLE_MS
 export const STABLE_MS = 60_000;
@@ -266,6 +266,8 @@ class BodyReader {
 
 // --- The driver's side of the relay connection -----------------------------------------------------
 
+// Options include helloPingS, the interval the hello announces (ping_s): the ping interval by
+// default, none without pings (as drivers before 1.6.0); null leaves it out.
 // Events: "text" (text, { fragments }), "request" (message), "response" (message), "pong" (rtt ms),
 // "ping" (payload of a protocol ping), "unknown" (text), "close" ({ code, reason, by }).
 // `ready` resolves once connected (or rejects, with a HandshakeError when the relay refused);
@@ -284,6 +286,7 @@ export class DriverConnection extends EventEmitter {
     this.log = options.log ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? SILENCE_TIMEOUT_MS;
+    this.helloPingS = options.helloPingS !== undefined ? options.helloPingS : this.pingIntervalMs > 0 ? this.pingIntervalMs / 1000 : null;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS;
     this.state = "connecting"; // connecting, handshake, refused, open, closing, closed
     this.key = randomBytes(16).toString("base64");
@@ -437,8 +440,9 @@ export class DriverConnection extends EventEmitter {
       this.timers.ping.unref?.();
     }
     if (this.sendHello) {
-      this.sendJson({ type: "hello", home: this.home, version: this.helloVersion });
-      this.log(`-> hello (version ${this.helloVersion})`);
+      const pingS = this.helloPingS !== null ? { ping_s: this.helloPingS } : {};
+      this.sendJson({ type: "hello", home: this.home, version: this.helloVersion, ...pingS });
+      this.log(`-> hello (version ${this.helloVersion}${this.helloPingS !== null ? `, ping every ${this.helloPingS} s` : ""})`);
     }
     this.resolveReady(this);
     if (rest.length > 0) {
