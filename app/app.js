@@ -18,6 +18,7 @@ import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
 import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
+import { HISTORY_ROW_KEY, historyAllowed, historyView, resetHistory } from "./js/views/history.js";
 import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
@@ -71,6 +72,10 @@ function parseRoute() {
   if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
   }
+  // Settings → Controller → History (ADR-046); alert notifications open it too.
+  if (parts[0] === "settings" && parts[1] === "history") {
+    return { name: "history", tab: "settings" };
+  }
   // Settings' list, or one of its pages (#/settings/rooms); an unknown page is the list.
   if (parts[0] === "settings") {
     return { name: "settings", page: SETTINGS_PAGES.includes(parts[1]) ? parts[1] : null, tab: "settings" };
@@ -99,6 +104,7 @@ window.addEventListener("hashchange", () => {
   ui.cameFrom = previous.name;
   // People and devices loads fresh each time it is opened; a scene opens as it was saved.
   if (route.name === "access" && previous.name !== "access") resetAccess();
+  if (route.name === "history" && previous.name !== "history") resetHistory();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
   // Shabbat and holidays opens with the controller's settings.
@@ -114,7 +120,12 @@ window.addEventListener("hashchange", () => {
   window.scrollTo(0, 0);
   // Back on Settings' list from one of its pages, the row that opened it has the focus; otherwise
   // the new screen's heading, for keyboard and screen-reader users.
-  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : null;
+  const rowKey =
+    route.name === "settings" && !route.page
+      ? settingsRowKey(previous)
+      : route.page === "controller" && previous.name === "history"
+        ? HISTORY_ROW_KEY
+        : null;
   const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey) : null;
   if (row) {
     row.scrollIntoView({ block: "center" });
@@ -269,6 +280,7 @@ function signature() {
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     route.name === "access" ? ui.access : 0,
+    route.name === "history" ? ui.history : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
@@ -299,6 +311,9 @@ function screen() {
       return joinView(actions);
     case "access":
       return accessView(actions);
+    case "history":
+      if (historyAllowed()) return historyView(actions);
+    // falls through: anyone but an admin (a notification may open it) gets Settings' list.
     case "settings":
       return settingsView({
         page: route.page,

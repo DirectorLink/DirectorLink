@@ -21,6 +21,7 @@ import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.j
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { backupPanel } from "./backup.js";
+import { historyRow } from "./history.js";
 import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
 import { musicRoomsSection } from "./music.js";
 import { chip, stepper } from "./schedules.js";
@@ -34,7 +35,7 @@ export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "ap
 export function settingsView({ page = null, onPalette, onTheme, onLanguage, navigate }) {
   switch (page) {
     case "controller":
-      return subpage(t("settings.controller.title"), controllerSection(navigate), updatesSection(), backupPanel());
+      return subpage(t("settings.controller.title"), controllerSection(navigate), historyRow(), updatesSection(), backupPanel());
     case "rooms":
       return subpage(t("settings.rooms.title"), roomsSection(), roomNamesSection(), musicSection());
     case "calendar":

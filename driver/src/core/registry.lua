@@ -260,6 +260,55 @@ function Registry.changes(previousDevices, previousRooms)
     return changes
 end
 
+-- The same changes one by one, by name, for the history (ADR-046): devices and rooms removed, added,
+-- renamed and moved, in that order, by name within each; DirectorLink sees every device in the
+-- project, also those it cannot control (a keypad's button). Each is { change, type ("device" or
+-- "room"), name, room, from (the name before, or the room before) }. Returns { changes = list }, or
+-- nil when nothing changed.
+function Registry.changeList(previousDevices, previousRooms)
+    local groups = { removed = {}, added = {}, renamed = {}, moved = {} }
+    local function compare(before, now, kind)
+        for id, record in pairs(now) do
+            local old = before[id]
+            local room = kind == "device" and record.room_name or nil
+            if not old then
+                table.insert(groups.added, { change = "added", type = kind, name = record.name, room = room })
+            else
+                if old.name ~= record.name then
+                    table.insert(groups.renamed, { change = "renamed", type = kind, name = record.name, room = room, from = old.name })
+                end
+                if kind == "device" and old.room_id ~= record.room_id then
+                    table.insert(groups.moved, { change = "moved", type = kind, name = record.name, room = room, from = old.room_name })
+                end
+            end
+        end
+        for id, old in pairs(before) do
+            if not now[id] then
+                table.insert(groups.removed, { change = "removed", type = kind, name = old.name, room = kind == "device" and old.room_name or nil })
+            end
+        end
+    end
+    compare(previousDevices or {}, Registry.devices or {}, "device")
+    compare(previousRooms or {}, Registry.rooms or {}, "room")
+    local changes = {}
+    for _, change in ipairs({ "removed", "added", "renamed", "moved" }) do
+        local group = groups[change]
+        table.sort(group, function(a, b)
+            if a.type ~= b.type then
+                return a.type == "device"
+            end
+            return string.lower(tostring(a.name)) < string.lower(tostring(b.name))
+        end)
+        for _, item in ipairs(group) do
+            changes[#changes + 1] = item
+        end
+    end
+    if #changes == 0 then
+        return nil
+    end
+    return { changes = changes }
+end
+
 function Registry.snapshot()
     return {
         metadata = Registry.metadata,

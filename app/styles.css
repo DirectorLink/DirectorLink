@@ -2973,6 +2973,152 @@ input::placeholder {
   color: var(--muted);
 }
 
+/* ---- Settings → Controller → History (views/history.js) ------------------------------------ */
+
+.history {
+  display: grid;
+  gap: 12px;
+  max-width: 760px;
+}
+
+.history-help {
+  margin: 0;
+}
+
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-day {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.history-day-title {
+  margin: 8px 4px 0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.history-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+}
+
+.history-item {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 2px 12px;
+  align-items: start;
+  padding: 12px 16px;
+}
+
+.history-item + .history-item {
+  border-block-start: 1px solid var(--line);
+}
+
+.history-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+
+.history-icon .icon {
+  width: 20px;
+  height: 20px;
+}
+
+.history-item.is-skipped .history-icon {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
+.history-item.is-failed .history-icon {
+  background: var(--errBg);
+  color: var(--errText);
+}
+
+.history-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.history-line,
+.history-outcome {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Its own direction: a name at its end never runs into who did it. */
+.history-title {
+  font-weight: 600;
+  margin-inline-end: 6px;
+  unicode-bidi: isolate;
+}
+
+.history-who {
+  color: var(--muted);
+}
+
+.history-outcome {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.history-outcome .icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-block-start: 2px;
+}
+
+.history-outcome.is-skipped {
+  color: var(--onText);
+}
+
+.history-outcome.is-failed {
+  color: var(--errText);
+}
+
+.history-changes {
+  margin: 2px 0 0;
+  padding-inline-start: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.history-time {
+  padding-block-start: 1px;
+  color: var(--muted);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.history-more {
+  display: flex;
+  justify-content: center;
+}
+
+.history-status:empty {
+  display: none;
+}
+
 .radio-group {
   margin: 0;
   padding: 0;

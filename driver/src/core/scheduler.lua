@@ -18,11 +18,14 @@
 --   restart; nor is anything when what the schedules ran could not be read.
 -- A scheduled scene runs like one from a member's key: doors and gates in it are skipped.
 -- The installer can pause them all in Composer (the Schedules property); each run is shown in the
--- Last Automation property (src/core/installer_view.lua).
+-- Last Automation property (src/core/installer_view.lua). Each run, and each skip with its reason,
+-- also goes into the history (ADR-046, src/core/activity.lua).
 
+local Activity = require("src.core.activity")
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
+local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local Sun = require("src.core.sun")
 local Weather = require("src.core.weather")
@@ -37,8 +40,19 @@ Scheduler.DRY_SECONDS = 3600
 Scheduler.RAIN_EXPECTED_CHANCE = 50
 
 -- `firstTick`: the first minute after start, which catches up (CATCH_UP_SECONDS). `stopped`: Shabbat
--- automation could not run when last looked at (Scheduler.switchesChanged).
-local state = { services = nil, timer = nil, firstTick = false, stopped = false }
+-- automation could not run when last looked at (Scheduler.switchesChanged). `pausedSkips`: schedule id
+-- -> the run the history says was skipped while paused (once a run).
+local state = { services = nil, timer = nil, firstTick = false, stopped = false, pausedSkips = {} }
+
+-- The history: a schedule ran (`fields.counts`, `note`), failed or was skipped (`reason`), with its
+-- scene by the name it has now, and its time and days as they are now.
+local function remember(schedule, fields)
+    local scene = Scenes.find(schedule.scene_id)
+    fields.who = { type = "schedule", schedule_id = schedule.id, trigger = schedule.trigger, days = schedule.days }
+    fields.what = scene and scene.name or nil
+    fields.ids = { schedule_id = schedule.id, scene_id = schedule.scene_id }
+    Activity.record("schedule", "run", fields)
+end
 
 -- The Jewish calendar service (src/core/jewish_calendar.lua), or nil.
 local function calendarService()
@@ -275,6 +289,12 @@ local function run(schedule, now, note, weather)
         lastRun.error = failure or "FAILED"
     end
     runtime.last_run = lastRun
+    remember(schedule, {
+        outcome = lastRun.error and "failed" or nil,
+        reason = lastRun.error and (lastRun.error == "SCENE_NOT_FOUND" and "scene_gone" or "error") or nil,
+        note = note,
+        counts = result,
+    })
     if state.services.onRun then
         pcall(state.services.onRun, { at = now, scene_id = schedule.scene_id, schedule = schedule, weather = weather, note = note, result = result, error = lastRun.error })
     end
@@ -378,6 +398,29 @@ local function dueShabbat(schedule, calendar, now, catchUp)
     return nil
 end
 
+-- While the schedules are paused in Composer: the history says which time, sun and Shabbat runs did
+-- not happen because of it, once a run, when it comes due (and not one that would not have run
+-- anyway, on Shabbat). Nothing is remembered as done: resumed within its 5 minutes, it still runs.
+local function notePaused(now)
+    local calendar = calendarService()
+    local info = Scheduler.localTime(now)
+    for _, schedule in ipairs(Schedules.records()) do
+        if schedule.enabled ~= false and schedule.trigger.type ~= "weather" then
+            local key, at
+            if schedule.trigger.type == "shabbat" then
+                key, at = dueShabbat(schedule, calendar, now, nil)
+            else
+                key, at = dueRun(schedule, info, now, nil)
+            end
+            if key and key ~= Schedules.runtime(schedule.id).last_fired and key ~= state.pausedSkips[schedule.id]
+                and (schedule.updated_epoch or 0) <= at and shabbatAllows(schedule, calendar, at) then
+                state.pausedSkips[schedule.id] = key
+                remember(schedule, { outcome = "skipped", reason = "paused" })
+            end
+        end
+    end
+end
+
 -- One pass over the schedules for the minute of `now`. Returns how many ran. While paused in
 -- Composer nothing runs and nothing is remembered as done.
 function Scheduler.tick(now)
@@ -393,6 +436,7 @@ function Scheduler.tick(now)
     -- calendar was off or had no location, never runs afterwards.
     local catchUp = firstTick and (Schedules.catchUpAfter() or 0) or nil
     if state.services and state.services.paused and state.services.paused() then
+        notePaused(now)
         return 0
     end
     local calendar = calendarService()
@@ -460,18 +504,25 @@ function Scheduler.tick(now)
                         if why == "shabbat" then
                             runtime.last_run = { at = Clock.iso(now), skipped_by = "shabbat" }
                             Log.info("schedules", "schedule skipped: Shabbat or a holiday", { schedule = schedule.id })
+                            remember(schedule, { outcome = "skipped", reason = "shabbat" })
+                        elseif why == "calendar" then
+                            -- Only on Shabbat, and the calendar is off or has no location: the
+                            -- history says so (the schedule cannot run while it is).
+                            remember(schedule, { outcome = "skipped", reason = "calendar_off" })
                         end
                     elseif met == nil then
                         if schedule.if_no_weather ~= "skip" then
                             due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or "no_weather" }
                         else
                             runtime.last_run = { at = Clock.iso(now), skipped_by = "no_weather" }
+                            remember(schedule, { outcome = "skipped", reason = "no_weather" })
                         end
                     elseif met then
                         due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil }
                     else
                         runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
                         Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
+                        remember(schedule, { outcome = "skipped", reason = "only_if" })
                     end
                 end
             end

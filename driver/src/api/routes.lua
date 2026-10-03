@@ -111,6 +111,9 @@ return {
     { method = "POST", path = "/v1/restore/parts", handler = "backup.part", role = "admin" },
     { method = "POST", path = "/v1/restore", handler = "backup.restore", role = "admin" },
 
+    -- What the controller did and noticed (ADR-046), for admins; in the clear too, like the log.
+    { method = "GET", path = "/v1/activity", handler = "activity.list", role = "admin" },
+
     { method = "GET", path = "/v1/logs", handler = "logs.list", role = "admin" },
     { method = "GET", path = "/v1/logs/settings", handler = "logs.get_settings", role = "admin" },
     { method = "PATCH", path = "/v1/logs/settings", handler = "logs.update_settings", role = "admin" },

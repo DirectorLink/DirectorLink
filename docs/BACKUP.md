@@ -22,8 +22,8 @@ says to update DirectorLink.
 | The calendar's settings | Candle lighting and havdalah minutes, Israel or abroad. | As they were. |
 | The remote identity | The home id, its secret and the replacements waiting for the owner's approval, only once the relay has accepted it (`linked`). | By the rules below. |
 
-Not in a backup: pending invitations (revoked by a restore; see ADR-042 for why), what the schedules
-ran, the request ids kept against replays, the random pool, the weather, the last automation shown
+Not in a backup: pending invitations (revoked by a restore; see ADR-042 for why), the activity
+history (it stays on the controller, and a restore adds to it; ADR-046), what the schedules ran, the request ids kept against replays, the random pool, the weather, the last automation shown
 in Composer, the pairing and start counters, the log and a claim token (both only in memory). A
 remote identity the relay never accepted (Remote Access never on, or never connected) is not in a
 backup either, and none is made for one: restored, it would replace a home that is linked now.

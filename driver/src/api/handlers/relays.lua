@@ -2,6 +2,10 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Activity = require("src.core.activity")
+
+-- How the history names what a relay was told (a relay held closed holds its door open).
+local HISTORY = { pulse = "pulse", close = "hold", open = "release" }
 
 local Relays = {}
 
@@ -39,6 +43,7 @@ local function run(ctx, device, action)
         key_id = ctx.apiKey and ctx.apiKey.id or Json.null,
         client = ctx.client and ctx.client.ip or Json.null,
     })
+    Activity.record("door", HISTORY[action], { by = ctx.apiKey, what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
     return 202, Views.relay(ctx.services.registry, device)
 end
 
