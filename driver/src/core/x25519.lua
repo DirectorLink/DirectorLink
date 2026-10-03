@@ -2,7 +2,8 @@
 -- on the home network never sees the new API key (docs/ACCOUNTS.md). DriverWorks has no key
 -- exchange of its own; this is TweetNaCl's field arithmetic in plain Lua 5.1: numbers are doubles,
 -- so an element of GF(2^255 - 19) is 16 limbs of 16 bits, and every intermediate stays far below
--- 2^53. It is not constant time; it runs once per pairing, on the home network.
+-- 2^53. It is not constant time; it runs a few times per pairing, on the home network, and twice
+-- for each automatic backup (ADR-048), with a key used once.
 -- Checked against RFC 7748's test vectors (driver/tests/test_x25519.lua).
 
 local X25519 = {}
@@ -152,8 +153,10 @@ end
 
 local A24 = gf({ 0xDB41, 1 })
 
--- The 32-byte shared value for a 32-byte scalar and a 32-byte u-coordinate (little-endian strings).
-function X25519.scalarmult(scalar, point)
+-- A scalar multiplication a few of its 255 steps at a time, so that a long one never holds
+-- Director's Lua thread (an automatic backup's, src/cloud/auto_backup.lua): job:step(count) runs
+-- up to `count` steps and returns true once all have run; job:result() then gives the 32 bytes.
+function X25519.start(scalar, point)
     assert(type(scalar) == "string" and #scalar == 32, "X25519 needs a 32-byte scalar")
     assert(type(point) == "string" and #point == 32, "X25519 needs a 32-byte point")
     local z = { scalar:byte(1, 32) }
@@ -164,34 +167,52 @@ function X25519.scalarmult(scalar, point)
     local a, b, c, d, e, f = gf(), gf(), gf(), gf(), gf(), gf()
     copy(b, x)
     a[1], d[1] = 1, 1
-    for i = 254, 0, -1 do
-        local r = floor(z[floor(i / 8) + 1] / 2 ^ (i % 8)) % 2
-        swap(a, b, r)
-        swap(c, d, r)
-        add(e, a, c)
-        sub(a, a, c)
-        add(c, b, d)
-        sub(b, b, d)
-        square(d, e)
-        square(f, a)
-        mul(a, c, a)
-        mul(c, b, e)
-        add(e, a, c)
-        sub(a, a, c)
-        square(b, a)
-        sub(c, d, f)
-        mul(a, c, A24)
-        add(a, a, d)
-        mul(c, c, a)
-        mul(a, d, f)
-        mul(d, b, x)
-        square(b, e)
-        swap(a, b, r)
-        swap(c, d, r)
+    local i = 254
+    local job = {}
+    function job.step(count)
+        local last = math.max(i - count + 1, 0)
+        while i >= last do
+            local r = floor(z[floor(i / 8) + 1] / 2 ^ (i % 8)) % 2
+            swap(a, b, r)
+            swap(c, d, r)
+            add(e, a, c)
+            sub(a, a, c)
+            add(c, b, d)
+            sub(b, b, d)
+            square(d, e)
+            square(f, a)
+            mul(a, c, a)
+            mul(c, b, e)
+            add(e, a, c)
+            sub(a, a, c)
+            square(b, a)
+            sub(c, d, f)
+            mul(a, c, A24)
+            add(a, a, d)
+            mul(c, c, a)
+            mul(a, d, f)
+            mul(d, b, x)
+            square(b, e)
+            swap(a, b, r)
+            swap(c, d, r)
+            i = i - 1
+        end
+        return i < 0
     end
-    invert(c, c)
-    mul(a, a, c)
-    return pack(a)
+    function job.result()
+        assert(i < 0, "the scalar multiplication has steps left")
+        invert(c, c)
+        mul(a, a, c)
+        return pack(a)
+    end
+    return job
+end
+
+-- The 32-byte shared value for a 32-byte scalar and a 32-byte u-coordinate (little-endian strings).
+function X25519.scalarmult(scalar, point)
+    local job = X25519.start(scalar, point)
+    job.step(255)
+    return job.result()
 end
 
 local ZERO = string.rep(string.char(0), 32)

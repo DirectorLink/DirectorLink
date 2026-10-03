@@ -110,6 +110,11 @@ return {
     { method = "GET", path = "/v1/backup", handler = "backup.export", role = "admin" },
     { method = "POST", path = "/v1/restore/parts", handler = "backup.part", role = "admin" },
     { method = "POST", path = "/v1/restore", handler = "backup.restore", role = "admin" },
+    -- Automatic backups to the account, sealed to the backup password's key (ADR-048).
+    { method = "GET", path = "/v1/backup/automatic", handler = "backup.automatic", role = "admin" },
+    { method = "PUT", path = "/v1/backup/automatic", handler = "backup.set_automatic", role = "admin" },
+    { method = "DELETE", path = "/v1/backup/automatic", handler = "backup.clear_automatic", role = "admin" },
+    { method = "POST", path = "/v1/backup/automatic/run", handler = "backup.run_automatic", role = "admin" },
 
     -- What the controller did and noticed (ADR-046), for admins; in the clear too, like the log.
     { method = "GET", path = "/v1/activity", handler = "activity.list", role = "admin" },

@@ -2832,6 +2832,34 @@ input::placeholder {
   text-align: start;
 }
 
+/* Its automatic backups to the account (js/views/cloud-backup.js): below a line; each backup in
+   the account with its date and size, and Restore at the end of the line. */
+.auto-backup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.backup-references ul.auto-backup-items {
+  gap: 2px;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+.auto-backup-items li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 8px;
+}
+
+.auto-backup-items li .button {
+  margin-inline-start: auto;
+}
+
 .settings {
   display: grid;
   gap: 16px;

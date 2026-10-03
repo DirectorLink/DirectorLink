@@ -266,9 +266,9 @@ local function onMessage(text, kind)
         log("debug", "ignored a relay message that is not JSON")
         return
     end
-    -- Answers to what the driver asked (Relay.ask).
+    -- Answers to what the driver asked (Relay.ask): an invitation registered, a backup's chunk kept.
     local waiting = type(message.id) == "string" and state.asked[message.id]
-    if waiting and message.type == "invitation_result" then
+    if waiting and (message.type == "invitation_result" or message.type == "backup_result") then
         state.asked[message.id] = nil
         waiting(message)
         return

@@ -21,6 +21,8 @@ const ASSETS = [
   "/js/music.js",
   "/js/views/music.js",
   "/js/backup.js",
+  "/js/cloud-backup.js",
+  "/js/views/cloud-backup.js",
   "/js/lock.js",
   "/js/cpace.js",
   "/js/platform.js",

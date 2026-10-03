@@ -42,6 +42,7 @@ local suites = {
     "test_fans",
     "test_alarm",
     "test_backup",
+    "test_auto_backup",
     "test_sonos",
     "test_activity",
 }
@@ -59,6 +60,7 @@ local SECONDS = {
     test_shades = 25,
     test_relay = 9,
     test_activity = 7,
+    test_auto_backup = 7,
     test_lock = 1,
     test_remote = 18,
     test_profiles = 3,

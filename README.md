@@ -121,7 +121,7 @@ Update the installed driver manually through Composer Pro using the `DirectorLin
 
 To downgrade, download `DirectorLink.c4z` from an older release and install that version through Composer Pro. Release notes say when a downgrade is not safe.
 
-Do not remove and re-add the project instance unless a release specifically requires it. Removing it deletes everything DirectorLink keeps: have an admin make a backup in the app first (Settings → Controller → Backup, [`docs/BACKUP.md`](docs/BACKUP.md)).
+Do not remove and re-add the project instance unless a release specifically requires it. Removing it deletes everything DirectorLink keeps: have an admin make a backup in the app first (Settings → Controller → Backup, [`docs/BACKUP.md`](docs/BACKUP.md)), or turn on automatic backups to the account there (1.6.0).
 
 ## API
 

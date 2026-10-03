@@ -1,0 +1,35 @@
+{
+  "about": "Test vectors for automatic backups (ADR-048, docs/BACKUP.md), computed with Node's crypto. The browser makes the backup password's key pair (key); the driver seals each backup to its public key (seal), and the app opens it with the password. The driver (Lua) and the app (WebCrypto) must both reproduce them.",
+  "key": {
+    "password": "Correct horse, battery staple — סוס",
+    "salt": "ABEiM0RVZneImaq7zN3u/w==",
+    "iterations": 1000,
+    "private_hex": "b6f5bca9744859bce8059dcd7e4f87a782b7429cc93dad6e6dea50f669e83b84",
+    "public_key": "yhoMdriYcjCiosehwzKzav99+vT1pEfCZqEB48MsvHY=",
+    "key_id": "ca1a0c76b8987230"
+  },
+  "seal": {
+    "public_key": "yhoMdriYcjCiosehwzKzav99+vT1pEfCZqEB48MsvHY=",
+    "ephemeral_hex": "a8abababababababababababababababababababababababababababababab6b",
+    "epk": "43EthRoOXXm4McXjSrIrQaGYFx3iCbi4+sojoRxiSFk=",
+    "shared_hex": "92f3b2ef34f2bc0c0791eec98f2708e5035c63abff8beb4dbe79b65692970b32",
+    "lock_key_hex": "733691711a9fb5eec6cef8d29b06a77b1f09afc5cf8e826d98c590735b8686b9",
+    "enc_key_hex": "f7d7765de72d5f1bb5e672dc3642fb142d90776a67f0bdf17cda4a90dfbf2f8d",
+    "mac_key_hex": "605bea9edbfa3dfecb5126d1056f7d4c3c4fc6fdd1ebe9403aebae014282d182",
+    "iv_hex": "0f0e0d0c0b0a09080706050403020100",
+    "plaintext": "{\"format\":\"directorlink-backup\",\"format_version\":1,\"driver_version\":\"1.6.0\",\"created_at\":\"2026-10-03T00:27:00Z\",\"home\":{\"name\":\"בית Home\"},\"sections\":{\"sonos_rooms\":{\"version\":1,\"rooms\":{\"RINCON_000E58A0B1C201400\":{\"room_id\":10,\"name\":\"Kitchen\"}}}}}",
+    "sealed": {
+      "format": "directorlink-cloud-backup",
+      "version": 1,
+      "cipher": "X25519-AES-256-CBC-HMAC-SHA256",
+      "kdf": "PBKDF2-SHA-256",
+      "iterations": 1000,
+      "salt": "ABEiM0RVZneImaq7zN3u/w==",
+      "key_id": "ca1a0c76b8987230",
+      "epk": "43EthRoOXXm4McXjSrIrQaGYFx3iCbi4+sojoRxiSFk=",
+      "iv": "Dw4NDAsKCQgHBgUEAwIBAA==",
+      "ct": "jgE1XrVKKKX5ff0tCN7kcggJb9tQj7vXve0aQ3FwPFYQfW1/obglHayXbKS6TjcEudWzkmb/zVNUx1K3uGayVQMceWe2xwhMCpj1r1dD6A//bzG5b7T0JvhclpHUagq8sYj4fw6Kx62JZ6s9yLPp+xyr8AX9/hXZzfd+lGsb0Z7jFqanv9RJd2hGY9k31D1OQwbBrxvMgHPa7CZTAXM+PXh6sho9vsDacOMT3Ab8/zGlK1iGUtlxvuEytD8WkzkatSLMl5KG9Q/9Uihx0VfxUQaPcQR+FYJZMiNlPKQ+3BzmkdM/FtTHVS3al1fsXRcGuQqTsKvLvNtlK8oEQncEDg==",
+      "mac": "s0ER6aYCpm/8CfcNn64/8eJOmKwlkvRWJw41zV8kDAY="
+    }
+  }
+}

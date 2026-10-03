@@ -1,7 +1,8 @@
 -- Which Control4 room each Sonos room is in (docs/SONOS.md). A Sonos room appears in the Control4
 -- room of the same name, matched without regard to case or spaces (with the room's names in other
 -- languages too, from Settings → Rooms); an admin picks the room for the others, and that choice
--- wins. The choices are kept in the driver's persistent data: { [player id] = { room_id, name } }.
+-- wins. The choices are kept in the driver's persistent data: { [player id] = { room_id, name } },
+-- and go into backups (1.6.0, ADR-048).
 
 local Log = require("src.core.log")
 local Store = require("src.core.store")
@@ -121,6 +122,31 @@ function Rooms.place(player, rooms, names)
         return matched, "name"
     end
     return nil, nil
+end
+
+-- Backups (ADR-042, ADR-048, src/core/backup.lua): the choices as stored.
+function Rooms.backup()
+    local rooms = {}
+    for playerId, choice in pairs(state.choices) do
+        rooms[playerId] = { room_id = choice.room_id, name = choice.name }
+    end
+    return { version = 1, rooms = rooms }
+end
+
+-- Replaces every choice with those of `data` ({ version, rooms }). Returns true once saved.
+function Rooms.restore(data)
+    local before, complete = state.choices, state.complete
+    state.choices, state.complete = Rooms.read(data), true
+    if not save() then
+        state.choices, state.complete = before, complete
+        return false
+    end
+    return true
+end
+
+-- False when the stored choices could not be read at start: a restore would overwrite them.
+function Rooms.complete()
+    return state.complete
 end
 
 function Rooms.reset()

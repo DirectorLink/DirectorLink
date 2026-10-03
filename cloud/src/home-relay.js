@@ -29,6 +29,7 @@ import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
+import { receiveBackupChunk } from "./backups.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -222,6 +223,18 @@ export class HomeRelay extends DurableObject {
           result = { ok: false, code: "INTERNAL" };
         }
         this.reply(ws, { type: "invitation_result", id: data.id, ...result });
+        return;
+      }
+      case "backup_chunk": {
+        // A chunk of the day's sealed backup (backups.js); the next waits for this answer.
+        let result;
+        try {
+          result = await receiveBackupChunk(this.env, attachment.home, data);
+        } catch (error) {
+          log("backup_chunk_failed", { home: attachment.home, error: String(error?.message ?? error) });
+          result = { ok: false, code: "INTERNAL" };
+        }
+        this.reply(ws, { type: "backup_result", id: data.id, ...result });
         return;
       }
       case "invitation_cancel":

@@ -33,10 +33,13 @@ Not part of this design: push notifications, local HTTPS, native apps, billing.
 | Which homes the account belongs to | yes | yes | — |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
+| Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
+| The backup password | while typed | **never** | **never** (only its public key) |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
-which home. It cannot open a door, read a light's state or show a picture.
+which home. It cannot open a door, read a light's state or show a picture, and the backups it holds
+open only with their backup password, which only the family knows.
 
 ## Keys
 
@@ -349,6 +352,12 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   cannot be registered again for another email.
 - `join_requests`: home, invitation id, the account asking, its code, pending, approved or refused,
   when (`migrations/0005`). They go with their invitation, their account or a change of owner.
+- `backups`, `backup_chunks` (1.6.0, ADR-048, `migrations/0007`): each home's automatic backups as
+  the controller sealed them to the backup password's public key: the ciphertext in chunks, its
+  size, when it came, and which password's key (the public key's first 8 bytes). Not the home's
+  name, nor anything it holds: the cloud cannot open them. One a day (the newest), the last 7, at
+  most 5 MB in all; they go with the home (its owner's account deleted), when an admin deletes
+  them, and an upload that never finished after an hour (daily cron).
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 
@@ -362,7 +371,7 @@ to join.
 
 In `docs/RELAY.md`: `e2e`, `join` and `claim` from the relay, answered with `e2e`, `join_result` and
 `claim_result`; `invitation` (answered `invitation_result`) and `invitation_cancel` from the
-controller (1.0.0). Version 0's plain requests are refused (410
+controller (1.0.0); `backup_chunk` (answered `backup_result`) from the controller (1.6.0). Version 0's plain requests are refused (410
 `RELAY_REQUESTS_RETIRED`) and its test endpoints are off in production. Roles come from the
 device's key.
 
@@ -456,7 +465,8 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
    *my other device*); since 1.3.0 the owner approves another email (ADR-041).
 5. Google sign-in first, with the session in a secure cookie; Apple once the whole flow works
    (on since 1.3.0).
-6. The cloud stores only accounts, homes, members and pending invitations.
+6. The cloud stores only accounts, homes, members and pending invitations; since 1.6.0 also each
+   home's automatic backups, sealed so that only the backup password opens them (ADR-048).
 7. Home-network use without an account stays.
 8. The version 0 relayed requests, the test endpoints and the viewer-only rule are gone.
 9. (1.0.0, ADR-032) The app seals its requests on the home network too and pairs with an X25519 key
