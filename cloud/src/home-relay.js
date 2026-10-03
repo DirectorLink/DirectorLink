@@ -197,8 +197,12 @@ export class HomeRelay extends DurableObject {
         this.announced = new Set(ids);
         await this.queueKeyWork(async () => {
           await this.ctx.storage.put("key_ids", ids);
-          await syncKeys(this.env, attachment.home, ids);
-          await this.alerts.keys(attachment.home, ids, data.admins);
+          try {
+            await syncKeys(this.env, attachment.home, ids);
+          } finally {
+            // The admin list counts even when D1 failed above (alerts and backups read it).
+            await this.alerts.keys(attachment.home, ids, data.admins);
+          }
         }, attachment.home);
         return;
       }
@@ -237,7 +241,7 @@ export class HomeRelay extends DurableObject {
         // A chunk of the day's sealed backup (backups.js); the next waits for this answer.
         let result;
         try {
-          result = await receiveBackupChunk(this.env, attachment.home, data);
+          result = await receiveBackupChunk(this.env, attachment.home, data, this.ctx.storage);
         } catch (error) {
           log("backup_chunk_failed", { home: attachment.home, error: String(error?.message ?? error) });
           result = { ok: false, code: "INTERNAL" };
