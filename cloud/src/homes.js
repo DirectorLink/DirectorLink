@@ -22,7 +22,7 @@
 
 import { appOrigins, currentUser } from "./accounts.js";
 import { BACKUP_ROUTES } from "./backups.js";
-import { handleHomeAlerts } from "./alerts.js";
+import { handleHomeAlerts, homesChanged } from "./alerts.js";
 import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 import { validKeyId } from "./member-keys.js";
@@ -179,8 +179,10 @@ async function claim(request, env, user) {
   if (!existing) {
     statements.push(env.DB.prepare("INSERT INTO homes (id, owner_id, claimed_at) VALUES (?, ?, ?)").bind(homeId, user.id, now));
   } else if (transferred) {
-    // Whoever holds an admin key at home controls the home: the new owner starts with no one else.
+    // Whoever holds an admin key at home controls the home: the new owner starts with no one else,
+    // and the others' browsers get no more of its alerts.
     statements.push(
+      env.DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
       env.DB.prepare("UPDATE homes SET owner_id = ?, claimed_at = ? WHERE id = ?").bind(user.id, now, homeId),
       env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
       env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id != ?").bind(homeId, user.id),
@@ -188,7 +190,10 @@ async function claim(request, env, user) {
     );
   }
   statements.push(env.DB.prepare("INSERT OR IGNORE INTO members (home_id, user_id, added_at) VALUES (?, ?, ?)").bind(homeId, user.id, now));
-  await env.DB.batch(statements);
+  const [first] = await env.DB.batch(statements);
+  if (transferred && first.meta?.changes) {
+    await homesChanged(env, [homeId]);
+  }
   log("home_claimed", { home: homeId, user: user.id, transferred });
   return json({ home_id: homeId, owner: true, transferred });
 }
@@ -642,10 +647,15 @@ async function removeMember(env, user, homeId, userId) {
   if (self && row.owner_id === user.id) {
     return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; another account can claim the home at home instead");
   }
-  const [{ meta }] = await env.DB.batch([
+  // Its browsers' subscriptions go with the membership.
+  const [alerts, { meta }] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
     env.DB.prepare("DELETE FROM members WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
     env.DB.prepare("DELETE FROM member_keys WHERE home_id = ? AND user_id = ?").bind(homeId, userId),
   ]);
+  if (alerts.meta?.changes) {
+    await homesChanged(env, [homeId]);
+  }
   if (!meta.changes) {
     return problem(404, "NOT_FOUND", "That account does not belong to the home");
   }

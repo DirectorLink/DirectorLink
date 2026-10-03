@@ -296,15 +296,17 @@ two things only: the home has been unreachable for 10 minutes, or a schedule had
    silent on a socket that never closed, once per absence. *Schedule failed*: the controller sends
    `{"type":"alert","kind":"schedule_failed","at":…}` when a scheduled scene had a device refuse or
    could not run, without saying which; at most three an hour reach the admins.
-4. An alert is encrypted for each browser (RFC 8291) and carries only `{kind, home, at}`. The
-   push service (Google, Mozilla, Apple or Microsoft) sees that an alert went to the browser, when
-   and how large, not what it says. The app's service worker shows it with the app's own words in
-   its language ("Your home – a schedule had a problem at 08:00. Open the app to see what
-   happened."): the cloud knows no names, not even the home's. Tapping it opens Settings →
-   Controller → History.
+4. An alert is encrypted for each browser (RFC 8291) and carries only `{kind, home, at}`, padded
+   so that every alert is the same size. The push service (Google, Mozilla, Apple or Microsoft) sees
+   that an alert went to the browser and when, not which alert nor what it says. The app's service
+   worker shows it with the app's own words in its language ("Your home – a schedule had a problem
+   at 08:00. Open the app to see what happened."): the cloud knows no names, not even the home's.
+   Tapping it opens Settings → Controller → History.
 
-Turning the switch off, signing out or forgetting the key on that device, signing out everywhere,
-leaving the home and deleting the account all end that browser's alerts.
+Turning the switch off, signing out or forgetting the key on that device, signing out everywhere
+(or Apple ending the account's only sign-in), leaving the home or being removed, another account
+claiming the home, and deleting the account all end that browser's alerts; the home then stops
+watching for them once no admin's browser is left.
 
 ## Google and Apple
 
@@ -389,12 +391,13 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   the controller sealed them to the backup password's public key: the ciphertext in chunks, its
   size, when it came, and which password's key (the public key's first 8 bytes). Not the home's
   name, nor anything it holds: the cloud cannot open them. One a day (the newest), the last 7, at
-  most 5 MB in all; they go with the home (its owner's account deleted), when an admin deletes
-  them, and an upload that never finished after an hour (daily cron).
+  most 5 MB a home and 25 MB an owner's homes; they go with the home (its owner's account deleted),
+  when an admin deletes them, and an upload that never finished after an hour (daily cron).
 - `push_subscriptions` (1.6.0): home, the browser's push address, its public key and secret, the
   account that registered it, when (`migrations/0006`). They go with the membership, the account,
-  signing out everywhere, or the push service saying the browser is gone. The home's Durable Object
-  keeps the admin key ids the controller last listed.
+  signing out everywhere (also Apple ending the account's only sign-in), or the push service saying
+  the browser is gone. The home's Durable Object keeps the admin key ids the controller last
+  listed.
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 

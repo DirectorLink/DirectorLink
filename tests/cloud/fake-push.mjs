@@ -35,8 +35,11 @@ export function decrypt(body, browser) {
   const decipher = createDecipheriv("aes-128-gcm", cek, nonce);
   decipher.setAuthTag(ciphertext.subarray(ciphertext.length - 16));
   const record = Buffer.concat([decipher.update(ciphertext.subarray(0, ciphertext.length - 16)), decipher.final()]);
-  if (record[record.length - 1] !== 2) return null;
-  return record.subarray(0, record.length - 1).toString("utf8");
+  // RFC 8188: the message, the delimiter 2 (the last record's), then any number of zeros.
+  let end = record.length - 1;
+  while (end >= 0 && record[end] === 0) end -= 1;
+  if (end < 0 || record[end] !== 2) return null;
+  return record.subarray(0, end).toString("utf8");
 }
 
 // RFC 8292: the Authorization header's JWT, checked against its own key `k`. Returns its claims
@@ -61,7 +64,7 @@ export async function startFakePush() {
   const port = await freePort();
   const url = `http://127.0.0.1:${port}`;
   const browsers = new Map(); // id -> browser
-  // Every request: { id, message (parsed), headers, vapid, error }.
+  // Every request: { id, message (parsed), headers, vapid, error, status, body (its bytes) }.
   const received = [];
 
   const server = createServer((request, response) => {
@@ -70,39 +73,46 @@ export async function startFakePush() {
     request.on("end", () => {
       const id = request.url.replace(/^\/push\//, "");
       const browser = browsers.get(id);
-      const entry = { id, headers: request.headers, message: null, error: null };
+      const entry = { id, headers: request.headers, message: null, error: null, body: Buffer.concat(chunks) };
       try {
         if (request.method !== "POST" || !browser) throw new Error(`unknown subscription ${request.url}`);
         entry.vapid = checkVapid(request.headers.authorization, url);
         if (request.headers["content-encoding"] !== "aes128gcm") throw new Error("not aes128gcm");
         if (!(Number(request.headers.ttl) > 0)) throw new Error("no TTL");
-        const text = decrypt(Buffer.concat(chunks), browser);
+        const text = decrypt(entry.body, browser);
         entry.message = JSON.parse(text);
       } catch (error) {
         entry.error = error.message;
       }
+      // A browser that fails: its first `fails` pushes are answered `failStatus` (the service busy).
+      let status = browser?.status ?? 201;
+      if (!entry.error && browser.fails > 0) {
+        browser.fails -= 1;
+        status = browser.failStatus;
+      }
+      entry.status = entry.error ? 400 : status;
       received.push(entry);
-      const status = entry.error ? 400 : (browser?.status ?? 201);
-      response.writeHead(status);
+      response.writeHead(entry.status, browser?.location ? { Location: browser.location } : {});
       response.end();
     });
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
   // A new browser's push subscription, as PushSubscription.toJSON() gives it. `status`: what the
-  // service answers for it (410: the browser unsubscribed).
-  function subscribe({ status = 201 } = {}) {
+  // service answers for it (410: the browser unsubscribed; 307 with `location`: a redirect), after
+  // answering its first `fails` pushes `failStatus`.
+  function subscribe({ status = 201, fails = 0, failStatus = 503, location = null } = {}) {
     const ecdh = createECDH("prime256v1");
     ecdh.generateKeys();
     const id = randomBytes(12).toString("hex");
-    const browser = { id, ecdh, publicKey: ecdh.getPublicKey(), auth: randomBytes(16), status };
+    const browser = { id, ecdh, publicKey: ecdh.getPublicKey(), auth: randomBytes(16), status, fails, failStatus, location };
     browsers.set(id, browser);
     browser.subscription = { endpoint: `${url}/push/${id}`, keys: { p256dh: b64(browser.publicKey), auth: b64(browser.auth) } };
     return browser;
   }
 
-  // What reached `browser` (its opened messages), and what failed anywhere.
-  const messagesFor = (browser) => received.filter((entry) => entry.id === browser.id && entry.message).map((entry) => entry.message);
+  // What reached `browser` (its opened messages, that the service accepted), and what failed anywhere.
+  const messagesFor = (browser) => received.filter((entry) => entry.id === browser.id && entry.message && entry.status < 300).map((entry) => entry.message);
   const errors = () => received.filter((entry) => entry.error);
 
   return { url, received, subscribe, messagesFor, errors, close: () => new Promise((resolve) => server.close(resolve)) };

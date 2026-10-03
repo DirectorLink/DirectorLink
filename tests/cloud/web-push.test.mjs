@@ -9,7 +9,7 @@ import { createPublicKey, verify } from "node:crypto";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { encryptPayload, subscriptionKeys, validEndpoint, vapidAuthorization, vapidProblem } from "../../cloud/src/web-push.js";
+import { MESSAGE_BYTES, encryptPayload, sendPush, subscriptionKeys, validEndpoint, vapidAuthorization, vapidProblem } from "../../cloud/src/web-push.js";
 import { decrypt, startFakePush, vapidVars } from "./fake-push.mjs";
 
 const b = (text) => Buffer.from(text, "base64url");
@@ -33,8 +33,34 @@ test("a message is encrypted exactly as RFC 8291's test vector", async () => {
     privateKey: await crypto.subtle.importKey("jwk", jwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]),
     publicKey: await crypto.subtle.importKey("raw", asPublic, { name: "ECDH", namedCurve: "P-256" }, true, []),
   };
-  const body = await encryptPayload(b(VECTOR.plaintext).toString("utf8"), { p256dh: VECTOR.uaPublic, auth: VECTOR.auth }, { salt: b(VECTOR.salt), serverKeys });
+  // The vector has no padding.
+  const body = await encryptPayload(b(VECTOR.plaintext).toString("utf8"), { p256dh: VECTOR.uaPublic, auth: VECTOR.auth }, { salt: b(VECTOR.salt), serverKeys, padTo: 0 });
   assert.equal(Buffer.from(body).toString("base64url"), Buffer.concat([b(VECTOR.header), b(VECTOR.encrypted)]).toString("base64url"));
+});
+
+test("every alert is padded to the same size, so its length does not say which it is", async () => {
+  const push = await startFakePush();
+  try {
+    const browser = push.subscribe();
+    const home = "0123456789abcdef0123456789abcdef";
+    const at = "2026-10-03T05:00:00.000Z";
+    const sizes = [];
+    for (const kind of ["offline", "schedule_failed"]) {
+      const message = JSON.stringify({ kind, home, at });
+      const body = Buffer.from(await encryptPayload(message, browser.subscription.keys));
+      // Header (salt 16, record size 4, key length 1, key 65), the padded record, the tag (16).
+      assert.equal(body.length, 86 + MESSAGE_BYTES + 16, kind);
+      assert.equal(body.readUInt32BE(16), 4096, "the record size is unchanged");
+      assert.equal(decrypt(body, browser), message, "the browser takes the padding off (RFC 8188)");
+      sizes.push(body.length);
+    }
+    assert.equal(sizes[0], sizes[1]);
+    // A longer message is not cut: it is only not padded.
+    const long = "x".repeat(MESSAGE_BYTES + 10);
+    assert.equal(decrypt(Buffer.from(await encryptPayload(long, browser.subscription.keys)), browser), long);
+  } finally {
+    await push.close();
+  }
 });
 
 test("each message has its own salt and server key, and only the browser opens it", async () => {
@@ -90,12 +116,17 @@ test("only push services' https addresses are taken, with a P-256 key and a 16-b
     "https://fcm.googleapis.com.example.com/x",
     "https://user:pass@fcm.googleapis.com/x",
     "https://192.168.1.10/push",
+    // Only HTTPS's own port.
+    "https://fcm.googleapis.com:8443/fcm/send/x",
+    "https://fcm.googleapis.com:22/x",
+    "https://web.push.apple.com:80/QGx",
     "not a url",
     `https://fcm.googleapis.com/${"x".repeat(2100)}`,
     42,
   ]) {
     assert.equal(validEndpoint({}, endpoint), false, String(endpoint));
   }
+  assert.equal(validEndpoint({}, "https://fcm.googleapis.com:443/fcm/send/x"), true, "443 is HTTPS's own port");
   assert.equal(validEndpoint({ PUSH_TEST_URL: "http://127.0.0.1:9" }, "http://127.0.0.1:9/push/a"), true, "the tests' fake service");
 
   const push = await startFakePush();
@@ -106,6 +137,21 @@ test("only push services' https addresses are taken, with a P-256 key and a 16-b
     assert.equal(await subscriptionKeys({ ...keys, p256dh: b64(Buffer.alloc(65, 4)) }), null, "not a point on the curve");
     assert.equal(await subscriptionKeys({ p256dh: keys.p256dh }), null);
     assert.equal(await subscriptionKeys(null), null);
+  } finally {
+    await push.close();
+  }
+});
+
+test("a push service's redirect is not followed: the message goes only to the address that was checked", async () => {
+  const push = await startFakePush();
+  try {
+    const target = push.subscribe();
+    const redirecting = push.subscribe({ status: 307, location: target.subscription.endpoint });
+    const subscription = { endpoint: redirecting.subscription.endpoint, ...redirecting.subscription.keys };
+    const status = await sendPush(vapidVars(), subscription, { kind: "offline", home: "a".repeat(32), at: new Date().toISOString() }, { ttl: 60 });
+    assert.equal(status, 307);
+    assert.equal(push.received.filter((entry) => entry.id === target.id).length, 0, "nothing was sent where it pointed");
+    assert.equal(push.received.filter((entry) => entry.id === redirecting.id).length, 1);
   } finally {
     await push.close();
   }

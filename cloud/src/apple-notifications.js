@@ -5,7 +5,8 @@
 //   consent-revoked   the person stopped using Sign in with Apple for DirectorLink
 //   account-deleted   the person deleted their Apple Account (older documents: account-delete)
 //                     → that Apple sign-in is removed; an account left without any sign-in is
-//                       signed out everywhere. After consent-revoked it is kept for the same Apple
+//                       signed out everywhere, and its browsers' alerts end (as for signing out
+//                       everywhere, ADR-047). After consent-revoked it is kept for the same Apple
 //                       ID to come back (for UNUSED_DAYS, accounts.js); after account-deleted it
 //                       keeps nothing of the person: deleted without a home, emptied with one
 //                       (accounts.js forgetAccountWithoutSignIn). A home, its members and keys are
@@ -18,6 +19,7 @@
 // 16 KiB, Apple's signing keys are cached (jwt.js), and each notification is a few D1 batches.
 
 import { forgetAccountWithoutSignIn } from "./accounts.js";
+import { homesChanged } from "./alerts.js";
 import { verifyNotification } from "./apple.js";
 import { json, methodNotAllowed, problem, readText } from "./http.js";
 import { SignInError } from "./jwt.js";
@@ -48,15 +50,17 @@ async function removeAppleIdentity(env, identity, event) {
     ]);
     return "identity_removed";
   }
-  // Its only sign-in: every session ends, and nobody can sign in to it. After consent-revoked the
-  // account keeps its homes and memberships (an owner's family keeps its access), and still records
-  // the Apple ID it began with, so the same Apple ID signing in again later gets it back
-  // (accounts.js accountFor). An Apple Account that was deleted never comes back: the account then
-  // keeps nothing of the person.
-  await env.DB.batch([
+  // Its only sign-in: every session ends, and nobody can sign in to it; its browsers' alerts end,
+  // as when it signs out everywhere. After consent-revoked the account keeps its homes and
+  // memberships (an owner's family keeps its access), and still records the Apple ID it began
+  // with, so the same Apple ID signing in again later gets it back (accounts.js accountFor). An
+  // Apple Account that was deleted never comes back: the account then keeps nothing of the person.
+  const [, , { results: alerts }] = await env.DB.batch([
     env.DB.prepare("DELETE FROM identities WHERE provider = 'apple' AND subject = ?").bind(event.subject),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(identity.user_id),
+    env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ? RETURNING home_id").bind(identity.user_id),
   ]);
+  await homesChanged(env, alerts.map((row) => row.home_id));
   if (event.type === "account-deleted") {
     return forgetAccountWithoutSignIn(env, identity.user_id);
   }

@@ -288,19 +288,30 @@ made` with why; `GET /v1/backup/automatic` gives the last one's time, size and o
 ### In the account
 
 The account service keeps the ciphertext in chunks (D1, `migrations/0007_cloud_backups.sql`), with
-its size, when it came and its `key_id`: nothing about the home. One a day per home (a newer one
-the same day, UTC, replaces it), the last 7, and at most 5 MB a home in all: above that the oldest
-go first, and the newest always stays. A single backup is at most 3,000,000 characters (the largest
+its size, when it came and its `key_id`: nothing about the home. The sealed text is printable ASCII
+(JSON around base64), and the account takes nothing else, so its sizes are bytes. One a day per home
+(a newer one the same day, UTC, replaces it, and does not count against the others), the last 7, and
+at most 5 MB a home in all: above that the oldest go first, and the newest always stays. The homes
+of one account's owner hold at most 25 MB together: above that the oldest go first, whichever home
+they are of, and each home's newest stays. A single backup is at most 3,000,000 bytes (the largest
 backup, 2 MiB of JSON, is about 2.8 MB sealed; a big home's is about 175 KB): a larger one is not
 sent, and the log says `BACKUP_TOO_LARGE` (download a backup file instead). They go when an admin
 deletes them, and with the home when its owner deletes their account; an upload that never finished
 goes after an hour.
 
+A home starts at most 4 backups a UTC day (Back up now, a nightly one tried again); the nightly one
+goes besides, once a day, so pressing Back up now never costs the night's backup. A fifth start is
+refused with `BACKUP_LIMIT`, and one that would not fit in the owner's 25 MB with the newest backup
+of each of their other homes with `ACCOUNT_BACKUPS_FULL` (only an owner of many large homes); the
+controller logs the code, and `GET /v1/backup/automatic` gives it as the last backup's.
+
 The home's admins list them (date, size, which password), download one and delete them
 (`GET /v1/homes/{home_id}/backups`, `GET …/backups/{id}`, `DELETE …/backups`). The account service
-does not know roles (they are the controller's keys): today only the home's owner passes, and
-`mayUseBackups` in `cloud/src/backups.js` is the one place that decides; once the controller
-announces which key ids are admins' with its key ids, the admins who use them pass too.
+does not know roles (they are the controller's keys): a 1.6.0 controller names its admin keys with
+its key ids, and the accounts that use one of them pass, the home's owner too only then (an owner
+whose keys are all members' or viewers' now is refused, as for alerts). A controller before 1.6.0
+names none: then only the home's owner passes, who claimed it at home with an admin key.
+`mayUseBackups` in `cloud/src/backups.js` is the one place that decides.
 
 ### Restoring one
 
@@ -348,5 +359,6 @@ with the private key; refusals, timeouts, a changed password; the nightly minute
 Access off) and opened by `tests/app/cloud-backup.test.mjs` (the key and the vectors, the ladder
 where WebCrypto has no X25519; the section: signing in first, the password set with only its public
 key sent, Back up now, the list, a restore through the same preview, change and turn off), and
-`tests/cloud/backups.test.mjs` (chunks kept whole, sizes and order, a home nobody claimed, one a day,
-seven and 5 MB, who may list, download and delete).
+`tests/cloud/backups.test.mjs` (chunks kept whole, sizes and order, printable ASCII only, a home
+nobody claimed, one a day, seven and 5 MB, starts a day, 25 MB an owner, who may list, download and
+delete, the owner made a member).
