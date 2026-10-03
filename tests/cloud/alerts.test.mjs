@@ -1,8 +1,9 @@
 // Alerts on admins' devices (cloud/src/alerts.js, ADR-047) end to end: the Worker under
 // `wrangler dev`, a fake Google, a fake controller (the relay protocol, sealing like the driver) and
 // a fake push service (fake-push.mjs) that checks each push's VAPID signature and opens its message
-// as the browser would. The alert's minutes are 0.1 (6 s) and a connection whose pings go
-// unanswered for 2 s counts as away, so the waits are short.
+// as the browser would. The alert's minutes are 0.1 (6 s), an alert that did not get through is
+// tried again after 1 s, and a connection whose pings go unanswered for 2 s counts as away, so the
+// waits are short. A fake Apple sends Apple's notifications about its accounts.
 //   node --test tests/cloud/alerts.test.mjs
 
 import assert from "node:assert/strict";
@@ -12,6 +13,7 @@ import { after, afterEach, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
+import { appleVars, postNotification, signInWithApple, startFakeApple } from "./fake-apple.mjs";
 import { startFakePush, vapidVars } from "./fake-push.mjs";
 import { googleVars, signInAs, startFakeGoogle } from "./fake-google.mjs";
 import { invitationKey, lockKey, open, seal } from "./lock.mjs";
@@ -27,21 +29,25 @@ const NOA = { sub: "google-noa", email: "noa@example.com", name: "Noa" };
 
 let worker;
 let google;
+let apple;
 let push;
 const vapid = vapidVars();
 const drivers = [];
 
 before(async () => {
   google = await startFakeGoogle();
+  apple = await startFakeApple();
   push = await startFakePush();
   worker = await startWorker({
     migrate: true,
     devVars: {
       ...googleVars(google, APP, "https://api.directorlink.test"),
+      ...appleVars(apple),
       ...vapid,
       PUSH_TEST_URL: push.url,
       OFFLINE_ALERT_MINUTES: 0.1,
       ALERT_SILENCE_SECONDS: 2,
+      ALERT_RETRY_SECONDS: 1,
       REQUEST_TIMEOUT_MS: 3000,
     },
   });
@@ -51,6 +57,7 @@ after(async () => {
   await Promise.all(drivers.splice(0).map((connection) => connection.close()));
   await worker?.stop();
   await google?.close();
+  await apple?.close();
   await push?.close();
 });
 
@@ -148,14 +155,15 @@ async function e2e(cookie, state, keyId) {
 
 const membersOf = async (state, cookie) => (await call("GET", `/v1/homes/${state.home}/members`, { cookie })).json.items;
 
-// Dana pairs at home (an admin key), claims the home and uses it once through the account.
-async function claimedHome(options) {
-  const state = await home(options);
+// Dana (or `person`, or the account of `cookie`) pairs at home (an admin key), claims the home and
+// uses it once through the account.
+async function claimedHome({ pings, person = DANA, cookie } = {}) {
+  const state = await home({ pings });
   const keyId = randomHex(4);
   state.keys.set(keyId, `ak_${randomHex(24)}`);
   state.admins.add(keyId);
   state.announce();
-  const dana = await signIn(DANA);
+  const dana = cookie ?? (await signIn(person));
   const claimed = await call("POST", "/v1/homes/claim", { cookie: dana, body: { home_id: state.home, claim_token: state.claimToken } });
   assert.equal(claimed.status, 200, claimed.text);
   assert.equal((await e2e(dana, state, keyId)).status, 200);
@@ -191,6 +199,10 @@ async function subscribed(state, cookie, options) {
 }
 
 const of = (browser, kind) => push.messagesFor(browser).filter((message) => message.kind === kind);
+
+// Whether the Worker logged `event` for this home (its last lines).
+const logged = (event, homeId) => worker.output().includes(`"event":"${event}","home":"${homeId}"`);
+const accountId = async (cookie) => (await call("GET", "/v1/me", { cookie })).json.id;
 
 // --- Tests -----------------------------------------------------------------------------------------
 
@@ -366,6 +378,76 @@ test("leaving the home, being removed and signing out everywhere end a browser's
   state.connection.sendJson({ type: "alert", kind: "schedule_failed", at: new Date().toISOString() });
   await sleep(1500);
   assert.equal(of(danaBrowser, "schedule_failed").length, 1, "signed out everywhere: no more alerts");
+});
+
+test("an offline alert the push service refused once (503) is sent again", TEST, async () => {
+  const { state, dana } = await claimedHome();
+  const browser = await subscribed(state, dana, { fails: 1, failStatus: 503 });
+  await state.connection.close();
+  await eventually(async () => of(browser, "offline").length === 1, "the offline alert, sent again", OFFLINE_MS + 8000);
+  assert.deepEqual(
+    push.received.filter((entry) => entry.id === browser.id).map((entry) => entry.status),
+    [503, 201],
+    "refused once, then delivered"
+  );
+  await sleep(1500);
+  assert.equal(of(browser, "offline").length, 1, "and only once");
+});
+
+test("whatever removes the last admin's subscriptions stops the home's alarms", { timeout: 120_000 }, async () => {
+  // Signing out everywhere: no alarm is left, so none goes off when the driver then leaves.
+  const out = await claimedHome();
+  await subscribed(out.state, out.dana);
+  assert.equal((await call("POST", "/auth/logout?everywhere=1", { cookie: out.dana })).status, 204);
+  await eventually(async () => logged("alerts_stopped", out.state.home), "signing out everywhere to stop the alarms");
+  await out.state.connection.close();
+  await sleep(OFFLINE_MS + 2000);
+  assert.equal(logged("alert_not_sent", out.state.home), false, "no alarm went off");
+
+  // An admin who is removed, who leaves, or who deletes their account.
+  for (const how of ["removed", "left", "deleted"]) {
+    const { state, dana } = await claimedHome();
+    const person = { sub: `google-ben-${how}`, email: `ben.${how}@example.com`, name: "Ben" };
+    const ben = await joins(state, dana, person);
+    state.admins.add(ben.keyId);
+    state.announce();
+    await eventually(async () => (await subscribe(state, ben.cookie, push.subscribe())).status === 201, "Ben's browser");
+    const benId = await accountId(ben.cookie);
+    const done =
+      how === "deleted"
+        ? await call("DELETE", "/v1/me", { cookie: ben.cookie })
+        : await call("DELETE", `/v1/homes/${state.home}/members/${benId}`, { cookie: how === "left" ? ben.cookie : dana });
+    assert.equal(done.status, 204, done.text);
+    await eventually(async () => logged("alerts_stopped", state.home), `Ben ${how}: the alarms stop`);
+  }
+
+  // Another account claims the home at home: the earlier members' browsers go.
+  const taken = await claimedHome();
+  await subscribed(taken.state, taken.dana);
+  const noa = await signIn(NOA);
+  const claimed = await call("POST", "/v1/homes/claim", { cookie: noa, body: { home_id: taken.state.home, claim_token: taken.state.claimToken } });
+  assert.equal(claimed.json?.transferred, true, claimed.text);
+  await eventually(async () => logged("alerts_stopped", taken.state.home), "the claim to stop the alarms");
+
+  // The owner deletes their account: the home goes with it.
+  const gone = await claimedHome({ person: { sub: "google-gil", email: "gil@example.com", name: "Gil" } });
+  await subscribed(gone.state, gone.dana);
+  assert.equal((await call("DELETE", "/v1/me", { cookie: gone.dana })).status, 204);
+  await eventually(async () => logged("alerts_stopped", gone.state.home), "deleting the account to stop the alarms");
+});
+
+test("Apple's consent-revoked and account-deleted end the account's alerts, as signing out everywhere does", TEST, async () => {
+  for (const type of ["consent-revoked", "account-deleted"]) {
+    const person = { sub: `001.alerts.${type}`, email: `${type}@example.com`, firstName: "Tal", lastName: "Apple" };
+    const { cookie } = await signInWithApple(worker.http, apple, person, APP);
+    const { state, dana } = await claimedHome({ cookie });
+    const browser = await subscribed(state, dana);
+    assert.equal((await postNotification(worker.http, apple.notification({ type, sub: person.sub }))).status, 200);
+    await eventually(async () => logged("alerts_stopped", state.home), `${type}: the alarms stop`);
+    state.connection.sendJson({ type: "alert", kind: "schedule_failed", at: new Date().toISOString() });
+    await sleep(1000);
+    assert.deepEqual(push.messagesFor(browser), [], `${type}: no more alerts on that browser`);
+  }
 });
 
 // A deploy restarts every Durable Object and ends its sockets without webSocketClose; the drivers

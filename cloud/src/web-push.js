@@ -15,6 +15,9 @@ const DEFAULT_SUBJECT = "https://directorlink.io";
 const JWT_SECONDS = 12 * 3600;
 // One aes128gcm record (RFC 8188) holds the whole message.
 const RECORD_SIZE = 4096;
+// Every message is padded to this many bytes (with its delimiter), so that its size does not tell
+// the push service which alert it is: an alert's JSON is about 100 bytes.
+export const MESSAGE_BYTES = 128;
 const SEND_TIMEOUT_MS = 10000;
 
 // The push services browsers use: an alert is only ever sent to one of them.
@@ -52,7 +55,8 @@ export function validEndpoint(env, endpoint) {
     return false;
   }
   const host = url.hostname.toLowerCase();
-  return url.protocol === "https:" && !url.username && !url.password && PUSH_HOSTS.some((name) => host === name || host.endsWith(`.${name}`));
+  // HTTPS's own port only (URL drops an explicit :443).
+  return url.protocol === "https:" && url.port === "" && !url.username && !url.password && PUSH_HOSTS.some((name) => host === name || host.endsWith(`.${name}`));
 }
 
 // The browser's keys of a subscription ({ p256dh, auth }, base64url), or null when they are not
@@ -89,7 +93,9 @@ async function hmac(key, data) {
 // RFC 8291: `plaintext` (a string) encrypted for the subscription's keys, as the aes128gcm body
 // (RFC 8188): salt, record size, the server's one-time public key, then one record. `salt` and
 // `serverKeys` (an ECDH P-256 key pair) are made for each message; the tests pass the RFC's.
-export async function encryptPayload(plaintext, keys, { salt = crypto.getRandomValues(new Uint8Array(16)), serverKeys } = {}) {
+// `padTo`: the record's length before encryption (the message, its delimiter, then zeros); 0 pads
+// nothing, as the RFC's test vector.
+export async function encryptPayload(plaintext, keys, { salt = crypto.getRandomValues(new Uint8Array(16)), serverKeys, padTo = MESSAGE_BYTES } = {}) {
   const uaPublic = fromBase64url(keys.p256dh);
   const authSecret = fromBase64url(keys.auth);
   const pair = serverKeys ?? (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]));
@@ -104,8 +110,10 @@ export async function encryptPayload(plaintext, keys, { salt = crypto.getRandomV
   const nonce = (await hmac(prk, concat(encoder.encode("Content-Encoding: nonce\0"), [1]))).slice(0, 12);
 
   const key = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
-  // The last (and only) record ends with the delimiter 2, without padding.
-  const record = concat(encoder.encode(plaintext), [2]);
+  // The last (and only) record: the message, the delimiter 2, then zeros up to `padTo` (RFC 8188
+  // section 2).
+  const message = encoder.encode(plaintext);
+  const record = concat(message, [2], new Uint8Array(Math.max(0, padTo - message.length - 1)));
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, key, record));
   const recordSize = [(RECORD_SIZE >>> 24) & 255, (RECORD_SIZE >>> 16) & 255, (RECORD_SIZE >>> 8) & 255, RECORD_SIZE & 255];
   return concat(salt, recordSize, [asPublic.length], asPublic, ciphertext);
@@ -152,7 +160,8 @@ export async function vapidAuthorization(env, endpoint, now = Date.now()) {
 
 // Sends `message` (an object, sent as JSON) to one subscription ({ endpoint, p256dh, auth }).
 // Returns the push service's HTTP status, or 0 when it could not be reached. `ttl`: how long the
-// service keeps it for a browser that is offline, in seconds.
+// service keeps it for a browser that is offline, in seconds. A redirect is not followed (its 3xx
+// status is returned): the message goes only to the address that was checked (validEndpoint).
 // Settings that do not work (vapidKeys) throw.
 export async function sendPush(env, subscription, message, { ttl }) {
   const authorization = await vapidAuthorization(env, subscription.endpoint);
@@ -168,6 +177,7 @@ export async function sendPush(env, subscription, message, { ttl }) {
         "Content-Type": "application/octet-stream",
       },
       body,
+      redirect: "manual",
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
     await response.body?.cancel().catch(() => {});

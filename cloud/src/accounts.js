@@ -18,6 +18,7 @@
 // only its SHA-256. The app calls /v1/me and /auth/logout with `credentials: "include"`; only the
 // app's own origins (APP_ORIGINS) get CORS answers, and changes are refused from any other origin.
 
+import { homesChanged } from "./alerts.js";
 import { apple } from "./apple.js";
 import { google } from "./google.js";
 import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, readText, setCookie, sha256Hex } from "./http.js";
@@ -359,9 +360,12 @@ function forgetInvitationsFor(env, user, where, ...values) {
   );
 }
 
-// Everything an account is (Delete account, and an account nobody can sign in to any more).
+// Everything an account is (Delete account, and an account nobody can sign in to any more). The
+// first statement gives the homes whose alerts it changes (its browsers' subscriptions, and all of
+// those of the homes it owns, which go with it).
 function accountDeletion(env, user) {
   return [
+    env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ?1 OR home_id IN (SELECT id FROM homes WHERE owner_id = ?1) RETURNING home_id").bind(user.id),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user.id),
     // Its requests to join homes, and those waiting for it to decide (ADR-041).
     env.DB.prepare("DELETE FROM join_requests WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
@@ -376,6 +380,12 @@ function accountDeletion(env, user) {
   ];
 }
 
+// Deletes the account, then tells the homes whose alerts that changed (alerts.js).
+async function deleteAccount(env, user) {
+  const [{ results }] = await env.DB.batch(accountDeletion(env, user));
+  await homesChanged(env, results.map((row) => row.home_id));
+}
+
 // An account left without any way to sign in (ADR-041: Apple's account-deleted, or no sign-in for
 // UNUSED_DAYS after Apple's consent-revoked) keeps nothing of the person. Without a home it is
 // deleted, as Delete account does. One that owns a home stays, so the home and its family keep
@@ -387,11 +397,13 @@ export async function forgetAccountWithoutSignIn(env, userId) {
     return "kept";
   }
   if (!(await env.DB.prepare("SELECT 1 AS found FROM homes WHERE owner_id = ?").bind(userId).first())) {
-    await env.DB.batch(accountDeletion(env, user));
+    await deleteAccount(env, user);
     return "account_deleted";
   }
   const others = "home_id NOT IN (SELECT id FROM homes WHERE owner_id = ?)";
-  await env.DB.batch([
+  // Its browsers get no more alerts, at its own homes either: a push address is the person's.
+  const [{ results: alerts }] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ? RETURNING home_id").bind(userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM join_requests WHERE user_id = ?").bind(userId),
     env.DB.prepare(`DELETE FROM member_keys WHERE user_id = ? AND ${others}`).bind(userId, userId),
@@ -399,6 +411,7 @@ export async function forgetAccountWithoutSignIn(env, userId) {
     ...forgetInvitationsFor(env, user, "accepted_by = ?", userId),
     env.DB.prepare("UPDATE users SET email = '', name = NULL WHERE id = ?").bind(userId),
   ]);
+  await homesChanged(env, alerts.map((row) => row.home_id));
   return "account_emptied";
 }
 
@@ -447,7 +460,7 @@ async function me(request, env, headers) {
     if (!user) {
       return withHeaders(notSignedIn(), headers);
     }
-    await env.DB.batch(accountDeletion(env, user));
+    await deleteAccount(env, user);
     console.log(JSON.stringify({ event: "account_deleted", user: user.id }));
     return new Response(null, { status: 204, headers: { ...headers, "Set-Cookie": clearSession(), "Cache-Control": "no-store" } });
   }
@@ -507,10 +520,11 @@ async function logout(request, env, headers) {
       return refused;
     }
     // The account's devices stop getting its homes' alerts too (ADR-047): one may be lost.
-    await env.DB.batch([
+    const [, { results: alerts }] = await env.DB.batch([
       env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(session.user_id),
-      env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ?").bind(session.user_id),
+      env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ? RETURNING home_id").bind(session.user_id),
     ]);
+    await homesChanged(env, alerts.map((row) => row.home_id));
     log("signed_out_everywhere", { user: session.user_id });
   }
   if (hash) {

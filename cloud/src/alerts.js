@@ -19,14 +19,21 @@
 // The home's Durable Object (home-relay.js) runs the rest with HomeAlerts. It sets alarms only
 // while an admin's browser is subscribed: at a disconnect (OFFLINE_ALERT_MINUTES later) and, while
 // the driver is connected, every OFFLINE_ALERT_MINUTES to see that its pings are still answered.
+// Whatever removes subscriptions tells the object ({ op: "changed" }, homesChanged), and while
+// connected it also asks D1 again every RECHECK_TIMES alarms, so it stops once nobody is left. An
+// offline alert that reached no push service (D1 failed, or the service was unreachable, busy or
+// failing) is tried again ALERT_RETRY_SECONDS (60) later, ALERT_TRIES times in all.
 // Its storage:
 //   alerts_home      the home id (an alarm has no request to name it)
 //   alerts_admins    the admin key ids of the controller's last "keys"; none: it never said (before 1.6.0)
 //   alerts_on        true while an admin's browser is subscribed
+//   alerts_checked   when an alarm last asked D1 whether one still is (milliseconds)
 //   away_since       when the driver went away (milliseconds): its disconnect, or, when the relay
 //                    restarted under the connection (a deploy records no disconnect), when an alarm
 //                    first found it gone
-//   offline_alerted  the offline alert of this absence went (milliseconds)
+//   offline_alerted  the offline alert of this absence went, or was given up (milliseconds)
+//   offline_retry    { tries, endpoints }: the offline alert's tries so far, and the browsers it is
+//                    still to reach (null: all), while it is tried again
 //   schedule_alerts  the times of the schedule alerts of the last hour
 
 import { json, problem, readText } from "./http.js";
@@ -36,6 +43,11 @@ import { sendPush, subscriptionKeys, validEndpoint, vapidProblem } from "./web-p
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_OFFLINE_MINUTES = 10;
 const DEFAULT_SILENCE_SECONDS = 60;
+const DEFAULT_RETRY_SECONDS = 60;
+// Sends of one offline alert at most: the first and the tries again.
+export const ALERT_TRIES = 4;
+// While the driver is connected, every this many alarms (an hour at 10 minutes) ask D1 again.
+const RECHECK_TIMES = 6;
 const SCHEDULE_ALERTS_PER_HOUR = 3;
 // How long a push service keeps an alert for a device that is off.
 const ALERT_TTL_SECONDS = 12 * 3600;
@@ -61,6 +73,15 @@ function silenceMs(env) {
   const value = Number(env.ALERT_SILENCE_SECONDS);
   return Math.round((Number.isFinite(value) && value > 0 ? value : DEFAULT_SILENCE_SECONDS) * 1000);
 }
+
+function retryMs(env) {
+  const value = Number(env.ALERT_RETRY_SECONDS);
+  return Math.round((Number.isFinite(value) && value > 0 ? value : DEFAULT_RETRY_SECONDS) * 1000);
+}
+
+// A push that may get through if sent again: the service could not be reached (0), was busy (429)
+// or failed (5xx). A redirect (3xx) or a refusal (4xx) would not.
+const retryable = (status) => status === 0 || status === 429 || status >= 500;
 
 // Whether the driver has gone quiet on its socket `ws` (see the top of this file).
 function quiet(relay, ws, now) {
@@ -124,6 +145,18 @@ export async function homeObject(env, homeId, message) {
   return response.json();
 }
 
+// Subscriptions of these homes went (an account signed out everywhere, left, was removed or
+// deleted, a home changed hands): each home's object looks again whether an admin's browser is
+// still subscribed, and stops its alarms if not. Best effort: the change is made already, and a
+// connected home's object also asks D1 again within the hour.
+export async function homesChanged(env, homeIds) {
+  await Promise.all(
+    [...new Set(homeIds)].map((homeId) =>
+      homeObject(env, homeId, { op: "changed" }).catch((error) => log("alerts_change_not_told", { home: homeId, error: String(error?.message ?? error) }))
+    )
+  );
+}
+
 const REFUSALS = {
   ADMIN_ONLY: [403, "Only the home's admins get its alerts"],
   NOT_A_MEMBER: [403, "This account does not belong to that home"],
@@ -184,7 +217,7 @@ export class HomeAlerts {
   }
 
   // The Worker's operations: { op: "subscribe", user, endpoint, p256dh, auth } after it checked
-  // the account's membership and the subscription, { op: "changed" } after a subscription went, or
+  // the account's membership and the subscription, { op: "changed" } after subscriptions went, or
   // { op: "admins" } for the admin key ids the controller last announced (backups.js asks).
   async request(input, homeId) {
     if (input?.op === "subscribe") {
@@ -195,7 +228,10 @@ export class HomeAlerts {
       return { ok: true, admins: Array.isArray(admins) ? admins : null };
     }
     if (input?.op === "changed") {
-      await this.watch(homeId);
+      // Only a home that is watching has anything to stop (and only it asks D1).
+      if ((await this.storage.get("alerts_on")) === true) {
+        await this.watch(homeId);
+      }
       return { ok: true };
     }
     return { ok: false, code: "INVALID_REQUEST" };
@@ -243,6 +279,9 @@ export class HomeAlerts {
     const on = Boolean(home) && (await recipients(this.env, home, stored.get("alerts_admins"))).length > 0;
     if (stored.get("alerts_on") !== on) {
       await this.storage.put("alerts_on", on);
+      if (stored.get("alerts_on") === true) {
+        log("alerts_stopped", { home, why: "no admin's browser is subscribed" });
+      }
     }
     if (!on) {
       await this.storage.deleteAlarm();
@@ -269,9 +308,9 @@ export class HomeAlerts {
 
   // The driver connected: its absence, if any, is over.
   async connected(homeId) {
-    const stored = await this.storage.get(["alerts_on", "away_since", "offline_alerted"]);
-    if (stored.get("away_since") !== undefined || stored.get("offline_alerted") !== undefined) {
-      await this.storage.delete(["away_since", "offline_alerted"]);
+    const stored = await this.storage.get(["alerts_on", "away_since", "offline_alerted", "offline_retry"]);
+    if (stored.get("away_since") !== undefined || stored.get("offline_alerted") !== undefined || stored.get("offline_retry") !== undefined) {
+      await this.storage.delete(["away_since", "offline_alerted", "offline_retry"]);
     }
     if (stored.get("alerts_on") === true) {
       await this.storage.setAlarm(Date.now() + offlineMs(this.env));
@@ -287,6 +326,16 @@ export class HomeAlerts {
   }
 
   async alarm() {
+    try {
+      await this.look();
+    } catch (error) {
+      // D1 or storage failed: the object goes on watching, and looks again at its usual pace.
+      log("alert_alarm_failed", { error: String(error?.message ?? error) });
+      await this.storage.setAlarm(Date.now() + offlineMs(this.env));
+    }
+  }
+
+  async look() {
     const stored = await this.storage.get(["alerts_on", "alerts_home", "away_since"]);
     const homeId = stored.get("alerts_home");
     if (stored.get("alerts_on") !== true || !homeId) {
@@ -300,8 +349,16 @@ export class HomeAlerts {
       if (!quiet(this.relay, ws, now)) {
         // Connected, and its pings are answered: look again later. Back without reconnecting
         // after an alert, it may be alerted about again.
-        if ((await this.storage.get("offline_alerted")) !== undefined) {
-          await this.storage.delete("offline_alerted");
+        const marks = await this.storage.get(["offline_alerted", "offline_retry", "alerts_checked"]);
+        if (marks.get("offline_alerted") !== undefined || marks.get("offline_retry") !== undefined) {
+          await this.storage.delete(["offline_alerted", "offline_retry"]);
+        }
+        // Now and then D1 is asked again, in case subscriptions went without the object being told.
+        if (!(now - marks.get("alerts_checked") < RECHECK_TIMES * limit)) {
+          if (!(await this.watch(homeId))) {
+            return; // nobody to alert: no more alarms
+          }
+          await this.storage.put("alerts_checked", now);
         }
         await this.storage.setAlarm(now + limit);
         return;
@@ -326,15 +383,36 @@ export class HomeAlerts {
   }
 
   // The driver is away since `since`: the offline alert once it has been `limit`, once per absence;
-  // until then, an alarm for that moment (and true).
+  // until then, an alarm for that moment (and true). An alert that did not get through is tried
+  // again (an alarm, and true) until ALERT_TRIES sends; only then is the absence marked alerted.
   async whenAway(homeId, since, now, limit) {
     if (now - since < limit) {
       await this.storage.setAlarm(since + limit);
       return true;
     }
-    if ((await this.storage.get("offline_alerted")) === undefined) {
-      await this.storage.put("offline_alerted", now);
-      await this.send(homeId, "offline", since);
+    const stored = await this.storage.get(["offline_alerted", "offline_retry"]);
+    if (stored.get("offline_alerted") !== undefined) {
+      return false;
+    }
+    const before = stored.get("offline_retry") ?? { tries: 0, endpoints: null };
+    let left;
+    try {
+      left = await this.send(homeId, "offline", since, before.endpoints);
+    } catch (error) {
+      // D1 could not say who to alert: everyone still waiting, again.
+      log("alert_failed", { home: homeId, kind: "offline", error: String(error?.message ?? error) });
+      left = before.endpoints;
+    }
+    const tries = before.tries + 1;
+    if ((left === null || left.length > 0) && tries < ALERT_TRIES) {
+      await this.storage.put("offline_retry", { tries, endpoints: left });
+      await this.storage.setAlarm(now + retryMs(this.env));
+      log("alert_retry", { home: homeId, kind: "offline", tries, devices: left === null ? null : left.length });
+      return true;
+    }
+    await this.storage.put("offline_alerted", now);
+    if (stored.get("offline_retry") !== undefined) {
+      await this.storage.delete("offline_retry");
     }
     return false;
   }
@@ -361,16 +439,23 @@ export class HomeAlerts {
     await this.send(homeId, "schedule_failed", when);
   }
 
-  // Sends one alert to the admins' browsers; forgets those the push service no longer knows.
-  async send(homeId, kind, at) {
+  // Sends one alert to the admins' browsers (`only`: to those of these endpoints); forgets those
+  // the push service no longer knows. Returns the endpoints worth sending to again (retryable). A
+  // failed D1 read throws.
+  async send(homeId, kind, at, only = null) {
     if (!KINDS.has(kind)) {
-      return 0;
+      return [];
     }
-    const list = await recipients(this.env, homeId, await this.storage.get("alerts_admins"));
+    let list = await recipients(this.env, homeId, await this.storage.get("alerts_admins"));
+    if (only) {
+      list = list.filter((subscription) => only.includes(subscription.endpoint));
+    }
     if (list.length === 0) {
-      log("alert_not_sent", { home: homeId, kind, why: "no admin's browser is subscribed" });
-      await this.watch(homeId);
-      return 0;
+      if (!only) {
+        log("alert_not_sent", { home: homeId, kind, why: "no admin's browser is subscribed" });
+        await this.watch(homeId);
+      }
+      return [];
     }
     const message = { kind, home: homeId, at: iso(at) };
     let statuses;
@@ -378,24 +463,30 @@ export class HomeAlerts {
       statuses = await Promise.all(list.map((subscription) => sendPush(this.env, subscription, message, { ttl: ALERT_TTL_SECONDS })));
     } catch (error) {
       log("alert_failed", { home: homeId, kind, error: String(error?.message ?? error) });
-      return 0;
+      return list.map((subscription) => subscription.endpoint);
     }
     const gone = list.filter((_, index) => statuses[index] === 404 || statuses[index] === 410);
     if (gone.length > 0) {
       const DB = this.env.DB;
-      await DB.batch(gone.map((subscription) => DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND endpoint = ?").bind(homeId, subscription.endpoint)));
-      await this.watch(homeId);
+      try {
+        await DB.batch(gone.map((subscription) => DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND endpoint = ?").bind(homeId, subscription.endpoint)));
+        await this.watch(homeId);
+      } catch (error) {
+        // Forgotten at the next alert; what was delivered is not sent again.
+        log("alert_failed", { home: homeId, kind, error: String(error?.message ?? error) });
+      }
     }
-    const delivered = statuses.filter((status) => status >= 200 && status < 300).length;
+    const again = list.filter((_, index) => retryable(statuses[index])).map((subscription) => subscription.endpoint);
     log("alert_sent", {
       home: homeId,
       kind,
       at: message.at,
       devices: list.length,
-      delivered,
+      delivered: statuses.filter((status) => status >= 200 && status < 300).length,
       gone: gone.length,
       failed: statuses.filter((status) => !(status >= 200 && status < 300) && status !== 404 && status !== 410),
+      again: again.length,
     });
-    return delivered;
+    return again;
   }
 }
