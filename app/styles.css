@@ -3513,11 +3513,31 @@ a.scene-name:hover {
   font-size: 14px;
 }
 
+/* Tapping an action's text changes it, as its Edit button does. */
+.step-open {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .step-text.step-open:hover .step-what {
+    text-decoration: underline;
+  }
+}
+
+/* Phones: up and down in one column, edit and remove in the next, so the text keeps its width. */
 .step-tools {
-  display: inline-flex;
+  display: grid;
+  grid-template-rows: repeat(2, auto);
+  grid-auto-flow: column;
   grid-column: 3;
   grid-row: 1 / span 2;
-  gap: 2px;
+  gap: 0 2px;
+}
+
+@media (min-width: 480px) {
+  .step-tools {
+    display: inline-flex;
+  }
 }
 
 @media (min-width: 640px) {
@@ -3691,6 +3711,15 @@ a.scene-name:hover {
   flex: 1;
   min-width: 0;
   padding-block: 6px;
+}
+
+/* A device an action names that is no longer in the project (changing an action). */
+.pick-item.is-gone .device-name {
+  color: var(--muted);
+}
+
+.pick-item.is-gone .device-meta {
+  color: var(--errText);
 }
 
 .segment.is-active {

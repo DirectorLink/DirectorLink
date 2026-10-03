@@ -29,7 +29,7 @@ import { camerasView } from "./js/views/cameras.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
-import { resetSceneEditor, sceneEditorView, scenesView } from "./js/views/scenes.js";
+import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from "./js/views/scenes.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
@@ -60,7 +60,8 @@ function parseRoute() {
     return { name: "room", id: Number(parts[1]), tab: "home" };
   }
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
-    return { name: "scene", id: parts[1], adding: parts[2] === "add", tab: "scenes" };
+    const editing = parts[2] === "edit" && /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : null;
+    return { name: "scene", id: parts[1], adding: parts[2] === "add", editing, tab: "scenes" };
   }
   if (parts[0] === "schedule" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     return { name: "schedule", id: parts[1], tab: "scenes" };
@@ -112,10 +113,11 @@ window.addEventListener("hashchange", () => {
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
-  // Back on Settings' list from one of its pages, the row that opened it has the focus; otherwise
-  // the new screen's heading, for keyboard and screen-reader users.
-  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : null;
-  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey) : null;
+  // Back on Settings' list from one of its pages, the row that opened it has the focus (in the scene
+  // editor, the action just changed); otherwise the new screen's heading, for keyboard and
+  // screen-reader users.
+  const rowKey = route.name === "settings" && !route.page ? settingsRowKey(previous) : sceneReturnKey(previous, route);
+  const row = rowKey ? [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === rowKey && !item.disabled) : null;
   if (row) {
     row.scrollIntoView({ block: "center" });
     row.focus({ preventScroll: true });
@@ -290,7 +292,7 @@ function screen() {
     case "schedule":
       return scheduleEditorView(route.id, actions);
     case "scene":
-      return sceneEditorView(route.id, route.adding, actions);
+      return sceneEditorView(route.id, route.adding, actions, route.editing);
     case "cameras":
       return camerasView(actions);
     case "climate":

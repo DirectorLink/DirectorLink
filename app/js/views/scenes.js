@@ -2,8 +2,10 @@
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
 // what (lights, AC, fans, blinds, doors and gates, all of them or chosen ones; the Sonos music)
 // and what to do;
-// "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor. "Copy the
-// house as it is now" makes the actions from the current state; "Try it now" runs them unsaved.
+// "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor; so has
+// changing one (#/scene/<id>/edit/<index>, 1.6.0), the same screen filled in from the action.
+// "Copy the house as it is now" makes the actions from the current state; "Try it now" runs them
+// unsaved.
 
 import { emptyState, skeletonCards, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
@@ -257,7 +259,8 @@ function changeSteps(draft, steps) {
   notify();
 }
 
-export function sceneEditorView(key, adding, { navigate }) {
+// `adding`: the Add an action screen; `editing`: the index of the action being changed, or null.
+export function sceneEditorView(key, adding, { navigate }, editing = null) {
   const title = key === "new" ? t("scenes.editor.newTitle") : t("scenes.editor.editTitle");
   const draft0 = ui.sceneEditor?.key === key ? ui.sceneEditor : null;
   const header = pageHeader({
@@ -278,8 +281,15 @@ export function sceneEditorView(key, adding, { navigate }) {
   if (!draft) {
     return [header, emptyState("scene", t("scenes.editor.notFound"), "", h("a", { class: "button button-primary", href: "#/scenes" }, t("scenes.title")))];
   }
-  if (adding) {
-    draft.adding ??= newAdding();
+  if (adding || editing != null) {
+    const screen = adding ? "add" : `edit:${editing}`;
+    if (draft.adding?.screen !== screen) draft.adding = adding ? newAdding() : editAdding(draft.steps, editing);
+    if (!draft.adding) {
+      return [
+        pageHeader({ title: t("scenes.edit.title"), back: `#/scene/${key}` }),
+        emptyState("scene", t("scenes.edit.notFound"), "", h("a", { class: "button button-primary", href: `#/scene/${key}` }, t("common.back"))),
+      ];
+    }
     return addActionView(draft);
   }
   draft.adding = null;
@@ -361,7 +371,7 @@ function stepsSection(draft, navigate) {
       h("h2", { class: "section-title" }, t("scenes.editor.steps")),
       h("span", { class: "muted-note" }, t("scenes.editor.count", { count }))
     ),
-    count ? h("ol", { class: "step-list" }, draft.steps.map((step, index) => stepRow(draft, step, index))) : null,
+    count ? h("ol", { class: "step-list" }, draft.steps.map((step, index) => stepRow(draft, step, index, navigate))) : null,
     h(
       "button",
       {
@@ -380,12 +390,18 @@ function stepsSection(draft, navigate) {
   );
 }
 
-function stepRow(draft, step, index) {
+// An action: tapping its text or Edit changes it (the Edit button is the one keyboards and screen
+// readers use, so a row is not read out twice).
+function stepRow(draft, step, index, navigate) {
   const what = stepWhat(step);
   const move = (offset) => {
     const steps = [...draft.steps];
     [steps[index], steps[index + offset]] = [steps[index + offset], steps[index]];
     changeSteps(draft, steps);
+  };
+  const edit = () => {
+    draft.message = null;
+    navigate(`#/scene/${draft.key}/edit/${index}`);
   };
   return h(
     "li",
@@ -393,16 +409,17 @@ function stepRow(draft, step, index) {
     h("span", { class: `step-icon step-${step.type}`, "aria-hidden": "true" }, icon(STEP_ICONS[step.type])),
     h(
       "span",
-      { class: "step-text" },
+      { class: "step-text step-open", onclick: edit },
       name(what, "span", "step-what"),
       h("span", { class: "step-where" }, name(stepWhere(step), "span"), step.type === "relays" ? h("span", {}, ` · ${t("scenes.editor.needsDoors")}`) : null)
     ),
-    h("span", { class: "step-action" }, stepAction(step)),
+    h("span", { class: "step-action step-open", onclick: edit }, stepAction(step)),
     h(
       "span",
       { class: "step-tools" },
       iconButton("arrowUp", t("scenes.editor.moveUp", { what }), { disabled: index === 0, dataset: { key: `step-up:${index}` }, onclick: () => move(-1) }),
       iconButton("arrowDown", t("scenes.editor.moveDown", { what }), { disabled: index === draft.steps.length - 1, dataset: { key: `step-down:${index}` }, onclick: () => move(1) }),
+      iconButton("edit", t("scenes.editor.editStep", { what }), { dataset: { key: `step-edit:${index}` }, onclick: edit }),
       iconButton("close", t("scenes.editor.remove", { what }), {
         class: "danger",
         dataset: { key: `step-remove:${index}` },
@@ -579,7 +596,105 @@ async function deleteDraft(draft) {
 
 function newAdding() {
   // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
-  return { room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause" };
+  // `screen`: the screen these choices belong to ("add", or "edit:<index>").
+  return { screen: "add", editing: null, room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause" };
+}
+
+// The choices that make the setting of each kind of action; the others say where and which devices.
+const SETTING_CHOICES = {
+  lights: ["light", "brightness"],
+  climate: ["mode", "temperature", "heat", "cool", "fan"],
+  fans: ["fanDo", "fanSpeed"],
+  blinds: ["blind", "position"],
+  relays: [],
+  music: ["music"],
+};
+
+function settingOf(adding) {
+  return JSON.stringify((SETTING_CHOICES[adding.type] || []).map((choice) => adding[choice]));
+}
+
+// A step's setting, the same whatever order the controller sent its fields in.
+function setKey(set) {
+  return JSON.stringify(Object.keys(set || {}).sort().map((field) => [field, set[field]]));
+}
+
+function samePart(a, b) {
+  return a.type === b.type && (a.room_id ?? null) === (b.room_id ?? null) && Array.isArray(a.device_ids) && Array.isArray(b.device_ids) && setKey(a.set) === setKey(b.set);
+}
+
+// The actions one choice became: more than 100 devices are kept as several actions in a row, with
+// the same type, room and setting, each but the last naming 100 devices. They are changed together.
+function splitRun(steps, index) {
+  const step = steps[index];
+  if (!Array.isArray(step.device_ids)) return { start: index, count: 1 };
+  let start = index;
+  while (start > 0 && samePart(steps[start - 1], step) && steps[start - 1].device_ids.length === MAX_DEVICE_IDS) start -= 1;
+  let end = index;
+  while (end + 1 < steps.length && steps[end].device_ids.length === MAX_DEVICE_IDS && samePart(steps[end + 1], step)) end += 1;
+  return { start, count: end - start + 1 };
+}
+
+// Changing the action at `index` (#/scene/<id>/edit/<index>): the Add an action choices, filled in
+// from it. `editing` keeps what it was: where it is in the scene, its devices (some may be gone
+// from the project) and its setting. null when the scene has no such action.
+function editAdding(steps, index) {
+  const step = steps[index];
+  if (!step || !STEP_TYPES.includes(step.type)) return null;
+  const { start, count } = splitRun(steps, index);
+  const ids = Array.isArray(step.device_ids) ? unique(steps.slice(start, start + count).flatMap((part) => part.device_ids)) : null;
+  const set = step.set || {};
+  const adding = { ...newAdding(), screen: `edit:${index}`, type: step.type, room: step.room_id ?? null, choose: Boolean(ids), picked: ids ? [...ids] : [] };
+  if (step.type === "lights") {
+    if (set.on === false || set.brightness === 0) adding.light = "off";
+    else if (Number.isFinite(set.brightness)) Object.assign(adding, { light: "dim", brightness: Math.max(1, Math.min(100, Math.round(set.brightness))) });
+    else adding.light = "on";
+  } else if (step.type === "climate") {
+    const target = Number.isFinite(set.target_temperature) ? set.target_temperature : set.mode === "heat" ? set.heat_setpoint : set.mode === "cool" ? set.cool_setpoint : null;
+    adding.mode = set.mode ?? null;
+    if (Number.isFinite(target)) adding.temperature = target;
+    if (Number.isFinite(set.heat_setpoint)) adding.heat = set.heat_setpoint;
+    if (Number.isFinite(set.cool_setpoint)) adding.cool = set.cool_setpoint;
+    adding.fan = set.fan_speed ?? null;
+  } else if (step.type === "fans") {
+    if (set.on === false) adding.fanDo = "off";
+    else if (Number.isInteger(set.speed)) Object.assign(adding, { fanDo: "speed", fanSpeed: set.speed });
+    else adding.fanDo = "on";
+  } else if (step.type === "blinds") {
+    const position = Number.isFinite(set.position) ? set.position : 0;
+    if (position >= 100) adding.blind = "open";
+    else if (position <= 0) adding.blind = "close";
+    else Object.assign(adding, { blind: "set", position: Math.round(position) });
+  } else if (step.type === "music") {
+    adding.music = set.action === "stop" ? "stop" : "pause";
+  }
+  // `setting`: the setting choices as first shown (settingOf), filled in then.
+  adding.editing = { index, start, count, type: step.type, room: adding.room, ids: ids || [], set, setting: null, steps: steps.slice(start, start + count) };
+  return adding;
+}
+
+// While an action is being changed its setting stays as it was saved until a setting choice is
+// changed: it may hold what these choices do not show (a copied AC with no mode, both setpoints of
+// a copied thermostat, a speed these fans no longer have).
+function keptSet(adding) {
+  const editing = adding.editing;
+  return editing && adding.type === editing.type && editing.setting === settingOf(adding) ? editing.set : null;
+}
+
+function sameSteps(a, b) {
+  const plain = (step) => JSON.stringify([step.type, step.room_id ?? null, step.device_ids ?? null, setKey(step.set)]);
+  return a.length === b.length && a.every((step, index) => plain(step) === plain(b[index]));
+}
+
+// The data-key app.js focuses when the editor opens again after adding or changing an action, or
+// cancelling that: the action's Edit button (the first, when it became several), or Add an action.
+export function sceneReturnKey(previous, route) {
+  if (route?.name !== "scene" || route.adding || route.editing != null || previous?.name !== "scene" || previous.id !== route.id) return null;
+  const draft = ui.sceneEditor;
+  const saved = draft?.returnFocus;
+  if (draft) draft.returnFocus = null;
+  if (previous.editing != null) return saved || `step-edit:${previous.editing}`;
+  return previous.adding ? "scene-add" : null;
 }
 
 // Devices of `type` in `room` (null: the whole home).
@@ -649,11 +764,13 @@ function setpointChoices(adding, { min, max, gap }) {
 }
 
 // Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights, no position
-// for shades that only open and close), before the steps are built from them.
+// for shades that only open and close), before the steps are built from them. Nothing to go by
+// when none of the devices is in the project any more (an action being changed).
 function settle(adding, devices) {
+  if (!devices.length) return;
   if (adding.type === "lights" && adding.light === "dim" && !devices.some((device) => device.dimmable)) adding.light = "on";
   if (adding.type === "blinds" && !sceneBlindChoices(devices).includes(adding.blind)) adding.blind = adding.position >= 50 ? "open" : "close";
-  if (adding.type === "climate" && devices.length) {
+  if (adding.type === "climate") {
     const { modes, min, max, fans, dual, gap } = climateChoices(devices);
     if (!modes.includes(adding.mode)) adding.mode = modes.includes("cool") ? "cool" : modes[modes.length - 1];
     adding.temperature = Math.min(max, Math.max(min, adding.temperature));
@@ -671,27 +788,39 @@ function settle(adding, devices) {
   }
 }
 
+// The setting the choices describe, for `targets` (the devices it goes to).
+function chosenSet(adding, targets) {
+  if (adding.type === "lights") return adding.light === "off" ? { on: false } : adding.light === "on" ? { on: true } : { brightness: adding.brightness };
+  if (adding.type === "climate") {
+    let set;
+    if (adding.mode === "off") set = { mode: "off" };
+    else if (adding.mode === "auto" && targets.some(isDual)) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
+    else set = { mode: adding.mode, target_temperature: adding.temperature };
+    if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
+    return set;
+  }
+  if (adding.type === "fans") return adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
+  if (adding.type === "blinds") return { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
+  if (adding.type === "music") return { action: adding.music };
+  return { action: "pulse" };
+}
+
 // The steps the choices describe: one, or several when more than 100 devices are picked; none
 // while chosen devices are wanted and none is picked. All of them picked is "all" (so devices
 // added to the room later are included). Auto on thermostats with heat and cool setpoints sets
-// both setpoints instead of a target.
-function buildSteps(adding, devices) {
-  const picked = devices.filter((device) => adding.picked.includes(device.id)).map((device) => device.id);
+// both setpoints instead of a target. `others`: ids an action being changed names that are not
+// among `devices` (moved to another room, or gone from the project); ticked, they stay in it.
+function buildSteps(adding, devices, others = []) {
+  const here = [...devices.map((device) => device.id), ...others];
+  // An action being changed keeps the order it named its devices in; new ones come after.
+  const picked = unique([...(adding.editing?.ids || []), ...here]).filter((id) => here.includes(id) && adding.picked.includes(id));
   if (adding.choose && !picked.length) return [];
-  let set;
-  if (adding.type === "lights") set = adding.light === "off" ? { on: false } : adding.light === "on" ? { on: true } : { brightness: adding.brightness };
-  else if (adding.type === "climate") {
-    const dual = (adding.choose ? devices.filter((device) => picked.includes(device.id)) : devices).some(isDual);
-    if (adding.mode === "off") set = { mode: "off" };
-    else if (adding.mode === "auto" && dual) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
-    else set = { mode: adding.mode, target_temperature: adding.temperature };
-    if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
-  } else if (adding.type === "fans") set = adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
-  else if (adding.type === "blinds") set = { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
+  const elsewhere = devicesOfType(adding.type).filter((device) => others.includes(device.id));
+  const set = keptSet(adding) ?? chosenSet(adding, adding.choose ? [...devices, ...elsewhere].filter((device) => picked.includes(device.id)) : devices);
   // Music names no devices: the Sonos rooms in the room, or the whole home.
-  else if (adding.type === "music") return [{ type: "music", room_id: adding.room, device_ids: null, set: { action: adding.music } }];
-  else set = { action: "pulse" };
-  if (!adding.choose || picked.length === devices.length) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
+  if (adding.type === "music") return [{ type: "music", room_id: adding.room, device_ids: null, set }];
+  const everyOne = picked.length === devices.length && !others.some((id) => picked.includes(id));
+  if (!adding.choose || everyOne) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
   const steps = [];
   for (let start = 0; start < picked.length; start += MAX_DEVICE_IDS) {
     steps.push({ type: adding.type, room_id: adding.room, device_ids: picked.slice(start, start + MAX_DEVICE_IDS), set });
@@ -711,8 +840,12 @@ function nowText(type, device) {
   return "";
 }
 
-function whichDevices(adding, devices, where) {
-  if (devices.length < 2 || adding.type === "music") return null;
+// All the devices of the kind here, or chosen ones. An action being changed also lists the devices
+// it names that are elsewhere now, or gone from the project (`others`), so they leave it only when
+// unticked.
+function whichDevices(adding, devices, where, others = []) {
+  if (adding.type === "music") return null;
+  if (devices.length + others.length < 2 && !(adding.editing && adding.choose)) return null;
   const kind = t(`scenes.add.kinds.${adding.type}`);
   if (!adding.choose) {
     return h(
@@ -726,8 +859,9 @@ function whichDevices(adding, devices, where) {
           class: "button button-secondary button-small",
           dataset: { key: "add-choose" },
           onclick: () => {
+            // An action being changed, in its own place: the devices it named, ticked again.
+            resetPicks(adding);
             adding.choose = true;
-            adding.picked = [];
             notify();
           },
         },
@@ -735,14 +869,44 @@ function whichDevices(adding, devices, where) {
       )
     );
   }
-  const all = devices.every((device) => adding.picked.includes(device.id));
+  const listed = [...devices.map((device) => device.id), ...others];
+  const all = listed.every((id) => adding.picked.includes(id));
+  const known = devicesOfType(adding.type);
+  const item = (deviceId, device) => {
+    const id = `pick-${deviceId}`;
+    // Elsewhere now: its room. Gone from the project: said so, with its Control4 id.
+    const here = devices.includes(device);
+    const meta = device
+      ? [adding.room == null || !here ? isolate(roomName(device.room)) : null, nowText(adding.type, device)].filter(Boolean).join(" · ")
+      : t("scenes.edit.goneMeta", { id: String(deviceId) });
+    return h(
+      "li",
+      { class: `pick-item ${device ? "" : "is-gone"}`.trim() },
+      h("input", {
+        type: "checkbox",
+        id,
+        checked: adding.picked.includes(deviceId),
+        dataset: { key: `pick:${deviceId}` },
+        onchange: (event) => {
+          adding.picked = event.target.checked ? [...adding.picked, deviceId] : adding.picked.filter((other) => other !== deviceId);
+          notify();
+        },
+      }),
+      h(
+        "label",
+        { for: id, class: "pick-label" },
+        device ? name(device.name, "span", "device-name") : h("span", { class: "device-name" }, t("scenes.edit.goneDevice")),
+        meta ? h("span", { class: "device-meta" }, meta) : null
+      )
+    );
+  };
   return h(
     "div",
     { class: "pick-panel" },
     h(
       "div",
       { class: "which-row" },
-      h("span", {}, t("scenes.add.picked", { picked: adding.picked.filter((id) => devices.some((device) => device.id === id)).length, count: devices.length })),
+      h("span", {}, t("scenes.add.picked", { picked: listed.filter((id) => adding.picked.includes(id)).length, count: listed.length })),
       h(
         "button",
         {
@@ -750,52 +914,45 @@ function whichDevices(adding, devices, where) {
           class: "button button-quiet button-small",
           dataset: { key: "add-pick-all" },
           onclick: () => {
-            adding.picked = all ? [] : devices.map((device) => device.id);
+            adding.picked = all ? [] : listed;
             notify();
           },
         },
-        all ? t("scenes.add.pickNone") : t("scenes.add.pickAll", { count: devices.length })
+        all ? t("scenes.add.pickNone") : t("scenes.add.pickAll", { count: listed.length })
       )
     ),
     h(
       "ul",
       { class: "pick-list" },
-      devices.map((device) => {
-        const id = `pick-${device.id}`;
-        const meta = [adding.room == null ? isolate(roomName(device.room)) : null, nowText(adding.type, device)].filter(Boolean).join(" · ");
-        return h(
-          "li",
-          { class: "pick-item" },
-          h("input", {
-            type: "checkbox",
-            id,
-            checked: adding.picked.includes(device.id),
-            dataset: { key: `pick:${device.id}` },
-            onchange: (event) => {
-              adding.picked = event.target.checked ? [...adding.picked, device.id] : adding.picked.filter((other) => other !== device.id);
-              notify();
-            },
-          }),
-          h("label", { for: id, class: "pick-label" }, name(device.name, "span", "device-name"), meta ? h("span", { class: "device-meta" }, meta) : null)
-        );
-      })
+      devices.map((device) => item(device.id, device)),
+      others.map((id) => item(id, known.find((device) => device.id === id) || null))
     ),
     h("p", { class: "field-help" }, t("scenes.add.pickHelp")),
-    h(
-      "button",
-      {
-        type: "button",
-        class: "button button-quiet button-small",
-        dataset: { key: "add-use-all" },
-        onclick: () => {
-          adding.choose = false;
-          adding.picked = [];
-          notify();
-        },
-      },
-      t("scenes.add.useAll", { count: devices.length })
-    )
+    devices.length
+      ? h(
+          "button",
+          {
+            type: "button",
+            class: "button button-quiet button-small",
+            dataset: { key: "add-use-all" },
+            onclick: () => {
+              adding.choose = false;
+              adding.picked = [];
+              notify();
+            },
+          },
+          t("scenes.add.useAll", { count: devices.length })
+        )
+      : null
   );
+}
+
+// What to do. When none of an action's devices is in the project any more (it is being changed),
+// that is said instead, and its setting stays as it was; music names no devices.
+function doSection(adding, devices) {
+  if (devices.length || adding.type === "music") return doControls(adding, devices);
+  const gone = h("p", { class: "notice notice-info" }, t("scenes.edit.noDevices"));
+  return adding.type === "relays" ? [gone, doControls(adding, devices)] : gone;
 }
 
 function doControls(adding, devices) {
@@ -956,30 +1113,55 @@ function setpointSteppers(adding, choices) {
   );
 }
 
+// A new place or kind starts with all its devices; back at the place and kind of the action being
+// changed, with the devices it named.
+function resetPicks(adding) {
+  const editing = adding.editing;
+  const own = Boolean(editing) && adding.room === editing.room && adding.type === editing.type;
+  adding.choose = own && editing.ids.length > 0;
+  adding.picked = own ? [...editing.ids] : [];
+}
+
+// Add an action, or change one (`adding.editing`): the same screen, where the changed action takes
+// the place of the one it was (several when it now names more than 100 devices).
 function addActionView(draft) {
   const adding = draft.adding;
-  const available = STEP_TYPES.filter((type) => scopeDevices(type, adding.room).length);
+  const editing = adding.editing;
+  // A changed action keeps its kind in its own place even with none of its devices left there.
+  const own = (type) => Boolean(editing) && type === editing.type && adding.room === editing.room;
+  const available = STEP_TYPES.filter((type) => scopeDevices(type, adding.room).length || own(type));
   if (!available.includes(adding.type)) {
     adding.type = available[0] || null;
-    adding.choose = false;
-    adding.picked = [];
+    resetPicks(adding);
   }
-  const where = adding.room == null ? t("scenes.wholeHome") : roomName(roomById(adding.room));
+  const room = adding.room == null ? null : roomById(adding.room);
+  const where = adding.room == null ? t("scenes.wholeHome") : room ? roomName(room) : t("scenes.roomGone");
   const devices = adding.type ? scopeDevices(adding.type, adding.room) : [];
-  const targets = adding.choose ? devices.filter((device) => adding.picked.includes(device.id)) : devices;
-  settle(adding, targets.length ? targets : devices);
-  const steps = adding.type ? buildSteps(adding, devices) : [];
-  const fits = draft.steps.length + steps.length <= MAX_STEPS;
+  const others = own(adding.type) ? editing.ids.filter((id) => !devices.some((device) => device.id === id)) : [];
+  // What the setting choices offer: the devices it goes to (its devices moved to another room
+  // count), else all here.
+  const elsewhere = devicesOfType(adding.type).filter((device) => others.includes(device.id));
+  const targets = adding.choose ? [...devices, ...elsewhere].filter((device) => adding.picked.includes(device.id)) : devices;
+  const choices = targets.length ? targets : devices.length ? devices : elsewhere;
+  settle(adding, choices);
+  if (editing) editing.setting ??= settingOf(adding);
+  const steps = adding.type ? buildSteps(adding, devices, others) : [];
+  const kept = draft.steps.length - (editing ? editing.count : 0);
+  const fits = kept + steps.length <= MAX_STEPS;
   const shown = steps.length > 1 ? { ...steps[0], device_ids: steps.flatMap((step) => step.device_ids) } : steps[0];
   const back = () => leave(`#/scene/${draft.key}`, "scene");
   const pickRoom = (id) => () => {
+    if (adding.room === id) return;
     adding.room = id;
-    adding.choose = false;
-    adding.picked = [];
+    resetPicks(adding);
     notify();
   };
+  // The room of the action being changed, when it has no devices now or is gone from the project.
+  const rooms = roomsWithDevices();
+  const ownRoom = editing && editing.room != null && !rooms.some((item) => item.id === editing.room) ? editing.room : null;
+  const summary = shown ? `${isolate(stepWhat(shown))} (${isolate(stepWhere(shown))}): ${stepAction(shown)}` : "";
   return [
-    pageHeader({ title: t("scenes.add.title"), back: `#/scene/${draft.key}` }),
+    pageHeader({ title: editing ? t("scenes.edit.title") : t("scenes.add.title"), back: `#/scene/${draft.key}` }),
     h(
       "div",
       { class: "scene-editor" },
@@ -989,8 +1171,10 @@ function addActionView(draft) {
           "div",
           { class: "chip-row" },
           choiceChip(t("scenes.wholeHome"), adding.room == null, "add-room:home", pickRoom(null)),
-          roomsWithDevices().map((room) => choiceChip(roomName(room), adding.room === room.id, `add-room:${room.id}`, pickRoom(room.id)))
-        )
+          rooms.map((item) => choiceChip(roomName(item), adding.room === item.id, `add-room:${item.id}`, pickRoom(item.id))),
+          ownRoom != null ? choiceChip(roomById(ownRoom) ? roomName(roomById(ownRoom)) : t("scenes.roomGone"), adding.room === ownRoom, `add-room:${ownRoom}`, pickRoom(ownRoom)) : null
+        ),
+        adding.room != null && !room ? h("p", { class: "notice notice-info" }, t("scenes.edit.roomGone")) : null
       ),
       available.length
         ? addSection(
@@ -1007,9 +1191,9 @@ function addActionView(draft) {
                     "aria-pressed": String(adding.type === type),
                     dataset: { key: `add-kind:${type}` },
                     onclick: () => {
+                      if (adding.type === type) return;
                       adding.type = type;
-                      adding.choose = false;
-                      adding.picked = [];
+                      resetPicks(adding);
                       notify();
                     },
                   },
@@ -1019,22 +1203,20 @@ function addActionView(draft) {
                 )
               )
             ),
-            whichDevices(adding, devices, where)
+            editing && editing.count > 1 ? h("p", { class: "field-help" }, t("scenes.edit.joined", { count: editing.count })) : null,
+            whichDevices(adding, devices, where, others)
           )
         : h("p", { class: "muted-note" }, t("scenes.add.nothingHere")),
-      adding.type ? addSection(t("scenes.add.do"), doControls(adding, targets.length ? targets : devices)) : null,
+      adding.type ? addSection(t("scenes.add.do"), doSection(adding, choices)) : null,
       h(
         "div",
         { class: "card scene-section add-foot" },
         h(
           "p",
           { class: "add-summary", role: "status" },
-          shown
-            ? fits
-              ? t("scenes.add.adds", { summary: `${isolate(stepWhat(shown))} (${isolate(stepWhere(shown))}): ${stepAction(shown)}` })
-              : t("scenes.add.tooMany")
-            : t("scenes.add.pickOne")
+          shown ? (fits ? t(editing ? "scenes.edit.becomes" : "scenes.add.adds", { summary }) : t("scenes.add.tooMany")) : t("scenes.add.pickOne")
         ),
+        steps.length > 1 && fits ? h("p", { class: "field-help" }, t("scenes.add.parts", { count: steps.length })) : null,
         h(
           "div",
           { class: "scene-actions" },
@@ -1048,16 +1230,23 @@ function addActionView(draft) {
               dataset: { key: "add-confirm" },
               onclick: () => {
                 // Built again from the choices as they are at the tap.
-                settle(adding, targets.length ? targets : devices);
-                const chosen = buildSteps(adding, devices);
-                if (!chosen.length || draft.steps.length + chosen.length > MAX_STEPS) return;
+                settle(adding, choices);
+                const chosen = buildSteps(adding, devices, others);
+                if (!chosen.length || kept + chosen.length > MAX_STEPS) return;
                 draft.adding = null;
-                changeSteps(draft, [...draft.steps, ...chosen]);
+                if (!editing) changeSteps(draft, [...draft.steps, ...chosen]);
+                else {
+                  // In its place; the editor then focuses it (sceneReturnKey). Unchanged, the scene is too.
+                  draft.returnFocus = `step-edit:${editing.start}`;
+                  if (!sameSteps(chosen, editing.steps)) {
+                    changeSteps(draft, [...draft.steps.slice(0, editing.start), ...chosen, ...draft.steps.slice(editing.start + editing.count)]);
+                  }
+                }
                 back();
               },
             },
-            icon("plus"),
-            t("scenes.add.addButton")
+            icon(editing ? "check" : "plus"),
+            editing ? t("scenes.edit.save") : t("scenes.add.addButton")
           )
         )
       )
