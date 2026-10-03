@@ -166,7 +166,12 @@ function byKey(node, key) {
 }
 const theSwitch = () => byKey(alertsPanel(), "alerts-switch");
 const isOn = () => theSwitch().attributes["aria-checked"] === "true";
-const isDisabled = () => "disabled" in theSwitch().attributes;
+// Off, but focusable: aria-disabled, never disabled (the keyboard would be lost).
+const isDisabled = () => {
+  const attributes = theSwitch().attributes;
+  assert.equal("disabled" in attributes, false, "kept focusable");
+  return attributes["aria-disabled"] === "true";
+};
 const hint = () => byKey(alertsPanel(), "alerts-hint")?.textContent ?? null;
 const shown = () => byKey(alertsPanel(), "alerts-message")?.textContent ?? null;
 
@@ -282,6 +287,19 @@ test("refused: the permission, an account that is not an admin, a controller tha
   assert.equal(callsTo("POST").length, 0, "nothing registered without permission");
   assert.equal(isDisabled(), true, "blocked: the switch cannot be used");
   assert.match(hint(), /blocked/);
+  assert.equal(shown(), null, "said once, not twice");
+  assert.equal(byKey(alertsPanel(), "alerts-hint").attributes.role, "status", "as the answer to the tap");
+  assert.equal(theSwitch().attributes["aria-describedby"], "alerts-switch-help alerts-hint", "read on the switch");
+  // Pressed again (it keeps the keyboard): nothing asked.
+  const asked = browser.asked;
+  await press();
+  assert.equal(browser.asked, asked);
+  // The prompt closed without an answer: said, as nothing else says it.
+  browser.permission = "default";
+  browser.answer = "default";
+  await press();
+  assert.equal(hint(), null);
+  assert.match(shown(), /blocked/);
 
   browser.permission = "granted";
   browser.answer = "granted";
@@ -304,6 +322,37 @@ test("refused: the permission, an account that is not an admin, a controller tha
   assert.equal(shown(), "Alerts aren’t available yet. Try again later.");
   cloud.get = null;
   assert.equal(isOn(), false);
+});
+
+test("while it works the switch keeps the keyboard: off to the eye and to a second press, not disabled", async () => {
+  admin();
+  await turnAlertsOff();
+  browser.permission = "granted";
+  cloud.calls.length = 0;
+  let answer;
+  cloud.get = null;
+  const realFetch = globalThis.fetch;
+  // The account service answers when told to.
+  globalThis.fetch = (url, init) => new Promise((resolve) => (answer = () => resolve(realFetch(url, init))));
+  try {
+    for (const listener of theSwitch().listeners.click) listener({ type: "click" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(alertsUi.busy, true);
+    const busy = theSwitch();
+    assert.equal(busy.attributes["aria-disabled"], "true");
+    assert.equal(busy.attributes["aria-busy"], "true");
+    assert.equal("disabled" in busy.attributes, false, "still focusable");
+    for (const listener of busy.listeners.click) listener({ type: "click" });
+    globalThis.fetch = realFetch;
+    answer();
+    await settle();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(callsTo("GET").length, 1, "pressed while busy: nothing more");
+  assert.equal(isOn(), true);
+  assert.equal(isDisabled(), false);
+  await turnAlertsOff();
 });
 
 test("a browser that cannot receive pushes says so", () => {
