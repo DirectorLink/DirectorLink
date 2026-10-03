@@ -138,20 +138,25 @@ link is the permission.
 | Request | Answer |
 | --- | --- |
 | `GET /run/{home_id}.{link_id}` (and `HEAD`) | A small page with one Run button, the same for every address (a made-up one too): it runs nothing, since link previews fetch links. Its script reads the secret after `#`, which the browser never sends, and posts it. `no-store`, `noindex`, `no-referrer`, a CSP with a nonce. |
-| `POST /run/{home_id}.{link_id}` | The secret in the body: `{"secret": "…"}`, a form field `secret` (url-encoded or multipart), or the secret alone as text (at most 1 KB). `200 {"result": "ran" \| "partly" \| "failed", "message"}`; `400 SECRET_REQUIRED`; `404 NOT_FOUND` for an unknown home (or one no account has claimed), link or secret, word for word alike; `429 TOO_MANY_RUNS` (`Retry-After`); `503 HOME_OFFLINE`; `502 HOME_DISCONNECTED`, `HOME_FAILED`; `504 HOME_TIMEOUT`. Any other method: 405. |
+| `POST /run/{home_id}.{link_id}` | The secret in the body: `{"secret": "…"}`, a form field `secret` (url-encoded or multipart), or the secret alone as text (at most 1 KB). `200 {"result": "ran" \| "partly" \| "failed" \| "nothing", "message"}`; `400 SECRET_REQUIRED`; `404 NOT_FOUND` for an unknown home (or one no account has claimed), link or secret, word for word alike; `429 TOO_MANY_RUNS` (`Retry-After`); `503 HOME_OFFLINE` (so a claimed home's id shows whether it is online: the family needs to know); `502 HOME_DISCONNECTED`, `HOME_FAILED`; `504 HOME_TIMEOUT`. Any other method: 405. |
 
 How it works: the Worker checks the address and the secret's shape (40 hex digits), reads D1 once to
-see that an account has claimed the home, and hands `{link, secret}` to the home's object
-(`/link`). The object lets at most 30 runs a minute reach the home (in memory; a flood keeps it
-awake), and sends `{"type":"link","id","link","secret"}` (docs/RELAY.md) only to a driver whose
+see that an account has claimed the home, and hands `{link, secret}` and the phone's address
+(`CF-Connecting-IP`, as `X-DirectorLink-Client`) to the home's object (`/link`). The object answers
+429 to an address (an IPv6 one by its /64) whose runs it answered 404 ten times in 10 minutes, until
+the first of those is 10 minutes old, before it counts against the home (so one stranger guessing
+cannot keep the family's runs at 429; at most 1,000 addresses a home, in memory, never logged); it
+lets at most 30 runs a minute reach the home (in memory; a flood keeps it awake), and sends `{"type":"link","id","link","secret"}` (docs/RELAY.md) only to a driver whose
 `hello` listed `features: ["scene_links"]` (DirectorLink 1.7.0): an older driver would never
 answer, so the phone gets 404 at once. The driver's `link_result` becomes the answer above; its
 `RATE_LIMITED` (6 runs a minute a link) becomes 429 with its `retry_s`.
 
 The secret stays out of the logs: it is never in the address (Workers Logs record each request's
-method and URL), and `link_run` logs only the home, the link's id, the status, why and how long.
-`scene-links.test.mjs` checks the forms the apps send, that a GET runs nothing, the 404s alike, an
-older driver, offline, both limits, and that the Worker's output never holds a secret.
+method and URL), and `link_run` logs only the home, the link's id, the status, the result word, why
+and how long (Workers Logs keeps them some days: the privacy page and docs/ACCOUNTS.md say so).
+`scene-links.test.mjs` checks the forms the apps send (multipart with a case-sensitive boundary too),
+that a GET runs nothing, the 404s alike, an older driver, offline, the three limits, and that the
+Worker's output never holds a secret.
 
 ## Deploying (by hand for now)
 

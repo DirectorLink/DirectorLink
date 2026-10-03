@@ -3,6 +3,7 @@
 -- the answer that makes it and nowhere else. A run comes from the account service over the relay
 -- (docs/RELAY.md, `link`): the scene runs as a member's key would run it, as schedules do, so it
 -- never opens a door or gate even if one were in it, and goes into the history as run by the link.
+-- A link goes with the key that made it (revoked, or expired: main.lua prunes when keys change).
 --   GET    /v1/scene-links                every link, with its scene's name (admins)
 --   GET    /v1/scenes/{sceneId}/link      the scene's link, without its secret
 --   POST   /v1/scenes/{sceneId}/link      {"label"}: a new link, replacing the scene's; its secret once
@@ -15,6 +16,7 @@ local Scenes = require("src.core.scenes")
 local SceneLinks = require("src.core.scene_links")
 local Activity = require("src.core.activity")
 local Relay = require("src.cloud.relay")
+local Keys = require("src.auth.keys")
 local SceneHandlers = require("src.api.handlers.scenes")
 
 local Handlers = {}
@@ -39,6 +41,8 @@ local function view(link)
         scene_name = scene and scene.name or Json.null,
         link_id = link.id,
         label = nullable(link.label),
+        -- The key that made it: revoking that key ends the link (the app says so first).
+        made_by = nullable(link.by),
         created_at = link.created_at,
         last_used_at = nullable(link.last_used_at),
     }
@@ -72,14 +76,15 @@ local function unreadable()
     return Problem.new(503, "UNAVAILABLE", "The saved scene links could not be read when DirectorLink started; restart the driver and try again")
 end
 
--- Links whose scene is gone or now opens doors or gates, or that were made for another home than
--- the one the relay knows, go (at start, after a restore, before a list). Nothing while the scenes
--- could not be read: every link would look orphaned.
+-- Links whose scene is gone or now opens doors or gates, that were made for another home than the
+-- one the relay knows, or whose key was revoked or expired, go (at start, after a restore, when
+-- keys change, before a list). Nothing while the scenes could not be read: every link would look
+-- orphaned; and no key is missing while the keys could not be read.
 function Handlers.prune()
     if not Scenes.complete() then
         return {}
     end
-    return SceneLinks.prune(Scenes.find, linkedHome())
+    return SceneLinks.prune(Scenes.find, linkedHome(), Keys.complete() and Keys.exists or nil)
 end
 
 function Handlers.list(ctx)
@@ -127,7 +132,7 @@ function Handlers.create(ctx)
             return problem
         end
     end
-    if SceneLinks.opensDoors(scene) then
+    if not SceneLinks.linkable(scene) then
         return Problem.new(409, "SCENE_OPENS_DOORS", "A scene that opens doors or gates cannot have a link")
     end
     if not ctx.services.remote.enabled() then
@@ -140,7 +145,7 @@ function Handlers.create(ctx)
     if not SceneLinks.complete() then
         return unreadable()
     end
-    local link, secret, replaced = SceneLinks.create(scene.id, label, home)
+    local link, secret, replaced = SceneLinks.create(scene.id, label, home, ctx.apiKey.id)
     if not link then
         return Problem.internal("The link could not be made (" .. tostring(secret) .. ")")
     end
@@ -183,9 +188,12 @@ function Handlers.delete(ctx)
     return 204
 end
 
--- What the phone is told: everything ran, some of it, or nothing.
+-- What the phone is told: everything ran, some of it, none of it (skipped or failed), or nothing
+-- was there to run (its devices were all removed in Composer since).
 local function outcome(result)
-    if result.skipped == 0 and result.failed == 0 then
+    if result.ran == 0 and result.skipped == 0 and result.failed == 0 then
+        return "nothing"
+    elseif result.skipped == 0 and result.failed == 0 then
         return "ran"
     end
     return result.ran > 0 and "partly" or "failed"
@@ -202,9 +210,9 @@ local function refused(services, why, linkId)
 end
 
 -- A run from the account service: {"type":"link","id":…,"link":"<8 hex>","secret":"<40 hex>"},
--- answered {"type":"link_result","id":…,"ok":true,"result":"ran"|"partly"|"failed"}, or "ok":false
--- with NOT_FOUND (no such link, a wrong secret, or a scene that is gone or opens doors: all alike)
--- or RATE_LIMITED (with retry_s). The secret is never logged.
+-- answered {"type":"link_result","id":…,"ok":true,"result":"ran"|"partly"|"failed"|"nothing"}, or
+-- "ok":false with NOT_FOUND (no such link, a wrong secret, a scene that is gone or opens doors, or
+-- the key that made it gone: all alike) or RATE_LIMITED (with retry_s). The secret is never logged.
 function Handlers.relayRun(services, message, send)
     local function answer(fields)
         fields.type = "link_result"
@@ -226,10 +234,11 @@ function Handlers.relayRun(services, message, send)
     end
     local scene = Scenes.find(link.scene_id)
     -- Checked again at every run: the scene may have been changed to open doors (by a driver that
-    -- does not know links, before an update), or deleted.
-    if not scene or SceneLinks.opensDoors(scene) or link.home ~= linkedHome() then
+    -- does not know links, before an update), or deleted; the key that made it may have expired a
+    -- moment ago (finding it removes it then, and its links with it).
+    if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then
         Handlers.prune()
-        refused(services, "the scene is gone or opens doors or gates", link.id)
+        refused(services, "the scene is gone or opens doors or gates, or its key is gone", link.id)
         answer({ ok = false, code = "NOT_FOUND" })
         return
     end

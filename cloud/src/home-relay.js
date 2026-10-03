@@ -52,6 +52,27 @@ const STALE_PINGS = 2.5;
 const DEFAULT_PING_S = 25;
 // Scene links (ADR-051): at most this many runs a minute reach the home, whatever their link.
 const LINK_RUNS_PER_MINUTE = 30;
+// A client (an address; an IPv6 one by its /64) whose runs were refused as unknown this many times
+// within LINK_MISS_WINDOW_MS gets 429 until the first of them is that old, before its runs count
+// against the home's limit: someone guessing from one place cannot use up the family's runs. At
+// most LINK_CLIENTS clients are remembered (the one seen longest ago goes first), in memory only.
+const LINK_MISSES_PER_CLIENT = 10;
+const LINK_MISS_WINDOW_MS = 10 * 60 * 1000;
+const LINK_CLIENTS = 1000;
+
+// The client a scene link's run came from (CF-Connecting-IP), for its limit: an IPv4 address, or
+// the first 64 bits of an IPv6 address (one subscriber's network: the rest is chosen at will).
+export function linkClient(address) {
+  const text = String(address ?? "").trim().toLowerCase();
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (mapped) return mapped[1];
+  if (!text.includes(":")) return text;
+  const [head, tail] = text.split("::");
+  const front = head ? head.split(":") : [];
+  const back = tail ? tail.split(":") : [];
+  const groups = tail === undefined ? front : [...front, ...Array(Math.max(0, 8 - front.length - back.length)).fill("0"), ...back];
+  return `${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
 
 export class HomeRelay extends DurableObject {
   constructor(ctx, env) {
@@ -69,9 +90,11 @@ export class HomeRelay extends DurableObject {
     this.keyWork = Promise.resolve();
     this.announced = undefined;
     this.alerts = new HomeAlerts(this);
-    // When the last scene link runs went to the home (milliseconds), for its limit. Memory is
+    // When the last scene link runs went to the home (milliseconds), for its limit, and when each
+    // client's last runs were refused as unknown (linkClient -> [ms], oldest seen first). Memory is
     // enough: a flood keeps the object awake.
     this.linkRuns = [];
+    this.linkMisses = new Map();
   }
 
   // Queues `work` behind the key work already waiting; returns when it is done.
@@ -106,7 +129,7 @@ export class HomeRelay extends DurableObject {
       case "/alerts":
         return json(await this.alerts.request(await request.json(), homeId));
       case "/link":
-        return this.link(await request.json(), homeId);
+        return this.link(await request.json(), homeId, request.headers.get("X-DirectorLink-Client"));
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -584,17 +607,27 @@ export class HomeRelay extends DurableObject {
   }
 
   // A scene link's run (ADR-051, scene-links.js): `input` { link, secret }, already checked for
-  // shape by the Worker. Only a driver whose hello lists scene_links gets it (an older one would
-  // ignore it, and the phone would wait 15 s): otherwise, as for any unknown link, 404.
-  async link(input, homeId) {
+  // shape by the Worker; `address` the phone's (CF-Connecting-IP). Only a driver whose hello lists
+  // scene_links gets it (an older one would ignore it, and the phone would wait 15 s): otherwise, as
+  // for any unknown link, 404.
+  async link(input, homeId, address) {
     const linkId = typeof input?.link === "string" ? input.link : "";
     const secret = typeof input?.secret === "string" ? input.secret : "";
     if (!LINK_ID.test(linkId) || !LINK_SECRET.test(secret)) {
       return linkNotFound();
     }
     const started = Date.now();
-    // Never the secret: the home, the link's id, the answer and why.
-    const done = (status, fields = {}) => log("link_run", { home: homeId, link: linkId, status, ms: Date.now() - started, ...fields });
+    const client = linkClient(address);
+    // Never the secret nor the address: the home, the link's id, the answer and why.
+    const done = (status, fields = {}) => {
+      if (status === 404) this.linkMissed(client, Date.now());
+      log("link_run", { home: homeId, link: linkId, status, ms: Date.now() - started, ...fields });
+    };
+    const guessing = this.linkMissWait(client, started);
+    if (guessing) {
+      log("link_run", { home: homeId, link: linkId, status: 429, ms: 0, why: "client limit" });
+      return problem(429, "TOO_MANY_RUNS", "Too many runs of links that do not work from here; try again later", { "Retry-After": String(guessing) });
+    }
     const wait = this.linkRunWait(started);
     if (wait) {
       done(429, { why: "home limit" });
@@ -645,6 +678,30 @@ export class HomeRelay extends DurableObject {
     }
     done(404);
     return linkNotFound();
+  }
+
+  // Seconds until `client` may run a scene link again, after LINK_MISSES_PER_CLIENT refused as
+  // unknown within LINK_MISS_WINDOW_MS; 0 when it may now.
+  linkMissWait(client, now) {
+    const misses = (this.linkMisses.get(client) ?? []).filter((at) => now - at < LINK_MISS_WINDOW_MS && at <= now);
+    if (!misses.length) {
+      this.linkMisses.delete(client);
+      return 0;
+    }
+    this.linkMisses.set(client, misses);
+    return misses.length >= LINK_MISSES_PER_CLIENT ? Math.max(1, Math.ceil((LINK_MISS_WINDOW_MS - (now - misses[0])) / 1000)) : 0;
+  }
+
+  // A run of `client` was refused as unknown (404). The client goes to the end of the Map's order,
+  // and the one seen longest ago goes when there are too many.
+  linkMissed(client, now) {
+    const misses = this.linkMisses.get(client) ?? [];
+    this.linkMisses.delete(client);
+    misses.push(now);
+    this.linkMisses.set(client, misses.slice(-LINK_MISSES_PER_CLIENT));
+    while (this.linkMisses.size > LINK_CLIENTS) {
+      this.linkMisses.delete(this.linkMisses.keys().next().value);
+    }
   }
 
   // Seconds until another scene link run may go to the home, or 0 when it may now (and it counts).

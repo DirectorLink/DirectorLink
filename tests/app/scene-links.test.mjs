@@ -113,6 +113,7 @@ globalThis.fetch = async (url, init = {}) => {
     controller.links = controller.links.filter((item) => item.scene_id !== link[1]);
     return answer(204);
   }
+  if (method === "GET" && path === "/v1/api-keys") return answer(200, { items: controller.keys || [] });
   if (method === "PATCH" && path.startsWith("/v1/scenes/")) return answer(200, { ...state.scenes[0], ...body });
   if (method === "GET" && path === "/v1/scenes") return answer(200, { items: state.scenes });
   if (method === "GET") return answer(200, { items: [] });
@@ -205,8 +206,60 @@ test("the address and the link: the account service, the secret after #", () => 
   const made = { home_id: HOME, link_id: "12345678", secret: SECRET };
   assert.equal(links.linkAddress(made), `https://api.directorlink.io/run/${HOME}.12345678`);
   assert.equal(links.linkUrl(made), `https://api.directorlink.io/run/${HOME}.12345678#${SECRET}`);
-  assert.equal(links.opensDoors(STEPS), false);
-  assert.equal(links.opensDoors([...STEPS, GATE_STEP]), true);
+  assert.equal(links.linkable(STEPS), true);
+  assert.equal(links.linkable([...STEPS, GATE_STEP]), false);
+  // Only the types a link may run (as the controller allows them): one this app does not know is
+  // no more linkable than a gate.
+  assert.equal(links.linkable([...STEPS, { type: "refrigerators" }, { type: "music" }, { type: "climate" }, { type: "fans" }, { type: "blinds" }]), true);
+  assert.equal(links.linkable([...STEPS, { type: "garage_door" }]), false);
+});
+
+test("revoking a key, or Forget key, says how many scene links stop with it", async () => {
+  await setLanguage("en");
+  const MINE = "0a1b2c3d"; // this device's key (the fake's /v1/api-keys/current)
+  const HOUSEKEEPER = "0b0b0b0b";
+  await connect({
+    items: [
+      { ...LINKED, made_by: HOUSEKEEPER },
+      { ...LINKED, scene_id: "c3c3c3c3", link_id: "11112222", made_by: HOUSEKEEPER },
+      { ...LINKED, scene_id: "d4d4d4d4", link_id: "33334444", made_by: MINE },
+      { ...LINKED, scene_id: "e5e5e5e5", link_id: "55556666", made_by: null },
+    ],
+  });
+  controller.keys = [
+    { id: MINE, name: "This phone", role: "admin", current: true },
+    { id: HOUSEKEEPER, name: "Housekeeper", role: "admin" },
+    { id: "0c0c0c0c", name: "Tablet", role: "member" },
+  ];
+  // The Access screen's 30 s refresh is not waited for here.
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, ms, ...rest) => (ms >= 30000 ? 0 : realSetTimeout(callback, ms, ...rest));
+  try {
+    const { accessView, loadAccess, resetAccess } = await import("../../app/js/views/access.js");
+    resetAccess();
+    await loadAccess();
+    confirmAnswer = false;
+    await press(accessView(), `access-revoke-${HOUSEKEEPER}`);
+    assert.equal(confirmed.at(-1), "Revoke the key of “Housekeeper”? That device loses access at once. The 2 scene links made on it stop working too.");
+    await press(accessView(), "access-revoke-0c0c0c0c");
+    assert.equal(confirmed.at(-1), "Revoke the key of “Tablet”? That device loses access at once.", "no links: nothing more");
+    assert.equal(controller.calls.filter((call) => call.method === "DELETE").length, 0, "Cancel revokes nothing");
+
+    // Forget access key on this device: its own links stop too.
+    const { settingsView } = await import("../../app/js/views/settings.js");
+    await press(settingsView({ page: "controller", navigate() {} }), "settings-forget");
+    assert.match(confirmed.at(-1), /^Remove this device’s access\?.* The scene link made on this device stops working too\.$/);
+    // A controller before 1.7.0 has no links: the questions are as before.
+    await connect({ old: true });
+    controller.keys = [{ id: MINE, name: "This phone", role: "admin", current: true }, { id: HOUSEKEEPER, name: "Housekeeper", role: "admin" }];
+    resetAccess();
+    await loadAccess();
+    await press(accessView(), `access-revoke-${HOUSEKEEPER}`);
+    assert.equal(confirmed.at(-1), "Revoke the key of “Housekeeper”? That device loses access at once.");
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    confirmAnswer = true;
+  }
 });
 
 test("a controller before 1.7.0 shows nothing of scene links; nor do keys that are not an admin's", async () => {
@@ -388,6 +441,14 @@ test("the history names a link's runs and why a link went", async () => {
   assert.equal(plain(outcomeText({ kind: "access", action: "link_removed", reason: "scene_gone" })), "The scene was deleted");
   assert.equal(plain(outcomeText({ kind: "access", action: "links_removed", reason: "new_identity", count: 2 })), "Reset Remote Identity, in Composer");
   assert.equal(plain(outcomeText({ kind: "access", action: "link_created", note: "Siri" })), "Link “Siri”");
+  // A link goes with the key that made it, and with Revoke All API Keys.
+  assert.equal(plain(outcomeText({ kind: "access", action: "link_removed", reason: "key_gone", note: "Cleaning done" })), "The key that made it was removed or expired · Link “Cleaning done”");
+  assert.equal(plain(outcomeText({ kind: "access", action: "links_removed", reason: "keys_revoked", count: 3 })), "Revoke All API Keys, in Composer");
+  // Remove All Scene Links that the controller could not save: said so, and that they still work.
+  const failed = { id: 7, at: "2026-10-04T10:00:00Z", kind: "access", action: "links_removed", outcome: "failed", count: 2, who: { type: "composer" } };
+  assert.equal(plain(outcomeText(failed)), "The controller couldn’t save it: the links still work");
+  assert.ok(en.history.access.links_not_removed && he.history.access.links_not_removed);
+  for (const reason of ["key_gone", "keys_revoked", "not_saved"]) assert.ok(en.history.reason[reason] && he.history.reason[reason], reason);
 });
 
 test("every string is in both languages", () => {

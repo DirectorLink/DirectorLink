@@ -997,7 +997,8 @@ paths:
         its scene's name, its label, when it was made and when it last ran; never a secret. Also
         what a link needs to work: `remote_access` (the Composer property) and `home_linked` (the
         account service has accepted this home). Links whose scene is gone or now opens doors or
-        gates, or that were made for another home connection, go before the list is made.
+        gates, that were made for another home connection, or whose key (`made_by`) was revoked or
+        expired, go before the list is made.
       responses:
         "200":
           description: The links.
@@ -1047,9 +1048,12 @@ paths:
         follows `#`, with the secret in the body (docs/SCENES.md); the account service passes it to
         the home (`link`, docs/RELAY.md), and the scene runs as a member's key would run it.
 
-        Refused for a scene that opens doors or gates (409 `SCENE_OPENS_DOORS`), while Remote Access
-        is off (409 `REMOTE_ACCESS_OFF`), and before the account service has accepted the home (409
-        `HOME_NOT_LINKED`). A scene changed to open doors or gates loses its link.
+        Refused for a scene that opens doors or gates (409 `SCENE_OPENS_DOORS`: a step of a type a
+        link may not run; only lights, climate, fans, blinds, music and refrigerators may), while
+        Remote Access is off (409 `REMOTE_ACCESS_OFF`), and before the account service has accepted
+        the home (409 `HOME_NOT_LINKED`). A scene changed to open doors or gates loses its link. The
+        link goes with the key that makes it (`made_by`): revoking that key, or its expiry, removes
+        it.
       requestBody:
         required: false
         content:
@@ -3901,7 +3905,7 @@ components:
     SceneLink:
       type: object
       description: A scene's link for the phone's own automations (1.7.0, ADR-051), without its secret.
-      required: [scene_id, scene_name, link_id, label, created_at, last_used_at]
+      required: [scene_id, scene_name, link_id, label, made_by, created_at, last_used_at]
       properties:
         scene_id:
           type: string
@@ -3915,6 +3919,10 @@ components:
         label:
           type: [string, "null"]
           description: What an admin called it ("Arriving home", "NFC by the door"); shown in the history with each run.
+        made_by:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{8}$"
+          description: The id of the API key that made it. Revoking that key, or its expiry, removes the link; Revoke All API Keys removes every link. Null for a link made before this was kept (a test build of 1.7.0), which only Revoke All API Keys ends.
         created_at:
           type: string
           format: date-time
@@ -5652,9 +5660,11 @@ components:
           (Composer's Revoke All API Keys; `count`). Scene links (1.7.0, ADR-051): `link_created`,
           `link_replaced`, `link_removed` (`what` is the scene, `note` the link's label; `reason`
           `doors` when a change made the scene open doors or gates, `scene_gone` when the scene was
-          deleted, `other_home` when it was made for another home connection; none when an admin
-          removed it), `links_removed` (all of them: Composer's Remove All Scene Links, or
-          `reason` `new_identity` after Reset Remote Identity; `count`).
+          deleted, `other_home` when it was made for another home connection, `key_gone` when the
+          key that made it was revoked or expired; none when an admin removed it), `links_removed`
+          (all of them: Composer's Remove All Scene Links, `reason` `keys_revoked` after Revoke All
+          API Keys, or `new_identity` after Reset Remote Identity; `count`; `outcome` `failed` when
+          the controller could not save it, and the links still work).
         - A scene run by its link (1.7.0) is `scene` `run` with `who.type` `link`.
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
@@ -5694,10 +5704,10 @@ components:
         outcome:
           type: string
           enum: [ran, skipped, failed]
-          description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`.
+          description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`. Also `failed` for `links_removed` that the controller could not save (the links still work).
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity, key_gone, keys_revoked]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
@@ -5715,8 +5725,9 @@ components:
             turned off, or the backup password changed, while it was being made), `error`
             (anything else; the log and `GET /v1/backup/automatic`'s `last.code` say what).
 
-            Why a scene link went (`link_removed`, 1.7.0): `doors`, `scene_gone`, `other_home`; and
-            all of them (`links_removed`): `new_identity`.
+            Why a scene link went (`link_removed`, 1.7.0): `doors`, `scene_gone`, `other_home`,
+            `key_gone` (the key that made it was revoked or expired); and all of them
+            (`links_removed`): `new_identity`, `keys_revoked` (Revoke All API Keys).
         note:
           type: string
           description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).
@@ -5953,7 +5964,7 @@ components:
                         type: [string, "null"]
             scene_links:
               type: object
-              description: The scene links (1.7.0, ADR-051), as the controller keeps them - a hash of each secret, never the secret. A backup without them keeps the links here whose scene comes back.
+              description: The scene links (1.7.0, ADR-051), as the controller keeps them - a hash of each secret, never the secret. They come back only with the backup's keys; a backup without them keeps the links here whose scene comes back.
               required: [version, links]
               properties:
                 version:
@@ -5981,6 +5992,10 @@ components:
                         type: string
                         pattern: "^[0-9a-f]{32}$"
                         description: The home id the link's address names.
+                      by:
+                        type: string
+                        pattern: "^[0-9a-f]{8}$"
+                        description: The id of the key that made it; the link goes with that key.
                       created_at:
                         type: string
                       last_used_at:
@@ -6217,7 +6232,7 @@ components:
               description: Sonos players with a room an admin chose (1.6.0); null when the backup has none, and the choices stay as they are.
             scene_links:
               type: integer
-              description: Scene links after the restore (1.7.0, ADR-051) - the backup's, or from a backup made before them the ones here - each only while its scene comes back without doors or gates and the home's identity in use is the one it was made for.
+              description: Scene links after the restore (1.7.0, ADR-051). Like the keys - the backup's only when its keys come back (keys.action restore; from a backup made before links, the ones here), else the ones here, so a link removed or replaced since the backup was made never comes back. Each only while its scene comes back without doors or gates, the home's identity in use is the one it was made for, and the key that made it is among the keys after the restore.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).

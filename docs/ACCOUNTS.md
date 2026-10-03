@@ -45,7 +45,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |
 | Joining from another device (1.7.0): the new device's label ("Safari on iPhone"), both devices' public keys | yes | yes, while the request lasts (10 minutes; deleted within a day) | no |
 | Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
-| Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran or failed; it keeps neither the secret nor the runs; which scene it runs, **never** | the link's id, a hash of its secret and its scene; every run in History |
+| Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
@@ -56,12 +56,15 @@ family knows.
 **Scene links (1.7.0, ADR-051) are the one thing that is not sealed.** A phone's automation (iPhone
 Shortcuts, an Android app, an NFC tag) cannot seal a request, so it sends a link's secret in the
 clear to the account service, over HTTPS, which passes it to the home. So: whoever holds a link can
-run that one scene, from anywhere, until an admin removes or replaces it; and the account service
-sees the link and its secret in transit each time it is used (not which scene: it has no names).
-It keeps no secret (no table, never in its logs: the secret is in the request's body, not its
-address). Someone who could read the account service's traffic could run the linked scenes they saw;
-a scene that opens doors or gates can never have a link, so that is at most lights, AC, fans, blinds
-and music. Everything else stays sealed. Homes without links are as before.
+run that one scene, from anywhere, until an admin removes or replaces it or the key that made it is
+revoked; and the account service sees the link and its secret in transit each time it is used (not
+which scene: it has no names). It keeps no secret (no table, never in its logs: the secret is in the
+request's body, not its address), but it logs each run: the home, the link's id, the status, the
+result word and how long it took, in Workers Logs, which Cloudflare keeps for some days (3 on
+Workers Free, 7 on Paid), beside its own line for the request with the phone's IP address. Someone
+who could read the account service's traffic could run the linked scenes they saw; a scene that
+opens doors or gates can never have a link, so that is at most lights, AC, fans, blinds, music and
+refrigerator settings. Everything else stays sealed. Homes without links are as before.
 
 ## Keys
 
@@ -281,21 +284,27 @@ uses to let it in, without a link:
    *Home Screen app on iPhone*) and a **commitment**: the SHA-256 of its public key, not the key.
    The app says to open DirectorLink on a device already in use.
 2. A device of the same account that reaches the home with an admin key (the rule of *Add my other
-   device*) shows the request under the header of every screen while the app is open; it looks every
-   15 seconds, and at once when it comes to the front. **Show code** sends that device's own public
-   key. Only then does the new device send its public key, which the cloud and the other device
-   check against the commitment.
-3. Both screens show the same six digits, made from the request and both public keys. The person
-   approves on the device they already use only if the code is the one the new device shows.
-   Because the new device's key was fixed (committed) before the other key was known, and the other
-   key before the new one was shown, nobody passing the keys on (the cloud included) can choose keys
-   that make two different conversations show the same code: a key put in the middle gives each
-   screen its own code.
+   device*, once the controller has said the key's role) shows the request under the header of every
+   screen while the app is open; it looks every 60 seconds, at once when it comes to the front or
+   connects, and every 2 seconds while it answers a request. **Show code** sends that device's own
+   public key. Only then does the new device send its public key, which the cloud and the other
+   device check against the commitment.
+3. Both devices work out the same six digits from the request and both public keys. The new device
+   shows them; the device already in use asks the person to type them, and approves only when they
+   are its own (it never shows them itself, so Approve cannot be tapped without the new device in
+   sight). A wrong code approves nothing; the third declines the request. Because the new device's
+   key was fixed (committed) before the other key was known, and the other key before the new one
+   was shown, nobody passing the keys on (the cloud included) can choose keys that make two
+   different conversations have the same code: a key put in the middle gives each its own code.
 4. **Approve** makes a for-me invitation at the controller exactly as *Add my other device* does (10
    minutes, the device's role and person, registered by the controller) and seals it to the new
    device's key: X25519, HKDF-SHA-256 bound to the request, the home and both keys, AES-256-GCM.
-   The cloud passes the sealed value on, once, and cannot open it.
-5. The new device opens it and joins with it as with the link (*3. Invitations*, steps 4 and 5).
+   The cloud passes the sealed value on, once, and cannot open it. The invitation is revoked at
+   home if the cloud refuses Approve; if no answer comes, the device reads the request first and
+   keeps the invitation when the cloud took it.
+5. The new device opens it and joins with it as with the link (*3. Invitations*, steps 4 and 5). A
+   device that got a key another way meanwhile (it paired at home, or opened an invitation's link)
+   withdraws its request when it connects, and is asked before a key it has is replaced.
 
 Only the account's own sessions see, answer, approve, collect or decline its requests. Asking needs
 an account that could approve (it uses an admin key at the home, as far as the controller names its
@@ -303,8 +312,9 @@ admins); answering and approving need an account that uses a key there (`member_
 lasts 10 minutes; it goes once collected, declined or withdrawn, when it is read after it expired,
 at the daily clean-up, when the account leaves the home, and when it signs out everywhere. An
 account has at most 3 requests open and starts at most 10 an hour. Someone holding the account's
-session could ask too: the account's devices would show a request nobody made ("Didn't you ask?
-Decline it."), and its code would match no screen the person holds.
+session could ask too, under any label: the account's devices would show a request nobody made
+("Didn't ask? Decline it and sign out everywhere in Settings → Account."), and approving it would
+take the code on the asker's own screen, which the person does not see.
 
 **Paste invitation link** (the Connect screen, and Settings → Account) brings a link that opened
 elsewhere into the Home Screen app: it reads the clipboard (iOS shows its Paste button) or, where
@@ -314,7 +324,8 @@ only the part after `#/join/`. The secret still never reaches a server.
 ### 4. Removing someone, or a lost phone
 
 An admin revokes that device's key: in the app (Settings → **People and devices**),
-the API console, or Composer's Revoke All API Keys. It stops working at home and away at once.
+the API console, or Composer's Revoke All API Keys. It stops working at home and away at once, and
+so do the scene links made with it (1.7.0; Revoke All API Keys ends every link).
 Signing in to the account alone gives no access, because the keys live only on the devices.
 Settings → Account → **Sign out everywhere** also ends every session of the account, on every
 device (`POST /auth/logout?everywhere=1`).
@@ -383,11 +394,16 @@ An admin makes a link for a scene (docs/SCENES.md); the controller shows its sec
 a hash of it. A phone's automation posts the secret to `https://api.directorlink.io/run/<home_id>.<link_id>`
 (in the body, never in the address; a browser gets it after `#` and posts it from the page). The
 account service checks that an account has claimed the home, lets at most 30 runs a minute reach
-it, and passes the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks
-the hash in constant time, runs the scene as a member's key would and records the run in History;
-the phone gets `ran`, `partly` or `failed`, and an unknown home, link or secret all get the same 404.
-No account and no session is involved: the link is the permission. Removing or replacing the link
-ends it at once; so do Composer's Remove All Scene Links and Reset Remote Identity.
+it (and none from an address whose runs were refused as unknown 10 times in 10 minutes), and passes
+the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks the hash in
+constant time, runs the scene as a member's key would and records the run in History; the phone gets
+`ran`, `partly`, `failed` or `nothing`, and an unknown home, link or secret all get the same 404 (but
+a claimed home that is offline gets 503, so that the family knows: whoever has the home's id, which
+every link and invitation link carries, can tell whether it is online). No account and no session is
+involved: the link is the permission. Removing or replacing the link ends it at once; so do revoking
+the key that made it (or its expiry), and Composer's Remove All Scene Links, Revoke All API Keys and
+Reset Remote Identity. Another account claiming the home does not: its new owner should run Revoke
+All API Keys, which ends every link the old family had.
 
 ## Google and Apple
 
@@ -501,7 +517,9 @@ to join.
 Once an hour the cloud counts three totals, and anyone may read them at
 `GET https://api.directorlink.io/v1/stats` (no cookie; the website shows them from 25 homes):
 
-- **homes**: homes linked to an account (claimed, their owner's account still there);
+- **homes**: homes linked to an account (claimed, their owner's account still there); a home stays
+  counted until its owner's account is deleted, also once it is no longer used (a reset identity, a
+  replaced or test controller): the cloud keeps no time a home was last seen;
 - **people**: accounts someone can sign in to (deleted accounts are gone; one Apple's notices left
   without a sign-in is not counted);
 - **downloads**: how often `DirectorLink.c4z` was downloaded, all GitHub releases together, from

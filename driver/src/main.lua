@@ -103,13 +103,14 @@ local function publishKeyCount()
     updateProperty("API Keys", Keys.count())
 end
 
--- A key was created, changed or revoked: profiles nobody uses go, then Composer's count and the
--- cloud's list of key ids.
+-- A key was created, changed or revoked: profiles nobody uses go, and the scene links a revoked
+-- key made (ADR-051), then Composer's count and the cloud's list of key ids.
 local function keysChanged()
     Profiles.prune(Keys.list())
     if Keys.complete() then
         Alerts.prune(Keys.list())
     end
+    SceneLinkHandlers.prune()
     publishKeyCount()
     Relay.announceKeys()
 end
@@ -623,6 +624,22 @@ function OnDriverLateInit(driverInitType)
     end
 end
 
+-- Every scene link goes (ADR-051): Composer's Remove All Scene Links (`always`: in the history even
+-- when there were none), Revoke All API Keys and Reset Remote Identity (`reason`). Links that could
+-- not be removed for good (the store was not written) stay, and the history, the log and Remote
+-- Status say so. Returns how many there were and whether they went.
+local function removeSceneLinks(reason, always)
+    local count, saved = SceneLinks.removeAll()
+    if not saved then
+        Log.error("scenes", "scene links not removed: they could not be saved", { count = count, reason = reason })
+        updateProperty("Remote Status", "Scene links not removed: could not save")
+        Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = count, reason = reason, outcome = "failed" })
+    elseif count > 0 or always then
+        Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = count, reason = reason })
+    end
+    return count, saved
+end
+
 function ExecuteCommand(command, params)
     if command ~= "LUA_ACTION" or type(params) ~= "table" then
         return
@@ -638,11 +655,8 @@ function ExecuteCommand(command, params)
             local invitations = Invitations.revokeAll()
             Remote.clearClaim()
             -- Scene links name the old home in their addresses: none of them can work any more.
-            local links = SceneLinks.removeAll()
+            local links = removeSceneLinks("new_identity")
             Log.warn("relay", "remote identity reset from Composer", { invitations = invitations, scene_links = links })
-            if links > 0 then
-                Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = links, reason = "new_identity" })
-            end
         else
             updateProperty("Remote Status", "Identity not reset: " .. tostring(code))
         end
@@ -659,17 +673,20 @@ function ExecuteCommand(command, params)
         Log.info("schedules", "schedules and scenes printed for Composer")
     elseif params.ACTION == "REVOKE_API_KEYS" then
         local count = Keys.revokeAll()
-        -- Nobody may join afterwards with an invitation or claim the home with an older token.
+        -- Nobody may join afterwards with an invitation or claim the home with an older token, nor
+        -- run a scene with a link someone made before (ADR-051).
         local invitations = Invitations.revokeAll()
         Remote.clearClaim()
-        keysChanged()
-        Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
         Activity.record("access", "all_revoked", { who = Activity.COMPOSER, count = count })
+        local links = removeSceneLinks("keys_revoked")
+        keysChanged()
+        Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations, scene_links = links })
     elseif params.ACTION == "REMOVE_SCENE_LINKS" then
         -- Every scene's link stops working at once (ADR-051); admins can make new ones.
-        local count = SceneLinks.removeAll()
-        Log.warn("scenes", "all scene links removed from Composer", { count = count })
-        Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = count })
+        local count, saved = removeSceneLinks(nil, true)
+        if saved then
+            Log.warn("scenes", "all scene links removed from Composer", { count = count })
+        end
     end
 end
 

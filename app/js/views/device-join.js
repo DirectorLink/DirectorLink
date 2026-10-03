@@ -4,11 +4,11 @@
 // link of Add my other device never reaches it. So a new device signed in to the account (that app,
 // or any phone or computer) asks to join one of the account's homes from the Connect screen, and
 // a device of the same account that already reaches the home, with an admin key (as for Add my
-// other device), sees the request while it is open. There it shows a check code, which the new
-// device shows too; once they match, Approve makes a for-me invitation at the controller, exactly
-// as Add my other device does, and seals it to the new device (../device-join.js). The new device
-// opens it and joins with it as with a link. The account service passes the keys and the sealed
-// invitation on, and cannot open it.
+// other device), sees the request while it is open. The new device shows a check code, which the
+// person types there: only the same code (worked out on both from both keys) lets Approve make a
+// for-me invitation at the controller, exactly as Add my other device does, and seal it to the new
+// device (../device-join.js). The new device opens it and joins with it as with a link. The account
+// service passes the keys and the sealed invitation on, and cannot open it.
 //
 // Paste invitation link (the Connect screen and Settings → Account) reads a link from the
 // clipboard, or from a field where the clipboard cannot be read, and opens the join page with it.
@@ -40,15 +40,17 @@ import { useInvitation } from "./join.js";
 // The new device's request, so that a reload carries on: { id, home, secret, approverKey,
 // expiresAt }. The secret is its key pair's (hex), kept only while the request lasts.
 const REQUEST_KEY = "directorlink.deviceJoin";
-// The requests this device answers: { [id]: { secret, publicKey, commitment, expiresAt } }.
+// The requests this device answers: { [id]: { secret, publicKey, commitment, expiresAt, tries } }.
 const ANSWERS_KEY = "directorlink.deviceAnswers";
 // While a request waits, the new device asks every 2 s; a device that reaches the home looks for
-// requests every 15 s while it is shown (and at once when it comes to the front), and every 2 s
-// while it answers one.
+// requests every 60 s while it is shown (and at once when it comes to the front or connects), and
+// every 2 s while it answers one.
 const REQUEST_POLL_MS = 2000;
-const LIST_POLL_MS = 15000;
+const LIST_POLL_MS = 60000;
 const ANSWER_POLL_MS = 2000;
 const LONGEST_POLL_MS = 60000;
+// Wrong codes typed for one request before it is declined.
+const CODE_TRIES = 3;
 // A message after Approve or Decline stays this long.
 const MESSAGE_MS = 10000;
 
@@ -57,8 +59,9 @@ const HOMES_RETRY_MS = 30000;
 
 // The new device's side.
 const joining = { homes: null, homesFor: null, home: null, busy: false, code: null, message: null };
-// The side of a device that reaches the home.
-const approving = { home: null, items: [], codes: {}, mismatched: {}, busy: null, message: null, messageAt: 0 };
+// The side of a device that reaches the home. `typed`: the code being typed for each request, left
+// out of the screen's signature (what is typed is never redrawn).
+const approving = { home: null, items: [], codes: {}, mismatched: {}, typed: {}, busy: null, message: null, messageAt: 0 };
 // Paste invitation link: the field, when the clipboard could not give a link. `text` is left out of
 // the screen's signature: what is typed is never redrawn.
 const paste = { open: null, text: "", message: null };
@@ -118,7 +121,7 @@ function go(hash) {
 export function deviceJoinSignature() {
   return [
     { ...joining, request: storedRequest()?.id ?? null },
-    { ...approving, messageAt: undefined },
+    { ...approving, messageAt: undefined, typed: undefined },
     { open: paste.open, message: paste.message },
   ];
 }
@@ -329,8 +332,18 @@ async function finishJoining(saved, pair) {
     return;
   }
   endRequest(null);
-  // The join, exactly as with the link of Add my other device.
-  useInvitation(text, go, { accept: true });
+  // The join, exactly as with the link of Add my other device. A device that has a key by now (it
+  // got one another way meanwhile) is asked first whether to replace it.
+  useInvitation(text, go, { accept: !state.apiKey });
+}
+
+// A key was saved on this device another way (pairing, an invitation's link) while its request
+// waited: it needs no other, so the request is withdrawn before anyone approves it.
+async function withdrawForKey() {
+  const saved = storedRequest();
+  if (!saved || !state.apiKey) return;
+  endRequest(null, { kind: "info", text: t("deviceJoin.keySaved") });
+  await deleteDeviceRequest(saved.home, saved.id).catch(() => {});
 }
 
 function homePicker(homes) {
@@ -417,9 +430,10 @@ export function joinFromAnotherDevice() {
 
 // ---- A device that reaches the home -------------------------------------------------------------
 
-// The same rule as Add my other device: signed in, linked to the home, with an admin key.
+// The same rule as Add my other device: signed in, linked to the home, with an admin key, once the
+// key's role is known (Settings asks the same; before that can() takes it for an admin's).
 function mayApprove() {
-  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && can("admin");
+  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && state.loaded && can("admin");
 }
 
 function answers() {
@@ -555,8 +569,10 @@ export function watchDeviceRequests() {
   document.addEventListener("visibilitychange", lookNow);
   window.addEventListener("focus", lookNow);
   listSoon(3000);
-  // Once connected (its role is known), at once.
+  // Once connected (its role is known), at once; a request of this device's own goes, as it has a
+  // key now.
   whenConnected(() => {
+    withdrawForKey();
     lastLook = 0;
     lookNow();
   });
@@ -594,11 +610,50 @@ function showCode(item) {
   });
 }
 
+// The code typed for a request, as digits.
+const typedCode = (id) => String(approving.typed[id] || "").replace(/\D/g, "");
+
+// A wrong code typed: approved is nothing, and after CODE_TRIES the request is declined (whoever
+// asked must start again, on their own screen).
+async function wrongCode(item, answer) {
+  const tries = (answer.tries || 0) + 1;
+  approving.typed[item.id] = "";
+  const kept = answers();
+  if (kept[item.id]) {
+    kept[item.id].tries = tries;
+    keepAnswers(kept);
+  }
+  if (tries < CODE_TRIES) {
+    say("error", t("deviceJoin.request.wrongCode", { label: item.label }));
+    return;
+  }
+  await deleteDeviceRequest(approving.home, item.id).catch(() => {});
+  approving.items = approving.items.filter((other) => other.id !== item.id);
+  say("error", t("deviceJoin.request.wrongCodeDeclined", { label: item.label }));
+}
+
+// The cloud did not answer Approve (no connection, a timeout, an error of its own): the request
+// says whether it took the sealed invitation. True when it did (approved, or collected since);
+// false when it still waits; null when that cannot be told now.
+async function approvalArrived(home, id) {
+  try {
+    return (await getDeviceRequest(home, id)).status === "approved";
+  } catch (error) {
+    return error instanceof RemoteError && error.code === "NOT_FOUND" ? true : null;
+  }
+}
+
 function approve(item) {
   const answer = mine(item);
   if (!answer || !approving.codes[item.id]) return Promise.resolve();
   return act(item, async () => {
+    // The person types the code the new device shows: a tap alone approves nothing.
+    if (typedCode(item.id) !== approving.codes[item.id].code) {
+      await wrongCode(item, answer);
+      return;
+    }
     let invitation = null;
+    let sent = false;
     try {
       const home = approving.home;
       invitation = await makeInvitation({ forSelf: true, email: state.account.user.email, role: state.role || "admin" });
@@ -609,12 +664,25 @@ function approve(item) {
       if (!verified) throw new Error(t("deviceJoin.request.mismatch"));
       const { deviceKey } = verified;
       const sealed = await sealInvitation(pair, { requestId: item.id, home, deviceKey }, `${invitation.home_id}.${invitation.id}.${invitation.secret}`);
+      sent = true;
       await approveDeviceRequest(home, item.id, sealed);
+      approving.typed[item.id] = "";
       say("success", t("deviceJoin.request.approved", { label: item.label }));
     } catch (error) {
-      // Nobody can use it now: it goes at home too.
-      revokeInvitation(invitation);
-      say("error", error instanceof RemoteError && error.code === "NOT_FOUND" ? t("deviceJoin.request.gone") : errorText(error));
+      // The cloud refused it (gone, approved elsewhere): nobody can use it, and it goes at home too.
+      // Without an answer it may have arrived: the request says so first.
+      const refused = error instanceof RemoteError && error.httpStatus >= 400 && error.httpStatus < 500;
+      const arrived = sent && !refused ? await approvalArrived(approving.home, item.id) : false;
+      if (arrived === false) revokeInvitation(invitation);
+      if (arrived === true) {
+        approving.typed[item.id] = "";
+        say("success", t("deviceJoin.request.approved", { label: item.label }));
+      } else if (arrived === null) {
+        // Left as it is: it lasts 10 minutes, and the new device may have it already.
+        say("error", t("deviceJoin.request.unsure", { label: item.label }));
+      } else {
+        say("error", error instanceof RemoteError && error.code === "NOT_FOUND" ? t("deviceJoin.request.gone") : errorText(error));
+      }
     }
   });
 }
@@ -665,25 +733,64 @@ function requestRow(item) {
   } else if (!code) {
     text = t("deviceJoin.request.waitingKey", { label: item.label });
   } else {
-    text = t("deviceJoin.request.compare", { label: item.label });
-    actions = [
-      h(
-        "button",
-        { type: "button", class: "button button-primary button-small", dataset: { key: `device-request-approve-${item.id}` }, disabled: busy, onclick: () => approve(item) },
-        approving.busy === item.id ? t("deviceJoin.request.approving") : t("deviceJoin.request.approve")
-      ),
-      declineButton,
-    ];
+    // This device's code is not shown: the person types the one the new device shows, so that
+    // Approve cannot be tapped without looking at the device that asks.
+    return h(
+      "li",
+      { class: "device-request-item", dataset: { key: `device-request-${item.id}` } },
+      codeForm(item, busy, declineButton)
+    );
   }
   return h(
     "li",
     { class: "device-request-item", dataset: { key: `device-request-${item.id}` } },
     h("p", { class: "device-request-text", dir: "auto" }, text),
-    code && answer && !approving.mismatched[item.id] && item.status !== "approved"
-      ? h("p", { class: "join-code", dir: "ltr", dataset: { key: `device-request-code-${item.id}` }, "aria-label": t("deviceJoin.codeLabel", { code: code.split("").join(" ") }) }, codeText(code))
-      : null,
     detail ? h("p", { class: "field-help" }, detail) : null,
     actions.length ? h("div", { class: "button-row" }, ...actions) : null
+  );
+}
+
+// Type the code {label} shows, and Approve (or Enter); Decline.
+function codeForm(item, busy, declineButton) {
+  const id = `device-request-code-${item.id}`;
+  const field = h("input", {
+    id,
+    type: "text",
+    inputmode: "numeric",
+    autocomplete: "off",
+    maxlength: "7",
+    dir: "ltr",
+    class: "code-input",
+    value: approving.typed[item.id] || "",
+    placeholder: "000 000",
+    dataset: { key: id },
+  });
+  field.addEventListener("input", () => {
+    approving.typed[item.id] = field.value;
+  });
+  return h(
+    "form",
+    {
+      class: "device-request-form",
+      novalidate: true,
+      dataset: { key: `device-request-form-${item.id}` },
+      onsubmit: (event) => {
+        event.preventDefault();
+        approve(item);
+      },
+    },
+    h("label", { class: "device-request-text", for: id, dir: "auto" }, t("deviceJoin.request.typeCode", { label: item.label })),
+    field,
+    h(
+      "div",
+      { class: "button-row" },
+      h(
+        "button",
+        { type: "submit", class: "button button-primary button-small", dataset: { key: `device-request-approve-${item.id}` }, disabled: busy },
+        approving.busy === item.id ? t("deviceJoin.request.approving") : t("deviceJoin.request.approve")
+      ),
+      declineButton
+    )
   );
 }
 

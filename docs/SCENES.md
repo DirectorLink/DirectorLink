@@ -113,11 +113,16 @@ else, from anywhere; every run is in History.
 - **The secret is shown once**, in the answer that makes the link (`secret`, 160 random bits as 40
   hex digits, and `url`); the controller keeps only its SHA-256, as it keeps API keys. Lost? Make a
   new link: the old one stops working at once. Composer's action **Remove All Scene Links** removes
-  every one; Reset Remote Identity does too (the addresses name the home).
-- **Never doors or gates.** A scene with a doors-and-gates step gets no link (`409
-  SCENE_OPENS_DOORS`); adding such a step to a linked scene removes its link (the app warns and asks
-  before saving), and so does deleting the scene. A run checks again and runs the scene as a
-  member's key would (as schedules do), which never opens a door or gate.
+  every one; so do **Revoke All API Keys** and Reset Remote Identity (the addresses name the home).
+- **A link goes with the key that made it**: revoking that key (in People and devices, by removing
+  its person, or with Forget access key on that device), or its expiry, removes its links (`made_by`
+  in the list; the app says how many before it revokes a key).
+- **Never doors or gates.** Only scenes whose steps are all lights, climate, fans, blinds, music or
+  refrigerators can have a link; a scene with a doors-and-gates step (or a kind of step added later
+  and not yet allowed) gets none (`409 SCENE_OPENS_DOORS`); adding such a step to a linked scene
+  removes its link (the app warns and asks before saving), and so does deleting the scene. A run
+  checks again and runs the scene as a member's key would (as schedules do), which never opens a
+  door or gate.
 - **What it needs:** Remote Access on in Composer and the home linked to an account (`409
   REMOTE_ACCESS_OFF`, `HOME_NOT_LINKED` when making one; the app says which).
 
@@ -135,22 +140,30 @@ secret alone as text; the whole link in place of the secret works too. Answers:
 
 | Status | Body | When |
 | --- | --- | --- |
-| 200 | `{"result": "ran", "message": "The scene ran."}` | `ran`: everything ran; `partly`: some devices were skipped or did not respond; `failed`: none ran |
+| 200 | `{"result": "ran", "message": "The scene ran."}` | `ran`: everything ran; `partly`: some devices were skipped or did not respond; `failed`: none ran; `nothing`: there was nothing to run (its devices were removed in Composer) |
 | 400 | `SECRET_REQUIRED` | no secret in the body |
-| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, and a DirectorLink before 1.7.0 |
-| 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home |
-| 503 | `HOME_OFFLINE` | the home is not connected |
+| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, a link whose key was revoked, and a DirectorLink before 1.7.0 |
+| 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home; or 10 runs answered 404 in 10 minutes from the same address (an IPv6 one by its /64), which then waits until the first of them is 10 minutes old |
+| 503 | `HOME_OFFLINE` | the home is not connected (a claimed home's id therefore shows whether it is online: the family needs to know) |
 | 502, 504 | `HOME_DISCONNECTED`, `HOME_FAILED`, `HOME_TIMEOUT` | the home did not answer |
 
 A GET never runs anything (link previews in Messages, WhatsApp and Slack fetch links): it is the
 page with the Run button, the same for every address.
 
 **Who sees what.** The account service sees the link and its secret when a phone uses it, never which
-scene it runs (it has no names), and keeps neither (docs/ACCOUNTS.md, "Who knows what"). The secret
-is never logged, on the controller or in the cloud.
+scene it runs (it has no names), and keeps no secret (docs/ACCOUNTS.md, "Who knows what"). The secret
+is never logged, on the controller or in the cloud; the cloud logs each run (the home, the link's id,
+the status, the result word and how long), kept a few days in Workers Logs. A home's id is in every
+link and invitation link, so it is not secret.
 
-**Backups** hold each link's hash (section `scene_links`, docs/BACKUP.md): a restore brings back the
-links whose scene comes back without doors or gates and that name the home identity in use after it.
+**Backups** hold each link's hash and the key that made it (section `scene_links`, docs/BACKUP.md).
+Like the keys, the backup's links come back only with the backup's keys (the driver added again, or
+a replaced controller); otherwise the links here stay as they are, so a link removed or replaced
+since the backup was made stays gone. Either way only the links whose scene comes back without doors
+or gates, that name the home identity in use after the restore, and whose key is still there.
+
+**A sold home:** another account claiming the home does not end the old family's links. The new
+owner runs **Revoke All API Keys** in Composer, which ends every key and every link.
 
 **Going back to 1.6.0:** it does not read the links' store (it stays), and the relay sends it no runs
 (its hello lists no `scene_links`), so phones get 404. A scene changed there to open doors or gates

@@ -2,7 +2,10 @@
 // part on the Connect screen, a device that reaches the home seeing the request, both showing the
 // same code, Approve making a for-me invitation at the controller (as Add my other device does) and
 // sealing it, and the new device joining with it; Decline; an account service before 1.7.0; and
-// Paste invitation link with and without the clipboard. Both devices run in this one page, against
+// Paste invitation link with and without the clipboard. The approving device types the code the new
+// device shows (a wrong one approves nothing; three decline the request), asks only once its role is
+// known, looks for requests every 60 s, and keeps the invitation when Approve's answer is lost but
+// the cloud took it; a key saved another way withdraws the request. Both devices run in this one page, against
 // a fake account service that keeps the requests as cloud/src/device-requests.js does and a fake
 // controller behind it. Rendered into a small fake DOM, with timers under the test's control.
 //   node --test tests/app/
@@ -108,6 +111,8 @@ const cloud = {
   requests: new Map(),
   calls: [],
   invitations: new Map(), // made at the controller: id -> { secret, body }
+  revoked: 0, // invitations revoked at the controller
+  dropApproveAnswer: false, // Approve reaches the cloud, but its answer is lost on the way back
   joined: [],
 };
 const ok = (body, status = 200) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -131,6 +136,11 @@ async function controller(envelope) {
     cloud.invitations.set(id, { secret, body: request.body });
     status = 201;
     body = { id, secret, role: request.body.role, home_id: HOME, expires_at: new Date(Date.now() + request.body.expires_in * 1000).toISOString(), registered: true, email: request.body.email };
+  }
+  if (request.method === "DELETE" && request.path.startsWith("/v1/invitations/")) {
+    cloud.revoked += 1;
+    cloud.invitations.delete(request.path.split("/").pop());
+    status = 204;
   }
   const answer = { id: request.id, ts: Math.floor(Date.now() / 1000), status, content_type: "application/json", body: JSON.stringify(body) };
   return { envelope: await seal(lock, { home: HOME, key: KEY_ID }, "res", JSON.stringify(answer)) };
@@ -192,6 +202,7 @@ globalThis.fetch = async (url, init = {}) => {
   }
   if (action === "approve") {
     item.sealed = input.sealed;
+    if (cloud.dropApproveAnswer) throw new TypeError("network connection lost");
     return ok(view(item));
   }
   if (action === "collect") {
@@ -254,8 +265,41 @@ const signedIn = (offers = true) => {
 
 // The device that reaches the home: an admin key, linked to the home, through the account.
 function approverDevice() {
-  Object.assign(state, { apiKey: ADMIN_KEY, role: "admin", status: "connected", transport: "remote", profile: { id: "p1" } });
+  Object.assign(state, { apiKey: ADMIN_KEY, role: "admin", loaded: true, status: "connected", transport: "remote", profile: { id: "p1" } });
   saveRemote({ home: HOME, keyId: KEY_ID });
+}
+
+// Types `code` in the request's field on the approving device and submits it (Approve, or Enter).
+function typeCode(request, code) {
+  const notice = deviceRequestNotice();
+  const field = byKey(notice, `device-request-code-${request.id}`);
+  assert.ok(field, "the field for the code");
+  field.value = code;
+  for (const listener of field.listeners.input) listener();
+  for (const listener of byKey(notice, `device-request-form-${request.id}`).listeners.submit) listener({ preventDefault() {} });
+}
+
+// The new device asks, the approving device shows the code field: returns the request and the code
+// the new device shows.
+async function untilCodeAsked() {
+  signedIn(true);
+  state.apiKey = "";
+  joinFromAnotherDevice();
+  await until(() => byKey(joinFromAnotherDevice(), "device-join-start"), "the account's homes");
+  click(byKey(joinFromAnotherDevice(), "device-join-start"));
+  await until(() => cloud.requests.size === 1, "the request");
+  const [request] = [...cloud.requests.values()];
+  approverDevice();
+  await tick(60000);
+  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
+  click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
+  await until(() => request.approver_key, "the other device's key");
+  await tick(2000);
+  await until(() => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
+  const code = byKey(joinFromAnotherDevice(), "device-join-code").textContent.replace(/\D/g, "");
+  await tick(2000);
+  await until(() => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the field on the other device");
+  return { request, code };
 }
 
 const devicePaths = () => cloud.calls.filter((call) => call.path.includes("/device-requests"));
@@ -268,12 +312,12 @@ test("an account service before 1.7.0: no Join from another device, and nothing 
   assert.equal(joinFromAnotherDevice(), null);
   watchDeviceRequests();
   for (const listener of windowListeners.focus || []) listener();
-  await tick(20000);
+  await tick(60000);
   assert.equal(devicePaths().length, 0);
   assert.equal(deviceRequestNotice(), null);
 });
 
-test("the new device asks, the other shows the same code, Approve seals a for-me invitation, and the new device joins", async () => {
+test("the new device asks and shows a code, the other types it, Approve seals a for-me invitation, and the new device joins", async () => {
   signedIn(true);
   cloud.calls.length = 0;
   standalone = true;
@@ -289,26 +333,30 @@ test("the new device asks, the other shows the same code, Approve seals a for-me
   assert.match(waiting.textContent, /Open DirectorLink on a device you already use, signed in as dana@example\.com/);
   assert.equal(byKey(waiting, "device-join-code"), null, "no code before the other device answers");
 
-  // The device that reaches the home sees it at its next look (every 15 s while it is shown).
+  // The device that reaches the home sees it at its next look (every 60 s while it is shown).
   approverDevice();
-  await tick(15000);
+  await tick(60000);
   await until(() => deviceRequestNotice(), "the request on the other device");
   assert.match(deviceRequestNotice().textContent, /Home Screen app on iPhone wants to join your home/);
+  assert.match(deviceRequestNotice().textContent, /Didn’t ask\? Decline it and sign out everywhere in Settings → Account\./);
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
 
-  // The new device shows its key (the one it committed to) and its code; the other device then too.
+  // The new device shows its key (the one it committed to) and its code; the other device asks for
+  // it, and does not show its own.
   await tick(2000);
   await until(() => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
   await tick(2000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the other device's code");
+  await until(() => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the other device's field");
   const onNew = byKey(joinFromAnotherDevice(), "device-join-code").textContent;
-  const onOther = byKey(deviceRequestNotice(), `device-request-code-${request.id}`).textContent;
   assert.match(onNew, /^[0-9]{3} [0-9]{3}$/);
-  assert.equal(onOther, onNew, "both screens show the same code");
+  assert.match(joinFromAnotherDevice().textContent, /Type this code on your other device/);
+  assert.match(deviceRequestNotice().textContent, /Type the code that Home Screen app on iPhone shows/);
+  assert.ok(!deviceRequestNotice().textContent.includes(onNew), "the approving device never shows the code itself");
 
-  // Approve: a for-me invitation at the controller, as Add my other device makes it.
-  click(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`));
+  // The code typed (as shown, with its space), then Approve: a for-me invitation at the controller,
+  // as Add my other device makes it.
+  typeCode(request, onNew);
   await until(() => request.sealed, "the sealed invitation");
   const [[invitationId, made]] = [...cloud.invitations.entries()];
   assert.deepEqual(made.body, { role: "admin", expires_in: 600, for_me: true, email: EMAIL });
@@ -335,7 +383,7 @@ test("Decline on the other device ends the request on the new one", async () => 
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(20000);
+  await tick(60000);
   await until(() => byKey(deviceRequestNotice(), `device-request-decline-${request.id}`), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
   await until(() => cloud.requests.size === 0, "declined");
@@ -353,7 +401,7 @@ test("keys swapped on the way stop both devices: no code to approve, and the new
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(15000);
+  await tick(60000);
   await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
@@ -380,7 +428,7 @@ test("a key swapped after the code was shown takes the code and Approve away", a
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(15000);
+  await tick(60000);
   await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
@@ -390,7 +438,7 @@ test("a key swapped after the code was shown takes the code and Approve away", a
   await until(() => byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), "Approve with the code");
   // Now the account service shows another key in the new device's place.
   cloud.swapKey = (await keyPair()).publicKey;
-  await tick(15000);
+  await tick(60000);
   await until(() => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
   assert.equal(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), null, "no Approve");
   assert.equal(request.sealed, undefined, "nothing sealed");
@@ -399,6 +447,128 @@ test("a key swapped after the code was shown takes the code and Approve away", a
   await until(() => cloud.requests.size === 0, "declined");
   await tick(2000);
   await until(() => !byKey(joinFromAnotherDevice(), "device-join-cancel"), "the new device to stop");
+});
+
+test("a wrong code approves nothing; three wrong codes decline the request", async () => {
+  const { request, code } = await untilCodeAsked();
+  const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, "0");
+  typeCode(request, wrong);
+  await until(() => /That isn’t the code .* shows/.test(deviceRequestNotice()?.textContent || ""), "said so");
+  assert.equal(request.sealed, undefined, "nothing sealed");
+  assert.equal(cloud.invitations.size, 0, "no invitation made");
+  assert.ok(cloud.requests.has(request.id), "the request still waits");
+  typeCode(request, "");
+  await until(() => /That isn’t the code/.test(deviceRequestNotice()?.textContent || ""), "an empty field neither");
+  typeCode(request, wrong);
+  await until(() => /three times, so the request was declined\. Didn’t ask\? Sign out everywhere/.test(deviceRequestNotice()?.textContent || ""), "declined after the third");
+  assert.equal(cloud.requests.has(request.id), false, "declined");
+  assert.equal(cloud.invitations.size, 0);
+  state.apiKey = "";
+  await tick(2000);
+  await until(() => /declined, or the request ran out/.test(joinFromAnotherDevice()?.textContent || ""), "the new device stops");
+});
+
+test("a device whose role is not known yet asks nothing and offers nothing", async () => {
+  signedIn(true);
+  state.apiKey = "";
+  click(byKey(joinFromAnotherDevice(), "device-join-start"));
+  await until(() => cloud.requests.size === 1, "the request");
+  const [request] = [...cloud.requests.values()];
+  // A member key still connecting (or its home offline): can() would take it for an admin's.
+  Object.assign(state, { apiKey: `ak_${"3".repeat(48)}`, role: null, loaded: false, status: "connecting", transport: "remote" });
+  saveRemote({ home: HOME, keyId: "0c0c0c0c" });
+  const before = cloud.calls.filter((call) => call.method === "GET" && call.path === `/v1/homes/${HOME}/device-requests`).length;
+  for (const listener of windowListeners.focus || []) listener();
+  await tick(60000);
+  assert.equal(deviceRequestNotice(), null, "no Show code");
+  assert.equal(cloud.calls.filter((call) => call.method === "GET" && call.path === `/v1/homes/${HOME}/device-requests`).length, before, "nothing asked");
+  assert.equal(request.approver_key, null);
+  // Known to be an admin: then it looks.
+  approverDevice();
+  await tick(60000);
+  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request");
+  click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
+  await until(() => cloud.requests.size === 0, "declined");
+  state.apiKey = "";
+  await tick(2000);
+});
+
+test("a device that reaches the home looks every 60 s, every 2 s only while it answers", async () => {
+  signedIn(true);
+  approverDevice();
+  cloud.requests.clear();
+  await tick(60000);
+  const lists = () => cloud.calls.filter((call) => call.method === "GET" && call.path === `/v1/homes/${HOME}/device-requests`).length;
+  const before = lists();
+  for (let minute = 0; minute < 3; minute += 1) {
+    await tick(30000);
+    await tick(30000);
+  }
+  assert.equal(lists() - before, 3, "three looks in three minutes, not twelve");
+});
+
+test("a key saved another way while the request waits withdraws the request", async () => {
+  const { connect, stopPolling } = await import("../../app/js/session.js");
+  signedIn(true);
+  state.apiKey = "";
+  joinFromAnotherDevice();
+  click(byKey(joinFromAnotherDevice(), "device-join-start"));
+  await until(() => cloud.requests.size === 1, "the request");
+  // This device paired at home, or joined with a link: it has a key, and connects with it.
+  approverDevice();
+  const connected = connect();
+  await until(() => cloud.requests.size === 0, "withdrawn");
+  await connected;
+  stopPolling();
+  assert.equal(localStorage.getItem("directorlink.deviceJoin"), null);
+  state.apiKey = "";
+  assert.match(joinFromAnotherDevice()?.textContent || "", /has an access key now, so its request to join was withdrawn/);
+});
+
+test("a device that got a key while its request was approved is asked before it is replaced", async () => {
+  const { request, code } = await untilCodeAsked();
+  typeCode(request, code);
+  await until(() => request.sealed, "the sealed invitation");
+  // Meanwhile this device got a key of its own (and the hook missed it): the join page asks first.
+  const own = `ak_${"4".repeat(48)}`;
+  state.apiKey = own;
+  const joinedBefore = cloud.joined.length;
+  await tick(2000);
+  await until(() => !cloud.requests.has(request.id) && window.location.hash === "#/join", "collected, and the join page open");
+  for (let index = 0; index < 20; index += 1) await tick(100);
+  assert.equal(cloud.joined.length, joinedBefore, "not joined without asking");
+  assert.equal(state.apiKey, own, "its key stays");
+  sessionStorage.removeItem("directorlink.join");
+  window.location.hash = "#/";
+});
+
+test("Approve whose answer is lost keeps the invitation the cloud took; a refusal revokes it", async () => {
+  // A definite refusal (the request is gone): the invitation goes at home too.
+  let { request, code } = await untilCodeAsked();
+  cloud.revoked = 0;
+  cloud.requests.delete(request.id);
+  typeCode(request, code);
+  await until(() => cloud.revoked === 1, "revoked at home");
+  assert.match(deviceRequestNotice()?.textContent || "", /withdrawn or ran out/);
+  state.apiKey = "";
+  await tick(2000);
+
+  // No answer, but the cloud took it: the request says so, and the invitation stays.
+  ({ request, code } = await untilCodeAsked());
+  cloud.revoked = 0;
+  cloud.dropApproveAnswer = true;
+  const invitations = cloud.invitations.size;
+  typeCode(request, code);
+  await until(() => request.sealed, "the cloud took it");
+  await until(() => /Approved\./.test(deviceRequestNotice()?.textContent || ""), "Approved, as the request says");
+  cloud.dropApproveAnswer = false;
+  assert.equal(cloud.revoked, 0, "not revoked at home");
+  assert.equal(cloud.invitations.size, invitations + 1, "the invitation waits at home");
+  // The new device joins with it.
+  const joinedBefore = cloud.joined.length;
+  state.apiKey = "";
+  await tick(2000);
+  await until(() => cloud.joined.length === joinedBefore + 1, "the join");
 });
 
 test("an account with no device that could approve is told what to do instead", async () => {
