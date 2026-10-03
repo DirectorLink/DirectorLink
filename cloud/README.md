@@ -12,6 +12,7 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/invitations.js` — tombstones for invitations whose email or creator goes, and the daily purge
 - `src/member-keys.js` — which account uses which key id; the controller's `keys` list ends the membership of accounts whose keys are all revoked
 - `src/backups.js` — automatic backups (1.6.0, ADR-048): the controller's sealed backup, received in chunks over its socket and kept in D1 (one a day, the last 7, 5 MB a home, 25 MB an owner's homes, 4 starts a home a day besides the nightly one); listed, downloaded and deleted by the home's admins
+- `src/device-requests.js` — a new device joins by approval from another device of the account (1.7.0, ADR-053): the requests, the keys the two devices pass each other and the sealed invitation, for 10 minutes
 - `src/alerts.js` — alerts to a home's admins (ADR-047): their browsers' push subscriptions, who is an admin, the offline alarm and the controller's `alert` messages
 - `src/web-push.js` — Web Push: the message encrypted for the browser (RFC 8291) and the VAPID signature (RFC 8292), with WebCrypto
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
@@ -20,7 +21,7 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/apple.js` — Sign in with Apple: the posted answer, the ES256 client secret, and the check of Apple's notifications
 - `src/apple-notifications.js` — Apple's server-to-server notifications about its accounts (ADR-041)
 - `src/jwt.js` — ID token checks shared by both (signature, issuer, audience, expiry, nonce), and Apple's and Google's signing keys, cached
-- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0006` `push_subscriptions` (alerts, 1.6.0); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0)
+- `migrations/` — the D1 schema: `0001` `users`, `sessions`, `sign_ins`; `0002` `homes`, `members`, `invitations`; `0003` `identities` (Google and Apple for one account); `0004` `member_keys` (which account uses which key id); `0005` `join_requests` (invitations accepted with another email, waiting for the owner); `0006` `push_subscriptions` (alerts, 1.6.0); `0007` `backups`, `backup_chunks` (automatic backups, sealed; 1.6.0); `0009` `device_requests`, `device_request_starts` (joining from another device; 1.7.0)
 - `wrangler.jsonc` — Worker `directorlink-api`, the `HOME_RELAY` binding (SQLite-backed class, migration `v1`), the `api.directorlink.io` custom domain
 - `.dev.vars` (git-ignored) — secrets for `wrangler dev`
 
@@ -112,7 +113,7 @@ Tests: `web-push.test.mjs` (in Node: RFC 8291's test vector, the padding, the VA
 
 ```bash
 cd cloud
-npx wrangler@4.143.0 d1 migrations apply directorlink --remote   # new tables first (1.6.0: 0006_push_subscriptions, 0007_cloud_backups)
+npx wrangler@4.143.0 d1 migrations apply directorlink --remote   # new tables first (1.6.0: 0006_push_subscriptions, 0007_cloud_backups; 1.7.0: 0009_device_requests)
 node ../scripts/vapid_key.mjs | npx wrangler@4.143.0 secret put VAPID_PRIVATE_KEY   # once (1.6.0, alerts): then the public key, below
 npx wrangler@4.143.0 deploy                   # Worker, Durable Object migration v1, custom domain api.directorlink.io
 curl https://api.directorlink.io/health
@@ -132,7 +133,7 @@ The migrations go before the Worker that uses them. The VAPID key pair is made o
 
 - Trust on first use: the first secret that connects with a `home_id` owns its connection (who may use the home is decided by the claim and the device keys). The driver makes up its `home_id` (128 random bits), so only someone who learned it before the driver's first connection could take it. The home's owner can replace its secret (the app's **Replace the remote secret**, `POST /v1/homes/{home_id}/secret`); otherwise a registration cannot be reset short of deleting the object's storage, and a driver that loses its identity, or is reset (Composer: Reset Remote Identity), simply creates a new `home_id`.
 - A WebSocket message may be at most 32 MiB: a binary answer larger than about 24 MiB (as `body_base64`) makes the runtime close the driver's connection (1009), and the caller gets 502.
-- No rate limiting yet, except for automatic backups.
+- No rate limiting yet, except for automatic backups and requests from new devices (3 open per account, 10 started an hour).
 - Automatic backups: at most 5 MB a home in D1 (each at most 3 MB; a big home's is about 175 KB) and 25 MB an owner's homes together, one a day is kept, however often an admin backs up, and a home starts at most 4 a day besides its nightly one. How many homes an account may claim is not limited; each account's backups are.
 
 ## Accounts
@@ -146,11 +147,11 @@ The migrations go before the Worker that uses them. The VAPID key pair is made o
 | `GET /auth/apple/start?return_to=<app URL>` | 302 to Apple (`response_mode=form_post`); sets the 10-minute `__Host-dl_signin_apple` cookie (`SameSite=None`: Apple's answer is a POST from its site). 503 `SIGN_IN_NOT_CONFIGURED` until the Apple settings exist |
 | `POST /auth/apple/callback` | Apple's form comes here; 303 to `return_to` with the same outcomes as Google's |
 | `POST /auth/apple/notifications` | Apple's server-to-server notifications (ADR-041): `{"payload": "<JWT>"}` signed with Apple's keys, issuer Apple, audience `APPLE_APP_ID` (the primary App ID). `consent-revoked`, `account-deleted` (older documents: `account-delete`, also accepted): that Apple sign-in goes, and an account left without one is signed out everywhere. After `consent-revoked` it stays as it was for the same Apple ID to come back; after `account-deleted` it keeps nothing of the person: without a home it is deleted, with one it stays for the home without name and email, outside other homes (homes, their members and keys stay). `email-disabled`, `email-enabled`: the stored address follows Apple's. 200 `{"ok": true}` (also for an Apple ID with no account, or a notice from before the person's last sign-in); 400 `INVALID_REQUEST` / `INVALID_NOTIFICATION` (the log line names the refused audience); 503 `NOTIFICATIONS_NOT_CONFIGURED` without `APPLE_APP_ID`, `PROVIDER_UNREACHABLE` when Apple's keys cannot be read |
-| `GET /v1/me` | `{"id", "email", "name", "created_at", "providers", "sign_in_providers"}` (`providers`: the account's, `google`, `apple`; `sign_in_providers`: those set up here), or 401 `NOT_SIGNED_IN` |
+| `GET /v1/me` | `{"id", "email", "name", "created_at", "providers", "sign_in_providers", "device_requests"}` (`providers`: the account's, `google`, `apple`; `sign_in_providers`: those set up here; `device_requests: true`: this server takes requests from new devices, 1.7.0), or 401 `NOT_SIGNED_IN` |
 | `DELETE /v1/me/identities/{google\|apple}` | 204: the account no longer signs in with that provider; 409 `LAST_SIGN_IN` for its only one, 409 `SIGN_IN_HELD_ELSEWHERE` (nothing changed) when another account began with the one it would keep |
 | `DELETE /v1/me` | 204; the account and all its sessions are deleted |
 | `POST /auth/logout` | 204; this session ends |
-| `POST /auth/logout?everywhere=1` | 204; every session of the account ends, on every device |
+| `POST /auth/logout?everywhere=1` | 204; every session of the account ends, on every device, with its browsers' alerts and its new devices' requests to join |
 
 ## Homes
 
@@ -169,6 +170,23 @@ The migrations go before the Worker that uses them. The VAPID key pair is made o
 | `POST /v1/homes/{home_id}/join-requests/{id}` | the owner only: `{ "decision": "approve" \| "refuse" }` → `{"id", "status", "decided_at"}`; 404 `NOT_FOUND` once the invitation was used, revoked or expired |
 | `GET /v1/homes/{home_id}/members` | the owner only: `{"items": [{"user_id", "email", "name", "owner", "added_at", "key_ids"}]}`; `key_ids`: the home's API keys this account uses, as far as the cloud has seen (the key an invitation made, and each key the home accepted a sealed request with) |
 | `DELETE /v1/homes/{home_id}/members/{user_id}` | 204: the owner removes someone, or anyone leaves (the owner cannot, 409) |
+
+### Joining from another device (1.7.0, ADR-053)
+
+A device signed in to the account, without a key for one of its homes (the iPhone's Home Screen app, which keeps its own storage and gets no links), asks; a device of the same account that holds a key there approves it with a for-me invitation sealed to the new device (docs/ACCOUNTS.md, *Join from another device*). `src/device-requests.js`, D1 `device_requests` (migration `0009`). Each answer about a request is `{"id", "home_id", "label", "status", "commitment", "approver_key", "device_key", "created_at", "expires_at"}`; `status` is `waiting`, `answered` (a device sent its key), `checking` (the new device showed its key) or `approved`. Only the account's own sessions see or change its requests: another account gets 404.
+
+| Request | Answer |
+| --- | --- |
+| `POST /v1/homes/{home_id}/device-requests` | `{ label, commitment }`: what the device calls itself (at most 48 characters; control and direction marks are taken out) and the SHA-256 (hex) of `"DirectorLink device join v1\|commit\|" + its public key (base64)`. 201 with the request, for 10 minutes. 403 `NOT_A_MEMBER`; 409 `NO_APPROVER` (the account uses no key at the home, or none of the admin keys the controller names: nobody could approve); 429 `DEVICE_REQUEST_LIMIT_REACHED` (3 open per account, 10 started an hour) |
+| `GET /v1/homes/{home_id}/device-requests` | the account's open requests for the home: `{"items": [...]}`; expired ones are deleted as they are read. 403 `NOT_A_MEMBER` |
+| `GET /v1/homes/{home_id}/device-requests/{id}` | the request; 404 `NOT_FOUND` once collected, declined, withdrawn or expired |
+| `POST …/device-requests/{id}/answer` | `{ approver_key }` (X25519, base64): a device of the account takes the request; the same key again is fine. 403 `NO_KEY_AT_HOME` (the account uses no key at the home), 409 `ALREADY_ANSWERED` (another key did) |
+| `POST …/device-requests/{id}/key` | `{ device_key }`: the new device shows its key once a device answered (409 `NOT_ANSWERED`); it must match the commitment (400 `COMMITMENT_MISMATCH`) |
+| `POST …/device-requests/{id}/approve` | `{ sealed }` (base64, at most 512 characters): the invitation sealed to the new device, kept as it came. 403 `NO_KEY_AT_HOME`, 409 `NOT_READY` (no device key yet), 409 `ALREADY_APPROVED` |
+| `POST …/device-requests/{id}/collect` | `{"sealed", "approver_key"}`, once: the request goes. 409 `NOT_APPROVED` |
+| `DELETE …/device-requests/{id}` | 204: declined by a device of the account, or withdrawn by the new one |
+
+Requests also go with the membership (leaving, being removed, another account claiming the home, the account deleted), when the account signs out everywhere, and at the daily cron once expired; `device_request_starts` (an account's starts in the current hour) is cleared there too. Logs: `device_request_created`, `device_request_answered`, `device_request_approved`, `device_request_collected`, `device_request_deleted`, `device_request_refused` (`why`: `no_approver`, `open_limit`, `hourly_limit`), `device_request_roles_unknown`, `device_requests_purged`; never a label, a key or a sealed value. `.dev.vars` may set `DEVICE_REQUEST_SECONDS` (default 600; the tests use 2). Tests: `device-requests.test.mjs`.
 
 They all need the session (401 `NOT_SIGNED_IN`). A daily cron (`triggers` in `wrangler.jsonc`, `src/invitations.js`, `src/index.js`) removes invitations a day after their expiry, with their requests to join, and expired sessions and unfinished sign-ins; and accounts nobody can sign in to (Apple's consent-revoked took their only sign-in) that nobody signed in to for 90 days, as after Apple's account-deleted (ADR-041: deleted without a home, emptied of the person with one).
 

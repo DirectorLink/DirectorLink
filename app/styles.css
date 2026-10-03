@@ -2587,6 +2587,56 @@ select:disabled {
   gap: 10px;
 }
 
+/* Joining from another device (ADR-053, js/views/device-join.js): the new device's part on the
+   Connect screen, Paste invitation link, and the request on a device that reaches the home. */
+.device-join,
+.paste-invitation {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.device-join {
+  margin-block-start: 6px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.device-request {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px;
+  border: 2px solid var(--primary);
+}
+
+.device-request-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 16px;
+}
+
+.device-request-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-request-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-request-text {
+  margin: 0;
+}
+
 .connect-or {
   display: flex;
   align-items: center;

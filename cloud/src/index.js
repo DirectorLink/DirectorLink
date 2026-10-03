@@ -13,12 +13,14 @@
 //   POST /auth/apple/notifications     Apple's notifications about its accounts (apple-notifications.js)
 //   /v1/homes/..., /v1/join            homes, members, invitations, sealed requests (homes.js)
 //   /v1/homes/{home_id}/backups        the home's automatic backups, sealed (backups.js)
+//   /v1/homes/{home_id}/device-requests  a new device joins by approval (device-requests.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
 import { handleAccounts, purgeAccountsWithoutSignIn } from "./accounts.js";
 import { handleAppleNotification } from "./apple-notifications.js";
 import { purgeBackupUploads } from "./backups.js";
+import { purgeDeviceRequests } from "./device-requests.js";
 import { handleHomes } from "./homes.js";
 import { HomeRelay } from "./home-relay.js";
 import { purgeInvitations } from "./invitations.js";
@@ -37,6 +39,7 @@ export default {
     ctx.waitUntil(purgeSessions(env));
     ctx.waitUntil(purgeAccountsWithoutSignIn(env));
     ctx.waitUntil(purgeBackupUploads(env));
+    ctx.waitUntil(purgeDeviceRequests(env));
   },
 
   async fetch(request, env) {

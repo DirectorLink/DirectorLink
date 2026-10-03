@@ -5,8 +5,9 @@ the app's requests on the home network too, pairs with a key exchange, and lets 
 register its own invitations (ADR-032). 1.3.0 switches Sign in with Apple on, lets the home's owner
 approve an invitation accepted with another email, and follows Apple's notifications about its
 accounts (ADR-041); it also pairs with CPace, so the pairing code never crosses the network
-(ADR-039), and the API console's own key lasts a day (ADR-040).** The driver's side is
-`driver/src/cloud/` (`lock.lua`, `remote.lua`) and
+(ADR-039), and the API console's own key lasts a day (ADR-040). 1.7.0 lets a new device join by
+approval from another device of the same account, and paste an invitation link (ADR-053).** The
+driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
 `docs/RELAY.md`, version 1. Known issues are listed at the end.
@@ -39,6 +40,8 @@ ADR-047) are in *6. Alerts* below.
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
 | The backup password | while typed | **never** | **never** (only its public key) |
+| Joining from another device (1.7.0): the new device's label ("Safari on iPhone"), both devices' public keys | yes | yes, while the request lasts (10 minutes; deleted within a day) | no |
+| Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
@@ -252,6 +255,48 @@ People and devices and can remove it). An invitation takes at most 5 open reques
 approved; a refused one still stops its own account) and a home 20 waiting ones on invitations
 that can still be accepted; a request goes with its invitation, its account or a change of owner.
 
+### Join from another device (1.7.0, ADR-053)
+
+iOS gives the app added to the Home Screen its own storage (it signs in again there, and has no key)
+and opens every link in Safari, so the link of *my other device* never reaches it. Any device signed
+in to the account, with no key for one of the account's homes, can instead ask a device it already
+uses to let it in, without a link:
+
+1. On the Connect screen, **Join from another device**. The new device makes an X25519 key pair and
+   sends the cloud a request for that home with its label (its browser's own description, e.g.
+   *Home Screen app on iPhone*) and a **commitment**: the SHA-256 of its public key, not the key.
+   The app says to open DirectorLink on a device already in use.
+2. A device of the same account that reaches the home with an admin key (the rule of *Add my other
+   device*) shows the request under the header of every screen while the app is open; it looks every
+   15 seconds, and at once when it comes to the front. **Show code** sends that device's own public
+   key. Only then does the new device send its public key, which the cloud and the other device
+   check against the commitment.
+3. Both screens show the same six digits, made from the request and both public keys. The person
+   approves on the device they already use only if the code is the one the new device shows.
+   Because the new device's key was fixed (committed) before the other key was known, and the other
+   key before the new one was shown, nobody passing the keys on (the cloud included) can choose keys
+   that make two different conversations show the same code: a key put in the middle gives each
+   screen its own code.
+4. **Approve** makes a for-me invitation at the controller exactly as *Add my other device* does (10
+   minutes, the device's role and person, registered by the controller) and seals it to the new
+   device's key: X25519, HKDF-SHA-256 bound to the request, the home and both keys, AES-256-GCM.
+   The cloud passes the sealed value on, once, and cannot open it.
+5. The new device opens it and joins with it as with the link (*3. Invitations*, steps 4 and 5).
+
+Only the account's own sessions see, answer, approve, collect or decline its requests. Asking needs
+an account that could approve (it uses an admin key at the home, as far as the controller names its
+admins); answering and approving need an account that uses a key there (`member_keys`). A request
+lasts 10 minutes; it goes once collected, declined or withdrawn, when it is read after it expired,
+at the daily clean-up, when the account leaves the home, and when it signs out everywhere. An
+account has at most 3 requests open and starts at most 10 an hour. Someone holding the account's
+session could ask too: the account's devices would show a request nobody made ("Didn't you ask?
+Decline it."), and its code would match no screen the person holds.
+
+**Paste invitation link** (the Connect screen, and Settings → Account) brings a link that opened
+elsewhere into the Home Screen app: it reads the clipboard (iOS shows its Paste button) or, where
+that is refused or holds no link, takes it in a field; a whole link, a message with one in it, or
+only the part after `#/join/`. The secret still never reaches a server.
+
 ### 4. Removing someone, or a lost phone
 
 An admin revokes that device's key: in the app (Settings → **People and devices**),
@@ -387,6 +432,12 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   cannot be registered again for another email.
 - `join_requests`: home, invitation id, the account asking, its code, pending, approved or refused,
   when (`migrations/0005`). They go with their invitation, their account or a change of owner.
+- `device_requests` (1.7.0, ADR-053, `migrations/0009`): a new device's request to join a home of
+  its account, usable for 10 minutes: its label, the commitment and its public key, the approving
+  device's public key, the invitation sealed to it (which the cloud cannot open), when. They go
+  once collected or declined, when read after they expired or at the daily clean-up, with the
+  membership, and when the account signs out everywhere. `device_request_starts` counts each
+  account's requests of the hour.
 - `backups`, `backup_chunks` (1.6.0, ADR-048, `migrations/0007`): each home's automatic backups as
   the controller sealed them to the backup password's public key: the ciphertext in chunks, its
   size, when it came, and which password's key (the public key's first 8 bytes). Not the home's
@@ -452,7 +503,8 @@ device's key.
   relay, take the home secret from the connection and keep the home offline; sealed requests stay
   unreadable to them.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
-  a home was offline or a schedule failed, and which key ids are admin keys. An alert's words are
+  a home was offline or a schedule failed, and which key ids are admin keys. With requests from new
+  devices (1.7.0), also the kind of device and browser that asked, and when. An alert's words are
   the app's, never the cloud's: whoever could send pushes in DirectorLink's name could only choose
   among its own sentences and a time.
 
@@ -460,7 +512,9 @@ device's key.
 
 They cannot use the home-network connection: WebKit blocks it (see the README). With this design
 they always go through the cloud, locked, even at home. The owner still has to claim the home once
-from a computer or an Android phone; the owner's iPhone then joins as *my other device*.
+from a computer or an Android phone; the owner's iPhone then joins as *my other device*, or (1.7.0)
+with **Join from another device**, which the Home Screen app needs: it gets no links (*Join from
+another device*, above).
 
 ## Phases
 
@@ -526,3 +580,6 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
 12. (1.6.0, ADR-047) Admins may get Web Push alerts (home offline 10 minutes, a schedule failed),
     encrypted for their browsers and naming nothing; the controller tells the cloud which key ids
     are admin keys.
+13. (1.7.0, ADR-053) A new device of the account joins by approval from a device that reaches the
+    home with an admin key, after both show the same code; the new device commits to its key first,
+    and the invitation reaches it sealed. Paste invitation link brings a link into the Home Screen app.

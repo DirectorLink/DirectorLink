@@ -17,6 +17,7 @@ import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
 import { joinView, storeInvitation } from "./js/views/join.js";
+import { deviceJoinSignature, deviceRequestNotice, watchDeviceRequests } from "./js/views/device-join.js";
 import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
 import { HISTORY_ROW_KEY, historyAllowed, historyView, resetHistory } from "./js/views/history.js";
@@ -243,6 +244,8 @@ function signature() {
     savedRemote(),
     // Alerts on this device (js/alerts.js): on, possible, being switched, what it said.
     alertsSignature(),
+    // Joining from another device (ADR-053): this device's request, or the account's new devices'.
+    deviceJoinSignature(),
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),
@@ -393,6 +396,9 @@ function render(force = false) {
     const notice = ringNotice(ringingDoorbells());
     if (notice) content.splice(1, 0, notice);
   }
+  // A new device of the account asks to join this home (ADR-053): under the header, on every screen.
+  const request = deviceRequestNotice();
+  if (request) content.splice(1, 0, request);
   view.replaceChildren(...content);
   restoreUi(saved);
   attachCameraImages(view);
@@ -458,6 +464,7 @@ async function start() {
   applyLanguage();
   startPwa();
   startAccount();
+  watchDeviceRequests();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
   if (reachable()) {
     connect();
