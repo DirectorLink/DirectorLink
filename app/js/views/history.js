@@ -30,7 +30,7 @@ export const FILTERS = {
 };
 
 const ICONS = { scene: "scene", door: "door", composer: "controller", access: "key" };
-const SYSTEM_ICONS = { backup: "archive", restore: "archive", remote_away: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
+const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
 
 let generation = 0;
 let refreshTimer = null;
@@ -237,6 +237,8 @@ function title(entry) {
       return t("history.composer.setting", { setting: isolate(what), value: isolate(entry.to) });
     case "system.backup":
       return t("history.system.backup");
+    case "system.cloud_backup":
+      return t(entry.outcome === "failed" ? "history.system.cloudBackupFailed" : "history.system.cloudBackup");
     case "system.restore":
       return entry.from ? t("history.system.restoreFrom", { date: date(entry.from) }) : t("history.system.restore");
     case "system.remote_away":
@@ -260,6 +262,10 @@ export function outcomeText(entry) {
   const counts = entry.counts;
   if (entry.kind === "schedule" && entry.outcome === "skipped") {
     return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);
+  }
+  if (entry.kind === "system" && entry.action === "cloud_backup" && entry.outcome === "failed") {
+    const reason = { REMOTE_ACCESS_OFF: "remoteOff", REMOTE_OFFLINE: "accountUnreachable", RELAY_TIMEOUT: "accountUnreachable", HOME_NOT_LINKED: "notLinked" }[entry.reason];
+    return t(reason ? `history.reason.${reason}` : "history.reason.error");
   }
   if (entry.outcome === "failed" && !counts?.failed) {
     return t(entry.reason === "scene_gone" ? "history.reason.scene_gone" : "history.reason.error");

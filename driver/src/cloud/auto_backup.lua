@@ -11,6 +11,7 @@
 -- Nothing here holds the Lua thread long: the document, each slice of the two scalar
 -- multiplications, the encryption and each chunk run in a timer tick of their own.
 
+local Activity = require("src.core.activity")
 local Backup = require("src.core.backup")
 local BackupSeal = require("src.cloud.backup_seal")
 local Base64 = require("src.core.base64")
@@ -239,7 +240,6 @@ local function finish(job, ok, code, size)
         if job.why == "daily" then
             state.config.daily = job.day
         end
-        -- One line for the history of what happened (ADR-046 can show it).
         Log.info("backup", "backup uploaded", {
             why = job.why,
             size = size,
@@ -255,6 +255,8 @@ local function finish(job, ok, code, size)
         end
         Log.warn("backup", "automatic backup not made", { why = job.why, code = code, step = job.phase })
     end
+    -- The history (ADR-046): who asked (Back up now) or the controller (every night), and how it went.
+    Activity.record("system", "cloud_backup", { by = job.by, outcome = ok and "ran" or "failed", reason = not ok and code or nil })
     save()
 end
 
@@ -403,6 +405,7 @@ end
 function AutoBackup.runNow(keyId, now)
     local ok, code = start("now", now)
     if ok then
+        state.job.by = keyId
         Log.info("backup", "backup started", { why = "now", by = keyId })
     end
     return ok, code
@@ -431,6 +434,7 @@ function AutoBackup.tick(now)
         if state.warnedDay ~= day then
             state.warnedDay = day
             Log.warn("backup", "automatic backup not made", { why = "daily", code = code })
+            Activity.record("system", "cloud_backup", { outcome = "failed", reason = code })
         end
     end
     return ok == true

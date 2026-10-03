@@ -265,6 +265,15 @@ test("entries newest first, a section a day, an icon per kind, who and what in o
   assert.match(byClass(view, "history-status")[0].textContent, /That’s everything from the last 30 days/);
 });
 
+test("automatic backups to the account: made, or not and why", () => {
+  const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "system", action: "cloud_backup", who: { type: "controller" }, ...fields });
+  assert.equal(history.outcomeText(entry({ outcome: "ran" })), "");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "REMOTE_ACCESS_OFF" })), "Remote Access is off in Composer");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "RELAY_TIMEOUT" })), "The account couldn’t be reached; it tries again later");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "HOME_NOT_LINKED" })), "The home isn’t linked to an account");
+  assert.equal(history.outcomeText(entry({ outcome: "failed", reason: "KEY_CHANGED" })), "The controller couldn’t run it");
+});
+
 test("days: today, yesterday, then the date, in the home's time zone", () => {
   home("admin");
   const now = new Date("2026-10-03T09:00:00Z"); // 12:00 in Israel

@@ -114,7 +114,7 @@ async function body(request) {
 }
 
 // An operation of the home's object (HomeAlerts.request).
-async function homeObject(env, homeId, message) {
+export async function homeObject(env, homeId, message) {
   const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
   const response = await stub.fetch("https://home-relay/alerts", {
     method: "POST",
@@ -184,10 +184,15 @@ export class HomeAlerts {
   }
 
   // The Worker's operations: { op: "subscribe", user, endpoint, p256dh, auth } after it checked
-  // the account's membership and the subscription, or { op: "changed" } after a subscription went.
+  // the account's membership and the subscription, { op: "changed" } after a subscription went, or
+  // { op: "admins" } for the admin key ids the controller last announced (backups.js asks).
   async request(input, homeId) {
     if (input?.op === "subscribe") {
       return this.subscribe(input, homeId);
+    }
+    if (input?.op === "admins") {
+      const admins = await this.storage.get("alerts_admins");
+      return { ok: true, admins: Array.isArray(admins) ? admins : null };
     }
     if (input?.op === "changed") {
       await this.watch(homeId);

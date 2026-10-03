@@ -57,6 +57,7 @@ async function home() {
       const lock = invitationKey(secret);
       const request = JSON.parse(open(lock, message.envelope, "req"));
       const id = randomHex(4);
+      state.joinedKey = id;
       const answer = { id: request.id, ts: nowSeconds(), status: 201, content_type: "application/json", body: JSON.stringify({ key: `ak_${randomHex(24)}`, id, role: "admin" }) };
       return reply({ type: "join_result", ok: true, key_id: id, envelope: seal(lock, { home: state.home, key: message.invitation }, "res", JSON.stringify(answer)) });
     }
@@ -125,7 +126,7 @@ async function upload(state, text, { size = 60000, keyId = "ca1a0c76b8987230" } 
   return backup;
 }
 
-test("a backup sent in chunks is kept whole, and only the home's owner lists and downloads it", TEST, async () => {
+test("a backup sent in chunks is kept whole, and only the home's admins list and download it", TEST, async () => {
   const { state, dana } = await claimedHome();
   const text = sealedText(150000);
   const id = await upload(state, text);
@@ -143,7 +144,8 @@ test("a backup sent in chunks is kept whole, and only the home's owner lists and
   assert.equal(downloaded.status, 200);
   assert.equal(downloaded.json.data, text, "byte for byte");
 
-  // Another member: the cloud does not know roles; only the owner passes until the controller says.
+  // Another member: the cloud does not know roles; only the owner passes until the controller says
+  // which keys are admins' (its {type:"keys"} message, ADR-047).
   const avi = await signIn(AVI);
   const invitationId = randomHex(4);
   state.invitations.set(invitationId, randomBytes(32).toString("hex"));
@@ -155,6 +157,18 @@ test("a backup sent in chunks is kept whole, and only the home's owner lists and
   assert.equal(member.status, 403);
   assert.equal(member.json.code, "ADMINS_ONLY");
   assert.equal((await call("GET", `/v1/homes/${state.home}/backups/${id}`, { cookie: avi })).status, 403);
+  // The controller names its keys, Avi's not an admin's: still refused. Then it is: Avi passes.
+  state.connection.sendJson({ type: "keys", ids: [state.joinedKey, "0000aaaa"], admins: ["0000aaaa"] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await call("GET", `/v1/homes/${state.home}/backups`, { cookie: avi })).json.code, "ADMINS_ONLY");
+  state.connection.sendJson({ type: "keys", ids: [state.joinedKey, "0000aaaa"], admins: [state.joinedKey] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const admin = await call("GET", `/v1/homes/${state.home}/backups`, { cookie: avi });
+  assert.equal(admin.status, 200, admin.text);
+  assert.equal(admin.json.items.length, 1, "an admin of the home sees its backups");
+  assert.equal((await call("GET", `/v1/homes/${state.home}/backups/${id}`, { cookie: avi })).json.data, text);
+  state.connection.sendJson({ type: "keys", ids: [state.joinedKey, "0000aaaa"], admins: ["0000aaaa"] });
+  await new Promise((resolve) => setTimeout(resolve, 300));
   const noa = await signIn(NOA);
   assert.equal((await call("GET", `/v1/homes/${state.home}/backups`, { cookie: noa })).json.code, "NOT_A_MEMBER");
   assert.equal((await call("GET", `/v1/homes/${state.home}/backups`)).status, 401);

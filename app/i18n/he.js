@@ -966,6 +966,8 @@ export default {
     },
     system: {
       backup: "יצירת גיבוי",
+      cloudBackup: "גיבוי לחשבון",
+      cloudBackupFailed: "הגיבוי לחשבון לא הצליח",
       restore: "שחזור מגיבוי",
       restoreFrom: "שחזור הגיבוי מ-{date}",
       remote_away: "הגישה מרחוק נותקה ל-{duration}",
@@ -988,6 +990,9 @@ export default {
       no_weather: "לא הופעל: לא היו נתוני מזג אוויר",
       scene_gone: "לא הופעל: הסצנה כבר לא קיימת",
       error: "הבקר לא הצליח להפעיל",
+      remoteOff: "Remote Access כבוי ב-Composer",
+      accountUnreachable: "לא הייתה גישה לחשבון; ננסה שוב מאוחר יותר",
+      notLinked: "הבית לא מקושר לחשבון",
       other: "לא הופעל",
     },
     note: {

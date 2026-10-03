@@ -11,6 +11,7 @@
 // One a day per home (UTC; a newer one the same day replaces it), the last KEEP, at most
 // MAX_HOME_BYTES in all: the oldest go first, and the newest always stays.
 
+import { homeObject } from "./alerts.js";
 import { json, problem, randomHex } from "./http.js";
 
 export const KEEP = 7;
@@ -144,12 +145,10 @@ async function completed(env, homeId, id, size) {
 
 // Who may list, download and delete a home's backups: its admins. The cloud does not know roles
 // (they are the controller's keys), so the home's owner (who claimed it at home with an admin key)
-// passes, and the members who use a key the controller announced as an admin's.
-// TODO(1.6.0 integrator): the alerts work (ADR-047) adds `admins` (the admin key ids) to the
-// driver's {type:"keys"} message, and the home's Durable Object keeps it (alerts.js,
-// "alerts_admins"). Have adminKeyIds below return that list (from the home's object) as a Set;
-// alerts.js's isAdmin makes the same member_keys check. Until then it answers null and only the
-// owner passes. This is the only place that decides.
+// passes, and the members who use a key the controller announced as an admin's: the driver's
+// {type:"keys"} message lists them (`admins`, ADR-047) and the home's object keeps the list
+// (alerts.js). A controller before 1.6.0 names none: then only the owner passes. This is the only
+// place that decides.
 export async function mayUseBackups(env, homeId, userId) {
   const row = await env.DB.prepare("SELECT homes.owner_id AS owner_id FROM members JOIN homes ON homes.id = members.home_id WHERE members.home_id = ? AND members.user_id = ?")
     .bind(homeId, userId)
@@ -171,8 +170,14 @@ export async function mayUseBackups(env, homeId, userId) {
 }
 
 // The key ids the controller announced as admins' (a Set), or null while it says no roles.
-async function adminKeyIds(_env, _homeId) {
-  return null;
+async function adminKeyIds(env, homeId) {
+  try {
+    const answer = await homeObject(env, homeId, { op: "admins" });
+    return Array.isArray(answer?.admins) ? new Set(answer.admins) : null;
+  } catch (error) {
+    log("backup_roles_unknown", { home: homeId, error: String(error?.message ?? error) });
+    return null;
+  }
 }
 
 async function listBackups(env, user, homeId) {

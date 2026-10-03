@@ -979,6 +979,8 @@ export default {
     },
     system: {
       backup: "Made a backup",
+      cloudBackup: "Backed up to your account",
+      cloudBackupFailed: "Couldn’t back up to your account",
       restore: "Restored a backup",
       restoreFrom: "Restored the backup of {date}",
       remote_away: "Remote access was down for {duration}",
@@ -1001,6 +1003,9 @@ export default {
       no_weather: "Not run: there was no weather data",
       scene_gone: "Not run: its scene no longer exists",
       error: "The controller couldn’t run it",
+      remoteOff: "Remote Access is off in Composer",
+      accountUnreachable: "The account couldn’t be reached; it tries again later",
+      notLinked: "The home isn’t linked to an account",
       other: "Not run",
     },
     note: {

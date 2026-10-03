@@ -341,6 +341,11 @@ function tests.back_up_now_seals_the_backup_and_sends_it_in_chunks_one_at_a_time
     T.eq(uploaded[1].data.size, #text)
     T.eq(uploaded[1].data.chunks, #chunks)
     T.eq(uploaded[1].data.why, "now")
+    -- The history (ADR-046): who asked, and that it went.
+    local entry = (require("src.core.activity").list({ kinds = { system = true } }))[1]
+    T.eq(entry.action, "cloud_backup")
+    T.eq(entry.outcome, "ran")
+    T.eq(entry.who.type, "key", "Back up now names who pressed it")
 end
 
 function tests.back_up_now_needs_the_key_remote_access_and_a_linked_home()
@@ -409,6 +414,10 @@ function tests.a_refused_or_unanswered_chunk_ends_the_backup()
     T.eq(last.code, "NOT_CLAIMED")
     local notMade = logged(s, "automatic backup not made")
     T.eq(notMade[#notMade].data.code, "NOT_CLAIMED")
+    local failed = (require("src.core.activity").list({ kinds = { system = true } }))[1]
+    T.eq(failed.action, "cloud_backup")
+    T.eq(failed.outcome, "failed")
+    T.eq(failed.reason, "NOT_CLAIMED", "the history says why")
     -- No answer: the backup ends when the relay's wait does.
     T.eq(T.http(s.mock, "POST", "/v1/backup/automatic/run", { key = s.key }).status, 202)
     runSteps(s.mock)
