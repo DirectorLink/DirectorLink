@@ -30,6 +30,7 @@ local HANDLERS = {
     invitations = require("src.api.handlers.invitations"),
     profiles = require("src.api.handlers.profiles"),
     scenes = require("src.api.handlers.scenes"),
+    scene_links = require("src.api.handlers.scene_links"),
     schedules = require("src.api.handlers.schedules"),
     calendar = require("src.api.handlers.calendar"),
     sealed = require("src.api.handlers.sealed"),

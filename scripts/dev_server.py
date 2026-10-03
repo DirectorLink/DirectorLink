@@ -143,6 +143,11 @@ class Bridge:
         returns how many schedules ran."""
         return int(self._ask("tick" if at is None else f"tick {int(at)}", "TICKED"))
 
+    def link_home(self):
+        """Remote Access on, and the home's identity marked as one the relay accepted (there is no
+        relay here): scene links can be made (ADR-051). Returns the home id."""
+        return self._ask("linked", "LINKED")
+
     def seal(self, key, key_id, request):
         """The envelope the app would send to POST /v1/sealed for `request` ({method, path, body})."""
         asked = json.dumps({"key": key, "key_id": key_id, "request": request})
@@ -188,6 +193,7 @@ def main():
     parser.add_argument("--lua", default=shutil.which("lua5.1") or shutil.which("lua"))
     parser.add_argument("--jewish-calendar", action="store_true", help="start with the Composer property Jewish Calendar = On")
     parser.add_argument("--sonos", type=int, metavar="PORT", help="fake Sonos players on this port (tests/sonos/fake-sonos.mjs); starts with Sonos = On")
+    parser.add_argument("--remote-linked", action="store_true", help="start with Remote Access On and the home as the relay accepted it (scene links can be made)")
     args = parser.parse_args()
     if not args.lua:
         sys.exit("Lua 5.1 not found; install it or pass --lua")
@@ -198,6 +204,8 @@ def main():
         bridge.set_property("Jewish Calendar", "On")
     if args.sonos:
         bridge.set_property("Sonos", "On")
+    if args.remote_linked:
+        bridge.link_home()
     with Server(("127.0.0.1", args.port), make_handler(bridge)) as server:
         print(f"DirectorLink dev server on http://localhost:{args.port} (fake Director)")
         print(f"Pairing code: {bridge.pairing_code}")

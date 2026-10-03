@@ -978,6 +978,117 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/scene-links:
+    get:
+      tags: [Scenes]
+      operationId: listSceneLinks
+      x-directorlink-role: admin
+      summary: List the scene links
+      description: |
+        Since 1.7.0 (ADR-051). Every scene that has a link for the phone's own automations, with
+        its scene's name, its label, when it was made and when it last ran; never a secret. Also
+        what a link needs to work: `remote_access` (the Composer property) and `home_linked` (the
+        account service has accepted this home). Links whose scene is gone or now opens doors or
+        gates, or that were made for another home connection, go before the list is made.
+      responses:
+        "200":
+          description: The links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneLinkList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/scenes/{sceneId}/link:
+    parameters:
+      - $ref: "#/components/parameters/SceneId"
+    get:
+      tags: [Scenes]
+      operationId: getSceneLink
+      x-directorlink-role: admin
+      summary: Get a scene's link
+      description: Since 1.7.0 (ADR-051). The scene's link, without its secret; 404 when it has none.
+      responses:
+        "200":
+          description: The link.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Scenes]
+      operationId: createSceneLink
+      x-directorlink-role: admin
+      summary: Make a scene's link
+      description: |
+        Since 1.7.0 (ADR-051). A new private link for the scene, for the phone's own automations
+        (iPhone Shortcuts, Android automation apps, an NFC tag). It replaces the scene's link, which
+        stops working at once. The answer is the only place its `secret` ever appears: the controller
+        keeps a hash of it, as of API keys. A phone runs the scene with a POST to `url` without what
+        follows `#`, with the secret in the body (docs/SCENES.md); the account service passes it to
+        the home (`link`, docs/RELAY.md), and the scene runs as a member's key would run it.
+
+        Refused for a scene that opens doors or gates (409 `SCENE_OPENS_DOORS`), while Remote Access
+        is off (409 `REMOTE_ACCESS_OFF`), and before the account service has accepted the home (409
+        `HOME_NOT_LINKED`). A scene changed to open doors or gates loses its link.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneLinkCreate"
+            example:
+              label: Arriving home
+      responses:
+        "201":
+          description: The new link, with its secret, shown this once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SceneLinkCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [Scenes]
+      operationId: deleteSceneLink
+      x-directorlink-role: admin
+      summary: Remove a scene's link
+      description: Since 1.7.0 (ADR-051). The link stops working at once. The Composer action Remove All Scene Links removes every one.
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/off:
     post:
       tags: [Scenes]
@@ -3142,6 +3253,9 @@ components:
             alert_choices:
               type: boolean
               description: "Always true since 1.7.0: alerts are sealed to each device's key, and every key chooses its own (`/v1/alerts/choices`, ADR-050). Missing before 1.7.0, whose alerts go to admins only."
+            scene_links:
+              type: boolean
+              description: "Always true since 1.7.0: admins can make a link per scene for the phone's own automations (`/v1/scene-links`, ADR-051). Missing before 1.7.0."
 
     PairRequest:
       oneOf:
@@ -3672,6 +3786,77 @@ components:
           items:
             type: integer
             minimum: 1
+
+    SceneLink:
+      type: object
+      description: A scene's link for the phone's own automations (1.7.0, ADR-051), without its secret.
+      required: [scene_id, scene_name, link_id, label, created_at, last_used_at]
+      properties:
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        scene_name:
+          type: [string, "null"]
+        link_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: Not secret; the link's address names it.
+        label:
+          type: [string, "null"]
+          description: What an admin called it ("Arriving home", "NFC by the door"); shown in the history with each run.
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+
+    SceneLinkList:
+      type: object
+      required: [items, remote_access, home_linked]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SceneLink"
+        remote_access:
+          type: boolean
+          description: The Remote Access property is On; links work only then.
+        home_linked:
+          type: boolean
+          description: The account service has accepted this home's identity; links work only then, and only while an account has the home.
+
+    SceneLinkCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          type: [string, "null"]
+          maxLength: 64
+          description: Optional; blank for none.
+
+    SceneLinkCreated:
+      allOf:
+        - $ref: "#/components/schemas/SceneLink"
+        - type: object
+          required: [home_id, secret, url, replaced]
+          properties:
+            home_id:
+              type: string
+              pattern: "^[0-9a-f]{32}$"
+            secret:
+              type: string
+              pattern: "^[0-9a-f]{40}$"
+              description: 160 random bits, shown only in this answer. Whoever has it can run this scene.
+            url:
+              type: string
+              description: |
+                `https://api.directorlink.io/run/<home_id>.<link_id>#<secret>`. Opened in a browser (an
+                NFC tag), it shows a Run button; the browser never sends what follows `#`, and the page
+                posts it. An automation posts to the address before `#` with the secret in the body.
+            replaced:
+              type: boolean
+              description: The scene had a link, which stopped working.
 
     SceneRun:
       type: object
@@ -5253,7 +5438,13 @@ components:
           reported opened without DirectorLink (ADR-050).
         - `access`: `paired`, `created`, `role_changed` (`from`, `to`), `revoked`, `forgotten` (a
           device removed its own key), `expired`, `joined` (an invitation accepted), `all_revoked`
-          (Composer's Revoke All API Keys; `count`).
+          (Composer's Revoke All API Keys; `count`). Scene links (1.7.0, ADR-051): `link_created`,
+          `link_replaced`, `link_removed` (`what` is the scene, `note` the link's label; `reason`
+          `doors` when a change made the scene open doors or gates, `scene_gone` when the scene was
+          deleted, `other_home` when it was made for another home connection; none when an admin
+          removed it), `links_removed` (all of them: Composer's Remove All Scene Links, or
+          `reason` `new_identity` after Reset Remote Identity; `count`).
+        - A scene run by its link (1.7.0) is `scene` `run` with `who.type` `link`.
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -5277,7 +5468,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
+          enum: [run, "off", pulse, hold, release, doorbell, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:
@@ -5295,7 +5486,7 @@ components:
           description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`.
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
@@ -5312,6 +5503,9 @@ components:
             have no room left in the account, 25 MB in all), `stopped` (automatic backups were
             turned off, or the backup password changed, while it was being made), `error`
             (anything else; the log and `GET /v1/backup/automatic`'s `last.code` say what).
+
+            Why a scene link went (`link_removed`, 1.7.0): `doors`, `scene_gone`, `other_home`; and
+            all of them (`links_removed`): `new_identity`.
         note:
           type: string
           description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).
@@ -5351,6 +5545,8 @@ components:
               type: string
             invitation_id:
               type: string
+            link_id:
+              type: string
         changes:
           type: array
           items:
@@ -5362,13 +5558,15 @@ components:
       properties:
         type:
           type: string
-          enum: [key, schedule, composer, controller, control4]
-          description: A key (an app, a device, a script), a schedule, Composer, DirectorLink itself, or Control4 (1.7.0, ADR-050) for a door or gate that opened without DirectorLink (its app, a keypad, its programming, the DoorBird's own app).
+          enum: [key, schedule, composer, controller, control4, link]
+          description: A key (an app, a device, a script), a schedule, Composer, DirectorLink itself, Control4 (1.7.0, ADR-050) for a door or gate that opened without DirectorLink (its app, a keypad, its programming, the DoorBird's own app), or a scene's link (1.7.0, ADR-051, a phone's automation; `link_id`, and `name`, its label).
         key_id:
+          type: string
+        link_id:
           type: string
         name:
           type: string
-          description: The key's name (its device), as it was then.
+          description: The key's name (its device), or the link's label, as it was then.
         profile:
           type: string
           description: The person the key belongs to, as named then.
@@ -5542,6 +5740,40 @@ components:
                         type: integer
                       name:
                         type: [string, "null"]
+            scene_links:
+              type: object
+              description: The scene links (1.7.0, ADR-051), as the controller keeps them - a hash of each secret, never the secret. A backup without them keeps the links here whose scene comes back.
+              required: [version, links]
+              properties:
+                version:
+                  type: integer
+                links:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, scene_id, alg, hash, home, created_at]
+                    properties:
+                      id:
+                        type: string
+                        pattern: "^[0-9a-f]{8}$"
+                      scene_id:
+                        type: string
+                        pattern: "^[0-9a-f]{8}$"
+                      label:
+                        type: string
+                      alg:
+                        type: string
+                        enum: [sha256, sha1]
+                      hash:
+                        type: string
+                      home:
+                        type: string
+                        pattern: "^[0-9a-f]{32}$"
+                        description: The home id the link's address names.
+                      created_at:
+                        type: string
+                      last_used_at:
+                        type: string
 
     AutomaticBackupKey:
       type: object
@@ -5772,6 +6004,9 @@ components:
             sonos_rooms:
               type: [integer, "null"]
               description: Sonos players with a room an admin chose (1.6.0); null when the backup has none, and the choices stay as they are.
+            scene_links:
+              type: integer
+              description: Scene links after the restore (1.7.0, ADR-051) - the backup's, or from a backup made before them the ones here - each only while its scene comes back without doors or gates and the home's identity in use is the one it was made for.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).

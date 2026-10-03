@@ -33,6 +33,7 @@ import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from "./js/views/scenes.js";
+import { leaveSceneLink, sceneLinksView, sceneLinkView } from "./js/views/scene-links.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
@@ -61,6 +62,13 @@ function parseRoute() {
   }
   if (parts[0] === "room" && /^\d+$/.test(parts[1] || "")) {
     return { name: "room", id: Number(parts[1]), tab: "home" };
+  }
+  // A scene's link for the phone's own automations, and the list of them (ADR-051).
+  if (parts[0] === "scene" && /^[0-9a-f]{8}$/.test(parts[1] || "") && parts[2] === "link") {
+    return { name: "sceneLink", id: parts[1], tab: "scenes" };
+  }
+  if (parts[0] === "links") {
+    return { name: "sceneLinks", tab: "scenes" };
   }
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     const editing = parts[2] === "edit" && /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : null;
@@ -110,6 +118,8 @@ window.addEventListener("hashchange", () => {
   if (route.name === "history" && previous.name !== "history") resetHistory();
   if (route.name === "scene" && (previous.name !== "scene" || previous.id !== route.id)) resetSceneEditor();
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
+  // A new link's secret is shown only on its screen, until it is left.
+  if (previous.name === "sceneLink" && (route.name !== "sceneLink" || route.id !== previous.id)) leaveSceneLink();
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
@@ -287,6 +297,9 @@ function signature() {
     route.name === "schedules" ? Math.floor(Date.now() / 60000) : 0,
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
+    // Scene links (views/scene-links.js): on the scenes, a scene and its link (labels being typed
+    // are kept outside `ui`).
+    ["scenes", "scene", "sceneLink", "sceneLinks"].includes(route.name) ? ui.sceneLinks : 0,
     route.name === "access" ? ui.access : 0,
     route.name === "history" ? ui.history : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
@@ -313,6 +326,10 @@ function screen() {
       return scheduleEditorView(route.id, actions);
     case "scene":
       return sceneEditorView(route.id, route.adding, actions, route.editing);
+    case "sceneLink":
+      return sceneLinkView(route.id, actions);
+    case "sceneLinks":
+      return sceneLinksView(actions);
     case "cameras":
       return camerasView(actions);
     case "climate":

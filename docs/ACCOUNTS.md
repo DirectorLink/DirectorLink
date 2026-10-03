@@ -45,12 +45,23 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |
 | Joining from another device (1.7.0): the new device's label ("Safari on iPhone"), both devices' public keys | yes | yes, while the request lasts (10 minutes; deleted within a day) | no |
 | Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
+| Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran or failed; it keeps neither the secret nor the runs; which scene it runs, **never** | the link's id, a hash of its secret and its scene; every run in History |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
 which home (and, with alerts, admins' push addresses). It cannot open a door, read a light's state
 or show a picture, and the backups it holds open only with their backup password, which only the
 family knows.
+
+**Scene links (1.7.0, ADR-051) are the one thing that is not sealed.** A phone's automation (iPhone
+Shortcuts, an Android app, an NFC tag) cannot seal a request, so it sends a link's secret in the
+clear to the account service, over HTTPS, which passes it to the home. So: whoever holds a link can
+run that one scene, from anywhere, until an admin removes or replaces it; and the account service
+sees the link and its secret in transit each time it is used (not which scene: it has no names).
+It keeps no secret (no table, never in its logs: the secret is in the request's body, not its
+address). Someone who could read the account service's traffic could run the linked scenes they saw;
+a scene that opens doors or gates can never have a link, so that is at most lights, AC, fans, blinds
+and music. Everything else stays sealed. Homes without links are as before.
 
 ## Keys
 
@@ -366,6 +377,18 @@ Turning the switch off, signing out or forgetting the key on that device, signin
 revoked, another account claiming the home, and deleting the account all end that browser's
 alerts; the home then stops watching for the offline alert once no admin's browser wants it.
 
+### 7. Scene links (1.7.0, ADR-051)
+
+An admin makes a link for a scene (docs/SCENES.md); the controller shows its secret once and keeps
+a hash of it. A phone's automation posts the secret to `https://api.directorlink.io/run/<home_id>.<link_id>`
+(in the body, never in the address; a browser gets it after `#` and posts it from the page). The
+account service checks that an account has claimed the home, lets at most 30 runs a minute reach
+it, and passes the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks
+the hash in constant time, runs the scene as a member's key would and records the run in History;
+the phone gets `ran`, `partly` or `failed`, and an unknown home, link or secret all get the same 404.
+No account and no session is involved: the link is the permission. Removing or replacing the link
+ends it at once; so do Composer's Remove All Scene Links and Reset Remote Identity.
+
 ## Google and Apple
 
 Both are OpenID Connect sign-ins run by `api.directorlink.io` (`google.js`, `apple.js`, the shared
@@ -534,12 +557,16 @@ device's key.
   internet with a certificate one of those authorities issued for any other name could pose as the
   relay, take the home secret from the connection and keep the home offline; sealed requests stay
   unreadable to them.
+- **Scene links** (1.7.0, ADR-051): not sealed. Whoever holds one runs its scene; the account
+  service, and Cloudflare beneath it, see its secret when a phone uses it. Never a scene with doors
+  or gates; remove or replace a link that may have leaked.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
   a home was offline, and which key ids are admin keys. Since 1.7.0, when the home notified which
   key ids, and whether the notice was brief: never its kind or what it names, though the keys and
   the brevity hint at it (only rings are brief, and only rings reach viewers' keys; a notice for
   admin keys only is a door or a schedule). With requests from new devices (1.7.0), also the
-  kind of device and browser that asked, and when. An alert's words are the app's, never the cloud's:
+  kind of device and browser that asked, and when. With scene links (1.7.0), when a
+  home's linked scenes run and whether they ran. An alert's words are the app's, never the cloud's:
   whoever could send pushes in DirectorLink's name could only choose among its own sentences and a
   time, and could not seal a detail a device would open; the cloud could send a sealed alert again
   to the same device, which shows its own time.
@@ -619,9 +646,12 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
 13. (1.7.0, ADR-050) What the controller alerts about (doorbells, doors opened, the refrigerator,
     schedules) it seals to each key that gets it, and each key chooses; the cloud delivers each part
     to that key's browsers only, knowing which keys and when, not what.
-14. (1.7.0, ADR-052) Three totals are public, counted once an hour: homes linked to an account,
+14. (1.7.0, ADR-051) A scene may have a private link for the phone's own automations: its secret
+    passes the account service in the clear when used (never which scene), the controller keeps
+    its hash, and a scene that opens doors or gates never has one.
+15. (1.7.0, ADR-052) Three totals are public, counted once an hour: homes linked to an account,
     people with an account, driver downloads. Nothing about any one home; the homes send nothing
     for them.
-15. (1.7.0, ADR-053) A new device of the account joins by approval from a device that reaches the
+16. (1.7.0, ADR-053) A new device of the account joins by approval from a device that reaches the
     home with an admin key, after both show the same code; the new device commits to its key first,
     and the invitation reaches it sealed. Paste invitation link brings a link into the Home Screen app.

@@ -14,6 +14,7 @@ Since DirectorLink 0.10.0 (protocol version 1) signed-in accounts reach their ho
 - `src/backups.js` — automatic backups (1.6.0, ADR-048): the controller's sealed backup, received in chunks over its socket and kept in D1 (one a day, the last 7, 5 MB a home, 25 MB an owner's homes, 4 starts a home a day besides the nightly one); listed, downloaded and deleted by the home's admins
 - `src/device-requests.js` — a new device joins by approval from another device of the account (1.7.0, ADR-053): the requests, the keys the two devices pass each other and the sealed invitation, for 10 minutes
 - `src/alerts.js` — alerts (ADR-047, ADR-050): browsers' push subscriptions and the key each registered with, who is an admin, the offline alarm, the controller's sealed `notify` messages and the `alert` messages of drivers before 1.7.0
+- `src/scene-links.js` — scene links (1.7.0, ADR-051): `/run/{home_id}.{link_id}`, the page a browser gets and the POST a phone's automation sends with the link's secret, passed to the home's object (`HomeRelay.link`)
 - `src/web-push.js` — Web Push: the message encrypted for the browser (RFC 8291) and the VAPID signature (RFC 8292), with WebCrypto
 - `src/stats.js` — DirectorLink in numbers (1.7.0, ADR-052): the hourly count of three totals and the public `GET /v1/stats`
 - `src/http.js` — JSON and Problem Details responses, constant-time secret comparison, cookies, random tokens
@@ -53,6 +54,7 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 | 400 | `WEBSOCKET_REQUIRED` | `/relay/connect` without `Upgrade: websocket` |
 | 400 | `INVALID_HOME_ID` | `X-DirectorLink-Home` or `{home_id}` is not 32 lowercase hex characters |
 | 400 | `INVALID_HOME_SECRET` | `Authorization` is not `Bearer <64 hex characters>` |
+| 400 | `SECRET_REQUIRED` | a scene link's POST without a secret (below) |
 | 401 | `WRONG_HOME_SECRET` | another secret is registered for this `home_id` |
 | 401 | `UNAUTHORIZED` | a test endpoint without the right token |
 | 404 | `NOT_FOUND` | any other path |
@@ -127,6 +129,29 @@ Logs: `stats_counted` (`homes`, `people`, `downloads`; `null` for a total not co
 Cost: 24 runs a day, each two or three requests to GitHub and two D1 writes; one D1 read of three rows per answer (browsers keep it 5 minutes).
 
 Tests: `stats-count.test.mjs` (in Node: the sum over pages and only the package, failures keeping the totals, the answer, CORS and caching) and `stats.test.mjs` (end to end with a fake GitHub: claimed homes only, deleted accounts and accounts without a sign-in not counted, the hourly and daily triggers apart).
+
+## Scene links (1.7.0, ADR-051)
+
+A private link per scene for the phone's own automations (docs/SCENES.md). No session, no CORS: the
+link is the permission.
+
+| Request | Answer |
+| --- | --- |
+| `GET /run/{home_id}.{link_id}` (and `HEAD`) | A small page with one Run button, the same for every address (a made-up one too): it runs nothing, since link previews fetch links. Its script reads the secret after `#`, which the browser never sends, and posts it. `no-store`, `noindex`, `no-referrer`, a CSP with a nonce. |
+| `POST /run/{home_id}.{link_id}` | The secret in the body: `{"secret": "…"}`, a form field `secret` (url-encoded or multipart), or the secret alone as text (at most 1 KB). `200 {"result": "ran" \| "partly" \| "failed", "message"}`; `400 SECRET_REQUIRED`; `404 NOT_FOUND` for an unknown home (or one no account has claimed), link or secret, word for word alike; `429 TOO_MANY_RUNS` (`Retry-After`); `503 HOME_OFFLINE`; `502 HOME_DISCONNECTED`, `HOME_FAILED`; `504 HOME_TIMEOUT`. Any other method: 405. |
+
+How it works: the Worker checks the address and the secret's shape (40 hex digits), reads D1 once to
+see that an account has claimed the home, and hands `{link, secret}` to the home's object
+(`/link`). The object lets at most 30 runs a minute reach the home (in memory; a flood keeps it
+awake), and sends `{"type":"link","id","link","secret"}` (docs/RELAY.md) only to a driver whose
+`hello` listed `features: ["scene_links"]` (DirectorLink 1.7.0): an older driver would never
+answer, so the phone gets 404 at once. The driver's `link_result` becomes the answer above; its
+`RATE_LIMITED` (6 runs a minute a link) becomes 429 with its `retry_s`.
+
+The secret stays out of the logs: it is never in the address (Workers Logs record each request's
+method and URL), and `link_run` logs only the home, the link's id, the status, why and how long.
+`scene-links.test.mjs` checks the forms the apps send, that a GET runs nothing, the 404s alike, an
+older driver, offline, both limits, and that the Worker's output never holds a secret.
 
 ## Deploying (by hand for now)
 

@@ -13,6 +13,8 @@
 --        the minute of that time (the home's minute of automatic backups); out: "TICKED <ran>\n"
 --   in:  "remove <device id>\n" removes a device from the project in Composer, then Refresh Project;
 --        out: "REMOVED\n"
+--   in:  "linked\n" switches Remote Access on and marks the home's identity as one the relay has
+--        accepted (there is no relay here), so scene links can be made; out: "LINKED <home id>\n"
 -- With a second argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
@@ -269,6 +271,15 @@ local function command(line)
     local tick = line:match("^tick ?(%d*)$")
     if tick then
         return "TICKED " .. tostring(require("src.core.scheduler").tick(tonumber(tick)))
+    end
+    if line == "linked" then
+        local Relay = require("src.cloud.relay")
+        local identity = Relay.identity()
+        identity.linked = true
+        Relay.restoreIdentity(identity)
+        Properties["Remote Access"] = "On"
+        OnPropertyChanged("Remote Access")
+        return "LINKED " .. identity.home_id
     end
     local removed = line:match("^remove (%d+)$")
     if removed then

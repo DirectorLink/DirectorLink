@@ -51,6 +51,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - No import of Composer programming, scenes, or schedules
 - Schedules by time and weekday, at sunrise or sunset with offsets, and by the weather (heat, wind and rain from Open-Meteo), with "only if" weather conditions; with the Jewish calendar on, also at candle lighting and havdalah, or never or only on Shabbat and holidays (worked out on the controller)
 - Director location/timezone used for solar scheduling
+- A private link per scene for the phone's own automations (iPhone Shortcuts, Android apps, an NFC tag), through the account; never for scenes that open doors or gates, and every run in History (docs/SCENES.md)
 - No automatic `.c4z` self-update in V1
 
 ## Installation
@@ -99,7 +100,7 @@ A successful install shows:
 - **Jewish Calendar:** `Off`, so DirectorLink works out no Shabbat or holiday times. `On` gives schedules and the app Shabbat and holiday times, the Hebrew date and the weekly reading, from the project's location; **Calendar Status** shows what it works out
 - **Log Level** and **Inventory** (rooms and devices found)
 
-Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), and **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home). A DirectorLink backup file together with its password counts as such a copy.
+Actions: **New Pairing Code**, **Revoke All API Keys**, **Print Schedules and Scenes**, **Refresh Project** (reads the project again after changes in Composer; DirectorLink is also meant to do it by itself a few seconds after Composer's changes, which has not yet been seen on a real controller), **Reset Remote Identity** (a last resort: the controller becomes a new home for DirectorLink's servers, and the owner links it again), and **Remove All Scene Links** (every scene's link for automations stops working at once). If a copy of the project's data got into the wrong hands, run Revoke All API Keys, and have the home's owner use **Replace the remote secret** in the app (Settings → Account, at home). A DirectorLink backup file together with its password counts as such a copy.
 
 If the status shows an error, open `GET /v1/logs` (see below) or capture the DirectorLink Lua log and open a GitHub issue.
 

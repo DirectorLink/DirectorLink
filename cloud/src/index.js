@@ -15,6 +15,7 @@
 //   /v1/homes/{home_id}/backups        the home's automatic backups, sealed (backups.js)
 //   GET /v1/stats                      DirectorLink in numbers: totals only, public (stats.js)
 //   /v1/homes/{home_id}/device-requests  a new device joins by approval (device-requests.js)
+//   GET, POST /run/{home_id}.{link_id} a scene's link, from a phone's automation (scene-links.js)
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
@@ -23,6 +24,7 @@ import { handleAppleNotification } from "./apple-notifications.js";
 import { purgeBackupUploads } from "./backups.js";
 import { purgeDeviceRequests } from "./device-requests.js";
 import { handleHomes } from "./homes.js";
+import { handleSceneLink } from "./scene-links.js";
 import { HomeRelay } from "./home-relay.js";
 import { purgeInvitations } from "./invitations.js";
 import { STATS_CRON, countStats, handleStats } from "./stats.js";
@@ -66,6 +68,10 @@ export default {
       }
       if (url.pathname === "/auth/apple/notifications") {
         return await handleAppleNotification(request, env);
+      }
+      const link = await handleSceneLink(request, env);
+      if (link) {
+        return link;
       }
       const account = await handleAccounts(request, env);
       if (account) {

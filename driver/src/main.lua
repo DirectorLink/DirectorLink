@@ -15,6 +15,8 @@ local Scheduler = require("src.core.scheduler")
 local Weather = require("src.core.weather")
 local JewishCalendar = require("src.core.jewish_calendar")
 local SceneHandlers = require("src.api.handlers.scenes")
+local SceneLinks = require("src.core.scene_links")
+local SceneLinkHandlers = require("src.api.handlers.scene_links")
 local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
 local Clock = require("src.core.clock")
@@ -208,6 +210,8 @@ local function restored(restore)
     end
     shownScheduleStatus, shownCalendarStatus = nil, nil
     calendarChanged()
+    -- Scene links (ADR-051) whose scene did not come back, or that name another home, go.
+    SceneLinkHandlers.prune()
 end
 
 local services = {
@@ -465,6 +469,11 @@ function OnDriverLateInit(driverInitType)
     RoomLayout.load()
     local sceneCount, scenesStoredAs = Scenes.load()
     Log.info("scenes", "scenes loaded", { count = sceneCount, stored_as = scenesStoredAs })
+    -- Scene links (ADR-051): a scene changed to open doors meanwhile (by an older DirectorLink)
+    -- loses its link now.
+    local linkCount, linksStoredAs = SceneLinks.load()
+    Log.info("scenes", "scene links loaded", { count = linkCount, stored_as = linksStoredAs })
+    SceneLinkHandlers.prune()
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
@@ -603,7 +612,12 @@ function ExecuteCommand(command, params)
         if ok then
             local invitations = Invitations.revokeAll()
             Remote.clearClaim()
-            Log.warn("relay", "remote identity reset from Composer", { invitations = invitations })
+            -- Scene links name the old home in their addresses: none of them can work any more.
+            local links = SceneLinks.removeAll()
+            Log.warn("relay", "remote identity reset from Composer", { invitations = invitations, scene_links = links })
+            if links > 0 then
+                Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = links, reason = "new_identity" })
+            end
         else
             updateProperty("Remote Status", "Identity not reset: " .. tostring(code))
         end
@@ -626,6 +640,11 @@ function ExecuteCommand(command, params)
         keysChanged()
         Log.warn("auth", "all API keys revoked from Composer", { count = count, invitations = invitations })
         Activity.record("access", "all_revoked", { who = Activity.COMPOSER, count = count })
+    elseif params.ACTION == "REMOVE_SCENE_LINKS" then
+        -- Every scene's link stops working at once (ADR-051); admins can make new ones.
+        local count = SceneLinks.removeAll()
+        Log.warn("scenes", "all scene links removed from Composer", { count = count })
+        Activity.record("access", "links_removed", { who = Activity.COMPOSER, count = count })
     end
 end
 
