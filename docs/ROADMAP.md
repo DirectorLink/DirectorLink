@@ -2,6 +2,11 @@
 
 What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.6.0](releases/v1.6.0.md). This page lists only what is still to come.
 
+## Next: 1.7.0
+
+- Samsung refrigerators (the DirectorLink Samsung Refrigerator driver for Control4): temperatures, doors and the water filter in the app; Power Cool, Power Freeze, Ice Maker and Sabbath Mode as controls, in scenes and in Shabbat schedules.
+- Scene links: a private link per scene for the phone's own automations (iPhone Shortcuts "when I arrive home", Android automation apps, Siri, NFC tags). Scenes that open doors or gates get none; links can be revoked, and every run is in History.
+
 ## Later
 
 - Releases signed on GitHub, the signature checked by the driver in plain Lua (the minimum OS stays 3.3.0).
