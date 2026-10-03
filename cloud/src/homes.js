@@ -14,11 +14,13 @@
 //   DELETE /v1/join/{home_id}/{invitation_id}       withdraws that request
 //   GET    /v1/homes/{home_id}/join-requests        requests waiting for the owner (the owner only)
 //   POST   /v1/homes/{home_id}/join-requests/{id}   { decision: approve | refuse } (the owner only)
+//   GET    /v1/homes/{home_id}/backups[/{id}], DELETE /v1/homes/{home_id}/backups   (backups.js)
 //
 // All need the session cookie; they answer CORS with credentials only for the app's origins, and
 // refuse changes from any other origin.
 
 import { appOrigins, currentUser } from "./accounts.js";
+import { BACKUP_ROUTES } from "./backups.js";
 import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
 import { validKeyId } from "./member-keys.js";
@@ -662,6 +664,7 @@ const ROUTES = [
   [/^\/v1\/join\/([0-9a-f]{32})\/([0-9a-f]{8})$/, { GET: (r, env, user, m) => myJoinRequest(env, user, m[1], m[2]), DELETE: (r, env, user, m) => withdrawJoinRequest(env, user, m[1], m[2]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests$/, { GET: (r, env, user, m) => listJoinRequests(env, user, m[1]) }],
   [/^\/v1\/homes\/([0-9a-f]{32})\/join-requests\/([0-9a-f]{32})$/, { POST: (r, env, user, m) => decideJoinRequest(r, env, user, m[1], m[2]) }],
+  ...BACKUP_ROUTES,
 ];
 
 function cors(request, env) {

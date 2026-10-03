@@ -40,6 +40,7 @@ local suites = {
     "test_fans",
     "test_alarm",
     "test_backup",
+    "test_auto_backup",
     "test_sonos",
 }
 

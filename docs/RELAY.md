@@ -115,7 +115,7 @@ staged file the same way.
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a
 `type`. Every message the relay sends has an `id`; the driver's reply carries the same `id`. The
-same holds the other way for what the driver asks the relay (`invitation`).
+same holds the other way for what the driver asks the relay (`invitation`, `backup_chunk`).
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
@@ -132,6 +132,8 @@ same holds the other way for what the driver asks the relay (`invitation`).
 | driver → relay | `{"type":"invitation","id":"…","invitation_id":"<8 hex>","email":"…","expires_at":"<ISO time>","pending":["<8 hex>", …]}` | Registers an invitation the controller made for an admin (`POST /v1/invitations` with `email`), binding it to that email. `pending`: the ids of every invitation still waiting on the controller (this one included); the relay forgets the others it registered for the home. Since 1.0.0. |
 | relay → driver | `{"type":"invitation_result","id":"…","ok":true}` | Registered; or `"ok":false` with `INVALID_REQUEST`, `INVITATION_EXISTS` (an id is bound to its email once), `INVITATION_LIMIT_REACHED` (20 waiting), `NOT_CLAIMED` (no account has claimed the home) or `INTERNAL`: the driver revokes the invitation and answers the admin `502` with that code. With no answer within 10 s, or while not connected, it revokes it and answers `503 REMOTE_OFFLINE`. |
 | driver → relay | `{"type":"invitation_cancel","invitation_id":"<8 hex>"}` | The driver revoked the invitation, or gave up waiting for `invitation_result`: the relay forgets it if it took it. No answer. Since 1.0.0. |
+| driver → relay | `{"type":"backup_chunk","id":"…","index":0,"count":3,"size":174000,"key_id":"<16 hex>","data":"…"}`, then `{"type":"backup_chunk","id":"…","backup":"<32 hex>","index":1,"data":"…"}` | An automatic backup (ADR-048, `docs/BACKUP.md`), sealed to the backup password's public key: its text in chunks of at most 64 KiB (the driver sends 60,000 characters), each sent once the one before is answered. The first says how many there are, the whole size (at most 3,000,000) and which password's key it is sealed to. Since 1.6.0. |
+| relay → driver | `{"type":"backup_result","id":"…","ok":true,"backup":"<32 hex>","complete":false}` | Kept (`complete` after the last); or `"ok":false` with `INVALID_REQUEST`, `NOT_CLAIMED` (no account has claimed the home), `BACKUP_TOO_LARGE`, `SIZE_MISMATCH`, `OUT_OF_ORDER`, `UPLOAD_NOT_FOUND` or `INTERNAL`: the driver stops and logs why. With no answer within 30 s it stops too. |
 | relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. |
 
 Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CIPHERTEXT`, `BAD_REQUEST`, `STALE`

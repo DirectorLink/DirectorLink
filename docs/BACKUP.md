@@ -1,12 +1,15 @@
 # Backup and restore
 
-**Status: built in DirectorLink 1.4.0 (ADR-042).**
+**Status: built in DirectorLink 1.4.0 (ADR-042); automatic backups to the account and the Sonos
+room choices in 1.6.0 (ADR-048).**
 
 Updating the driver keeps everything DirectorLink knows. Removing the driver from the project (by
 accident), replacing the controller or rebuilding the project loses it all: Control4 deletes a
 removed driver's data. A backup brings it back. Admins make one in the app (Settings → Controller →
 Backup) and restore it there; the file is locked with a password in the browser, and the controller
-never sees the password or the file. The app shows Backup only when the controller's DirectorLink
+never sees the password or the file. From 1.6.0 the controller can also back up to the home's
+account every night, locked with a backup password only the family knows
+([Automatic backups to your account](#automatic-backups-to-your-account)). The app shows Backup only when the controller's DirectorLink
 says it has it (`GET /v1/system`: `features.backup`, 1.4.0 and newer); a request answered `404`
 says to update DirectorLink.
 
@@ -21,6 +24,7 @@ says to update DirectorLink.
 | Schedules | Every schedule's definition. Not what it ran. | They start as if saved at the restore (below). A schedule whose scene is not in the backup stays out. |
 | The calendar's settings | Candle lighting and havdalah minutes, Israel or abroad. | As they were. |
 | The remote identity | The home id, its secret and the replacements waiting for the owner's approval, only once the relay has accepted it (`linked`). | By the rules below. |
+| The Sonos room choices (1.6.0) | Each Sonos player an admin put in a room: the room and the player's name. | Matched to the project, as a scene's room. A backup made before 1.6.0 has none: the choices on the controller stay as they are. |
 
 Not in a backup: pending invitations (revoked by a restore; see ADR-042 for why), what the schedules
 ran, the request ids kept against replays, the random pool, the weather, the last automation shown
@@ -82,7 +86,8 @@ Composer. A file must never switch a safety setting on.
     "scenes": { "version": 1, "scenes": [] },
     "schedules": { "version": 1, "schedules": [] },
     "calendar": { "version": 1, "settings": {} },
-    "remote_identity": { "version": 1, "linked": true, "home_id": "…", "home_secret": "…" }
+    "remote_identity": { "version": 1, "linked": true, "home_id": "…", "home_secret": "…" },
+    "sonos_rooms": { "version": 1, "rooms": { "RINCON_…": { "room_id": 10, "name": "Kitchen" } } }
   }
 }
 ```
@@ -92,7 +97,8 @@ rooms and devices the sections refer to by id, as the project named them when th
 The home's name is its site in Composer's project tree. `controller_id` is a hash of the
 controller's MAC address (`C4:GetUniqueMAC`), the same after the driver is added again and another
 on a replacement; null when Director does not give it. Without a linked identity,
-`remote_identity` is `{"version": 1, "linked": false}`.
+`remote_identity` is `{"version": 1, "linked": false}`. `sonos_rooms` (1.6.0) may be missing: a
+backup made before 1.6.0 has none, and restores as it did.
 
 It holds every key's lock key and the home secret: whoever has the document can reach the home
 through the account, sealed, as any of its devices. That is why it goes only in sealed requests
@@ -150,7 +156,8 @@ characters, 10 languages a room) and preferences it would refuse are left out.
 
 ### Rooms and devices
 
-Scene steps, favorites, hidden rooms, room names and the room order refer to Control4 ids. For each:
+Scene steps, favorites, hidden rooms, room names, the room order and the Sonos room choices refer to
+Control4 ids. For each:
 
 1. The same id, still a room, or a device of the same kind (a lights step needs a light), with the
    same name: kept.
@@ -214,6 +221,99 @@ another's: tick the box once the old controller is off or reset.
 - A device linked to the other home through the account: the app points it at the backup's home.
 - Pending invitations and a claim token made before the restore are revoked.
 
+## Automatic backups to your account
+
+From 1.6.0 (ADR-048) the controller can send a backup to the home's account every night, so that a
+controller that died, or a driver removed by accident, can be brought back without a file anyone
+remembered to download. Nobody but the family can open them: not DirectorLink's servers, which keep
+them, and not the controller, which makes them.
+
+### The backup password
+
+An admin sets it once in the app (Settings → Controller → Backup → **Automatic backups to your
+account**), signed in to the account, with the home linked to it. It is typed twice, at least 10
+characters, with the same strength hint as a file's, and the app says plainly that without it the
+backups cannot be opened, by anyone, DirectorLink included.
+
+The browser makes an X25519 key pair from it: PBKDF2-SHA-256 with 600,000 iterations and a random
+16-byte salt gives the private key's 32 bytes. Only the public key, the salt and the iterations go
+to the controller (`PUT /v1/backup/automatic`, admins, sealed requests only, so that nobody on the
+network can put their own key in its place). The password and the private key never leave the
+browser. **Change backup password** sends a new key: backups made before keep the old password, and
+the list in the app marks them "earlier password". **Turn off** forgets the key; the backups in the
+account stay until an admin deletes them there (**Delete these backups**).
+
+### Every night
+
+At the home's own minute between 03:00 and 04:59 (the controller's time, picked at random once;
+`GET /v1/backup/automatic` gives it as `time`), and when an admin taps **Back up now**
+(`POST /v1/backup/automatic/run`, answered `202`), the controller makes the same document as
+`GET /v1/backup` and seals it to the public key:
+
+1. a key pair used once (the ephemeral key, 32 random bytes) and the X25519 shared value with the
+   backup password's public key;
+2. a lock key `HMAC-SHA256(shared, "DirectorLink cloud backup v1|" + epk + "|" + public key)` (both
+   keys in base64), and from it, as in the end-to-end lock (docs/ACCOUNTS.md), an `enc` and a `mac`
+   key;
+3. AES-256-CBC with a random IV, then an HMAC-SHA256 over the label, the key's id, the salt, the
+   iterations, the ephemeral key, the IV and the ciphertext (encrypt-then-MAC).
+
+```json
+{"format": "directorlink-cloud-backup", "version": 1, "cipher": "X25519-AES-256-CBC-HMAC-SHA256",
+ "kdf": "PBKDF2-SHA-256", "iterations": 600000, "salt": "…", "key_id": "ca1a0c76b8987230",
+ "epk": "…", "iv": "…", "ct": "…", "mac": "…"}
+```
+
+`key_id` is the public key's first 8 bytes in hex. C4:HMAC and C4:Encrypt do the encryption, as for
+every sealed request; the two scalar multiplications are plain Lua (`src/core/x25519.lua`), 64 of
+their 255 steps at a time, each slice and each one's final inversion in a timer tick of its own (11
+steps in all), as are the document, its JSON and each chunk: nothing holds Director's Lua thread
+long. On a PC a big home's backup (130 KB of JSON, 175 KB sealed, 3 chunks) takes 16 ms for the
+document, 10 ms for its JSON, some 70 ms of Lua for the seal in steps of at most about 15 ms (two
+scalar multiplications of 29 ms each, and their inversions), and 2 to 5 ms to frame each chunk; the
+controller's AES and HMAC run natively. The CORE-1's Cortex-A53 is some 5 to 10 times slower: about
+0.35 to 0.7 s of seal in all, no step much over 0.15 s. The log line `backup uploaded` gives the
+real `seal_ms` and `total_ms`.
+
+The ephemeral key is forgotten as soon as the backup is sealed: the controller cannot open its own
+backups. The sealed text goes to the account over the relay connection in chunks of 60,000
+characters (`backup_chunk`, docs/RELAY.md), each sent once the one before is answered. Only while
+Remote Access is on, the relay has accepted the home's identity and the lock passed its self-test;
+the account keeps backups only of a home an account has claimed (`NOT_CLAIMED` otherwise). A daily
+backup that could not be made (the relay offline) is tried again every 15 minutes until 06:00, then
+that day has none; Remote Access off is logged once a day. The log says `backup uploaded` (with its
+size, chunks and times: the line a history of what happened can show) or `automatic backup not
+made` with why; `GET /v1/backup/automatic` gives the last one's time, size and outcome.
+
+### In the account
+
+The account service keeps the ciphertext in chunks (D1, `migrations/0007_cloud_backups.sql`), with
+its size, when it came and its `key_id`: nothing about the home. One a day per home (a newer one
+the same day, UTC, replaces it), the last 7, and at most 5 MB a home in all: above that the oldest
+go first, and the newest always stays. A single backup is at most 3,000,000 characters (the largest
+backup, 2 MiB of JSON, is about 2.8 MB sealed; a big home's is about 175 KB): a larger one is not
+sent, and the log says `BACKUP_TOO_LARGE` (download a backup file instead). They go when an admin
+deletes them, and with the home when its owner deletes their account; an upload that never finished
+goes after an hour.
+
+The home's admins list them (date, size, which password), download one and delete them
+(`GET /v1/homes/{home_id}/backups`, `GET …/backups/{id}`, `DELETE …/backups`). The account service
+does not know roles (they are the controller's keys): today only the home's owner passes, and
+`mayUseBackups` in `cloud/src/backups.js` is the one place that decides; once the controller
+announces which key ids are admins' with its key ids, the admins who use them pass too.
+
+### Restoring one
+
+The app lists the backups of the account's homes it may see (this device's linked home first). An
+admin picks one and types its backup password; the browser downloads it, makes the private key
+again from the password and the backup's own salt and iterations, checks the MAC (a wrong password,
+or a changed backup, opens nothing and sends nothing) and opens it. The document then goes through
+the same check, preview and **Replace everything** as a file (above). After a controller was
+replaced, pair one device at home, sign in, and restore from the list; the backup's remote identity
+moves to the new controller by the rules above (it looks like another home's: tick **Move remote
+access to this controller**). Then set the backup password again on it: the new controller has no
+key until an admin sets one.
+
 ## Limits
 
 - A backup is at most 2 MiB of JSON (a home at DirectorLink's limits: 50 scenes of 40 steps with 100
@@ -235,7 +335,18 @@ another's: tick the box once the old controller is off or reset.
 `driver/tests/test_backup.lua` (round trip into fresh storage, the checks, all or nothing, the
 keys kept or restored and "this device is", key records, matching with swaps and doors, schedules,
 invitations, uploads per key and their timer, the remote identity and another home's backup, a store
-not read at start, names cut, a big home), `tests/app/backup.test.mjs` (the file, the strength hint,
+not read at start, names cut, a big home; the Sonos room choices in and out, by name, gone, a backup
+from before 1.6.0, all or nothing), `tests/app/backup.test.mjs` (the file, the strength hint,
 the parts, the Settings panel, when it shows, and its preview), the contract test
 (`scripts/check_contract.py`), and a browser check against the dev server: download, start it again
 with fresh storage, pair, restore.
+
+Automatic backups: `tests/vectors/cloud_backup.json` (Node's crypto made it: the key from the
+password, each step of the seal), reproduced by `driver/tests/test_auto_backup.lua` (the seal and
+its slices; the key set in sealed requests only; Back up now sealed, in chunks one at a time, opened
+with the private key; refusals, timeouts, a changed password; the nightly minute, retries, Remote
+Access off) and opened by `tests/app/cloud-backup.test.mjs` (the key and the vectors, the ladder
+where WebCrypto has no X25519; the section: signing in first, the password set with only its public
+key sent, Back up now, the list, a restore through the same preview, change and turn off), and
+`tests/cloud/backups.test.mjs` (chunks kept whole, sizes and order, a home nobody claimed, one a day,
+seven and 5 MB, who may list, download and delete).

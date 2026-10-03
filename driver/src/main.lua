@@ -27,6 +27,7 @@ local Invitations = require("src.auth.invitations")
 local Sonos = require("src.sonos.sonos")
 local SonosClient = require("src.sonos.client")
 local SonosRooms = require("src.sonos.rooms")
+local AutoBackup = require("src.cloud.auto_backup")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -450,6 +451,7 @@ function OnDriverLateInit(driverInitType)
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
     SonosRooms.load()
+    AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
         assignProfiles()
@@ -521,6 +523,8 @@ function OnDriverLateInit(driverInitType)
             refreshCalendarStatus(now)
             -- Keys that expired go within a minute, with their invitations, even when nothing asks.
             Keys.count()
+            -- The day's automatic backup, at the home's minute (ADR-048).
+            AutoBackup.tick(now)
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil
@@ -544,6 +548,15 @@ function OnDriverLateInit(driverInitType)
         onStatus = function(text)
             updateProperty("Remote Status", text)
         end,
+    })
+    -- Automatic backups go to the account over the relay connection (ADR-048).
+    AutoBackup.configure({
+        registry = Registry,
+        ready = function()
+            return STATE.status == "ok"
+        end,
+        remoteEnabled = services.remote.enabled,
+        lockAvailable = Remote.available,
     })
     if Properties and Properties["Remote Access"] == "On" then
         Relay.start()

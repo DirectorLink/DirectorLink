@@ -6,12 +6,18 @@
 --   POST /v1/restore        checks it ("dry_run", the default: nothing changes) or restores it;
 --                           "replaces_key": this device is that key of the backup's, "move_remote":
 --                           another home's remote identity moves here
+-- Automatic backups to the account (ADR-048, src/cloud/auto_backup.lua):
+--   GET    /v1/backup/automatic      whether they are on, the backup password's public key, the last
+--   PUT    /v1/backup/automatic      the backup password's public key, salt and iterations (sealed)
+--   DELETE /v1/backup/automatic      turns them off (sealed)
+--   POST   /v1/backup/automatic/run  Back up now
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Backup = require("src.core.backup")
+local AutoBackup = require("src.cloud.auto_backup")
 
 local Handlers = {}
 
@@ -135,6 +141,63 @@ function Handlers.restore(ctx)
         pcall(services.onRestored, { switching = plan.switching })
     end
     return 200, { dry_run = false, restore = plan.preview, restored_at = Clock.iso(now) }
+end
+
+function Handlers.automatic(ctx)
+    return 200, AutoBackup.status()
+end
+
+-- PUT /v1/backup/automatic {"public_key", "salt", "iterations", "kdf"}: sealed only, so that nobody
+-- on the network can put their own key in its place.
+function Handlers.set_automatic(ctx)
+    local refused = inTheClear(ctx)
+    if refused then
+        return refused
+    end
+    local problem = Validate.body(ctx.body, { public_key = true, salt = true, iterations = true, kdf = true })
+    if problem then
+        return problem
+    end
+    local status, failure = AutoBackup.setKey(ctx.body, ctx.apiKey.id, Clock.now())
+    if not status then
+        if failure.field then
+            return Problem.invalidField(failure.field, failure.detail)
+        end
+        return problemFrom(failure)
+    end
+    return 200, status
+end
+
+function Handlers.clear_automatic(ctx)
+    local refused = inTheClear(ctx)
+    if refused then
+        return refused
+    end
+    local ok, failure = AutoBackup.clear(ctx.apiKey.id)
+    if not ok then
+        return problemFrom(failure)
+    end
+    return 204
+end
+
+-- Why Back up now cannot start: the status and what to say.
+local NOT_NOW = {
+    AUTOMATIC_BACKUP_OFF = { 409, "Automatic backups are off: set the backup password first" },
+    BACKUP_RUNNING = { 409, "A backup is being made; it is done in a minute" },
+    REMOTE_ACCESS_OFF = { 409, "Backups go to the account through remote access: turn on Remote Access in Composer first" },
+    HOME_NOT_LINKED = { 409, "DirectorLink's servers have not accepted this home yet: link it to your account first" },
+    LOCK_UNAVAILABLE = { 503, "This controller cannot seal (the lock self-test failed; see the log)" },
+    REMOTE_OFFLINE = { 503, "The controller is not connected to DirectorLink's servers; try again in a minute" },
+    PROJECT_NOT_READY = { 503, "DirectorLink has not read the project yet; try again in a minute" },
+}
+
+function Handlers.run_automatic(ctx)
+    local ok, code = AutoBackup.runNow(ctx.apiKey.id, Clock.now())
+    if not ok then
+        local answer = NOT_NOW[code] or { 500, "The backup could not start" }
+        return Problem.new(answer[1], code, answer[2])
+    end
+    return 202, { started = true, status = AutoBackup.status() }
 end
 
 return Handlers

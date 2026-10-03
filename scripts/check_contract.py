@@ -718,6 +718,25 @@ def scenario(client, bridge):
         fail(f"POST /v1/restore with dry_run false should restore: {restored}")
     client.check("GET", "/v1/scenes", 200)
 
+    # Automatic backups to the account (1.6.0, ADR-048): the backup password's public key, set in
+    # sealed requests only; Back up now needs Remote Access, which is off here.
+    if client.check("GET", "/v1/system", 200)["features"].get("automatic_backup") is not True:
+        fail("GET /v1/system should say features.automatic_backup true: the app shows the section only then")
+    if client.check("GET", "/v1/backup/automatic", 200)["enabled"] is not False:
+        fail("automatic backups should be off until a backup password is set")
+    backup_key = {"public_key": base64.b64encode(x25519_public(os.urandom(32))).decode(), "salt": base64.b64encode(os.urandom(16)).decode(), "iterations": 600000, "kdf": "PBKDF2-SHA-256"}
+    client.check("PUT", "/v1/backup/automatic", 403, body=backup_key)
+    client.check_sealed(bridge, "PUT", "/v1/backup/automatic", 400, body=dict(backup_key, iterations=10))
+    automatic = client.check_sealed(bridge, "PUT", "/v1/backup/automatic", 200, body=backup_key)
+    if not automatic["enabled"] or automatic["key"]["public_key"] != backup_key["public_key"]:
+        fail(f"PUT /v1/backup/automatic should turn automatic backups on with the key: {automatic}")
+    if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "REMOTE_ACCESS_OFF":
+        fail("Back up now with Remote Access off should be REMOTE_ACCESS_OFF")
+    client.check("DELETE", "/v1/backup/automatic", 403)
+    client.check_sealed(bridge, "DELETE", "/v1/backup/automatic", 204)
+    if client.check("POST", "/v1/backup/automatic/run", 409)["code"] != "AUTOMATIC_BACKUP_OFF":
+        fail("Back up now with automatic backups off should be AUTOMATIC_BACKUP_OFF")
+
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
     info = client.check("GET", "/v1/sealed", 200, auth=False)
