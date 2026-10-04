@@ -24,7 +24,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
     <td align="center">Climate</td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/scenes.png" width="260" alt="Scenes: Good Morning, Movie Night, Leaving Home and Good Night, each one tap to run"></td>
+    <td><img src="docs/screenshots/scenes.png" width="260" alt="Scenes: Good Morning, Movie Night, Leaving Home, Good Night and Welcome Home, each one tap to run"></td>
     <td><img src="docs/screenshots/schedules.png" width="260" alt="Schedules: the weather at home, and scenes run on weekday mornings, at sunset and when it gets hot"></td>
     <td><img src="docs/screenshots/home-dark.png" width="260" alt="Home in dark mode"></td>
   </tr>
@@ -32,6 +32,16 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
     <td align="center">Scenes</td>
     <td align="center">Schedules</td>
     <td align="center">Dark mode</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/music.png" width="260" alt="Kitchen: the Kitchen and Living Room Sonos rooms playing together, with the group's volume, each room's volume and Leave group"></td>
+    <td><img src="docs/screenshots/people.png" width="260" alt="People and devices: Sam, a member, may use 5 rooms, lights, climate, fans, blinds and music, the cameras, doors and gates and 3 scenes; the rooms are ticked in the editor"></td>
+    <td><img src="docs/screenshots/history.png" width="260" alt="History: today a scene run by Alex, the main gate opened in answer to an ask-before-opening question, the front door opened by Sam, and the 07:00 schedule"></td>
+  </tr>
+  <tr>
+    <td align="center">Music in several rooms</td>
+    <td align="center">A member's access</td>
+    <td align="center">History</td>
   </tr>
 </table>
 
