@@ -363,8 +363,10 @@ end
 
 -- Sends `detail` (its kind and what to say) to every key that gets that kind, saying it happened at
 -- `at` (a time, or the ISO text of one; default `now`). `brief`: kept by the push services a minute
--- only (a doorbell). Returns how many keys it went to, or nil and why not.
-local function send(detail, now, brief, at)
+-- only (a doorbell). `only` (a set of key ids): to those keys instead, whatever their role and kinds,
+-- if their device switched alerts on (an open request, ADR-058). Returns how many keys it went to
+-- and their ids (a set), or nil and why not.
+local function send(detail, now, brief, at, only)
     local options = state.options
     if not state.loaded or not state.readable or not options then
         return nil, "not ready"
@@ -390,19 +392,26 @@ local function send(detail, now, brief, at)
     if not plaintext then
         return nil, "too large"
     end
-    local recipients, count = {}, 0
+    local recipients, ids, count = {}, {}, 0
     for _, key in ipairs(options.keys.list()) do
         local choice = state.choices[key.id]
-        if choice and choice.on and Roles.allows(key.role, Alerts.ROLES[detail.kind]) and wants(choice, detail.kind) then
+        local gets
+        if only then
+            gets = only[key.id] == true
+        else
+            gets = Roles.allows(key.role, Alerts.ROLES[detail.kind]) and wants(choice, detail.kind)
+        end
+        if choice and choice.on and gets then
             local remote = options.keys.remote(key.id)
             if remote and remote.lock then
                 recipients[key.id] = Alerts.seal(remote.lock, home, key.id, plaintext)
+                ids[key.id] = true
                 count = count + 1
             end
         end
     end
     if count == 0 then
-        return 0
+        return 0, ids
     end
     local message = { type = "notify", at = detail.at, ["for"] = recipients }
     if brief then
@@ -412,7 +421,7 @@ local function send(detail, now, brief, at)
         return nil, "not connected"
     end
     state.hour[#state.hour + 1] = now
-    return count
+    return count, ids
 end
 
 local function sent(kind, count, why)
@@ -420,6 +429,9 @@ local function sent(kind, count, why)
         Log.info("alerts", count > 0 and "alert sent" or "alert for nobody", { kind = kind, keys = count })
     else
         Log.info("alerts", "alert not sent", { kind = kind, why = why })
+    end
+    if count then
+        return count
     end
     return count, why
 end
@@ -505,6 +517,26 @@ function Alerts.scheduleFailed(at, info, now)
     local detail = { kind = "schedule_failed", name = cut(info and info.what, Alerts.MAX_NAME) }
     -- At the run's own time (a run caught up after a restart is late).
     return sent("schedule_failed", send(detail, now, false, at))
+end
+
+-- An ask-to-open link ran (ADR-058, src/api/handlers/ask_links.lua): the devices of its person that
+-- may open the door `device` (`keyIds`, a set) and switched alerts on are asked whether to open it,
+-- with the request's id, how many seconds it lasts and the link's label. Not one of the kinds a key
+-- chooses: its person made the link to be asked. Brief: a push service keeps it a minute (the
+-- request lasts two). Returns how many keys it went to and their ids, or nil and why not.
+function Alerts.openRequest(device, request, keyIds, now)
+    now = now or Clock.now()
+    local detail = deviceDetail("open_request", device)
+    detail.request = request.id
+    detail.seconds = request.seconds
+    detail.via = cut(request.label, Alerts.MAX_NAME)
+    local count, ids = send(detail, now, true, nil, keyIds or {})
+    if count then
+        Log.info("alerts", count > 0 and "open request sent" or "open request for nobody", { keys = count, device_id = device.id })
+    else
+        Log.info("alerts", "open request not sent", { why = ids, device_id = device.id })
+    end
+    return count, ids
 end
 
 -- ---- what the controller notices ---------------------------------------------------------------

@@ -114,6 +114,8 @@ function System.info(ctx)
         -- ADR-049), always there.
         -- sonos_groups: /v1/music/{id}/group, and music scene steps that resume, set the volume
         -- and play a favorite (1.8.0, ADR-057), always there.
+        -- ask_links: /v1/ask-links, open requests sealed as alerts, and a pulse that answers one
+        -- (1.8.0, ADR-058), always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -124,6 +126,7 @@ function System.info(ctx)
             scene_links = true,
             refrigerators = true,
             sonos_groups = true,
+            ask_links = true,
         },
     }
 end

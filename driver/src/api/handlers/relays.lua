@@ -3,6 +3,7 @@ local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Activity = require("src.core.activity")
+local AskLinkHandlers = require("src.api.handlers.ask_links")
 
 -- How the history names what a relay was told (a relay held closed holds its door open).
 local HISTORY = { pulse = "pulse", close = "hold", open = "release" }
@@ -23,7 +24,8 @@ local function findRelay(ctx)
     return device
 end
 
-local function run(ctx, device, action)
+-- `answering`: an ask-to-open link's request this pulse answers (ADR-058): { link_id, note, done }.
+local function run(ctx, device, action, answering)
     if not ctx.services.doorControlEnabled() then
         return Problem.new(403, "DOOR_CONTROL_DISABLED",
             "Door control is off; turn on the Door Control property of DirectorLink in Composer")
@@ -38,12 +40,23 @@ local function run(ctx, device, action)
     if not ok then
         return Problem.fromAdapter(failure)
     end
+    if answering then
+        answering.done()
+    end
     ctx.services.log.info("relay_command", "relay " .. action .. " requested", {
         device_id = device.id,
         key_id = ctx.apiKey and ctx.apiKey.id or Json.null,
         client = ctx.client and ctx.client.ip or Json.null,
+        link_id = answering and answering.link_id or nil,
     })
-    Activity.record("door", HISTORY[action], { by = ctx.apiKey, what = device.name, room = device.room_name, ids = { device_id = device.id, room_id = device.room_id } })
+    Activity.record("door", HISTORY[action], {
+        by = ctx.apiKey,
+        what = device.name,
+        room = device.room_name,
+        -- Opened in answer to an ask-to-open link: its label, and its id.
+        note = answering and answering.note or nil,
+        ids = { device_id = device.id, room_id = device.room_id, link_id = answering and answering.link_id or nil },
+    })
     return 202, Views.relay(ctx.services.registry, device)
 end
 
@@ -87,12 +100,22 @@ function Relays.update(ctx)
     return run(ctx, device, action)
 end
 
+-- POST, optionally with {"request": "<id>"}: the answer to an ask-to-open link's request (ADR-058),
+-- from a device it was sent to, only while it lasts and once (src/api/handlers/ask_links.lua). Any
+-- other body is ignored, as before.
 function Relays.pulse(ctx)
     local device, problem = findRelay(ctx)
     if not device then
         return problem
     end
-    return run(ctx, device, "pulse")
+    local answering
+    if type(ctx.body) == "table" and ctx.body.request ~= nil and ctx.body.request ~= Json.null then
+        answering, problem = AskLinkHandlers.claim(ctx, device, ctx.body.request)
+        if not answering then
+            return problem
+        end
+    end
+    return run(ctx, device, "pulse", answering)
 end
 
 return Relays

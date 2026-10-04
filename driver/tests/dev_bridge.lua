@@ -16,6 +16,9 @@
 --   in:  "linked\n" switches Remote Access on and marks the home's identity as one the relay has
 --        accepted (there is no relay here), so scene links can be made; out: "LINKED <home id>\n"
 --   in:  "event <device id> <event id>\n" a device fires an event; out: "EVENT <times delivered>\n"
+--   in:  "ask <hex JSON { link, secret }>\n" runs an ask-to-open link (ADR-058) as the account service
+--        would pass it on, the relay counting as connected meanwhile; out: "ASKED <hex JSON { answer,
+--        questions: [{ key_id, detail }] }>\n", each question opened as that device's worker would
 -- With a second argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
@@ -40,8 +43,23 @@ local sonosForwarding = arg and arg[2] == "sonos"
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
 -- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
 -- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On.
+-- An ask-to-open link's run ("ask", below): the relay counts as connected while it runs, and what
+-- the driver tells it (the sealed question) is kept here instead.
+local relaying = { on = false, told = {} }
 local mock = Mock.startDriver(Mock.demoProject(), specText, nil, function()
     Properties["Alarm Status"] = "On"
+    local Relay = require("src.cloud.relay")
+    local connected, tell = Relay.connected, Relay.tell
+    Relay.connected = function()
+        return relaying.on or connected()
+    end
+    Relay.tell = function(message)
+        if relaying.on then
+            relaying.told[#relaying.told + 1] = message
+            return true
+        end
+        return tell(message)
+    end
 end)
 -- The fake home lets the API open its (fake) doors.
 Properties["Door Control"] = "Enabled"
@@ -320,6 +338,48 @@ local function command(line)
         Mock.removeDevice(mock.project, tonumber(removed))
         ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
         return "REMOVED"
+    end
+    local asking = line:match("^ask (%x+)$")
+    if asking then
+        local asked = Json.decode(fromHex(asking)) or {}
+        local services = {
+            registry = require("src.core.registry"),
+            log = require("src.core.log"),
+            doorControlEnabled = function()
+                return Properties["Door Control"] == "Enabled"
+            end,
+        }
+        local answer = { type = "link_result", ok = false, code = "NOT_FOUND" }
+        relaying.on, relaying.told = true, {}
+        local ok, err = pcall(require("src.api.handlers.ask_links").relayRun, services, { type = "link", id = "dev", link = asked.link, secret = asked.secret }, function(message)
+            answer = message
+        end)
+        relaying.on = false
+        if not ok then
+            answer = { error = tostring(err) }
+        end
+        -- Each question opened with that device's alert key, as its service worker would.
+        local Alerts = require("src.cloud.alerts")
+        local Base64 = require("src.core.base64")
+        local questions = Json.array()
+        for _, message in ipairs(relaying.told) do
+            for keyId, sealed in pairs(type(message["for"]) == "table" and message["for"] or {}) do
+                local remote = require("src.auth.keys").remote(keyId)
+                if remote and remote.lock then
+                    local alertKey = Alerts.alertKey(remote.lock)
+                    local enc = C4:HMAC("SHA256", alertKey, "enc", { key_encoding = "HEX", data_encoding = "NONE", return_encoding = "HEX" }):lower()
+                    local plaintext = C4:Decrypt("AES-256-CBC", enc, Base64.toHex(Base64.decode(sealed.iv)), Base64.toHex(Base64.decode(sealed.ct)), {
+                        key_encoding = "HEX",
+                        iv_encoding = "HEX",
+                        data_encoding = "HEX",
+                        return_encoding = "NONE",
+                        padding = true,
+                    })
+                    questions[#questions + 1] = { key_id = keyId, detail = Json.decode(plaintext or "") }
+                end
+            end
+        end
+        return "ASKED " .. toHex(Json.encode({ answer = answer, questions = questions }))
     end
     local opening = line:match("^open (%x+)$")
     if opening then

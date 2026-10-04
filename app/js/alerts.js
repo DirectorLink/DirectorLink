@@ -143,6 +143,10 @@ export function alertTexts() {
     fridge_door: t("alerts.fridgeDoor"),
     fridge_door_now: t("alerts.fridgeDoorNow"),
     device_request: t("alerts.deviceRequest"),
+    // Ask before opening (1.8.0, ADR-058): the question an ask-to-open link sends its person.
+    open_request_title: t("alerts.openRequestTitle"),
+    open_request: t("alerts.openRequest"),
+    open_request_unnamed: t("alerts.openRequestUnnamed"),
   };
 }
 

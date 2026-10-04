@@ -18,6 +18,8 @@ local Activity = require("src.core.activity")
 local Relay = require("src.cloud.relay")
 local Keys = require("src.auth.keys")
 local SceneHandlers = require("src.api.handlers.scenes")
+-- Ask-to-open links (ADR-058) come by the same run, and go when keys change, as these do.
+local AskLinkHandlers = require("src.api.handlers.ask_links")
 
 local Handlers = {}
 
@@ -81,6 +83,7 @@ end
 -- keys change, before a list). Nothing while the scenes could not be read: every link would look
 -- orphaned; and no key is missing while the keys could not be read.
 function Handlers.prune()
+    AskLinkHandlers.prune()
     if not Scenes.complete() then
         return {}
     end
@@ -221,6 +224,10 @@ function Handlers.relayRun(services, message, send)
     end
     local linkId = type(message.link) == "string" and message.link:match("^[0-9a-f]+$") and #message.link == SceneLinks.ID_LENGTH and message.link or nil
     local link = linkId and SceneLinks.check(linkId, message.secret) or nil
+    -- Not a scene's: an ask-to-open link answers for itself (it opens nothing).
+    if not link and linkId and AskLinkHandlers.relayRun(services, message, send) then
+        return
+    end
     if not link then
         refused(services, "unknown link or wrong secret", linkId)
         answer({ ok = false, code = "NOT_FOUND" })

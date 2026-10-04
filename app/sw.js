@@ -40,6 +40,8 @@ const ASSETS = [
   "/js/scenes.js",
   "/js/views/scene-links.js",
   "/js/scene-links.js",
+  "/js/views/ask-links.js",
+  "/js/ask-links.js",
   "/js/views/schedules.js",
   "/js/schedules.js",
   "/js/calendar.js",
@@ -198,7 +200,9 @@ self.addEventListener("activate", (event) => {
 // shows a notification (browsers revoke a subscription that does not). Tapping a doorbell's opens
 // Home (its banner), a refrigerator's its room, any other the home's history. The servers' push of
 // a new device asking to join (1.8.0), { kind: "device_request", home, at, request }, says only
-// that, and opens the app, where the request shows under every screen's header.
+// that, and opens the app, where the request shows under every screen's header. An ask-to-open
+// link's request (1.8.0, ADR-058) asks "Open the main gate?": its tap opens the app's question
+// (#/open/<door>/<request>/<until>), where only Open, with this device's own key, opens the door.
 const ALERT_TEXTS_CACHE = "directorlink-alerts";
 const ALERT_TEXTS_PATH = "/alert-texts.json";
 const ALERT_KEY_PATH = "/alert-key.json";
@@ -221,6 +225,9 @@ const ALERT_TEXTS = {
   fridge_door: "{name} – the door has been open for at least {minutes} min ({time}).",
   fridge_door_now: "{name} – the door was left open ({time}).",
   device_request: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
+  open_request_title: "Open {name}?",
+  open_request: "Your link “{via}” asked at {time}. Tap to answer.",
+  open_request_unnamed: "Your link asked at {time}. Tap to answer.",
 };
 const HISTORY_URL = "/#/settings/history";
 
@@ -317,6 +324,21 @@ function sealedNotice(detail, texts, home) {
     }
     case "schedule_failed":
       return { title: texts.title, body: fill(name ? texts.schedule_failed_named : texts.schedule_failed, { name, time }), tag: `alert-schedule_failed-${home}`, url: HISTORY_URL };
+    case "open_request": {
+      // An ask-to-open link asks this person (ADR-058). The question lasts `seconds` from now on this
+      // device's clock (the push service keeps it a minute at most); the controller decides anyway.
+      const request = typeof detail.request === "string" && /^[0-9a-f]{16}$/.test(detail.request) ? detail.request : null;
+      if (!name || !id || !request) return null;
+      const seconds = Number.isInteger(detail.seconds) ? Math.min(Math.max(detail.seconds, 1), 600) : 120;
+      const until = Date.now() + seconds * 1000;
+      const via = text(detail.via);
+      return {
+        title: fill(texts.open_request_title, { name }),
+        body: fill(via ? texts.open_request : texts.open_request_unnamed, { via, time }),
+        tag: `open-${id}`,
+        url: `/#/open/${id}/${request}/${until}`,
+      };
+    }
     default:
       return null;
   }

@@ -31,7 +31,8 @@ export const FILTERS = {
 
 const ICONS = { scene: "scene", door: "door", composer: "controller", access: "key" };
 // A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
-const ACTION_ICONS = { left_open: "fridge" };
+// An ask-to-open link's question (1.8.0) is a door entry with a bell; its links are access entries.
+const ACTION_ICONS = { left_open: "fridge", asked: "bell", ask_link_created: "link", ask_link_replaced: "link", ask_link_removed: "link" };
 const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
 
 let generation = 0;
@@ -185,7 +186,8 @@ function who(entry) {
   // A door or gate opened without DirectorLink (1.7.0, ADR-050).
   if (by.type === "control4") return t("history.who.control4");
   // A scene's link, from a phone's automation (1.7.0, ADR-051), by the label an admin gave it.
-  if (by.type === "link") return by.name ? t("history.who.link", { name: isolate(by.name) }) : t("history.who.linkUnnamed");
+  // A door's ask-before-opening link (1.8.0, ADR-058) asks, a scene's runs.
+  if (by.type === "link") return by.name ? t("history.who.link", { name: isolate(by.name) }) : t(entry.kind === "door" ? "history.who.askLinkUnnamed" : "history.who.linkUnnamed");
   if (by.type !== "key") return t("history.who.controller");
   const device = by.name ? isolate(by.name) : t("history.who.unknownDevice");
   const text = by.profile && by.profile !== by.name ? t("history.who.person", { person: isolate(by.profile), device }) : device;
@@ -236,6 +238,7 @@ function title(entry) {
     case "door.release":
     case "door.doorbell":
     case "door.left_open":
+    case "door.asked":
       return t(`history.door.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
     case "access.paired":
     case "access.created":
@@ -253,6 +256,10 @@ function title(entry) {
     case "access.link_replaced":
     case "access.link_removed":
       return withName(`history.access.${entry.action}`, what || t("history.sceneGone"));
+    case "access.ask_link_created":
+    case "access.ask_link_replaced":
+    case "access.ask_link_removed":
+      return t(`history.access.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
     case "access.links_removed":
       return entry.outcome === "failed" ? t("history.access.links_not_removed") : t("history.access.links_removed", { count: entry.count ?? 0 });
     case "composer.project": {
@@ -289,6 +296,10 @@ function title(entry) {
 // Why a scene link went without an admin removing it (1.7.0), besides its scene's deletion.
 const LINK_REASONS = ["doors", "other_home", "new_identity", "key_gone", "keys_revoked"];
 
+// Ask before opening (1.8.0): why nobody was asked, and why a link went by itself.
+const ASK_REASONS = ["nobody", "doors_off", "not_sent"];
+const ASK_LINK_REASONS = ["key_gone", "no_access", "door_gone", "other_home"];
+
 // Why a backup to the account was not made (GET /v1/activity's reasons for cloud_backup).
 const BACKUP_REASONS =["remote_off", "account_unreachable", "not_linked", "too_large", "limit", "account_full", "stopped"];
 
@@ -302,6 +313,14 @@ export function outcomeText(entry) {
     // Remove All Scene Links that the controller could not save: the links still work.
     const failed = entry.outcome === "failed" ? t("history.reason.not_saved") : null;
     return [failed, reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
+  }
+  // Ask before opening (1.8.0, ADR-058): asked on how many devices, or why nobody was.
+  if (entry.kind === "door" && entry.action === "asked") {
+    return ASK_REASONS.includes(entry.reason) ? t(`history.reason.${entry.reason}`) : t("history.counts.asked", { count: entry.count ?? 0 });
+  }
+  if (entry.kind === "access" && /^ask_link_/.test(entry.action || "")) {
+    const reason = ASK_LINK_REASONS.includes(entry.reason) ? t(`history.reason.${entry.reason}`) : null;
+    return [reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
   }
   if (entry.kind === "schedule" && entry.outcome === "skipped") {
     return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);
@@ -327,6 +346,8 @@ export function outcomeText(entry) {
   if (entry.kind === "schedule" && entry.note === "late") parts.push(t("history.note.late"));
   if (entry.kind === "schedule" && entry.note === "no_weather") parts.push(t("history.note.noWeather"));
   if (entry.via) parts.push(t("history.via", { scene: isolate(entry.via) }));
+  // A door opened in answer to an ask-to-open link (1.8.0).
+  if (entry.kind === "door" && entry.ids?.link_id) parts.push(entry.note ? t("history.answered", { label: isolate(entry.note) }) : t("history.answeredUnnamed"));
   return parts.join(" · ");
 }
 

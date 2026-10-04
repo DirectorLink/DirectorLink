@@ -4135,6 +4135,56 @@ a.scene-name:hover {
   margin-block-start: 16px;
 }
 
+/* Ask before opening (ADR-058, views/ask-links.js): a door's link, the list, and the question. */
+.relay-ask {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.ask-links {
+  max-width: none;
+}
+
+.ask-links .section-title {
+  margin: 8px 0 0;
+}
+
+.ask-links-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-links-item > .settings-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.ask-links-item > .button {
+  flex: 0 0 auto;
+  margin-inline-end: 8px;
+}
+
+.open-request {
+  max-width: 480px;
+}
+
+.open-request-question {
+  margin: 8px 0 0;
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.open-request-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.open-request-actions .button {
+  min-height: 56px;
+  font-size: 17px;
+}
+
 /* Add an action: where, what, do. */
 .add-title {
   margin: 0;
