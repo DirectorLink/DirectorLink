@@ -35,6 +35,7 @@ local suites = {
     "test_cpace",
     "test_cpace_pairing",
     "test_key_expiry",
+    "test_access",
     "test_security",
     "test_light_v1",
     "test_thermostat_v2_heat",
@@ -56,6 +57,7 @@ local suites = {
 -- DEFAULT_SECONDS: add it here once measured (lua5.1 driver/tests/run.lua <suite>).
 local SECONDS = {
     test_json = 1,
+    test_access = 1,
     test_http = 1,
     test_router = 1,
     test_api = 16,
