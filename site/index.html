@@ -8,7 +8,7 @@
     <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
     <meta
       name="description"
-      content="DirectorLink: an open-source Control4 driver and app. Control your home at home and away, locked end to end; one-tap scenes; schedules by the clock, the sun and the weather; access for the family; everything visible to your installer in Composer."
+      content="DirectorLink: an open-source Control4 driver and app. Control your home at home and away, locked end to end; one-tap scenes run by the clock, the sun, the weather or when you arrive home; the doorbell and other alerts on your phone; Sonos; history and automatic backups; access for the family; everything visible to your installer in Composer."
     />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
@@ -39,9 +39,10 @@
           <h1 id="hero-title">Direct to Director. <span>End-to-end integration.</span> <span>Open source.</span></h1>
           <p class="intro">
             DirectorLink is a free, open-source driver for Control4 and an app for phones and computers.
-            Control lights, AC, blinds, cameras and gates at home and away, make one-tap scenes, and
-            schedule them by the clock, the sun or the weather. You make the changes yourself, and your
-            installer still sees everything in Composer. In English and Hebrew.
+            Control lights, AC, blinds, music, cameras and gates at home and away. Make one-tap scenes and
+            run them by the clock, the sun, the weather, or when you arrive home. Get the doorbell and other
+            alerts on your phone. You make the changes yourself, and your installer still sees everything
+            in Composer. In English and Hebrew.
           </p>
           <div class="actions">
             <a class="button button-primary" href="https://app.directorlink.io">Open the app</a>
@@ -131,10 +132,10 @@
           <li class="step">
             <span class="step-number" aria-hidden="true">3</span>
             <h3>Use it anywhere</h3>
-            <p>Turn on Remote Access in Composer, sign in with Google and link the home. Add your phone with Add my other device and invite the family by email.</p>
+            <p>Turn on Remote Access in Composer, sign in with Google or Apple, and link the home. Add your phone with Join from another device, and invite the family by email.</p>
           </li>
         </ol>
-        <p class="note">Needs a Control4 controller with OS 3.3.0 or newer. DirectorLink 1.0 is used every day in one home so far: tell us what works on <a href="https://github.directorlink.io/issues" rel="noreferrer">GitHub</a>.</p>
+        <p class="note">Needs a Control4 controller with OS 3.3.0 or newer. DirectorLink is used every day in a real home: tell us what works on <a href="https://github.directorlink.io/issues" rel="noreferrer">GitHub</a>.</p>
       </section>
 
       <section class="features" aria-labelledby="features-title">
@@ -142,19 +143,43 @@
         <ul class="feature-list">
           <li>
             <h3>At home and away</h3>
-            <p>At home the app talks to the controller directly, locked with its own key. Away, and on iPhone, it goes through your account, locked end to end: our servers pass it along but can't read it.</p>
+            <p>At home the app talks to the controller directly, locked with its own key. Away, and on iPhone, it goes through your account (Google or Apple), locked end to end: our servers pass it along but can't read it.</p>
+          </li>
+          <li>
+            <h3>Every device in one app</h3>
+            <p>Lights and dimmers, AC and floor heating, fans, blinds, cameras, doors and gates, the doorbell, and the alarm's status (read only). Samsung refrigerators with the free DirectorLink driver.</p>
+          </li>
+          <li>
+            <h3>Music</h3>
+            <p>Your Sonos rooms in the app: what's playing, play, pause, skip, volume and your Sonos favorites. DirectorLink talks to the speakers on your home network.</p>
           </li>
           <li>
             <h3>Scenes</h3>
-            <p>One tap for lights, AC, blinds and gates. Pick single lights, or copy the house as it is right now.</p>
+            <p>One tap for lights, AC, blinds, music and gates. Pick single lights, or copy the house as it is right now. Anything that opens a door asks for a second tap.</p>
           </li>
           <li>
             <h3>Schedules</h3>
             <p>By the clock, at sunrise or sunset, or when it gets hot, windy or rainy (weather from Open-Meteo). The controller runs them on its own.</p>
           </li>
           <li>
+            <h3>When you arrive home</h3>
+            <p>A scene can have a private link for your phone's own automations: iPhone Shortcuts, Android apps, Siri or an NFC tag. Never for doors or gates. <a href="#arrive">How to set it up</a>.</p>
+          </li>
+          <li>
+            <h3>Alerts on your phone</h3>
+            <p>The doorbell, a door or gate opened and by whom, the fridge door left open, the home offline, a schedule that had a problem. Each device picks its own, and what an alert says is locked for that device.</p>
+          </li>
+          <li>
+            <h3>History</h3>
+            <p>What ran, what didn't and why, who opened which door, and what changed in Composer, for the last 30 days. For admins.</p>
+          </li>
+          <li>
+            <h3>Backups</h3>
+            <p>Everything DirectorLink keeps, in a file locked with your password, or every night to your account, locked with a password only you know.</p>
+          </li>
+          <li>
             <h3>The family, with the right access</h3>
-            <p>View only, control, doors, or admin, for every person and device. Each person keeps their own language, theme and favorites.</p>
+            <p>View only, control, doors, or admin, for every person and device. Each person keeps their own language, theme and favorites. A new phone joins with a code from a device you already use.</p>
           </li>
           <li>
             <h3>Visible to your installer</h3>
@@ -162,9 +187,39 @@
           </li>
           <li>
             <h3>A real API</h3>
-            <p>Rooms, lights, climate, blinds, cameras, doors, scenes and schedules as REST resources, described by OpenAPI 3.1, with a key and a role for every app.</p>
+            <p>Rooms, lights, climate, blinds, cameras, doors, music, scenes and schedules as REST resources, described by OpenAPI 3.1, with a key and a role for every app.</p>
           </li>
         </ul>
+      </section>
+
+      <section class="how arrive" id="arrive" aria-labelledby="arrive-title">
+        <h2 id="arrive-title">Arrive home, automatically</h2>
+        <p class="shots-lead">
+          Your phone already knows when you get home. Let it run a scene: lights on, AC on, blinds up. Your
+          location stays on your phone; DirectorLink only gets the run.
+        </p>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Make a link</h3>
+            <p>In the app, open a scene without doors or gates, such as Arriving Home, then Link for automations → Make a link. Copy the address and the secret.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>iPhone: Shortcuts</h3>
+            <p>Automation → New → Arrive, pick your home, Run Immediately. Add Get Contents of URL with the address: Method POST, Request Body JSON, a Text field named <code>secret</code> holding the secret.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Android</h3>
+            <p>In MacroDroid, Tasker or HTTP Shortcuts, a location (geofence) trigger with an HTTP request: POST to the address, with the secret as the body.</p>
+          </li>
+        </ol>
+        <p class="note">
+          Do the same with Leave for a Leaving Home scene, or with an NFC tag by the door. It needs Remote
+          Access and the home linked to your account. Every run is in History, and Replace or Remove ends a
+          link at once, for example when a phone is lost.
+        </p>
       </section>
 
       <section class="more" aria-labelledby="more-title">

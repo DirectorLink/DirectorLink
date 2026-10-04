@@ -491,6 +491,15 @@ main {
   font-size: 19px;
 }
 
+/* Homepage: arriving home with a scene link. */
+.arrive {
+  margin-block-start: 40px;
+}
+
+.arrive code {
+  font-size: 0.9em;
+}
+
 /* Homepage: the line about the drivers. */
 .more {
   display: flex;
