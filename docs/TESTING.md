@@ -2,7 +2,65 @@
 
 ## Current release
 
-`v1.7.0` — Join from another device and Paste invitation link (0zu), scene links (0zt), alerts sealed to each device: doorbells, doors, the refrigerator and choices (0zs), Samsung refrigerators (0zr), DirectorLink in numbers and the drivers pages (0zq). Apply migrations 0008, 0009 and 0010 and deploy the Worker before updating the driver.
+`v1.8.0` — Admins and members (0zz), ask before opening with Siri and Google Assistant (0zy), Sonos groups and music in scenes (0zx), camera pictures at the same time and camera alerts (0zw), what DirectorLink does by itself: drivers updated in Composer, favorites of removed devices, the join notification and the minimum driver version (0zv). No D1 migration; deploy the Worker before or with the driver.
+
+## 0zz. Admins and members (1.8.0)
+
+1. Before updating, note each device's role in People and devices (1.7.0). Update the driver: People and devices lists people, each Admin or Member. A person who had an admin device is an admin; doors devices became members with doors and gates; member devices members without them and without the scenes that open doors; viewer devices members with no rooms and cameras only.
+2. As an admin, **Change** a member: Rooms (one room only), Devices they use (Lights on, Climate off), Cameras off, Doors and gates off, Sees the alarm on, one scene. Save: "Saved. …'s devices follow at once." On that member's phone (reopen the app): Home and the room show only that room's lights; no thermostat, no cameras; Scenes shows only that scene, with Run and no editing; Settings has no Schedules, History, Rooms or controller settings. Turn off all turns off only their lights.
+3. In the API console with that member's key: `GET /v1/devices` lists only what they see; `GET /v1/lights/<a light in another room>` is 404 with the same words as a made-up id, and so is a `PATCH`. A thermostat of their room: 404. `GET /v1/schedules`: 403. `GET /v1/api-keys/current` shows their `access`.
+4. Give them Doors and gates: the gate in their room opens (Door Control on); a gate in another room is not listed. Take it away: the gate stays listed, opening it is refused (403).
+5. Run their scene that opens a gate: it runs in full, the gate opens. A scene not chosen for them: 404 in the console.
+6. Settings → Rooms → **Hide from members** on their room: the member sees nothing of it; the admin still sees it, marked "hidden from members". History → Access: "… hidden from members". Show it again.
+7. Make a second person an admin, then a member again (the app asks first each time); their devices follow. As that second admin, try to change the owner: "Only the home's owner can change the owner's access or devices." The owner making themself a member: "The home's owner is always an admin." Moving the only admin's only device into a member's person: "There must always be an admin…".
+8. As the second admin, link the home to your account again (Settings → Account): refused, only the owner may. As the owner it works as before.
+9. Invite a new member with chosen rooms: the new device has exactly those. Add my other device on a member's device: the new device joins their person.
+10. Alerts: a member without cameras gets no camera alert; a member without Refrigerators gets no refrigerator alert; doorbell rings reach members who see that doorbell.
+11. Back up, then restore on a test controller: the people, their rooms and the hidden rooms come back. A 1.7.0 backup restores, and the people are worked out from its keys.
+12. Downgrade to 1.7.0: every device has a role close to its person's (a member with a room list is `member` and controls every room again); back on 1.8.0 the permissions are as before.
+13. The People and Rooms screens in Hebrew, at 320 and 390 px, light and dark.
+
+## 0zy. Ask before opening, and Siri and Google Assistant (1.8.0)
+
+1. Deploy the 1.8.0 Worker first. With Remote Access on, the home linked and alerts on for this iPhone (the Home Screen app), open the gate's room: the gate's row has **Ask**. Make a link named "Arriving home": the secret shows once, with the iPhone, Siri, Android, Google Assistant and browser steps. History → Access: "Made an ask-before-opening link for …".
+2. iPhone Shortcuts: a shortcut with Get Contents of URL (POST, Request Body JSON, field `secret`). Run it by hand: it returns "Asked: answer the notification on your phone to open.", and within seconds the iPhone shows "Open Main gate?" ("Your link “Arriving home” asked at HH:MM. Tap to answer."). History → Doors: "Asked whether to open Main gate", asked on 1 device.
+3. Tap it: the app shows "Open Main gate?" with Open and Cancel. **Open**: the gate opens, and History shows the opening by your person and device, "Answering the link “Arriving home”".
+4. Run it again and tap the notification after 2 minutes: "This question is over: nothing was opened." Run it, Open, then tap the same notification again: "answered already", nothing opens. Run it twice within 2 minutes: one notification.
+5. Run it 11 times within an hour: from the 11th nothing is asked. A wrong secret: 404.
+6. Turn alerts off on the iPhone and run it: "Nobody was asked…" in the answer and History. Door Control off in Composer: nobody asked, and why.
+7. As an admin, take away the person's Doors and gates (or the gate's room): the link is removed (History says why) and its run gets 404. Revoke the iPhone's key: the same. Composer's Remove All Scene Links removes ask links too.
+8. Make the same request an Arrive (home) automation with Run Immediately and drive home: the question comes near the gate; Open opens it.
+9. **Siri:** a shortcut named "Open Main gate" with the same action: "Hey Siri, Open Main gate" makes the phone ask. For a scene link, a shortcut named "Good night": "Hey Siri, Good night" runs the scene.
+10. **Google Assistant:** HTTP Shortcuts with the scene link's request named "Good night", started by an Assistant routine: the scene runs.
+11. Another person's devices get nothing from your link; an admin sees everyone's links in Scenes → Links for automations, with Remove.
+
+## 0zx. Sonos in several rooms, and in scenes (1.8.0)
+
+1. Play a radio station in the kitchen. On its card, **Play in more rooms…** → the living room: both play the same station in step, and the kitchen keeps playing. The Sonos app shows one group.
+2. **Group volume** moves both and keeps their balance; down to 0 and back up returns to the same balance. Each room's own volume still works.
+3. **Leave group** on the living room: it stops following; the kitchen plays on. In another room, **Play here too…** → the kitchen: it joins.
+4. Pause, Next and a favorite on the group act on all its rooms.
+5. A scene "Good morning": Music → Play a favorite → the kitchen, a station, volume 15, Also play in the living room. Run it: both rooms play the station at 15, grouped. A scene with Volume 10, and one with Resume after a pause: both work.
+6. Remove that favorite in the Sonos app and run the scene: "Done — the music was skipped: that Sonos favorite is no longer in your Sonos favorites".
+7. A member without Music sees no Sonos; a member with Music and only the kitchen can't add the living room (403 in the console).
+8. Composer's scene printout shows `play favorite "…" at volume 15, grouped with …`. A backup file has the steps.
+9. Downgrade to 1.7.0: the new steps are left out (the log says so); back on 1.8.0 they return.
+
+## 0zw. Camera pictures at the same time, and camera alerts (1.8.0)
+
+1. Log Level Debug. Open Cameras through the account (mobile data): every tile gets its picture within a few seconds, and the browser's console says "DirectorLink: 11 camera pictures in … ms, 4 at once (remote)". Note it, and the same at home.
+2. The driver log's `snapshot` lines: after the first round, `requests` is 1 a picture (2 means that camera or NVR took only one kept login at a time: note which), and `in_flight` is never above 8.
+3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`.
+4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Controller → Alerts on this device shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
+5. Walk past again within a minute: no second alert. A member without cameras, or without that camera's room, gets none. In Hebrew the words are Hebrew.
+6. This checks that the Hikvision driver's Alert reaches DirectorLink and that `LAST_ALERT` is read at it (Person, Vehicle, Line Crossing…).
+
+## 0zv. What DirectorLink does by itself (1.8.0)
+
+1. **A driver updated in Composer:** update a device's driver to a new version in Composer (the Samsung Refrigerator driver, for example), without Refresh Project. Within a few minutes the log says "a device's driver was updated in Composer; set up again" with the versions, and what the new driver adds shows.
+2. **Favorites of removed devices:** make a camera a favorite, then remove it in Composer. Home shows "Removed in Composer" with Remove; Remove takes it away. Leave another one: after 7 days it goes by itself (the log says so). A device added back within the 7 days (Undo in Composer) is a tile again.
+3. **A new device asks to join:** on an admin device with alerts on ("A new device of mine asks to join" on) and the app closed, tap Join from another device on a new device: the admin device gets "A new device asks to join your home…"; tapping it opens the app with the request. With the switch off: no notification.
+4. **The minimum driver version,** only on a test Worker (`wrangler dev`; never on api.directorlink.io while other homes use it): `MIN_DRIVER_VERSION` "1.9.0" with a 1.8.0 driver: Remote Status says "Update DirectorLink…", the next try is an hour later, History has "Remote access stopped: update DirectorLink to 1.9.0 or later…", and the app through the account says "Update DirectorLink…". At home the app works. Unset it: the driver connects at its next try, or at once with Remote Access off and on.
 
 ## 0zu. Join from another device, and Paste invitation link (1.7.0)
 
