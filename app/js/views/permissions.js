@@ -39,21 +39,22 @@ export function copyAccess(access) {
 }
 
 // What PATCH /v1/profiles/{id}/access and an invitation's `access` take (an admin's role alone).
+// Rooms and scenes go only once the app has read them (state.rooms, state.scenes): before that, or
+// when reading them failed, they are left out, and the controller keeps what the person has.
 export function accessBody(draft) {
   if (draft.role === "admin") return { role: "admin" };
-  const rooms = new Set(state.rooms.map((room) => room.id));
-  const scenes = new Set((state.scenes || []).map((scene) => scene.id));
-  return {
-    role: "member",
-    all_rooms: draft.all_rooms,
-    // Only rooms and scenes the controller still has (one removed meanwhile would be refused).
-    rooms: draft.rooms.filter((id) => rooms.has(id)),
-    kinds: { ...draft.kinds },
-    cameras: draft.cameras,
-    doors: draft.doors,
-    alarm: draft.alarm,
-    scenes: draft.scenes.filter((id) => scenes.has(id)),
-  };
+  const body = { role: "member", all_rooms: draft.all_rooms };
+  // Only rooms and scenes the controller still has (one removed meanwhile would be refused).
+  if (state.rooms.length) {
+    const rooms = new Set(state.rooms.map((room) => room.id));
+    body.rooms = draft.rooms.filter((id) => rooms.has(id));
+  }
+  Object.assign(body, { kinds: { ...draft.kinds }, cameras: draft.cameras, doors: draft.doors, alarm: draft.alarm });
+  if (Array.isArray(state.scenes)) {
+    const scenes = new Set(state.scenes.map((scene) => scene.id));
+    body.scenes = draft.scenes.filter((id) => scenes.has(id));
+  }
+  return body;
 }
 
 // "All rooms", "2 rooms · lights, climate · cameras": what a member may do, in a line.
@@ -189,7 +190,10 @@ export function permissionsEditor(draft, { prefix = "perm", changed, lockedRole 
               checkRow(`${prefix}-scene-${scene.id}`, name(scene.name, "span", "device-name"), draft.scenes.includes(scene.id), (on) => update(() => (draft.scenes = toggleIn(draft.scenes, scene.id, on))))
             )
           )
-        : h("p", { class: "muted-note" }, state.scenes === null ? t("common.loading") : t("perm.noScenes"))
+        : state.scenes === null
+          ? // Not read yet, or reading them failed: saving leaves the person's scenes as they are.
+            h("p", { class: "muted-note", dataset: { key: `${prefix}-scenes-unread` } }, state.scenesError ? t("perm.scenesUnread", { error: state.scenesError }) : t("perm.scenesLoading"))
+          : h("p", { class: "muted-note" }, t("perm.noScenes"))
     )
   );
   return parts;
