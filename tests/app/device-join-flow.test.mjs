@@ -271,12 +271,25 @@ async function until(check, what) {
 
 // Ticks the page's timers by `ms` until `check` holds: a timer the page sets after a tick (it was
 // still busy, say with its WebCrypto work, on a slow or loaded machine) fires at the next one.
+// At most a few ticks, each followed by real time for the page's work (WebCrypto) to finish:
+// ticking on and on while a slow machine catches up would carry the clock past a request's 10
+// minutes, and the page would give up on what the test waits for.
 async function untilTicking(ms, check, what) {
   const deadline = Date.now() + 5000;
+  let ticks = 0;
   while (Date.now() < deadline) {
-    await tick(ms);
-    if (await check()) return;
+    if (ticks < 4) {
+      await tick(ms);
+      ticks += 1;
+    }
+    const settled = Math.min(deadline, Date.now() + 300);
+    while (Date.now() < settled) {
+      if (await check()) return;
+      mock.timers.tick(0);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   }
+  if (await check()) return;
   assert.fail(`timed out waiting for ${what}`);
 }
 
