@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · Hikvision for Control4: free, open-source drivers for Hikvision IP cameras and NVRs. Every camera added at once, live video, detections, alerts with a snapshot. Local network, no cloud."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · Hikvision for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · Hikvision <span>for Control4</span></h1>
+        <p class="lead">
+          Free, open-source Control4 drivers for Hikvision IP cameras and NVRs. Add one driver, type the
+          camera login once, and every camera on the network is in Control4, named and ready. They work
+          on your local network: no cloud, no extra hardware and no subscription.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/hikvision/download">Download the drivers</a>
+          <a class="button button-secondary" href="/drivers/hikvision/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/hikvision/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">Control4 app</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Find and add every camera</th>
+                <td>Nothing to do: cameras appear, named</td>
+                <td>Hub actions: Search Network, Add New Cameras</td>
+              </tr>
+              <tr>
+                <th scope="row">Live video and snapshots</th>
+                <td>The camera view; the driver picks the H.264 stream that fits each screen</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Detections</th>
+                <td>–</td>
+                <td>Motion, person, vehicle, line crossing, intrusion, region entrance and exit, tamper, scene change, face, objects left or removed, alarm inputs, PIR: events, variables, conditionals and contacts</td>
+              </tr>
+              <tr>
+                <th scope="row">Alerts for people</th>
+                <td>Notifications with a snapshot: any detection, people and vehicles, or people only</td>
+                <td>Alert and Camera Alert events, last-alert variables</td>
+              </tr>
+              <tr>
+                <th scope="row">One alerts tile for the home</th>
+                <td>Tap to turn alerts on or off; shows an alert, off, snoozed or a camera offline</td>
+                <td>Set Alerts, Snooze Alerts; Alerts On and Off events</td>
+              </tr>
+              <tr>
+                <th scope="row">Camera controls</th>
+                <td>In the camera view: alerts, alert filter, snooze, motion detection, day and night, light, reboot</td>
+                <td>Commands for each, and image settings</td>
+              </tr>
+              <tr>
+                <th scope="row">PTZ</th>
+                <td>Arrows and home in the camera view</td>
+                <td>Go to preset</td>
+              </tr>
+              <tr>
+                <th scope="row">Camera health</th>
+                <td>The tile shows a camera that is offline or refuses the login</td>
+                <td>Camera Online and Offline events, online counts</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Control4 plays H.264 video only. The hub switches each camera's sub stream to H.264 when it adds
+          it; the main stream, which the NVR records, is not touched.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="two-title">
+        <h2 id="two-title">Two drivers, install both</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Driver in Composer</th>
+                <th scope="col">File</th>
+                <th scope="col">What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">DirectorLink · Hikvision</th>
+                <td><code>DirectorLink-Hikvision.c4z</code></td>
+                <td>Added once (it shows as Hikvision Hub): finds every camera and NVR, adds them with one login, and gives the home one alerts tile.</td>
+              </tr>
+              <tr>
+                <th scope="row">DirectorLink · Hikvision Camera</th>
+                <td><code>DirectorLink-Hikvision-Camera.c4z</code></td>
+                <td>One per camera, added by the hub (or by hand): video, detections, alerts, controls and programming.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Control4 controller on OS 3.2 or newer (tested on 4.2.4), and Composer Pro.</li>
+          <li>Hikvision IP cameras and NVRs with ISAPI, which covers almost all current models. Tested with AcuSense and ColorVu G2 cameras and a K-series NVR.</li>
+          <li>The cameras on the controller's network. Cameras on other subnets or VLANs are listed by address in the hub.</li>
+          <li>One login that works on the cameras, and H.264 on at least one stream (the hub sets it).</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in three steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Add the drivers</h3>
+            <p>In Composer Pro: Driver → Add or Update Driver or Agent, once for each file. Search for <strong>DirectorLink</strong> and add <strong>DirectorLink · Hikvision</strong> to the room where new cameras should appear.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Enter the login once</h3>
+            <p>In the Hikvision Hub's properties, set Username and Password. The hub searches the network and lists what it found.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Add them</h3>
+            <p>Run Actions → Add New Cameras. The hub checks the login first, then adds, names and sets up each camera. Drag each one to its room.</p>
+          </li>
+        </ol>
+        <p class="note">
+          For events, turn each detection on in the camera (or NVR) with <em>Notify Surveillance Center</em> ticked.
+          Each step, NVRs, other subnets and what each message means are on the drivers' Documentation tab in
+          Composer and in the <a href="/drivers/hikvision/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>One notification for every camera</h3>
+            <p>On the hub's Camera Alert, send a notification with the snapshot from the camera that raised it.</p>
+          </li>
+          <li>
+            <h3>Alerts follow the alarm</h3>
+            <p>Turn alerts on when the security system arms, and off when it disarms.</p>
+          </li>
+          <li>
+            <h3>Lights for people at night</h3>
+            <p>On Person Detected, if it is dark, turn on the porch lights, even with alerts off.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The drivers talk only to the Hikvision cameras and NVRs on your home network. They send nothing to DirectorLink and collect no usage data. Camera logins stay in your Control4 project, and reports and logs never show passwords.</li>
+          <li>Keep the exact file names: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. Cameras keep their settings, rooms and programming when you update.</li>
+          <li>Community-supported, best effort. <a href="/drivers/hikvision/issues" rel="noreferrer">Report a problem</a> with the camera or NVR model and firmware, your Control4 OS version and each driver's Driver Version.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by Hikvision. Hikvision is a trademark of its owner.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>
