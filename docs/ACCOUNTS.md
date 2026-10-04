@@ -427,7 +427,7 @@ a hash of it. A phone's automation posts the secret to `https://api.directorlink
 account service checks that an account has claimed the home, lets at most 30 runs a minute reach
 it (and none from an address whose runs were refused as unknown 10 times in 10 minutes), and passes
 the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks the hash in
-constant time, runs the scene as a member's key would and records the run in History; the phone gets
+constant time, runs the scene as DirectorLink itself (before 1.8.0: as a member's key would) and records the run in History; the phone gets
 `ran`, `partly`, `failed` or `nothing`, and an unknown home, link or secret all get the same 404 (but
 a claimed home that is offline gets 503, so that the family knows: whoever has the home's id, which
 every link and invitation link carries, can tell whether it is online). No account and no session is

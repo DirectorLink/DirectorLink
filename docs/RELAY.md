@@ -311,7 +311,7 @@ internet provider or Cloudflare's edge.
 - Only the controller registers invitations for its home; the account service's own endpoint for
   it is kept for the home's owner, for drivers before 1.0.0 (`OWNER_ONLY` for other members).
 - A scene link's run (`link`, 1.7.0) is no API request: it runs only the scene the link was made
-  for, as a member's key, never one that opens doors or gates, and goes into the history as run by
+  for, as DirectorLink itself (before 1.8.0: as a member's key), never one that opens doors or gates, and goes into the history as run by
   that link (ADR-051). The driver logs it with the link's id, never its secret.
 
 ## Test endpoints
