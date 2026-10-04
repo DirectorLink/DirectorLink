@@ -203,7 +203,8 @@ function Mock.project()
             [50] = { [1000] = "40", [1001] = "40" },
             [51] = { [1000] = "-255", [1001] = "-255" },
         },
-        -- Camera proxies: what GET_PROPERTIES / GET_SNAPSHOT_QUERY_STRING return, and the fake camera.
+        -- Camera proxies: what GET_PROPERTIES / GET_SNAPSHOT_QUERY_STRING return, and the fake camera
+        -- (`composer_auth_type`: the login type set in Composer, when it is not the camera's own).
         cameras = {
             [60] = {
                 address = "192.0.2.21", http_port = 80, auth_type = "DIGEST", username = "admin", password = "s3cret&pw",
@@ -441,6 +442,70 @@ function Mock.withRefrigerator(project, options)
         project.variableNames[protocol][1000 + index] = name
     end
     return project
+end
+
+-- Cameras on the DirectorLink · Hikvision Camera driver (DirectorLink-Hikvision-Camera.c4z, 1.8.0,
+-- ADR-056): each its own driver with one camera proxy, digest login, its snapshot the sub stream's
+-- picture at the size asked for, and the driver's variables, numbered from 1001 in the order it adds
+-- them. Its event 1 is Alert. `list`: { { id, protocol, name, room (10 or 11), address, channel,
+-- driver } }; by default 65 "Garden" (Living Room, driver 150) and 66 "Back Gate" (Kitchen, 151).
+-- A camera whose `address` another uses too is an NVR's channel.
+Mock.HIKVISION_VARIABLES = {
+    "ONLINE", "ALERTS_ENABLED", "ALERT_ACTIVE", "MOTION", "PERSON", "VEHICLE", "LINE_CROSSING",
+    "INTRUSION", "TAMPER", "ALARM_INPUT", "MOTION_DETECTION_ENABLED", "LAST_DETECTION", "LAST_ALERT",
+    "LAST_ALERT_TIME",
+}
+Mock.HIKVISION_ALERT = 1
+
+function Mock.withHikvisionCameras(project, list)
+    list = list or {
+        { id = 65, protocol = 150, name = "Garden", room = 11, address = "192.0.2.31" },
+        { id = 66, protocol = 151, name = "Back Gate", room = 10, address = "192.0.2.32" },
+    }
+    project.cameras = project.cameras or {}
+    -- An NVR's channels share its login, and so the nonces it gave.
+    local logins = {}
+    for _, camera in ipairs(list) do
+        local room = camera.room or 11
+        local roomName = room == 10 and "Kitchen" or "Living Room"
+        local driver = camera.driver or "DirectorLink-Hikvision-Camera.c4z"
+        project.devices[camera.protocol] = {
+            deviceName = camera.name, driverFileName = driver, roomId = room, roomName = roomName,
+            proxies = { [camera.id] = { deviceName = camera.name, driverFileName = "camera.c4i" } },
+        }
+        project.devices[camera.id] = {
+            deviceName = camera.name, driverFileName = "camera.c4i", roomId = room, roomName = roomName,
+            protocol = { [camera.protocol] = { deviceName = camera.name, driverFileName = driver } },
+        }
+        project.cameras[camera.id] = {
+            address = camera.address, http_port = 80, auth_type = "DIGEST", username = "admin", password = "hik-pass",
+            query = "ISAPI/Streaming/channels/" .. tostring(camera.channel or 1) .. "02/picture?videoResolutionWidth=%d&amp;videoResolutionHeight=%d",
+        }
+        logins[camera.address] = logins[camera.address] or { issued = 0, accepted = 0, nonces = {} }
+        project.cameras[camera.id].digest = logins[camera.address]
+        project.variables[camera.protocol] = {}
+        project.variableNames[camera.protocol] = {}
+        for index, name in ipairs(Mock.HIKVISION_VARIABLES) do
+            local isText = name == "LAST_DETECTION" or name == "LAST_ALERT" or name == "LAST_ALERT_TIME"
+            project.variables[camera.protocol][1000 + index] = isText and "" or (name == "ONLINE" and "1" or "0")
+            project.variableNames[camera.protocol][1000 + index] = name
+        end
+    end
+    return project
+end
+
+-- The Hikvision camera driver raises an alert as it does: LAST_ALERT (the detection's label, e.g.
+-- "Person" or "Line Crossing") and LAST_ALERT_TIME set, then its Alert event. Returns how many
+-- registrations of the event heard it.
+function Mock.hikvisionAlert(mock, protocol, label)
+    for variableId, name in pairs(mock.project.variableNames[protocol] or {}) do
+        if name == "LAST_ALERT" then
+            Mock.changeVariable(mock, protocol, variableId, label)
+        elseif name == "LAST_ALERT_TIME" then
+            Mock.changeVariable(mock, protocol, variableId, os.date("%Y-%m-%d %H:%M:%S"))
+        end
+    end
+    return Mock.fireDeviceEvent(mock, protocol, Mock.HIKVISION_ALERT)
 end
 
 -- The refrigerator's driver reports: variables by name, e.g. { DOOR_OPEN = "1" }.
@@ -695,7 +760,7 @@ function Mock.install(project)
                     .. "<use_https>false</use_https><authentication_required>true</authentication_required>"
                     .. "<authentication_type>%s</authentication_type><username>%s</username><password>%s</password>"
                     .. "</camera_properties>",
-                camera.address, camera.http_port, camera.auth_type, camera.username, camera.password:gsub("&", "&amp;")
+                camera.address, camera.http_port, camera.composer_auth_type or camera.auth_type, camera.username, camera.password:gsub("&", "&amp;")
             )
         elseif camera and request == "GET_SNAPSHOT_QUERY_STRING" then
             local query = camera.query:find("%%d") and string.format(camera.query, params.SIZE_X, params.SIZE_Y) or camera.query
@@ -819,6 +884,41 @@ function Mock.install(project)
         end) .. ({ "", "==", "=" })[#data % 3 + 1])
     end
 
+    -- A digest login at a fake camera (qop=auth), as a Hikvision camera checks one: every 401 gives a
+    -- new nonce ("n1", "n2", ... per camera), and each nonce is taken while the camera knows it
+    -- (camera.digest.nonces = {} forgets them, as a restart does), with its counts going up only:
+    -- one out of order, or used again, is refused (401). `camera.staleAfter`: a nonce used that many
+    -- times is refused with stale=TRUE. Kept in camera.digest: issued (401s given), accepted.
+    local function digestAccepted(camera, authorization, path)
+        local digest = camera.digest
+        local fields = {}
+        for name, value in authorization:gmatch('([%w_-]+)="([^"]*)"') do
+            fields[name] = value
+        end
+        for name, value in authorization:gmatch("([%w_-]+)=([^\",%s]+)") do
+            fields[name] = fields[name] or value
+        end
+        local known = fields.nonce and digest.nonces[fields.nonce]
+        if not known or fields.uri ~= path or fields.opaque ~= "op1" then
+            return false
+        end
+        local ha1 = md5(camera.username .. ":Camera:" .. (camera.camera_password or camera.password))
+        local ha2 = md5("GET:" .. path)
+        if fields.response ~= md5(ha1 .. ":" .. fields.nonce .. ":" .. tostring(fields.nc) .. ":" .. tostring(fields.cnonce) .. ":auth:" .. ha2) then
+            return false
+        end
+        local count = tonumber(fields.nc or "", 16)
+        if camera.staleAfter and known.uses >= camera.staleAfter then
+            return false, true
+        end
+        if not count or count <= known.last then
+            return false
+        end
+        known.last, known.uses = count, known.uses + 1
+        digest.accepted = digest.accepted + 1
+        return true
+    end
+
     -- A fake camera web server: digest (qop=auth) or basic login, answers with a tiny "JPEG".
     local function cameraAnswer(url, headers)
         mock.urlRequests[#mock.urlRequests + 1] = { url = url, headers = headers }
@@ -835,29 +935,28 @@ function Mock.install(project)
         for _, camera in pairs(project.cameras or {}) do
             if camera.address == host then
                 local authorization = headers and headers.Authorization or ""
-                local ok = false
+                local ok, stale = false, false
                 if camera.auth_type == "BASIC" then
                     ok = authorization == "Basic " .. C4:Base64Encode(camera.username .. ":" .. (camera.camera_password or camera.password))
                 else
-                    local fields = {}
-                    for name, value in authorization:gmatch('([%w_-]+)="([^"]*)"') do
-                        fields[name] = value
-                    end
-                    for name, value in authorization:gmatch("([%w_-]+)=([^\",%s]+)") do
-                        fields[name] = fields[name] or value
-                    end
-                    if fields.nonce == "abc123" and fields.uri == path then
-                        local ha1 = md5(camera.username .. ":Camera:" .. (camera.camera_password or camera.password))
-                        local ha2 = md5("GET:" .. path)
-                        local expected = md5(ha1 .. ":abc123:" .. fields.nc .. ":" .. fields.cnonce .. ":auth:" .. ha2)
-                        ok = fields.response == expected and fields.opaque == "op1"
-                    end
+                    camera.digest = camera.digest or { issued = 0, accepted = 0, nonces = {} }
+                    ok, stale = digestAccepted(camera, authorization, path)
                 end
                 if ok then
                     return { code = 200, headers = { ["Content-Type"] = "image/jpeg" }, body = "\255\216JPEG-" .. path .. "\255\217" }
                 end
-                local challenge = camera.auth_type == "BASIC" and 'Basic realm="Camera"'
-                    or 'Digest realm="Camera", qop="auth", nonce="abc123", opaque="op1", algorithm=MD5'
+                local challenge = 'Basic realm="Camera"'
+                if camera.auth_type ~= "BASIC" then
+                    local digest = camera.digest
+                    digest.issued = digest.issued + 1
+                    local nonce = "n" .. digest.issued
+                    digest.nonces[nonce] = { last = 0, uses = 0 }
+                    challenge = 'Digest realm="Camera", qop="auth", nonce="' .. nonce .. '", opaque="op1", algorithm=MD5' .. (stale and ", stale=TRUE" or "")
+                end
+                -- `offersBasic`: Basic offered too, in a WWW-Authenticate header before digest's.
+                if camera.offersBasic and camera.auth_type ~= "BASIC" then
+                    return { code = 401, headers = { ["WWW-Authenticate"] = { 'Basic realm="Camera"', challenge } }, body = "" }
+                end
                 return { code = 401, headers = { ["WWW-Authenticate"] = challenge }, body = "" }
             end
         end
@@ -894,7 +993,7 @@ function Mock.install(project)
             end
         end
         if mock.httpDeferred then
-            mock.httpQueue[#mock.httpQueue + 1] = { deliver = deliver, url = url, method = method }
+            mock.httpQueue[#mock.httpQueue + 1] = { deliver = deliver, url = url, method = method, headers = headers }
         else
             deliver()
         end

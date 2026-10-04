@@ -16,11 +16,22 @@
 --   in:  "linked\n" switches Remote Access on and marks the home's identity as one the relay has
 --        accepted (there is no relay here), so scene links can be made; out: "LINKED <home id>\n"
 --   in:  "event <device id> <event id>\n" a device fires an event; out: "EVENT <times delivered>\n"
--- With a second argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
+--   in:  "alert <driver id> <hex label>\n" a camera's DirectorLink · Hikvision Camera driver raises
+--        an alert (LAST_ALERT, then its Alert event); out: "ALERTED <times delivered>\n"
+-- With an argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
 --   in:  "FETCHED <hex JSON { code, headers, body_hex } or { error }>\n"
 -- and the driver's search for players gets the fake players' answers.
+-- With an argument "cameras=N" (scripts/dev_server.py --cameras N), the project's two plain cameras
+-- are N cameras on the DirectorLink · Hikvision Camera driver instead (ADR-055, ADR-056), and every
+-- camera's pictures (the DoorBird's too) come from the dev server's fake cameras, later, as from real
+-- ones; the driver keeps working meanwhile:
+--   out: "CAMERA <n> <hex JSON { url, headers, login = { type, username, password }, name }>\n" (any time
+--        before an answer line)
+--   in:  "CAMERA_ANSWER <n> <hex JSON { code, headers, body_hex } or { error }>\n"; out: "PUSHED <hex
+--        JSON [{ handle, data_hex, closed }]>\n", what the driver sent to its clients meanwhile
+--   in:  "clock <milliseconds>\n" before each line: DirectorLink's millisecond clock (no answer)
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -35,12 +46,40 @@ if specPath and specPath ~= "" then
         file:close()
     end
 end
-local sonosForwarding = arg and arg[2] == "sonos"
+local sonosForwarding = false
+local fakeCameras = 0
+for index = 2, #(arg or {}) do
+    if arg[index] == "sonos" then
+        sonosForwarding = true
+    end
+    fakeCameras = tonumber((arg[index] or ""):match("^cameras=(%d+)$")) or fakeCameras
+end
+
+-- Made-up names of the fake Hikvision cameras (--cameras), in English as every demo home.
+local CAMERA_NAMES = {
+    "Front Gate", "Driveway", "Garden", "Pool", "Back Door", "Garage", "Side Path", "Terrace",
+    "Parking", "Entrance", "Playground", "Storage", "Roof", "Lobby", "Yard", "Shed",
+}
 
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
 -- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
 -- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On.
-local mock = Mock.startDriver(Mock.demoProject(), specText, nil, function()
+local project = Mock.demoProject()
+if fakeCameras > 0 then
+    for _, id in ipairs({ 60, 61, 107, 108 }) do
+        project.devices[id] = nil
+    end
+    project.cameras[60], project.cameras[61] = nil, nil
+    local list = {}
+    for index = 1, fakeCameras do
+        list[index] = {
+            id = 600 + index, protocol = 700 + index, room = index % 2 == 0 and 10 or 11,
+            name = CAMERA_NAMES[index] or ("Camera " .. index), address = "192.0.2." .. tostring(40 + index),
+        }
+    end
+    Mock.withHikvisionCameras(project, list)
+end
+local mock = Mock.startDriver(project, specText, nil, function()
     Properties["Alarm Status"] = "On"
 end)
 -- The fake home lets the API open its (fake) doors.
@@ -271,6 +310,67 @@ local function sonosTick()
     end)
 end
 
+-- ---- fake cameras through the dev server (see the protocol at the top) -----------------------
+
+local cameraTransfers, cameraCount = {}, 0
+if fakeCameras > 0 then
+    local byAddress, names = {}, {}
+    for id, camera in pairs(mock.project.cameras) do
+        byAddress[camera.address] = camera
+        names[camera.address] = mock.project.devices[id] and mock.project.devices[id].deviceName or nil
+    end
+    local mockUrl = C4.url
+    C4.url = function(self)
+        local transfer = mockUrl(self)
+        local get = transfer.Get
+        function transfer:Get(url, headers)
+            local address = tostring(url):match("^https?://([^/:]+)") or ""
+            local camera = byAddress[address]
+            if not camera then
+                return get(self, url, headers)
+            end
+            cameraCount = cameraCount + 1
+            cameraTransfers[cameraCount] = self
+            local login = { type = camera.auth_type, username = camera.username, password = camera.password }
+            io.write("CAMERA " .. cameraCount .. " " .. toHex(Json.encode({ url = url, headers = headers or {}, login = login, name = names[address] })) .. "\n")
+            io.flush()
+            return self
+        end
+        return transfer
+    end
+end
+
+-- A fake camera's answer reached the driver: what it sent to its clients meanwhile.
+local offsets = {}
+local reportedClosed = {}
+local function pushed()
+    local list = {}
+    for handle, sent in pairs(mock.sent) do
+        local from = (offsets[handle] or 0) + 1
+        local closed = mock.closed[handle] == true and not reportedClosed[handle]
+        if #sent >= from or closed then
+            list[#list + 1] = { handle = handle, data_hex = toHex(sent:sub(from)), closed = mock.closed[handle] == true }
+            offsets[handle] = #sent
+            reportedClosed[handle] = mock.closed[handle] == true or nil
+        end
+    end
+    return Json.encode(Json.array(list))
+end
+
+local function cameraAnswer(n, hex)
+    local transfer = cameraTransfers[n]
+    cameraTransfers[n] = nil
+    local answer = Json.decode(fromHex(hex)) or { error = "no answer" }
+    if transfer and transfer.callback then
+        if answer.error then
+            transfer.callback(transfer, {}, 7, answer.error)
+        else
+            transfer.callback(transfer, { { url = "", code = answer.code, headers = answer.headers or {}, body = fromHex(answer.body_hex or "") } }, 0, nil)
+        end
+    end
+    return "PUSHED " .. toHex(pushed())
+end
+
 -- What the contract test and the dev server ask for besides HTTP (see the protocol at the top).
 local Lock = require("src.cloud.lock")
 local Remote = require("src.cloud.remote")
@@ -315,6 +415,14 @@ local function command(line)
     if fired then
         return "EVENT " .. Mock.fireDeviceEvent(mock, tonumber(fired), tonumber(event))
     end
+    local alerting, label = line:match("^alert (%d+) (%x*)$")
+    if alerting then
+        return "ALERTED " .. Mock.hikvisionAlert(mock, tonumber(alerting), fromHex(label))
+    end
+    local answered, answerHex = line:match("^CAMERA_ANSWER (%d+) (%x*)$")
+    if answered then
+        return cameraAnswer(tonumber(answered), answerHex)
+    end
     local removed = line:match("^remove (%d+)$")
     if removed then
         Mock.removeDevice(mock.project, tonumber(removed))
@@ -333,8 +441,12 @@ end
 io.write("READY " .. tostring(mock.properties["Pairing Code"]) .. "\n")
 io.flush()
 
-local offsets = {}
 for line in io.lines() do
+    local clock = line:match("^clock (%d+)$")
+    if clock then
+        mock.clock = tonumber(clock)
+        line = ""
+    end
     if line:match("^code") then
         ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
         io.write("CODE " .. tostring(mock.properties["Pairing Code"]) .. "\n")

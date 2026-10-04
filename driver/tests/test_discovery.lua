@@ -453,22 +453,30 @@ function tests.snapshots_asked_for_before_a_refresh_are_answered()
         end
         return transfer
     end
+    -- Four sizes of one camera (two at once from its address) and one of another.
+    local asked = { "60/snapshot?width=320", "60/snapshot?width=640", "60/snapshot?width=1280", "60/snapshot?width=1920", "61/snapshot" }
     local waiting = {}
-    for index = 1, 5 do
-        waiting[index] = T.http(mock, "GET", "/v1/cameras/" .. (index % 2 == 0 and 61 or 60) .. "/snapshot", { key = key })
+    for index, path in ipairs(asked) do
+        waiting[index] = T.http(mock, "GET", "/v1/cameras/" .. path, { key = key })
         T.eq(waiting[index].status, nil, "fetched later")
     end
-    T.eq(#held, 3, "three at once, two waiting")
+    T.eq(#held, 3, "two from one camera and one from the other at once, two waiting")
     refresh()
     while #held > 0 do
         table.remove(held, 1)()
     end
-    for index = 1, 5 do
+    for index = 1, #asked do
         local answer = T.response(mock, waiting[index].handle)
         T.eq(answer.status, 200, "snapshot " .. index)
     end
-    T.eq(get(mock, key, "/v1/cameras/60/snapshot").status, nil, "and the limit still holds")
-    T.eq(#held, 1)
+    -- And the limits still hold: a picture asked for again within 2 s is the one that just came.
+    T.eq(get(mock, key, "/v1/cameras/60/snapshot?width=320").status, 200)
+    T.eq(#held, 0, "no new request")
+    mock.clock = mock.clock + 2500
+    for _, width in ipairs({ 320, 640, 1280 }) do
+        T.eq(get(mock, key, "/v1/cameras/60/snapshot?width=" .. width).status, nil)
+    end
+    T.eq(#held, 2)
 end
 
 function tests.a_failed_or_empty_read_keeps_the_project()
