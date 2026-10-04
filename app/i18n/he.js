@@ -1721,7 +1721,7 @@ export default {
       cardTitle: "DirectorLink",
       slogan: "Direct to Director. End-to-end integration. Open source.",
       text: "DirectorLink מחבר את האפליקציה למערכת ה-Control4 דרך הרשת הביתית, ומכל מקום דרך החשבון שלך, נעול מקצה לקצה כך ששום שרת באמצע לא יכול לקרוא.",
-      independent: "DirectorLink הוא פרויקט עצמאי ואינו קשור ל-Control4 או ל-Snap One.",
+      independent: "DirectorLink הוא פרויקט עצמאי, שאינו קשור ל-Control4 או ל-Snap One.",
       source: "קוד מקור",
     },
   },

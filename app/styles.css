@@ -2725,6 +2725,19 @@ select:disabled {
   padding-inline: 4px;
 }
 
+/* The owner's disclaimer: on Connect, at the foot of Settings and on About. */
+.independent-note {
+  margin: 20px auto 0;
+  max-width: 60ch;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.about-independent {
+  font-weight: 600;
+}
+
 /* The code read out to the home's owner while an invitation waits for their approval. */
 .join-code {
   margin: 4px 0;
