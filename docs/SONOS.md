@@ -82,7 +82,10 @@ a Sonos room was renamed).
 1.8.0 (ADR-057):
 
 - **Resume**: each group with a room there that is paused or stopped plays again (a radio station
-  a scene stopped starts again); one that plays, or has nothing to play, is left alone.
+  a scene stopped starts again); one that plays, or has nothing to play, is left alone. It does
+  not remember what a scene paused: a room paused earlier by someone else plays too, and Sonos
+  rooms not in use usually sit paused, so a Resume for the whole home starts every room that has
+  something to play. The editor says so under Resume.
 - **Volume**: each Sonos room there gets that volume, its own.
 - **Play a favorite**, in a room: the Sonos favorite picked in the editor, at a volume if one is
   set, and in other rooms too (**Also play in**). The rooms are grouped first, as in the Sonos app:

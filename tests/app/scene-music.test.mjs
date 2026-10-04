@@ -195,6 +195,8 @@ test("Resume and Volume, in a room or the whole home", () => {
   nodes = add();
   assert.equal(summary(nodes), "Adds: Music (Whole home): Resume");
   assert.match(textOf(nodes), /paused or stopped plays again/);
+  // Said plainly: idle Sonos rooms sit paused, so a whole-home Resume starts every room with music.
+  assert.match(textOf(nodes), /whoever paused it and whenever: rooms not in use usually sit paused, so with the whole home every room that has something to play starts/);
   press(nodes, "add-music:volume");
   nodes = add();
   const slider = byKey(nodes, "add-music-volume");
