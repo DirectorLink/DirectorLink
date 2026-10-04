@@ -194,10 +194,10 @@
         Once an hour our servers count how many homes are linked to an account (a home stays counted
         until its owner's account is deleted, also once it is no longer used), how many accounts can
         sign in, and how often the driver was downloaded (from GitHub's public list of releases). Only
-        these three totals are kept, and anyone can read them at api.directorlink.io/v1/stats. Nothing
-        about any one home or person is in them, and your controller sends nothing for them. When this
-        website's home page opens, it asks for the totals, without cookies or anything about you, and
-        shows them once there are 25 homes.
+        these three totals are kept. Once there are 25 homes, anyone can read them at
+        api.directorlink.io/v1/stats; until then they are not public. Nothing about any one home or person
+        is in them, and your controller sends nothing for them. When this website's home page opens, it
+        asks for the totals, without cookies or anything about you, and shows them once there are 25 homes.
       </p>
 
       <h2>Cookies</h2>

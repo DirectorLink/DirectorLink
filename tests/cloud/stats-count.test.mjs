@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 
-import { MAX_PAGES, PACKAGE_NAME, PER_PAGE, REPOSITORY, STATS_CRON, countDownloads, countStats, handleStats } from "../../cloud/src/stats.js";
+import { MAX_PAGES, MIN_HOMES, PACKAGE_NAME, PER_PAGE, REPOSITORY, STATS_CRON, countDownloads, countStats, handleStats } from "../../cloud/src/stats.js";
 
 const BASE = "http://github.test";
 const SITE = "https://directorlink.io";
@@ -192,7 +192,7 @@ test("GitHub failing keeps the downloads and their time; the accounts are still 
   assert.deepEqual(logs.lines[0], { event: "stats_not_counted", totals: "downloads", error: "GitHub answered 403", status: 403, page: 1, rate_limit_remaining: "0" });
   assert.deepEqual(logs.lines[1], { event: "stats_counted", homes: 3, people: 7, downloads: null });
 
-  const answer = await handleStats(new Request("https://api.directorlink.io/v1/stats"), { DB: db });
+  const answer = await handleStats(new Request("https://api.directorlink.io/v1/stats"), { DB: db, STATS_MIN_HOMES: "0" });
   const body = await answer.json();
   assert.equal(body.downloads, 34);
   assert.equal(body.updated, old, "updated: the oldest total's time");
@@ -265,6 +265,29 @@ test("only GET: a preflight is answered, anything else refused", async () => {
     assert.equal(answer.status, 405, method);
     assert.equal(answer.headers.get("allow"), "GET");
   }
+});
+
+test("below 25 homes the totals are not public: only that, and nothing counted", async () => {
+  const below = fakeDb();
+  below.table.set("homes", { name: "homes", value: MIN_HOMES - 1, updated_at: "2026-10-03T10:47:00.120Z" });
+  below.table.set("people", { name: "people", value: 64, updated_at: "2026-10-03T10:47:00.120Z" });
+  below.table.set("downloads", { name: "downloads", value: 412, updated_at: "2026-10-03T08:47:00.950Z" });
+  const hidden = await handleStats(new Request("https://api.directorlink.io/v1/stats", { headers: { Origin: SITE } }), { DB: below });
+  assert.equal(MIN_HOMES, 25);
+  assert.equal(hidden.status, 200, "an expected answer: the website shows nothing, and logs no error");
+  assert.deepEqual(await hidden.json(), { public: false, from_homes: 25 });
+  assert.equal(hidden.headers.get("access-control-allow-origin"), SITE);
+  assert.equal(hidden.headers.get("cache-control"), "public, max-age=300");
+
+  below.table.set("homes", { name: "homes", value: MIN_HOMES, updated_at: "2026-10-03T10:47:00.120Z" });
+  const shown = await handleStats(new Request("https://api.directorlink.io/v1/stats"), { DB: below });
+  assert.deepEqual(await shown.json(), { homes: 25, people: 64, downloads: 412, updated: "2026-10-03T08:47:00.950Z" });
+
+  below.table.set("homes", { name: "homes", value: 2, updated_at: "2026-10-03T10:47:00.120Z" });
+  const lowered = await handleStats(new Request("https://api.directorlink.io/v1/stats"), { DB: below, STATS_MIN_HOMES: "0" });
+  assert.equal((await lowered.json()).homes, 2, "STATS_MIN_HOMES, for tests");
+  const wrong = await handleStats(new Request("https://api.directorlink.io/v1/stats"), { DB: below, STATS_MIN_HOMES: "lots" });
+  assert.deepEqual(await wrong.json(), { public: false, from_homes: 25 }, "an unreadable setting keeps 25");
 });
 
 test("before all three are counted, or when D1 fails: 503, never made-up totals", async () => {

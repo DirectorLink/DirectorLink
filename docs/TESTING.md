@@ -60,7 +60,7 @@
 
 ## 0zq. DirectorLink in numbers, and the drivers pages (1.7.0)
 
-1. After migration 0010 and the Worker, `curl https://api.directorlink.io/v1/stats` answers 503 `STATS_NOT_COUNTED` until the next :47, then `{"homes","people","downloads","updated"}` and nothing else, matching D1 (claimed homes; accounts with a sign-in) and GitHub's total for DirectorLink.c4z.
+1. After migration 0010 and the Worker, `curl https://api.directorlink.io/v1/stats` answers 503 `STATS_NOT_COUNTED` until the next :47, then, with fewer than 25 homes, only `{"public":false,"from_homes":25}`. In the Workers logs, `stats_counted` shows the totals: they match D1 (claimed homes; accounts with a sign-in) and GitHub's total for DirectorLink.c4z. From 25 homes the answer is `{"homes","people","downloads","updated"}` and nothing else.
 2. With `-H "Origin: https://directorlink.io"`: `Access-Control-Allow-Origin` for it and `Cache-Control: public, max-age=300`; another origin gets no ACAO; POST gets 405.
 3. Workers Observability shows `stats_counted` every hour; `stats_not_counted` only when GitHub or D1 failed, and the totals then stay.
 4. directorlink.io with fewer than 25 homes: no numbers section, no console or CSP errors.

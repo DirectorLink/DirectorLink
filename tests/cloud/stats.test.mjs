@@ -64,7 +64,9 @@ before(async () => {
   worker = await startWorker({
     migrate: true,
     scheduled: true,
-    devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), ...appleVars(apple), GITHUB_API_URL: github.url },
+    // STATS_MIN_HOMES 0: the totals of these few test homes are readable (25 in production;
+    // stats-count.test.mjs checks that threshold).
+    devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), ...appleVars(apple), GITHUB_API_URL: github.url, STATS_MIN_HOMES: "0" },
   });
 }, { timeout: STARTUP_MS + 10_000 });
 

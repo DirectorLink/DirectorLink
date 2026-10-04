@@ -1,6 +1,7 @@
 // DirectorLink in numbers (ADR-052): three totals for the website, counted once an hour.
 //
-//   GET /v1/stats   {"homes", "people", "downloads", "updated"}: no cookie, CORS for SITE_ORIGINS
+//   GET /v1/stats   {"homes", "people", "downloads", "updated"}: no cookie, CORS for SITE_ORIGINS;
+//                   below MIN_HOMES homes only {"public": false, "from_homes": 25}
 //
 // homes: homes linked to an account (claimed by an owner); people: accounts someone can sign in
 // to; downloads: how often DirectorLink.c4z was downloaded from the project's GitHub releases, all
@@ -22,6 +23,14 @@ const GITHUB_TIMEOUT_MS = 10_000;
 const USER_AGENT = "DirectorLink-stats (+https://directorlink.io)";
 // Browsers keep an answer for 5 minutes; the totals change once an hour.
 const CACHE_SECONDS = 300;
+// The totals are public from this many homes (the owner's choice, ADR-052); below it the answer
+// says only that they are not public yet. STATS_MIN_HOMES lowers it, for tests only.
+export const MIN_HOMES = 25;
+
+function minHomes(env) {
+  const value = Number(env.STATS_MIN_HOMES);
+  return env.STATS_MIN_HOMES !== undefined && Number.isSafeInteger(value) && value >= 0 ? value : MIN_HOMES;
+}
 const TOTALS = ["homes", "people", "downloads"];
 
 const UPSERT = "INSERT INTO stats (name, value, updated_at) VALUES (?1, (%COUNT%), ?2) " +
@@ -156,6 +165,12 @@ export async function handleStats(request, env) {
   const found = Object.fromEntries(rows.map((row) => [row.name, row]));
   if (!TOTALS.every((name) => found[name])) {
     return problem(503, "STATS_NOT_COUNTED", "The totals have not been counted yet; they are counted once an hour", headers);
+  }
+  const from = minHomes(env);
+  if (found.homes.value < from) {
+    // Not public yet: no total at all, so that a handful of homes and their accounts are not
+    // counted in public. A 200, not an error: the website asks on every visit and shows nothing.
+    return json({ public: false, from_homes: from }, 200, { ...headers, "cache-control": `public, max-age=${CACHE_SECONDS}` });
   }
   return json(
     {

@@ -515,8 +515,9 @@ to join.
 
 ### What is public: DirectorLink in numbers (1.7.0, ADR-052)
 
-Once an hour the cloud counts three totals, and anyone may read them at
-`GET https://api.directorlink.io/v1/stats` (no cookie; the website shows them from 25 homes):
+Once an hour the cloud counts three totals. From 25 homes anyone may read them at
+`GET https://api.directorlink.io/v1/stats` (no cookie), and the website shows them; with fewer homes
+the answer says only that they are not public yet (`{"public": false, "from_homes": 25}`):
 
 - **homes**: homes linked to an account (claimed, their owner's account still there); a home stays
   counted until its owner's account is deleted, also once it is no longer used (a reset identity, a
