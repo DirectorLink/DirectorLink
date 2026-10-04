@@ -116,6 +116,59 @@ function tests.a_device_that_could_not_be_set_up_works_once_its_driver_is_update
     T.eq(T.http(mock, "GET", "/v1/system", { key = key }).json.inventory.refrigerators, 1, "counted")
 end
 
+-- Director may show a driver's new version while it is still starting that driver, before the
+-- driver has added its variables: the setup DirectorLink does then fails. The device is tried
+-- again a minute later, not left out until a Refresh Project.
+function tests.a_device_whose_updated_driver_was_still_starting_is_set_up_a_minute_later()
+    local mock, key = start({ version = "100" })
+    T.eq(#T.http(mock, "GET", "/v1/refrigerators", { key = key }).json.items, 1)
+    -- The new version is there, the variables not yet.
+    local variables, names = mock.project.variables[140], mock.project.variableNames[140]
+    mock.project.variables[140], mock.project.variableNames[140] = {}, {}
+    Mock.updateDeviceDriver(mock, 140, "110")
+    minutes(1)
+    T.eq(#T.http(mock, "GET", "/v1/refrigerators", { key = key }).json.items, 0, "not set up while its driver starts")
+    T.eq(logged(mock, "not set up yet"), 0, "the first setup is the update's own line")
+    -- The driver has started, with its variables and the two new ones.
+    mock.project.variables[140], mock.project.variableNames[140] = variables, names
+    Mock.updateDeviceDriver(mock, 140, "110", { REPORTED_VARIABLES = "POWER_COOL,ICE_MAKER,FRIDGE_SETPOINT,FRIDGE_TEMP,ONLINE,DOOR_OPEN", TEMPERATURE_UNIT = "C" })
+    minutes(1)
+    T.eq(#T.http(mock, "GET", "/v1/refrigerators", { key = key }).json.items, 1, "set up a minute later")
+    T.same(fridge(mock, key).features, { "power_cool", "ice_maker" }, "with the new driver's variables")
+    T.eq(logged(mock, "set up again on a later try"), 1, "logged")
+    T.eq(#listeners(mock, 140), 13, "its variables watched once each")
+    T.eq(Mock.changeVariable(mock, 140, 1009, "5"), 1, "FRIDGE_SETPOINT is delivered once")
+    minutes(10)
+    T.eq(logged(mock, "set up again"), 2, "the update's line and the later try's, nothing more")
+end
+
+-- A device that still cannot be set up is tried a few times over some minutes, then left to
+-- Refresh Project, and said so once.
+function tests.a_device_not_set_up_after_its_drivers_update_is_tried_a_few_times_then_left()
+    local mock, key = start({ version = "100" })
+    mock.project.variables[140], mock.project.variableNames[140] = {}, {}
+    Mock.updateDeviceDriver(mock, 140, "110")
+    local Manager = require("src.adapters.manager")
+    local real = Manager.setUpAgain
+    local tries = {}
+    local minute = 0
+    Manager.setUpAgain = function(ids)
+        tries[#tries + 1] = minute
+        return real(ids)
+    end
+    for _ = 1, 30 do
+        minute = minute + 1
+        minutes(1)
+    end
+    Manager.setUpAgain = real
+    T.same(tries, { 1, 2, 3, 6 }, "at the update, then 1, 2 and 5 minutes later")
+    T.eq(logged(mock, "not set up yet, tried again later"), 2)
+    T.eq(logged(mock, "it could not be set up again (Refresh Project tries again)"), 1, "said once")
+    T.eq(#T.http(mock, "GET", "/v1/refrigerators", { key = key }).json.items, 0)
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    T.eq(#T.http(mock, "GET", "/v1/refrigerators", { key = key }).json.items, 0, "nothing to set up yet")
+end
+
 -- Drivers are looked at a few a minute, one after another: every one within a few minutes.
 function tests.drivers_are_looked_at_a_few_a_minute_in_turn()
     local DriverUpdates
