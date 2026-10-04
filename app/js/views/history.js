@@ -32,7 +32,7 @@ export const FILTERS = {
 const ICONS = { scene: "scene", door: "door", composer: "controller", access: "key" };
 // A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
 const ACTION_ICONS = { left_open: "fridge" };
-const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
+const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
 
 let generation = 0;
 let refreshTimer = null;
@@ -276,6 +276,9 @@ function title(entry) {
         : t("history.system.updated", { to: entry.to || "" });
     case "system.driver_started":
       return t("history.system.started");
+    // 1.8.0 (ADR-059): the account service no longer takes this version for remote access.
+    case "system.remote_update_required":
+      return entry.to ? t("history.system.updateRequiredTo", { to: entry.to }) : t("history.system.updateRequired");
     case "system.driver_added":
       return t("history.system.added");
     default:

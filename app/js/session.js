@@ -484,6 +484,9 @@ function remoteErrorText(error) {
     case "HOME_TIMEOUT":
     case "HOME_DISCONNECTED":
       return t("errors.remote.homeOffline");
+    // The controller's DirectorLink is older than the account service takes (1.8.0, ADR-059).
+    case "HOME_UPDATE_REQUIRED":
+      return t("errors.remote.updateRequired");
     case "NOT_A_MEMBER":
       return t("errors.remote.notMember");
     case "UNKNOWN_KEY":

@@ -129,6 +129,7 @@ export default {
     remote: {
       signIn: "Sign in to your account again (Settings → Account) to reach your home from here.",
       homeOffline: "Your home is not connected to DirectorLink right now. Check that the controller is online and Remote Access is on.",
+      updateRequired: "Update DirectorLink: the version on your controller can no longer connect to remote access. Update it in Composer; at home the app works as before.",
       notMember: "This account does not belong to this home any more.",
       unknownKey: "Your home does not know this device’s key. Open the app once on the home network, or ask for a new invitation.",
       lock: "Your controller cannot lock remote requests. Update DirectorLink and check its log.",
@@ -199,6 +200,12 @@ export default {
     moveLater: "Move {name} later",
     pickerTitle: "Choose favorites",
     pickerHelp: "Starred devices appear at the top of Home.",
+    // 1.8.0: a favorite whose device was removed in Composer (the controller drops it after 7 days).
+    gone: {
+      label: "Removed in Composer",
+      unnamed: "A removed device",
+      remove: "Remove",
+    },
   },
   sections: {
     lights: "Lights",
@@ -986,6 +993,8 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – the door has been open for at least {minutes} min ({time}).",
     fridgeDoorNow: "{name} – the door was left open ({time}).",
+    // 1.8.0: the account service's own push, to admins' devices (it names nothing).
+    deviceRequest: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
     settings: {
       title: "Alerts",
       label: "Alerts on this device",
@@ -994,6 +1003,7 @@ export default {
       kindsTitle: "What to alert about",
       kinds: {
         offline: "The home is offline for 10 minutes",
+        device_requests: "A new device of mine asks to join",
         doorbell: "Someone rings at the door",
         door_opened: "A door or gate is opened",
         fridge_door: "The refrigerator door is left open",
@@ -1117,6 +1127,8 @@ export default {
       updatedFrom: "DirectorLink updated from {from} to {to}",
       started: "DirectorLink started (the controller or the driver restarted)",
       added: "DirectorLink added to the project",
+      updateRequired: "Remote access stopped: update DirectorLink, this version can no longer connect",
+      updateRequiredTo: "Remote access stopped: update DirectorLink to {to} or later, this version can no longer connect",
     },
     counts: {
       ran: { one: "Ran on 1 device", other: "Ran on {count} devices" },

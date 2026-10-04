@@ -549,6 +549,80 @@ function tests.refusals_wait_longer_and_say_why()
     T.contains(mock.properties["Remote Status"], "HOME_SECRET_MISMATCH")
 end
 
+-- The account service's minimum version (ADR-059): 426 DRIVER_UPDATE_REQUIRED to the upgrade.
+local function refusedAsTooOld(minimum)
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    local body = Json.encode({ type = "about:blank", title = "Upgrade Required", status = 426, code = "DRIVER_UPDATE_REQUIRED",
+        detail = "DirectorLink dev can no longer connect to remote access: update DirectorLink to 1.8.0 or later", minimum_version = minimum })
+    ReceivedFromNetwork(BINDING, 443, "HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/problem+json\r\n"
+        .. "Content-Length: " .. #body .. "\r\n\r\n" .. body)
+end
+
+local function updateEntries()
+    local found = {}
+    for _, item in ipairs(require("src.core.activity").list({ limit = 200 })) do
+        if item.kind == "system" and item.action == "remote_update_required" then
+            found[#found + 1] = item
+        end
+    end
+    return found
+end
+
+function tests.a_version_the_relay_no_longer_takes_says_update_and_tries_hourly_with_one_history_entry()
+    local mock = Mock.startDriver()
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    refusedAsTooOld("1.8.0")
+    T.eq(mock.properties["Remote Status"], "Update DirectorLink: this version can no longer connect to remote access")
+    local retry = lastTimer(mock, 3600 * 1000)
+    T.truthy(retry, "tried again an hour later")
+    for _, seconds in ipairs({ 1, 5, 10, 30, 60, 300 }) do
+        T.eq(lastTimer(mock, seconds * 1000), nil, "not with the backoff: " .. seconds .. " s")
+    end
+    local entries = updateEntries()
+    T.eq(#entries, 1, "in the history")
+    T.eq(entries[1].from, "dev", "this version")
+    T.eq(entries[1].to, "1.8.0", "the one it needs")
+    T.eq(entries[1].who.type, "controller")
+    local logged = false
+    for _, line in ipairs(mock.debugLog) do
+        logged = logged or (line:find("no longer takes this version", 1, true) ~= nil and line:find('"retry_s":3600', 1, true) ~= nil)
+    end
+    T.truthy(logged, "the log says why and when it tries again")
+
+    -- An hour later it is refused again, and Remote Access switched off and on: still one entry.
+    retry.fired = true
+    retry.callback()
+    refusedAsTooOld("1.8.0")
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    refusedAsTooOld("1.8.0")
+    T.eq(mock.properties["Remote Status"], "Update DirectorLink: this version can no longer connect to remote access")
+    T.eq(#updateEntries(), 1, "once, however often it is refused")
+
+    -- The minimum lowered (or this driver updated): it connects; refused again later, it is news again.
+    retry = lastTimer(mock, 3600 * 1000)
+    retry.fired = true
+    retry.callback()
+    local connection = mock.network[BINDING]
+    connection.sent = ""
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    Harness.accept(connection.sent)
+    T.contains(mock.properties["Remote Status"], "Connected since")
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    local again = lastTimer(mock, 5000) or lastTimer(mock, 1000)
+    T.truthy(again, "lost: tried again with the backoff")
+    again.fired = true
+    again.callback()
+    refusedAsTooOld(nil)
+    T.eq(mock.properties["Remote Status"], "Update DirectorLink: this version can no longer connect to remote access", "a 426 without a minimum too")
+    local entries2 = updateEntries()
+    T.eq(#entries2, 2)
+    T.eq(entries2[1].to, nil, "no minimum said, none recorded")
+end
+
 function tests.a_close_from_the_relay_is_answered_then_retried()
     local mock, connection = connected()
     ReceivedFromNetwork(BINDING, 443, serverFrame(8, bigEndian(4000, 2) .. "replaced"))

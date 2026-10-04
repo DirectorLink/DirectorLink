@@ -47,3 +47,31 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
 - **Hiding is personal**: anyone unticks a room in Settings → Rooms; it goes into their profile's
   `hidden_rooms` and disappears from their Home and Climate, not anyone else's. Favorites in a
   hidden room still show.
+
+## Favorites of removed devices (1.8.0, ADR-059)
+
+A favorite names a device by id (`"camera:60"`). When a device is removed in Composer (a camera
+replaced by another, which Control4 gives a new id), its favorite would ask for a device that is
+not there: the app showed an empty tile and asked the controller for its picture (404). Now:
+
+- **The controller decides, never on one read.** Only a project read that worked counts (at the
+  start, Refresh Project, or Composer's changes, `src/core/favorites_gone.lua`). A read that failed,
+  or one in which Director lists no devices at all (as while it loads a project), changes nothing.
+  The first such read in which no device of the project has a favorite's id marks it gone, with
+  the time and, when the read before still knew it, the device's name and room. A later read that
+  has the device again (one missing for a moment while its driver is replaced) clears the mark.
+- **The app shows it as removed.** `GET` and `PATCH /v1/profile` add `gone_favorites`, the
+  caller's own favorites that are marked (`entry`, `since`, and `name` for someone who may see
+  such a device there). Home shows each as a tile "Removed in Composer", with the name it had and
+  **Remove**, instead of an empty tile; the app never asks for its device. The app never decides
+  by itself that a favorite is gone: its own lists leave out what the person may not see, and may
+  be a minute old.
+- **After 7 days the controller drops it** from every profile that has it (each profile's
+  `version` goes up, so every device of that person sees it), at a project read or at the
+  scheduler's minute look, and logs it. Only once a read in this run of the driver has looked at
+  the marks: a mark kept from before a restart may be of a device that came back meanwhile.
+- A kind of favorite DirectorLink does not know (one a newer version keeps) is never marked or
+  dropped. The marks are kept in the driver's data (`directorlink_favorites_gone`), so a restart
+  does not start the 7 days again; they are not in backups (the next project read marks again).
+- DirectorLink 1.7.0 does not read the marks: its app shows nothing of them, and Home leaves the
+  gone favorites out as before. A favorite dropped by 1.8.0 stays dropped after going back.

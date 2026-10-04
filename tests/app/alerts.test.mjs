@@ -277,7 +277,7 @@ test("on: permission asked once, a subscription with the service's key, register
   assert.equal(browser.asked, 1, "the permission is asked from the switch");
   assert.deepEqual(browser.subscribed, [{ userVisibleOnly: true, key: PUBLIC_KEY }]);
   const [post] = callsTo("POST");
-  assert.deepEqual(post.body, { endpoint: browser.subscription.endpoint, keys: { p256dh: `p256dh-${browser.made}`, auth: `auth-${browser.made}` }, key_id: KEY_ID, offline: true }, "with this device's key");
+  assert.deepEqual(post.body, { endpoint: browser.subscription.endpoint, keys: { p256dh: `p256dh-${browser.made}`, auth: `auth-${browser.made}` }, key_id: KEY_ID, offline: true, device_requests: true }, "with this device's key; a new device of this account asking to join is on by default");
   assert.equal(isOn(), true);
   assert.equal(shown(), "Alerts are on for this device.");
   const texts = savedTexts();
@@ -500,6 +500,34 @@ test("an admin also chooses the servers' offline alert, kept with the browser's 
   assert.equal(toHome("PUT", "/v1/alerts/choices").length, 1, "the controller has nothing to do with it");
   await pressKind("door_opened");
   assert.deepEqual(home.choices.kinds, { doorbell: true, door_opened: true, schedule_failed: true });
+  await turnAlertsOff();
+});
+
+test("an admin chooses the push of a new device asking to join, kept with the browser's registration (1.8.0)", async () => {
+  await turnAlertsOff();
+  withChoices("admin", { doorbell: true });
+  await press();
+  assert.equal(callsTo("POST").at(-1).body.device_requests, true, "on by default");
+  assert.equal(kindSwitch("device_requests").attributes["aria-checked"], "true");
+  assert.match(byKey(alertsPanel(), "alerts-kinds").textContent, /A new device of mine asks to join/);
+  cloud.calls.length = 0;
+  await pressKind("device_requests");
+  assert.deepEqual(
+    callsTo("POST").map((call) => [call.body.offline, call.body.device_requests]),
+    [[true, false]],
+    "registered again without it, the offline alert as it was"
+  );
+  assert.equal(kindSwitch("device_requests").attributes["aria-checked"], "false");
+  assert.equal(toHome("PUT", "/v1/alerts/choices").length, 1, "the controller has nothing to do with it");
+  // Kept: the next start registers with it off, and the offline choice beside it.
+  await pressKind("offline");
+  assert.deepEqual(callsTo("POST").at(-1).body.device_requests, false);
+  assert.equal(JSON.parse(localStorage.getItem("directorlink.alerts")).deviceRequests, false);
+  // A member has no such switch: only admins approve.
+  state.role = "member";
+  assert.equal(kindSwitch("device_requests"), null);
+  state.role = "admin";
+  assert.equal(savedTexts().device_request, "A new device asks to join your home. Open DirectorLink to approve or decline it.");
   await turnAlertsOff();
 });
 

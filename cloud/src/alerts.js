@@ -23,11 +23,13 @@
 // with its key ids ("keys"); the cloud knows which account uses which key (member_keys).
 //
 //   GET    /v1/homes/{home_id}/alerts   { public_key }: the VAPID key the app subscribes with (members)
-//   POST   /v1/homes/{home_id}/alerts   { endpoint, keys: { p256dh, auth }, key_id?, offline? }: this
-//                                       browser gets the alerts of key_id (an account that uses that
-//                                       key at the home), and the offline alert unless offline is
-//                                       false; without key_id (apps before 1.7.0), the admins' alerts
-//                                       (accounts with an admin key there)
+//   POST   /v1/homes/{home_id}/alerts   { endpoint, keys: { p256dh, auth }, key_id?, offline?,
+//                                       device_requests? }: this browser gets the alerts of key_id (an
+//                                       account that uses that key at the home), and the offline alert
+//                                       unless offline is false; without key_id (apps before 1.7.0),
+//                                       the admins' alerts (accounts with an admin key there).
+//                                       device_requests (1.8.0): whether it wants a push when a new
+//                                       device of its account asks to join (below)
 //   DELETE /v1/homes/{home_id}/alerts   { endpoint }: it no longer does
 //
 // The home's Durable Object (home-relay.js) runs the rest with HomeAlerts. It sets alarms only
@@ -50,8 +52,19 @@
 //                    still to reach (null: all), while it is tried again
 //   schedule_alerts  the times of the schedule alerts of the last hour
 //   notify_times     the times of the notify messages of the last hour
+//   device_request_choices  { <SHA-256 of an endpoint>: { on, at } }: whether that browser wants the
+//                    push of a new device asking to join (1.8.0); only browsers whose app said so
+//   device_request_pushes   { <account id>: [times] }: the account's join pushes of the last hour
+//
+// A new device asks to join (ADR-053, amended in 1.8.0 by ADR-059): device-requests.js tells the
+// object, which pushes { kind: "device_request", home, at, request } at once to the browsers of
+// that same account registered at the home with one of its admin keys (only admins approve), whose
+// app said it wants it (on by default there), at most DEVICE_REQUEST_PUSHES_PER_HOUR an account an
+// hour. The cloud made the request, so the push tells it nothing new, and it names nothing but the
+// home, the time and the request's id. The choice is kept here, not in D1 (no migration): an app
+// sends it with every registration (at each start), so a choice pruned or lost comes back by itself.
 
-import { json, problem, readText } from "./http.js";
+import { json, problem, readText, sha256Hex } from "./http.js";
 import { validKeyId, validKeyList } from "./member-keys.js";
 import { sendPush, subscriptionKeys, validEndpoint, vapidProblem } from "./web-push.js";
 
@@ -78,6 +91,11 @@ const BRIEF_TTL_SECONDS = 60;
 // Browsers one account may have subscribed for one home: a new one beyond it replaces the oldest.
 const MAX_PER_MEMBER = 10;
 const MAX_BODY_BYTES = 4096;
+// A new device asking to join (1.8.0): the pushes an account may get an hour at one home, how long
+// the push service keeps one (a request lasts 10 minutes), and how many browsers' choices are kept.
+export const DEVICE_REQUEST_PUSHES_PER_HOUR = 3;
+const DEVICE_REQUEST_TTL_SECONDS = 600;
+const DEVICE_REQUEST_CHOICES_MAX = 200;
 const KINDS = new Set(["offline", "schedule_failed"]);
 
 function iso(ms = Date.now()) {
@@ -244,7 +262,7 @@ export async function handleHomeAlerts(request, env, user, homeId) {
       return problem(400, "INVALID_SUBSCRIPTION", "Send { endpoint } of the browser's push subscription");
     }
     const { meta } = await env.DB.prepare("DELETE FROM push_subscriptions WHERE home_id = ? AND user_id = ? AND endpoint = ?").bind(homeId, user.id, input.endpoint).run();
-    await homeObject(env, homeId, { op: "changed" });
+    await homeObject(env, homeId, { op: "changed", endpoint: input.endpoint });
     log("alerts_unsubscribed", { home: homeId, user: user.id, service: serviceOf(input.endpoint), removed: meta.changes ?? 0 });
     return new Response(null, { status: 204 });
   }
@@ -262,8 +280,12 @@ export async function handleHomeAlerts(request, env, user, homeId) {
     return problem(400, "INVALID_SUBSCRIPTION", "Send the browser's push subscription: { endpoint, keys: { p256dh, auth } }, from a known push service");
   }
   // The key its device uses at the home (1.7.0); apps before 1.7.0 send none.
-  if ((input.key_id !== undefined && !validKeyId(input.key_id)) || (input.offline !== undefined && typeof input.offline !== "boolean")) {
-    return problem(400, "INVALID_SUBSCRIPTION", "key_id must be the device's key id (8 hex characters), offline true or false");
+  if (
+    (input.key_id !== undefined && !validKeyId(input.key_id)) ||
+    (input.offline !== undefined && typeof input.offline !== "boolean") ||
+    (input.device_requests !== undefined && typeof input.device_requests !== "boolean")
+  ) {
+    return problem(400, "INVALID_SUBSCRIPTION", "key_id must be the device's key id (8 hex characters), offline and device_requests true or false");
   }
   const answer = await homeObject(env, homeId, {
     op: "subscribe",
@@ -271,6 +293,7 @@ export async function handleHomeAlerts(request, env, user, homeId) {
     endpoint: input.endpoint,
     ...keys,
     ...(input.key_id ? { key_id: input.key_id, offline: input.offline !== false } : {}),
+    ...(input.key_id && typeof input.device_requests === "boolean" ? { device_requests: input.device_requests } : {}),
   });
   if (!answer?.ok) {
     const [status, detail] = REFUSALS[answer?.code] ?? [500, "The alerts could not be switched on; try again"];
@@ -296,17 +319,25 @@ export class HomeAlerts {
   }
 
   // The Worker's operations: { op: "subscribe", user, endpoint, p256dh, auth } after it checked
-  // the account's membership and the subscription, { op: "changed" } after subscriptions went, or
-  // { op: "admins" } for the admin key ids the controller last announced (backups.js asks).
+  // the account's membership and the subscription, { op: "changed" } after subscriptions went (with
+  // the `endpoint` that went, when one browser did), { op: "admins" } for the admin key ids the
+  // controller last announced (backups.js and device-requests.js ask), or { op: "device_request",
+  // user, request } when a new device of that account asked to join (device-requests.js).
   async request(input, homeId) {
     if (input?.op === "subscribe") {
       return this.subscribe(input, homeId);
+    }
+    if (input?.op === "device_request") {
+      return this.deviceRequest(input, homeId);
     }
     if (input?.op === "admins") {
       const admins = await this.storage.get("alerts_admins");
       return { ok: true, admins: Array.isArray(admins) ? admins : null };
     }
     if (input?.op === "changed") {
+      if (typeof input.endpoint === "string") {
+        await this.deviceRequestChoice(input.endpoint, null);
+      }
       // Only a home that is watching has anything to stop (and only it asks D1).
       if ((await this.storage.get("alerts_on")) === true) {
         await this.watch(homeId);
@@ -356,9 +387,81 @@ export class HomeAlerts {
       log("alerts_subscribe_failed", { home: homeId, user: input.user, error: String(error?.message ?? error) });
       return { ok: false, code: /FOREIGN KEY/i.test(String(error?.message)) ? "NOT_A_MEMBER" : "INTERNAL" };
     }
-    log("alerts_subscribed", { home: homeId, user: input.user, key: keyId, offline: input.offline !== false, service: serviceOf(input.endpoint) });
+    const choice = keyId && typeof input.device_requests === "boolean" ? input.device_requests : null;
+    if (choice !== null) {
+      await this.deviceRequestChoice(input.endpoint, choice);
+    }
+    log("alerts_subscribed", { home: homeId, user: input.user, key: keyId, offline: input.offline !== false, device_requests: choice, service: serviceOf(input.endpoint) });
     await this.watch(homeId);
     return { ok: true };
+  }
+
+  // Keeps whether the browser of `endpoint` wants the push of a new device asking to join (`on`), or
+  // forgets it (null). The newest DEVICE_REQUEST_CHOICES_MAX are kept.
+  async deviceRequestChoice(endpoint, on) {
+    const choices = (await this.storage.get("device_request_choices")) ?? {};
+    const hash = await sha256Hex(endpoint);
+    if (on === null) {
+      if (!Object.hasOwn(choices, hash)) return;
+      delete choices[hash];
+    } else {
+      choices[hash] = { on, at: Date.now() };
+      const hashes = Object.keys(choices);
+      if (hashes.length > DEVICE_REQUEST_CHOICES_MAX) {
+        hashes.sort((a, b) => choices[b].at - choices[a].at);
+        for (const old of hashes.slice(DEVICE_REQUEST_CHOICES_MAX)) delete choices[old];
+      }
+    }
+    await this.storage.put("device_request_choices", choices);
+  }
+
+  // A new device of `input.user` asked to join (device-requests.js; `input.request` is its id): a
+  // push, at once, to that account's browsers registered here with one of the home's admin keys that
+  // want it, at most DEVICE_REQUEST_PUSHES_PER_HOUR an account an hour. The push says only that a
+  // device asks, at this home, when, and the request's id: all of it the cloud's own.
+  async deviceRequest(input, homeId) {
+    const user = typeof input.user === "string" ? input.user : "";
+    const request = typeof input.request === "string" && /^[0-9a-f]{32}$/.test(input.request) ? input.request : null;
+    if (!user || !request) {
+      return { ok: false, code: "INVALID_REQUEST" };
+    }
+    const admins = await this.storage.get("alerts_admins");
+    if (!Array.isArray(admins) || admins.length === 0) {
+      log("device_request_push_not_sent", { home: homeId, user, request, why: "no admin keys known" });
+      return { ok: true, devices: 0 };
+    }
+    const now = Date.now();
+    const pushes = {};
+    for (const [account, times] of Object.entries((await this.storage.get("device_request_pushes")) ?? {})) {
+      const recent = (Array.isArray(times) ? times : []).filter((time) => now - time < HOUR_MS && time <= now);
+      if (recent.length) pushes[account] = recent;
+    }
+    if ((pushes[user] ?? []).length >= DEVICE_REQUEST_PUSHES_PER_HOUR) {
+      log("device_request_push_limited", { home: homeId, user, request });
+      return { ok: true, limited: true };
+    }
+    const { results } = await this.env.DB.prepare(
+      "SELECT endpoint, p256dh, auth FROM push_subscriptions AS s WHERE s.home_id = ?1 AND s.user_id = ?2 AND s.key_id IN (SELECT value FROM json_each(?3)) " +
+        "AND EXISTS (SELECT 1 FROM member_keys AS m WHERE m.home_id = ?1 AND m.key_id = s.key_id AND m.user_id = s.user_id)"
+    )
+      .bind(homeId, user, JSON.stringify(admins))
+      .all();
+    const choices = (await this.storage.get("device_request_choices")) ?? {};
+    const list = [];
+    for (const subscription of results) {
+      if (choices[await sha256Hex(subscription.endpoint)]?.on === true) list.push(subscription);
+    }
+    if (list.length === 0) {
+      log("device_request_push_not_sent", { home: homeId, user, request, why: "no admin's browser of this account wants it" });
+      return { ok: true, devices: 0 };
+    }
+    pushes[user] = [...(pushes[user] ?? []), now];
+    await this.storage.put("device_request_pushes", pushes);
+    const message = { kind: "device_request", home: homeId, at: iso(now), request };
+    const outcome = await this.deliver(homeId, list, () => message, DEVICE_REQUEST_TTL_SECONDS, "device_request");
+    const counts = outcome ? outcome.counts : { devices: list.length, delivered: 0 };
+    log("device_request_pushed", { home: homeId, user, request, ...counts });
+    return { ok: true, devices: counts.devices, delivered: counts.delivered };
   }
 
   // Whether an admin's browser is subscribed; the object sets alarms only then. Returns it.

@@ -4586,6 +4586,28 @@ components:
           description: Goes up with every change; send it back to detect changes made meanwhile.
         prefs:
           $ref: "#/components/schemas/ProfilePrefs"
+        gone_favorites:
+          type: array
+          description: |
+            Since 1.8.0, in the caller's own profile only (GET and PATCH /v1/profile): the favorites
+            of devices the project no longer has (removed in Composer), as the last project read
+            that worked found them. The controller drops them from every profile once they have
+            been gone 7 days (docs/PREFERENCES.md); meanwhile the app shows them as removed.
+          items:
+            type: object
+            required: [entry, since]
+            properties:
+              entry:
+                type: string
+                pattern: "^[a-z]+:[0-9]+$"
+                description: The favorite, as in `prefs.favorites`.
+              since:
+                type: string
+                format: date-time
+                description: When a project read first found the device gone.
+              name:
+                type: string
+                description: The name the device had, when the controller still knew it then.
 
     ProfileWithKeys:
       allOf:
@@ -5674,7 +5696,9 @@ components:
           listed once a night when it fails, with `note` `retry` when it is tried again that night),
           `remote_away` (the remote connection was away for `seconds`, more than a minute; recorded
           when it is back), `driver_updated` (`from`, `to`), `driver_started` (the controller or the
-          driver restarted), `driver_added`.
+          driver restarted), `driver_added`, `remote_update_required` (1.8.0: the account service no
+          longer takes this version of DirectorLink for remote access; `from` this version, `to` the
+          oldest it takes when it said; once until a connection opens again).
       required: [id, at, kind, action, who]
       properties:
         id:
@@ -5689,7 +5713,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:

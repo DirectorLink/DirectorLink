@@ -330,6 +330,25 @@ test("without the app's words an alert is in English, and an unreadable push sti
   assert.deepEqual(shown.slice(1).map((item) => item.options.tag), Array(3).fill("alert-other-"));
 });
 
+// 1.8.0 (ADR-053 as amended by ADR-059): the account service's push when a new device of this
+// account asks to join says only that; tapping it opens the app, where the request is shown.
+test("a new device asking to join shows the app's words and opens the app", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await push({ kind: "device_request", home: HOME, at: AT, request: "ab".repeat(16) });
+  assert.equal(shown[0].title, "DirectorLink");
+  assert.equal(shown[0].options.body, "A new device asks to join your home. Open DirectorLink to approve or decline it.", "English without the app's words");
+  assert.equal(shown[0].options.tag, `device-request-${HOME}`, "one per home: a newer request replaces it");
+  const texts = await storage.open("directorlink-alerts");
+  await texts.put("/alert-texts.json", new Response(JSON.stringify({ lang: "he", dir: "rtl", title: "DirectorLink", device_request: "מכשיר חדש מבקש להצטרף לבית שלכם." })));
+  await push({ kind: "device_request", home: HOME, at: AT, request: "cd".repeat(16) });
+  assert.equal(shown[1].options.body, "מכשיר חדש מבקש להצטרף לבית שלכם.");
+  assert.equal(shown[1].options.dir, "rtl");
+  await notificationClick(shown[1].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/`], "the app, where the request shows under the header");
+});
+
 test("a new version keeps the alerts' words", async () => {
   const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-alerts"] });
   assert.deepEqual((await storage.keys()).sort(), ["directorlink-alerts", /CACHE_NAME = "([^"]+)"/.exec(SOURCE)[1]]);

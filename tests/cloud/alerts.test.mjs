@@ -3,7 +3,8 @@
 // a fake push service (fake-push.mjs) that checks each push's VAPID signature and opens its message
 // as the browser would. The alert's minutes are 0.1 (6 s), an alert that did not get through is
 // tried again after 1 s, and a connection whose pings go unanswered for 2 s counts as away, so the
-// waits are short. A fake Apple sends Apple's notifications about its accounts.
+// waits are short. A fake Apple sends Apple's notifications about its accounts. Also the push of a
+// new device asking to join (1.8.0, ADR-053 as amended by ADR-059).
 //   node --test tests/cloud/alerts.test.mjs
 
 import assert from "node:assert/strict";
@@ -13,6 +14,7 @@ import path from "node:path";
 import { after, afterEach, before, test } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 
+import { commitmentOf, keyPair } from "../../app/js/device-join.js";
 import { connectDriver, randomHex } from "../../scripts/relay_smoke.mjs";
 import { appleVars, postNotification, signInWithApple, startFakeApple } from "./fake-apple.mjs";
 import { startFakePush, vapidVars } from "./fake-push.mjs";
@@ -614,4 +616,72 @@ test("after the relay restarts, only a home that stays away alerts, counted from
   assert.ok(Date.parse(alert.at) >= restarted - 500, `away counted from the restart, not from before it (${alert.at})`);
   await sleep(OFFLINE_MS);
   assert.deepEqual(of(backBrowser, "offline"), [], "the home that came back is not alerted about");
+});
+
+test("a new device asking to join is pushed at once to the same account's admin browsers that want it, three an hour", TEST, async () => {
+  const { state, dana, keyId } = await claimedHome();
+  // Dana's browsers at the home, with her admin key: one wants it, one said no, one (an app before
+  // 1.8.0) said nothing.
+  const wants = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, wants, keyId, { device_requests: true })).status, 201);
+  const declined = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, declined, keyId, { device_requests: false })).status, 201);
+  const older = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, older, keyId)).status, 201);
+  assert.equal((await subscribeWithKey(state, dana, push.subscribe(), keyId, { device_requests: "yes" })).json.code, "INVALID_SUBSCRIPTION");
+  // A member key of Dana's, and Avi (a member) at the same home, who both want it.
+  const memberKey = randomHex(4);
+  state.keys.set(memberKey, `ak_${randomHex(24)}`);
+  state.announce();
+  assert.equal((await e2e(dana, state, memberKey)).status, 200);
+  const danaMember = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, danaMember, memberKey, { device_requests: true })).status, 201);
+  const avi = await joins(state, dana, AVI);
+  await sleep(300);
+  const aviBrowser = push.subscribe();
+  assert.equal((await subscribeWithKey(state, avi.cookie, aviBrowser, avi.keyId, { device_requests: true })).status, 201);
+  // Avi made an admin: his browser wants it too, but it is not his account that asks.
+  state.admins.add(avi.keyId);
+  state.announce();
+  await sleep(300);
+
+  // Dana's new phone asks to join, in a session of its own.
+  const phone = await signIn(DANA);
+  const ask = async () => {
+    const pair = await keyPair();
+    const asked = await call("POST", `/v1/homes/${state.home}/device-requests`, { cookie: phone, body: { label: "Home Screen app on iPhone", commitment: await commitmentOf(pair.publicKey) } });
+    assert.equal(asked.status, 201, asked.text);
+    return asked.json;
+  };
+  const first = await ask();
+  const [message] = await eventually(async () => {
+    const found = of(wants, "device_request");
+    return found.length ? found : null;
+  }, "the push at Dana's browser");
+  assert.equal(message.home, state.home);
+  assert.equal(message.request, first.id);
+  assert.ok(Math.abs(Date.parse(message.at) - Date.parse(first.created_at)) < 5000);
+  assert.deepEqual(Object.keys(message).sort(), ["at", "home", "kind", "request"], "nothing but the home, the time and the request: no label, no name");
+  const delivered = push.received.find((entry) => entry.id === wants.id);
+  assert.equal(delivered.headers.ttl, "600", "kept no longer than a request lasts");
+  await sleep(500);
+  for (const browser of [declined, older, danaMember, aviBrowser]) {
+    assert.deepEqual(push.messagesFor(browser), [], "only Dana's admin browsers that want it");
+  }
+
+  // Three an hour for the account at this home; requests go on being made.
+  assert.equal((await call("DELETE", `/v1/homes/${state.home}/device-requests/${first.id}`, { cookie: phone })).status, 204);
+  for (let index = 0; index < 3; index += 1) {
+    const next = await ask();
+    assert.equal((await call("DELETE", `/v1/homes/${state.home}/device-requests/${next.id}`, { cookie: phone })).status, 204);
+  }
+  await eventually(async () => logged("device_request_push_limited", state.home), "the limit to be logged");
+  await sleep(500);
+  assert.equal(of(wants, "device_request").length, 3, "the fourth in the hour is not pushed");
+
+  // The choice changed in the app: registered again with false, nothing more would come (the
+  // object keeps it); a DELETE forgets it.
+  assert.equal((await subscribeWithKey(state, dana, wants, keyId, { device_requests: false })).status, 201);
+  assert.equal((await call("DELETE", `/v1/homes/${state.home}/alerts`, { cookie: dana, body: { endpoint: wants.subscription.endpoint } })).status, 204);
+  assert.ok(!worker.output().split("\n").some((line) => line.includes('"event":"device_request_pushed"') && line.includes("iPhone")), "the logs never carry the label");
 });

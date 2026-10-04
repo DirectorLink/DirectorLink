@@ -229,7 +229,8 @@ function answerBlob(answer) {
   return new Blob([answer.bytes], { type: answer.contentType || "image/jpeg" });
 }
 
-// The account's homes: { items: [{ home_id, owner, added_at, connected }] }.
+// The account's homes: { items: [{ home_id, owner, added_at, connected, update_required? }] }
+// (update_required, 1.8.0: its DirectorLink is older than the account service takes, ADR-059).
 export function listAccountHomes() {
   return send("GET", "/v1/homes");
 }

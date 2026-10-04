@@ -1241,6 +1241,24 @@ select:disabled {
   margin-block-start: auto;
 }
 
+/* A favorite whose device was removed in Composer (1.8.0): dashed and quiet, with Remove. */
+.fav-tile.fav-gone {
+  border-style: dashed;
+  background: transparent;
+}
+
+.fav-gone .fav-name {
+  color: var(--muted);
+}
+
+.fav-gone .fav-state {
+  margin-block-start: 0;
+}
+
+.fav-gone .fav-gone-remove {
+  margin-block-start: auto;
+}
+
 .fav-error {
   font-size: 12px;
   color: var(--errText);

@@ -6,7 +6,7 @@ import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, s
 import { blindMove, setFan, setLight } from "../controls.js";
 import { h, iconButton, name } from "../dom.js";
 import { ringIsActive, ringingDoorbells } from "../doorbells.js";
-import { favoriteDevices, moveFavorite, toggleFavorite } from "../favorites.js";
+import { favoriteDevices, goneFavorites, moveFavorite, removeFavorite, toggleFavorite } from "../favorites.js";
 import { formatRelative, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import {
@@ -171,6 +171,7 @@ function sceneButton(scene) {
 
 function favoritesSection({ openCamera, openFavoritesPicker }) {
   const items = favoriteDevices();
+  const gone = goneFavorites();
   const editing = ui.editFavorites;
   const hasDevices =
     state.lights.length + state.thermostats.length + state.fans.length + state.blinds.length + state.cameras.length + state.relays.length + state.doorbells.length + state.refrigerators.length > 0;
@@ -193,7 +194,7 @@ function favoritesSection({ openCamera, openFavoritesPicker }) {
   );
 
   let body;
-  if (!items.length && !editing) {
+  if (!items.length && !gone.length && !editing) {
     body = h(
       "div",
       { class: "favorites-empty" },
@@ -208,6 +209,7 @@ function favoritesSection({ openCamera, openFavoritesPicker }) {
     );
   } else {
     const tiles = items.map((item, index) => favoriteTile(item, { editing, index, count: items.length, openCamera }));
+    tiles.push(...gone.map(goneTile));
     if (editing) {
       tiles.push(
         h(
@@ -226,6 +228,38 @@ function favoritesSection({ openCamera, openFavoritesPicker }) {
     { class: "home-section", "aria-labelledby": "favorites-title" },
     h("div", { class: "section-head" }, h("h2", { id: "favorites-title", class: "section-title" }, icon("star"), t("favorites.title")), toggleEdit),
     body
+  );
+}
+
+// The icon of a favorite's kind, for a tile whose device is gone.
+const GONE_ICONS = { light: "bulb", thermostat: "climate", fan: "fan", blind: "blinds", refrigerator: "fridge", camera: "camera", relay: "door", doorbell: "bell" };
+
+// A favorite whose device was removed in Composer (1.8.0, ADR-059): by the name it had when the
+// controller knew it, "Removed in Composer", and Remove. The controller drops it by itself after
+// some days (docs/PREFERENCES.md).
+function goneTile({ entry, kind, name: deviceName }) {
+  const label = deviceName || t("favorites.gone.unnamed");
+  return h(
+    "div",
+    { class: "fav-tile fav-gone", dataset: { key: `${entry}:gone` } },
+    h("span", { class: "fav-icon" }, icon(GONE_ICONS[kind] || "star")),
+    name(label, "span", "fav-name"),
+    h("span", { class: "fav-state" }, t("favorites.gone.label")),
+    h(
+      "button",
+      {
+        type: "button",
+        class: "button button-secondary button-small fav-gone-remove",
+        "aria-label": t("favorites.remove", { name: label }),
+        dataset: { key: `${entry}:gone-remove` },
+        onclick: () => {
+          removeFavorite(entry);
+          ui.tick += 1;
+          notify();
+        },
+      },
+      t("favorites.gone.remove")
+    )
   );
 }
 

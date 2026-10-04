@@ -6,6 +6,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local RoomNames = require("src.core.room_names")
+local FavoritesGone = require("src.core.favorites_gone")
 
 local Profiles = {}
 
@@ -144,12 +145,20 @@ local function validatePrefs(prefs, maxFavorites)
     return changes
 end
 
+-- The caller's own profile, with its favorites of devices removed in Composer (1.8.0, ADR-059): the
+-- app shows them as removed, with Remove, until the controller drops them (src/core/favorites_gone.lua).
+local function ownView(ctx, profile)
+    local result = view(profile)
+    result.gone_favorites = FavoritesGone.list(result.prefs.favorites, ctx.apiKey)
+    return result
+end
+
 function Profiles.current(ctx)
     local profile, problem = ownProfile(ctx)
     if not profile then
         return problem
     end
-    return 200, view(profile)
+    return 200, ownView(ctx, profile)
 end
 
 -- PATCH {"prefs": {"language": "he", "favorites": [...]}, "version": 3}: changes the named
@@ -185,7 +194,7 @@ function Profiles.update(ctx)
         end
         return Problem.notFound("Profile", profile.id)
     end
-    return 200, view(updated)
+    return 200, ownView(ctx, updated)
 end
 
 function Profiles.list(ctx)
