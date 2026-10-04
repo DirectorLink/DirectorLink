@@ -645,6 +645,19 @@ def check_calendar_privacy(files):
                 fail(f"{name} uses {call}: the Jewish calendar is worked out on the controller and never goes to the network")
 
 
+def check_documentation(xml, documentation):
+    """Composer's Documentation tab: declared, packaged, and opening with the owner's disclaimer."""
+    disclaimer = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
+    if '<documentation file="www/documentation.html"/>' not in xml:
+        fail('driver.xml must declare <documentation file="www/documentation.html"/> (Composer\'s Documentation tab)')
+    if not documentation:
+        fail("www/documentation.html must be packaged")
+    body = documentation[documentation.find("<body>"):]
+    first = body.find(disclaimer)
+    if first < 0 or first > 400:
+        fail(f"www/documentation.html must say near its top: {disclaimer}")
+
+
 def main():
     if not PACKAGE.is_file():
         fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
@@ -655,6 +668,7 @@ def main():
         check_contents(names)
         check_reproducible(archive.infolist())
         files = {name: archive.read(name).decode("utf-8") for name in names if not name.startswith("www/")}
+        documentation = archive.read("www/documentation.html").decode("utf-8") if "www/documentation.html" in names else ""
 
     check_driver_xml(files["driver.xml"], driver_version)
     if f'Version.BRIDGE_VERSION = "{version}"' not in files["src/core/version.lua"]:
@@ -667,6 +681,7 @@ def main():
     check_calendar_privacy(files)
     check_remote_methods(files)
     check_relay_roots(files)
+    check_documentation(files["driver.xml"], documentation)
     print(f"OK: validated {len(files)} packaged files for version {version}")
 
 

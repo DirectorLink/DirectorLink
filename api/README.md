@@ -1,5 +1,7 @@
 # DirectorLink API
 
+> **DirectorLink is an independent project, not affiliated with Control4 or Snap One.**
+
 [`openapi.yaml`](openapi.yaml) is the contract for the LAN API that the DirectorLink driver serves on the Control4 controller. It is the single source of truth: the driver routes are checked against it in CI (`scripts/check_api.py`), the build embeds it in the driver, and every release publishes it as `openapi.json`.
 
 A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The [API console](https://console.directorlink.io) ([`../console/`](../console/)) reads it to list and try every endpoint.
