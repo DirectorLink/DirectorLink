@@ -13,7 +13,8 @@ permissions:
 jobs:
   driver-tests:
     name: Driver tests (part ${{ matrix.part }} of 3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -34,7 +35,8 @@ jobs:
 
   time-zones:
     name: Calendar and schedule tests in other time zones
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,7 +55,8 @@ jobs:
 
   checks:
     name: Build and checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,12 +109,13 @@ jobs:
       - name: Validate console and website
         run: python scripts/check_sites.py
 
-      - name: Check JavaScript syntax (app, console and relay)
-        run: find app console cloud github-link -name '*.js' -print0 | xargs -0 -n1 node --check
+      - name: Check JavaScript syntax (app, console, website and relay)
+        run: find app console site cloud github-link -name '*.js' -print0 | xargs -0 -n1 node --check
 
   app-and-cloud:
     name: App and cloud tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -146,7 +150,8 @@ jobs:
   validate:
     if: always()
     needs: [driver-tests, time-zones, checks, app-and-cloud]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Every job passed
         env:
