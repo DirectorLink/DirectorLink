@@ -685,3 +685,28 @@ test("a new device asking to join is pushed at once to the same account's admin 
   assert.equal((await call("DELETE", `/v1/homes/${state.home}/alerts`, { cookie: dana, body: { endpoint: wants.subscription.endpoint } })).status, 204);
   assert.ok(!worker.output().split("\n").some((line) => line.includes('"event":"device_request_pushed"') && line.includes("iPhone")), "the logs never carry the label");
 });
+
+test("a new device's request is answered at once, without waiting for the push", TEST, async () => {
+  const { state, dana, keyId } = await claimedHome();
+  // Dana's browser wants it, but its push service is slow: it answers only when released.
+  const slow = push.subscribe({ hold: true });
+  assert.equal((await subscribeWithKey(state, dana, slow, keyId, { device_requests: true })).status, 201);
+  const phone = await signIn(DANA);
+  const pair = await keyPair();
+  const started = Date.now();
+  const asked = await Promise.race([
+    call("POST", `/v1/homes/${state.home}/device-requests`, { cookie: phone, body: { label: "Home Screen app on iPhone", commitment: await commitmentOf(pair.publicKey) } }),
+    sleep(5000).then(() => null),
+  ]);
+  assert.ok(asked, `answered while the push service still holds the push (${Date.now() - started} ms)`);
+  assert.equal(asked.status, 201, asked.text);
+  // The push still goes out after the answer.
+  await eventually(async () => slow.held.length === 1, "the push at the slow service");
+  push.release(slow);
+  const [message] = await eventually(async () => {
+    const found = of(slow, "device_request");
+    return found.length ? found : null;
+  }, "the push");
+  assert.equal(message.request, asked.json.id);
+  await eventually(async () => logged("device_request_pushed", state.home), "the push to be logged");
+});

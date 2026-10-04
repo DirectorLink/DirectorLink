@@ -53,7 +53,7 @@ export default {
     ctx.waitUntil(purgeDeviceRequests(env));
   },
 
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/health") {
@@ -80,7 +80,7 @@ export default {
       if (account) {
         return account;
       }
-      const home = await handleHomes(request, env);
+      const home = await handleHomes(request, env, ctx);
       if (home) {
         return home;
       }
