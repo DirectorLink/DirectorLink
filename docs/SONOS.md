@@ -96,9 +96,12 @@ a Sonos room was renamed).
   same address or name, or the same address under another id) and starts it as the list has it.
   While a scene plays a favorite, the favorites are read every half hour, so a run knows at once;
   just after a start they are read first, and a favorite found gone then is only logged.
-- **Who may**: a scene changes only the Sonos rooms whoever runs it may control (a schedule: a
-  member's key); the others are skipped with `FORBIDDEN`. A group is changed only when every room
-  in it may be.
+- **Who may**: a scene's music steps run in full, as its other steps do (ADR-054): a member an
+  admin chose the scene for, a schedule and a link change every Sonos room the step names, grouped
+  rooms included, also rooms the member could not control themselves (DirectorLink's own runs,
+  schedules and links, leave out only doors and gates). The Music screen and `/v1/music` change
+  only the rooms the person may control (`FORBIDDEN` for the others; a group only when every room in
+  it may be).
 
 ## How DirectorLink talks to the speakers
 

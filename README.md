@@ -219,7 +219,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 
 ## Status
 
-1.7, used every day in a real home. The API is described and versioned: 1.x releases add to `/v1` without breaking existing clients, and a breaking change would get a new prefix (`/v2`). The roadmap is [`docs/ROADMAP.md`](docs/ROADMAP.md).
+1.8, used every day in a real home. The API is described and versioned: 1.x releases add to `/v1` without breaking existing clients, and a breaking change would get a new prefix (`/v2`). The roadmap is [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Disclaimer
 
