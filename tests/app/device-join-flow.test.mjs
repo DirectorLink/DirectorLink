@@ -12,7 +12,7 @@
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
-import test, { mock } from "node:test";
+import test, { beforeEach, mock } from "node:test";
 
 import { deriveLock, invitationLock, open, seal } from "../../app/js/lock.js";
 
@@ -100,6 +100,15 @@ Object.defineProperty(globalThis, "localStorage", { value: storage(), configurab
 Object.defineProperty(globalThis, "sessionStorage", { value: storage(), configurable: true });
 globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 0);
 mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+// The tests share one page. Before each, what the last one left running (an answer on its way,
+// WebCrypto work, a timer set for now) has a moment to finish, so that it lands in its own test.
+beforeEach(async () => {
+  const until = Date.now() + 200;
+  while (Date.now() < until) {
+    mock.timers.tick(0);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+});
 
 // ---- the account service and the controller behind it ------------------------------------------
 
@@ -239,17 +248,34 @@ function byKeyStart(node, prefix) {
   });
   return found;
 }
+// The element when it can be pressed: not disabled (the approving device disables its buttons
+// while one of its actions finishes, and ignores a press then).
+const enabled = (element) => (element && !("disabled" in element.attributes) ? element : null);
+
 function click(element) {
   assert.ok(element, "the button is there");
   for (const listener of element.listeners.click || []) listener({ type: "click", preventDefault() {} });
 }
 
-// Lets the page's requests, its WebCrypto work and what follows them run (real time, not timers).
+// Lets the page's requests, its WebCrypto work and what follows them run (real time, not timers),
+// and the timers it sets for "now" (a list or a look asked for at once), without moving the clock.
 async function until(check, what) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     if (await check()) return;
+    mock.timers.tick(0);
     await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+// Ticks the page's timers by `ms` until `check` holds: a timer the page sets after a tick (it was
+// still busy, say with its WebCrypto work, on a slow or loaded machine) fires at the next one.
+async function untilTicking(ms, check, what) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    await tick(ms);
+    if (await check()) return;
   }
   assert.fail(`timed out waiting for ${what}`);
 }
@@ -270,7 +296,8 @@ function approverDevice() {
 }
 
 // Types `code` in the request's field on the approving device and submits it (Approve, or Enter).
-function typeCode(request, code) {
+async function typeCode(request, code) {
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`)), "Approve enabled");
   const notice = deviceRequestNotice();
   const field = byKey(notice, `device-request-code-${request.id}`);
   assert.ok(field, "the field for the code");
@@ -290,15 +317,12 @@ async function untilCodeAsked() {
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(60000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
-  await tick(2000);
-  await until(() => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
+  await untilTicking(2000, () => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
   const code = byKey(joinFromAnotherDevice(), "device-join-code").textContent.replace(/\D/g, "");
-  await tick(2000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the field on the other device");
+  await untilTicking(2000, () => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the field on the other device");
   return { request, code };
 }
 
@@ -335,8 +359,7 @@ test("the new device asks and shows a code, the other types it, Approve seals a 
 
   // The device that reaches the home sees it at its next look (every 60 s while it is shown).
   approverDevice();
-  await tick(60000);
-  await until(() => deviceRequestNotice(), "the request on the other device");
+  await untilTicking(60000, () => deviceRequestNotice(), "the request on the other device");
   assert.match(deviceRequestNotice().textContent, /Home Screen app on iPhone wants to join your home/);
   assert.match(deviceRequestNotice().textContent, /Didn’t ask\? Decline it and sign out everywhere in Settings → Account\./);
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
@@ -344,10 +367,8 @@ test("the new device asks and shows a code, the other types it, Approve seals a 
 
   // The new device shows its key (the one it committed to) and its code; the other device asks for
   // it, and does not show its own.
-  await tick(2000);
-  await until(() => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
-  await tick(2000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the other device's field");
+  await untilTicking(2000, () => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
+  await untilTicking(2000, () => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the other device's field");
   const onNew = byKey(joinFromAnotherDevice(), "device-join-code").textContent;
   assert.match(onNew, /^[0-9]{3} [0-9]{3}$/);
   assert.match(joinFromAnotherDevice().textContent, /Type this code on your other device/);
@@ -356,7 +377,7 @@ test("the new device asks and shows a code, the other types it, Approve seals a 
 
   // The code typed (as shown, with its space), then Approve: a for-me invitation at the controller,
   // as Add my other device makes it.
-  typeCode(request, onNew);
+  await typeCode(request, onNew);
   await until(() => request.sealed, "the sealed invitation");
   const [[invitationId, made]] = [...cloud.invitations.entries()];
   assert.deepEqual(made.body, { role: "admin", expires_in: 600, for_me: true, email: EMAIL });
@@ -366,8 +387,7 @@ test("the new device asks and shows a code, the other types it, Approve seals a 
 
   // The new device collects it, opens it and joins with it.
   state.apiKey = "";
-  await tick(2000);
-  await until(() => cloud.joined.length === 1, "the join");
+  await untilTicking(2000, () => cloud.joined.length === 1, "the join");
   assert.equal(cloud.joined[0].invitation, invitationId);
   await until(() => localStorage.getItem("directorlink.apiKey") || state.apiKey === `ak_${"2".repeat(48)}`, "the new key");
   assert.equal(state.apiKey, `ak_${"2".repeat(48)}`);
@@ -383,12 +403,11 @@ test("Decline on the other device ends the request on the new one", async () => 
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(60000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-decline-${request.id}`), "the request on the other device");
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "the request on the other device");
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "Decline enabled");
   click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
   await until(() => cloud.requests.size === 0, "declined");
-  await tick(2000);
-  await until(() => /declined, or the request ran out/.test(joinFromAnotherDevice()?.textContent || ""), "the new device to say so");
+  await untilTicking(2000, () => /declined, or the request ran out/.test(joinFromAnotherDevice()?.textContent || ""), "the new device to say so");
   assert.equal(localStorage.getItem("directorlink.deviceJoin"), null);
 });
 
@@ -401,21 +420,17 @@ test("keys swapped on the way stop both devices: no code to approve, and the new
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(60000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
-  await tick(2000);
-  await until(() => request.device_key, "the new device's key");
-  await tick(2000);
-  await until(() => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
+  await untilTicking(2000, () => request.device_key, "the new device's key");
+  await untilTicking(2000, () => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
   assert.equal(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), null, "no Approve");
   assert.equal(byKey(deviceRequestNotice(), `device-request-code-${request.id}`), null, "no code");
   // The approving key changes after the new device showed its own: it stops and withdraws.
   request.approver_key = (await keyPair()).publicKey;
   state.apiKey = "";
-  await tick(2000);
-  await until(() => /changed on its way/.test(joinFromAnotherDevice()?.textContent || ""), "the new device to stop");
+  await untilTicking(2000, () => /changed on its way/.test(joinFromAnotherDevice()?.textContent || ""), "the new device to stop");
   assert.equal(cloud.requests.size, 0, "withdrawn");
   cloud.swapKey = null;
 });
@@ -428,44 +443,39 @@ test("a key swapped after the code was shown takes the code and Approve away", a
   await until(() => cloud.requests.size === 1, "the request");
   const [request] = [...cloud.requests.values()];
   approverDevice();
-  await tick(60000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request on the other device");
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
   await until(() => request.approver_key, "the other device's key");
-  await tick(2000);
-  await until(() => request.device_key, "the new device's key");
-  await tick(2000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), "Approve with the code");
+  await untilTicking(2000, () => request.device_key, "the new device's key");
+  await untilTicking(2000, () => enabled(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`)), "Approve with the code");
   // Now the account service shows another key in the new device's place.
   cloud.swapKey = (await keyPair()).publicKey;
-  await tick(60000);
-  await until(() => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
+  await untilTicking(60000, () => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
   assert.equal(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), null, "no Approve");
   assert.equal(request.sealed, undefined, "nothing sealed");
   cloud.swapKey = null;
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "Decline enabled");
   click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
   await until(() => cloud.requests.size === 0, "declined");
-  await tick(2000);
-  await until(() => !byKey(joinFromAnotherDevice(), "device-join-cancel"), "the new device to stop");
+  await untilTicking(2000, () => !byKey(joinFromAnotherDevice(), "device-join-cancel"), "the new device to stop");
 });
 
 test("a wrong code approves nothing; three wrong codes decline the request", async () => {
   const { request, code } = await untilCodeAsked();
   const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, "0");
-  typeCode(request, wrong);
+  await typeCode(request, wrong);
   await until(() => /That isn’t the code .* shows/.test(deviceRequestNotice()?.textContent || ""), "said so");
   assert.equal(request.sealed, undefined, "nothing sealed");
   assert.equal(cloud.invitations.size, 0, "no invitation made");
   assert.ok(cloud.requests.has(request.id), "the request still waits");
-  typeCode(request, "");
+  await typeCode(request, "");
   await until(() => /That isn’t the code/.test(deviceRequestNotice()?.textContent || ""), "an empty field neither");
-  typeCode(request, wrong);
+  await typeCode(request, wrong);
   await until(() => /three times, so the request was declined\. Didn’t ask\? Sign out everywhere/.test(deviceRequestNotice()?.textContent || ""), "declined after the third");
   assert.equal(cloud.requests.has(request.id), false, "declined");
   assert.equal(cloud.invitations.size, 0);
   state.apiKey = "";
-  await tick(2000);
-  await until(() => /declined, or the request ran out/.test(joinFromAnotherDevice()?.textContent || ""), "the new device stops");
+  await untilTicking(2000, () => /declined, or the request ran out/.test(joinFromAnotherDevice()?.textContent || ""), "the new device stops");
 });
 
 test("a device whose role is not known yet asks nothing and offers nothing", async () => {
@@ -485,8 +495,8 @@ test("a device whose role is not known yet asks nothing and offers nothing", asy
   assert.equal(request.approver_key, null);
   // Known to be an admin: then it looks.
   approverDevice();
-  await tick(60000);
-  await until(() => byKey(deviceRequestNotice(), `device-request-show-${request.id}`), "the request");
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request");
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "Decline enabled");
   click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
   await until(() => cloud.requests.size === 0, "declined");
   state.apiKey = "";
@@ -527,14 +537,13 @@ test("a key saved another way while the request waits withdraws the request", as
 
 test("a device that got a key while its request was approved is asked before it is replaced", async () => {
   const { request, code } = await untilCodeAsked();
-  typeCode(request, code);
+  await typeCode(request, code);
   await until(() => request.sealed, "the sealed invitation");
   // Meanwhile this device got a key of its own (and the hook missed it): the join page asks first.
   const own = `ak_${"4".repeat(48)}`;
   state.apiKey = own;
   const joinedBefore = cloud.joined.length;
-  await tick(2000);
-  await until(() => !cloud.requests.has(request.id) && window.location.hash === "#/join", "collected, and the join page open");
+  await untilTicking(2000, () => !cloud.requests.has(request.id) && window.location.hash === "#/join", "collected, and the join page open");
   for (let index = 0; index < 20; index += 1) await tick(100);
   assert.equal(cloud.joined.length, joinedBefore, "not joined without asking");
   assert.equal(state.apiKey, own, "its key stays");
@@ -547,7 +556,7 @@ test("Approve whose answer is lost keeps the invitation the cloud took; a refusa
   let { request, code } = await untilCodeAsked();
   cloud.revoked = 0;
   cloud.requests.delete(request.id);
-  typeCode(request, code);
+  await typeCode(request, code);
   await until(() => cloud.revoked === 1, "revoked at home");
   assert.match(deviceRequestNotice()?.textContent || "", /withdrawn or ran out/);
   state.apiKey = "";
@@ -558,7 +567,7 @@ test("Approve whose answer is lost keeps the invitation the cloud took; a refusa
   cloud.revoked = 0;
   cloud.dropApproveAnswer = true;
   const invitations = cloud.invitations.size;
-  typeCode(request, code);
+  await typeCode(request, code);
   await until(() => request.sealed, "the cloud took it");
   await until(() => /Approved\./.test(deviceRequestNotice()?.textContent || ""), "Approved, as the request says");
   cloud.dropApproveAnswer = false;
@@ -567,8 +576,7 @@ test("Approve whose answer is lost keeps the invitation the cloud took; a refusa
   // The new device joins with it.
   const joinedBefore = cloud.joined.length;
   state.apiKey = "";
-  await tick(2000);
-  await until(() => cloud.joined.length === joinedBefore + 1, "the join");
+  await untilTicking(2000, () => cloud.joined.length === joinedBefore + 1, "the join");
 });
 
 test("an account with no device that could approve is told what to do instead", async () => {
