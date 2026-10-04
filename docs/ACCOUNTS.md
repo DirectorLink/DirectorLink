@@ -6,7 +6,9 @@ register its own invitations (ADR-032). 1.3.0 switches Sign in with Apple on, le
 approve an invitation accepted with another email, and follows Apple's notifications about its
 accounts (ADR-041); it also pairs with CPace, so the pairing code never crosses the network
 (ADR-039), and the API console's own key lasts a day (ADR-040). 1.7.0 lets a new device join by
-approval from another device of the same account, and paste an invitation link (ADR-053).** The
+approval from another device of the same account, and paste an invitation link (ADR-053); 1.8.0
+pushes such a request to the account's admin devices, and lets the account service turn away
+drivers older than a minimum version (ADR-059).** The
 driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
@@ -45,6 +47,8 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |
 | Joining from another device (1.7.0): the new device's label ("Safari on iPhone"), both devices' public keys | yes | yes, while the request lasts (10 minutes; deleted within a day) | no |
 | Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
+| Joining from another device (1.8.0): the push that a new device asks | its own choice; the push, opened by its worker | nothing new: it made the request, and pushes only that a device of the account asks, the home, when and the request's id (never the label); and whether each browser wants the push | no |
+| DirectorLink's version on the controller | its own controller's (`GET /v1/system`) | yes, from every connection (`X-DirectorLink-Version`, the `hello`); since 1.8.0 it can refuse versions below a minimum it is set to (ADR-059), which teaches it nothing new | yes |
 | Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
 | When, and how much data, flows | yes | yes | yes |
 
@@ -286,7 +290,11 @@ uses to let it in, without a link:
 2. A device of the same account that reaches the home with an admin key (the rule of *Add my other
    device*, once the controller has said the key's role) shows the request under the header of every
    screen while the app is open; it looks every 60 seconds, at once when it comes to the front or
-   connects, and every 2 seconds while it answers a request. **Show code** sends that device's own
+   connects, and every 2 seconds while it answers a request. Since 1.8.0 (ADR-059) the account
+   service also pushes "A new device asks to join your home" at once to that account's browsers
+   registered at the home with an admin key (*6. Alerts*) whose device wants it (Settings →
+   Controller → Alerts on this device, on by default), at most 3 an hour; tapping it opens the app,
+   which then shows the request. The push says nothing the cloud did not already have. **Show code** sends that device's own
    public key. Only then does the new device send its public key, which the cloud and the other
    device check against the commitment.
 3. Both devices work out the same six digits from the request and both public keys. The new device
@@ -353,7 +361,8 @@ there too (*On the home network*). No cloud is involved.
 Anyone with a key at the home can get notifications on their phones and computers, with the app
 closed: a doorbell rang, a door or gate was opened (admins, if they choose), the refrigerator's
 door was left open (members and admins), a schedule had a problem (admins), and the home has been
-unreachable for 10 minutes (admins). Before 1.7.0 on the controller, only the last two, for admins.
+unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join
+(admins). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
 
 1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
    switches on **Alerts on this device**. The browser asks for permission and makes a push

@@ -76,6 +76,8 @@ User-Agent: DirectorLink/<driver version>
   previous (the relay closes the old socket with code 4000, reason `replaced`).
 - `400` — missing or malformed headers; `401` — wrong secret for this `home_id`. Problem Details
   JSON (`application/problem+json`) with a `code`.
+- `426` — `DRIVER_UPDATE_REQUIRED` (1.8.0, ADR-059): this DirectorLink is older than the account
+  service takes, with `minimum_version`. See *The oldest version the relay takes*, below.
 
 The driver reconnects after a lost connection: after 1 s when the connection had been up for a
 minute, then with backoff, 5 s, 10 s, 30 s, then every 60 s (*Keeping the connection*, below). An
@@ -112,6 +114,38 @@ root expires or when Cloudflare adds an authority. `scripts/build.py` packages o
 CRLF included) and checks that the certificates in it are exactly these roots, each once, with its
 pinned SHA-256, and nothing else: no key and no other block. `scripts/check_repo.py` checks the
 staged file the same way.
+
+### The oldest version the relay takes (1.8.0, ADR-059)
+
+If a flaw is found in the remote protocol, the account service can turn away the drivers without
+the fix until they are updated: the Worker var `MIN_DRIVER_VERSION` (`"1.8.0"`; unset, as it is
+today, every version connects). The Worker compares `X-DirectorLink-Version` with it before the
+home's Durable Object is asked, so an old driver trying again costs one Worker request:
+
+```
+HTTP/1.1 426 Upgrade Required
+Content-Type: application/problem+json
+
+{"type":"about:blank","title":"Upgrade Required","status":426,"code":"DRIVER_UPDATE_REQUIRED",
+ "detail":"DirectorLink 1.7.0 can no longer connect to remote access: update DirectorLink to 1.8.0 or later",
+ "minimum_version":"1.8.0"}
+```
+
+- Versions compare by their three numbers (`1.8.0-rc.1` is 1.8.0; `1.10.0` is above `1.8.0`). A
+  version that is not three numbers (`dev`, a missing header) is below any minimum. A minimum that
+  is not three numbers is ignored (logged `min_driver_version_invalid`).
+- **Drivers from 1.8.0** say in Remote Status "Update DirectorLink: this version can no longer
+  connect to remote access", try again an hour later, log each refusal and put one entry in the
+  history (`remote_update_required`) until a connection opens again.
+- **Drivers before 1.8.0** take it as any other refusal: they keep trying with their backoff (every
+  60 s), and Remote Status says `Reconnecting in 60 s (refused: DRIVER_UPDATE_REQUIRED)`.
+- **For the app**, the home's object still has the version of the driver's last connection. While
+  no driver is connected and that version is below the minimum, a request through the account is
+  answered `503 HOME_UPDATE_REQUIRED` (not `HOME_OFFLINE`), the status says `update_required`
+  with `minimum_version`, and `GET /v1/homes` marks the home `update_required`: the app says to
+  update DirectorLink. A scene link's run still gets `503 HOME_OFFLINE`.
+- Setting or changing the var is a deploy, which ends every driver's connection: each is checked
+  again as it reconnects. The home network is never affected.
 
 ## Messages
 
@@ -196,6 +230,7 @@ once.
 | The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |
 | An attempt that does not open within 30 s, or fails | `no connection within 30 s`, `connection lost` | backoff |
 | The relay refuses the upgrade: `401` / other | `refused: <code>` | 300 s / backoff |
+| The relay refuses this version: `426 DRIVER_UPDATE_REQUIRED` (1.8.0) | `Update DirectorLink: this version can no longer connect to remote access` (the log: `update required`) | 3600 s |
 
 A connection lost less than a minute after it opened goes on with the backoff (5 s, 10 s, 30 s,
 then every 60 s), so one that fails as soon as it opens is not tried every second.
