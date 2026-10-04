@@ -62,7 +62,7 @@ const { default: he } = await import("../../app/i18n/he.js");
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
-const RELEASES = "https://github.com/IsraelCIL/DirectorLink/releases";
+const RELEASES = "https://github.com/DirectorLink/DirectorLink/releases";
 
 // A release as js/updates.js keeps it.
 const release = (version) => ({
@@ -246,7 +246,7 @@ test("Check now in Settings: admins only; it asks GitHub at once, then not again
   const pressed = checkNow();
   assert.deepEqual(updateFact(), ["Updates", "Checking…"]);
   await pressed;
-  assert.deepEqual(asked, ["https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest"]);
+  assert.deepEqual(asked, ["https://api.github.com/repos/DirectorLink/DirectorLink/releases/latest"]);
   assert.match(updateFact()[1], /^DirectorLink 1\.1\.0 is available/);
   // Within the minute the button looks off and says so under it (no tooltip: phones show none),
   // stays focusable, and does nothing.

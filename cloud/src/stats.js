@@ -15,7 +15,7 @@ import { json, methodNotAllowed, problem } from "./http.js";
 // The hourly trigger: it must match wrangler.jsonc character for character (event.cron).
 export const STATS_CRON = "47 * * * *";
 export const PACKAGE_NAME = "DirectorLink.c4z";
-export const REPOSITORY = "IsraelCIL/DirectorLink";
+export const REPOSITORY = "DirectorLink/DirectorLink";
 export const PER_PAGE = 100;
 export const MAX_PAGES = 10;
 const GITHUB_API = "https://api.github.com";

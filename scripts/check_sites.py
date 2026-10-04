@@ -32,7 +32,7 @@ GITHUB = "https://github.directorlink.io"
 # where a machine needs it: the short link's target, and the app's check that GitHub's release
 # answers point into this project (app/js/updates.js and the tests that hold such answers), and
 # the website's redirects to the drivers' own repositories (their names start with the same text).
-REPOSITORY = "https://github.com/IsraelCIL/DirectorLink"
+REPOSITORY = "https://github.com/DirectorLink/DirectorLink"
 REPOSITORY_ALLOWED = {
     "github-link/worker.js",
     "site/_redirects",
@@ -477,7 +477,7 @@ def check_site():
 # releases, issues and source links are redirects in site/_redirects to the driver's own repository.
 DRIVER_REDIRECT = re.compile(
     r"^/drivers/([a-z0-9]+(?:-[a-z0-9]+)*)/(download|releases|issues|source) "
-    r"https://github\.com/IsraelCIL/DirectorLink-[A-Za-z0-9-]+(/[^\s]*)? 302$"
+    r"https://github\.com/DirectorLink/DirectorLink-[A-Za-z0-9-]+(/[^\s]*)? 302$"
 )
 
 
@@ -489,7 +489,7 @@ def check_drivers():
         match = DRIVER_REDIRECT.match(line)
         if not match:
             fail(f"site/_redirects line {number}: only /drivers/<slug>/(download|releases|issues|source) "
-                 "to github.com/IsraelCIL/DirectorLink-<driver>, as 302")
+                 "to github.com/DirectorLink/DirectorLink-<driver>, as 302")
         source = line.split()[0]
         if source in redirects:
             fail(f"site/_redirects sends {source} twice")

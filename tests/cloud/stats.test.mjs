@@ -42,7 +42,7 @@ async function startFakeGitHub() {
       response.writeHead(403, { "content-type": "application/json", "x-ratelimit-remaining": "0" });
       return response.end(JSON.stringify({ message: "API rate limit exceeded" }));
     }
-    if (url.pathname !== "/repos/IsraelCIL/DirectorLink/releases") {
+    if (url.pathname !== "/repos/DirectorLink/DirectorLink/releases") {
       response.writeHead(404, { "content-type": "application/json" });
       return response.end(JSON.stringify({ message: "Not Found" }));
     }
@@ -178,7 +178,7 @@ test("the hourly count: homes linked to an account, people who can sign in, and 
   assert.deepEqual(lastJson(logged("stats_counted")), { event: "stats_counted", homes: 2, people: 3, downloads: github.total });
   assert.deepEqual(
     github.asked.map(({ path, page }) => `${path}?page=${page}`),
-    ["/repos/IsraelCIL/DirectorLink/releases?page=1", "/repos/IsraelCIL/DirectorLink/releases?page=2"]
+    ["/repos/DirectorLink/DirectorLink/releases?page=1", "/repos/DirectorLink/DirectorLink/releases?page=2"]
   );
   assert.ok(github.asked.every(({ userAgent }) => /^DirectorLink/.test(userAgent ?? "")), "GitHub needs a User-Agent");
   assert.equal(logged("sessions_purged").length, 0, "the hourly trigger is not the daily housekeeping");
