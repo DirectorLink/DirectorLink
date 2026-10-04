@@ -2,6 +2,9 @@
 // for admins the Sonos rooms with the Control4 room each is shown in (musicRoomsSection, on Settings
 // → Rooms). A group plays as one: play, pause and skip on any of its rooms work on the group;
 // volume and mute are each room's own. Playback controls stay left to right in Hebrew too.
+// Since 1.8.0 (ADR-057, a driver with features.sonos_groups) a group of rooms has one card: what it
+// plays once, a slider for the group and one per room, Leave group per room; a playing room plays in
+// more rooms, and a room that plays nothing plays what another group plays, too.
 
 import { inlineError, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
@@ -9,8 +12,13 @@ import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { hiddenRoomIds, roomById, roomName } from "../model.js";
 import {
+  groupLeader,
   groupMates,
+  groupRooms,
+  groupsAvailable,
   isPlaying,
+  joinGroup,
+  leaveGroup,
   loadFavorites,
   musicArt,
   musicAvailable,
@@ -20,6 +28,7 @@ import {
   musicRooms,
   placeMusicRoom,
   playFavorite,
+  setGroupVolume,
   setMusicLevels,
 } from "../music.js";
 import { can, state } from "../state.js";
@@ -223,8 +232,185 @@ function favoritesPanel(item) {
   return panel;
 }
 
-// One Sonos room on its room screen.
+// ---- groups (1.8.0, ADR-057) ---------------------------------------------------------------
+
+// "Kitchen + Living Room": the rooms of an item's group, its coordinator first.
+export function groupName(item) {
+  return groupRooms(item)
+    .map((room) => room.name)
+    .join(" + ");
+}
+
+function isGrouped(item) {
+  return groupsAvailable() && (item.group?.rooms || []).length > 1;
+}
+
+// Where a Sonos room is and what it does, for a list to pick from: "Living Room · Paused".
+function roomMeta(item) {
+  const where = item.room_id != null && roomById(item.room_id) ? roomName(roomById(item.room_id)) : null;
+  return [where && where !== item.name ? where : null, musicStateText(item)].filter(Boolean).join(" · ");
+}
+
+// A list to pick from, folded until opened (its open state kept over redraws by its data-key).
+function pickPanel(key, title, help, entries) {
+  const summary = h("summary", { dataset: { key: `${key}:title` } }, icon("plus"), title);
+  return h(
+    "details",
+    { class: "music-favorites music-pick", dataset: { key } },
+    summary,
+    h("p", { class: "field-help" }, help),
+    h(
+      "ul",
+      { class: "music-favorites-list" },
+      entries.map(({ id, label, meta, disabled, onPick }) =>
+        h(
+          "li",
+          {},
+          h(
+            "button",
+            {
+              type: "button",
+              class: "music-favorite",
+              disabled,
+              dataset: { key: `${key}:${id}` },
+              onclick: () => {
+                // The row goes once it is done: the keyboard waits on the panel's title.
+                summary.focus({ preventScroll: true });
+                return onPick();
+              },
+            },
+            icon("plus"),
+            h("span", { class: "music-favorite-text" }, name(label, "span", "music-favorite-name"), meta ? h("span", { class: "device-meta" }, meta) : null)
+          )
+        )
+      )
+    )
+  );
+}
+
+// On a group that plays: the other rooms; a tap and one plays it too.
+function morePanel(item) {
+  const leader = groupLeader(item);
+  const inGroup = new Set(groupRooms(item).map((room) => room.id));
+  const others = musicRooms().filter((room) => !inGroup.has(room.id));
+  if (!others.length) return null;
+  return pickPanel(
+    `${musicKey(leader)}:more`,
+    t("music.group.more"),
+    t("music.group.moreHelp"),
+    others.map((room) => ({
+      id: room.id,
+      label: room.name,
+      meta: roomMeta(room),
+      disabled: room.reachable === false || leader.reachable === false,
+      onPick: () => joinGroup(room, leader),
+    }))
+  );
+}
+
+// On a room that plays nothing: the groups that play; a tap and it plays that too.
+function herePanel(item) {
+  const groups = playingGroups({ all: true }).filter((leader) => leader.group?.id !== item.group?.id && leader.id !== item.id);
+  if (!groups.length) return null;
+  return pickPanel(
+    `${musicKey(item)}:here`,
+    t("music.group.here"),
+    t("music.group.hereHelp", { name: isolate(item.name) }),
+    groups.map((leader) => {
+      const text = nowPlayingText(leader);
+      return {
+        id: leader.id,
+        label: groupName(leader),
+        meta: [text.title, text.detail].filter(Boolean).join(" · "),
+        disabled: item.reachable === false || leader.reachable === false,
+        onPick: () => joinGroup(item, leader),
+      };
+    })
+  );
+}
+
+// A room of a group on its card: its name, its own volume and mute, and Leave group.
+function memberRow(room) {
+  const member = can("member");
+  return h(
+    "li",
+    { class: "music-member" },
+    h(
+      "div",
+      { class: "music-member-head" },
+      name(room.name, "span", "music-member-name"),
+      member
+        ? h(
+            "button",
+            {
+              type: "button",
+              class: "button button-quiet button-small",
+              disabled: room.reachable === false,
+              "aria-label": t("music.group.leaveLabel", { name: room.name }),
+              dataset: { key: `${musicKey(room)}:leave` },
+              onclick: () => leaveGroup(room),
+            },
+            t("music.group.leave")
+          )
+        : Number.isFinite(room.volume)
+          ? h("span", { class: "device-meta" }, t("music.volumeLevel", { percent: room.volume }))
+          : null
+    ),
+    member ? volumeControls(room) : null,
+    inlineError(musicKey(room))
+  );
+}
+
+// A group of rooms on a room's screen: what it plays once, its controls, a slider for the group
+// and one per room (each room's own volume), Leave group per room.
+export function groupCard(item) {
+  const leader = groupLeader(item);
+  const text = nowPlayingText(leader);
+  const member = can("member");
+  const volume = Number.isFinite(item.group?.volume) ? item.group.volume : null;
+  const title = groupName(item);
+  return h(
+    "div",
+    { class: `device music-card music-group ${isPlaying(leader) ? "is-playing" : ""} ${leader.reachable === false ? "is-unreachable" : ""}`.trim() },
+    h(
+      "div",
+      { class: "music-main" },
+      artTile(leader),
+      h(
+        "div",
+        { class: "music-text" },
+        name(title, "span", "device-name"),
+        name(text.title, "span", "music-title"),
+        text.detail ? name(text.detail, "span", "music-detail") : null,
+        h("span", { class: "device-meta" }, [musicStateText(leader), !member && volume != null ? t("music.volumeLevel", { percent: volume }) : null].filter(Boolean).join(" · "))
+      )
+    ),
+    member ? transportControls(leader) : null,
+    member
+      ? h(
+          "div",
+          { class: "music-group-volume" },
+          h("span", { class: "music-group-label" }, icon("volume"), t("music.group.volume")),
+          slider({
+            label: t("music.group.volumeLabel", { rooms: title }),
+            value: volume ?? 0,
+            key: `${musicKey(leader)}:group-volume`,
+            disabled: volume == null || leader.reachable === false,
+            format: (value) => t("common.percent", { percent: value }),
+            onCommit: (value) => setGroupVolume(leader, value),
+          })
+        )
+      : null,
+    h("ul", { class: "music-members", "aria-label": t("music.group.rooms", { rooms: title }) }, groupRooms(item).map((room) => memberRow(room))),
+    member ? morePanel(leader) : null,
+    favoritesPanel(leader),
+    inlineError(musicKey(leader))
+  );
+}
+
+// One Sonos room on its room screen (in a group of rooms: the group's card, groupCard).
 export function musicCard(item) {
+  if (isGrouped(item)) return groupCard(item);
   const text = nowPlayingText(item);
   const mates = groupMates(item);
   const member = can("member");
@@ -251,14 +437,24 @@ export function musicCard(item) {
     ),
     member ? transportControls(item) : null,
     member ? volumeControls(item) : null,
+    member && groupsAvailable() ? (isPlaying(item) ? morePanel(item) : herePanel(item)) : null,
     favoritesPanel(item),
     inlineError(musicKey(item))
   );
 }
 
-// The Sonos rooms shown in a Control4 room (room.js).
+// The Sonos rooms shown in a Control4 room (room.js): a group with more than one of them there
+// has one card.
 export function musicCards(items) {
-  return items.map((item) => musicCard(item));
+  const shown = new Set();
+  const cards = [];
+  for (const item of items) {
+    const id = isGrouped(item) ? `group:${item.group.id}` : item.id;
+    if (shown.has(id)) continue;
+    shown.add(id);
+    cards.push(musicCard(item));
+  }
+  return cards;
 }
 
 // ---- Home ----------------------------------------------------------------------------------
@@ -268,10 +464,11 @@ function roomRank(roomId) {
   return index < 0 ? state.rooms.length : index;
 }
 
-// The groups playing in rooms this person shows, in the home's room order: one line each.
-export function playingGroups() {
+// The groups playing in rooms this person shows (`all`: in hidden rooms too), in the home's room
+// order: one line each.
+export function playingGroups({ all = false } = {}) {
   if (!musicAvailable()) return [];
-  const hidden = hiddenRoomIds();
+  const hidden = all ? new Set() : hiddenRoomIds();
   const groups = new Map();
   for (const item of musicRooms()) {
     if (!isPlaying(item) || (item.room_id != null && hidden.has(item.room_id))) continue;
