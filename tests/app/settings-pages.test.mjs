@@ -137,7 +137,7 @@ const ROOMS = [
   { id: 11, name: "Living room", names: { he: "סלון" } },
 ];
 const HOUR = 3600 * 1000;
-const RELEASES = "https://github.com/IsraelCIL/DirectorLink/releases";
+const RELEASES = "https://github.com/DirectorLink/DirectorLink/releases";
 const release = (version) => ({
   version,
   name: `DirectorLink v${version}`,

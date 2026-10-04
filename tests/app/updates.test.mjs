@@ -24,7 +24,7 @@ import {
   updateStatus,
 } from "../../app/js/updates.js";
 
-const RELEASES = "https://github.com/IsraelCIL/DirectorLink/releases";
+const RELEASES = "https://github.com/DirectorLink/DirectorLink/releases";
 const NOW = Date.parse("2026-10-01T12:00:00Z");
 const HOUR = 3600 * 1000;
 
@@ -142,10 +142,10 @@ test("malformed answers, drafts and links out of the project's releases are refu
     ["a pre-release tag", answer("1.2.0", { tag_name: "v1.2.0-beta.1" })],
     ["a draft", answer("1.2.0", { draft: true })],
     ["a pre-release", answer("1.2.0", { prerelease: true })],
-    ["release notes elsewhere", answer("1.2.0", { html_url: "https://example.com/IsraelCIL/DirectorLink/releases/tag/v1.2.0" })],
+    ["release notes elsewhere", answer("1.2.0", { html_url: "https://example.com/DirectorLink/DirectorLink/releases/tag/v1.2.0" })],
     ["a script link", answer("1.2.0", { html_url: "javascript:alert(1)" })],
     ["a link out of the releases", answer("1.2.0", { html_url: `${RELEASES}/../../../other/releases/tag/v1.2.0` })],
-    ["another user on github.com", answer("1.2.0", { html_url: "https://github.com@example.com/IsraelCIL/DirectorLink/releases/tag/v1.2.0" })],
+    ["another user on github.com", answer("1.2.0", { html_url: "https://github.com@example.com/DirectorLink/DirectorLink/releases/tag/v1.2.0" })],
   ]) {
     assert.equal(readRelease(value), null, what);
   }
