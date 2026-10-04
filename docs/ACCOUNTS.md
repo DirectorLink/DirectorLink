@@ -38,7 +38,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Which key ids are admin keys (1.6.0) | its own role | yes (ids only) | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
-| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring, one that is not brief for a key that is not an admin key is the refrigerator | yes |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
@@ -369,10 +369,12 @@ there too (*On the home network*). No cloud is involved.
 ### 6. Alerts (1.6.0, ADR-047; 1.7.0, ADR-050)
 
 Anyone with a key at the home can get notifications on their phones and computers, with the app
-closed: a doorbell rang, a door or gate was opened (admins, if they choose), the refrigerator's
-door was left open (members and admins), a schedule had a problem (admins), and the home has been
-unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join
-(admins). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
+closed: a doorbell rang, a camera of the DirectorLink · Hikvision drivers saw a person, a vehicle or
+a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose), a door or gate was
+opened (admins, if they choose), the refrigerator's door was left open (members and admins), a
+schedule had a problem (admins), the home has been unreachable for 10 minutes (admins), and (1.8.0)
+a new device of their own account asks to join (admins). Before 1.7.0 on the controller, only the
+offline and schedule alerts, for admins.
 
 1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
    switches on **Alerts on this device**. The browser asks for permission and makes a push
@@ -401,7 +403,8 @@ unreachable for 10 minutes (admins), and (1.8.0) a new device of their own accou
    key), and shows it with the app's own words in its language ("Front gate rang at 08:00.", "Main
    door was opened by Dana (Dana's iPhone) at 08:01."); the cloud's offline alert, and anything it
    cannot open, in general words ("Your home – …"): the home's name is never sent. Tapping a ring
-   opens Home, a refrigerator's alert its room, the others Settings → Controller → History.
+   opens Home, a camera's alert that camera, a refrigerator's alert its room, the others Settings →
+   Controller → History.
 
 Turning the switch off, signing out or forgetting the key on that device, signing out everywhere
 (or Apple ending the account's only sign-in), leaving the home or being removed, the key being
@@ -615,9 +618,12 @@ device's key.
   key ids, and whether the notice was brief; every sealed part has the same size, and none names
   anything the cloud can read. The keys and the brevity tell some kinds for certain: a brief notice
   is a doorbell's ring (only rings are brief); one that is not brief and reaches a key that is not
-  an admin key is the refrigerator's door left open (doors opened and schedules that failed go to
-  admin keys only); one for admin keys only is a door or gate opened, a schedule that failed or the
-  refrigerator. Never which doorbell, door or refrigerator, who opened it, or which schedule.
+  an admin key is the refrigerator's door left open or, since 1.8.0, a camera's alert (doors opened
+  and schedules that failed go to admin keys only); one for admin keys only is a door or gate
+  opened, a schedule that failed, the refrigerator or a camera. Camera alerts (1.8.0, ADR-056) are
+  one more kind of the same notice, sealed and padded like the others: the cloud learns that more
+  notices went out (at most 30 an hour from cameras, one a camera a minute), never which camera, what
+  it saw or where. Never which doorbell, door or refrigerator, who opened it, or which schedule.
   With requests from new devices (1.7.0), also the kind of device and browser that asked, and
   when. With scene links (1.7.0), when a home's linked scenes run and whether they ran. With
   ask-before-opening links (1.8.0), which links are those, when they ask, and which key ids each

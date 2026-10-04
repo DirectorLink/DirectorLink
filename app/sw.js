@@ -194,15 +194,16 @@ self.addEventListener("activate", (event) => {
 // "schedule_failed", home, at }. What the controller alerts about it seals to this device's key, so
 // that the servers cannot read it: { kind: "sealed", home, key, at, sealed: { iv, ct, mac } }; this
 // opens it with the alert key js/alerts.js keeps here, and says what happened and where (a doorbell
-// rang, a door or gate was opened and by whom, the refrigerator's door was left open, a schedule
-// failed). The words are the app's, in its language (js/alerts.js keeps them here); English when
-// there are none, and the general words when the detail is missing or does not open. Every push
-// shows a notification (browsers revoke a subscription that does not). Tapping a doorbell's opens
-// Home (its banner), a refrigerator's its room, any other the home's history. The servers' push of
-// a new device asking to join (1.8.0), { kind: "device_request", home, at, request }, says only
-// that, and opens the app, where the request shows under every screen's header. An ask-to-open
-// link's request (1.8.0, ADR-058) asks "Open the main gate?": its tap opens the app's question
-// (#/open/<door>/<request>/<until>), where only Open, with this device's own key, opens the door.
+// rang, a camera saw someone or something, a door or gate was opened and by whom, the refrigerator's
+// door was left open, a schedule failed). The words are the app's, in its language (js/alerts.js
+// keeps them here); English when there are none, and the general words when the detail is missing
+// or does not open. Every push shows a notification (browsers revoke a subscription that does not).
+// Tapping a doorbell's opens Home (its banner), a camera's its full view, a refrigerator's its room,
+// any other the home's history. The servers' push of a new device asking to join (1.8.0),
+// { kind: "device_request", home, at, request }, says only that, and opens the app, where the
+// request shows under every screen's header. An ask-to-open link's request (1.8.0, ADR-058) asks
+// "Open the main gate?": its tap opens the app's question (#/open/<door>/<request>/<until>), where
+// only Open, with this device's own key, opens the door.
 const ALERT_TEXTS_CACHE = "directorlink-alerts";
 const ALERT_TEXTS_PATH = "/alert-texts.json";
 const ALERT_KEY_PATH = "/alert-key.json";
@@ -228,6 +229,23 @@ const ALERT_TEXTS = {
   open_request_title: "Open {name}?",
   open_request: "Your link “{via}” asked at {time}. Tap to answer.",
   open_request_unnamed: "Your link asked at {time}. Tap to answer.",
+  camera_title: "Camera alert",
+  camera: "{what} at {name} at {time}.",
+  camera_person: "Person",
+  camera_vehicle: "Vehicle",
+  camera_face: "Face",
+  camera_motion: "Motion",
+  camera_line_crossing: "Line crossed",
+  camera_intrusion: "Intrusion",
+  camera_region_entrance: "Someone entering",
+  camera_region_exiting: "Someone leaving",
+  camera_tamper: "Tampering",
+  camera_scene_change: "View changed",
+  camera_object_left: "Object left behind",
+  camera_object_removed: "Object removed",
+  camera_alarm_input: "Alarm input",
+  camera_pir: "Motion (PIR)",
+  camera_other: "Alert",
 };
 const HISTORY_URL = "/#/settings/history";
 
@@ -315,6 +333,12 @@ function sealedNotice(detail, texts, home) {
       const by = detail.who || {};
       const template = by.type === "control4" ? texts.door_opened_control4 : detail.action === "hold" ? texts.door_held : text(detail.via) ? texts.door_opened_scene : texts.door_opened;
       return { title: texts.title, body: fill(template, { name, who: whoText(by, texts), scene: text(detail.via), time }), tag: `door-${id}`, url: HISTORY_URL };
+    }
+    case "camera": {
+      // A camera of the DirectorLink · Hikvision drivers (ADR-056): what it saw, in the app's words.
+      if (!name) return null;
+      const what = /^[a-z_]+$/.test(detail.what ?? "") && typeof texts[`camera_${detail.what}`] === "string" ? texts[`camera_${detail.what}`] : texts.camera_other;
+      return { title: texts.camera_title, body: fill(texts.camera, { what, name, time }), tag: `camera-${id}`, url: id ? `/#/cameras/${id}` : "/#/cameras" };
     }
     case "fridge_door": {
       if (!name) return null;

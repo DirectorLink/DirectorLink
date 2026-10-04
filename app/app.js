@@ -26,7 +26,7 @@ import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { loadScenes } from "./js/scenes.js";
 import { loadSchedules } from "./js/schedules.js";
-import { state, subscribe, ui } from "./js/state.js";
+import { findDevice, state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
 import { climateView } from "./js/views/climate.js";
@@ -87,6 +87,10 @@ function parseRoute() {
   }
   if (parts[0] === "schedules") {
     return { name: "schedules", tab: "scenes" };
+  }
+  // A camera alert's tap (sw.js, ADR-056): Cameras, with that camera's full view.
+  if (parts[0] === "cameras" && /^\d+$/.test(parts[1] || "")) {
+    return { name: "cameras", tab: "cameras", camera: Number(parts[1]) };
   }
   if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
@@ -210,6 +214,18 @@ document.body.append(cameraDialog, pickerDialog);
 
 function openCamera(camera) {
   openFullView(cameraDialog, camera, cameraParts);
+}
+
+// #/cameras/<id>: once the cameras are read, that camera's full view, and the address becomes
+// #/cameras (Back does not open it again). A camera this device does not have shows Cameras.
+function openRouteCamera() {
+  if (!route.camera || !state.loaded) return;
+  const camera = findDevice("camera", route.camera);
+  route = { name: "cameras", tab: "cameras" };
+  window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#/cameras`);
+  if (!camera) return;
+  ui.featuredCamera = camera.id;
+  openCamera(camera);
 }
 
 function openFavoritesPicker() {
@@ -436,6 +452,7 @@ function render(force = false) {
   view.replaceChildren(...content);
   restoreUi(saved);
   attachCameraImages(view);
+  openRouteCamera();
   updateTabbar();
   if (pickerDialog.open) {
     pickerBody.replaceChildren(...favoritesPicker());

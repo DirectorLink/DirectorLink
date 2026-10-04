@@ -1,12 +1,14 @@
--- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang, a door or gate was opened,
--- the refrigerator's door was left open, a schedule failed. Each goes to DirectorLink's servers as
+-- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang, a camera of the DirectorLink
+-- · Hikvision drivers saw someone or something (1.8.0, ADR-056), a door or gate was opened, the
+-- refrigerator's door was left open, a schedule failed. Each goes to DirectorLink's servers as
 -- one "notify" message that names only the key ids it is for and, for each, the details sealed to
 -- that key: what happened, when, by the names the controller has (the doorbell, the door, who opened
 -- it as the history names them), so that the servers can deliver it to the browsers of those keys
 -- (Web Push) without being able to read it. Only the device of that key can open its part.
 --
 -- Who gets what is decided here: a key whose role may get the kind (ROLES), whose device has
--- switched alerts on, and whose own choices include it (DEFAULTS until it chose). The choices are
+-- switched alerts on, and whose own choices include it (DEFAULTS until it chose); a camera's alert
+-- only keys that may see that camera's pictures (src/auth/access.lua). The choices are
 -- each key's, kept in the driver's persistent data and read and set by that key only
 -- (GET and PUT /v1/alerts/choices, src/api/handlers/alerts.lua).
 --
@@ -15,8 +17,10 @@
 -- the ciphertext, through C4:Encrypt and C4:HMAC. tests/vectors/alert.json is shared with the app,
 -- whose service worker keeps only that alert key (never the lock key or the API key).
 
+local Access = require("src.auth.access")
 local Base64 = require("src.core.base64")
 local Clock = require("src.core.clock")
+local CameraAdapter = require("src.adapters.camera")
 local DoorBird = require("src.adapters.doorbird")
 local KnxRelay = require("src.adapters.knx_relay")
 local Json = require("src.core.json")
@@ -29,17 +33,21 @@ local Alerts = {}
 
 Alerts.LABEL = "DirectorLink alert v1"
 -- In the order the app lists them.
-Alerts.KINDS = { "doorbell", "door_opened", "fridge_door", "schedule_failed" }
--- The least role that gets each: whoever may see a doorbell (every key), the admins for doors
--- opened and schedules, members and admins (and doors keys) for the refrigerator.
-Alerts.ROLES = { doorbell = "viewer", door_opened = "admin", fridge_door = "member", schedule_failed = "admin" }
--- A key that never chose gets these.
-Alerts.DEFAULTS = { doorbell = true, door_opened = false, fridge_door = true, schedule_failed = true }
--- At most one alert per doorbell in RING_SECONDS, per door in DOOR_SECONDS, per refrigerator in
--- FRIDGE_SECONDS; SCHEDULE_PER_HOUR schedule alerts, and PER_HOUR alerts in all, an hour.
+Alerts.KINDS = { "doorbell", "camera", "door_opened", "fridge_door", "schedule_failed" }
+-- The least role that gets each: whoever may see a doorbell or a camera's pictures (every key; a
+-- camera's only the keys Access lets see that camera), the admins for doors opened and schedules,
+-- members and admins (and doors keys) for the refrigerator.
+Alerts.ROLES = { doorbell = "viewer", camera = "viewer", door_opened = "admin", fridge_door = "member", schedule_failed = "admin" }
+-- A key that never chose gets these. Cameras can be busy: off until chosen.
+Alerts.DEFAULTS = { doorbell = true, camera = false, door_opened = false, fridge_door = true, schedule_failed = true }
+-- At most one alert per doorbell in RING_SECONDS, per camera in CAMERA_SECONDS, per door in
+-- DOOR_SECONDS, per refrigerator in FRIDGE_SECONDS; CAMERA_PER_HOUR camera alerts (busy cameras
+-- leave room for the rest), SCHEDULE_PER_HOUR schedule alerts, and PER_HOUR alerts in all, an hour.
 Alerts.RING_SECONDS = 30
+Alerts.CAMERA_SECONDS = 60
 Alerts.DOOR_SECONDS = 60
 Alerts.FRIDGE_SECONDS = 300
+Alerts.CAMERA_PER_HOUR = 30
 Alerts.SCHEDULE_PER_HOUR = 3
 Alerts.PER_HOUR = 60
 -- A door or doorbell reporting an opening this soon after DirectorLink's own command to it was
@@ -66,6 +74,7 @@ local state = {
     last = {},
     hour = {},
     schedules = {},
+    cameras = {},
     -- The alert keys of lock keys: key id -> { lock, enc, mac }.
     sealing = {},
 }
@@ -185,18 +194,19 @@ function Alerts.load()
 end
 
 -- options: connected() and tell(message) (the relay connection; false while not connected), keys
--- (src/auth/keys.lua), homeId(), available() (the lock passed its self-test), present(kind) (the
--- home has what the kind is about: a doorbell, a door, a refrigerator); for deviceEvent, below.
+-- (src/auth/keys.lua), homeId(), available() (the lock passed its self-test), present(kind, key)
+-- (the home has what the kind is about: a doorbell, a camera with alerts that `key` may see, a door,
+-- a refrigerator); for deviceEvent, below.
 function Alerts.configure(options)
     state.options = options
 end
 
-local function present(kind)
+local function present(kind, key)
     local options = state.options
     if kind == "schedule_failed" then
         return true
     end
-    return options ~= nil and options.present ~= nil and options.present(kind) == true
+    return options ~= nil and options.present ~= nil and options.present(kind, key) == true
 end
 
 -- Wires the alerts to the rest of the driver (main.lua, at start): deps = { relay, remote, keys,
@@ -212,10 +222,18 @@ function Alerts.start(deps)
             return deps.relay.identity().home_id
         end,
         available = deps.remote.available,
-        present = function(kind)
+        present = function(kind, key)
             local registry = deps.registry
             if kind == "doorbell" then
                 return #registry.doorbellList() > 0
+            elseif kind == "camera" then
+                -- A camera whose driver raises alerts (src/adapters/camera.lua) that this key may see.
+                for _, camera in ipairs(registry.cameraList()) do
+                    if camera.capabilities and camera.capabilities.alerts == true and (key == nil or Access.canSeePictures(key, camera)) then
+                        return true
+                    end
+                end
+                return false
             elseif kind == "door_opened" then
                 return #registry.relayList() > 0 or #registry.doorbellList() > 0
             end
@@ -223,6 +241,9 @@ function Alerts.start(deps)
         end,
         doorbellEvent = function(eventId)
             return DoorBird.EVENTS[tonumber(eventId)]
+        end,
+        cameraAlert = function(eventId)
+            return tonumber(eventId) == CameraAdapter.ALERT_EVENT
         end,
         relayClosed = KnxRelay.closedEvent,
         commandedAt = deps.adapters.commandedAt,
@@ -246,7 +267,7 @@ function Alerts.view(key)
     local choice = state.choices[key.id]
     local kinds = {}
     for _, kind in ipairs(Alerts.KINDS) do
-        if Roles.allows(key.role, Alerts.ROLES[kind]) and present(kind) then
+        if Roles.allows(key.role, Alerts.ROLES[kind]) and present(kind, key) then
             kinds[kind] = wants(choice, kind)
         end
     end
@@ -364,9 +385,10 @@ end
 -- Sends `detail` (its kind and what to say) to every key that gets that kind, saying it happened at
 -- `at` (a time, or the ISO text of one; default `now`). `brief`: kept by the push services a minute
 -- only (a doorbell). `only` (a set of key ids): to those keys instead, whatever their role and kinds,
--- if their device switched alerts on (an open request, ADR-058). Returns how many keys it went to
--- and their ids (a set), or nil and why not.
-local function send(detail, now, brief, at, only)
+-- if their device switched alerts on (an open request, ADR-058). `allowed(key)`: which of the keys
+-- may get this one (a camera's: the keys that may see that camera, ADR-056). Returns how many keys
+-- it went to and their ids (a set), or nil and why not.
+local function send(detail, now, brief, at, only, allowed)
     local options = state.options
     if not state.loaded or not state.readable or not options then
         return nil, "not ready"
@@ -399,7 +421,7 @@ local function send(detail, now, brief, at, only)
         if only then
             gets = only[key.id] == true
         else
-            gets = Roles.allows(key.role, Alerts.ROLES[detail.kind]) and wants(choice, detail.kind)
+            gets = Roles.allows(key.role, Alerts.ROLES[detail.kind]) and wants(choice, detail.kind) and (allowed == nil or allowed(key))
         end
         if choice and choice.on and gets then
             local remote = options.keys.remote(key.id)
@@ -455,6 +477,36 @@ function Alerts.ring(device, now)
     end
     local last = device.state and device.state.last and device.state.last.doorbell
     return sent("doorbell", send(deviceDetail("doorbell", device), now, true, type(last) == "string" and last or nil))
+end
+
+-- A camera of the DirectorLink · Hikvision drivers raised an alert (its driver's Alert event, with
+-- the camera's Alert On filter, the hub's switch and its snooze already applied:
+-- src/adapters/camera.lua): the keys that chose camera alerts and may see that camera's pictures,
+-- saying what it saw (`device.state.alert.what`: person, vehicle, line_crossing, ... or other), at
+-- most once a camera in CAMERA_SECONDS and CAMERA_PER_HOUR an hour. Not brief: someone in the
+-- garden at night is worth knowing later too.
+function Alerts.camera(device, now)
+    now = now or Clock.now()
+    if type(device) ~= "table" then
+        return nil, "no camera"
+    end
+    if tooSoon("camera:" .. tostring(device.id), Alerts.CAMERA_SECONDS, now) then
+        return sent("camera", nil, "too soon")
+    end
+    state.cameras = lastHour(state.cameras, now)
+    if #state.cameras >= Alerts.CAMERA_PER_HOUR then
+        return sent("camera", nil, "limit")
+    end
+    local detail = deviceDetail("camera", device)
+    local alert = type(device.state) == "table" and device.state.alert or nil
+    detail.what = type(alert) == "table" and type(alert.what) == "string" and alert.what or "other"
+    local count, why = send(detail, now, false, nil, nil, function(key)
+        return Access.canSeePictures(key, device)
+    end)
+    if count and count > 0 then
+        state.cameras[#state.cameras + 1] = now
+    end
+    return sent("camera", count, why)
 end
 
 -- The history recorded a door or gate opened (`entry`, src/core/activity.lua: a pulse, a relay held
@@ -551,13 +603,14 @@ function Alerts.recorded(entry)
 end
 
 -- A device's event that its adapter took (src/adapters/manager.lua; `before`: the device's state
--- before it): a doorbell's ring, or a door or gate opened that DirectorLink did not open (in
--- Control4: its app, a keypad, its programming, the DoorBird's own app), which goes into the
--- history, at most once a door in DOOR_SECONDS, and from there to the admins. A relay counts only
--- when it closes from open as last reported: a relay that reports "closed" again (a status read
--- after a restart, a cyclic report) or whose state is not known yet opened nothing.
--- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; relayClosed(eventId);
--- commandedAt(deviceId) (DirectorLink's last command to it); record(kind, action, fields).
+-- before it): a doorbell's ring, a camera's alert, or a door or gate opened that DirectorLink did
+-- not open (in Control4: its app, a keypad, its programming, the DoorBird's own app), which goes
+-- into the history, at most once a door in DOOR_SECONDS, and from there to the admins. A relay
+-- counts only when it closes from open as last reported: a relay that reports "closed" again (a
+-- status read after a restart, a cyclic report) or whose state is not known yet opened nothing.
+-- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; cameraAlert(eventId);
+-- relayClosed(eventId); commandedAt(deviceId) (DirectorLink's last command to it); record(kind,
+-- action, fields).
 function Alerts.deviceEvent(device, eventId, before)
     local options = state.options
     if not options or type(device) ~= "table" then
@@ -565,7 +618,13 @@ function Alerts.deviceEvent(device, eventId, before)
     end
     local now = Clock.now()
     local opened
-    if device.kind == "doorbell" then
+    if device.kind == "camera" then
+        local capabilities = type(device.capabilities) == "table" and device.capabilities or {}
+        if capabilities.alerts == true and options.cameraAlert and options.cameraAlert(eventId) then
+            Alerts.camera(device, now)
+        end
+        return
+    elseif device.kind == "doorbell" then
         local event = options.doorbellEvent and options.doorbellEvent(eventId)
         if event == "doorbell" then
             Alerts.ring(device, now)

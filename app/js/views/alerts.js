@@ -23,7 +23,7 @@ import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { savedRemote } from "../remote.js";
-import { can } from "../state.js";
+import { can, state } from "../state.js";
 
 // Why the switch cannot be used on this device, or null.
 function obstacle(support, linked) {
@@ -42,14 +42,19 @@ function obstacle(support, linked) {
   }
 }
 
-// One kind's switch; busy while its change is saved.
-function kindRow(kind, on) {
+// One kind's switch; busy while its change is saved. `help`: a line under its name.
+function kindRow(kind, on, help = null) {
   const busy = alertsUi.saving === kind;
   const label = `alerts-kind-${kind}`;
   return h(
     "div",
     { class: "toggle-row alerts-toggle" },
-    h("span", { class: "toggle-text" }, h("span", { id: label }, t(`alerts.settings.kinds.${kind}`))),
+    h(
+      "span",
+      { class: "toggle-text" },
+      h("span", { id: label }, t(`alerts.settings.kinds.${kind}`)),
+      help ? h("span", { class: "field-help", id: `${label}-help` }, help) : null
+    ),
     h(
       "button",
       {
@@ -58,6 +63,7 @@ function kindRow(kind, on) {
         class: "switch",
         "aria-checked": String(on),
         "aria-labelledby": label,
+        "aria-describedby": help ? `${label}-help` : null,
         "aria-busy": busy ? "true" : null,
         "aria-disabled": alertsUi.saving ? "true" : null,
         dataset: { key: `alerts-kind:${kind}` },
@@ -77,7 +83,10 @@ function kindsList() {
   if (can("admin")) rows.push(kindRow("offline", offlineAlertsOn()), kindRow("device_requests", deviceRequestAlertsOn()));
   const kinds = alertsUi.choices?.kinds || {};
   for (const kind of ALERT_KINDS) {
-    if (typeof kinds[kind] === "boolean") rows.push(kindRow(kind, kinds[kind]));
+    // Camera alerts only with a controller that has them (DirectorLink 1.8.0 and a camera on the
+    // DirectorLink · Hikvision Camera driver, ADR-056).
+    if (kind === "camera" && state.system?.features?.camera_alerts !== true) continue;
+    if (typeof kinds[kind] === "boolean") rows.push(kindRow(kind, kinds[kind], kind === "camera" ? t("alerts.settings.cameraHelp") : null));
   }
   if (!rows.length) return null;
   return h(

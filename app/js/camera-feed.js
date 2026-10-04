@@ -1,7 +1,13 @@
 // Camera pictures, fetched as blobs with the API key (an <img src> cannot send it).
-// Thumbnails on screen refresh one after another about every 3 s; live pictures (data-live: the
-// doorbell banner) and the full view about every second. Only tiles that are visible refresh,
-// and nothing refreshes while the page is hidden.
+// Thumbnails on screen refresh about every 3 s; live pictures (data-live: the doorbell banner) and
+// the full view about every second. Only tiles that are visible refresh, and nothing refreshes
+// while the page is hidden.
+//
+// Several pictures are asked for at once (picturesAtOnce, 1.8.0, ADR-055): through the account each
+// is a round trip to the home, so one after another a grid of 11 took 11 of them. Each tile shows
+// its picture as soon as it arrives. A camera and size is asked for once however many tiles show it,
+// and not again while its last picture is still on its way (waiting or being fetched), so nothing
+// piles up on a slow connection.
 //
 // Markup: <div class="cam" data-state="loading|ok|busy|none"><img data-camera-id data-width [data-live]></div>
 
@@ -14,14 +20,37 @@ const remote = () => state.transport === "remote";
 const GRID_REFRESH_MS = () => (remote() ? 10000 : 3000);
 const FULL_REFRESH_MS = () => (remote() ? 3000 : 1000);
 const LIVE_REFRESH_MS = () => (remote() ? 2000 : 1000);
+// Pictures asked for at once. "directorlink.picturesAtOnce" (1 to 8) in this browser's storage
+// overrides it, to compare (1: one after another, as before 1.8.0).
+export const PICTURES_AT_ONCE = 4;
+const AT_ONCE_KEY = "directorlink.picturesAtOnce";
 const pictures = new Map(); // "cameraId:width" -> { url, at }
 const visible = new WeakSet();
 const observed = new Set();
+// Pictures asked for and not here yet: "cameraId:width" -> a promise of its address (null when it
+// was no longer wanted by the time its turn came); the ones not started yet, in order; how many are
+// on their way.
+const loading = new Map();
+const waiting = [];
+let fetching = 0;
 // One loop each; a redraw while a loop waits for a picture must not start a second one.
 let gridTimer = null;
 let gridRunning = false;
 let liveRunning = false;
 let full = null; // { camera, image, status, timer }
+// How long the last screen of tiles took to fill: { pictures, ms, atOnce, transport }.
+let filling = null;
+export let lastFill = null;
+
+export function picturesAtOnce() {
+  try {
+    const chosen = Number(localStorage.getItem(AT_ONCE_KEY));
+    if (Number.isInteger(chosen) && chosen >= 1 && chosen <= 8) return chosen;
+  } catch {
+    // Blocked storage: the default.
+  }
+  return PICTURES_AT_ONCE;
+}
 
 // A camera by id: from /v1/cameras, or a doorbell's own camera.
 function cameraById(id) {
@@ -50,6 +79,43 @@ async function fetchPicture(camera, width) {
   // Revoke after the new picture had time to replace the old one everywhere.
   if (previous) window.setTimeout(() => URL.revokeObjectURL(previous.url), 2000);
   return url;
+}
+
+// Starts the pictures that may start: picturesAtOnce() on their way at most, the oldest first. One
+// no longer wanted by the time its turn comes (the page hidden, the full view opened) is skipped.
+function startWaiting() {
+  while (fetching < picturesAtOnce() && waiting.length) {
+    const job = waiting.shift();
+    if (job.wanted && !job.wanted()) {
+      loading.delete(job.key);
+      job.resolve(null);
+      continue;
+    }
+    fetching += 1;
+    fetchPicture(job.camera, job.width)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        fetching -= 1;
+        loading.delete(job.key);
+        startWaiting();
+      });
+  }
+}
+
+// The picture of `camera` at `width`: the one already asked for while it has not come, or a new
+// request. `first`: ahead of the others waiting (the full view, the doorbell banner). Resolves to its
+// address, or null when it was no longer `wanted()` by its turn.
+function picture(camera, width, { first = false, wanted = null } = {}) {
+  const key = `${camera.id}:${width}`;
+  if (loading.has(key)) return loading.get(key);
+  const promise = new Promise((resolve, reject) => {
+    const job = { key, camera, width, wanted, resolve, reject };
+    if (first) waiting.unshift(job);
+    else waiting.push(job);
+  });
+  loading.set(key, promise);
+  startWaiting();
+  return promise;
 }
 
 function bestPicture(cameraId, width) {
@@ -120,37 +186,67 @@ function isVisible(image) {
   return image.isConnected && (!observer || visible.has(image));
 }
 
-// One request per camera and size, however many tiles show it.
-async function refreshImages(images, stillWanted) {
-  const jobs = new Map();
+// The tiles on the page now that show `key` ("cameraId:width"): a redraw while its picture was on
+// its way made new ones.
+function tilesOf(key) {
+  const [id, width] = key.split(":");
+  return [...document.querySelectorAll(`img[data-camera-id="${id}"][data-width="${width}"]`)].filter((image) => !image.closest("dialog"));
+}
+
+// Each picture as soon as it comes; one request per camera and size, however many tiles show it.
+// Resolves to false when the key was refused (the device was signed out), else true.
+async function refreshImages(images, stillWanted, { first = false } = {}) {
+  const keys = new Set();
   for (const image of images.filter(isVisible)) {
-    const key = `${image.dataset.cameraId}:${image.dataset.width}`;
-    if (!jobs.has(key)) jobs.set(key, []);
-    jobs.get(key).push(image);
+    keys.add(`${image.dataset.cameraId}:${image.dataset.width}`);
   }
-  for (const [key, targets] of jobs) {
-    const [id, width] = key.split(":").map(Number);
-    if (!stillWanted()) break;
-    const camera = cameraById(id);
-    if (!camera) continue;
-    try {
-      const url = await fetchPicture(camera, width);
-      for (const image of targets) {
-        image.src = url;
+  let refused = null;
+  await Promise.all(
+    [...keys].map(async (key) => {
+      const [id, width] = key.split(":").map(Number);
+      const camera = cameraById(id);
+      if (!camera || !stillWanted()) return;
+      try {
+        const url = await picture(camera, width, { first, wanted: stillWanted });
+        if (!url) return;
+        for (const image of tilesOf(key)) {
+          image.src = url;
+        }
+        noteFilled();
+      } catch (error) {
+        if (error?.status === 401) {
+          refused = refused || error;
+          return;
+        }
+        for (const image of tilesOf(key)) {
+          // 503: the camera proxy is busy; keep the last picture and try again next round.
+          if (error?.status !== 503) setTileState(image, "none");
+          else if (!image.getAttribute("src")) setTileState(image, "busy");
+        }
       }
-    } catch (error) {
-      if (error?.status === 401) {
-        handleUnauthorized(error);
-        return false;
-      }
-      for (const image of targets) {
-        // 503: the camera proxy is busy; keep the last picture and try again next round.
-        if (error?.status !== 503) setTileState(image, "none");
-        else if (!image.getAttribute("src")) setTileState(image, "busy");
-      }
-    }
+    })
+  );
+  if (refused) {
+    handleUnauthorized(refused);
+    return false;
   }
   return true;
+}
+
+// How long a screen of new tiles took until every one had a picture (lastFill; the console says it,
+// to compare at home and through the account).
+function startFilling(images) {
+  const empty = images.filter((image) => isVisible(image) && !image.getAttribute("src")).length;
+  if (empty && !filling) filling = { started: performance.now(), pictures: empty };
+}
+
+function noteFilled() {
+  if (!filling) return;
+  const shown = [...document.querySelectorAll("img[data-camera-id]")].filter((image) => !image.closest("dialog") && isVisible(image));
+  if (shown.some((image) => !image.getAttribute("src"))) return;
+  lastFill = { pictures: filling.pictures, ms: Math.round(performance.now() - filling.started), atOnce: picturesAtOnce(), transport: state.transport };
+  filling = null;
+  console.info(`DirectorLink: ${lastFill.pictures} camera pictures in ${lastFill.ms} ms, ${lastFill.atOnce} at once (${lastFill.transport || "home"})`);
 }
 
 const canRefresh = () => !document.hidden && !full && state.apiKey && state.status === "connected";
@@ -158,20 +254,32 @@ const canRefresh = () => !document.hidden && !full && state.apiKey && state.stat
 // Live pictures (the doorbell banner), about every second while one is on screen.
 async function refreshLive() {
   const images = [...document.querySelectorAll("img[data-camera-id][data-live]")].filter((image) => !image.closest("dialog"));
-  if (!images.length || (canRefresh() && !(await refreshImages(images, canRefresh)))) {
+  if (!images.length || (canRefresh() && !(await refreshImages(images, canRefresh, { first: true })))) {
     liveRunning = false;
     return;
   }
   window.setTimeout(refreshLive, LIVE_REFRESH_MS());
 }
 
+// The tiles, a round at a time. A round waits for its pictures, but at most one refresh interval:
+// a slow camera does not hold the others back, and is not asked again while its picture is still
+// on its way.
 async function refreshGrid() {
   gridTimer = null;
   const images = [...document.querySelectorAll("img[data-camera-id]:not([data-live])")].filter((image) => !image.closest("dialog"));
   if (!images.length) return;
   gridRunning = true;
   try {
-    if (canRefresh() && !(await refreshImages(images, canRefresh))) return;
+    if (canRefresh()) {
+      startFilling(images);
+      let timer = null;
+      const longest = new Promise((resolve) => {
+        timer = window.setTimeout(() => resolve(true), GRID_REFRESH_MS());
+      });
+      const done = await Promise.race([refreshImages(images, canRefresh), longest]);
+      window.clearTimeout(timer);
+      if (!done) return;
+    }
   } finally {
     gridRunning = false;
   }
@@ -201,9 +309,12 @@ async function refreshFull() {
   current.timer = null;
   if (!document.hidden) {
     try {
-      current.image.src = await fetchPicture(current.camera, current.width);
+      const url = await picture(current.camera, current.width, { first: true });
       if (full !== current) return;
-      current.status.textContent = t("cameras.updated", { time: formatTime(new Date()) });
+      if (url) {
+        current.image.src = url;
+        current.status.textContent = t("cameras.updated", { time: formatTime(new Date()) });
+      }
     } catch (error) {
       if (full !== current) return;
       if (error?.status === 401) {
