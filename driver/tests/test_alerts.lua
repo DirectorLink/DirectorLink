@@ -1,6 +1,6 @@
 -- Alerts (ADR-047, ADR-050, docs/RELAY.md): which of its keys are admin keys the driver tells the
--- relay; what it alerts about (a doorbell rang, a door or gate opened, the refrigerator's door left
--- open, a schedule failed) it sends as one "notify" message that names only the key ids it is for,
+-- relay; what it alerts about (a doorbell rang, a camera of the DirectorLink · Hikvision drivers saw
+-- someone (ADR-056), a door or gate opened, the refrigerator's door left open, a schedule failed) it sends as one "notify" message that names only the key ids it is for,
 -- each with the details sealed to that key (tests/vectors/alert.json); who gets what (the role, the
 -- device's switch, the key's own choices, GET and PUT /v1/alerts/choices); and how often.
 
@@ -76,9 +76,10 @@ local function open(apiKey, home, keyId, sealed)
 end
 
 -- A connected driver with the clock in the test's hands: { mock, connection, clock, home, admin,
--- adminId, keys = { name -> { key, id } } }. `setup` runs before the start (Composer properties).
-local function home(setup)
-    local mock = Mock.startDriver(nil, nil, nil, setup)
+-- adminId, keys = { name -> { key, id } } }. `setup` runs before the start (Composer properties);
+-- `project`: the fake Director's project (Mock.project() by default).
+local function home(setup, project)
+    local mock = Mock.startDriver(project, nil, nil, setup)
     local _, connection = Harness.connected({ mock = mock })
     local Clock = require("src.core.clock")
     local clock = { now = os.time() }
@@ -254,6 +255,140 @@ function tests.nothing_goes_out_for_nobody_or_without_the_relay()
     T.eq(home.connection.sent, "", "nothing goes out without the relay")
 end
 
+-- ---- cameras (1.8.0, ADR-056) --------------------------------------------------------------------
+
+-- The DirectorLink · Hikvision Camera driver's Alert goes sealed to the keys that chose camera
+-- alerts and may see that camera, saying which camera, where and what it saw; at most one a camera
+-- a minute; not brief.
+function tests.a_camera_alert_goes_sealed_to_the_keys_that_chose_it_and_may_see_that_camera()
+    local home = home(nil, Mock.withHikvisionCameras(Mock.project()))
+    home.add("Hall tablet", "viewer")
+    home.add("Kids phone", "member")
+    home.add("Guest phone", "viewer")
+    T.eq(T.http(home.mock, "GET", "/v1/system", { key = home.keys["Kids phone"].key }).json.features.camera_alerts, true, "the app may offer it")
+    -- Offered to every role, off until chosen.
+    for _, name in ipairs({ "admin", "Hall tablet", "Kids phone" }) do
+        T.eq(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys[name].key }).json.kinds.camera, false, name)
+    end
+    home.on("admin", { camera = true })
+    home.on("Hall tablet", { camera = true })
+    home.on("Kids phone")
+    T.eq(T.http(home.mock, "PUT", "/v1/alerts/choices", { key = home.keys["Guest phone"].key, body = { kinds = { camera = true } } }).status, 200, "chosen, but its device never switched alerts on")
+    home.notified()
+
+    home.clock.now = home.clock.now + 3600
+    T.eq(Mock.hikvisionAlert(home.mock, 150, "Person"), 1, "the camera's driver raises an alert")
+    local notified = home.notified()
+    T.eq(#notified, 1, "one message")
+    local message = notified[1].message
+    T.eq(message.brief, nil, "not brief")
+    T.eq(count(message), 3, "type, at and for: nothing else in the clear")
+    T.eq(count(message["for"]), 2, "the admin and the hall tablet; not the member who did not choose it, nor the guest")
+    for _, word in ipairs({ "Garden", "Living Room", "camera", "erson" }) do
+        T.notContains(notified[1].text, word, "no names and no kind in the clear")
+    end
+    for _, name in ipairs({ "admin", "Hall tablet" }) do
+        local key = home.keys[name]
+        local detail = open(key.key, home.home, key.id, message["for"][key.id])
+        T.same(detail, { at = message.at, id = 65, kind = "camera", name = "Garden", room = "Living Room", room_id = 11, what = "person", v = 1 }, name)
+    end
+
+    -- Again within a minute: one is enough. Another camera is its own.
+    home.clock.now = home.clock.now + 30
+    Mock.hikvisionAlert(home.mock, 150, "Vehicle")
+    T.eq(#home.notified(), 0, "at most one a camera a minute")
+    Mock.hikvisionAlert(home.mock, 151, "Line Crossing")
+    notified = home.notified()
+    T.eq(#notified, 1)
+    local key = home.keys.admin
+    local detail = open(key.key, home.home, key.id, notified[1].message["for"][key.id])
+    T.eq(detail.name, "Back Gate")
+    T.eq(detail.what, "line_crossing")
+    home.clock.now = home.clock.now + 31
+    Mock.hikvisionAlert(home.mock, 150, "Something new")
+    notified = home.notified()
+    T.eq(#notified, 1, "a minute later, again")
+    T.eq(open(key.key, home.home, key.id, notified[1].message["for"][key.id]).what, "other", "a label DirectorLink does not know")
+
+    -- Its detections alone (Person Detected, 4) are no alert: the driver's Alert is.
+    home.clock.now = home.clock.now + 120
+    T.eq(Mock.fireDeviceEvent(home.mock, 150, 4), 0, "not even watched")
+    T.eq(#home.notified(), 0)
+
+    -- Only the keys that may see that camera's pictures (src/auth/access.lua decides).
+    local Access = require("src.auth.access")
+    local canSeePictures = Access.canSeePictures
+    local hall = home.keys["Hall tablet"].id
+    Access.canSeePictures = function(actor, device)
+        if actor.id == hall and tonumber(device.id) == 65 then
+            return false
+        end
+        return canSeePictures(actor, device)
+    end
+    Mock.hikvisionAlert(home.mock, 150, "Intrusion")
+    notified = home.notified()
+    Access.canSeePictures = canSeePictures
+    T.eq(count(notified[1].message["for"]), 1)
+    T.eq(notified[1].message["for"][hall], nil, "the hall tablet may not see the garden")
+end
+
+-- Control4's own camera drivers raise nothing new; a home without the Hikvision drivers is not
+-- offered camera alerts; the choice is kept like the others.
+function tests.only_the_directorlink_hikvision_cameras_raise_alerts()
+    local plain = home()
+    T.eq(T.http(plain.mock, "GET", "/v1/system", { key = plain.admin }).json.features.camera_alerts, false)
+    T.eq(T.http(plain.mock, "GET", "/v1/alerts/choices", { key = plain.admin }).json.kinds.camera, nil, "not offered")
+    plain.on("admin", { camera = true })
+    plain.notified()
+    -- Driveway's driver is Control4's Hikvision driver (camera_ip_hik_ipc_static.c4z).
+    for _, eventId in ipairs({ 1, 2, 4 }) do
+        T.eq(Mock.fireDeviceEvent(plain.mock, 107, eventId), 0, "its events are not watched")
+    end
+    local registry = require("src.core.registry")
+    require("src.cloud.alerts").deviceEvent(registry.getDevice(60), 1, {})
+    T.eq(#plain.notified(), 0)
+    for _, watched in ipairs(plain.mock.deviceEvents) do
+        T.truthy(watched[1] ~= 107 and watched[1] ~= 60, "nothing watched on a Control4 camera")
+    end
+
+    -- The Hikvision driver also as Composer installs a second download of it.
+    local project = Mock.withHikvisionCameras(Mock.project(), {
+        { id = 67, protocol = 152, name = "Pool", room = 11, address = "192.0.2.33", driver = "DirectorLink-Hikvision-Camera (1).c4z" },
+    })
+    local copy = home(nil, project)
+    T.eq(T.http(copy.mock, "GET", "/v1/system", { key = copy.admin }).json.features.camera_alerts, true)
+    local chosen = copy.on("admin", { camera = true })
+    T.eq(chosen.kinds.camera, true)
+    copy.notified()
+    copy.clock.now = copy.clock.now + 60
+    Mock.hikvisionAlert(copy.mock, 152, "Person")
+    T.eq(#copy.notified(), 1)
+    -- Kept through a driver update.
+    local updated = Mock.updateDriver(copy.mock, project)
+    T.eq(T.http(updated, "GET", "/v1/alerts/choices", { key = copy.admin }).json.kinds.camera, true)
+end
+
+-- Busy cameras leave room for the rest: at most 30 camera alerts an hour, of the 60 in all.
+function tests.camera_alerts_are_at_most_thirty_an_hour()
+    local home = home()
+    home.on("admin", { camera = true })
+    home.notified()
+    local Alerts = require("src.cloud.alerts")
+    for index = 1, 30 do
+        home.clock.now = home.clock.now + 10
+        T.eq(Alerts.camera({ id = 1000 + index, name = "Camera " .. index, state = { alert = { what = "motion" } } }), 1)
+    end
+    home.clock.now = home.clock.now + 10
+    local none, why = Alerts.camera({ id = 2000, name = "One more", state = { alert = { what = "motion" } } })
+    T.eq(none, nil)
+    T.eq(why, "limit")
+    T.eq(#home.notified(), 30)
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(#home.notified(), 1, "a ring still goes")
+    home.clock.now = home.clock.now + 3600
+    T.eq(Alerts.camera({ id = 2000, name = "One more", state = { alert = { what = "motion" } } }), 1, "an hour later, again")
+end
+
 -- ---- doors and gates ----------------------------------------------------------------------------
 
 function tests.doors_opened_reach_the_admins_who_chose_it_saying_which_and_who()
@@ -417,7 +552,13 @@ function tests.every_alert_is_sealed_at_one_size()
     home.clock.now = home.clock.now + 100
     Alerts.scheduleFailed(home.clock.now, { what = "Morning blinds" })
     T.eq(look("a schedule").name, "Morning blinds")
-    T.same(sizes, { 684, 684, 684, 684, 684 }, "512 bytes, in base64")
+    home.clock.now = home.clock.now + 100
+    T.eq(T.http(home.mock, "PUT", "/v1/alerts/choices", { key = home.admin, body = { kinds = { camera = true } } }).status, 200)
+    home.notified()
+    local long = string.rep("\215\169", 40)
+    Alerts.camera({ id = 65, name = long, room_name = long, room_id = 11, state = { alert = { what = "region_entrance" } } })
+    T.eq(look("a camera").what, "region_entrance")
+    T.same(sizes, { 684, 684, 684, 684, 684, 684 }, "512 bytes, in base64")
 end
 
 -- Names that take more room in JSON (a quote or a backslash takes two bytes) are shortened, whole

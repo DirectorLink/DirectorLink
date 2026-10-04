@@ -3,15 +3,16 @@
 // place that asks for permission.
 //
 // With DirectorLink 1.7.0 on the controller (features.alert_choices), every role may have them: the
-// controller decides who gets what (a doorbell rang, a door or gate was opened, the refrigerator's
-// door was left open, a schedule failed) by each key's role and its own choices, which this device
-// keeps on the controller (GET and PUT /v1/alerts/choices), and sends each alert sealed to the keys
-// it is for. The browser is registered with this device's key id; admins may also have the servers'
+// controller decides who gets what (a doorbell rang, a camera saw someone (1.8.0), a door or gate
+// was opened, the refrigerator's door was left open, a schedule failed) by each key's role and its
+// own choices, which this device keeps on the controller (GET and PUT /v1/alerts/choices), and
+// sends each alert sealed to the keys it is for. The browser is registered with this device's key id; admins may also have the servers'
 // own alert when the home is offline (`offline`). For the service worker (sw.js) this keeps, in
 // Cache Storage, the words in this device's language and this device's alert key, which opens what
 // was sealed to it and nothing else: never the lock key or the API key. With an older controller,
 // alerts are for admins only, and say only their kind and time (ADR-047). Tapping one opens the
-// doorbell on Home, the refrigerator's room, or Settings → Controller → History (sw.js).
+// doorbell on Home, the camera's full view, the refrigerator's room, or Settings → Controller →
+// History (sw.js).
 
 import { ACCOUNTS_API } from "./account.js";
 import { currentLanguage, languageInfo, t } from "./i18n.js";
@@ -29,7 +30,26 @@ export const KEY_PATH = "/alert-key.json";
 // The alert key of a device: HMAC-SHA256(its lock key, ALERT_LABEL) (driver: src/cloud/alerts.lua).
 export const ALERT_LABEL = "DirectorLink alert v1";
 // What the controller alerts about, in the order Settings lists them; offline is the servers' own.
-export const ALERT_KINDS = ["doorbell", "door_opened", "fridge_door", "schedule_failed"];
+export const ALERT_KINDS = ["doorbell", "camera", "door_opened", "fridge_door", "schedule_failed"];
+// What a camera alert can say it saw (the DirectorLink · Hikvision Camera driver's detections,
+// ADR-056); anything else is "other".
+export const CAMERA_DETECTIONS = [
+  "person",
+  "vehicle",
+  "face",
+  "motion",
+  "line_crossing",
+  "intrusion",
+  "region_entrance",
+  "region_exiting",
+  "tamper",
+  "scene_change",
+  "object_left",
+  "object_removed",
+  "alarm_input",
+  "pir",
+  "other",
+];
 const TIMEOUT_MS = 10000;
 
 // What Settings shows: busy while switching; message: { kind, key } once done (the text is
@@ -132,6 +152,9 @@ export function alertTexts() {
     unknown_device: t("history.who.unknownDevice"),
     fridge_door: t("alerts.fridgeDoor"),
     fridge_door_now: t("alerts.fridgeDoorNow"),
+    camera_title: t("alerts.cameraTitle"),
+    camera: t("alerts.camera"),
+    ...Object.fromEntries(CAMERA_DETECTIONS.map((what) => [`camera_${what}`, t(`alerts.cameraSaw.${what}`)])),
   };
 }
 

@@ -20,6 +20,16 @@ local function number(value)
     return parsed
 end
 
+-- Whether a camera raises alerts (src/adapters/camera.lua).
+local function cameraAlerts(registry)
+    for _, camera in ipairs(registry.cameraList and registry.cameraList() or {}) do
+        if camera.capabilities and camera.capabilities.alerts == true then
+            return true
+        end
+    end
+    return false
+end
+
 function System.health(ctx)
     local status = ctx.services.status()
     return 200, {
@@ -112,6 +122,8 @@ function System.info(ctx)
         -- scene_links: /v1/scene-links and a scene's link (1.7.0, ADR-051), always there.
         -- refrigerators: /v1/refrigerators and the scene step that switches their features (1.7.0,
         -- ADR-049), always there.
+        -- camera_alerts: a camera of the project raises alerts DirectorLink passes on (1.8.0,
+        -- ADR-056: the DirectorLink · Hikvision Camera driver), so the app offers their choice.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -121,6 +133,7 @@ function System.info(ctx)
             alert_choices = true,
             scene_links = true,
             refrigerators = true,
+            camera_alerts = cameraAlerts(registry),
         },
     }
 end

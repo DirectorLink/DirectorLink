@@ -122,7 +122,8 @@ tags:
   - name: Alerts
     description: |
       Which alerts each device gets (1.7.0, ADR-050): a doorbell rang, a door or gate was opened, the
-      refrigerator's door was left open, a schedule failed. The controller sends them through
+      refrigerator's door was left open, a schedule failed; since 1.8.0 a camera of the DirectorLink ·
+      Hikvision drivers saw someone or something (ADR-056). The controller sends them through
       DirectorLink's servers sealed to each device's own key, so the servers learn only which key
       ids an alert is for and when (docs/RELAY.md, `notify`). Each key reads and sets its own choices.
   - name: Logs
@@ -2709,9 +2710,9 @@ paths:
       summary: This key's alert choices
       description: |
         Whether this key's device switched alerts on, and which of the kinds its role may get, of
-        those this home has, it wants. Until it chooses: every kind but `door_opened`. A doorbell
-        goes to every role, `fridge_door` to members and up, `door_opened` and `schedule_failed` to
-        admins.
+        those this home has, it wants. Until it chooses: every kind but `door_opened` and `camera`. A
+        doorbell goes to every role, `camera` (1.8.0) to the keys that may see that camera's pictures,
+        `fridge_door` to members and up, `door_opened` and `schedule_failed` to admins.
       responses:
         "200":
           description: This key's choices.
@@ -3360,6 +3361,9 @@ components:
             refrigerators:
               type: boolean
               description: "Always true since 1.7.0: `/v1/refrigerators` and the `refrigerators` scene step (ADR-049). Missing before 1.7.0."
+            camera_alerts:
+              type: boolean
+              description: "A camera of the project is on the DirectorLink · Hikvision Camera driver, whose alerts this DirectorLink passes on: the `camera` alert choice (1.8.0, ADR-056). Missing before 1.8.0."
 
     PairRequest:
       oneOf:
@@ -5597,10 +5601,13 @@ components:
           description: This key's device switched alerts on.
         kinds:
           type: object
-          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one), each wanted or not.
+          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one; `camera` only with a camera on the DirectorLink · Hikvision Camera driver that this key may see), each wanted or not.
           properties:
             doorbell:
               type: boolean
+            camera:
+              type: boolean
+              description: "A camera saw someone or something (1.8.0, ADR-056): its driver's own alert, as the camera's Alert On, the hub's alerts switch and its snooze let it through; at most one a camera a minute. Off until chosen."
             door_opened:
               type: boolean
             fridge_door:
@@ -5621,6 +5628,8 @@ components:
           additionalProperties: false
           properties:
             doorbell:
+              type: boolean
+            camera:
               type: boolean
             door_opened:
               type: boolean

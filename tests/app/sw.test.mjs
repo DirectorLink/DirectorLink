@@ -457,6 +457,57 @@ test("a sealed alert this device cannot open shows the general words", async () 
   assert.deepEqual(shown.map((item) => item.options.data.url), Array(7).fill("/#/settings/history"));
 });
 
+// A camera of the DirectorLink · Hikvision drivers (1.8.0, ADR-056): what it saw, where, and its
+// tap opens that camera's full view.
+test("a camera's alert says what it saw at which camera, in the app's words, and opens that camera", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await keepAlertKey(storage);
+  const at = "2026-10-03T19:14:00Z";
+  for (const [what, body] of [
+    ["person", `Person at Garden at ${sealedClock(at)}.`],
+    ["vehicle", `Vehicle at Garden at ${sealedClock(at)}.`],
+    ["line_crossing", `Line crossed at Garden at ${sealedClock(at)}.`],
+    ["intrusion", `Intrusion at Garden at ${sealedClock(at)}.`],
+    ["region_entrance", `Someone entering at Garden at ${sealedClock(at)}.`],
+    ["tamper", `Tampering at Garden at ${sealedClock(at)}.`],
+    ["other", `Alert at Garden at ${sealedClock(at)}.`],
+    ["something_newer", `Alert at Garden at ${sealedClock(at)}.`],
+    ["constructor", `Alert at Garden at ${sealedClock(at)}.`],
+    [undefined, `Alert at Garden at ${sealedClock(at)}.`],
+  ]) {
+    await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 65, name: "Garden", room: "Living Room", room_id: 11, what })));
+    const last = shown.at(-1);
+    assert.equal(last.title, "Camera alert", String(what));
+    assert.equal(last.options.body, body, String(what));
+    assert.equal(last.options.tag, "camera-65", "one notification a camera");
+    assert.equal(last.options.renotify, true);
+    assert.equal(last.options.data.url, "/#/cameras/65");
+  }
+  await notificationClick(shown[0].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/cameras/65`], "the camera's full view");
+
+  // Without a name it is the general words.
+  await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 65, what: "person" })));
+  assert.equal(shown.at(-1).options.body, GENERAL);
+
+  // In Hebrew, with the app's words.
+  await (await storage.open("directorlink-alerts")).put("/alert-texts.json", new Response(JSON.stringify({
+    lang: "he",
+    dir: "rtl",
+    camera_title: "התראת מצלמה",
+    camera: "{what} ב-{name} ב-{time}.",
+    camera_person: "אדם",
+    camera_other: "התראה",
+  })));
+  await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 66, name: "שער אחורי", what: "person" })));
+  assert.equal(shown.at(-1).title, "התראת מצלמה");
+  assert.equal(shown.at(-1).options.body, `אדם ב-שער אחורי ב-${sealedClock(at, "he")}.`);
+  assert.equal(shown.at(-1).options.dir, "rtl");
+  assert.equal(shown.at(-1).options.tag, "camera-66");
+});
+
 test("a ring the app already shows, or shows on its banner now, is shown again quietly", async () => {
   const shown = [];
   const [ring] = VECTORS.details;

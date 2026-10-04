@@ -184,7 +184,7 @@ const { state, notify } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
 const { saveRemote } = await import("../../app/js/remote.js");
 const session = await import("../../app/js/session.js");
-const { alertKey, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
+const { alertKey, alertTexts, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
 const { alertsPanel } = await import("../../app/js/views/alerts.js");
 
 // ---- helpers -----------------------------------------------------------------------------------
@@ -572,4 +572,44 @@ test("a controller that does not know this device has alerts on is told: switche
   assert.equal(isOn(), true);
   assert.equal(kindSwitch("schedule_failed").attributes["aria-checked"], "true");
   await turnAlertsOff();
+});
+
+// ---- DirectorLink 1.8.0: camera alerts (ADR-056) ------------------------------------------------
+
+test("camera alerts are offered only with a controller that has them, off until chosen, saying what they are", async () => {
+  await turnAlertsOff();
+  withChoices("viewer", { doorbell: true, camera: false });
+  await press();
+  assert.equal(isOn(), true);
+  assert.equal(kindSwitch("camera"), null, "a controller that does not say it has them (features.camera_alerts)");
+  state.system = { features: { alert_choices: true, camera_alerts: true } };
+  assert.equal(kindSwitch("camera").attributes["aria-checked"], "false", "off until chosen");
+  assert.equal(kindSwitch("camera").attributes["aria-describedby"], "alerts-kind-camera-help");
+  assert.match(alertsPanel().textContent, /A camera sees a person, a vehicle or a line crossed/);
+  assert.match(alertsPanel().textContent, /cameras can be busy/);
+  await pressKind("camera");
+  assert.deepEqual(toHome("PUT", "/v1/alerts/choices").at(-1).body, { kinds: { camera: true } });
+  assert.equal(kindSwitch("camera").attributes["aria-checked"], "true");
+  // The service worker gets the words for every detection the controller may name.
+  const texts = savedTexts();
+  assert.equal(texts.camera_title, "Camera alert");
+  assert.equal(texts.camera, "{what} at {name} at {time}.");
+  assert.equal(texts.camera_line_crossing, "Line crossed");
+  await turnAlertsOff();
+});
+
+test("the app gives the service worker a word for every camera detection the worker knows, in English and Hebrew", async () => {
+  const worker = readFileSync(new URL("../../app/sw.js", import.meta.url), "utf8");
+  const known = [...worker.matchAll(/^\s+(camera(?:_[a-z_]+)?):/gm)].map((match) => match[1]).sort();
+  assert.ok(known.includes("camera_person") && known.includes("camera_other") && known.includes("camera_title"));
+  for (const language of ["en", "he"]) {
+    await setLanguage(language);
+    const texts = alertTexts();
+    const given = Object.keys(texts).filter((name) => name.startsWith("camera")).sort();
+    assert.deepEqual(given, known, language);
+    for (const name of given) assert.ok(texts[name] && !texts[name].startsWith("alerts."), `${language}: ${name}`);
+    assert.match(texts.camera, /\{what\}.*\{name\}.*\{time\}/, language);
+  }
+  assert.equal(alertTexts().camera_person, "אדם");
+  await setLanguage("en");
 });
