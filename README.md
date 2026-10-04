@@ -35,7 +35,33 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 <img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side">
 
-## V1 scope
+## What it does
+
+- **Every device in one app:** lights and dimmers, AC and floor heating, fans, blinds, cameras, doors and gates (anything that opens asks for a second tap), DoorBird doorbells, the alarm's status (read only, off by default), Sonos speakers (off by default, [`docs/SONOS.md`](docs/SONOS.md)), and Samsung refrigerators with the free [DirectorLink · Samsung Refrigerator](https://directorlink.io/drivers/samsung-refrigerator) driver.
+- **At home and away:** at home the app talks to the controller directly, locked with its own key; away, and on iPhone and iPad, it goes through your account (Google or Apple), locked end to end so that DirectorLink's servers cannot read it ([`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)).
+- **Scenes:** one tap for lights, AC, fans, blinds, music, refrigerators and gates; pick single devices or copy the house as it is, and change any action later ([`docs/SCENES.md`](docs/SCENES.md)).
+- **Schedules:** by the clock and weekday, at sunrise or sunset, by the weather (heat, wind and rain), and, with the Jewish calendar on, at Shabbat and holiday times. The controller runs them on its own ([`docs/SCHEDULES.md`](docs/SCHEDULES.md), [`docs/CALENDAR.md`](docs/CALENDAR.md)).
+- **Scene links and geofencing:** a private link per scene for iPhone Shortcuts, Android automation apps, Siri and NFC tags, so your phone runs a scene when you arrive or leave ([below](#geofencing-run-a-scene-when-you-arrive-or-leave)).
+- **Alerts on your phone and computer:** doorbell rings, a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem. Each device chooses its own; what an alert says is encrypted for that device on the controller.
+- **History:** what ran, what didn't and why, who opened which door, keys and invitations, and what changed in Composer, for the last 30 days, for admins ([`docs/HISTORY.md`](docs/HISTORY.md)).
+- **Backups:** everything DirectorLink keeps, in a file locked with your password, or every night to your account, sealed to a backup password only you know ([`docs/BACKUP.md`](docs/BACKUP.md)).
+- **The family:** a role for every person and device (viewer, member, doors, admin), invitations by email, and each person's own language, theme, favorites and hidden rooms. A new device joins with a code from a device you already use.
+- **For the installer:** Composer shows what DirectorLink automates and what it ran last, one switch pauses every schedule, and DirectorLink's settings stay in Composer.
+- **An API:** a REST API described by OpenAPI 3.1, with a key and a role for every app or script, and the API console ([below](#api)).
+- **More drivers:** free, open-source [DirectorLink Drivers](https://directorlink.io/drivers) for other devices.
+
+## Geofencing: run a scene when you arrive or leave
+
+DirectorLink does not track your phone; your phone's own automations do the geofencing and call a scene's private link. Your location never leaves the phone: DirectorLink only gets the run. Links go through your account, so the home needs **Remote Access** on in Composer and to be linked to an account (Settings → Account).
+
+1. **Make a link.** In the app, open a scene that opens no doors or gates (for example *Arriving Home*: entrance lights, AC, blinds up), then **Link for automations → Make a link**. The app shows the link once, with **Copy address**, **Copy secret**, **Copy link** and a QR code. Keep the secret private: whoever has it can run that scene.
+2. **iPhone (Shortcuts).** Automation → New Automation → **Arrive**, choose your home's location, and **Run Immediately**. Add the action **Get Contents of URL**: paste the address, then Method **POST**, Request Body **JSON**, Add new field → **Text**, key `secret`, value the secret. Make a second automation with **Leave** for a *Leaving Home* scene.
+3. **Android.** In MacroDroid, Tasker or HTTP Shortcuts, use a location (geofence) trigger, entering or leaving, with an HTTP request: method **POST** to the address, with the secret as the body (as plain text, or as a form field `secret`).
+4. **NFC tag or Siri.** Write the whole link (**Copy link**, the secret after `#`) to a tag with an NFC app: tapping it opens a page with one Run button. On iPhone, a Shortcuts **NFC** automation, or a shortcut you name for Siri, with the same Get Contents of URL step runs the scene without the page.
+
+Good to know: a scene with a door or gate step can never have a link, and adding one removes it. Every run is in History by the link's name. **Replace** gives a new secret and **Remove** ends the link at once, for example when a phone is lost; a link also ends with the key of the device that made it, and with Composer's **Revoke All API Keys** or **Remove All Scene Links**. Details and the answers a link gives are in [`docs/SCENES.md`](docs/SCENES.md).
+
+## Scope and limits
 
 - Control4 Director OS **3.3.0+**
 - `DirectorLink.c4z` is assumed to already be installed in the Control4 project
@@ -52,7 +78,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - Schedules by time and weekday, at sunrise or sunset with offsets, and by the weather (heat, wind and rain from Open-Meteo), with "only if" weather conditions; with the Jewish calendar on, also at candle lighting and havdalah, or never or only on Shabbat and holidays (worked out on the controller)
 - Director location/timezone used for solar scheduling
 - A private link per scene for the phone's own automations (iPhone Shortcuts, Android apps, an NFC tag), through the account; never for scenes that open doors or gates, and every run in History (docs/SCENES.md)
-- No automatic `.c4z` self-update in V1
+- No automatic `.c4z` self-update: updates go through Composer (ADR-035)
 
 ## Installation
 
@@ -114,7 +140,7 @@ A code is valid for 15 minutes and works once, and only on the home network. Fiv
 
 ### Updating DirectorLink
 
-Automatic self-update is intentionally **not** part of V1.
+DirectorLink does not update itself: driver updates go through Composer (ADR-035).
 
 Update the installed driver manually through Composer Pro using the `DirectorLink.c4z` asset from the desired GitHub Release. Admins see in the app when a newer release is out (Settings → Controller, and a notice on Home), with a download of its `DirectorLink.c4z` and the steps in Composer.
 
@@ -188,7 +214,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 
 ## Status
 
-1.0. The API is described and versioned: 1.x releases add to `/v1` without breaking existing clients, and a breaking change would get a new prefix (`/v2`). The roadmap is [`docs/ROADMAP.md`](docs/ROADMAP.md).
+1.7, used every day in a real home. The API is described and versioned: 1.x releases add to `/v1` without breaking existing clients, and a breaking change would get a new prefix (`/v2`). The roadmap is [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Disclaimer
 
