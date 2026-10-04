@@ -43,6 +43,8 @@ REPOSITORY_ALLOWED = {
     "scripts/check_sites.py",
 }
 NOT_AFFILIATED = "not affiliated with Control4 or Snap One"
+# The owner's disclaimer, word for word: prominent in the README, the docs, the app and the console.
+DISCLAIMER = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
 SLOGAN = ("Direct to Director.", "End-to-end integration.", "Open source.")
 
 REQUIRED = {
@@ -595,8 +597,18 @@ def check_short_links():
             fail(f"{relative} uses the repository's long address; link to {GITHUB} instead")
 
 
+def check_disclaimers():
+    """The disclaimer stays prominent: near the top of the README and the API's README, and in the console."""
+    for relative, lines in (("README.md", 12), ("api/README.md", 6)):
+        top = "\n".join((ROOT / relative).read_text(encoding="utf-8").splitlines()[:lines])
+        if DISCLAIMER not in top:
+            fail(f"{relative} must say, in its first {lines} lines: {DISCLAIMER}")
+    require((CONSOLE / "index.html").read_text(encoding="utf-8"), DISCLAIMER, f"console/index.html must say: {DISCLAIMER}")
+
+
 def main():
     check_console()
+    check_disclaimers()
     check_site()
     check_icons()
     check_github_link()

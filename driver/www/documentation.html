@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DirectorLink</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; font-size: 13px; line-height: 1.5; color: #18181b; margin: 16px; }
+h1 { font-size: 22px; margin: 0 0 2px; }
+h2 { font-size: 15px; margin: 18px 0 6px; }
+.slogan { color: #52525b; margin: 0 0 12px; }
+.disclaimer { border: 1px solid #2563eb; background: #eff6ff; padding: 8px 12px; font-weight: 600; margin: 0 0 14px; }
+code { font-family: Consolas, monospace; }
+li { margin-bottom: 4px; }
+.small { color: #52525b; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>DirectorLink</h1>
+<p class="slogan">Direct to Director. End-to-end integration. Open source.</p>
+<p class="disclaimer">DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+
+<p>DirectorLink is a free, open-source driver and an app for phones and computers: lights, climate, fans, blinds, cameras, doors and gates, the doorbell, Sonos and more, at home and away, with scenes, schedules, alerts, history and backups. The homeowner makes routine changes in the app; everything DirectorLink automates stays visible here in Composer.</p>
+
+<h2>Getting started</h2>
+<ol>
+<li>DirectorLink shows a <b>Pairing Code</b> in its properties (or run <b>Actions → New Pairing Code</b>). A code lasts 15 minutes and works once.</li>
+<li>On a computer or an Android phone at home, open <b>app.directorlink.io</b>, enter the controller's address (or tap Find my controller) and the code. That device gets an admin key.</li>
+<li>For use away from home and on iPhone: set <b>Remote Access</b> to On, sign in with Google or Apple in the app and link the home (Settings → Account). Then add phones with <b>Join from another device</b> and invite the family by email.</li>
+</ol>
+
+<h2>Settings</h2>
+<ul>
+<li><b>Door Control</b>: off until doors and gates may be opened from the app. <b>Relay Hold</b>: doors and gates are only pulsed unless allowed.</li>
+<li><b>Remote Access</b>: the app from anywhere, through the homeowner's account, locked end to end.</li>
+<li><b>Schedules</b>: On, or Paused to stop every DirectorLink schedule; <b>Schedule Status</b> and <b>Last Automation</b> show what runs and what ran.</li>
+<li><b>Alarm Status</b>, <b>Sonos</b> and <b>Jewish Calendar</b>: off by default.</li>
+<li><b>Log Level</b>, and <b>Inventory</b> (rooms and devices found).</li>
+</ul>
+
+<h2>Actions</h2>
+<ul>
+<li><b>New Pairing Code</b>, <b>Revoke All API Keys</b> (every key, invitation and scene link), <b>Remove All Scene Links</b>.</li>
+<li><b>Print Schedules and Scenes</b> (to the Lua tab), <b>Refresh Project</b> (read the project again).</li>
+<li><b>Reset Remote Identity</b>: a last resort; the homeowner links the home again.</li>
+</ul>
+
+<h2>Updating</h2>
+<p>Download <code>DirectorLink.c4z</code> from <b>github.directorlink.io/releases/latest</b> and use <b>Driver → Add or Update Driver or Agent</b>. Keep the file name exactly <code>DirectorLink.c4z</code>: a browser's <code>DirectorLink (1).c4z</code> copy installs as a separate driver. Keys, scenes, schedules and settings stay.</p>
+
+<h2>Help</h2>
+<p>Problems and questions: <b>github.directorlink.io/issues</b>. Website: <b>directorlink.io</b>. Source code: <b>github.directorlink.io</b>.</p>
+
+<p class="small">Licensed under the Apache License 2.0. DirectorLink is an independent project, not affiliated with Control4 or Snap One. Control4 and Snap One are trademarks of their owners.</p>
+</body>
+</html>

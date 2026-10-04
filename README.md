@@ -6,6 +6,8 @@ DirectorLink is an open-source, local-first management layer for Control4 homeow
 
 The goal is to provide simple device control, scenes, schedules, and everyday automation without requiring homeowners to use Composer Pro for routine changes.
 
+> **DirectorLink is an independent project, not affiliated with Control4 or Snap One.**
+
 ## Screenshots
 
 The app on a demo home: made-up rooms and devices, and drawn camera pictures.
@@ -218,7 +220,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 
 ## Disclaimer
 
-DirectorLink is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
+DirectorLink is an independent project, not affiliated with Control4 or Snap One. It is open source and is not endorsed by Control4 or Snap One.
 
 Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
 

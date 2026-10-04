@@ -1727,7 +1727,7 @@ export default {
       cardTitle: "DirectorLink",
       slogan: "Direct to Director. End-to-end integration. Open source.",
       text: "DirectorLink connects this app to your Control4 system over your home network, and from anywhere through your account, locked end to end so that no server in between can read it.",
-      independent: "DirectorLink is independent and not affiliated with Control4 or Snap One.",
+      independent: "DirectorLink is an independent project, not affiliated with Control4 or Snap One.",
       source: "Source code",
     },
   },

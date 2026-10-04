@@ -18,6 +18,7 @@
   <auto_update>false</auto_update>
 
   <config>
+    <documentation file="www/documentation.html"/>
     <script file="driver.lua"></script>
     <actions>
       <action>

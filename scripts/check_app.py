@@ -472,6 +472,18 @@ def main():
     if any(path.name.endswith(test_suffixes) for path in APP.rglob("*") if path.is_file()):
         fail("tests must not live in app/ (Cloudflare publishes everything there); use tests/app/")
 
+    # The owner's disclaimer, word for word: on Connect (before anyone pairs or signs in), at the foot
+    # of Settings and on About, in both languages.
+    disclaimer = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
+    require((APP / "i18n" / "en.js").read_text(encoding="utf-8"), f'independent: "{disclaimer}"', "en.js settings.about.independent must be the disclaimer word for word")
+    require((APP / "i18n" / "he.js").read_text(encoding="utf-8"), "independent: \"DirectorLink ", "he.js settings.about.independent must say the disclaimer in Hebrew")
+    connect_view = (APP / "js" / "views" / "connect.js").read_text(encoding="utf-8")
+    require(connect_view, 't("settings.about.independent")', "the Connect screen must show the disclaimer")
+    if connect_view.count("independentNote()") < 3:
+        fail("the disclaimer must show on both Connect screens (iPhone and the others)")
+    settings_view = (APP / "js" / "views" / "settings.js").read_text(encoding="utf-8")
+    require(settings_view, 'dataset: { key: "settings-independent" } }, t("settings.about.independent")', "Settings' list must end with the disclaimer")
+    require(settings_view, 'h("p", { class: "about-independent" }, t("settings.about.independent"))', "About must show the disclaimer")
     print("OK: DirectorLink app validated")
 
 
