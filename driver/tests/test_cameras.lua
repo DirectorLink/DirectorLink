@@ -1,7 +1,7 @@
 -- Camera pictures at the same time (1.8.0, ADR-055, src/control4/camera.lua): how many are fetched
 -- at once (in all, per camera address, per NVR), in what order, a digest login's challenge kept and
 -- answered again with the count going up (and answered anew once when the camera refuses it), and
--- tiles showing one camera sharing a fetch for 2 s. The fake cameras answer when the test says
+-- tiles showing one camera sharing a fetch for 0.8 s. The fake cameras answer when the test says
 -- (mock.httpDeferred), and check digest logins as a Hikvision camera does (driver/tests/c4mock.lua).
 
 local T = require("helpers")
@@ -61,7 +61,7 @@ local function field(request, name)
     return authorization:match(name .. '="([^"]*)"') or authorization:match(name .. "=([^,%s]+)")
 end
 
--- Moves DirectorLink's millisecond clock on (pictures are kept 2 s).
+-- Moves DirectorLink's millisecond clock on (pictures are kept 0.8 s).
 local function later(mock, ms)
     mock.clock = mock.clock + ms
 end
@@ -306,7 +306,7 @@ end
 
 -- ---- sharing ----------------------------------------------------------------------------------------
 
-function tests.tiles_showing_one_camera_share_a_fetch_and_its_picture_for_two_seconds()
+function tests.tiles_showing_one_camera_share_a_fetch_and_its_picture_for_a_moment()
     local mock, key = start(2)
     mock.httpDeferred = true
     local tiles = {}
@@ -326,17 +326,82 @@ function tests.tiles_showing_one_camera_share_a_fetch_and_its_picture_for_two_se
     T.eq(T.response(mock, large.handle).status, 200)
     T.truthy(T.response(mock, large.handle).body ~= body)
 
-    -- Asked again within 2 s: that picture, at once.
+    -- Asked again within 0.8 s: that picture, at once.
+    later(mock, 700)
     local count = #mock.urlRequests
     local again = ask(mock, key, 200, 320)
     T.eq(again.status, 200)
     T.eq(again.body, body)
     T.eq(#mock.urlRequests, count, "nothing asked of the camera")
-    -- After 2 s, a new one.
-    later(mock, 2100)
+    -- After 0.8 s, a new one.
+    later(mock, 100)
     T.eq(ask(mock, key, 200, 320).status, nil)
     T.eq(#mock.urlRequests, count + 1)
     Mock.deliverHttp(mock)
+end
+
+-- One viewer of a live picture on the home network (the doorbell banner, the full view) asks again
+-- a second after each answer: each ask gets a new picture, not the one kept for tiles.
+function tests.a_live_picture_asked_every_second_is_new_each_time()
+    local mock, key = start(1)
+    for index = 1, 10 do
+        local before = #mock.urlRequests
+        local answer = ask(mock, key, 200, 640)
+        T.eq(answer.status, 200)
+        T.truthy(#mock.urlRequests > before, "a new picture for ask " .. index)
+        -- The camera answers at once here; the app asks again 1 s after the answer.
+        later(mock, 1000)
+    end
+end
+
+-- ---- errors ----------------------------------------------------------------------------------------
+
+-- An error while a picture's answer is read (here C4:Hash failing while the camera's challenge is
+-- answered) ends that picture as unreachable and gives its place back; the camera's next picture is
+-- fetched as usual. The same when it happens as a picture starts (a kept challenge answered).
+function tests.an_error_while_a_picture_is_fetched_gives_its_place_back()
+    local mock, key, Camera = start(1)
+    mock.httpDeferred = true
+    local first = ask(mock, key, 200)
+    -- Only the cameras' digest (MD5) fails: the API keys' hashes keep working.
+    local realHash = C4.Hash
+    local function failing(self, algorithm, ...)
+        if algorithm == "MD5" then
+            error("Hash failed")
+        end
+        return realHash(self, algorithm, ...)
+    end
+    C4.Hash = failing
+    local ok, err = pcall(Mock.deliverHttp, mock)
+    C4.Hash = realHash
+    T.truthy(ok, "nothing escapes to Director: " .. tostring(err))
+    local answer = T.response(mock, first.handle)
+    T.eq(answer.status, 502)
+    T.eq(answer.json.code, "CAMERA_UNREACHABLE")
+    T.eq(Camera.stats().in_flight, 0, "its place given back")
+    T.eq(#mock.httpQueue, 0)
+
+    -- The next picture of that camera is fetched (a new challenge), and kept.
+    local again = ask(mock, key, 200)
+    T.eq(#mock.httpQueue, 1, "asked of the camera")
+    Mock.deliverHttp(mock)
+    Mock.deliverHttp(mock)
+    T.eq(T.response(mock, again.handle).status, 200)
+
+    -- C4:Hash failing as the next picture starts, with the kept challenge: the same.
+    later(mock, 5000)
+    C4.Hash = failing
+    local started, startError = pcall(ask, mock, key, 200)
+    C4.Hash = realHash
+    T.truthy(started, tostring(startError))
+    T.eq(started and startError.status, 502)
+    T.eq(Camera.stats().in_flight, 0)
+    later(mock, 5000)
+    local third = ask(mock, key, 200)
+    Mock.deliverHttp(mock)
+    Mock.deliverHttp(mock)
+    T.eq(T.response(mock, third.handle).status, 200, "and the next one works")
+    T.eq(Camera.stats().in_flight, 0)
 end
 
 -- ---- how long a grid takes ----------------------------------------------------------------------
