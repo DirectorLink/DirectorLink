@@ -7,7 +7,8 @@
 //
 // Every player answers on the one port: the dev server sends each request with the player's own
 // address in X-Fake-Sonos-Host (scripts/dev_server.py --sonos). GET /fake/ssdp lists the players'
-// answers to a search; GET /fake/state shows what each player is doing.
+// answers to a search; GET /fake/state shows what each player is doing. Rooms join and leave groups
+// (1.8.0): the zone group state they answer follows.
 
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -101,6 +102,32 @@ function picture(seed) {
   ]);
 }
 
+const escape = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// The zone groups of a GetZoneGroupState answer: [{ coordinator, parts: [{ id, text }] }], a part
+// being a room as Sonos shows it (a stereo pair's hidden speaker goes with its room; a Boost is a
+// part of its own), and what goes around them (1.8.0: rooms join and leave groups).
+function zoneGroups(topology) {
+  const [, before, inner, after] = topology.match(/^([\s\S]*?<ZoneGroupState>)([\s\S]*?)(<\/ZoneGroupState>[\s\S]*)$/);
+  const [, head, body, tail] = unescape(inner).match(/^([\s\S]*?<ZoneGroups>)([\s\S]*?)(<\/ZoneGroups>[\s\S]*)$/);
+  const groups = [];
+  for (const [, attrs, members] of body.matchAll(/<ZoneGroup ([^>]*)>([\s\S]*?)<\/ZoneGroup>/g)) {
+    const group = { coordinator: attrs.match(/Coordinator="([^"]+)"/)[1], parts: [] };
+    for (const [text, tag] of members.matchAll(/<ZoneGroupMember ([^>]*?)(?:\/>|>[\s\S]*?<\/ZoneGroupMember>)/g)) {
+      const hidden = tag.includes('Invisible="1"') && !tag.includes('IsZoneBridge="1"');
+      if (hidden && group.parts.length) group.parts[group.parts.length - 1].text += text;
+      else group.parts.push({ id: tag.match(/UUID="([^"]+)"/)[1], text });
+    }
+    groups.push(group);
+  }
+  return { groups, frame: [before, head, tail, after] };
+}
+
+function zoneGroupState({ groups, frame }) {
+  const list = groups.map((group, index) => `<ZoneGroup Coordinator="${group.coordinator}" ID="${group.coordinator}:${900 + index + 1}">${group.parts.map((part) => part.text).join("")}</ZoneGroup>`);
+  return frame[0] + escape(frame[1] + list.join("") + frame[2]) + frame[3];
+}
+
 // The players of a household: "grouped" (Kitchen leads Living Room and plays a track, Bedroom plays
 // the radio, TV Room is paused in Spotify Connect, a stereo pair and a Boost) or "real" (the owner's
 // three rooms, each on its own, paused in Spotify Connect).
@@ -125,6 +152,33 @@ export function household(kind = "grouped") {
     add("192.168.50.17", "RINCON_000E58A0000701400", "member", 25);
   }
   const calls = [];
+  const byId = (id) => [...players.values()].find((player) => player.id === id);
+  // The room `id` joins the group led by `coordinatorId` (null: it leaves its group), as Sonos does
+  // it: its zone group state changes. False when there is no such group or room.
+  function regroup(id, coordinatorId) {
+    const state = zoneGroups(topology);
+    const from = state.groups.find((group) => group.parts.some((part) => part.id === id));
+    const target = coordinatorId ? state.groups.find((group) => group.coordinator === coordinatorId) : null;
+    if (!from || (coordinatorId && (!target || target === from)) || (!coordinatorId && from.parts.length === 1)) return false;
+    const part = from.parts.splice(from.parts.findIndex((entry) => entry.id === id), 1)[0];
+    const player = byId(id);
+    if (!from.parts.length) state.groups.splice(state.groups.indexOf(from), 1);
+    else if (from.coordinator === id) {
+      // The others go on together, led by the next of them.
+      from.coordinator = from.parts[0].id;
+      const led = byId(from.coordinator);
+      if (led && player) Object.assign(led, { playing: player.playing, transport: player.transport });
+    }
+    if (target) {
+      target.parts.push(part);
+      if (player) player.playing = "member";
+    } else {
+      state.groups.push({ coordinator: id, parts: [part] });
+      if (player) Object.assign(player, { playing: "track", transport: "STOPPED" });
+    }
+    topology = zoneGroupState(state);
+    return true;
+  }
   const fault = (code) => ({ status: 500, type: 'text/xml; charset="utf-8"', body: fixture("made/fault_701.xml").replace("701", String(code)) });
   const ok = (body) => ({ status: 200, type: 'text/xml; charset="utf-8"', body });
 
@@ -186,10 +240,19 @@ export function household(kind = "grouped") {
         return ok(envelope(action, service, "<FirstTrackNumberEnqueued>1</FirstTrackNumberEnqueued><NumTracksAdded>1</NumTracksAdded><NewQueueLength>1</NewQueueLength>"));
       case "SetAVTransportURI": {
         const uri = argument(body, "CurrentURI") || "";
+        const coordinator = uri.match(/^x-rincon:(RINCON_[0-9A-Fa-f]+)$/);
+        if (coordinator) {
+          // Joins that group (1.8.0): only a group's coordinator, not itself.
+          if (!regroup(player.id, coordinator[1])) return fault(701);
+          break;
+        }
         player.playing = uri.startsWith("x-rincon-queue:") ? "track" : "radio";
         player.transport = "STOPPED";
         break;
       }
+      case "BecomeCoordinatorOfStandaloneGroup":
+        regroup(player.id, null);
+        break;
       default:
         return fault(401);
     }
@@ -203,7 +266,7 @@ export function household(kind = "grouped") {
       .map((player) => template.replaceAll("192.168.50.11", player.ip).replaceAll("RINCON_000E58A0000101400", player.id));
   }
 
-  return { players, calls, answer, searchReplies };
+  return { players, calls, answer, searchReplies, topology: () => topology };
 }
 
 // Serves a household on `port` (0: any free one). Resolves to { port, home, close }.

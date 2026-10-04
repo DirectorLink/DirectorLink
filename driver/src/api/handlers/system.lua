@@ -112,6 +112,8 @@ function System.info(ctx)
         -- scene_links: /v1/scene-links and a scene's link (1.7.0, ADR-051), always there.
         -- refrigerators: /v1/refrigerators and the scene step that switches their features (1.7.0,
         -- ADR-049), always there.
+        -- sonos_groups: /v1/music/{id}/group, and music scene steps that resume, set the volume
+        -- and play a favorite (1.8.0, ADR-057), always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -121,6 +123,7 @@ function System.info(ctx)
             alert_choices = true,
             scene_links = true,
             refrigerators = true,
+            sonos_groups = true,
         },
     }
 end

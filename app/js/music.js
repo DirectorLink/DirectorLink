@@ -3,7 +3,9 @@
 // lists what plays. Everyone sees what plays; members play, pause, skip, set the volume and start
 // a Sonos favorite; admins pick the room of a Sonos room whose name matches none
 // (views/music.js). Read every 5 s while Home or a room is open (the controller then reads those
-// rooms' players every few seconds), else with each rooms refresh, once a minute.
+// rooms' players every few seconds), else with each rooms refresh, once a minute. Since 1.8.0
+// (ADR-057, features.sonos_groups) members also join rooms to a group, take them out, and set a
+// group's volume.
 
 import { t } from "./i18n.js";
 import { api, errorText, handleUnauthorized, image, keyGeneration, keyInUse, noteForbidden, whenForgotten } from "./session.js";
@@ -35,6 +37,11 @@ export function musicAvailable() {
   return state.system?.features?.sonos === true;
 }
 
+// Groups and the music scene steps of 1.8.0: a driver before it has neither.
+export function groupsAvailable() {
+  return musicAvailable() && state.system?.features?.sonos_groups === true;
+}
+
 // Every Sonos room known (none while Sonos is off).
 export function musicRooms() {
   return state.music?.enabled ? state.music.items : [];
@@ -51,6 +58,18 @@ export function groupMates(item) {
 
 export function isPlaying(item) {
   return item.state === "playing" || item.state === "transitioning";
+}
+
+// The Sonos rooms of an item's group as the app knows them, the coordinator first (the item alone
+// when it plays on its own).
+export function groupRooms(item) {
+  const rooms = (item.group?.rooms || []).map((room) => findMusic(room.id) || { id: room.id, name: room.name, group: item.group, volume: null, muted: null, reachable: item.reachable });
+  return rooms.length ? rooms : [item];
+}
+
+// The room that stands for its group: its coordinator, when the app knows it.
+export function groupLeader(item) {
+  return findMusic(item.group?.id) || item;
 }
 
 function withPending(item, now) {
@@ -105,10 +124,17 @@ export async function loadMusic(roomId = null, now = Date.now()) {
   notify();
 }
 
+// A room whose Sonos rooms are grouped with rooms elsewhere (1.8.0): its card shows them all, so
+// every room is read.
+function spansRooms(roomId) {
+  if (!groupsAvailable()) return false;
+  return musicRooms().some((item) => item.room_id === roomId && (item.group?.rooms || []).some((room) => findMusic(room.id)?.room_id !== roomId));
+}
+
 function poll() {
   timer = null;
   if (!keyInUse() || !musicAvailable() || !watching) return;
-  const target = watching.roomId;
+  const target = watching.roomId != null && spansRooms(watching.roomId) ? null : watching.roomId;
   const run = !document.hidden && state.status === "connected" ? loadMusic(target) : Promise.resolve();
   run.finally(() => {
     if (timer === null && watching && keyInUse()) timer = window.setTimeout(poll, MUSIC_POLL_MS);
@@ -247,6 +273,51 @@ export function musicCommand(item, action) {
 // { volume } or { muted }: this room's own speaker.
 export function setMusicLevels(item, change) {
   return send(item, `/v1/music/${encodeURIComponent(item.id)}`, { method: "PATCH", body: change }, change, { group: false });
+}
+
+// ---- groups (1.8.0) ------------------------------------------------------------------------
+
+// A command that changes groups or several rooms' volumes: then every room is read again (a group
+// spans rooms, and the controller shows the change at once).
+async function sendGroup(item, path, options) {
+  if (!can("member")) return false;
+  const key = musicKey(item);
+  clearError(key);
+  notify();
+  const since = keyGeneration();
+  try {
+    await api(path, { ...options, timeoutMs: 15000 });
+    if (since !== keyGeneration()) return false;
+    await loadMusic(null);
+    restart(AFTER_COMMAND_MS);
+    return true;
+  } catch (error) {
+    if (since !== keyGeneration()) return false;
+    if (error?.status === 401) {
+      handleUnauthorized(error);
+      return false;
+    }
+    noteForbidden(error);
+    setError(key, musicErrorText(error));
+    return false;
+  } finally {
+    notify();
+  }
+}
+
+// `item` plays in the group of `other` too (POST /v1/music/{id}/group).
+export function joinGroup(item, other) {
+  return sendGroup(item, `/v1/music/${encodeURIComponent(item.id)}/group`, { method: "POST", body: { with: other.id } });
+}
+
+// `item` leaves its group and plays on its own (DELETE).
+export function leaveGroup(item) {
+  return sendGroup(item, `/v1/music/${encodeURIComponent(item.id)}/group`, { method: "DELETE" });
+}
+
+// The group's volume, set through each room's own (PATCH).
+export function setGroupVolume(item, volume) {
+  return sendGroup(item, `/v1/music/${encodeURIComponent(item.id)}/group`, { method: "PATCH", body: { volume } });
 }
 
 // ---- favorites -----------------------------------------------------------------------------

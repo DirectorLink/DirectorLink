@@ -547,6 +547,10 @@ function OnDriverLateInit(driverInitType)
         onStatus = function(text)
             updateProperty(Sonos.STATUS_PROPERTY, text)
         end,
+        -- Scenes that play a favorite (1.8.0, ADR-057) keep the favorites read.
+        favoritesWanted = function()
+            return Scenes.favoriteSteps() > 0
+        end,
     })
     Sonos.apply()
 

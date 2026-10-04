@@ -321,6 +321,36 @@ def sonos(client, bridge):
         fail(f"a music step in the Kitchen should stop one group: {ran}")
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "device_ids": [20], "set": {"action": "pause"}}]})
 
+    # Groups and the new scene steps (1.8.0, ADR-057).
+    if client.check("GET", "/v1/system", 200)["features"].get("sonos_groups") is not True:
+        fail("GET /v1/system should say that this driver groups Sonos rooms")
+    groups = {group["id"]: group for group in client.check("GET", "/v1/music", 200)["groups"]}
+    if groups[KITCHEN]["rooms"] != [KITCHEN, LIVING]:
+        fail(f"GET /v1/music should list Kitchen's group with Living Room: {groups}")
+    joined = client.check("POST", f"/v1/music/{TV}/group", 200, body={"with": LIVING})
+    if [room["id"] for room in joined["group"]["rooms"]] != [KITCHEN, LIVING, TV] or joined["group"]["id"] != KITCHEN:
+        fail(f"TV Room should join Kitchen's group: {joined}")
+    client.check("POST", f"/v1/music/{TV}/group", 404, body={"with": "RINCON_0BADF00D01400"})
+    client.check("POST", f"/v1/music/{TV}/group", 400, body={"with": "192.168.50.11"})
+    louder = client.check("PATCH", f"/v1/music/{TV}/group", 200, body={"volume": 40})
+    if louder["group"]["volume"] is None:
+        fail(f"the group's volume should be shown: {louder}")
+    client.check("PATCH", f"/v1/music/{TV}/group", 400, body={"volume": 101})
+    left = client.check("DELETE", f"/v1/music/{TV}/group", 200)
+    if [room["id"] for room in left["group"]["rooms"]] != [TV]:
+        fail(f"TV Room should play on its own again: {left}")
+    favorite = client.check("POST", "/v1/scenes/try", 202, body={"steps": [
+        {"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "10"}, "volume": 20, "with_room_ids": [10]}},
+        {"type": "music", "room_id": 10, "set": {"action": "volume", "volume": 15}},
+        {"type": "music", "room_id": None, "set": {"action": "resume"}},
+    ]})
+    if favorite["skipped"] or favorite["failed"]:
+        fail(f"the music steps should run: {favorite}")
+    gone = client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "77", "title": "Old FM", "uri": "x-sonosapi-stream:gone"}}}]})
+    if [problem["code"] for problem in gone["problems"]] != ["FAVORITE_GONE"]:
+        fail(f"a favorite no longer in Sonos favorites should be reported: {gone}")
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "set": {"action": "play_favorite", "favorite": {"id": "10"}}}]})
+
 
 def scenario(client, bridge):
     client.check("GET", "/v1/health", 200)

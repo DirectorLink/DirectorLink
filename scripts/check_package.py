@@ -576,11 +576,19 @@ def check_alarm_read_only(files):
 # is allowed only by the module that reads the players' answers and the installer's property; the
 # API names a Sonos room, never an address.
 SONOS_CLIENT = "src/sonos/client.lua"
+# Grouping (1.8.0, ADR-057) is two actions: joining (SetAVTransportURI with the coordinator's
+# x-rincon: address) and leaving (BecomeCoordinatorOfStandaloneGroup). A group's volume is each
+# room's own SetVolume: no GroupRenderingControl, no other grouping action, no alarms or settings.
 SONOS_ACTIONS = {
     "GetTransportInfo", "GetPositionInfo", "GetMediaInfo", "Play", "Pause", "Stop", "Next", "Previous",
-    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "GetVolume", "SetVolume", "GetMute", "SetMute",
-    "GetZoneGroupState", "Browse",
+    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "BecomeCoordinatorOfStandaloneGroup",
+    "GetVolume", "SetVolume", "GetMute", "SetMute", "GetZoneGroupState", "Browse",
 }
+# The x-rincon: address a room joins a group with is made in one place (Protocol.groupUri, which
+# takes only a player's id), and only src/sonos/sonos.lua uses it, for a coordinator it found in the
+# zone group state: the API never names what a room joins.
+SONOS_GROUP_URI = re.compile(r"""["']x-rincon:["']\s*\.\.""")
+SONOS_GROUP_URI_USERS = {"src/sonos/protocol.lua", "src/sonos/sonos.lua"}
 
 
 # main.lua loads the client only to hand it the search's network events (ReceivedFromNetwork,
@@ -625,6 +633,10 @@ def check_sonos(files):
             fail(f"{name} loads {SONOS_CLIENT}: requests go through src/sonos/sonos.lua")
         if name == "src/main.lua":
             check_sonos_client_in_main(code)
+        if SONOS_GROUP_URI.search(code) and name != "src/sonos/protocol.lua":
+            fail(f"{name} makes an x-rincon: address: only Protocol.groupUri in src/sonos/protocol.lua does")
+        if re.search(r"\bgroupUri\b", code) and name not in SONOS_GROUP_URI_USERS:
+            fail(f"{name} uses Protocol.groupUri: only src/sonos/sonos.lua joins a room to a group")
     match = re.search(r"^Protocol\.ACTIONS = \{([^}]*)\}", files.get("src/sonos/protocol.lua", ""), re.M)
     if not match:
         fail("could not read Protocol.ACTIONS in src/sonos/protocol.lua")

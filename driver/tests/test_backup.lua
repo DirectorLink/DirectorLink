@@ -962,6 +962,28 @@ function tests.a_swapped_room_follows_its_name_and_doors_stay_in_their_own_room(
     T.eq(kitchen.now, "Living Room")
 end
 
+-- A music step that plays a favorite in several rooms (1.8.0, ADR-057): each of its rooms is
+-- matched as a step's room; one gone is left out and the favorite still plays in the others.
+function tests.a_favorites_rooms_follow_their_names()
+    local project = Mock.project()
+    Mock.addRoom(project, 12, "Patio")
+    local old = start(project)
+    local favorite = { id = "10", title = "Example FM 99", uri = "x-sonosapi-stream:s0000?sid=254&flags=8224&sn=0", meta = "" }
+    T.eq(T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Party", steps = {
+        { type = "music", room_id = 10, set = { action = "play_favorite", favorite = favorite, volume = 30, with_room_ids = { 11, 12 } } },
+    } } }).status, 201)
+    local document = export(old)
+    T.same(document.sections.scenes.scenes[1].steps[1].set.with_room_ids, { 11, 12 })
+    -- The kitchen and the living room swapped ids; the patio is gone.
+    local s = start(swappedRooms())
+    replace(s, document)
+    local step = sceneNamed(s, "Party").steps[1]
+    T.eq(step.room_id, 11, "the kitchen by its name")
+    T.same(step.set.with_room_ids, { 10 }, "the living room by its name, the patio left out")
+    T.same(step.set.favorite, favorite)
+    T.eq(step.set.volume, 30)
+end
+
 function tests.a_store_not_read_at_start_is_never_overwritten()
     local old = start()
     furnish(old)

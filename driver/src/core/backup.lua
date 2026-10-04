@@ -154,6 +154,12 @@ local function eachReference(sections, visit)
                 if tonumber(step.room_id) then
                     visit("room", tonumber(step.room_id))
                 end
+                -- The rooms a music step plays a favorite in besides its own (1.8.0, ADR-057).
+                for _, id in ipairs(items(isObject(step.set) and step.set.with_room_ids or nil)) do
+                    if tonumber(id) then
+                        visit("room", tonumber(id))
+                    end
+                end
                 for _, id in ipairs(items(step.device_ids)) do
                     if tonumber(id) then
                         visit(STEP_KINDS[step.type], tonumber(id))
@@ -727,8 +733,22 @@ local function matchScenes(m, scenes, counts)
                     end
                     keep = #ids > 0
                 end
+                local set = step.set
+                if keep and step.type == "music" and set.with_room_ids then
+                    -- The rooms grouped with it: each matched as a step's room; one not found is
+                    -- left out, and the favorite still plays in the others.
+                    set = Scenes.copySet(set)
+                    local rooms = Json.array()
+                    for _, id in ipairs(set.with_room_ids) do
+                        local newId = resolve(m, "room", id, where)
+                        if newId and newId ~= roomId then
+                            rooms[#rooms + 1] = newId
+                        end
+                    end
+                    set.with_room_ids = #rooms > 0 and rooms or nil
+                end
                 if keep then
-                    steps[#steps + 1] = { type = step.type, room_id = roomId, device_ids = ids, set = step.set }
+                    steps[#steps + 1] = { type = step.type, room_id = roomId, device_ids = ids, set = set }
                 else
                     counts.steps = counts.steps + 1
                 end

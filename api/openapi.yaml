@@ -2162,6 +2162,10 @@ paths:
         **Sonos Address**, which lists the others) and reads them: the rooms asked for (all of them
         without `room_id`) every few seconds for a while after each request, the others once a
         minute. The answer is what was read last; ask again every few seconds to follow it.
+
+        Since 1.8.0 (ADR-057) `groups` lists the groups as Sonos has them (with `room_id`, those
+        with a room there): each led by its coordinator, with its rooms, what it plays and its
+        volume. Rooms join and leave groups with `/v1/music/{musicId}/group`.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
@@ -2491,6 +2495,110 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/music/{musicId}/group:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: joinMusicGroup
+      x-directorlink-role: member
+      summary: Play in another room's group too
+      description: |
+        This Sonos room joins the group of the room in `with` (any room of it), as the Sonos app's
+        Group does, and plays what that group plays (1.8.0, ADR-057). DirectorLink gives the room
+        the address of the group's coordinator (AVTransport `SetAVTransportURI` with
+        `x-rincon:<coordinator>`), only for a coordinator it found in the household's zone group
+        state: `404` for a room it does not know. Already in that group: nothing is sent. Every
+        room of both groups must be one the key may control (`403 FORBIDDEN` names the others).
+        Answered once the player has taken it; the household is read again within seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicJoin"
+            example:
+              with: RINCON_000E58A0000101400
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+    delete:
+      tags: [Music]
+      operationId: leaveMusicGroup
+      x-directorlink-role: member
+      summary: Leave the group
+      description: |
+        This Sonos room leaves its group and plays on its own, stopped; the other rooms go on
+        together (AVTransport `BecomeCoordinatorOfStandaloneGroup`, 1.8.0). A room on its own:
+        nothing is sent. Every room of the group must be one the key may control.
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+    patch:
+      tags: [Music]
+      operationId: setMusicGroupVolume
+      x-directorlink-role: member
+      summary: Set the group's volume
+      description: |
+        The volume of this room's group (1.8.0), set through each room's own volume
+        (RenderingControl `SetVolume`), keeping their balance as the Sonos app does: each room is
+        scaled by the same factor, from the volumes they had when the group's volume was first
+        changed. The group's volume is the average of its rooms' (`group.volume`). Every room of
+        the group must be one the key may control.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicGroupVolume"
+            example:
+              volume: 30
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
 
   /v1/backup:
     get:
@@ -3360,6 +3468,9 @@ components:
             refrigerators:
               type: boolean
               description: "Always true since 1.7.0: `/v1/refrigerators` and the `refrigerators` scene step (ADR-049). Missing before 1.7.0."
+            sonos_groups:
+              type: boolean
+              description: "Always true since 1.8.0: `/v1/music/{musicId}/group` (join, leave, the group's volume), `groups` in `GET /v1/music`, and music scene steps that resume, set a volume or play a favorite (ADR-057). Missing before 1.8.0."
 
     PairRequest:
       oneOf:
@@ -3709,7 +3820,10 @@ components:
         One step: devices of one type, and what to set. `device_ids` names the devices (with
         `room_id` as the room they were picked in); without it, every device of the type in
         `room_id`, or in the whole home when `room_id` is null. A `music` step (1.5.0) names no
-        devices: it pauses or stops the Sonos groups with a room in `room_id`, or every group.
+        devices: it pauses or stops the Sonos groups with a room in `room_id`, or every group;
+        since 1.8.0 (ADR-057) it also resumes them, sets the volume of each Sonos room there, or
+        plays a Sonos favorite in the Sonos rooms of `room_id` (required then), with those of
+        `with_room_ids` grouped with them.
         A `refrigerators` step (1.7.0) switches features of Samsung refrigerators.
       properties:
         type:
@@ -3735,7 +3849,13 @@ components:
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
             door or gate relay is never held closed by a scene); music `{"action": "pause"}` or
             `{"action": "stop"}` (a radio station, which cannot pause, stops; a group pauses as
-            one); refrigerators (1.7.0) any of `power_cool`, `power_freeze`, `sabbath_mode` and
+            one), and since 1.8.0 `{"action": "resume"}` (a group paused or stopped plays again),
+            `{"action": "volume", "volume": 0-100}` (each Sonos room's own) or
+            `{"action": "play_favorite", "favorite": {"id": "10"}, "volume": 0-100,
+            "with_room_ids": [11]}` (volume and with_room_ids optional; the favorite is kept as the
+            favorites list has it: its `title`, and the `uri` and `meta` that start it; at run time
+            it is started as the list has it then, and a favorite no longer there is skipped with
+            `FAVORITE_GONE`); refrigerators (1.7.0) any of `power_cool`, `power_freeze`, `sabbath_mode` and
             `ice_maker`, true (on) or false (off), at least one (a feature a refrigerator does not
             have is left out on it, `partial`, or skipped with `NOT_SUPPORTED` when none is left).
             climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
@@ -3781,7 +3901,41 @@ components:
               maximum: 100
             action:
               type: string
-              enum: [pulse, pause, stop]
+              enum: [pulse, pause, stop, resume, volume, play_favorite]
+            volume:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: A music step's volume (1.8.0), each Sonos room's own.
+            favorite:
+              type: object
+              description: |
+                The Sonos favorite a `play_favorite` step plays (1.8.0): its `id` as
+                `GET /v1/music/{musicId}/favorites` lists it. DirectorLink keeps it as the favorites
+                list has it when the step is saved (its name, and the address and description that
+                start it); sent back unchanged, it is kept.
+              required: [id]
+              additionalProperties: false
+              properties:
+                id:
+                  type: string
+                  pattern: "^[0-9]{1,9}$"
+                title:
+                  type: string
+                  maxLength: 1024
+                uri:
+                  type: string
+                  maxLength: 2048
+                meta:
+                  type: string
+                  maxLength: 8192
+            with_room_ids:
+              type: array
+              maxItems: 32
+              description: The rooms whose Sonos rooms play the favorite too, grouped with the step's room's (1.8.0). Rooms not in the project are left out.
+              items:
+                type: integer
+                minimum: 1
             power_cool:
               type: boolean
             power_freeze:
@@ -4007,7 +4161,7 @@ components:
                 description: The step, counted from 1.
               device_id:
                 type: integer
-                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`).
+                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`, and since 1.8.0 `FORBIDDEN` for Sonos rooms this key may not control, `FAVORITE_GONE`, `FAVORITE_NOT_PLAYABLE`).
               outcome:
                 type: string
                 enum: [skipped, failed, partial]
@@ -4953,6 +5107,58 @@ components:
           description: Sorted by name. Empty while Sonos is Off.
           items:
             $ref: "#/components/schemas/MusicRoom"
+        groups:
+          type: array
+          description: The groups as Sonos has them (1.8.0), by their coordinator's name; missing while Sonos is Off and before 1.8.0.
+          items:
+            $ref: "#/components/schemas/MusicGroup"
+
+    MusicGroup:
+      type: object
+      description: A Sonos group (a room on its own is a group of one).
+      required: [id, rooms, state, volume, now_playing]
+      properties:
+        id:
+          type: string
+          description: Its coordinator's id, which play, pause and skip go to.
+        rooms:
+          type: array
+          description: Its rooms' ids, the coordinator first.
+          items:
+            type: string
+        state:
+          type: string
+          enum: [playing, paused, stopped, transitioning, unknown]
+        volume:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: The average of its rooms' volumes; null while none is read.
+        now_playing:
+          description: What it plays, as in `MusicRoom`.
+          oneOf:
+            - type: object
+            - type: "null"
+
+    MusicJoin:
+      type: object
+      required: [with]
+      additionalProperties: false
+      properties:
+        with:
+          type: string
+          pattern: "^RINCON_[0-9A-Fa-f]+$"
+          description: A Sonos room of the group to join, as `GET /v1/music` lists it (never an address).
+
+    MusicGroupVolume:
+      type: object
+      required: [volume]
+      additionalProperties: false
+      properties:
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
 
     MusicRoom:
       type: object
@@ -4987,6 +5193,11 @@ components:
             coordinator:
               type: boolean
               description: This room leads the group.
+            volume:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 100
+              description: The group's volume (1.8.0), the average of its rooms' own; null while none is read. Missing before 1.8.0.
             rooms:
               type: array
               description: The group's rooms, its coordinator first.
