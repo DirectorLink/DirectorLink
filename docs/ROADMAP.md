@@ -12,12 +12,21 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 - **A device whose driver is updated is set up again.** When a device's driver is updated in Composer, DirectorLink reads that device again by itself (its variables, what it supports), so nothing new is missed until a Refresh Project: for example the refrigerator driver 1.1.0's list of what the model has.
 - **Older drivers can be turned away.** The account service already knows which DirectorLink version each home runs; it gets a minimum version it enforces, so that if a flaw is found in the remote protocol, drivers without the fix stop connecting until they are updated, and the app and Composer say so.
 
+- **Camera alerts from the Hikvision drivers.** A person, a vehicle or a line crossed at a camera of the DirectorLink · Hikvision drivers becomes an alert like the doorbell's ("Person at the gate, 21:14"), sealed to each device that chose it, for those who may see that camera; tapping it opens the camera.
+- **A notification when a new device asks to join**, so the device that approves need not have the app open.
+- **Favorites of removed devices** are dropped, or marked as gone, by DirectorLink itself, instead of tiles that ask for a device the project no longer has.
+- **Siri and Google Assistant.** The scene link screen shows how to run a scene by voice: an iPhone shortcut named like the scene ("Good night") with the link, and the same with Google Assistant on Android. It works today; the app and the docs say how.
+- **New screenshots** for the website and the README, from a made-up demo home: music, alerts, history, the refrigerator, scene links.
+
+## Then: 1.9
+
+- **Say or type a command.** A field in the app, with the microphone where the browser has one (on iPhone the keyboard's dictation), that understands simple sentences in English and Hebrew ("kitchen lights off", "living room AC to 23", "run Good night") by the person's own room, device and scene names, on the phone, without AI; within the person's rooms and permissions.
+- **Later, an assistant (opt-in).** An AI that understands any sentence and proposes the actions to confirm, with the home's own AI key, called from the phone so that DirectorLink's servers never see it; its own privacy note first, because names and requests would reach the AI's company.
+
 ## Later
 
-- A notification when a new device asks to join, so the approving device need not have the app open.
 - A member's own new device approved by that member, not only by an admin (the controller then makes the invitation).
 - Alerts that stay on when the app starts while the home can't be reached, and are confirmed at the next start.
-- Refrigerators: switches only for the features the model has, once the refrigerator driver reports them.
 - Releases signed on GitHub, the signature checked by the driver in plain Lua (the minimum OS stays 3.3.0).
 - Fans with other than four speeds, from the fan's own speed list.
 - Better diagnostics for devices DirectorLink does not support yet.
