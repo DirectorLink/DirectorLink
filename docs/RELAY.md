@@ -136,7 +136,9 @@ Content-Type: application/problem+json
   is not three numbers is ignored (logged `min_driver_version_invalid`).
 - **Drivers from 1.8.0** say in Remote Status "Update DirectorLink: this version can no longer
   connect to remote access", try again an hour later, log each refusal and put one entry in the
-  history (`remote_update_required`) until a connection opens again.
+  history (`remote_update_required`) until a connection opens again. Until then their
+  `GET /v1/remote` says `update_required: true` (with `minimum_version`), so the app on the home
+  network says "Update DirectorLink" too (Settings → Account → This home).
 - **Drivers before 1.8.0** take it as any other refusal: they keep trying with their backoff (every
   60 s), and Remote Status says `Reconnecting in 60 s (refused: DRIVER_UPDATE_REQUIRED)`.
 - **For the app**, the home's object still has the version of the driver's last connection. While

@@ -476,7 +476,11 @@ paths:
       operationId: getRemoteAccess
       x-directorlink-role: member
       summary: Remote access status
-      description: Whether Remote Access is switched on in Composer, connected, and able to seal requests, and this home's id while it is on.
+      description: |
+        Whether Remote Access is switched on in Composer, connected, and able to seal requests, and
+        this home's id while it is on. Since 1.8.0 (ADR-059) also `update_required`: the account
+        service no longer takes this version of DirectorLink, so remote access stays down until it is
+        updated in Composer (the app says "Update DirectorLink" on the home network too).
       responses:
         "200":
           description: The status.
@@ -6145,6 +6149,17 @@ components:
           type: [string, "null"]
           pattern: "^[0-9a-f]{32}$"
           description: This home's id at api.directorlink.io; null while Remote Access is off.
+        update_required:
+          type: boolean
+          description: |
+            Since 1.8.0 (ADR-059). The account service answered this version `426`
+            `DRIVER_UPDATE_REQUIRED` and no connection has opened since: remote access stays down
+            until DirectorLink is updated in Composer (the driver tries again hourly). False while
+            Remote Access is off. Missing before 1.8.0.
+        minimum_version:
+          type: [string, "null"]
+          pattern: "^[0-9]+[.][0-9]+[.][0-9]+$"
+          description: Since 1.8.0. The oldest version the account service takes, when `update_required` is true and it named one; else null.
 
     ClaimToken:
       type: object

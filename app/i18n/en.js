@@ -1869,6 +1869,8 @@ export default {
         iosJoin: "On iPhone and iPad, join your home from a device that already reaches it: on the Home tab, tap Join from another device. Or open Add my other device on that device, copy its link, and paste it here.",
         askAdmin: "Only an admin can link the home or invite others. Ask your home’s admin for an invitation.",
         updateDriver: "Update DirectorLink on your controller to use your account away from home.",
+        updateRequired: "Update DirectorLink: the version on your controller can no longer connect to remote access, so your home can’t be reached away from it. Update it in Composer; at home the app works as before.",
+        updateRequiredTo: "Update DirectorLink to {to} or later: the version on your controller can no longer connect to remote access, so your home can’t be reached away from it. Update it in Composer; at home the app works as before.",
         turnOn: "Remote Access is off. In Composer, open DirectorLink’s properties and set Remote Access to On.",
         noLock: "Your controller could not lock remote requests (its self-test failed). See DirectorLink’s log.",
         linkHelp: "Link this home to your account once, here on the home network. Then your devices reach it from anywhere, sealed so that DirectorLink’s servers cannot read anything.",

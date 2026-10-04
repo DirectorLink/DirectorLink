@@ -1135,9 +1135,11 @@ function updatesSection() {
 // ---- This home: linking it to the account, adding devices, inviting (docs/ACCOUNTS.md) --------
 
 let remoteInfoLoading = false;
+let remoteInfoAt = 0;
 function loadRemoteInfo() {
   if (remoteInfoLoading) return;
   remoteInfoLoading = true;
+  remoteInfoAt = Date.now();
   api("/v1/remote")
     .then((info) => {
       state.remoteInfo = info;
@@ -1342,11 +1344,27 @@ function invitePanel() {
   ];
 }
 
+// The controller's word that the account service no longer takes its version (GET /v1/remote's
+// update_required, 1.8.0, ADR-059): remote access stays down until DirectorLink is updated. Through
+// the account the app hears it as HOME_UPDATE_REQUIRED; at home only the controller can say it.
+function updateRequiredNotice(info) {
+  if (info?.update_required !== true) return null;
+  const to = typeof info.minimum_version === "string" && /^\d+\.\d+\.\d+$/.test(info.minimum_version) ? info.minimum_version : null;
+  return h("p", { class: "notice notice-error", id: "account-home-update", role: "status" }, to ? t("settings.account.home.updateRequiredTo", { to }) : t("settings.account.home.updateRequired"));
+}
+
 function homeSection() {
   const linked = savedRemote();
   const content = [];
+  const atHome = state.status === "connected" && state.transport === "lan";
   if (linked) {
     content.push(h("p", { class: "field-help", id: "account-home-linked" }, t("settings.account.home.linked")));
+    // At home the controller says whether its remote access stopped for an update (asked again
+    // when shown a minute later: it may have been updated meanwhile).
+    if (atHome) {
+      if (!state.remoteInfo || Date.now() - remoteInfoAt > 60000) loadRemoteInfo();
+      content.push(updateRequiredNotice(state.remoteInfo));
+    }
     if (can("admin")) content.push(invitePanel());
     // On the home network only: the controller refuses it through the account.
     if (can("admin") && !ui.homeInvitation && !ui.inviteForm && state.status === "connected" && state.transport === "lan") content.push(...secretPanel());
@@ -1370,6 +1388,9 @@ function homeSection() {
       );
     } else if (!info.lock) {
       content.push(h("p", { class: "notice notice-error" }, t("settings.account.home.noLock")));
+    } else if (info.update_required === true) {
+      // Linking goes through remote access, which is down until DirectorLink is updated.
+      content.push(updateRequiredNotice(info));
     } else {
       content.push(
         h("p", { class: "field-help" }, t("settings.account.home.linkHelp")),
