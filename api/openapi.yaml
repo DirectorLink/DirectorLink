@@ -132,7 +132,8 @@ tags:
   - name: Alerts
     description: |
       Which alerts each device gets (1.7.0, ADR-050): a doorbell rang, a door or gate was opened, the
-      refrigerator's door was left open, a schedule failed. The controller sends them through
+      refrigerator's door was left open, a schedule failed; since 1.8.0 a camera of the DirectorLink ·
+      Hikvision drivers saw someone or something (ADR-056). The controller sends them through
       DirectorLink's servers sealed to each device's own key, so the servers learn only which key
       ids an alert is for and when (docs/RELAY.md, `notify`). Each key reads and sets its own choices.
   - name: Logs
@@ -1212,6 +1213,105 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+
+  /v1/ask-links:
+    get:
+      tags: [Relays]
+      operationId: listAskLinks
+      x-directorlink-role: member
+      summary: List the ask-to-open links
+      description: |
+        Since 1.8.0 (ADR-058). The links that ask their person to open a door or gate: the ones made
+        by this key's person (an admin gets every one), each with its door, its label, the person it
+        asks, when it was made and when it last ran; never a secret. Also what a link needs to work:
+        `remote_access`, `home_linked` and `door_control` (the Composer property). Links made for
+        another home connection, whose key (`made_by`) is gone, whose person may no longer open the
+        door, or whose door is gone, go before the list is made.
+      responses:
+        "200":
+          description: The links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskLinkList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Relays]
+      operationId: createAskLink
+      x-directorlink-role: member
+      summary: Make an ask-to-open link
+      description: |
+        Since 1.8.0 (ADR-058). A private link for the phone's own automations (iPhone Shortcuts when
+        arriving, Siri, an Android app) that never opens anything: its run (`/run/<home>.<link>`,
+        as a scene link's, docs/SCENES.md) makes the controller ask this key's person, by a sealed
+        alert to their devices that have alerts on, whether to open the door; tapping it opens the
+        app's question, whose Open is `POST /v1/relays/{relayId}/pulse` with the request's id. One
+        link per door and key: a new one replaces this key's link for that door, which stops working
+        at once. The answer is the only place its `secret` ever appears.
+
+        Only for a key that may open the door (403 `FORBIDDEN`), with Door Control on (403
+        `DOOR_CONTROL_DISABLED`), Remote Access on (409 `REMOTE_ACCESS_OFF`) and the home accepted by
+        the account service (409 `HOME_NOT_LINKED`); at most 50 links (409
+        `ASK_LINK_LIMIT_REACHED`). The link goes with the key that made it (revoked or expired), when
+        its person may no longer open the door, and with Composer's Remove All Scene Links, Revoke
+        All API Keys and Reset Remote Identity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AskLinkCreate"
+            example:
+              relay_id: 70
+              label: Arriving home
+      responses:
+        "201":
+          description: The new link, with its secret, shown this once.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AskLinkCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/ask-links/{linkId}:
+    parameters:
+      - name: linkId
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+    delete:
+      tags: [Relays]
+      operationId: deleteAskLink
+      x-directorlink-role: member
+      summary: Remove an ask-to-open link
+      description: Since 1.8.0 (ADR-058). The link stops working at once. A key removes its person's links; an admin anyone's (another person's is 404 for others).
+      responses:
+        "204":
+          description: Removed.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
         "503":
           $ref: "#/components/responses/Unavailable"
 
@@ -2056,6 +2156,18 @@ paths:
         Garage Door Controllers trigger it. Every pulse is written to the log with the API key used.
         For admins and the members given doors and gates (ADR-054); a member who sees the relay but
         may not open it gets 403 `FORBIDDEN`. Needs **Door Control** = Enabled in Composer.
+
+        Since 1.8.0 (ADR-058) the body may carry `request`, the id of an open request an
+        ask-to-open link made: the pulse then answers it, with the same checks as any opening, and
+        only from a device the request was sent to, within its two minutes (409
+        `OPEN_REQUEST_EXPIRED` otherwise, and nothing opens), once (409 `OPEN_REQUEST_ANSWERED`).
+        History names the link with the opening. Any other body is ignored, as before.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RelayPulse"
       responses:
         "202":
           description: Pulse started. The body is the last state the controller reported.
@@ -2287,6 +2399,10 @@ paths:
         **Sonos Address**, which lists the others) and reads them: the rooms asked for (all of them
         without `room_id`) every few seconds for a while after each request, the others once a
         minute. The answer is what was read last; ask again every few seconds to follow it.
+
+        Since 1.8.0 (ADR-057) `groups` lists the groups as Sonos has them (with `room_id`, those
+        with a room there): each led by its coordinator, with its rooms, what it plays and its
+        volume. Rooms join and leave groups with `/v1/music/{musicId}/group`.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
@@ -2617,6 +2733,110 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/music/{musicId}/group:
+    parameters:
+      - $ref: "#/components/parameters/MusicId"
+    post:
+      tags: [Music]
+      operationId: joinMusicGroup
+      x-directorlink-role: member
+      summary: Play in another room's group too
+      description: |
+        This Sonos room joins the group of the room in `with` (any room of it), as the Sonos app's
+        Group does, and plays what that group plays (1.8.0, ADR-057). DirectorLink gives the room
+        the address of the group's coordinator (AVTransport `SetAVTransportURI` with
+        `x-rincon:<coordinator>`), only for a coordinator it found in the household's zone group
+        state: `404` for a room it does not know. Already in that group: nothing is sent. Every
+        room of both groups must be one the key may control (`403 FORBIDDEN` names the others).
+        Answered once the player has taken it; the household is read again within seconds.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicJoin"
+            example:
+              with: RINCON_000E58A0000101400
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+    delete:
+      tags: [Music]
+      operationId: leaveMusicGroup
+      x-directorlink-role: member
+      summary: Leave the group
+      description: |
+        This Sonos room leaves its group and plays on its own, stopped; the other rooms go on
+        together (AVTransport `BecomeCoordinatorOfStandaloneGroup`, 1.8.0). A room on its own:
+        nothing is sent. Every room of the group must be one the key may control.
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+    patch:
+      tags: [Music]
+      operationId: setMusicGroupVolume
+      x-directorlink-role: member
+      summary: Set the group's volume
+      description: |
+        The volume of this room's group (1.8.0), set through each room's own volume
+        (RenderingControl `SetVolume`), keeping their balance as the Sonos app does: each room is
+        scaled by the same factor, from the volumes they had when the group's volume was first
+        changed. The group's volume is the average of its rooms' (`group.volume`). Every room of
+        the group must be one the key may control.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MusicGroupVolume"
+            example:
+              volume: 30
+      responses:
+        "200":
+          $ref: "#/components/responses/MusicCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
   /v1/backup:
     get:
       tags: [Backup]
@@ -2834,9 +3054,9 @@ paths:
       summary: This key's alert choices
       description: |
         Whether this key's device switched alerts on, and which of the kinds its role may get, of
-        those this home has, it wants. Until it chooses: every kind but `door_opened`. A doorbell
-        goes to every role, `fridge_door` to members and up, `door_opened` and `schedule_failed` to
-        admins.
+        those this home has, it wants. Until it chooses: every kind but `door_opened` and `camera`. A
+        doorbell goes to every role, `camera` (1.8.0) to the keys that may see that camera's pictures,
+        `fridge_door` to members and up, `door_opened` and `schedule_failed` to admins.
       responses:
         "200":
           description: This key's choices.
@@ -3233,7 +3453,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`; an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
       content:
         application/problem+json:
           schema:
@@ -3488,6 +3708,15 @@ components:
             people_permissions:
               type: boolean
               description: "Always true since 1.8.0: admins and members set per person (`/v1/profiles/{profileId}/access`, `access` in `/v1/api-keys/current`), rooms hidden from members (ADR-054). Missing before 1.8.0, whose keys have one of four roles."
+            sonos_groups:
+              type: boolean
+              description: "Always true since 1.8.0: `/v1/music/{musicId}/group` (join, leave, the group's volume), `groups` in `GET /v1/music`, and music scene steps that resume, set a volume or play a favorite (ADR-057). Missing before 1.8.0."
+            ask_links:
+              type: boolean
+              description: "Always true since 1.8.0: links that ask their person to open a door or gate (`/v1/ask-links`), and a pulse that answers one (ADR-058). Missing before 1.8.0."
+            camera_alerts:
+              type: boolean
+              description: "A camera of the project is on the DirectorLink · Hikvision Camera driver, whose alerts this DirectorLink passes on: the `camera` alert choice (1.8.0, ADR-056). Missing before 1.8.0."
 
     PairRequest:
       oneOf:
@@ -3949,7 +4178,10 @@ components:
         One step: devices of one type, and what to set. `device_ids` names the devices (with
         `room_id` as the room they were picked in); without it, every device of the type in
         `room_id`, or in the whole home when `room_id` is null. A `music` step (1.5.0) names no
-        devices: it pauses or stops the Sonos groups with a room in `room_id`, or every group.
+        devices: it pauses or stops the Sonos groups with a room in `room_id`, or every group;
+        since 1.8.0 (ADR-057) it also resumes them, sets the volume of each Sonos room there, or
+        plays a Sonos favorite in the Sonos rooms of `room_id` (required then), with those of
+        `with_room_ids` grouped with them.
         A `refrigerators` step (1.7.0) switches features of Samsung refrigerators.
       properties:
         type:
@@ -3975,7 +4207,13 @@ components:
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
             door or gate relay is never held closed by a scene); music `{"action": "pause"}` or
             `{"action": "stop"}` (a radio station, which cannot pause, stops; a group pauses as
-            one); refrigerators (1.7.0) any of `power_cool`, `power_freeze`, `sabbath_mode` and
+            one), and since 1.8.0 `{"action": "resume"}` (a group paused or stopped plays again),
+            `{"action": "volume", "volume": 0-100}` (each Sonos room's own) or
+            `{"action": "play_favorite", "favorite": {"id": "10"}, "volume": 0-100,
+            "with_room_ids": [11]}` (volume and with_room_ids optional; the favorite is kept as the
+            favorites list has it: its `title`, and the `uri` and `meta` that start it; at run time
+            it is started as the list has it then, and a favorite no longer there is skipped with
+            `FAVORITE_GONE`); refrigerators (1.7.0) any of `power_cool`, `power_freeze`, `sabbath_mode` and
             `ice_maker`, true (on) or false (off), at least one (a feature a refrigerator does not
             have is left out on it, `partial`, or skipped with `NOT_SUPPORTED` when none is left).
             climate may carry `heat_setpoint` and/or `cool_setpoint` instead of
@@ -4021,7 +4259,41 @@ components:
               maximum: 100
             action:
               type: string
-              enum: [pulse, pause, stop]
+              enum: [pulse, pause, stop, resume, volume, play_favorite]
+            volume:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: A music step's volume (1.8.0), each Sonos room's own.
+            favorite:
+              type: object
+              description: |
+                The Sonos favorite a `play_favorite` step plays (1.8.0): its `id` as
+                `GET /v1/music/{musicId}/favorites` lists it. DirectorLink keeps it as the favorites
+                list has it when the step is saved (its name, and the address and description that
+                start it); sent back unchanged, it is kept.
+              required: [id]
+              additionalProperties: false
+              properties:
+                id:
+                  type: string
+                  pattern: "^[0-9]{1,9}$"
+                title:
+                  type: string
+                  maxLength: 1024
+                uri:
+                  type: string
+                  maxLength: 2048
+                meta:
+                  type: string
+                  maxLength: 8192
+            with_room_ids:
+              type: array
+              maxItems: 32
+              description: The rooms whose Sonos rooms play the favorite too, grouped with the step's room's (1.8.0). Rooms not in the project are left out.
+              items:
+                type: integer
+                minimum: 1
             power_cool:
               type: boolean
             power_freeze:
@@ -4217,6 +4489,103 @@ components:
               type: boolean
               description: The scene had a link, which stopped working.
 
+    AskLink:
+      type: object
+      description: A link that asks its person to open a door or gate (1.8.0, ADR-058), without its secret.
+      required: [link_id, relay_id, relay_name, room_id, label, made_by, person, this_device, created_at, last_used_at]
+      properties:
+        link_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: Not secret; the link's address names it.
+        relay_id:
+          type: integer
+          minimum: 1
+        relay_name:
+          type: [string, "null"]
+          description: The door or gate; null while it is not in the project.
+        room_id:
+          type: [integer, "null"]
+        label:
+          type: [string, "null"]
+          description: What its person called it ("Arriving home"); in the question and in the history.
+        made_by:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The API key that made it. Revoking that key, or its expiry, removes the link.
+        person:
+          type: [string, "null"]
+          description: The person it asks (the key's profile), by name.
+        this_device:
+          type: boolean
+          description: Made with the key that asks.
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+
+    AskLinkList:
+      type: object
+      required: [items, remote_access, home_linked, door_control]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AskLink"
+        remote_access:
+          type: boolean
+          description: The Remote Access property is On; links work only then.
+        home_linked:
+          type: boolean
+          description: The account service has accepted this home's identity.
+        door_control:
+          type: boolean
+          description: The Door Control property is Enabled; a run asks nobody while it is not.
+
+    AskLinkCreate:
+      type: object
+      additionalProperties: false
+      required: [relay_id]
+      properties:
+        relay_id:
+          type: integer
+          minimum: 1
+          description: The door or gate (a relay) it asks about.
+        label:
+          type: [string, "null"]
+          maxLength: 64
+          description: Optional; blank for none.
+
+    AskLinkCreated:
+      allOf:
+        - $ref: "#/components/schemas/AskLink"
+        - type: object
+          required: [home_id, secret, url, replaced]
+          properties:
+            home_id:
+              type: string
+              pattern: "^[0-9a-f]{32}$"
+            secret:
+              type: string
+              pattern: "^[0-9a-f]{40}$"
+              description: 160 random bits, shown only in this answer. Whoever has it can make its person's phone ask, nothing more.
+            url:
+              type: string
+              description: "`https://api.directorlink.io/run/<home_id>.<link_id>#<secret>`, as a scene link's."
+            replaced:
+              type: boolean
+              description: This key had a link for this door, which stopped working.
+
+    RelayPulse:
+      type: object
+      properties:
+        request:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: An open request's id, from the sealed alert an ask-to-open link made (1.8.0, ADR-058).
+
     SceneRun:
       type: object
       required: [ran, skipped, failed, problems]
@@ -4247,7 +4616,7 @@ components:
                 description: The step, counted from 1.
               device_id:
                 type: integer
-                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`).
+                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`, and since 1.8.0 `FORBIDDEN` for Sonos rooms this key may not control, `FAVORITE_GONE`, `FAVORITE_NOT_PLAYABLE`).
               outcome:
                 type: string
                 enum: [skipped, failed, partial]
@@ -4829,6 +5198,28 @@ components:
         access:
           $ref: "#/components/schemas/PersonAccess"
           description: Since 1.8.0 (ADR-054). In `/v1/profile` what the caller may do; in `/v1/profiles` each person's role and permissions.
+        gone_favorites:
+          type: array
+          description: |
+            Since 1.8.0, in the caller's own profile only (GET and PATCH /v1/profile): the favorites
+            of devices the project no longer has (removed in Composer), as the last project read
+            that worked found them. The controller drops them from every profile once they have
+            been gone 7 days (docs/PREFERENCES.md); meanwhile the app shows them as removed.
+          items:
+            type: object
+            required: [entry, since]
+            properties:
+              entry:
+                type: string
+                pattern: "^[a-z]+:[0-9]+$"
+                description: The favorite, as in `prefs.favorites`.
+              since:
+                type: string
+                format: date-time
+                description: When a project read first found the device gone.
+              name:
+                type: string
+                description: The name the device had, when the controller still knew it then.
 
     ProfileWithKeys:
       allOf:
@@ -5174,6 +5565,58 @@ components:
           description: Sorted by name. Empty while Sonos is Off.
           items:
             $ref: "#/components/schemas/MusicRoom"
+        groups:
+          type: array
+          description: The groups as Sonos has them (1.8.0), by their coordinator's name; missing while Sonos is Off and before 1.8.0.
+          items:
+            $ref: "#/components/schemas/MusicGroup"
+
+    MusicGroup:
+      type: object
+      description: A Sonos group (a room on its own is a group of one).
+      required: [id, rooms, state, volume, now_playing]
+      properties:
+        id:
+          type: string
+          description: Its coordinator's id, which play, pause and skip go to.
+        rooms:
+          type: array
+          description: Its rooms' ids, the coordinator first.
+          items:
+            type: string
+        state:
+          type: string
+          enum: [playing, paused, stopped, transitioning, unknown]
+        volume:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 100
+          description: The average of its rooms' volumes; null while none is read.
+        now_playing:
+          description: What it plays, as in `MusicRoom`.
+          oneOf:
+            - type: object
+            - type: "null"
+
+    MusicJoin:
+      type: object
+      required: [with]
+      additionalProperties: false
+      properties:
+        with:
+          type: string
+          pattern: "^RINCON_[0-9A-Fa-f]+$"
+          description: A Sonos room of the group to join, as `GET /v1/music` lists it (never an address).
+
+    MusicGroupVolume:
+      type: object
+      required: [volume]
+      additionalProperties: false
+      properties:
+        volume:
+          type: integer
+          minimum: 0
+          maximum: 100
 
     MusicRoom:
       type: object
@@ -5208,6 +5651,11 @@ components:
             coordinator:
               type: boolean
               description: This room leads the group.
+            volume:
+              type: [integer, "null"]
+              minimum: 0
+              maximum: 100
+              description: The group's volume (1.8.0), the average of its rooms' own; null while none is read. Missing before 1.8.0.
             rooms:
               type: array
               description: The group's rooms, its coordinator first.
@@ -5847,10 +6295,13 @@ components:
           description: This key's device switched alerts on.
         kinds:
           type: object
-          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one), each wanted or not.
+          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one; `camera` only with a camera on the DirectorLink · Hikvision Camera driver that this key may see), each wanted or not.
           properties:
             doorbell:
               type: boolean
+            camera:
+              type: boolean
+              description: "A camera saw someone or something (1.8.0, ADR-056): its driver's own alert, as the camera's Alert On, the hub's alerts switch and its snooze let it through; at most one a camera a minute. Off until chosen."
             door_opened:
               type: boolean
             fridge_door:
@@ -5871,6 +6322,8 @@ components:
           additionalProperties: false
           properties:
             doorbell:
+              type: boolean
+            camera:
               type: boolean
             door_opened:
               type: boolean
@@ -5918,6 +6371,14 @@ components:
           API Keys, or `new_identity` after Reset Remote Identity; `count`; `outcome` `failed` when
           the controller could not save it, and the links still work).
         - A scene run by its link (1.7.0) is `scene` `run` with `who.type` `link`.
+        - Ask to open (1.8.0, ADR-058): `door` `asked` with `who.type` `link` (its label in
+          `who.name`): the link asked its person whether to open the door (`what`), on `count`
+          devices; or, with `outcome` skipped, `reason` `nobody` (no device of theirs had alerts on),
+          `doors_off` (Door Control off) or `not_sent`. The opening that answers it is `door`
+          `pulse` by the key that answered, with `ids.link_id` and the label in `note`.
+          `access` `ask_link_created`, `ask_link_replaced`, `ask_link_removed` (`what` is the door,
+          `note` the label; `reason` `key_gone`, `no_access` when its person may no longer open the
+          door, `door_gone`, `other_home`, or none when someone removed it).
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -5926,7 +6387,9 @@ components:
           listed once a night when it fails, with `note` `retry` when it is tried again that night),
           `remote_away` (the remote connection was away for `seconds`, more than a minute; recorded
           when it is back), `driver_updated` (`from`, `to`), `driver_started` (the controller or the
-          driver restarted), `driver_added`.
+          driver restarted), `driver_added`, `remote_update_required` (1.8.0: the account service no
+          longer takes this version of DirectorLink for remote access; `from` this version, `to` the
+          oldest it takes when it said; once until a connection opens again).
       required: [id, at, kind, action, who]
       properties:
         id:
@@ -5941,7 +6404,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:
@@ -5959,7 +6422,7 @@ components:
           description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`. Also `failed` for `links_removed` that the controller could not save (the links still work).
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity, key_gone, keys_revoked]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity, key_gone, keys_revoked, nobody, doors_off, not_sent, no_access, door_gone]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
@@ -5980,6 +6443,10 @@ components:
             Why a scene link went (`link_removed`, 1.7.0): `doors`, `scene_gone`, `other_home`,
             `key_gone` (the key that made it was revoked or expired); and all of them
             (`links_removed`): `new_identity`, `keys_revoked` (Revoke All API Keys).
+
+            Ask to open (1.8.0, ADR-058): why nobody was asked (`asked`): `nobody`, `doors_off`,
+            `not_sent`; why a link went (`ask_link_removed`): `key_gone`, `no_access`, `door_gone`,
+            `other_home`.
         note:
           type: string
           description: See `kind` for schedules and Turn off all. For a daily `cloud_backup` that failed, `retry` when it is tried again that night (every 15 minutes until 06:00).

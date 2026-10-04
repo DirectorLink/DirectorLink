@@ -13,6 +13,7 @@ local Access = require("src.auth.access")
 local People = require("src.auth.people")
 local Scenes = require("src.core.scenes")
 local Activity = require("src.core.activity")
+local FavoritesGone = require("src.core.favorites_gone")
 
 local Profiles = {}
 
@@ -170,15 +171,22 @@ local function validatePrefs(prefs, maxFavorites)
     return changes
 end
 
--- With what the caller may do (ADR-054), so that the app shows only that.
+-- The caller's own profile, with its favorites of devices removed in Composer (1.8.0, ADR-059): the
+-- app shows them as removed, with Remove, until the controller drops them (src/core/favorites_gone.lua);
+-- and what the caller may do (ADR-054), so that the app shows only that.
+local function ownView(ctx, profile)
+    local result = view(profile)
+    result.gone_favorites = FavoritesGone.list(result.prefs.favorites, ctx.apiKey)
+    result.access = Access.describe(ctx.apiKey)
+    return result
+end
+
 function Profiles.current(ctx)
     local profile, problem = ownProfile(ctx)
     if not profile then
         return problem
     end
-    local result = view(profile)
-    result.access = Access.describe(ctx.apiKey)
-    return 200, result
+    return 200, ownView(ctx, profile)
 end
 
 -- PATCH {"prefs": {"language": "he", "favorites": [...]}, "version": 3}: changes the named
@@ -214,9 +222,7 @@ function Profiles.update(ctx)
         end
         return Problem.notFound("Profile", profile.id)
     end
-    local result = view(updated)
-    result.access = Access.describe(ctx.apiKey)
-    return 200, result
+    return 200, ownView(ctx, updated)
 end
 
 -- Every person, with their role and permissions (ADR-054).

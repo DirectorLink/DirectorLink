@@ -173,6 +173,18 @@ SECURITY_CONTRACT = {
         '{ id = "link:" .. link.id, role = "member" }',
         "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then",
     ),
+    # Ask to open (ADR-058): only a hash of each secret, compared in constant time; a request lasts
+    # two minutes, and only a pulse from a device it was sent to, by a key that may open the door,
+    # answers it (check_ask_links_open_nothing: the link's own code never opens anything).
+    "src/core/ask_links.lua": (
+        "if SceneLinks.secretMatches(found and found.alg, found and found.hash, secret) and found then",
+        "AskLinks.OPEN_SECONDS = 120",
+    ),
+    "src/api/handlers/ask_links.lua": (
+        "if not Access.canOpen(ctx.apiKey, relay) then",
+        "if not request or request.relay_id ~= tonumber(device.id) or not request.keys[ctx.apiKey.id] then",
+        "if not maker or not relay or link.home ~= linkedHome() or not Access.canOpen(maker, relay) then",
+    ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
     ),
@@ -537,6 +549,27 @@ PARTITION_COMMANDS = re.compile(r"\bPARTITION_(?:ARM|DISARM)\b")
 ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
 
 
+# An ask-to-open link (ADR-058) asks; it never opens. Its modules send no command to a device:
+# only the pulse route does, with the answering device's own key.
+ASK_LINK_MODULES = ("src/core/ask_links.lua", "src/api/handlers/ask_links.lua")
+
+
+def check_ask_links_open_nothing(files):
+    for name in ASK_LINK_MODULES:
+        text = files.get(name)
+        if text is None:
+            fail(f"{name} is missing")
+        code = lua_code(text)
+        for pattern, what in (
+            (r"\badapters\b", "reach the device adapters"),
+            (r"\bexecute\s*\(", "send a command"),
+            (r"\bC4:SendToDevice\b", "send a command to a device"),
+            (r"\brunSaved\b", "run a scene"),
+        ):
+            if re.search(pattern, code):
+                fail(f"{name} must not {what}: an ask-to-open link only asks")
+
+
 def check_alarm_read_only(files):
     adapter = files.get(ALARM_ADAPTER)
     if adapter is None:
@@ -576,11 +609,19 @@ def check_alarm_read_only(files):
 # is allowed only by the module that reads the players' answers and the installer's property; the
 # API names a Sonos room, never an address.
 SONOS_CLIENT = "src/sonos/client.lua"
+# Grouping (1.8.0, ADR-057) is two actions: joining (SetAVTransportURI with the coordinator's
+# x-rincon: address) and leaving (BecomeCoordinatorOfStandaloneGroup). A group's volume is each
+# room's own SetVolume: no GroupRenderingControl, no other grouping action, no alarms or settings.
 SONOS_ACTIONS = {
     "GetTransportInfo", "GetPositionInfo", "GetMediaInfo", "Play", "Pause", "Stop", "Next", "Previous",
-    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "GetVolume", "SetVolume", "GetMute", "SetMute",
-    "GetZoneGroupState", "Browse",
+    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "BecomeCoordinatorOfStandaloneGroup",
+    "GetVolume", "SetVolume", "GetMute", "SetMute", "GetZoneGroupState", "Browse",
 }
+# The x-rincon: address a room joins a group with is made in one place (Protocol.groupUri, which
+# takes only a player's id), and only src/sonos/sonos.lua uses it, for a coordinator it found in the
+# zone group state: the API never names what a room joins.
+SONOS_GROUP_URI = re.compile(r"""["']x-rincon:["']\s*\.\.""")
+SONOS_GROUP_URI_USERS = {"src/sonos/protocol.lua", "src/sonos/sonos.lua"}
 
 
 # main.lua loads the client only to hand it the search's network events (ReceivedFromNetwork,
@@ -625,6 +666,10 @@ def check_sonos(files):
             fail(f"{name} loads {SONOS_CLIENT}: requests go through src/sonos/sonos.lua")
         if name == "src/main.lua":
             check_sonos_client_in_main(code)
+        if SONOS_GROUP_URI.search(code) and name != "src/sonos/protocol.lua":
+            fail(f"{name} makes an x-rincon: address: only Protocol.groupUri in src/sonos/protocol.lua does")
+        if re.search(r"\bgroupUri\b", code) and name not in SONOS_GROUP_URI_USERS:
+            fail(f"{name} uses Protocol.groupUri: only src/sonos/sonos.lua joins a room to a group")
     match = re.search(r"^Protocol\.ACTIONS = \{([^}]*)\}", files.get("src/sonos/protocol.lua", ""), re.M)
     if not match:
         fail("could not read Protocol.ACTIONS in src/sonos/protocol.lua")
@@ -645,6 +690,19 @@ def check_calendar_privacy(files):
                 fail(f"{name} uses {call}: the Jewish calendar is worked out on the controller and never goes to the network")
 
 
+def check_documentation(xml, documentation):
+    """Composer's Documentation tab: declared, packaged, and opening with the owner's disclaimer."""
+    disclaimer = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
+    if '<documentation file="www/documentation.html"/>' not in xml:
+        fail('driver.xml must declare <documentation file="www/documentation.html"/> (Composer\'s Documentation tab)')
+    if not documentation:
+        fail("www/documentation.html must be packaged")
+    body = documentation[documentation.find("<body>"):]
+    first = body.find(disclaimer)
+    if first < 0 or first > 400:
+        fail(f"www/documentation.html must say near its top: {disclaimer}")
+
+
 def main():
     if not PACKAGE.is_file():
         fail("dist/DirectorLink.c4z is missing; run python scripts/build.py")
@@ -655,6 +713,7 @@ def main():
         check_contents(names)
         check_reproducible(archive.infolist())
         files = {name: archive.read(name).decode("utf-8") for name in names if not name.startswith("www/")}
+        documentation = archive.read("www/documentation.html").decode("utf-8") if "www/documentation.html" in names else ""
 
     check_driver_xml(files["driver.xml"], driver_version)
     if f'Version.BRIDGE_VERSION = "{version}"' not in files["src/core/version.lua"]:
@@ -663,10 +722,12 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_ask_links_open_nothing(files)
     check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)
     check_relay_roots(files)
+    check_documentation(files["driver.xml"], documentation)
     print(f"OK: validated {len(files)} packaged files for version {version}")
 
 

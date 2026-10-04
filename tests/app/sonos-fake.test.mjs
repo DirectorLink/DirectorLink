@@ -51,12 +51,44 @@ test("they keep what they are told, and refuse what a real player refuses", asyn
     assert.match((await soap(fake.port, "192.168.50.12", ...RC, "GetVolume", "<InstanceID>0</InstanceID><Channel>Master</Channel>")).text, /<CurrentVolume>33</);
     await soap(fake.port, "192.168.50.11", ...AVT, "Next", "<InstanceID>0</InstanceID>");
     assert.equal((await soap(fake.port, "192.168.50.11", ...AVT, "GetPositionInfo", "<InstanceID>0</InstanceID>")).text, fixture("made/position_info_track_hebrew.xml"));
-    assert.equal((await soap(fake.port, "192.168.50.11", ...AVT, "BecomeCoordinatorOfStandaloneGroup", "<InstanceID>0</InstanceID>")).status, 500, "no grouping");
+    assert.equal((await soap(fake.port, "192.168.50.11", ...AVT, "DelegateGroupCoordinationTo", "<InstanceID>0</InstanceID>")).status, 500, "no other grouping");
     const art = await fetch(`http://127.0.0.1:${fake.port}/getaa?s=1&u=x`, { headers: { "X-Fake-Sonos-Host": "192.168.50.11" } });
     assert.equal(art.headers.get("content-type"), "image/png");
     assert.deepEqual([...new Uint8Array(await art.arrayBuffer()).slice(0, 4)], [0x89, 0x50, 0x4e, 0x47]);
     const unknown = await fetch(`http://127.0.0.1:${fake.port}/getaa?s=1`, { headers: { "X-Fake-Sonos-Host": "203.0.113.1" } });
     assert.equal(unknown.status, 404, "no player at another address");
+  } finally {
+    await fake.close();
+  }
+});
+
+// Rooms join and leave groups (1.8.0, ADR-057): the zone group state follows, as the real players'.
+test("rooms join a group and leave it, and the zone group state says so", async () => {
+  const fake = await startFakeSonos({ port: 0 });
+  const KITCHEN = "RINCON_000E58A0000101400";
+  const BEDROOM = "RINCON_000E58A0000301400";
+  const groups = async () => {
+    const text = (await soap(fake.port, "192.168.50.11", ...ZGT, "GetZoneGroupState")).text;
+    const xml = text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");
+    return [...xml.matchAll(/<ZoneGroup Coordinator="([^"]+)"[^>]*>([\s\S]*?)<\/ZoneGroup>/g)].map(([, coordinator, members]) => [
+      coordinator.slice(-7, -5),
+      [...members.matchAll(/<ZoneGroupMember UUID="([^"]+)"/g)].map(([, id]) => id.slice(-7, -5)),
+    ]);
+  };
+  try {
+    assert.deepEqual(await groups(), [["01", ["01", "02"]], ["03", ["03", "07"]], ["04", ["04"]], ["06", ["06"]]]);
+    const join = (ip, id) => soap(fake.port, ip, ...AVT, "SetAVTransportURI", `<InstanceID>0</InstanceID><CurrentURI>x-rincon:${id}</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>`);
+    // Bedroom (a stereo pair: its hidden speaker comes along) joins Kitchen.
+    assert.equal((await join("192.168.50.13", KITCHEN)).status, 200);
+    assert.deepEqual(await groups(), [["01", ["01", "02", "03", "07"]], ["04", ["04"]], ["06", ["06"]]]);
+    assert.equal(fake.home.players.get("192.168.50.13").playing, "member");
+    assert.equal((await join("192.168.50.14", BEDROOM)).status, 500, "only a group's coordinator");
+    assert.equal((await join("192.168.50.14", "RINCON_0BADF00D01400")).status, 500);
+    // The kitchen leaves: Living Room leads the others and plays on.
+    assert.equal((await soap(fake.port, "192.168.50.11", ...AVT, "BecomeCoordinatorOfStandaloneGroup", "<InstanceID>0</InstanceID>")).status, 200);
+    assert.deepEqual(await groups(), [["02", ["02", "03", "07"]], ["04", ["04"]], ["06", ["06"]], ["01", ["01"]]]);
+    assert.equal(fake.home.players.get("192.168.50.12").transport, "PLAYING");
+    assert.equal(fake.home.players.get("192.168.50.11").transport, "STOPPED");
   } finally {
     await fake.close();
   }

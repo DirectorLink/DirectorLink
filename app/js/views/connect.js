@@ -136,8 +136,14 @@ function iosCard() {
       h("p", { class: "connect-text" }, t("connect.iosHow")),
       accountOption({ divider: false }),
       pasteInvitationPanel({ key: "connect" })
-    )
+    ),
+    independentNote()
   );
+}
+
+// Shown before anyone pairs or signs in, as in Settings and About (the owner's disclaimer).
+function independentNote() {
+  return h("p", { class: "independent-note", dataset: { key: "connect-independent" } }, t("settings.about.independent"));
 }
 
 export function connectScreen() {
@@ -220,6 +226,7 @@ export function connectScreen() {
       accountOption(),
       pasteInvitationPanel({ key: "connect" })
     ),
-    h("p", { class: "connect-footnote" }, t("connect.lanNote"))
+    h("p", { class: "connect-footnote" }, t("connect.lanNote")),
+    independentNote()
   );
 }

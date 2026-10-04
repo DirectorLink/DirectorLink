@@ -1,7 +1,7 @@
 -- Which alerts a device gets (ADR-050, src/cloud/alerts.lua): each key's own choices, read and set
 -- by that key only. `on`: its device switched alerts on (Settings → Controller → Alerts on this
 -- device); `kinds`: what it wants of the kinds its role may get that this home has.
---   GET /v1/alerts/choices   { on, kinds: { doorbell, door_opened, fridge_door, schedule_failed } }
+--   GET /v1/alerts/choices   { on, kinds: { doorbell, camera, door_opened, fridge_door, schedule_failed } }
 --   PUT /v1/alerts/choices   { on?, kinds? }: the same, changed
 
 local Json = require("src.core.json")

@@ -529,6 +529,28 @@ test("a refrigerator door left open is listed under Doors, in both languages", a
   }
 });
 
+// The account service no longer takes this DirectorLink for remote access (1.8.0, ADR-059): once,
+// with the version it needs when it said.
+test("remote access refused because DirectorLink must be updated, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [
+      { id: 2, at: iso(NOW - 60 * 1000), kind: "system", action: "remote_update_required", who: { type: "controller" }, from: "1.8.0", to: "1.9.0" },
+      { id: 1, at: iso(NOW - 120 * 1000), kind: "system", action: "remote_update_required", who: { type: "controller" }, from: "1.8.0" },
+    ],
+  });
+  let rows = items(await open());
+  assert.equal(line(rows[0]), "Remote access stopped: update DirectorLink to 1.9.0 or later, this version can no longer connect, DirectorLink");
+  assert.equal(line(rows[1]), "Remote access stopped: update DirectorLink, this version can no longer connect, DirectorLink");
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.match(line(rows[0]), /^הגישה מרחוק הופסקה: עדכנו את DirectorLink לגרסה 1\.9\.0 ומעלה/);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

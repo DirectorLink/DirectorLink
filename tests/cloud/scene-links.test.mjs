@@ -318,3 +318,52 @@ test("the secret is never in what the Worker logs", TEST, async () => {
   assert.ok(!output.includes(link.secret), "never the secret");
   assert.ok(!output.includes(wrong), "nor a wrong one");
 });
+
+// Ask to open (1.8.0, ADR-058): the same run, for a link that asks its person to open a door. The
+// home sends a sealed notify (which this Worker delivers and cannot read) and answers `asked`; the
+// phone is told only that, and the Worker learns the result word and a notify for some key ids,
+// nothing about the door.
+test("an ask-to-open link: the home asks, and the phone is told so", TEST, async () => {
+  const state = await home();
+  const link = newLink(state);
+  const keyId = randomHex(4);
+  const b64 = (bytes) => Buffer.from(randomHex(bytes), "hex").toString("base64");
+  state.answer = () => {
+    state.connection.sendJson({ type: "notify", at: new Date().toISOString(), for: { [keyId]: { iv: b64(16), ct: b64(512), mac: b64(32) } }, brief: true });
+    return { ok: true, result: "asked" };
+  };
+  const path = runPath(state.home, link.id);
+  const body = JSON.stringify({ secret: link.secret });
+  const asked = await post(path, body);
+  assert.equal(asked.status, 200, asked.text);
+  assert.deepEqual(asked.json, { result: "asked", message: "Asked: answer the notification on your phone to open." });
+  for (const [result, words] of [
+    ["waiting", /^Already asked/],
+    ["nobody", /^Nobody was asked: turn on alerts/],
+    ["doors_off", /^Nobody was asked: door control is off/],
+    ["not_asked", /^Nobody was asked: the home could not send/],
+  ]) {
+    state.answer = () => ({ ok: true, result });
+    const answer = await post(path, body);
+    assert.equal(answer.status, 200, result);
+    assert.equal(answer.json.result, result);
+    assert.match(answer.json.message, words);
+    assert.deepEqual(Object.keys(answer.json).sort(), ["message", "result"], "nothing more");
+  }
+  // The run that reaches the home is the same as a scene link's: the link and its secret.
+  assert.deepEqual(Object.keys(runs(state)[0]).sort(), ["id", "link", "secret", "type"]);
+  await sleep(500);
+  const lines = worker
+    .output()
+    .split("\n")
+    .filter((line) => line.includes(`"home":"${state.home}"`))
+    .map((line) => JSON.parse(line.slice(line.indexOf("{"))));
+  const run = lines.find((line) => line.event === "link_run" && line.result === "asked");
+  assert.ok(run, "the run is logged with its result word");
+  assert.deepEqual(Object.keys(run).sort(), ["event", "home", "link", "ms", "result", "status"], "and nothing else");
+  const notice = lines.find((line) => line.event === "notify_sent");
+  assert.ok(notice, "the sealed notice was taken");
+  assert.equal(notice.keys, 1, "for one key id; no browser of it is registered here");
+  assert.deepEqual(Object.keys(notice).sort(), ["at", "devices", "event", "home", "keys"], "how many, never what");
+  assert.ok(!worker.output().includes(link.secret), "never the secret");
+});

@@ -57,6 +57,7 @@ export function settingsView({ page = null, onPalette, onTheme, onLanguage, navi
         pageHeader({ title: t("settings.title") }),
         offlineBanner(),
         h("div", { class: "settings" }, appearanceSection(onPalette, onTheme), languageSection(onLanguage), pageRows()),
+        h("p", { class: "independent-note", dataset: { key: "settings-independent" } }, t("settings.about.independent")),
       ];
   }
 }
@@ -1574,7 +1575,7 @@ function aboutSection() {
     t("settings.about.cardTitle"),
     h("p", { class: "about-slogan" }, t("settings.about.slogan")),
     h("p", {}, t("settings.about.text")),
-    h("p", { class: "field-help" }, t("settings.about.independent")),
+    h("p", { class: "about-independent" }, t("settings.about.independent")),
     h(
       "div",
       { class: "button-row" },

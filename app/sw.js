@@ -41,6 +41,8 @@ const ASSETS = [
   "/js/scenes.js",
   "/js/views/scene-links.js",
   "/js/scene-links.js",
+  "/js/views/ask-links.js",
+  "/js/ask-links.js",
   "/js/views/schedules.js",
   "/js/schedules.js",
   "/js/calendar.js",
@@ -193,11 +195,16 @@ self.addEventListener("activate", (event) => {
 // "schedule_failed", home, at }. What the controller alerts about it seals to this device's key, so
 // that the servers cannot read it: { kind: "sealed", home, key, at, sealed: { iv, ct, mac } }; this
 // opens it with the alert key js/alerts.js keeps here, and says what happened and where (a doorbell
-// rang, a door or gate was opened and by whom, the refrigerator's door was left open, a schedule
-// failed). The words are the app's, in its language (js/alerts.js keeps them here); English when
-// there are none, and the general words when the detail is missing or does not open. Every push
-// shows a notification (browsers revoke a subscription that does not). Tapping a doorbell's opens
-// Home (its banner), a refrigerator's its room, any other the home's history.
+// rang, a camera saw someone or something, a door or gate was opened and by whom, the refrigerator's
+// door was left open, a schedule failed). The words are the app's, in its language (js/alerts.js
+// keeps them here); English when there are none, and the general words when the detail is missing
+// or does not open. Every push shows a notification (browsers revoke a subscription that does not).
+// Tapping a doorbell's opens Home (its banner), a camera's its full view, a refrigerator's its room,
+// any other the home's history. The servers' push of a new device asking to join (1.8.0),
+// { kind: "device_request", home, at, request }, says only that, and opens the app, where the
+// request shows under every screen's header. An ask-to-open link's request (1.8.0, ADR-058) asks
+// "Open the main gate?": its tap opens the app's question (#/open/<door>/<request>/<until>), where
+// only Open, with this device's own key, opens the door.
 const ALERT_TEXTS_CACHE = "directorlink-alerts";
 const ALERT_TEXTS_PATH = "/alert-texts.json";
 const ALERT_KEY_PATH = "/alert-key.json";
@@ -219,6 +226,27 @@ const ALERT_TEXTS = {
   unknown_device: "a removed device",
   fridge_door: "{name} – the door has been open for at least {minutes} min ({time}).",
   fridge_door_now: "{name} – the door was left open ({time}).",
+  device_request: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
+  open_request_title: "Open {name}?",
+  open_request: "Your link “{via}” asked at {time}. Tap to answer.",
+  open_request_unnamed: "Your link asked at {time}. Tap to answer.",
+  camera_title: "Camera alert",
+  camera: "{what} at {name} at {time}.",
+  camera_person: "Person",
+  camera_vehicle: "Vehicle",
+  camera_face: "Face",
+  camera_motion: "Motion",
+  camera_line_crossing: "Line crossed",
+  camera_intrusion: "Intrusion",
+  camera_region_entrance: "Someone entering",
+  camera_region_exiting: "Someone leaving",
+  camera_tamper: "Tampering",
+  camera_scene_change: "View changed",
+  camera_object_left: "Object left behind",
+  camera_object_removed: "Object removed",
+  camera_alarm_input: "Alarm input",
+  camera_pir: "Motion (PIR)",
+  camera_other: "Alert",
 };
 const HISTORY_URL = "/#/settings/history";
 
@@ -307,6 +335,12 @@ function sealedNotice(detail, texts, home) {
       const template = by.type === "control4" ? texts.door_opened_control4 : detail.action === "hold" ? texts.door_held : text(detail.via) ? texts.door_opened_scene : texts.door_opened;
       return { title: texts.title, body: fill(template, { name, who: whoText(by, texts), scene: text(detail.via), time }), tag: `door-${id}`, url: HISTORY_URL };
     }
+    case "camera": {
+      // A camera of the DirectorLink · Hikvision drivers (ADR-056): what it saw, in the app's words.
+      if (!name) return null;
+      const what = /^[a-z_]+$/.test(detail.what ?? "") && typeof texts[`camera_${detail.what}`] === "string" ? texts[`camera_${detail.what}`] : texts.camera_other;
+      return { title: texts.camera_title, body: fill(texts.camera, { what, name, time }), tag: `camera-${id}`, url: id ? `/#/cameras/${id}` : "/#/cameras" };
+    }
     case "fridge_door": {
       if (!name) return null;
       const minutes = Number.isInteger(detail.minutes) && detail.minutes > 0 ? detail.minutes : null;
@@ -315,6 +349,21 @@ function sealedNotice(detail, texts, home) {
     }
     case "schedule_failed":
       return { title: texts.title, body: fill(name ? texts.schedule_failed_named : texts.schedule_failed, { name, time }), tag: `alert-schedule_failed-${home}`, url: HISTORY_URL };
+    case "open_request": {
+      // An ask-to-open link asks this person (ADR-058). The question lasts `seconds` from now on this
+      // device's clock (the push service keeps it a minute at most); the controller decides anyway.
+      const request = typeof detail.request === "string" && /^[0-9a-f]{16}$/.test(detail.request) ? detail.request : null;
+      if (!name || !id || !request) return null;
+      const seconds = Number.isInteger(detail.seconds) ? Math.min(Math.max(detail.seconds, 1), 600) : 120;
+      const until = Date.now() + seconds * 1000;
+      const via = text(detail.via);
+      return {
+        title: fill(texts.open_request_title, { name }),
+        body: fill(via ? texts.open_request : texts.open_request_unnamed, { via, time }),
+        tag: `open-${id}`,
+        url: `/#/open/${id}/${request}/${until}`,
+      };
+    }
     default:
       return null;
   }
@@ -366,6 +415,20 @@ async function showAlert(data) {
     } catch {
       // The general words, below.
     }
+  }
+  if (alert?.kind === "device_request") {
+    // One notification per home: a newer request replaces the one before. The app opens on Home,
+    // and looks for requests at once as it comes to the front.
+    await self.registration.showNotification(texts.title, {
+      body: texts.device_request,
+      tag: `device-request-${home}`,
+      renotify: true,
+      lang: texts.lang,
+      dir: texts.dir,
+      icon: "/icons/icon-192.png",
+      data: { url: "/#/" },
+    });
+    return;
   }
   const kind = alert?.kind === "offline" || alert?.kind === "schedule_failed" ? alert.kind : "other";
   await self.registration.showNotification(texts.title, {

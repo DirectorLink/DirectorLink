@@ -6,6 +6,8 @@ DirectorLink is an open-source, local-first management layer for Control4 homeow
 
 The goal is to provide simple device control, scenes, schedules, and everyday automation without requiring homeowners to use Composer Pro for routine changes.
 
+> **DirectorLink is an independent project, not affiliated with Control4 or Snap One.**
+
 ## Screenshots
 
 The app on a demo home: made-up rooms and devices, and drawn camera pictures.
@@ -41,8 +43,8 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - **At home and away:** at home the app talks to the controller directly, locked with its own key; away, and on iPhone and iPad, it goes through your account (Google or Apple), locked end to end so that DirectorLink's servers cannot read it ([`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)).
 - **Scenes:** one tap for lights, AC, fans, blinds, music, refrigerators and gates; pick single devices or copy the house as it is, and change any action later ([`docs/SCENES.md`](docs/SCENES.md)).
 - **Schedules:** by the clock and weekday, at sunrise or sunset, by the weather (heat, wind and rain), and, with the Jewish calendar on, at Shabbat and holiday times. The controller runs them on its own ([`docs/SCHEDULES.md`](docs/SCHEDULES.md), [`docs/CALENDAR.md`](docs/CALENDAR.md)).
-- **Scene links and geofencing:** a private link per scene for iPhone Shortcuts, Android automation apps, Siri and NFC tags, so your phone runs a scene when you arrive or leave ([below](#geofencing-run-a-scene-when-you-arrive-or-leave)).
-- **Alerts on your phone and computer:** doorbell rings, a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem. Each device chooses its own; what an alert says is encrypted for that device on the controller.
+- **Scene links and geofencing:** a private link per scene for iPhone Shortcuts, Android automation apps, Siri and NFC tags, so your phone runs a scene when you arrive or leave; for doors and gates, a link that asks you first ([below](#geofencing-run-a-scene-when-you-arrive-or-leave)).
+- **Alerts on your phone and computer:** doorbell rings, a person, a vehicle or a line crossed at a camera on the free [DirectorLink · Hikvision](https://directorlink.io/drivers/hikvision) drivers (off until chosen; the tap opens that camera), a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem, a new device of your account asking to join (admins). Each device chooses its own; what an alert says is encrypted for that device on the controller.
 - **History:** what ran, what didn't and why, who opened which door, keys and invitations, and what changed in Composer, for the last 30 days, for admins ([`docs/HISTORY.md`](docs/HISTORY.md)).
 - **Backups:** everything DirectorLink keeps, in a file locked with your password, or every night to your account, sealed to a backup password only you know ([`docs/BACKUP.md`](docs/BACKUP.md)).
 - **The family:** admins and members, with the rooms, kinds of devices and scenes each member may use, invitations by email, and each person's own language, theme, favorites and hidden rooms. A new device joins with a code from a device you already use.
@@ -57,7 +59,10 @@ DirectorLink does not track your phone; your phone's own automations do the geof
 1. **Make a link.** In the app, open a scene that opens no doors or gates (for example *Arriving Home*: entrance lights, AC, blinds up), then **Link for automations → Make a link**. The app shows the link once, with **Copy address**, **Copy secret**, **Copy link** and a QR code. Keep the secret private: whoever has it can run that scene.
 2. **iPhone (Shortcuts).** Automation → New Automation → **Arrive**, choose your home's location, and **Run Immediately**. Add the action **Get Contents of URL**: paste the address, then Method **POST**, Request Body **JSON**, Add new field → **Text**, key `secret`, value the secret. Make a second automation with **Leave** for a *Leaving Home* scene.
 3. **Android.** In MacroDroid, Tasker or HTTP Shortcuts, use a location (geofence) trigger, entering or leaving, with an HTTP request: method **POST** to the address, with the secret as the body (as plain text, or as a form field `secret`).
-4. **NFC tag or Siri.** Write the whole link (**Copy link**, the secret after `#`) to a tag with an NFC app: tapping it opens a page with one Run button. On iPhone, a Shortcuts **NFC** automation, or a shortcut you name for Siri, with the same Get Contents of URL step runs the scene without the page.
+4. **NFC tag.** Write the whole link (**Copy link**, the secret after `#`) to a tag with an NFC app: tapping it opens a page with one Run button. On iPhone, a Shortcuts **NFC** automation with the same Get Contents of URL step runs the scene without the page.
+5. **Siri and Google Assistant.** Make a shortcut (not an automation) with the same Get Contents of URL step, name it like the scene, and say "Hey Siri, Good night". On Android, a Google Assistant routine that starts when you say the scene's name can start the automation app's request.
+
+**Doors and gates: ask before opening (1.8.0).** A link never opens a door or gate. Instead, a door's **Ask** (in its room) makes a link that asks you: when your phone's Arrive automation, or Siri, runs it, DirectorLink sends your own devices with alerts on an encrypted notification, "Open the main gate?", and only your tap on **Open** opens it, from that device with its own key, within two minutes. A leaked link can only make your phone ask. It needs Door Control on in Composer and alerts on your phone (Settings → Controller); every question and opening is in History.
 
 Good to know: a scene with a door or gate step can never have a link, and adding one removes it. Every run is in History by the link's name. **Replace** gives a new secret and **Remove** ends the link at once, for example when a phone is lost; a link also ends with the key of the device that made it, and with Composer's **Revoke All API Keys** or **Remove All Scene Links**. Details and the answers a link gives are in [`docs/SCENES.md`](docs/SCENES.md).
 
@@ -70,7 +75,7 @@ Good to know: a scene with a door or gate step can never have a link, and adding
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
 - One owner and invited family members, with a separate named API key per browser, app or script; each person is an admin or a member, with the rooms, devices and scenes an admin chose (1.8.0), and every key of theirs has their permissions
-- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, Samsung refrigerators (through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, Power Cool, Power Freeze, Sabbath Mode and the ice maker), the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, docs/SONOS.md)
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots, several at once; alerts from the DirectorLink · Hikvision Camera driver), KNX relays (doors and gates), DoorBird doorbells, Samsung refrigerators (through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, Power Cool, Power Freeze, Sabbath Mode and the ice maker), the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, docs/SONOS.md)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
 - DirectorLink owns its own scenes, schedules, and automations
@@ -122,7 +127,7 @@ A successful install shows:
 - **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows admins, and members allowed to see it, in the app whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
 - **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
-- **Sonos:** `Off`, so DirectorLink looks for no Sonos speaker. `On` shows each Sonos room in the app, in the Control4 room of the same name, with play, pause, skip, volume and the Sonos favorites; **Sonos Address** (optional) names one player when the search finds none, and **Sonos Players** shows what was found ([`docs/SONOS.md`](docs/SONOS.md))
+- **Sonos:** `Off`, so DirectorLink looks for no Sonos speaker. `On` shows each Sonos room in the app, in the Control4 room of the same name, with play, pause, skip, volume and the Sonos favorites, rooms that play together in groups (join, leave, the group's volume), and scenes that start a favorite at a volume, set the volume, resume or pause; **Sonos Address** (optional) names one player when the search finds none, and **Sonos Players** shows what was found ([`docs/SONOS.md`](docs/SONOS.md))
 - **Jewish Calendar:** `Off`, so DirectorLink works out no Shabbat or holiday times. `On` gives schedules and the app Shabbat and holiday times, the Hebrew date and the weekly reading, from the project's location; **Calendar Status** shows what it works out
 - **Log Level** and **Inventory** (rooms and devices found)
 
@@ -218,7 +223,7 @@ See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **
 
 ## Disclaimer
 
-DirectorLink is an independent open-source project and is not affiliated with or endorsed by Control4 or Snap One.
+DirectorLink is an independent project, not affiliated with Control4 or Snap One. It is open source and is not endorsed by Control4 or Snap One.
 
 Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
 

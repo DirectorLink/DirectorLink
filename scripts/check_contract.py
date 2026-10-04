@@ -321,6 +321,36 @@ def sonos(client, bridge):
         fail(f"a music step in the Kitchen should stop one group: {ran}")
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "device_ids": [20], "set": {"action": "pause"}}]})
 
+    # Groups and the new scene steps (1.8.0, ADR-057).
+    if client.check("GET", "/v1/system", 200)["features"].get("sonos_groups") is not True:
+        fail("GET /v1/system should say that this driver groups Sonos rooms")
+    groups = {group["id"]: group for group in client.check("GET", "/v1/music", 200)["groups"]}
+    if groups[KITCHEN]["rooms"] != [KITCHEN, LIVING]:
+        fail(f"GET /v1/music should list Kitchen's group with Living Room: {groups}")
+    joined = client.check("POST", f"/v1/music/{TV}/group", 200, body={"with": LIVING})
+    if [room["id"] for room in joined["group"]["rooms"]] != [KITCHEN, LIVING, TV] or joined["group"]["id"] != KITCHEN:
+        fail(f"TV Room should join Kitchen's group: {joined}")
+    client.check("POST", f"/v1/music/{TV}/group", 404, body={"with": "RINCON_0BADF00D01400"})
+    client.check("POST", f"/v1/music/{TV}/group", 400, body={"with": "192.168.50.11"})
+    louder = client.check("PATCH", f"/v1/music/{TV}/group", 200, body={"volume": 40})
+    if louder["group"]["volume"] is None:
+        fail(f"the group's volume should be shown: {louder}")
+    client.check("PATCH", f"/v1/music/{TV}/group", 400, body={"volume": 101})
+    left = client.check("DELETE", f"/v1/music/{TV}/group", 200)
+    if [room["id"] for room in left["group"]["rooms"]] != [TV]:
+        fail(f"TV Room should play on its own again: {left}")
+    favorite = client.check("POST", "/v1/scenes/try", 202, body={"steps": [
+        {"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "10"}, "volume": 20, "with_room_ids": [10]}},
+        {"type": "music", "room_id": 10, "set": {"action": "volume", "volume": 15}},
+        {"type": "music", "room_id": None, "set": {"action": "resume"}},
+    ]})
+    if favorite["skipped"] or favorite["failed"]:
+        fail(f"the music steps should run: {favorite}")
+    gone = client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "77", "title": "Old FM", "uri": "x-sonosapi-stream:gone"}}}]})
+    if [problem["code"] for problem in gone["problems"]] != ["FAVORITE_GONE"]:
+        fail(f"a favorite no longer in Sonos favorites should be reported: {gone}")
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "set": {"action": "play_favorite", "favorite": {"id": "10"}}}]})
+
 
 def scenario(client, bridge):
     client.check("GET", "/v1/health", 200)
@@ -438,6 +468,10 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/relays/70", 400, body={"state": "unlocked"})
     client.check("POST", "/v1/relays/70/pulse", 202)
     client.check("POST", "/v1/relays/99/pulse", 404)
+    # Answering an ask-to-open link's request (ADR-058): one that is not there opens nothing.
+    if client.check("POST", "/v1/relays/70/pulse", 409, body={"request": "0" * 16})["code"] != "OPEN_REQUEST_EXPIRED":
+        fail("a pulse that answers no request should be OPEN_REQUEST_EXPIRED")
+    client.check("POST", "/v1/relays/70/pulse", 400, body={"request": "not a request"})
 
     # A Samsung refrigerator (1.7.0, Mock.withRefrigerator): the driver 140, the refrigerator 141.
     # The dev bridge's refrigerator confirms a feature 4 seconds later, as through Samsung's cloud.
@@ -866,6 +900,23 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/deadbeef/link", 404)
     client.check("DELETE", link_path, 204)
     client.check("GET", "/v1/scene-links", 401, auth=False)
+
+    # Ask to open (ADR-058): a link for a door that asks its person, never opens; the secret once.
+    if client.check("GET", "/v1/system", 200)["features"].get("ask_links") is not True:
+        fail("GET /v1/system should say features.ask_links true: the app shows ask-to-open links only then")
+    asks = client.check("GET", "/v1/ask-links", 200)
+    if asks["items"] or not asks["home_linked"] or not asks["door_control"]:
+        fail(f"GET /v1/ask-links should list none, with the home linked and Door Control on: {asks}")
+    ask = client.check("POST", "/v1/ask-links", 201, body={"relay_id": 70, "label": "Arriving home"})
+    if ask["url"] != f"https://api.directorlink.io/run/{home_id}.{ask['link_id']}#{ask['secret']}" or ask["relay_name"] is None or ask["replaced"]:
+        fail(f"POST /v1/ask-links should give the link's address with the secret after #: {ask}")
+    if ask["secret"] in json.dumps(client.check("GET", "/v1/ask-links", 200)):
+        fail("an ask-to-open link's secret is shown only when it is made")
+    client.check("POST", "/v1/ask-links", 404, body={"relay_id": 20})
+    client.check("POST", "/v1/ask-links", 400, body={"relay_id": 70, "secret": ask["secret"]})
+    client.check("DELETE", f"/v1/ask-links/{ask['link_id']}", 204)
+    client.check("DELETE", f"/v1/ask-links/{ask['link_id']}", 404)
+    client.check("GET", "/v1/ask-links", 401, auth=False)
     bridge.set_property("Remote Access", "Off")
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests

@@ -9,8 +9,10 @@
 //                                    nothing about the home or the scene
 //   POST /run/{home_id}.{link_id}    the secret in the body: {"secret": "…"} (JSON), secret=… (a
 //                                    form), or the secret alone (text). 200 {"result", "message"}:
-//                                    ran, partly, failed or nothing. 404 for an unknown home, link
-//                                    or secret alike; 429 too many runs; 503 the home is offline.
+//                                    ran, partly, failed or nothing; for an ask-to-open link
+//                                    (1.8.0, ADR-058) asked, waiting, nobody, doors_off or
+//                                    not_asked. 404 for an unknown home, link or secret alike; 429
+//                                    too many runs; 503 the home is offline.
 //
 // The home's Durable Object passes the link and its secret to the controller (`link`,
 // docs/RELAY.md), which checks the secret against the hash it keeps and runs the scene. The secret
@@ -25,12 +27,19 @@ export const LINK_SECRET = /^[0-9a-f]{40}$/;
 // A body is a secret and a little JSON or form around it.
 const MAX_BODY_BYTES = 1024;
 
-// What the phone is told, besides the result word (the controller's link_result).
+// What the phone is told, besides the result word (the controller's link_result). An ask-to-open
+// link (1.8.0, ADR-058) opens nothing: the home asks its person on their phone, by a sealed alert
+// this Worker delivers and cannot read; it says only whether it asked.
 export const RESULT_MESSAGES = {
   ran: "The scene ran.",
   partly: "The scene ran, but some devices were skipped or did not respond.",
   failed: "Nothing ran: the scene's devices were skipped or did not respond.",
   nothing: "Nothing ran: the scene has no devices left to switch.",
+  asked: "Asked: answer the notification on your phone to open.",
+  waiting: "Already asked: answer the notification on your phone.",
+  nobody: "Nobody was asked: turn on alerts in DirectorLink on your phone (Settings → Controller).",
+  doors_off: "Nobody was asked: door control is off in Composer.",
+  not_asked: "Nobody was asked: the home could not send the notification. Try again.",
 };
 
 export function linkNotFound() {
@@ -169,8 +178,8 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
 <body>
 <main>
 <p class="brand">DirectorLink</p>
-<h1 id="title">Run a scene</h1>
-<p id="help">This private link runs one scene of a home with DirectorLink.</p>
+<h1 id="title">Run a link</h1>
+<p id="help">This private link runs one scene of a home with DirectorLink, or asks its owner whether to open a door.</p>
 <button id="run" type="button">Run</button>
 <p id="status" role="status" aria-live="polite"></p>
 </main>
@@ -178,17 +187,23 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
 (() => {
   const WORDS = {
     en: {
-      title: "Run a scene", help: "This private link runs one scene of a home with DirectorLink.", run: "Run", running: "Running…", again: "Run again",
+      title: "Run a link", help: "This private link runs one scene of a home with DirectorLink, or asks its owner whether to open a door.", run: "Run", running: "Running…", again: "Run again",
       ran: "Done: the scene ran.", partly: "The scene ran, but some devices were skipped or did not respond.", failed: "Nothing ran: the scene's devices were skipped or did not respond.",
       nothing: "Nothing ran: the scene has no devices left to switch.",
+      asked: "Asked: answer the notification on your phone to open.", waiting: "Already asked: answer the notification on your phone.",
+      nobody: "Nobody was asked: turn on alerts in DirectorLink on your phone.", doors_off: "Nobody was asked: door control is off.",
+      not_asked: "Nobody was asked: the home could not send the notification. Try again.",
       notFound: "This link does not work: it was removed or replaced, or it was copied wrong.", tooMany: "Too many runs. Try again later.",
       offline: "The home is not connected right now. Try again later.", noAnswer: "The home did not answer. Try again.", error: "Something went wrong. Try again.",
       incomplete: "This link is not complete: the part after # is missing.",
     },
     he: {
-      title: "הפעלת סצנה", help: "הקישור הפרטי הזה מפעיל סצנה אחת בבית עם DirectorLink.", run: "הפעלה", running: "מפעילים…", again: "הפעלה נוספת",
+      title: "הפעלת קישור", help: "הקישור הפרטי הזה מפעיל סצנה אחת בבית עם DirectorLink, או שואל את בעליו אם לפתוח דלת.", run: "הפעלה", running: "מפעילים…", again: "הפעלה נוספת",
       ran: "בוצע: הסצנה הופעלה.", partly: "הסצנה הופעלה, אבל חלק מהמכשירים דולגו או לא הגיבו.", failed: "שום דבר לא הופעל: המכשירים של הסצנה דולגו או לא הגיבו.",
       nothing: "שום דבר לא הופעל: לא נשארו בסצנה מכשירים להפעלה.",
+      asked: "נשלחה שאלה: ענו להתראה בטלפון כדי לפתוח.", waiting: "כבר נשלחה שאלה: ענו להתראה בטלפון.",
+      nobody: "לא נשלחה שאלה לאף אחד: הפעילו התראות ב-DirectorLink בטלפון.", doors_off: "לא נשלחה שאלה לאף אחד: שליטה בדלתות כבויה.",
+      not_asked: "לא נשלחה שאלה לאף אחד: הבית לא הצליח לשלוח את ההתראה. נסו שוב.",
       notFound: "הקישור הזה לא עובד: הוא הוסר או הוחלף, או שהועתק לא נכון.", tooMany: "יותר מדי הפעלות. נסו שוב מאוחר יותר.",
       offline: "הבית לא מחובר כרגע. נסו שוב מאוחר יותר.", noAnswer: "הבית לא ענה. נסו שוב.", error: "משהו השתבש. נסו שוב.",
       incomplete: "הקישור לא שלם: החלק שאחרי # חסר.",
@@ -238,7 +253,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
       const body = await response.json().catch(() => ({}));
       if (response.ok && words[body.result]) {
         text = words[body.result];
-        tone = body.result === "ran" ? "ok" : "";
+        tone = body.result === "ran" || body.result === "asked" ? "ok" : "";
       } else if (response.status === 404) {
         text = words.notFound;
       } else if (response.status === 429) {

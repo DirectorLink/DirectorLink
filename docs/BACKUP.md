@@ -198,7 +198,9 @@ members' rooms and the rooms hidden from members refer to Control4 ids. For each
 4. Otherwise it is left out and listed (`unmatched`), with the scenes and people's favorites that
    used it. A step with no device left, or whose room matches nothing, is left out: a step without
    its room would act on every room of the home. A step's room that is only where its devices were
-   picked is dropped quietly when it is gone; the step keeps its devices.
+   picked is dropped quietly when it is gone; the step keeps its devices. The other rooms a music
+   step plays a favorite in (`with_room_ids`, 1.8.0) are matched the same way; one that matches
+   nothing is left out, and the favorite still plays in the step's room and the others.
 
 **Doors and gates are never moved.** A relay or a doorbell (a step that opens doors, a relays step
 for a whole room, a favorite) is kept only on the same id with the same name. Otherwise it is left

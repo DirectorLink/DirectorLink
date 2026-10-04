@@ -26,7 +26,7 @@ import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { loadScenes } from "./js/scenes.js";
 import { loadSchedules } from "./js/schedules.js";
-import { state, subscribe, ui } from "./js/state.js";
+import { findDevice, state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
 import { climateView } from "./js/views/climate.js";
@@ -34,6 +34,7 @@ import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
 import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from "./js/views/scenes.js";
 import { leaveSceneLink, sceneLinksView, sceneLinkView } from "./js/views/scene-links.js";
+import { askLinkView, leaveAskLink, leaveOpenRequest, openRequestView } from "./js/views/ask-links.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
@@ -70,6 +71,13 @@ function parseRoute() {
   if (parts[0] === "links") {
     return { name: "sceneLinks", tab: "scenes" };
   }
+  // Ask before opening (ADR-058): a door's link, and the question an alert's tap opens.
+  if (parts[0] === "door" && /^\d+$/.test(parts[1] || "") && parts[2] === "ask") {
+    return { name: "askLink", id: Number(parts[1]), tab: "home" };
+  }
+  if (parts[0] === "open" && /^\d+$/.test(parts[1] || "") && /^[0-9a-f]{16}$/.test(parts[2] || "") && /^\d+$/.test(parts[3] || "")) {
+    return { name: "openRequest", id: Number(parts[1]), request: parts[2], until: Number(parts[3]), tab: "home" };
+  }
   if (parts[0] === "scene" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     const editing = parts[2] === "edit" && /^\d+$/.test(parts[3] || "") ? Number(parts[3]) : null;
     return { name: "scene", id: parts[1], adding: parts[2] === "add", editing, tab: "scenes" };
@@ -79,6 +87,10 @@ function parseRoute() {
   }
   if (parts[0] === "schedules") {
     return { name: "schedules", tab: "scenes" };
+  }
+  // A camera alert's tap (sw.js, ADR-056): Cameras, with that camera's full view.
+  if (parts[0] === "cameras" && /^\d+$/.test(parts[1] || "")) {
+    return { name: "cameras", tab: "cameras", camera: Number(parts[1]) };
   }
   if (["scenes", "cameras", "climate"].includes(parts[0])) {
     return { name: parts[0], tab: parts[0] };
@@ -120,6 +132,8 @@ window.addEventListener("hashchange", () => {
   if (route.name === "schedule" && (previous.name !== "schedule" || previous.id !== route.id)) resetScheduleEditor();
   // A new link's secret is shown only on its screen, until it is left.
   if (previous.name === "sceneLink" && (route.name !== "sceneLink" || route.id !== previous.id)) leaveSceneLink();
+  if (previous.name === "askLink" && (route.name !== "askLink" || route.id !== previous.id)) leaveAskLink();
+  if (previous.name === "openRequest" && route.name !== "openRequest") leaveOpenRequest();
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
@@ -200,6 +214,18 @@ document.body.append(cameraDialog, pickerDialog);
 
 function openCamera(camera) {
   openFullView(cameraDialog, camera, cameraParts);
+}
+
+// #/cameras/<id>: once the cameras are read, that camera's full view, and the address becomes
+// #/cameras (Back does not open it again). A camera this device does not have shows Cameras.
+function openRouteCamera() {
+  if (!route.camera || !state.loaded) return;
+  const camera = findDevice("camera", route.camera);
+  route = { name: "cameras", tab: "cameras" };
+  window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#/cameras`);
+  if (!camera) return;
+  ui.featuredCamera = camera.id;
+  openCamera(camera);
 }
 
 function openFavoritesPicker() {
@@ -304,6 +330,8 @@ function signature() {
     // Scene links (views/scene-links.js): on the scenes, a scene and its link (labels being typed
     // are kept outside `ui`).
     ["scenes", "scene", "sceneLink", "sceneLinks"].includes(route.name) ? ui.sceneLinks : 0,
+    // Ask before opening (views/ask-links.js): a door's link, the list, and the question.
+    ["askLink", "sceneLinks", "openRequest"].includes(route.name) ? [ui.askLinks, ui.openRequest] : 0,
     route.name === "access" ? ui.access : 0,
     route.name === "history" ? ui.history : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
@@ -334,6 +362,10 @@ function screen() {
       return sceneLinkView(route.id, actions);
     case "sceneLinks":
       return sceneLinksView(actions);
+    case "askLink":
+      return askLinkView(route.id, actions);
+    case "openRequest":
+      return openRequestView(route.id, route.request, route.until);
     case "cameras":
       return camerasView(actions);
     case "climate":
@@ -423,6 +455,7 @@ function render(force = false) {
   view.replaceChildren(...content);
   restoreUi(saved);
   attachCameraImages(view);
+  openRouteCamera();
   updateTabbar();
   if (pickerDialog.open) {
     pickerBody.replaceChildren(...favoritesPicker());

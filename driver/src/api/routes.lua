@@ -52,6 +52,12 @@ return {
     { method = "GET", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.get", role = "admin" },
     { method = "POST", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.create", role = "admin" },
     { method = "DELETE", path = "/v1/scenes/{sceneId}/link", handler = "scene_links.delete", role = "admin" },
+    -- Ask to open (ADR-058): a link that asks its person to open a door or gate, never opens it;
+    -- made by those who may open that door (Access.canOpen), each sees their own person's (admins
+    -- every one).
+    { method = "GET", path = "/v1/ask-links", handler = "ask_links.list", role = "member" },
+    { method = "POST", path = "/v1/ask-links", handler = "ask_links.create", role = "member" },
+    { method = "DELETE", path = "/v1/ask-links/{linkId}", handler = "ask_links.delete", role = "member" },
     -- Home's "Turn off all": lights, AC or blinds only, never doors (handlers/scenes.lua).
     { method = "POST", path = "/v1/off", handler = "scenes.off", role = "member" },
 
@@ -121,6 +127,10 @@ return {
     { method = "POST", path = "/v1/music/{musicId}/favorites/{favoriteId}/play", handler = "music.play_favorite", role = "member" },
     { method = "GET", path = "/v1/music/{musicId}/art", handler = "music.art", role = "member" },
     { method = "PUT", path = "/v1/music/{musicId}/room", handler = "music.room", role = "admin" },
+    -- Groups (1.8.0, ADR-057): join another room's group, leave it, the group's volume.
+    { method = "POST", path = "/v1/music/{musicId}/group", handler = "music.join", role = "member" },
+    { method = "DELETE", path = "/v1/music/{musicId}/group", handler = "music.leave", role = "member" },
+    { method = "PATCH", path = "/v1/music/{musicId}/group", handler = "music.group_volume", role = "member" },
 
     -- Everything DirectorLink keeps, for admins, only in sealed requests (ADR-042).
     { method = "GET", path = "/v1/backup", handler = "backup.export", role = "admin" },

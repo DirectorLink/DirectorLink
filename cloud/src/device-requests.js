@@ -14,6 +14,10 @@
 //   POST   /v1/homes/{home_id}/device-requests/{id}/collect  the new device takes it; the request goes
 //   DELETE /v1/homes/{home_id}/device-requests/{id}          declined, or withdrawn
 //
+// A new request is pushed at once to the same account's browsers at the home registered with an
+// admin key that want it (1.8.0; alerts.js deviceRequest), so the device that approves need not
+// have the app open; it says only that a device asks (no label), at most 3 an hour an account.
+//
 // Only the account's own sessions see or change its requests. The new device sends a commitment
 // to its public key first and the key itself only once the approving device's key is there, so
 // whoever passes the keys on (this server too) cannot choose keys that give both screens the same
@@ -184,7 +188,19 @@ async function startRequest(request, env, user, homeId) {
     return problem(429, "DEVICE_REQUEST_LIMIT_REACHED", `At most ${MAX_OPEN_PER_ACCOUNT} requests may wait at a time; withdraw one, or wait 10 minutes`);
   }
   log("device_request_created", { home: homeId, user: user.id, request: row.id });
+  await pushRequest(env, homeId, user.id, row.id);
   return json(view(row), 201);
+}
+
+// The account's devices with an admin key at the home hear of the request at once, with the app
+// closed (1.8.0, ADR-053 as amended by ADR-059): the home's object pushes "A new device asks to
+// join" to the browsers that want it (alerts.js). The request is made whatever happens to the push.
+async function pushRequest(env, homeId, userId, requestId) {
+  try {
+    await homeObject(env, homeId, { op: "device_request", user: userId, request: requestId });
+  } catch (error) {
+    log("device_request_push_failed", { home: homeId, user: userId, request: requestId, error: String(error?.message ?? error) });
+  }
 }
 
 async function listRequests(env, user, homeId) {

@@ -1,5 +1,7 @@
 # DirectorLink API
 
+> **DirectorLink is an independent project, not affiliated with Control4 or Snap One.**
+
 [`openapi.yaml`](openapi.yaml) is the contract for the LAN API that the DirectorLink driver serves on the Control4 controller. It is the single source of truth: the driver routes are checked against it in CI (`scripts/check_api.py`), the build embeds it in the driver, and every release publishes it as `openapi.json`.
 
 A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/openapi.json`, so tools such as Postman or Swagger UI can import it directly. The [API console](https://console.directorlink.io) ([`../console/`](../console/)) reads it to list and try every endpoint.
@@ -293,7 +295,8 @@ Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home 
 - `GET /v1/music/{id}/art` is the album art of what the group plays, through the controller (`404 NO_ART` when there is none); `now_playing.art_key` changes when the picture does.
 - `PUT /v1/music/{id}/room` with `{"room_id": 12}` (admins) puts a Sonos room in a Control4 room; `null` goes back to its name.
 - A player that does not answer: `502 PLAYER_UNREACHABLE` (and `reachable: false`); too many requests waiting: `503 PLAYER_BUSY`.
-- In scenes a `music` step `{"type": "music", "room_id": 10, "set": {"action": "pause"}}` pauses (or `"stop"`) the groups with a room there, or every group without `room_id`.
+- Groups (1.8.0, ADR-057; `features.sonos_groups`): `POST /v1/music/{id}/group` with `{"with": "<id>"}` puts the room in the group of that room, as the Sonos app's Group does (`404` for a room DirectorLink does not know); `DELETE /v1/music/{id}/group` takes it out, to play on its own; `PATCH /v1/music/{id}/group` with `{"volume": 0-100}` sets the group's volume through each room's own, keeping their balance. `GET /v1/music` adds `groups`: each coordinator, its rooms, what it plays and its volume (the rooms' average, also `group.volume` on each room). A command on a group (play, pause, skip, a favorite, its volume, leaving, joining) needs every room in it to be one the key may control (`403 FORBIDDEN`).
+- In scenes a `music` step `{"type": "music", "room_id": 10, "set": {"action": "pause"}}` pauses (or `"stop"`) the groups with a room there, or every group without `room_id`. Since 1.8.0 also `{"action": "resume"}`, `{"action": "volume", "volume": 20}`, and `{"action": "play_favorite", "favorite": {"id": "10"}, "volume": 25, "with_room_ids": [11]}` in a room: the rooms are grouped, get the volume and play the favorite; a favorite since removed in Sonos is skipped with `FAVORITE_GONE`.
 
 ```bash
 curl -X POST http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400/pause -H "Authorization: Bearer ak_..."

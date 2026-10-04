@@ -3,15 +3,18 @@
 // place that asks for permission.
 //
 // With DirectorLink 1.7.0 on the controller (features.alert_choices), every role may have them: the
-// controller decides who gets what (a doorbell rang, a door or gate was opened, the refrigerator's
-// door was left open, a schedule failed) by each key's role and its own choices, which this device
-// keeps on the controller (GET and PUT /v1/alerts/choices), and sends each alert sealed to the keys
-// it is for. The browser is registered with this device's key id; admins may also have the servers'
-// own alert when the home is offline (`offline`). For the service worker (sw.js) this keeps, in
+// controller decides who gets what (a doorbell rang, a camera saw someone (1.8.0), a door or gate
+// was opened, the refrigerator's door was left open, a schedule failed) by each key's role and its
+// own choices, which this device keeps on the controller (GET and PUT /v1/alerts/choices), and
+// sends each alert sealed to the keys it is for. The browser is registered with this device's key
+// id; admins may also have the servers' own alert when the home is offline (`offline`), and (1.8.0)
+// their push when a new device of their account asks to join (`device_requests`, on by default).
+// For the service worker (sw.js) this keeps, in
 // Cache Storage, the words in this device's language and this device's alert key, which opens what
 // was sealed to it and nothing else: never the lock key or the API key. With an older controller,
 // alerts are for admins only, and say only their kind and time (ADR-047). Tapping one opens the
-// doorbell on Home, the refrigerator's room, or Settings → Controller → History (sw.js).
+// doorbell on Home, the camera's full view, the refrigerator's room, or Settings → Controller →
+// History (sw.js).
 
 import { ACCOUNTS_API } from "./account.js";
 import { currentLanguage, languageInfo, t } from "./i18n.js";
@@ -21,7 +24,7 @@ import { savedRemote } from "./remote.js";
 import { api, checkInThroughAccount, keyInUse, whenForgotten } from "./session.js";
 import { can, notify, state, subscribe } from "./state.js";
 
-const ALERTS_KEY = "directorlink.alerts"; // { home, endpoint, keyId, offline }: this browser gets that home's alerts
+const ALERTS_KEY = "directorlink.alerts"; // { home, endpoint, keyId, offline, deviceRequests }: this browser gets that home's alerts
 // Where the service worker finds the words and the alert key (sw.js uses the same names).
 export const TEXTS_CACHE = "directorlink-alerts";
 export const TEXTS_PATH = "/alert-texts.json";
@@ -29,7 +32,26 @@ export const KEY_PATH = "/alert-key.json";
 // The alert key of a device: HMAC-SHA256(its lock key, ALERT_LABEL) (driver: src/cloud/alerts.lua).
 export const ALERT_LABEL = "DirectorLink alert v1";
 // What the controller alerts about, in the order Settings lists them; offline is the servers' own.
-export const ALERT_KINDS = ["doorbell", "door_opened", "fridge_door", "schedule_failed"];
+export const ALERT_KINDS = ["doorbell", "camera", "door_opened", "fridge_door", "schedule_failed"];
+// What a camera alert can say it saw (the DirectorLink · Hikvision Camera driver's detections,
+// ADR-056); anything else is "other".
+export const CAMERA_DETECTIONS = [
+  "person",
+  "vehicle",
+  "face",
+  "motion",
+  "line_crossing",
+  "intrusion",
+  "region_entrance",
+  "region_exiting",
+  "tamper",
+  "scene_change",
+  "object_left",
+  "object_removed",
+  "alarm_input",
+  "pir",
+  "other",
+];
 const TIMEOUT_MS = 10000;
 
 // What Settings shows: busy while switching; message: { kind, key } once done (the text is
@@ -55,7 +77,10 @@ function remembered() {
 
 function remember(value) {
   try {
-    if (value) localStorage.setItem(ALERTS_KEY, JSON.stringify({ home: value.home, endpoint: value.endpoint, keyId: value.keyId, offline: value.offline !== false }));
+    if (value) {
+      const kept = { home: value.home, endpoint: value.endpoint, keyId: value.keyId, offline: value.offline !== false, deviceRequests: value.deviceRequests !== false };
+      localStorage.setItem(ALERTS_KEY, JSON.stringify(kept));
+    }
     else localStorage.removeItem(ALERTS_KEY);
   } catch {
     // Blocked storage: the switch shows off next time; the alerts still come.
@@ -105,9 +130,15 @@ export function offlineAlertsOn() {
   return remembered()?.offline !== false;
 }
 
+// Whether this browser wants the servers' push when a new device of this account asks to join
+// (admins; 1.8.0, on by default).
+export function deviceRequestAlertsOn() {
+  return remembered()?.deviceRequests !== false;
+}
+
 // What Settings → Controller shows of it, for app.js's redraws.
 export function alertsSignature() {
-  return [alertsOn(), alertsSupport(), alertsUi.busy, alertsUi.message, alertsUi.choices, alertsUi.saving, offlineAlertsOn()];
+  return [alertsOn(), alertsSupport(), alertsUi.busy, alertsUi.message, alertsUi.choices, alertsUi.saving, offlineAlertsOn(), deviceRequestAlertsOn()];
 }
 
 // The words the service worker shows, in this device's language. {time} and the names are filled in
@@ -132,6 +163,14 @@ export function alertTexts() {
     unknown_device: t("history.who.unknownDevice"),
     fridge_door: t("alerts.fridgeDoor"),
     fridge_door_now: t("alerts.fridgeDoorNow"),
+    device_request: t("alerts.deviceRequest"),
+    // Ask before opening (1.8.0, ADR-058): the question an ask-to-open link sends its person.
+    open_request_title: t("alerts.openRequestTitle"),
+    open_request: t("alerts.openRequest"),
+    open_request_unnamed: t("alerts.openRequestUnnamed"),
+    camera_title: t("alerts.cameraTitle"),
+    camera: t("alerts.camera"),
+    ...Object.fromEntries(CAMERA_DETECTIONS.map((what) => [`camera_${what}`, t(`alerts.cameraSaw.${what}`)])),
   };
 }
 
@@ -221,20 +260,21 @@ async function browserSubscription(registration, publicKey) {
 }
 
 // Registers the subscription with this device's key (the account service checks that this account
-// uses it at the home), and whether it wants the offline alert.
-function register(home, subscription, keyId, offline = true) {
+// uses it at the home), whether it wants the offline alert, and whether a new device of this account
+// asking to join (1.8.0; the account service pushes it to admin keys' browsers only).
+function register(home, subscription, keyId, offline = true, deviceRequests = true) {
   const { endpoint, keys } = subscription.toJSON();
-  return cloud("POST", home, { endpoint, keys, key_id: keyId, offline });
+  return cloud("POST", home, { endpoint, keys, key_id: keyId, offline, device_requests: deviceRequests });
 }
 
 // Registered; when the account service did not know yet that this account uses the key (it
 // learns it from a request sealed through the account), after one such request, again. When that
 // request did not reach the home (offline, Remote Access off), the refusal says so (`unreachable`).
-async function registered(home, subscription, keyId, offline) {
-  let result = await register(home, subscription, keyId, offline);
+async function registered(home, subscription, keyId, offline, deviceRequests) {
+  let result = await register(home, subscription, keyId, offline, deviceRequests);
   if (result.status === 403 && (result.data?.code === "KEY_NOT_LINKED" || result.data?.code === "ADMIN_ONLY")) {
     if ((await checkInThroughAccount(true)) === false) return { ...result, unreachable: true };
-    result = await register(home, subscription, keyId, offline);
+    result = await register(home, subscription, keyId, offline, deviceRequests);
   }
   return result;
 }
@@ -294,7 +334,7 @@ export async function turnAlertsOn() {
     }
     const registration = await withTimeout(navigator.serviceWorker.ready);
     const subscription = await browserSubscription(registration, key.data.public_key);
-    const result = await registered(remote.home, subscription, remote.keyId, true);
+    const result = await registered(remote.home, subscription, remote.keyId, true, true);
     if (result.status !== 201) {
       await subscription.unsubscribe().catch(() => {});
       finish("error", refusal(result));
@@ -311,7 +351,7 @@ export async function turnAlertsOn() {
         return;
       }
     }
-    remember({ home: remote.home, endpoint: subscription.endpoint, keyId: remote.keyId, offline: true });
+    remember({ home: remote.home, endpoint: subscription.endpoint, keyId: remote.keyId, offline: true, deviceRequests: true });
     await Promise.all([saveTexts(), saveAlertKey(remote.home, remote.keyId)]);
     refreshed = true;
     finish("success", "turnedOn");
@@ -352,7 +392,8 @@ export async function turnAlertsOff({ quiet = false } = {}) {
   } else finish("info", "turnedOff");
 }
 
-// A kind switched on or off on Settings: the controller keeps it (`offline`: the account service).
+// A kind switched on or off on Settings: the controller keeps it (`offline` and `device_requests`:
+// the account service, with this browser's registration).
 export async function chooseAlert(kind, on) {
   const saved = remembered();
   if (!saved || alertsUi.saving) return;
@@ -360,12 +401,14 @@ export async function chooseAlert(kind, on) {
   alertsUi.message = null;
   notify();
   try {
-    if (kind === "offline") {
+    if (kind === "offline" || kind === "device_requests") {
       const registration = await withTimeout(navigator.serviceWorker.ready);
       const subscription = await registration.pushManager.getSubscription();
-      const result = subscription ? await registered(saved.home, subscription, saved.keyId || savedRemote()?.keyId, on) : { status: 0 };
+      const offline = kind === "offline" ? on : saved.offline !== false;
+      const deviceRequests = kind === "device_requests" ? on : saved.deviceRequests !== false;
+      const result = subscription ? await registered(saved.home, subscription, saved.keyId || savedRemote()?.keyId, offline, deviceRequests) : { status: 0 };
       if (result.status !== 201) throw new Error("not registered");
-      remember({ ...saved, offline: on });
+      remember({ ...saved, offline, deviceRequests });
     } else {
       alertsUi.choices = await api("/v1/alerts/choices", { method: "PUT", body: { kinds: { [kind]: on } } });
     }
@@ -417,7 +460,7 @@ async function refreshAlerts() {
       notify();
       return;
     }
-    const result = await registered(saved.home, subscription, remote.keyId, saved.offline !== false);
+    const result = await registered(saved.home, subscription, remote.keyId, saved.offline !== false, saved.deviceRequests !== false);
     if (result.status === 201) {
       if (subscription.endpoint !== saved.endpoint) {
         await cloud("DELETE", saved.home, { endpoint: saved.endpoint }).catch(() => null);

@@ -30,6 +30,8 @@
   // Alerts (ADR-047): VAPID_PUBLIC_KEY is the public half of the key pair scripts/vapid_key.mjs
   // makes, which pipes the private half into `secret put VAPID_PRIVATE_KEY` (README.md); alerts are
   // off while either is missing.
+  // MIN_DRIVER_VERSION (ADR-059), not set: every DirectorLink connects. Set it ("1.8.0") only when a
+  // flaw in the remote protocol needs drivers with the fix; older ones are refused until updated.
   "vars": {
     "VAPID_PUBLIC_KEY": "BMvqqdAc8jZJwC-v7ZrwEeuMDZaPEaIt-sl4DFOykkz1ZBq7EY1xx8HBP0_NlDYT67Z1eADNnBFatwdjASvuH6w",
     "GOOGLE_CLIENT_ID": "1034749624411-vfj1im8dc42utkvl6lfiv3hs49mcna2s.apps.googleusercontent.com",

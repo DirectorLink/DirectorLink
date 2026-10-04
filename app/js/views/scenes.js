@@ -1,7 +1,8 @@
 // Scenes (#/scenes) and the scene editor (#/scene/new, #/scene/<id>; admins). The list runs a
 // scene with one tap. The editor builds a scene from actions: where (a room or the whole home),
 // what (lights, AC, fans, blinds, doors and gates, refrigerators, all of them or chosen ones; the
-// Sonos music) and what to do;
+// Sonos music: pause, stop, and since 1.8.0 resume, a volume, or a favorite in several rooms) and
+// what to do;
 // "Add an action" has its own address (#/scene/<id>/add), so Back returns to the editor; so has
 // changing one (#/scene/<id>/edit/<index>, 1.6.0), the same screen filled in from the action.
 // "Copy the house as it is now" makes the actions from the current state; "Try it now" runs them
@@ -34,6 +35,7 @@ import {
   stepWhere,
 } from "../scenes.js";
 import { api, errorText, noteForbidden, refreshDevices, roleLabel } from "../session.js";
+import { groupsAvailable, loadFavorites, musicFavorites, musicRooms } from "../music.js";
 import { isDual, setpointGap, withSetpoint } from "../setpoints.js";
 import { sceneBlindChoices } from "../shades.js";
 import { can, notify, state, ui } from "../state.js";
@@ -608,7 +610,34 @@ function newAdding() {
   // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
   // `screen`: the screen these choices belong to ("add", or "edit:<index>"). `fridgeFeature` and
   // `fridgeOn`: which refrigerator feature, on or off.
-  return { screen: "add", editing: null, room: null, type: null, choose: false, picked: [], light: "off", brightness: 50, mode: null, temperature: 24, heat: 20, cool: 24, fan: null, fanDo: "off", fanSpeed: 2, blind: "close", position: 50, music: "pause", fridgeFeature: "sabbath_mode", fridgeOn: true };
+  // Music (1.8.0): `music` the action, `musicVolume` its volume, `favorite` ({ id, title }) and
+  // whether it plays at `musicVolume` (`favoriteVolume`), `withRooms` the rooms grouped with it.
+  return {
+    screen: "add",
+    editing: null,
+    room: null,
+    type: null,
+    choose: false,
+    picked: [],
+    light: "off",
+    brightness: 50,
+    mode: null,
+    temperature: 24,
+    heat: 20,
+    cool: 24,
+    fan: null,
+    fanDo: "off",
+    fanSpeed: 2,
+    blind: "close",
+    position: 50,
+    music: "pause",
+    musicVolume: 30,
+    favorite: null,
+    favoriteVolume: false,
+    withRooms: [],
+    fridgeFeature: "sabbath_mode",
+    fridgeOn: true,
+  };
 }
 
 // The choices that make the setting of each kind of action; the others say where and which devices.
@@ -618,9 +647,17 @@ const SETTING_CHOICES = {
   fans: ["fanDo", "fanSpeed"],
   blinds: ["blind", "position"],
   relays: [],
-  music: ["music"],
+  music: ["music", "musicVolume", "favorite", "favoriteVolume", "withRooms"],
   refrigerators: ["fridgeFeature", "fridgeOn"],
 };
+
+// The music actions a step can take: pause and stop (1.5.0), and with a 1.8.0 driver resume, a
+// volume and a favorite (ADR-057).
+const MUSIC_ACTIONS = ["pause", "stop", "resume", "volume", "play_favorite"];
+
+function musicActions() {
+  return groupsAvailable() ? MUSIC_ACTIONS : MUSIC_ACTIONS.slice(0, 2);
+}
 
 function settingOf(adding) {
   return JSON.stringify((SETTING_CHOICES[adding.type] || []).map((choice) => adding[choice]));
@@ -678,7 +715,10 @@ function editAdding(steps, index) {
     else if (position <= 0) adding.blind = "close";
     else Object.assign(adding, { blind: "set", position: Math.round(position) });
   } else if (step.type === "music") {
-    adding.music = set.action === "stop" ? "stop" : "pause";
+    adding.music = MUSIC_ACTIONS.includes(set.action) ? set.action : "pause";
+    if (Number.isFinite(set.volume)) Object.assign(adding, { musicVolume: set.volume, favoriteVolume: set.action === "play_favorite" });
+    if (set.favorite?.id) adding.favorite = { id: set.favorite.id, title: set.favorite.title || "" };
+    adding.withRooms = Array.isArray(set.with_room_ids) ? [...set.with_room_ids] : [];
   } else if (step.type === "refrigerators") {
     // A step the API made with several features shows its first; it stays as it was unless changed.
     const first = stepFeature(set);
@@ -821,9 +861,21 @@ function chosenSet(adding, targets) {
   }
   if (adding.type === "fans") return adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
   if (adding.type === "blinds") return { position: adding.blind === "open" ? 100 : adding.blind === "close" ? 0 : adding.position };
-  if (adding.type === "music") return { action: adding.music };
+  if (adding.type === "music") return musicSet(adding);
   if (adding.type === "refrigerators") return stepSet(adding.fridgeFeature, adding.fridgeOn);
   return { action: "pulse" };
+}
+
+// A music step's setting: a favorite (its id and name: the controller keeps what starts it) at a
+// volume if asked, with the rooms grouped with it; a volume; or the action alone.
+function musicSet(adding) {
+  if (adding.music === "volume") return { action: "volume", volume: adding.musicVolume };
+  if (adding.music !== "play_favorite") return { action: adding.music };
+  const set = { action: "play_favorite", favorite: { id: adding.favorite?.id, title: adding.favorite?.title } };
+  if (adding.favoriteVolume) set.volume = adding.musicVolume;
+  const rooms = adding.withRooms.filter((id) => id !== adding.room);
+  if (rooms.length) set.with_room_ids = rooms;
+  return set;
 }
 
 // The devices an action being changed named, picked as they were, in its own place and kind: it
@@ -852,8 +904,12 @@ function buildSteps(adding, devices, others = []) {
   if (asBefore && keptSet(adding)) return [...adding.editing.steps];
   const elsewhere = devicesOfType(adding.type).filter((device) => others.includes(device.id));
   const set = keptSet(adding) ?? chosenSet(adding, adding.choose ? [...devices, ...elsewhere].filter((device) => picked.includes(device.id)) : devices);
-  // Music names no devices: the Sonos rooms in the room, or the whole home.
-  if (adding.type === "music") return [{ type: "music", room_id: adding.room, device_ids: null, set }];
+  // Music names no devices: the Sonos rooms in the room, or the whole home. A favorite plays in a
+  // room, once one is picked.
+  if (adding.type === "music") {
+    if (set.action === "play_favorite" && (adding.room == null || !set.favorite?.id)) return [];
+    return [{ type: "music", room_id: adding.room, device_ids: null, set }];
+  }
   const everyOne = adding.type !== "relays" && !asBefore && picked.length === devices.length && !others.some((id) => picked.includes(id));
   if (!adding.choose || everyOne) return [{ type: adding.type, room_id: adding.room, device_ids: null, set }];
   const steps = [];
@@ -1135,16 +1191,133 @@ function doControls(adding, devices) {
       h("p", { class: "field-help" }, t("scenes.add.fridgeNote")),
     ];
   }
-  if (adding.type === "music") {
-    return [
-      segments([["pause", t("scenes.do.pauseMusic")], ["stop", t("scenes.do.stopMusic")]], adding.music, "add-music", (value) => {
-        adding.music = value;
-      }),
-      h("p", { class: "field-help" }, t("scenes.add.musicNote")),
-    ];
-  }
+  if (adding.type === "music") return musicControls(adding);
   // Doors and gates: only what their Open button does. A linked scene would lose its link.
   return [h("p", { class: "notice notice-info" }, t("scenes.add.doorsNote")), doorLinkWarning(ui.sceneEditor)];
+}
+
+// Music: pause or stop (1.5.0); with a 1.8.0 driver also resume, a volume, or a favorite (from
+// the household's Sonos favorites) at a volume if asked, in this room and others grouped with it.
+function musicControls(adding) {
+  const actions = musicActions();
+  const pick = (value) => {
+    adding.music = value;
+  };
+  const labels = actions.map((action) => [action, t(`scenes.add.music.${action}`)]);
+  const parts = [
+    actions.length > 2
+      ? h(
+          "div",
+          { class: "chip-row", role: "group", "aria-label": t("scenes.add.kinds.music") },
+          labels.map(([action, label]) =>
+            choiceChip(label, adding.music === action, `add-music:${action}`, () => {
+              pick(action);
+              notify();
+            })
+          )
+        )
+      : segments(labels, adding.music, "add-music", pick),
+  ];
+  const percent = (value) => t("common.percent", { percent: value });
+  const volumeSlider = () =>
+    slider({
+      label: t("scenes.add.musicVolume"),
+      value: adding.musicVolume,
+      min: 0,
+      max: 100,
+      key: "add-music-volume",
+      format: percent,
+      onCommit: (value) => {
+        adding.musicVolume = value;
+        notify();
+      },
+    });
+  if (adding.music === "volume") {
+    parts.push(volumeSlider(), h("p", { class: "field-help" }, t("scenes.add.volumeNote")));
+  } else if (adding.music === "resume") {
+    parts.push(h("p", { class: "field-help" }, t("scenes.add.resumeNote")));
+  } else if (adding.music === "play_favorite") {
+    if (adding.room == null) {
+      parts.push(h("p", { class: "notice notice-info" }, t("scenes.add.favoriteNeedsRoom")));
+      return parts;
+    }
+    parts.push(favoriteChoices(adding));
+    parts.push(
+      h(
+        "label",
+        { class: "check-row" },
+        h("input", {
+          type: "checkbox",
+          checked: adding.favoriteVolume,
+          dataset: { key: "add-favorite-volume" },
+          onchange: (event) => {
+            adding.favoriteVolume = event.target.checked;
+            notify();
+          },
+        }),
+        h("span", {}, t("scenes.add.setVolume"))
+      ),
+      adding.favoriteVolume ? volumeSlider() : null,
+      withRoomChoices(adding),
+      h("p", { class: "field-help" }, t("scenes.add.favoriteNote"))
+    );
+  } else {
+    parts.push(h("p", { class: "field-help" }, t("scenes.add.musicNote")));
+  }
+  return parts;
+}
+
+// The household's Sonos favorites, read from one of its Sonos rooms (the same in each), once; the
+// one an action being changed has stays listed when it is no longer among them.
+function favoriteChoices(adding) {
+  const rooms = musicRooms();
+  const source = rooms.find((item) => item.reachable !== false) || rooms[0];
+  const loaded = source ? musicFavorites(source) : null;
+  if (source && !loaded) queueMicrotask(() => loadFavorites(source));
+  const items = loaded?.stage === "ready" ? loaded.items.filter((favorite) => favorite.playable) : [];
+  const chosen = adding.favorite;
+  const listed = chosen && !items.some((favorite) => favorite.id === chosen.id);
+  const chip = (favorite, gone) =>
+    choiceChip(gone ? t("scenes.add.favoriteGone", { name: favorite.title || favorite.id }) : favorite.title, chosen?.id === favorite.id, `add-favorite:${favorite.id}`, () => {
+      adding.favorite = { id: favorite.id, title: favorite.title };
+      notify();
+    });
+  let body;
+  if (!loaded || loaded.stage === "loading") body = h("p", { class: "muted-note", role: "status" }, t("common.loading"));
+  else if (loaded.stage === "error") {
+    body = h(
+      "div",
+      { class: "music-favorites-error" },
+      h("p", { class: "inline-error", role: "alert" }, loaded.text),
+      h("button", { type: "button", class: "button button-secondary button-small", dataset: { key: "add-favorites-retry" }, onclick: () => loadFavorites(source) }, icon("refresh"), t("common.retry"))
+    );
+  } else if (!items.length) body = h("p", { class: "muted-note" }, t("scenes.add.favoritesNone"));
+  return h(
+    "div",
+    { class: "add-favorites" },
+    h("span", { class: "chip-row-label" }, icon("star"), t("scenes.add.favorite")),
+    h("div", { class: "chip-row", role: "group", "aria-label": t("scenes.add.favorite") }, listed ? chip(chosen, loaded?.stage === "ready") : null, items.map((favorite) => chip(favorite, false))),
+    body || null
+  );
+}
+
+// The other rooms with Sonos rooms, to play the favorite in too (grouped with this one); rooms an
+// action being changed has that no longer have one stay listed, so they can be taken out.
+function withRoomChoices(adding) {
+  const rooms = state.rooms.filter((room) => room.id !== adding.room && (scopeDevices("music", room.id).length || adding.withRooms.includes(room.id)));
+  const gone = adding.withRooms.filter((id) => id !== adding.room && !rooms.some((room) => room.id === id));
+  if (!rooms.length && !gone.length) return null;
+  const toggle = (id) => () => {
+    adding.withRooms = adding.withRooms.includes(id) ? adding.withRooms.filter((other) => other !== id) : [...adding.withRooms, id];
+    notify();
+  };
+  return h(
+    "div",
+    { class: "chip-row", role: "group", "aria-label": t("scenes.add.alsoIn") },
+    h("span", { class: "chip-row-label" }, icon("music"), t("scenes.add.alsoIn")),
+    rooms.map((room) => choiceChip(roomName(room), adding.withRooms.includes(room.id), `add-with-room:${room.id}`, toggle(room.id))),
+    gone.map((id) => choiceChip(t("scenes.roomGone"), true, `add-with-room:${id}`, toggle(id)))
+  );
 }
 
 // Auto on thermostats with heat and cool setpoints: a Heat and a Cool stepper. Each pushes the
@@ -1281,7 +1454,13 @@ function addActionView(draft) {
         h(
           "p",
           { class: "add-summary", role: "status" },
-          shown ? (fits ? t(editing ? "scenes.edit.becomes" : "scenes.add.adds", { summary }) : t("scenes.add.tooMany")) : t("scenes.add.pickOne")
+          shown
+            ? fits
+              ? t(editing ? "scenes.edit.becomes" : "scenes.add.adds", { summary })
+              : t("scenes.add.tooMany")
+            : adding.type === "music"
+              ? t("scenes.add.pickFavorite")
+              : t("scenes.add.pickOne")
         ),
         steps.length > 1 && fits ? h("p", { class: "field-help" }, t("scenes.add.parts", { count: steps.length })) : null,
         h(

@@ -4,6 +4,7 @@ local Registry = require("src.core.registry")
 local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
 local ProjectEvents = require("src.control4.project_events")
+local DriverUpdates = require("src.control4.driver_updates")
 local AdapterManager = require("src.adapters.manager")
 local Alarm = require("src.adapters.alarm")
 local Refrigerator = require("src.adapters.refrigerator")
@@ -18,11 +19,13 @@ local JewishCalendar = require("src.core.jewish_calendar")
 local SceneHandlers = require("src.api.handlers.scenes")
 local SceneLinks = require("src.core.scene_links")
 local SceneLinkHandlers = require("src.api.handlers.scene_links")
+local AskLinks = require("src.core.ask_links")
 local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
 local Clock = require("src.core.clock")
 local Profiles = require("src.auth.profiles")
 local People = require("src.auth.people")
+local FavoritesGone = require("src.core.favorites_gone")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
@@ -405,6 +408,16 @@ local function discover(reason)
     Registry.reset()
     Registry.replace(normalized)
     AdapterManager.initialize(Registry, reason and previousDevices or nil)
+    -- Each device's driver version, to set it up again when its driver is updated (ADR-059).
+    local tracked, trackError = pcall(DriverUpdates.track, AdapterManager)
+    if not tracked then
+        Log.warn("adapters", "driver versions not read", { error = tostring(trackError) })
+    end
+    -- Favorites of devices no longer in the project: marked, and dropped after some days (ADR-059).
+    local looked, lookError = pcall(FavoritesGone.projectRead, Registry.devices, previousDevices)
+    if not looked then
+        Log.warn("profiles", "favorites not checked against the project", { error = tostring(lookError) })
+    end
 
     local counts = publishInventory()
     if reason then
@@ -502,6 +515,9 @@ function OnDriverLateInit(driverInitType)
     -- loses its link now.
     local linkCount, linksStoredAs = SceneLinks.load()
     Log.info("scenes", "scene links loaded", { count = linkCount, stored_as = linksStoredAs })
+    -- Ask-to-open links (ADR-058): a key gone meanwhile takes its links now (the prune below).
+    local askCount, asksStoredAs = AskLinks.load()
+    Log.info("doors", "ask-to-open links loaded", { count = askCount, stored_as = asksStoredAs })
     SceneLinkHandlers.prune()
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
@@ -509,6 +525,7 @@ function OnDriverLateInit(driverInitType)
     -- Admins and members (1.8.0, ADR-054).
     local peopleCount, peopleStoredAs = People.load()
     Log.info("auth", "people loaded", { count = peopleCount, stored_as = peopleStoredAs })
+    FavoritesGone.load()
     SonosRooms.load()
     AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
@@ -556,6 +573,10 @@ function OnDriverLateInit(driverInitType)
         onStatus = function(text)
             updateProperty(Sonos.STATUS_PROPERTY, text)
         end,
+        -- Scenes that play a favorite (1.8.0, ADR-057) keep the favorites read.
+        favoritesWanted = function()
+            return Scenes.favoriteSteps() > 0
+        end,
     })
     Sonos.apply()
 
@@ -593,6 +614,10 @@ function OnDriverLateInit(driverInitType)
             Keys.count()
             -- The day's automatic backup, at the home's minute (ADR-048).
             AutoBackup.tick(now)
+            -- A few drivers' versions: a device whose driver was updated is set up again, and
+            -- favorites of devices gone for days are dropped (ADR-059).
+            pcall(DriverUpdates.tick)
+            pcall(FavoritesGone.prune, now)
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil
@@ -647,12 +672,15 @@ function OnDriverLateInit(driverInitType)
     end
 end
 
--- Every scene link goes (ADR-051): Composer's Remove All Scene Links (`always`: in the history even
--- when there were none), Revoke All API Keys and Reset Remote Identity (`reason`). Links that could
--- not be removed for good (the store was not written) stay, and the history, the log and Remote
--- Status say so. Returns how many there were and whether they went.
+-- Every scene link goes (ADR-051), and every ask-to-open link (ADR-058): Composer's Remove All Scene
+-- Links (`always`: in the history even when there were none), Revoke All API Keys and Reset Remote
+-- Identity (`reason`). Links that could not be removed for good (the store was not written) stay,
+-- and the history, the log and Remote Status say so. Returns how many there were and whether they
+-- went.
 local function removeSceneLinks(reason, always)
-    local count, saved = SceneLinks.removeAll()
+    local sceneCount, scenesSaved = SceneLinks.removeAll()
+    local askCount, asksSaved = AskLinks.removeAll()
+    local count, saved = sceneCount + askCount, scenesSaved and asksSaved
     if not saved then
         Log.error("scenes", "scene links not removed: they could not be saved", { count = count, reason = reason })
         updateProperty("Remote Status", "Scene links not removed: could not save")

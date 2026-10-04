@@ -2,7 +2,8 @@
 
 **Status: built in DirectorLink 0.13.0.** Schedules (0.14.0, `docs/SCHEDULES.md`) run them by
 time, sun and weather; since 1.7.0 the phone's own automations run them by a link (ADR-051, *Links
-for automations* below).
+for automations* below), and since 1.8.0 Siri and Google Assistant too. Doors and gates get a link
+of their own that asks before opening (1.8.0, ADR-058, *Ask before opening* below).
 
 A scene is one tap that sets several things: "all lights off, the bedroom AC to 24°, the
 living-room blinds closed". Scenes belong to the home and are kept on the controller
@@ -13,7 +14,7 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 
 | Role (1.8.0, ADR-054) | Scenes |
 | --- | --- |
-| member | sees and runs only the scenes an admin chose for them (none at first), in full: devices they could not control themselves too, doors and gates included (with Door Control on in Composer) |
+| member | sees and runs only the scenes an admin chose for them (none at first), in full: devices they could not control themselves too, doors and gates included (with Door Control on in Composer); one given doors and gates also makes links that ask before opening them (1.8.0, ADR-058) |
 | admin | sees and runs every scene; makes, changes, tries and deletes them, chooses which members may run each, and gives them links for automations (1.7.0) |
 
 A scene a member may not run answers `404` for them, like one that does not exist. Up to 1.7.0 each
@@ -52,6 +53,15 @@ them in full (ADR-025); ADR-054 says what each became.
     as one (a radio station stops), and counts as ran; a group already paused or stopped is left
     alone. It is skipped, with the reason, when Sonos is off in Composer (`SONOS_OFF`), no player
     has been found yet (`NO_PLAYERS`), or no Sonos room is shown in its room (`NO_SONOS_ROOM`).
+    Since 1.8.0 (ADR-057) also `{"action": "resume"}` (groups paused or stopped play again),
+    `{"action": "volume", "volume": 0-100}` (each Sonos room's own volume), and
+    `{"action": "play_favorite", "favorite": {"id": "10"}, "volume": 25, "with_room_ids": [11]}`
+    in a room (`room_id` required; `volume` and `with_room_ids` optional): the Sonos rooms of the
+    step's room and of `with_room_ids` are grouped, get the volume, and play the Sonos favorite.
+    The step keeps the favorite's id, name, address and description as the favorites list gives
+    them; a favorite since removed in Sonos is skipped with `FAVORITE_GONE` and nothing of the step
+    runs. Sonos rooms the key that runs it may not control are skipped with `FORBIDDEN` (a group:
+    all its rooms). Each room, or group for resume, counts as ran.
   - refrigerators (1.7.0, ADR-049): any of `power_cool`, `power_freeze`, `sabbath_mode` and
     `ice_maker`, `true` (on) or `false` (off), at least one: `{"sabbath_mode": true}`. Each goes to
     the refrigerator's driver as its own command, through Samsung's cloud; the step counts as ran
@@ -95,7 +105,12 @@ the scene runs), and its next save of any scene drops them. 1.7.0 also keeps the
 scene comes back without them from a save by 1.6.0 (ADR-049). The scenes 1.7.0 saves say so
 (`steps_kept`, which 1.6.0 drops when it saves), so a step removed in 1.7.0 never comes back. A
 backup restored while 1.6.0 runs is such a save: back on 1.7.0, its scenes get the refrigerator
-steps the controller had before the restore, in scenes with the same id. If the stored scenes cannot be read at start, changes are refused (503) until a
+steps the controller had before the restore, in scenes with the same id. DirectorLink 1.7.0 in
+turn knows only the music steps that pause and stop: 1.8.0 keeps the others (resume, volume,
+favorite) apart under `directorlink_scene_steps_2`, which 1.7.0 neither reads nor rewrites, and
+marks the scenes record `music_steps_kept`, which 1.7.0 drops when it saves; back on 1.8.0 they go
+back in their places the same way (ADR-057). A 1.7.0 app shows such a step as "Pause" and keeps
+it when it saves the scene. If the stored scenes cannot be read at start, changes are refused (503) until a
 restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
@@ -139,6 +154,8 @@ goes in it.
 | iPhone Shortcuts | An automation (Arrive, NFC, a time) or a shortcut for Siri, with the action **Get Contents of URL**: the address as its URL; then Method **POST**, Request Body **JSON**, Add new field → Text, key `secret`, the secret as its text. For an automation, Run Immediately. |
 | Android (HTTP Shortcuts, Tasker, MacroDroid) | An HTTP request: method POST, to the address, with the secret as its body: on its own as text, or as a form field `secret`. |
 | An NFC tag or a browser | The whole link, with the secret after `#`: `https://api.directorlink.io/run/<home_id>.<link_id>#<secret>`. Opening it shows a page with one Run button; the browser never sends what follows `#`, the page's script posts it. Write it to a tag with an NFC app (NFC Tools, for example). |
+| Siri (1.8.0) | A shortcut (not an automation) with the same Get Contents of URL step, named like the scene: "Good night". Then "Hey Siri, Good night". |
+| Google Assistant (1.8.0) | The request in HTTP Shortcuts, Tasker or MacroDroid, named like the scene, and an Assistant routine (Assistant settings → Routines → New) that starts when you say its name and starts the app's shortcut. Each app's help says how Assistant starts it. |
 
 A POST takes `{"secret": "…"}` as JSON, `secret=…` as a form (url-encoded or multipart), or the
 secret alone as text; the whole link in place of the secret works too. Answers:
@@ -154,6 +171,10 @@ secret alone as text; the whole link in place of the secret works too. Answers:
 
 A GET never runs anything (link previews in Messages, WhatsApp and Slack fetch links): it is the
 page with the Run button, the same for every address.
+
+A new link's screen shows these steps, Siri's and Google Assistant's with the scene's name (1.8.0);
+an existing link's screen says it in one line (the secret is not shown again: replace the link for
+a new one).
 
 **Who sees what.** The account service sees the link and its secret when a phone uses it, never which
 scene it runs (it has no names), and keeps no secret (docs/ACCOUNTS.md, "Who knows what"). The secret
@@ -174,6 +195,54 @@ owner runs **Revoke All API Keys** in Composer, which ends every key and every l
 (its hello lists no `scene_links`), so phones get 404. A scene changed there to open doors or gates
 loses its link at the next start of 1.7.0.
 
+## Ask before opening (1.8.0, ADR-058)
+
+A scene link never opens a door or gate. For arriving at the gate, a door has a link of another
+kind that **asks**: the phone's automation (Arrive, Siri, an Android app) runs it, DirectorLink asks
+the person who made it, by a notification on their own devices, "Open the main gate?", and only
+their **Open** there opens it.
+
+- **Who makes one:** a key that may open that door (`Access.canOpen`: an admin, or a member given
+  doors and gates whose rooms have that door, ADR-054), with **Door Control** on in Composer, Remote Access on and
+  the home linked. One link per door and key: the door's row in its room has **Ask**, which opens its
+  screen (`#/door/<id>/ask`); making it again replaces it. The secret is shown once, as a scene
+  link's. A key sees and removes its person's links; admins see everyone's on Scenes → *Links for
+  automations*, and can remove them. In the API: `GET`, `POST /v1/ask-links` (`{"relay_id": 70,
+  "label": "Arriving home"}`) and `DELETE /v1/ask-links/{linkId}`.
+- **The run** is a scene link's (the same address, POST with the secret, the same limits), and opens
+  nothing. The controller sends one notification, sealed to each device's key like every alert
+  (ADR-050), to the devices of the link's person that may open the door and have **Alerts on this
+  device** switched on. It is not one of the alert kinds a device chooses: the link is the choice.
+  The phone that ran it is told:
+
+  | `result` | When |
+  | --- | --- |
+  | `asked` | the person's devices were asked |
+  | `waiting` | a question about this door is still open for this person (two minutes): nothing new is sent |
+  | `nobody` | none of the person's devices that may open the door has alerts on |
+  | `doors_off` | Door Control is off in Composer |
+  | `not_asked` | the notification could not be sent now (try again) |
+
+  Also as a scene link's: `404` (an unknown link or secret; a link whose key, door or permission is
+  gone), `429` (6 runs a minute, and at most 10 runs an hour that ask or say why nobody was asked),
+  `503`.
+- **The question.** The notification says "Open Main gate?" and "Your link “Arriving home” asked at
+  07:15. Tap to answer." Tapping it opens the app on the question (`#/open/<door>/<request>/<until>`),
+  with **Open** and **Cancel**. Open is the door's ordinary pulse, sealed with that device's key and
+  checked as any opening (its role, Door Control, pulse only), and only while the question lasts (two
+  minutes), only from a device it was sent to, and once (`POST /v1/relays/{id}/pulse` with
+  `{"request": "<id>"}`; `409 OPEN_REQUEST_EXPIRED`, `409 OPEN_REQUEST_ANSWERED`). Cancel sends
+  nothing. A question tapped after its two minutes opens nothing; the door's room is one tap away.
+- **History:** "Asked whether to open Main gate", by the link (on how many devices, or why nobody
+  was asked), then "Opened Main gate", by the person and device that answered, "Answering the link
+  “Arriving home”". Making, replacing and removing a link are Access entries.
+- **It goes** with the key that made it (revoked or expired), when its person may no longer open the
+  door, when the door is removed from the project, and with Composer's Revoke All API Keys, Remove
+  All Scene Links and Reset Remote Identity. Not in backups.
+- **What the cloud sees:** a link's run, as for a scene link, with its result word, and a sealed
+  notification for the person's key ids; never which door (docs/ACCOUNTS.md).
+- **Going back to 1.7.0:** it does not read their store (it stays); their runs get 404.
+
 ## The app
 
 - **Scenes** tab: every scene with a Run button (for a member, only the scenes they may run);
@@ -181,9 +250,11 @@ loses its link at the next start of 1.7.0.
   Good morning, Leaving home, Cool the house) that opens the editor filled in.
 - The editor: the name and an icon; **What happens** (the actions, which can be moved, changed and
   removed); **Add an action** — where (a room or the whole home), what (lights, AC, fans, blinds,
-  doors and gates, refrigerators, with how many there are) and what to do (fans: Off, On or a
-  speed; refrigerators: Power Cool, Power Freeze, Sabbath mode or Ice maker, the ones they have,
-  On or Off); **Choose**
+  doors and gates, refrigerators, the music, with how many there are) and what to do (fans: Off,
+  On or a speed; refrigerators: Power Cool, Power Freeze, Sabbath mode or Ice maker, the ones they
+  have, On or Off; music: Pause or Stop, and with a 1.8.0 driver Resume, Volume with a slider, or
+  Play a favorite: the favorite from the household's Sonos favorites, **Set the volume** with a
+  slider, and **Also play in** other rooms with Sonos, which are grouped with it); **Choose**
   picks single devices ("only the reading lamp of the six"); **Copy the house as it is now** makes
   the actions from the current state of every light, AC, fan and blind (doors and gates, and
   refrigerators, are never copied); **Show on Home**; **Try it now**; **Save scene**. The ideas All off and Leaving home

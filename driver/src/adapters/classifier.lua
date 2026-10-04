@@ -13,6 +13,15 @@ function Classifier.isRefrigeratorDriver(driverFileName)
     return name == REFRIGERATOR_DRIVER or name:gsub(" %(%d+%)%.c4z$", ".c4z") == REFRIGERATOR_DRIVER
 end
 
+-- The DirectorLink · Hikvision Camera driver (1.8.0, ADR-056), whose alerts DirectorLink passes on;
+-- also a second download of it.
+local HIKVISION_CAMERA_DRIVER = "directorlink-hikvision-camera.c4z"
+
+function Classifier.isHikvisionCameraDriver(driverFileName)
+    local name = normalizedDriverName(driverFileName)
+    return name == HIKVISION_CAMERA_DRIVER or name:gsub(" %(%d+%)%.c4z$", ".c4z") == HIKVISION_CAMERA_DRIVER
+end
+
 function Classifier.classify(driverFileName)
     local name = normalizedDriverName(driverFileName)
 

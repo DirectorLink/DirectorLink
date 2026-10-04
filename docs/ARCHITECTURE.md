@@ -48,12 +48,14 @@ driver/     the DriverWorks driver
                   backups to the account, sealed to the backup password's key (auto_backup.lua,
                   backup_seal.lua; ADR-048); alerts sealed to each device's key (alerts.lua; ADR-050)
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
-                  again without a restart) and device events; camera snapshots
+                  again without a restart) and device events; drivers updated in Composer (their
+                  devices set up again, ADR-059); camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, scene links (a private link per scene for the phone's automations,
-                  ADR-051), schedules, scheduler, sun, weather, installer view; room names and layout;
+                  ADR-051), ask-to-open links (a door's link that asks its person, ADR-058), schedules, scheduler, sun, weather, installer view; room names and layout;
                   backup (backup and restore, ADR-042; docs/BACKUP.md);
                   activity (the history admins read, ADR-046; docs/HISTORY.md);
+                  favorites of devices removed in Composer (ADR-059; docs/PREFERENCES.md);
                   the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,
                   holidays, parasha, holy_times; docs/CALENDAR.md)
   tests/          driver tests against a fake Director
