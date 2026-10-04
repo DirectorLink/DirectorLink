@@ -4,7 +4,9 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 
 ## Next
 
-Not decided yet.
+- **Camera pictures at the same time.** The app asks for several pictures at once instead of one after another, and the controller fetches them side by side inside the home, a few at a time per camera and per NVR (an NVR's channels share one device). The controller keeps a camera's login challenge between pictures, so each picture is one request to the camera instead of two, and tiles showing the same camera share one picture. Measured first, on a real controller, through the account and at home.
+- **Sonos in scenes:** a scene (and so a schedule) plays a Sonos favorite in a room at a chosen volume, sets the volume, or resumes, besides pausing and stopping. Only favorites saved in Sonos, and no grouping (ADR-044).
+- **Older drivers can be turned away.** The account service already knows which DirectorLink version each home runs; it gets a minimum version it enforces, so that if a flaw is found in the remote protocol, drivers without the fix stop connecting until they are updated, and the app and Composer say so.
 
 ## Later
 

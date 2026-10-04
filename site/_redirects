@@ -1,11 +1,11 @@
 # Links people see stay on directorlink.io; these send them on to each driver's GitHub repository.
-# Only /drivers/<slug>/(download|releases|issues|source), only to github.com/IsraelCIL/DirectorLink-*
+# Only /drivers/<slug>/(download|releases|issues|source), only to github.com/DirectorLink/DirectorLink-*
 # (scripts/check_sites.py checks both). 302, so a driver can move without browsers remembering.
-/drivers/samsung-refrigerator/download https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/releases/latest/download/DirectorLink-Samsung-Refrigerator.c4z 302
-/drivers/samsung-refrigerator/releases https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/releases 302
-/drivers/samsung-refrigerator/issues https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator/issues 302
-/drivers/samsung-refrigerator/source https://github.com/IsraelCIL/DirectorLink-Samsung-Refrigerator 302
-/drivers/hikvision/download https://github.com/IsraelCIL/DirectorLink-Hikvision/releases/latest 302
-/drivers/hikvision/releases https://github.com/IsraelCIL/DirectorLink-Hikvision/releases 302
-/drivers/hikvision/issues https://github.com/IsraelCIL/DirectorLink-Hikvision/issues 302
-/drivers/hikvision/source https://github.com/IsraelCIL/DirectorLink-Hikvision 302
+/drivers/samsung-refrigerator/download https://github.com/DirectorLink/DirectorLink-Samsung-Refrigerator/releases/latest/download/DirectorLink-Samsung-Refrigerator.c4z 302
+/drivers/samsung-refrigerator/releases https://github.com/DirectorLink/DirectorLink-Samsung-Refrigerator/releases 302
+/drivers/samsung-refrigerator/issues https://github.com/DirectorLink/DirectorLink-Samsung-Refrigerator/issues 302
+/drivers/samsung-refrigerator/source https://github.com/DirectorLink/DirectorLink-Samsung-Refrigerator 302
+/drivers/hikvision/download https://github.com/DirectorLink/DirectorLink-Hikvision/releases/latest 302
+/drivers/hikvision/releases https://github.com/DirectorLink/DirectorLink-Hikvision/releases 302
+/drivers/hikvision/issues https://github.com/DirectorLink/DirectorLink-Hikvision/issues 302
+/drivers/hikvision/source https://github.com/DirectorLink/DirectorLink-Hikvision 302

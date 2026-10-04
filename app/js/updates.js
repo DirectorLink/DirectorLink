@@ -8,7 +8,7 @@
 // date and links into the project's own releases are kept. Storage, fetch and the clock can be
 // passed in, so this is unit-tested in Node (tests/app/updates.test.mjs).
 
-export const LATEST_RELEASE_URL = "https://api.github.com/repos/IsraelCIL/DirectorLink/releases/latest";
+export const LATEST_RELEASE_URL = "https://api.github.com/repos/DirectorLink/DirectorLink/releases/latest";
 // About twice a day: GitHub allows 60 requests an hour per address without a token, and the privacy
 // page (site/privacy.html) says how often the app asks.
 export const CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
@@ -20,7 +20,7 @@ export const ANSWER_FRESH_MS = 3 * 24 * 60 * 60 * 1000;
 export const PACKAGE_NAME = "DirectorLink.c4z";
 const CHECKSUMS_NAME = "SHA256SUMS.txt";
 // Every link taken from an answer must lead into this project's releases, and nowhere else.
-const RELEASES = "https://github.com/IsraelCIL/DirectorLink/releases/";
+const RELEASES = "https://github.com/DirectorLink/DirectorLink/releases/";
 const TIMEOUT_MS = 10000;
 // In this browser only, for this viewer: the last check { checkedAt, answeredAt, release }, and
 // the version whose notice on Home was dismissed.
