@@ -24,19 +24,20 @@ let shortWorker;
 let google;
 const drivers = [];
 
+// One after the other, each kept as soon as it answers, so that after() stops whatever started
+// (two started together, with the other test files' Workers, once ran out of time on CI and were
+// never stopped).
 before(async () => {
   google = await startFakeGoogle();
   const vars = { ...googleVars(google, APP, "https://api.directorlink.test"), REQUEST_TIMEOUT_MS: 3000 };
-  [worker, shortWorker] = await Promise.all([
-    startWorker({ migrate: true, devVars: vars }),
-    startWorker({ migrate: true, scheduled: true, devVars: { ...vars, DEVICE_REQUEST_SECONDS: SHORT_SECONDS } }),
-  ]);
+  worker = await startWorker({ migrate: true, devVars: vars });
+  shortWorker = await startWorker({ migrate: true, scheduled: true, devVars: { ...vars, DEVICE_REQUEST_SECONDS: SHORT_SECONDS } });
 }, { timeout: 2 * STARTUP_MS + 10_000 });
 
 after(async () => {
   await Promise.all([worker?.stop(), shortWorker?.stop()]);
   await google?.close();
-});
+}, { timeout: 60_000 });
 
 afterEach(async () => {
   await Promise.all(drivers.splice(0).map((connection) => connection.close()));

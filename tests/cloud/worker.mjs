@@ -17,6 +17,27 @@ export const STARTUP_MS = 240_000;
 
 const ENV = { ...process.env, WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", FORCE_COLOR: "0", CI: "1" };
 
+// Every `wrangler dev` still running. One that a test never got to stop (a hook that timed out
+// while it started) must not keep the test file's process alive, nor outlive it: the children are
+// unreferenced, and whatever is left is killed when the process exits.
+const running = new Set();
+
+function killNow(child) {
+  try {
+    if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    } else {
+      process.kill(-child.pid, "SIGKILL");
+    }
+  } catch {
+    // Already gone.
+  }
+}
+
+process.on("exit", () => {
+  for (const child of running) killNow(child);
+});
+
 export function freePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -68,6 +89,11 @@ export async function startWorker({ devVars = {}, migrate = false, scheduled = f
     stdio: ["ignore", "pipe", "pipe"],
     env: ENV,
   });
+  running.add(child);
+  child.once("exit", () => running.delete(child));
+  child.unref();
+  child.stdout.unref?.();
+  child.stderr.unref?.();
   const lines = [];
   const collect = (chunk) => {
     lines.push(...chunk.toString("utf8").split(/\r?\n/).filter(Boolean));
