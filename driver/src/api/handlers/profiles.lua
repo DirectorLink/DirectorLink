@@ -1,11 +1,18 @@
 -- Profiles (docs/PREFERENCES.md, src/auth/profiles.lua): each person's preferences, shared by their
 -- devices. /v1/profile is the caller's own (any key); /v1/profiles lists them for admins, who can
 -- rename them and move a key to another (PATCH /v1/api-keys/{keyId} profile_id).
+-- A person is an admin or a member (1.8.0, ADR-054): /v1/profiles/{profileId}/access reads and
+-- sets that, and what a member may see and do (src/auth/people.lua, src/auth/access.lua). The
+-- home's owner is always an admin, and only they change their own; the last admin stays one.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local RoomNames = require("src.core.room_names")
+local Access = require("src.auth.access")
+local People = require("src.auth.people")
+local Scenes = require("src.core.scenes")
+local Activity = require("src.core.activity")
 
 local Profiles = {}
 
@@ -18,6 +25,25 @@ local function nullable(value)
     end
     return value
 end
+
+-- A person's role and permissions, as kept (their keys' 1.7.0 roles say it while the people's
+-- store could not be read), and whether they are the home's owner.
+local function accessView(services, profileId, owner)
+    local record = People.get(profileId)
+    if not record then
+        local highest, rank = "viewer", { viewer = 1, member = 2, doors = 3, admin = 4 }
+        for _, key in ipairs(services.keys.list()) do
+            if key.profile == profileId and (rank[key.role] or 0) > rank[highest] then
+                highest = key.role
+            end
+        end
+        record = People.fromLegacy(highest, Scenes.list())
+    end
+    local result = People.view(record)
+    result.owner = profileId == (owner or Access.owner())
+    return result
+end
+Profiles.accessView = accessView
 
 local function view(profile, keyIds)
     local prefs = profile.prefs or {}
@@ -144,12 +170,15 @@ local function validatePrefs(prefs, maxFavorites)
     return changes
 end
 
+-- With what the caller may do (ADR-054), so that the app shows only that.
 function Profiles.current(ctx)
     local profile, problem = ownProfile(ctx)
     if not profile then
         return problem
     end
-    return 200, view(profile)
+    local result = view(profile)
+    result.access = Access.describe(ctx.apiKey)
+    return 200, result
 end
 
 -- PATCH {"prefs": {"language": "he", "favorites": [...]}, "version": 3}: changes the named
@@ -185,14 +214,20 @@ function Profiles.update(ctx)
         end
         return Problem.notFound("Profile", profile.id)
     end
-    return 200, view(updated)
+    local result = view(updated)
+    result.access = Access.describe(ctx.apiKey)
+    return 200, result
 end
 
+-- Every person, with their role and permissions (ADR-054).
 function Profiles.list(ctx)
     local byProfile = keyIdsByProfile(ctx.services.keys)
+    local owner = Access.owner()
     local items = Json.array()
     for _, profile in ipairs(ctx.services.profiles.list()) do
-        items[#items + 1] = view(profile, byProfile[profile.id] or Json.array())
+        local item = view(profile, byProfile[profile.id] or Json.array())
+        item.access = accessView(ctx.services, profile.id, owner)
+        items[#items + 1] = item
     end
     return 200, { items = items }
 end
@@ -218,6 +253,207 @@ function Profiles.rename(ctx)
     end
     ctx.services.log.info("auth", "profile renamed", { profile = id, by = ctx.apiKey.id })
     return 200, view(renamed, keyIdsByProfile(ctx.services.keys)[id] or Json.array())
+end
+
+-- ---- a person's role and permissions (ADR-054) ------------------------------------------------
+
+local ACCESS_FIELDS = { role = true, all_rooms = true, rooms = true, kinds = true, cameras = true, doors = true, alarm = true, scenes = true }
+local ROLES = { admin = true, member = true }
+
+local function isList(value)
+    return type(value) == "table" and value ~= Json.null and (Json.isArray(value) or next(value) == nil)
+end
+
+-- `body` (an object of ACCESS_FIELDS) applied to `base` (a record of src/auth/people.lua): the new
+-- record, or nil and a problem. `field` names the body in problems ("access" inside another body).
+-- Rooms must be the home's, scenes its scenes.
+function Profiles.readAccess(services, body, base, field)
+    local prefix = field and (field .. ".") or ""
+    if type(body) ~= "table" or body == Json.null or Json.isArray(body) then
+        return nil, Problem.invalidField(field or "body", (field or "The body") .. " must be an object")
+    end
+    for key in pairs(body) do
+        if not ACCESS_FIELDS[key] then
+            return nil, Problem.invalidField(prefix .. tostring(key), "Unknown field: " .. prefix .. tostring(key))
+        end
+    end
+    local record = People.view(base or People.defaults("member"))
+    if body.role ~= nil then
+        if not ROLES[body.role] then
+            return nil, Problem.invalidField(prefix .. "role", "role must be admin or member")
+        end
+        record.role = body.role
+    end
+    for _, name in ipairs({ "all_rooms", "cameras", "doors", "alarm" }) do
+        if body[name] ~= nil then
+            if type(body[name]) ~= "boolean" then
+                return nil, Problem.invalidField(prefix .. name, name .. " must be true or false")
+            end
+            record[name] = body[name]
+        end
+    end
+    if body.kinds ~= nil then
+        if type(body.kinds) ~= "table" or body.kinds == Json.null or Json.isArray(body.kinds) then
+            return nil, Problem.invalidField(prefix .. "kinds", "kinds must be an object of kind to true or false")
+        end
+        for kind, on in pairs(body.kinds) do
+            if not People.KIND[kind] then
+                return nil, Problem.invalidField(prefix .. "kinds." .. tostring(kind), "kinds are " .. table.concat(People.KINDS, ", "))
+            end
+            if type(on) ~= "boolean" then
+                return nil, Problem.invalidField(prefix .. "kinds." .. kind, kind .. " must be true or false")
+            end
+            record.kinds[kind] = on
+        end
+    end
+    if body.rooms ~= nil then
+        if not isList(body.rooms) or #body.rooms > People.MAX_ROOMS then
+            return nil, Problem.invalidField(prefix .. "rooms", "rooms must be a list of room ids")
+        end
+        local rooms, seen = Json.array(), {}
+        for _, id in ipairs(body.rooms) do
+            if type(id) ~= "number" or id ~= math.floor(id) or not (services.registry.rooms or {})[id] then
+                return nil, Problem.invalidField(prefix .. "rooms", "Unknown room: " .. tostring(id))
+            end
+            if not seen[id] then
+                seen[id] = true
+                rooms[#rooms + 1] = id
+            end
+        end
+        record.rooms = rooms
+    end
+    if body.scenes ~= nil then
+        if not isList(body.scenes) or #body.scenes > People.MAX_SCENES then
+            return nil, Problem.invalidField(prefix .. "scenes", "scenes must be a list of scene ids")
+        end
+        local scenes, seen = Json.array(), {}
+        for _, id in ipairs(body.scenes) do
+            if type(id) ~= "string" or not Scenes.find(id) then
+                return nil, Problem.invalidField(prefix .. "scenes", "Unknown scene: " .. tostring(id))
+            end
+            if not seen[id] then
+                seen[id] = true
+                scenes[#scenes + 1] = id
+            end
+        end
+        record.scenes = scenes
+    end
+    return record
+end
+
+-- How many people other than `except` are admins.
+local function otherAdmins(services, except)
+    local count = 0
+    for _, profile in ipairs(services.profiles.list()) do
+        local record = People.peek(profile.id)
+        if profile.id ~= except and record and record.role == "admin" then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function unavailable()
+    return Problem.new(503, "UNAVAILABLE", "The people's permissions could not be read when DirectorLink started; restart the driver and try again")
+end
+
+-- Sets the person `profileId`'s role and permissions to `record`, for the caller `ctx.apiKey`: the
+-- owner's are only theirs to change, and stay an admin's; the last admin stays one. Every key of the
+-- person follows (its 1.7.0 role too); a person no longer an admin keeps no invitation their keys
+-- made (only admins make them); the history says what changed, and the account service learns the
+-- admins' keys again. Returns the person's view, or nil and a problem.
+function Profiles.setAccess(ctx, profileId, record)
+    local services = ctx.services
+    local profile = services.profiles.find(profileId)
+    if not profile then
+        return nil, Problem.notFound("Profile", profileId)
+    end
+    if not People.complete() then
+        return nil, unavailable()
+    end
+    local before = People.get(profileId)
+    local wasAdmin = before ~= nil and before.role == "admin"
+    if profileId == Access.owner() then
+        if not Access.isOwner(ctx.apiKey) then
+            return nil, Problem.new(403, "OWNER_PROTECTED", "Only the home's owner changes the owner's role and permissions")
+        end
+        if record.role ~= "admin" then
+            return nil, Problem.new(409, "OWNER_STAYS_ADMIN", "The home's owner is always an admin")
+        end
+    end
+    if wasAdmin and record.role ~= "admin" and otherAdmins(services, profileId) == 0 then
+        return nil, Problem.new(409, "LAST_ADMIN", "This is the only admin; make someone else an admin first")
+    end
+    local ok, failure = People.set(profileId, record)
+    if not ok then
+        return nil, failure == "UNAVAILABLE" and unavailable() or Problem.internal("The permissions could not be saved")
+    end
+    People.syncKeys(services.keys)
+    local after = People.get(profileId)
+    if wasAdmin and after.role ~= "admin" and services.invitations then
+        for _, key in ipairs(services.keys.list()) do
+            if key.profile == profileId then
+                services.invitations.revokeCreatedBy(key.id)
+            end
+        end
+    end
+    local beforeRole = before and before.role or nil
+    if beforeRole ~= after.role then
+        Activity.record("access", "role_changed", { by = ctx.apiKey, what = profile.name, from = beforeRole, to = after.role })
+    elseif after.role == "member" and Json.encode(People.view(before)) ~= Json.encode(People.view(after)) then
+        Activity.record("access", "permissions_changed", { by = ctx.apiKey, what = profile.name })
+    end
+    services.log.info("auth", "person's access changed", { profile = profileId, role = after.role, by = ctx.apiKey.id })
+    if services.onKeysChanged then
+        services.onKeysChanged()
+    end
+    return accessView(services, profileId)
+end
+
+local function profileParam(ctx)
+    local id = tostring(ctx.params.profileId or "")
+    if not id:match("^%x%x%x%x%x%x%x%x$") then
+        return nil, Problem.invalidParameter("profileId", "profileId is 8 hex characters")
+    end
+    if not ctx.services.profiles.find(id) then
+        return nil, Problem.notFound("Profile", id)
+    end
+    return id
+end
+
+-- GET /v1/profiles/{profileId}/access (admins): the person's role and permissions.
+function Profiles.get_access(ctx)
+    local id, problem = profileParam(ctx)
+    if not id then
+        return problem
+    end
+    return 200, accessView(ctx.services, id)
+end
+
+-- PATCH /v1/profiles/{profileId}/access (admins): {"role": "member", "all_rooms": false,
+-- "rooms": [12], "kinds": {"music": false}, "cameras": true, "doors": false, "alarm": true,
+-- "scenes": ["a1b2c3d4"]}, any of them; the rest stays as it is.
+function Profiles.update_access(ctx)
+    local id, problem = profileParam(ctx)
+    if not id then
+        return problem
+    end
+    local body = ctx.body
+    problem = Validate.body(body, ACCESS_FIELDS, true)
+    if problem then
+        return problem
+    end
+    local record
+    record, problem = Profiles.readAccess(ctx.services, body, People.get(id) or People.fromLegacy(nil))
+    if not record then
+        return problem
+    end
+    local result
+    result, problem = Profiles.setAccess(ctx, id, record)
+    if not result then
+        return problem
+    end
+    return 200, result
 end
 
 return Profiles

@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 -- Samsung refrigerators (1.7.0, ADR-049; src/adapters/refrigerator.lua): temperatures, doors, the
 -- water filter, and Power Cool, Power Freeze, Sabbath Mode and the ice maker switched on and off.
@@ -16,7 +17,8 @@ local function findRefrigerator(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "refrigerator" or device.supported ~= true then
+    -- A refrigerator the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "refrigerator" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Refrigerator", id)
     end
     return device
@@ -29,7 +31,7 @@ function Refrigerators.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.refrigeratorList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.refrigeratorList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.refrigerator(registry, device)
         end
@@ -53,6 +55,9 @@ function Refrigerators.update(ctx)
     local device, problem = findRefrigerator(ctx)
     if not device then
         return problem
+    end
+    if not Access.canControl(ctx.apiKey, device) then
+        return Problem.new(403, "FORBIDDEN", "This person may not change this refrigerator")
     end
     local body = ctx.body
     problem = Validate.body(body, { power_cool = true, power_freeze = true, sabbath_mode = true, ice_maker = true }, true)

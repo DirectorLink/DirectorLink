@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Clock = require("src.core.clock")
 local Version = require("src.core.version")
 local Problem = require("src.api.problem")
+local Access = require("src.auth.access")
 
 local System = {}
 
@@ -49,7 +50,7 @@ local function rounded(value)
 end
 
 function System.info(ctx)
-    local admin = ctx.apiKey and ctx.apiKey.role == "admin"
+    local admin = Access.isAdmin(ctx.apiKey)
     local services = ctx.services
     local registry = services.registry
     local metadata = registry.metadata or {}
@@ -112,6 +113,9 @@ function System.info(ctx)
         -- scene_links: /v1/scene-links and a scene's link (1.7.0, ADR-051), always there.
         -- refrigerators: /v1/refrigerators and the scene step that switches their features (1.7.0,
         -- ADR-049), always there.
+        -- people_permissions: admins and members set per person, and what each member may see and
+        -- do (1.8.0, ADR-054): /v1/profiles/{id}/access, `access` in /v1/api-keys/current and
+        -- /v1/profile, rooms hidden from members; always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -121,6 +125,7 @@ function System.info(ctx)
             alert_choices = true,
             scene_links = true,
             refrigerators = true,
+            people_permissions = true,
         },
     }
 end

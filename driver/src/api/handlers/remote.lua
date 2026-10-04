@@ -3,6 +3,8 @@
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
+local Access = require("src.auth.access")
+local People = require("src.auth.people")
 
 local Remote = {}
 
@@ -28,6 +30,13 @@ function Remote.claim(ctx)
     end
     if not remote.available() then
         return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal remote requests (the lock self-test failed; see the log)")
+    end
+    -- Claiming moves the home to the claiming account and removes everyone else from it: once the
+    -- home was claimed with DirectorLink 1.8.0, only the person who claimed it (the owner, while
+    -- they are here) claims it again, so that no other admin can take it from them (ADR-054).
+    local claimedBy = People.claimedBy()
+    if claimedBy and ctx.services.profiles.find(claimedBy) and not Access.isOwner(ctx.apiKey) then
+        return Problem.new(403, "OWNER_ONLY", "Only the home's owner claims this home again")
     end
     local claim = remote.createClaim(ctx.apiKey.id)
     ctx.services.log.info("remote", "claim token created", { key_id = ctx.apiKey.id })

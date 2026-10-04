@@ -74,8 +74,11 @@ function tests.an_admin_adds_a_device_to_a_person_and_moves_keys_between_profile
     profiles = T.http(mock, "GET", "/v1/profiles", { key = admin }).json.items
     T.eq(#profiles, 1)
     T.eq(#profiles[1].key_ids, 3)
-    T.eq(T.http(mock, "GET", "/v1/profiles", { key = guest.key }).status, 403, "only admins see everyone")
-    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { theme = "light" } } }).status, 200, "a viewer sets their own")
+    -- Moved into the admin's person, it has the admin's access (ADR-054).
+    T.eq(T.http(mock, "GET", "/v1/profiles", { key = guest.key }).status, 200, "now one of the admin's devices")
+    local viewer = createKey(mock, admin, { name = "Wall tablet", role = "viewer" })
+    T.eq(T.http(mock, "GET", "/v1/profiles", { key = viewer.key }).status, 403, "only admins see everyone")
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = viewer.key, body = { prefs = { theme = "light" } } }).status, 200, "a member sets their own")
 
     local renamed = T.http(mock, "PATCH", "/v1/profiles/" .. mine.id, { key = admin, body = { name = "Dana" } })
     T.eq(renamed.json.name, "Dana")
@@ -144,10 +147,10 @@ end
 
 function tests.each_person_hides_rooms_for_themselves_only()
     local mock, admin = start()
-    local guest = createKey(mock, admin, { name = "Guest", role = "viewer" })
+    local guest = createKey(mock, admin, { name = "Guest", role = "member" })
     local hidden = T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { hidden_rooms = { 11, 11, 10 } } } })
     T.eq(hidden.status, 200, hidden.body)
-    T.same(hidden.json.prefs.hidden_rooms, { 11, 10 }, "a viewer hides rooms for themselves")
+    T.same(hidden.json.prefs.hidden_rooms, { 11, 10 }, "a member hides rooms for themselves")
     local mine = T.http(mock, "GET", "/v1/profile", { key = admin }).json
     T.contains(Json.encode(mine.prefs), '"hidden_rooms":[]', "nobody else is affected")
     T.eq(T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { hidden_rooms = { "kitchen" } } } }).json.code, "INVALID_FIELD")

@@ -45,7 +45,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 - **Alerts on your phone and computer:** doorbell rings, a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem. Each device chooses its own; what an alert says is encrypted for that device on the controller.
 - **History:** what ran, what didn't and why, who opened which door, keys and invitations, and what changed in Composer, for the last 30 days, for admins ([`docs/HISTORY.md`](docs/HISTORY.md)).
 - **Backups:** everything DirectorLink keeps, in a file locked with your password, or every night to your account, sealed to a backup password only you know ([`docs/BACKUP.md`](docs/BACKUP.md)).
-- **The family:** a role for every person and device (viewer, member, doors, admin), invitations by email, and each person's own language, theme, favorites and hidden rooms. A new device joins with a code from a device you already use.
+- **The family:** admins and members, with the rooms, kinds of devices and scenes each member may use, invitations by email, and each person's own language, theme, favorites and hidden rooms. A new device joins with a code from a device you already use.
 - **For the installer:** Composer shows what DirectorLink automates and what it ran last, one switch pauses every schedule, and DirectorLink's settings stay in Composer.
 - **An API:** a REST API described by OpenAPI 3.1, with a key and a role for every app or script, and the API console ([below](#api)).
 - **More drivers:** free, open-source [DirectorLink Drivers](https://directorlink.io/drivers) for other devices.
@@ -69,7 +69,7 @@ Good to know: a scene with a door or gate step can never have a link, and adding
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
-- One owner and invited family members, with a separate named API key and role (viewer, member, doors, admin) per browser, app or script
+- One owner and invited family members, with a separate named API key per browser, app or script; each person is an admin or a member, with the rooms, devices and scenes an admin chose (1.8.0), and every key of theirs has their permissions
 - Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots), KNX relays (doors and gates), DoorBird doorbells, Samsung refrigerators (through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, Power Cool, Power Freeze, Sabbath Mode and the ice maker), the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, docs/SONOS.md)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
@@ -119,7 +119,7 @@ A successful install shows:
 - **API Keys:** how many keys exist
 - **Door Control:** `Disabled` until you allow opening doors and gates from the app
 - **Relay Hold:** `Not allowed`, so doors and gates are only pulsed (a short press, like their Open button). `Allowed` also lets API clients hold any relay closed, which holds a door or gate open
-- **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows members and admins in the app (never viewers) whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
+- **Alarm Status:** `Off`, so DirectorLink does not watch the alarm. `On` shows admins, and members allowed to see it, in the app whether each partition of the alarm is armed, in alarm, has open zones or trouble. Read-only: DirectorLink never arms or disarms
 - **Remote Access** and **Remote Status**: reaching the home from anywhere with an account
 - **Schedules** (`On`, or `Paused` to stop every DirectorLink schedule), **Schedule Status** (what is on and what runs next) and **Last Automation** (the last scene DirectorLink ran, when and why); the action **Print Schedules and Scenes** lists them all in the Lua output
 - **Sonos:** `Off`, so DirectorLink looks for no Sonos speaker. `On` shows each Sonos room in the app, in the Control4 room of the same name, with play, pause, skip, volume and the Sonos favorites; **Sonos Address** (optional) names one player when the search finds none, and **Sonos Players** shows what was found ([`docs/SONOS.md`](docs/SONOS.md))
@@ -163,7 +163,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
 
 Resources: system, rooms, devices, lights, thermostats, fans, blinds, cameras, relays (doors and gates), doorbells, refrigerators, the alarm (read-only, sealed requests only), music (Sonos), scenes, schedules and the weather, the calendar (Shabbat and holiday times), profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
-A script's key travels in the clear on the home network (plain HTTP); give each script its own key with the least role it needs. The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
+A script's key travels in the clear on the home network (plain HTTP); give each script its own key, as a person of its own with only the rooms and kinds of devices it needs (`POST /v1/api-keys` with role `member` and `access`; [`api/README.md`](api/README.md)). The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
 
 ## Design principle
 

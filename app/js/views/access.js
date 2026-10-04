@@ -3,7 +3,8 @@
 // devices each uses, and those asking to join with an invitation made for another email, which
 // the owner approves or refuses (docs/ACCOUNTS.md, ADR-041). Devices and invitations come from the
 // controller; people and requests from the account service, which never sees the keys, only their
-// ids.
+// ids. With DirectorLink 1.8.0 (ADR-054) a role is a person's, admin or member, with what a member
+// may see and do (views/permissions.js); with an older controller, one of four per device.
 
 import { h } from "../dom.js";
 import { formatDateTime, formatRelative, formatUntil, t } from "../i18n.js";
@@ -12,7 +13,9 @@ import { decideJoinRequest, joinCodeText, listJoinRequests, listMembers, removeM
 import { linksMadeBy, linksSupported } from "../scene-links.js";
 import { api, errorText, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
+import { loadScenes } from "../scenes.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
+import { accessBody, accessSummary, copyAccess, peopleSupported, permissionsEditor } from "./permissions.js";
 
 const ROLES = ["viewer", "member", "doors", "admin"];
 const REFRESH_MS = 30000;
@@ -95,11 +98,115 @@ async function act(work, done) {
     await work();
     message = { kind: "success", text: done };
   } catch (error) {
-    message = { kind: "error", text: error?.code === "LAST_ADMIN" ? t("access.lastAdmin") : errorText(error) };
+    message = { kind: "error", text: problemText(error) };
   }
   // The screen may have been left and opened again meanwhile (resetAccess).
   ui.access = { ...(ui.access || {}), busy: false, message };
   await loadAccess();
+}
+
+// The controller's refusals about people (ADR-054), in the app's words.
+function problemText(error) {
+  switch (error?.code) {
+    case "LAST_ADMIN":
+      return peopleSupported() ? t("access.lastAdminPerson") : t("access.lastAdmin");
+    case "OWNER_PROTECTED":
+      return t("access.ownerProtected");
+    case "OWNER_STAYS_ADMIN":
+      return t("access.ownerStaysAdmin");
+    default:
+      return errorText(error);
+  }
+}
+
+// ---- people (1.8.0) ------------------------------------------------------------------------
+
+// Opens a person's role and permissions to change (the scenes are needed to choose some).
+function editPerson(profile) {
+  ui.access = { ...ui.access, editing: { id: profile.id, draft: copyAccess(profile.access) }, message: null };
+  if (state.scenes === null) loadScenes();
+  notify();
+}
+
+function stopEditing() {
+  ui.access = { ...ui.access, editing: null };
+  notify();
+}
+
+// Saves what the editor holds; making an admin a member, or a member an admin, is asked first.
+function savePerson(profile) {
+  const draft = ui.access.editing?.draft;
+  if (!draft || ui.access.busy) return;
+  const wasAdmin = profile.access?.role === "admin";
+  if (wasAdmin && draft.role === "member" && !window.confirm(t("access.makeMemberConfirm", { name: profile.name }))) return;
+  if (!wasAdmin && draft.role === "admin" && !window.confirm(t("access.makeAdminConfirm", { name: profile.name }))) return;
+  act(async () => {
+    await api(`/v1/profiles/${profile.id}/access`, { method: "PATCH", body: accessBody(draft) });
+    ui.access = { ...ui.access, editing: null };
+  }, t("access.personSaved", { name: profile.name }));
+}
+
+// One person: their role, what a member may do, their devices; Edit opens the editor below.
+function personRow(profile, devices) {
+  const access = profile.access || {};
+  const editing = ui.access.editing?.id === profile.id ? ui.access.editing : null;
+  const theirs = devices.filter((device) => device.profile_id === profile.id);
+  const mine = theirs.some((device) => device.current);
+  const busy = Boolean(ui.access.busy);
+  return h(
+    "li",
+    { class: "access-item access-person-item", dataset: { key: `access-profile-${profile.id}` } },
+    h(
+      "div",
+      { class: "access-main" },
+      h(
+        "span",
+        { class: "access-name", dir: "auto" },
+        profile.name,
+        access.owner ? h("span", { class: "access-badge" }, t("access.owner")) : null,
+        mine ? h("span", { class: "access-badge" }, t("access.you")) : null
+      ),
+      h("span", { class: "access-sub", dataset: { key: `access-profile-role-${profile.id}` } }, access.role === "admin" ? roleLabel("admin") : `${roleLabel("member")} · ${accessSummary(access)}`),
+      h("span", { class: "access-sub", dir: "auto" }, theirs.length ? theirs.map((device) => device.name).join(", ") : t("access.noDevices"))
+    ),
+    h(
+      "div",
+      { class: "access-actions" },
+      access.owner
+        ? null
+        : h(
+            "button",
+            {
+              type: "button",
+              class: "button button-small button-secondary",
+              disabled: busy,
+              "aria-expanded": String(Boolean(editing)),
+              "aria-label": t("access.editFor", { name: profile.name }),
+              dataset: { key: `access-edit-${profile.id}` },
+              onclick: () => (editing ? stopEditing() : editPerson(profile)),
+            },
+            editing ? t("common.cancel") : t("access.edit")
+          ),
+      h(
+        "button",
+        { type: "button", class: "button button-small button-quiet", "aria-label": t("access.renameFor", { name: profile.name }), dataset: { key: `access-rename-profile-${profile.id}` }, onclick: () => renamePerson(profile) },
+        t("access.rename")
+      )
+    ),
+    editing
+      ? h(
+          "div",
+          { class: "perm-editor", dataset: { key: `access-editor-${profile.id}` } },
+          permissionsEditor(editing.draft, { prefix: `perm-${profile.id}`, changed: notify }),
+          h(
+            "div",
+            { class: "button-row" },
+            h("button", { type: "button", class: "button button-primary", disabled: busy, dataset: { key: `access-save-${profile.id}` }, onclick: () => savePerson(profile) }, t("access.save")),
+            h("button", { type: "button", class: "button button-quiet", onclick: stopEditing }, t("common.cancel"))
+          )
+        )
+      : null
+  );
 }
 
 // " The 2 scene links made on it stop working too." after a question, when keys that made scene
@@ -127,9 +234,11 @@ function changeRole(device, role, select) {
   act(() => api(`/v1/api-keys/${device.id}`, { method: "PATCH", body: { role } }), t("access.roleChanged", { name: device.name, role: roleLabel(role) }));
 }
 
-// Moves a device to another person's profile: it then shares their language and favorites.
+// Moves a device to another person's profile: it then shares their language and favorites (and,
+// with 1.8.0, has their access).
 function movePerson(device, profile, select) {
-  if (ui.access.busy || !window.confirm(t("access.moveConfirm", { device: device.name, person: profile.name }))) {
+  const question = peopleSupported() ? "access.moveConfirmAccess" : "access.moveConfirm";
+  if (ui.access.busy || !window.confirm(t(question, { device: device.name, person: profile.name }))) {
     select.value = device.profile_id || "";
     return;
   }
@@ -243,7 +352,7 @@ function section(id, title, help, content) {
   return h(
     "section",
     { class: "card settings-card", id: `access-${id}`, "aria-labelledby": `access-${id}-title` },
-    h("h2", { class: "settings-title", id: `access-${id}-title` }, icon(id === "people" || id === "requests" ? "user" : id === "devices" ? "key" : "plus"), title),
+    h("h2", { class: "settings-title", id: `access-${id}-title` }, icon(id === "people" || id === "persons" || id === "requests" ? "user" : id === "devices" ? "key" : "plus"), title),
     help ? h("p", { class: "field-help" }, help) : null,
     content
   );
@@ -288,16 +397,17 @@ function personPicker(device, profiles) {
 }
 
 // `owners`: key id → the accounts that use it, or null when this view cannot know (not the owner).
+// With 1.8.0 a device has its person's role (set under People), so it has no role of its own.
 function deviceRow(device, owners, profiles) {
   const busy = Boolean(ui.access.busy);
   const users = owners ? owners.get(device.id) || [] : null;
   const account = users === null ? null : users.length ? users.map((person) => person.name || person.email).join(", ") : t("access.noAccount");
-  const role = h(
+  const role = peopleSupported() ? null : h(
     "select",
     { class: "access-role", "aria-label": t("access.roleFor", { name: device.name }), disabled: device.current, dataset: { key: `access-role-${device.id}` } },
     ...ROLES.map((value) => h("option", { value, selected: value === device.role }, roleLabel(value)))
   );
-  role.addEventListener("change", () => changeRole(device, role.value, role));
+  role?.addEventListener("change", () => changeRole(device, role.value, role));
   return h(
     "li",
     { class: "access-item", dataset: { key: `access-device-${device.id}` } },
@@ -323,7 +433,7 @@ function deviceRow(device, owners, profiles) {
   );
 }
 
-function personRow(person, devices) {
+function accountRow(person, devices) {
   const name = person.name || person.email;
   const names = person.key_ids.map((id) => devices.find((device) => device.id === id)?.name).filter(Boolean);
   return h(
@@ -351,7 +461,12 @@ function personRow(person, devices) {
 
 function invitationRow(invitation, devices) {
   const maker = devices.find((device) => device.id === invitation.created_by)?.name;
-  const role = roleLabel(invitation.role);
+  // With 1.8.0, the person it makes: an admin, or a member and what they may do.
+  const role = invitation.access
+    ? invitation.access.role === "admin"
+      ? roleLabel("admin")
+      : `${roleLabel("member")} · ${accessSummary(invitation.access)}`
+    : roleLabel(invitation.role);
   return h(
     "li",
     { class: "access-item", dataset: { key: `access-invitation-${invitation.id}` } },
@@ -413,8 +528,12 @@ export function accessView() {
       requests.length
         ? section("requests", t("access.requests"), t("access.requestsHelp"), h("ul", { class: "access-list" }, requests.map((request) => requestRow(request, invitations, devices))))
         : problemNote(access.requests),
+      // The controller's people, their roles and permissions (1.8.0, ADR-054).
+      peopleSupported() && Array.isArray(access.profiles)
+        ? section("persons", t("access.persons"), t("access.personsHelp"), h("ul", { class: "access-list" }, access.profiles.map((profile) => personRow(profile, devices))))
+        : null,
       people
-        ? section("people", t("access.people"), t("access.peopleHelp"), h("ul", { class: "access-list" }, people.map((person) => personRow(person, devices))))
+        ? section("people", peopleSupported() ? t("access.accounts") : t("access.people"), t("access.peopleHelp"), h("ul", { class: "access-list" }, people.map((person) => accountRow(person, devices))))
         : access.home && state.account.status === "signed-in"
           ? problemNote(access.people) || h("p", { class: "field-help" }, t("access.ownerOnly"))
           : null,

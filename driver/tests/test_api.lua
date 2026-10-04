@@ -713,19 +713,21 @@ function tests.roles_limit_what_a_key_can_do()
         return T.http(mock, method, path, { key = key, body = body }).status
     end
 
-    -- viewer: read only
+    -- viewer (1.8.0, ADR-054: a member with no rooms, cameras only): nothing to see until an admin
+    -- gives them rooms; a light is, for them, one that does not exist
     T.eq(status("GET", "/v1/lights", viewer), 200)
-    T.eq(status("GET", "/v1/cameras/60/snapshot", viewer), 200)
-    local forbidden = T.http(mock, "PATCH", "/v1/lights/21", { key = viewer, body = { on = true } })
-    T.eq(forbidden.status, 403)
-    T.eq(forbidden.json.code, "FORBIDDEN")
-    T.eq(forbidden.json.role, "viewer")
-    T.eq(forbidden.json.required_role, "member")
+    T.eq(#T.http(mock, "GET", "/v1/lights", { key = viewer }).json.items, 0)
+    T.eq(status("GET", "/v1/cameras/60/snapshot", viewer), 404)
+    T.eq(status("PATCH", "/v1/lights/21", viewer, { on = true }), 404)
     -- member: control, no doors, no admin
     T.eq(status("PATCH", "/v1/lights/21", member, { on = true }), 202)
     T.eq(status("POST", "/v1/blinds/50/stop", member), 202)
     T.eq(status("POST", "/v1/relays/70/pulse", member), 403)
-    T.eq(status("GET", "/v1/api-keys", member), 403)
+    local forbidden = T.http(mock, "GET", "/v1/api-keys", { key = member })
+    T.eq(forbidden.status, 403)
+    T.eq(forbidden.json.code, "FORBIDDEN")
+    T.eq(forbidden.json.role, "member")
+    T.eq(forbidden.json.required_role, "admin")
     T.eq(status("GET", "/v1/logs", member), 403)
     T.eq(status("PATCH", "/v1/rooms/10", member, { names = { en = "x" } }), 403)
     -- doors: can open doors, still no admin
@@ -842,18 +844,20 @@ function tests.admins_change_roles_but_keep_one_admin()
     T.eq(renamed.json.name, "Kitchen tablet")
     T.eq(renamed.json.role, "doors")
 
+    -- The first admin is the home's owner (ADR-054), always an admin.
     local last = T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } })
     T.eq(last.status, 409)
-    T.eq(last.json.code, "LAST_ADMIN")
+    T.eq(last.json.code, "OWNER_STAYS_ADMIN")
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "owner" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = {} }).json.code, "INVALID_REQUEST")
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/deadbeef", { key = admin, body = { role = "viewer" } }).status, 404)
     T.eq(T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "x", role = "root" } }).json.code, "INVALID_FIELD")
     T.eq(T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "default role" } }).json.role, "member")
 
-    -- With a second admin the first may step down.
+    -- A second admin may be made a member again; the owner stays an admin.
     T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "admin" } })
-    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } }).json.role, "member")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "member" } }).json.role, "member")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. adminId, { key = admin, body = { role = "member" } }).json.code, "OWNER_STAYS_ADMIN")
 end
 
 function tests.keys_in_the_old_encrypted_store_are_moved_to_hashes()
@@ -960,7 +964,7 @@ function tests.opening_presses_the_doorbird_button()
     Properties["Door Control"] = "Enabled"
 
     local member = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Phone", role = "member" } }).json.key
-    T.eq(T.http(mock, "POST", "/v1/doorbells/93/open", { key = member }).json.required_role, "doors")
+    T.eq(T.http(mock, "POST", "/v1/doorbells/93/open", { key = member }).json.code, "FORBIDDEN", "not given doors and gates")
 
     local before = #mock.commands
     local opened = T.http(mock, "POST", "/v1/doorbells/93/open", { key = admin })

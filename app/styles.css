@@ -653,6 +653,59 @@ img {
   font-weight: 600;
 }
 
+/* A person's role and permissions (views/permissions.js, 1.8.0): under their row in People, and in
+   Invite someone. */
+.perm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.perm-roles,
+.perm-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.perm-role {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.perm-role.is-active {
+  border-color: var(--primary);
+}
+
+.perm-role input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.perm-toggle {
+  display: flex;
+  gap: 12px;
+}
+
+.room-members {
+  flex: none;
+}
+
 .access-person {
   display: flex;
   flex-wrap: wrap;

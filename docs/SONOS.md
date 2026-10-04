@@ -41,8 +41,9 @@ surrounds and sub, is one room. A Boost or a Bridge is no room.
 - **On a room's screen**, a Music card for each Sonos room there: the album art, what plays (title,
   artist and album; for the radio, the station and what it plays now; for Spotify Connect or
   AirPlay, the app), whether it plays, and the other rooms of its group.
-- **Members and admins** play and pause, skip to the next or previous track, set the volume and
-  mute, and start a Sonos favorite. **Viewers** see what plays and the volume.
+- **Admins, and members given Music** (1.8.0, ADR-054) play and pause, skip to the next or
+  previous track, set the volume and mute, and start a Sonos favorite, in the rooms they see. A
+  member without Music does not see the Sonos rooms at all.
 - **On Home**, "Music playing" lists each group that plays, with a pause button.
 - **Groups** are shown as Sonos has them: play, pause and skip on any room of a group act on the
   whole group (its coordinator). The volume and mute are each room's own. DirectorLink does not
@@ -60,7 +61,7 @@ A scene step can pause or stop the music in a room, or in the whole home ("Good 
 A group pauses as one: if the room is grouped with others, they pause too. Each group is first
 asked what it does: one that is already paused or stopped is left as it is, so a paused queue keeps
 its place in the track and a paused Spotify Connect session is not ended. A radio station, which
-Sonos cannot pause, stops. Scheduled scenes run music steps like any other (as a member's key).
+Sonos cannot pause, stops. Scheduled scenes run music steps like any other (as DirectorLink itself).
 
 Each group handled counts as ran in the run's report. A step that finds nothing is skipped and says
 why, as a problem with `device_id` 0: `SONOS_OFF` (Sonos is off in Composer), `NO_PLAYERS` (no
@@ -121,8 +122,9 @@ through Sonos's cloud, which DirectorLink does not use.)
 `GET /v1/music` (every Sonos room, or `?room_id=` those shown in a room), `GET /v1/music/{id}`,
 `POST /v1/music/{id}/play|pause|next|previous`, `PATCH /v1/music/{id}` (`volume`, `muted`),
 `GET /v1/music/{id}/favorites`, `POST /v1/music/{id}/favorites/{favoriteId}/play`,
-`GET /v1/music/{id}/art`, and for admins `PUT /v1/music/{id}/room`. Viewers read; members and
-admins control. See [`api/README.md`](../api/README.md) and `api/openapi.yaml`.
+`GET /v1/music/{id}/art`, and for admins `PUT /v1/music/{id}/room`. Admins, and members given
+music, read and control the Sonos rooms in the rooms they see; to others a Sonos room answers `404`
+like one that does not exist. See [`api/README.md`](../api/README.md) and `api/openapi.yaml`.
 
 ## Limits
 

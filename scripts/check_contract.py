@@ -622,50 +622,75 @@ def scenario(client, bridge):
     client.check("PATCH", f"/v1/api-keys/{created['id']}", 400, body={"role": "owner"})
     client.check("PATCH", "/v1/api-keys/deadbeef", 404, body={"role": "viewer"})
     me = client.check("GET", "/v1/api-keys/current", 200)
+    if me.get("access", {}).get("role") != "admin" or me["access"].get("owner") is not True:
+        fail(f"the first admin is the home's owner (ADR-054): {me}")
     client.check("PATCH", f"/v1/api-keys/{me['id']}", 409, body={"role": "member"})
+    # Admins and members, per person (1.8.0, ADR-054). A viewer of 1.7.0 is a member with no rooms
+    # and cameras only: what they may not see answers as what does not exist.
+    person = created["profile_id"]
+    access = client.check("GET", f"/v1/profiles/{person}/access", 200)
+    if (access["role"], access["all_rooms"], access["rooms"], access["cameras"], access["alarm"]) != ("member", False, [], True, False):
+        fail(f"a viewer of 1.7.0 should be a member with no rooms and cameras only: {access}")
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={"rooms": [999999]})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={"kinds": {"heater": True}})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 200, body={"scenes": []})
+    client.check("PATCH", f"/v1/profiles/{me['profile_id']}/access", 409, body={"role": "member"})
+    client.check("PATCH", "/v1/profiles/00000000/access", 404, body={"doors": True})
+    if not any(item.get("access", {}).get("owner") for item in client.check("GET", "/v1/profiles", 200)["items"]):
+        fail("GET /v1/profiles should say who the owner is")
+    if client.check("PATCH", "/v1/rooms/10", 200, body={"hidden_from_members": True})["hidden_from_members"] is not True:
+        fail("an admin hides a room from members")
+    client.check("PATCH", "/v1/rooms/10", 200, body={"hidden_from_members": False})
+    if client.check("GET", "/v1/system", 200)["features"].get("people_permissions") is not True:
+        fail("GET /v1/system should say features.people_permissions")
     admin_key, client.key = client.key, created["key"]
-    client.check("GET", "/v1/lights", 200)
-    client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
+    if client.check("GET", "/v1/lights", 200)["items"]:
+        fail("a member with no rooms sees no light")
+    client.check("PATCH", "/v1/lights/20", 404, body={"on": True})
     client.check("GET", "/v1/fans", 200)
-    client.check("PATCH", "/v1/fans/41", 403, body={"on": False})
-    client.check("GET", "/v1/refrigerators/141", 200)
-    client.check("PATCH", "/v1/refrigerators/141", 403, body={"sabbath_mode": False})
-    client.check("POST", "/v1/relays/70/pulse", 403)
+    client.check("PATCH", "/v1/fans/41", 404, body={"on": False})
+    client.check("GET", "/v1/refrigerators/141", 404)
+    client.check("PATCH", "/v1/refrigerators/141", 404, body={"sabbath_mode": False})
+    client.check("POST", "/v1/relays/70/pulse", 404)
     if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
-        fail("a viewer key must not read the alarm")
-    # Viewers read what plays; members control it, admins place it.
+        fail("a member not given the alarm must not read it")
+    # Music, a kind a member is given in their rooms; placing a Sonos room is the admins'.
     client.check("GET", "/v1/music", 200)
-    client.check("GET", f"/v1/music/{KITCHEN}/favorites", 200)
-    client.check("POST", f"/v1/music/{KITCHEN}/pause", 403)
-    client.check("PATCH", f"/v1/music/{KITCHEN}", 403, body={"volume": 5})
-    client.check("POST", f"/v1/music/{KITCHEN}/favorites/10/play", 403)
+    client.check("GET", f"/v1/music/{KITCHEN}/favorites", 404)
+    client.check("POST", f"/v1/music/{KITCHEN}/pause", 404)
+    client.check("PATCH", f"/v1/music/{KITCHEN}", 404, body={"volume": 5})
+    client.check("POST", f"/v1/music/{KITCHEN}/favorites/10/play", 404)
     client.check("PUT", f"/v1/music/{KITCHEN}/room", 403, body={"room_id": 10})
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
+    client.check("GET", f"/v1/profiles/{person}/access", 403)
     client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
+    client.check("PATCH", "/v1/rooms/10", 403, body={"hidden_from_members": True})
     client.check("GET", "/v1/profile", 200)
-    client.check("GET", "/v1/scenes", 200)
-    client.check("POST", f"/v1/scenes/{scene['id']}/run", 403)
+    if client.check("GET", "/v1/scenes", 200)["items"]:
+        fail("a member lists only the scenes chosen for them")
+    client.check("POST", f"/v1/scenes/{scene['id']}/run", 404)
     client.check("POST", "/v1/scenes", 403, body={"name": "Mine"})
     client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
     client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
-    client.check("POST", "/v1/off", 403, body={"type": "lights", "device_ids": [20]})
-    client.check("GET", "/v1/schedules", 200)
+    client.check("POST", "/v1/off", 400, body={"type": "lights", "device_ids": [20]})
+    client.check("GET", "/v1/schedules", 403)
     client.check("GET", "/v1/weather", 200)
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
     client.check("GET", "/v1/calendar", 200)
     client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
-    # Each key its own alert choices (1.7.0, ADR-050): a viewer may get doorbells only.
+    # Each key its own alert choices (1.7.0, ADR-050): among what its person may get (ADR-054).
     choices = client.check("GET", "/v1/alerts/choices", 200)
-    if choices != {"on": False, "kinds": {"doorbell": True}}:
-        fail(f"a viewer's alert choices should be off, with the doorbell only: {choices}")
+    if choices != {"on": False, "kinds": {}}:
+        fail(f"a member with no rooms has no alert to choose: {choices}")
     choices = client.check("PUT", "/v1/alerts/choices", 200, body={"on": True, "kinds": {"door_opened": True}})
-    if choices != {"on": True, "kinds": {"doorbell": True}}:
-        fail(f"a viewer cannot choose the doors opened: {choices}")
+    if choices != {"on": True, "kinds": {}}:
+        fail(f"a member cannot choose the doors opened: {choices}")
     client.check("PUT", "/v1/alerts/choices", 400, body={"kinds": {"lights": True}})
     client.check("PUT", "/v1/alerts/choices", 400, body={})
     client.check("DELETE", "/v1/api-keys/current", 204)

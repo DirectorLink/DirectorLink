@@ -457,11 +457,13 @@ function mine(item) {
 // person). The controller registers it itself (1.0.0 and later); for an older one the home's owner
 // does, from here. One the account did not take is revoked at home too. Settings' Add my other
 // device and Invite someone, and Approve here.
-export async function makeInvitation({ forSelf, email, role }) {
+export async function makeInvitation({ forSelf, email, role, access }) {
   // Just under 7 days: the account refuses invitations longer than that.
   // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
   const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
   if (forSelf && state.profile) body.for_me = true;
+  // What the invited member may see and do (1.8.0, ADR-054).
+  if (access) body.access = access;
   let invitation = null;
   try {
     try {

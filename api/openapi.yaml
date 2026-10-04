@@ -17,12 +17,22 @@ info:
     that is valid for 15 minutes and works once (`POST /v1/auth/pair`). An admin key then creates
     more keys under `/v1/api-keys`.
 
-    **Roles.** Every API key has a role, and each role can do everything the ones before it
-    can: `viewer` reads everything (including camera pictures) but the alarm, `member` also controls
-    lights, thermostats, fans, blinds, refrigerators and music, runs scenes and reads the alarm's status, `doors` also opens doors and gates, `admin` also
-    manages API keys, rooms (and the room of a Sonos room), scenes, schedules, the calendar's settings, invitations, profiles, remote access and the log. Each operation lists the least role it needs as `x-directorlink-role`;
-    a key without it gets `403 FORBIDDEN`. Opening doors also needs the **Door Control**
-    property of DirectorLink in Composer set to Enabled.
+    **Admins and members (since 1.8.0, ADR-054).** Every API key belongs to a person (a profile), and
+    has that person's permissions. A person is an `admin` or a `member`. Admins do everything: they
+    manage people and their keys, invitations, rooms (and the room of a Sonos room), scenes,
+    schedules, the calendar's settings, backups, remote access, the history and the log. For each
+    member an admin chooses the rooms they see (all, or a list; never a room hidden from members),
+    the kinds of devices they use there (lights, climate, fans, blinds, music, refrigerators, each on
+    or off), whether they see cameras, open doors and gates, and see the alarm's status, and the
+    scenes they may run (`/v1/profiles/{profileId}/access`). Operations with `x-directorlink-role:
+    admin` are for admins (`403 FORBIDDEN` otherwise); on `member` operations every person may ask,
+    and the answer holds what they may see: a device, room or scene a member may not see answers
+    `404` as one that does not exist does, and lists leave it out. A door or gate a member sees but
+    may not open answers `403 FORBIDDEN`. Opening doors also needs the **Door Control** property of
+    DirectorLink in Composer set to Enabled. `GET /v1/api-keys/current` says what the caller may do
+    (`access`). A key keeps `role`, the role DirectorLink 1.7.0 had (`viewer`, `member`, `doors`,
+    `admin`), worked out from its person; requests that set a 1.7.0 role set the person's role and
+    permissions as that role became in 1.8.0.
 
     **Changing state.** Send a device's desired state with `PATCH`. The bridge answers
     `202 Accepted` once the command has been handed to the controller. The returned object holds the last state the
@@ -60,7 +70,7 @@ tags:
   - name: Auth
     description: Pairing and API keys.
   - name: Profiles
-    description: Each person's preferences (language, theme, palette, favorites), shared by their devices. Every API key belongs to one profile.
+    description: Each person's preferences (language, theme, palette, favorites), shared by their devices, and (since 1.8.0) their role and permissions. Every API key belongs to one profile.
   - name: Rooms
     description: Rooms of the Control4 project.
   - name: Schedules
@@ -100,7 +110,7 @@ tags:
   - name: Alarm
     description: |
       Whether the home's alarm is armed, read-only (ADR-038). Off until an installer turns on
-      **Alarm Status** in Composer; then for members and admins, in sealed requests only. Nothing
+      **Alarm Status** in Composer; then for admins and the members given it, in sealed requests only. Nothing
       in this API arms or disarms.
   - name: Music
     description: |
@@ -169,7 +179,7 @@ paths:
     get:
       tags: [System]
       operationId: getSystem
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get bridge, controller and project information
       responses:
         "200":
@@ -340,6 +350,11 @@ paths:
       operationId: createApiKey
       x-directorlink-role: admin
       summary: Create an API key
+      description: |
+        A key for a new person, an admin or a member with `access` (since 1.8.0), or with
+        `profile_id` another device of a person, which has that person's permissions. The roles of
+        DirectorLink 1.7.0 still work: `viewer`, `member` without `access` and `doors` make the person
+        that role became in 1.8.0 (ADR-054).
       requestBody:
         required: true
         content:
@@ -368,9 +383,11 @@ paths:
     get:
       tags: [Auth]
       operationId: getCurrentApiKey
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: The API key used for this request
-      description: Lets an app learn its own role to show only what it may use. The secret is not returned.
+      description: |
+        Lets an app learn what its person may do (`access`, since 1.8.0) to show only that. The
+        secret is not returned.
       responses:
         "200":
           description: This key.
@@ -383,7 +400,7 @@ paths:
     delete:
       tags: [Auth]
       operationId: revokeCurrentApiKey
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Revoke the API key used for this request
       description: Lets any client forget itself, whatever its role; later requests with the key get 401.
       responses:
@@ -399,8 +416,15 @@ paths:
       tags: [Auth]
       operationId: updateApiKey
       x-directorlink-role: admin
-      summary: Rename an API key or change its role
-      description: The last admin key cannot lose its admin role (`409 LAST_ADMIN`).
+      summary: Rename an API key, move it to another person, or set a 1.7.0 role
+      description: |
+        A key has its person's permissions (ADR-054): `profile_id` moves it to another person, and
+        it then has theirs. `role`, as DirectorLink 1.7.0 clients send it, changes the key's person
+        (all of their devices) into what that role became in 1.8.0, unless the key has that role
+        already. The home's owner's devices are only theirs to move (`403 OWNER_PROTECTED`), the
+        owner stays an admin (`409 OWNER_STAYS_ADMIN`), and there is always an admin
+        (`409 LAST_ADMIN`). Use `PATCH /v1/profiles/{profileId}/access` to set a person's role and
+        permissions.
       requestBody:
         required: true
         content:
@@ -431,7 +455,10 @@ paths:
       operationId: deleteApiKey
       x-directorlink-role: admin
       summary: Revoke an API key
-      description: Revoking the key used for this request is allowed; later requests with it get 401.
+      description: |
+        Revoking the key used for this request is allowed; later requests with it get 401. The home's
+        owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke
+        (`403 OWNER_PROTECTED`).
       responses:
         "204":
           description: Revoked.
@@ -446,7 +473,7 @@ paths:
     get:
       tags: [Remote]
       operationId: getRemoteAccess
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Remote access status
       description: Whether Remote Access is switched on in Composer, connected, and able to seal requests, and this home's id while it is on.
       responses:
@@ -468,7 +495,9 @@ paths:
       description: |
         The app gives the token to the DirectorLink cloud, which checks it with this controller
         over remote access. It works once, for 5 minutes. Only from the home network: holding an
-        admin key here is what proves the home is yours.
+        admin key here is what proves the home is yours. Whoever claims it is the home's owner
+        (ADR-054); once a person has claimed it with DirectorLink 1.8.0, only they claim it again
+        (403 `OWNER_ONLY`), so that no other admin can take it from them.
       responses:
         "201":
           description: A new token (it replaces any earlier one).
@@ -539,7 +568,10 @@ paths:
       description: |
         The answer holds the invitation's secret, once. The app puts it after `#` in the link it
         shares, so it never reaches a server; the controller keeps only a key derived from it.
-        Whoever accepts gets their own API key with this role. Needs Remote Access switched on.
+        Whoever accepts gets their own API key, as a new person with this role and, for a member,
+        the permissions in `access` (since 1.8.0, ADR-054); `for_me` keys join the admin's own
+        person. The roles of DirectorLink 1.7.0 still work (`viewer`, `member` without `access`,
+        `doors`): the person is then what that role became in 1.8.0. Needs Remote Access switched on.
         With `email`, the controller registers the invitation with the account service first; if
         that fails (`REMOTE_OFFLINE`, or the service's own code with 502) the invitation is
         revoked, since its link could not work.
@@ -593,9 +625,11 @@ paths:
     get:
       tags: [Profiles]
       operationId: getProfile
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: The caller's profile
-      description: The preferences of the person this API key belongs to, shared by all their devices.
+      description: |
+        The preferences of the person this API key belongs to, shared by all their devices, and
+        (since 1.8.0) what they may do (`access`).
       responses:
         "200":
           description: The profile.
@@ -610,7 +644,7 @@ paths:
     patch:
       tags: [Profiles]
       operationId: updateProfile
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Change the caller's preferences
       description: |
         Changes the named preferences; `null` clears one, others keep their values. With `version`,
@@ -647,7 +681,9 @@ paths:
       operationId: listProfiles
       x-directorlink-role: admin
       summary: List profiles
-      description: Every profile with the ids of the API keys that belong to it.
+      description: |
+        Every profile (person) with the ids of the API keys that belong to it, and (since 1.8.0) its
+        role and permissions (`access`).
       responses:
         "200":
           description: The profiles.
@@ -690,15 +726,87 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /v1/profiles/{profileId}/access:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    get:
+      tags: [Profiles]
+      operationId: getPersonAccess
+      x-directorlink-role: admin
+      summary: A person's role and permissions
+      description: Admin or member, and what a member may see and do (since 1.8.0, ADR-054).
+      responses:
+        "200":
+          description: The person's role and permissions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Profiles]
+      operationId: updatePersonAccess
+      x-directorlink-role: admin
+      summary: Set a person's role and permissions
+      description: |
+        Any of the fields; the others keep their values. Every key of the person follows at once,
+        at home and away. Rooms must be the home's and scenes its scenes. Only the home's owner
+        changes the owner's (`403 OWNER_PROTECTED`), and the owner stays an admin
+        (`409 OWNER_STAYS_ADMIN`); there is always an admin (`409 LAST_ADMIN`). A person no longer an
+        admin keeps no invitation their devices made.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonAccessUpdate"
+            example:
+              role: member
+              all_rooms: false
+              rooms: [10, 12]
+              kinds:
+                music: false
+              doors: false
+              scenes: ["a1b2c3d4"]
+      responses:
+        "200":
+          description: The person's role and permissions after the change.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonAccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/rooms:
     get:
       tags: [Rooms]
       operationId: listRooms
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List rooms
       responses:
         "200":
-          description: All rooms, in the home's order (PUT /v1/rooms/order); rooms a person hides are in their profile.
+          description: |
+            The rooms the caller sees, in the home's order (PUT /v1/rooms/order): every room for
+            admins, a member's own rooms without those hidden from members (ADR-054). Rooms a person
+            hides from their own lists are in their profile.
           content:
             application/json:
               schema:
@@ -742,7 +850,7 @@ paths:
     get:
       tags: [Rooms]
       operationId: getRoom
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a room
       responses:
         "200":
@@ -761,11 +869,13 @@ paths:
       tags: [Rooms]
       operationId: updateRoom
       x-directorlink-role: admin
-      summary: Name a room in other languages
+      summary: Name a room in other languages, or hide it from members
       description: |
         Sets the room's name per language (the Control4 name itself does not change). An empty
         string removes a language; languages not in the request keep their names. At most 10
-        languages per room. Hiding a room is personal: the profile's `hidden_rooms`.
+        languages per room. `hidden_from_members` (since 1.8.0, ADR-054) keeps every member from
+        seeing the room and its devices, whatever rooms they were given; admins still see it.
+        Hiding a room only from one's own lists is personal: the profile's `hidden_rooms`.
       requestBody:
         required: true
         content:
@@ -791,16 +901,18 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/scenes:
     get:
       tags: [Scenes]
       operationId: listScenes
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List scenes
       responses:
         "200":
-          description: The home's scenes, oldest first.
+          description: The home's scenes, oldest first; for a member only those they may run (ADR-054).
           content:
             application/json:
               schema:
@@ -887,7 +999,7 @@ paths:
     get:
       tags: [Scenes]
       operationId: getScene
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a scene
       responses:
         "200":
@@ -966,9 +1078,11 @@ paths:
       x-directorlink-role: member
       summary: Run a scene
       description: |
-        Sends every step's commands, in order, and says what happened to each device. Doors and
-        gates are pulsed only for keys with the `doors` role and while Door Control is on;
-        otherwise they are skipped (`FORBIDDEN`, `DOOR_CONTROL_DISABLED`) and the rest of the scene
+        Sends every step's commands, in order, and says what happened to each device. A member runs
+        only the scenes an admin chose for them (another answers 404), in full: even devices they
+        could not control themselves (ADR-054). Doors and gates are pulsed only while Door Control
+        is on (else skipped with `DOOR_CONTROL_DISABLED`; when DirectorLink runs a scene itself,
+        from a schedule or a link, always skipped with `FORBIDDEN`), and the rest of the scene
         still runs.
       responses:
         "202":
@@ -1113,7 +1227,8 @@ paths:
         all" on Home, which names the ones it shows on or open. Answers like running a scene: a
         device the controller refused is `failed`, a thermostat without an Off mode is `skipped`
         (`MODE_NOT_SUPPORTED`), and the rest still run. It never turns anything on, and doors and
-        gates are not among its types.
+        gates are not among its types. A member names only devices they may control (ADR-054): any
+        other is refused like one that does not exist (400).
       requestBody:
         required: true
         content:
@@ -1141,8 +1256,9 @@ paths:
     get:
       tags: [Schedules]
       operationId: listSchedules
-      x-directorlink-role: viewer
+      x-directorlink-role: admin
       summary: List schedules
+      description: Admins only since 1.8.0 (ADR-054); members never see schedules.
       responses:
         "200":
           description: The home's schedules, oldest first.
@@ -1152,6 +1268,8 @@ paths:
                 $ref: "#/components/schemas/ScheduleList"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
     post:
       tags: [Schedules]
       operationId: createSchedule
@@ -1203,7 +1321,7 @@ paths:
     get:
       tags: [Schedules]
       operationId: getSchedule
-      x-directorlink-role: viewer
+      x-directorlink-role: admin
       summary: Get a schedule
       responses:
         "200":
@@ -1216,6 +1334,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
     patch:
@@ -1278,7 +1398,7 @@ paths:
     get:
       tags: [Schedules]
       operationId: getWeather
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: The weather at home
       description: |
         Open-Meteo's current conditions and today's forecast for the project's location (Composer
@@ -1300,7 +1420,7 @@ paths:
     get:
       tags: [Calendar]
       operationId: getCalendar
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Shabbat and holiday times, the Hebrew date and the week's reading
       description: |
         Worked out on the controller from the project's location (Composer project properties);
@@ -1367,7 +1487,7 @@ paths:
     get:
       tags: [Devices]
       operationId: listDevices
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List devices
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1399,7 +1519,7 @@ paths:
     get:
       tags: [Devices]
       operationId: getDevice
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a device
       responses:
         "200":
@@ -1419,7 +1539,7 @@ paths:
     get:
       tags: [Lights]
       operationId: listLights
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List lights
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1441,7 +1561,7 @@ paths:
     get:
       tags: [Lights]
       operationId: getLight
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a light
       responses:
         "200":
@@ -1493,7 +1613,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: listThermostats
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List thermostats
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1515,7 +1635,7 @@ paths:
     get:
       tags: [Thermostats]
       operationId: getThermostat
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a thermostat
       responses:
         "200":
@@ -1577,7 +1697,7 @@ paths:
     get:
       tags: [Fans]
       operationId: listFans
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List fans
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1599,7 +1719,7 @@ paths:
     get:
       tags: [Fans]
       operationId: getFan
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a fan
       responses:
         "200":
@@ -1651,7 +1771,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: listBlinds
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List blinds
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1673,7 +1793,7 @@ paths:
     get:
       tags: [Blinds]
       operationId: getBlind
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a blind
       responses:
         "200":
@@ -1762,7 +1882,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: listCameras
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List cameras
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1784,7 +1904,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCamera
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a camera
       responses:
         "200":
@@ -1806,7 +1926,7 @@ paths:
     get:
       tags: [Cameras]
       operationId: getCameraSnapshot
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get the current picture
       description: |
         The bridge fetches the picture from the camera with the address and login stored in
@@ -1846,7 +1966,7 @@ paths:
     get:
       tags: [Relays]
       operationId: listRelays
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List relays
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1868,7 +1988,7 @@ paths:
     get:
       tags: [Relays]
       operationId: getRelay
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a relay
       responses:
         "200":
@@ -1886,14 +2006,15 @@ paths:
     patch:
       tags: [Relays]
       operationId: updateRelay
-      x-directorlink-role: doors
+      x-directorlink-role: member
       summary: Open or close a relay and leave it so
       description: |
         For a door or gate use `POST …/pulse` instead; this holds the relay in the new state.
         `{"state": "open"}` releases the relay. `{"state": "closed"}` holds it closed, which holds a
         door or gate open until the relay is opened. Since 1.1.1 that is refused with 409
         `HOLD_NOT_ALLOWED`, and nothing is sent, unless the **Relay Hold** property of DirectorLink
-        in Composer is set to Allowed (the default is Not allowed).
+        in Composer is set to Allowed (the default is Not allowed). Like a pulse, only for those who
+        open doors and gates (admins, members given them: else 403 `FORBIDDEN`, ADR-054).
       requestBody:
         required: true
         content:
@@ -1928,11 +2049,13 @@ paths:
     post:
       tags: [Relays]
       operationId: pulseRelay
-      x-directorlink-role: doors
+      x-directorlink-role: member
       summary: Pulse the relay (open a door or gate)
       description: |
         Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
         Garage Door Controllers trigger it. Every pulse is written to the log with the API key used.
+        For admins and the members given doors and gates (ADR-054); a member who sees the relay but
+        may not open it gets 403 `FORBIDDEN`. Needs **Door Control** = Enabled in Composer.
       responses:
         "202":
           description: Pulse started. The body is the last state the controller reported.
@@ -1957,7 +2080,7 @@ paths:
     get:
       tags: [Doorbells]
       operationId: listDoorbells
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List doorbells
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -1979,7 +2102,7 @@ paths:
     get:
       tags: [Doorbells]
       operationId: getDoorbell
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a doorbell
       description: Poll it (e.g. every 10 s) to notice rings; `events` lists the last 20 since the driver started.
       responses:
@@ -2002,12 +2125,13 @@ paths:
     post:
       tags: [Doorbells]
       operationId: openDoorbell
-      x-directorlink-role: doors
+      x-directorlink-role: member
       summary: Open the gate or door wired to the doorbell
       description: |
         Presses the DoorBird's button exactly as the Control4 app does; the button runs the action
         the installer chose (by default *Trigger Relay 1*). Needs **Door Control** = Enabled in
-        Composer. Every request is written to the log with the API key used.
+        Composer, and a person who opens doors and gates (ADR-054: else 403 `FORBIDDEN`). Every
+        request is written to the log with the API key used.
       responses:
         "202":
           description: Button pressed. The body is the doorbell as last reported.
@@ -2032,7 +2156,7 @@ paths:
     get:
       tags: [Refrigerators]
       operationId: listRefrigerators
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List refrigerators
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
@@ -2054,7 +2178,7 @@ paths:
     get:
       tags: [Refrigerators]
       operationId: getRefrigerator
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a refrigerator
       responses:
         "200":
@@ -2129,7 +2253,8 @@ paths:
         there are (their names and rooms), never on their state. For that the panel's words are cut,
         at a character, to 32 bytes (`state`, `armed_type`, `alarm_type`) and 100 (`trouble`), with
         control characters made spaces, and `open_zones` and the delay's seconds stop at 99999.
-        Viewers get 403 `FORBIDDEN`. Partitions the alarm does not use are left out. The property
+        A member not given the alarm's status gets 403 `FORBIDDEN` (ADR-054). Partitions the alarm
+        does not use are left out. The property
         is read at every request, and `GET /v1/system` says it in `features.alarm_status`.
       responses:
         "200":
@@ -2147,7 +2272,7 @@ paths:
     get:
       tags: [Music]
       operationId: listMusic
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List the Sonos rooms and what they play
       description: |
         Each Sonos room (a player Sonos shows as a room; a stereo pair or a home theater is one),
@@ -2182,7 +2307,7 @@ paths:
     get:
       tags: [Music]
       operationId: getMusicRoom
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get a Sonos room
       responses:
         "200":
@@ -2351,7 +2476,7 @@ paths:
     get:
       tags: [Music]
       operationId: listMusicFavorites
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: List the Sonos favorites
       description: |
         The household's Sonos favorites (My Sonos), in Sonos's order, read from this room's player
@@ -2420,7 +2545,7 @@ paths:
     get:
       tags: [Music]
       operationId: getMusicArt
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Get the album art of what plays
       description: |
         The picture the player has for what its group plays (album art, a station's logo),
@@ -2705,7 +2830,7 @@ paths:
     get:
       tags: [Alerts]
       operationId: getAlertChoices
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: This key's alert choices
       description: |
         Whether this key's device switched alerts on, and which of the kinds its role may get, of
@@ -2724,7 +2849,7 @@ paths:
     put:
       tags: [Alerts]
       operationId: setAlertChoices
-      x-directorlink-role: viewer
+      x-directorlink-role: member
       summary: Change this key's alert choices
       description: |
         `on` when its device switches alerts on or off (the app also registers the browser with the
@@ -3341,7 +3466,7 @@ components:
               description: "The Jewish Calendar property is On: `/v1/calendar`, `shabbat` schedule triggers and `during_shabbat`."
             alarm_status:
               type: boolean
-              description: The **Alarm Status** property is On; members and admins can read `GET /v1/alarm` in sealed requests.
+              description: The **Alarm Status** property is On; admins and the members given it can read `GET /v1/alarm` in sealed requests.
             backup:
               type: boolean
               description: "Always true since 1.4.0: admins can make and restore backups (`GET /v1/backup`, `POST /v1/restore`, ADR-042). Missing before 1.4.0, so clients show no backup."
@@ -3360,6 +3485,9 @@ components:
             refrigerators:
               type: boolean
               description: "Always true since 1.7.0: `/v1/refrigerators` and the `refrigerators` scene step (ADR-049). Missing before 1.7.0."
+            people_permissions:
+              type: boolean
+              description: "Always true since 1.8.0: admins and members set per person (`/v1/profiles/{profileId}/access`, `access` in `/v1/api-keys/current`), rooms hidden from members (ADR-054). Missing before 1.8.0, whose keys have one of four roles."
 
     PairRequest:
       oneOf:
@@ -3551,8 +3679,107 @@ components:
       type: string
       enum: [viewer, member, doors, admin]
       description: |
-        `viewer` reads everything; `member` also controls lights, thermostats and blinds; `doors`
-        also opens doors and gates; `admin` also manages API keys, room names and the log.
+        The role a key had in DirectorLink 1.7.0, worked out since 1.8.0 from its person (ADR-054):
+        `admin` for an admin; for a member `viewer` when they have no rooms, `doors` when they open
+        doors and gates, else `member`. Sent by a 1.7.0 client, it sets the person as that role
+        became: `admin` an admin; `doors` a member with every room, every kind, cameras, doors and
+        gates, the alarm's status and every scene; `member` the same without doors and gates (and
+        without the scenes that open them); `viewer` a member with no rooms and cameras only.
+
+    PersonRole:
+      type: string
+      enum: [admin, member]
+      description: Admins do everything; members what an admin gave them (ADR-054).
+
+    DeviceKinds:
+      type: object
+      additionalProperties: false
+      description: The kinds of devices a member uses in their rooms; off hides that kind from them.
+      properties:
+        light:
+          type: boolean
+          description: Lights (heaters wired as lights too).
+        climate:
+          type: boolean
+          description: Thermostats (AC and heating).
+        fan:
+          type: boolean
+        blind:
+          type: boolean
+        music:
+          type: boolean
+          description: Sonos rooms.
+        refrigerator:
+          type: boolean
+
+    PersonAccessUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        role:
+          $ref: "#/components/schemas/PersonRole"
+        all_rooms:
+          type: boolean
+          description: Sees every room (but those hidden from members); `rooms` is kept for when it is false.
+        rooms:
+          type: array
+          maxItems: 1000
+          items:
+            type: integer
+          description: The rooms a member sees when `all_rooms` is false.
+        kinds:
+          $ref: "#/components/schemas/DeviceKinds"
+        cameras:
+          type: boolean
+          description: Sees the cameras in their rooms, and the picture of a doorbell in their rooms.
+        doors:
+          type: boolean
+          description: Opens the doors and gates in their rooms (with Door Control on in Composer).
+        alarm:
+          type: boolean
+          description: Sees the alarm's status (with Alarm Status on in Composer).
+        scenes:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            pattern: "^[0-9a-f]{8}$"
+          description: The scenes a member may run, in full; they never edit scenes.
+
+    PersonAccess:
+      type: object
+      required: [role, owner, all_rooms, rooms, kinds, cameras, doors, alarm, scenes]
+      description: |
+        A person's role and permissions (ADR-054). For an admin, what they would have as a member;
+        for the caller's own (`GET /v1/api-keys/current`, `/v1/profile`) an admin's are all true and
+        `scenes` is empty (every scene is theirs), and a member's `rooms` leave out rooms hidden from
+        members.
+      properties:
+        role:
+          $ref: "#/components/schemas/PersonRole"
+        owner:
+          type: boolean
+          description: The home's owner (the person who claimed it for an account, else the oldest admin), always an admin.
+        all_rooms:
+          type: boolean
+        rooms:
+          type: array
+          items:
+            type: integer
+        kinds:
+          $ref: "#/components/schemas/DeviceKinds"
+        cameras:
+          type: boolean
+        doors:
+          type: boolean
+        alarm:
+          type: boolean
+        scenes:
+          type: array
+          items:
+            type: string
+            pattern: "^[0-9a-f]{8}$"
 
     ApiKeyUpdate:
       type: object
@@ -3577,7 +3804,10 @@ components:
       properties:
         role:
           $ref: "#/components/schemas/KeyRole"
-          description: Default `member`.
+          description: Default `member`. With `access`, `admin` or `member`.
+        access:
+          $ref: "#/components/schemas/PersonAccessUpdate"
+          description: A new member's permissions (since 1.8.0); not with `profile_id`.
         name:
           type: string
           minLength: 1
@@ -3616,6 +3846,9 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the key stops working (paired with `expires_in`, such as the API console's own key); null for never. Then it is refused with `KEY_EXPIRED` and removed.
+        access:
+          $ref: "#/components/schemas/PersonAccess"
+          description: "`GET /v1/api-keys/current` only (since 1.8.0): what the caller's person may do."
 
     NewApiKey:
       allOf:
@@ -3679,12 +3912,19 @@ components:
             - type: "null"
         device_count:
           type: integer
+          description: The devices in the room that the caller sees.
+        hidden_from_members:
+          type: boolean
+          description: Since 1.8.0 (ADR-054). Hidden from every member; only admins see such a room.
 
     RoomUpdate:
       type: object
-      required: [names]
+      minProperties: 1
       additionalProperties: false
       properties:
+        hidden_from_members:
+          type: boolean
+          description: Hides the room, and its devices, from every member (admins only see it).
         names:
           type: object
           description: Language → name (1–64 characters); an empty string removes that language.
@@ -4586,6 +4826,9 @@ components:
           description: Goes up with every change; send it back to detect changes made meanwhile.
         prefs:
           $ref: "#/components/schemas/ProfilePrefs"
+        access:
+          $ref: "#/components/schemas/PersonAccess"
+          description: Since 1.8.0 (ADR-054). In `/v1/profile` what the caller may do; in `/v1/profiles` each person's role and permissions.
 
     ProfileWithKeys:
       allOf:
@@ -5476,6 +5719,10 @@ components:
       properties:
         role:
           $ref: "#/components/schemas/KeyRole"
+          description: "`admin` or `member` (with `access`); the 1.7.0 roles make the person they became (ADR-054)."
+        access:
+          $ref: "#/components/schemas/PersonAccessUpdate"
+          description: The invited member's permissions (since 1.8.0); not with `for_me`.
         expires_in:
           type: integer
           minimum: 60
@@ -5514,6 +5761,9 @@ components:
         for_me:
           type: boolean
           description: Made with "Add my other device" (the key joins its creator's profile).
+        access:
+          $ref: "#/components/schemas/PersonAccess"
+          description: The person it makes (since 1.8.0); missing for `for_me`.
 
     NewInvitation:
       allOf:
@@ -5655,9 +5905,11 @@ components:
           1.7.0 also `pulse` and `doorbell` with `who` `control4`: a door or gate that the device
           reported opened without DirectorLink (ADR-050); and `left_open`: a refrigerator's door open
           longer than its driver's Door Open Alert, once per opening, `who` DirectorLink (ADR-049).
-        - `access`: `paired`, `created`, `role_changed` (`from`, `to`), `revoked`, `forgotten` (a
-          device removed its own key), `expired`, `joined` (an invitation accepted), `all_revoked`
-          (Composer's Revoke All API Keys; `count`). Scene links (1.7.0, ADR-051): `link_created`,
+        - `access`: `paired`, `created`, `role_changed` (`from`, `to`; since 1.8.0 a person's,
+          `admin` or `member`, `what` their name), `permissions_changed` (1.8.0: a member's
+          permissions), `room_hidden` and `room_shown` (1.8.0: a room hidden from members, or shown
+          to them again), `revoked`, `forgotten` (a device removed its own key), `expired`, `joined`
+          (an invitation accepted), `all_revoked` (Composer's Revoke All API Keys; `count`). Scene links (1.7.0, ADR-051): `link_created`,
           `link_replaced`, `link_removed` (`what` is the scene, `note` the link's label; `reason`
           `doors` when a change made the scene open doors or gates, `scene_gone` when the scene was
           deleted, `other_home` when it was made for another home connection, `key_gone` when the
@@ -5689,7 +5941,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, paired, created, role_changed, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:
@@ -6000,6 +6252,26 @@ components:
                         type: string
                       last_used_at:
                         type: string
+            people:
+              type: object
+              description: People's roles and permissions, the home's owner and the rooms hidden from members (1.8.0, ADR-054). Like the keys - the backup's only when its keys come back, their rooms matched to the project like scene steps; else the ones here. A backup without them (before 1.8.0) has its people worked out from their keys' roles after the restore.
+              required: [version, people, hidden_rooms]
+              properties:
+                version:
+                  type: integer
+                people:
+                  type: object
+                  description: Profile id to that person's role and permissions.
+                  additionalProperties:
+                    $ref: "#/components/schemas/PersonAccessUpdate"
+                owner:
+                  type: string
+                  pattern: "^[0-9a-f]{8}$"
+                  description: The profile that last claimed the home for an account.
+                hidden_rooms:
+                  type: array
+                  items:
+                    type: integer
 
     AutomaticBackupKey:
       type: object
@@ -6233,6 +6505,9 @@ components:
             scene_links:
               type: integer
               description: Scene links after the restore (1.7.0, ADR-051). Like the keys - the backup's only when its keys come back (keys.action restore; from a backup made before links, the ones here), else the ones here, so a link removed or replaced since the backup was made never comes back. Each only while its scene comes back without doors or gates, the home's identity in use is the one it was made for, and the key that made it is among the keys after the restore.
+            people:
+              type: integer
+              description: People with a role of their own after the restore (1.8.0, ADR-054); the others are worked out from their keys' roles afterwards.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).

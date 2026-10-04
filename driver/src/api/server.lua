@@ -8,7 +8,7 @@ local Router = require("src.api.router")
 local Routes = require("src.api.routes")
 local Problem = require("src.api.problem")
 local Response = require("src.api.response")
-local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
 local Random = require("src.core.random")
 
 local HANDLERS = {
@@ -77,7 +77,9 @@ end
 
 for _, route in ipairs(Routes) do
     assert(resolveHandler(route.handler), "missing API handler " .. route.handler)
-    assert(route.public or Roles.valid(route.role), "route needs a role: " .. route.method .. " " .. route.path)
+    -- Two roles (ADR-054): admin routes are for admins; on member routes every person may ask, and
+    -- the handler answers with what they may see and do (src/auth/access.lua).
+    assert(route.public or route.role == "member" or route.role == "admin", "route needs a role, member or admin: " .. route.method .. " " .. route.path)
 end
 
 -- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not. Only DirectorLink's
@@ -292,10 +294,11 @@ function Server.handleRequest(request, client, respond)
                         .. "(DirectorLink → Actions → New Pairing Code) and pair again.")
                 end
                 extraHeaders = { { "WWW-Authenticate", 'Bearer realm="DirectorLink"' } }
-            elseif not match.route.public and not Roles.allows(apiKey.role, match.route.role) then
+            elseif not match.route.public and match.route.role == "admin" and not Access.isAdmin(apiKey) then
                 status = 403
-                payload = Problem.new(403, "FORBIDDEN", "This API key has the " .. tostring(apiKey.role)
-                    .. " role; " .. match.route.method .. " " .. match.route.path .. " needs " .. match.route.role, {
+                payload = Problem.new(403, "FORBIDDEN", match.route.method .. " " .. match.route.path
+                    .. " is for the home's admins; this key's person is a member", {
+                    -- The 1.7.0 role the key keeps (ADR-054), as before.
                     role = apiKey.role,
                     required_role = match.route.role,
                 })

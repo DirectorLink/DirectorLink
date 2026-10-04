@@ -20,6 +20,9 @@ local Lock = require("src.cloud.lock")
 local Store = require("src.core.store")
 local Activity = require("src.core.activity")
 local SceneLinkHandlers = require("src.api.handlers.scene_links")
+local Access = require("src.auth.access")
+local People = require("src.auth.people")
+local Scenes = require("src.core.scenes")
 
 local Remote = {}
 
@@ -125,7 +128,7 @@ local function useClaim(token)
     end
     state.claim = nil
     local owner = type(claim.by) == "string" and state.services.keys.find(claim.by) or nil
-    return owner ~= nil and owner.role == "admin"
+    return owner ~= nil and Access.isAdmin(owner), owner
 end
 
 -- Saves an accepted request dated ahead of this controller's clock (see SEEN_KEY).
@@ -274,7 +277,7 @@ local function handleE2e(message, send)
     end
     state.services.keys.touch(keyId)
     local answered = false
-    run(request, { id = key.id, name = key.name, role = key.role, remote = true }, function(status, headers, body)
+    run(request, { id = key.id, name = key.name, role = key.role, profile = key.profile, remote = true }, function(status, headers, body)
         if answered then
             return
         end
@@ -305,7 +308,7 @@ function Remote.handleLocal(envelope, client, done)
     end
     state.services.keys.touch(keyId)
     local answered = false
-    run(request, { id = key.id, name = key.name, role = key.role, remote = false, sealed = true }, function(status, headers, body)
+    run(request, { id = key.id, name = key.name, role = key.role, profile = key.profile, remote = false, sealed = true }, function(status, headers, body)
         if answered then
             return
         end
@@ -347,19 +350,26 @@ local function handleJoin(message, send)
     if name == "" then
         name = "Invited device"
     end
-    -- The inviter's own other device joins the inviter's profile; anyone else gets a new one.
+    -- The inviter's own other device joins the inviter's profile, with its permissions; anyone else
+    -- is a new person, as the invitation says (ADR-054: its access, else what its 1.7.0 role became).
     local profiles = state.services.profiles
     local profile = profiles and invitation.profile and profiles.find(invitation.profile)
+    local person = nil
     if profiles and not profile then
         profile = profiles.create(name)
+        person = invitation.access or People.fromLegacy(invitation.role, Scenes.list())
     end
-    local record, failure = state.services.keys.create(name, invitation.role, profile and profile.id or nil)
+    local role = People.legacyRole(person or (profile and People.peek(profile.id))) or invitation.role
+    local record, failure = state.services.keys.create(name, role, profile and profile.id or nil)
     if not record and profiles then
         profiles.prune(state.services.keys.list())
     end
     if not record then
         send({ type = "join_result", id = message.id, ok = false, code = failure or "KEY_NOT_CREATED" })
         return
+    end
+    if person and profile then
+        People.set(profile.id, person)
     end
     state.services.invitations.consume(invitationId)
     if state.services.onKeysChanged then
@@ -373,7 +383,11 @@ local function handleJoin(message, send)
 end
 
 local function handleClaim(message, send)
-    local ok = useClaim(message.token)
+    local ok, owner = useClaim(message.token)
+    -- Whoever claimed it is the home's owner from now on (ADR-054), as the account service has it.
+    if ok and owner.profile then
+        People.setOwner(owner.profile)
+    end
     log(ok and "info" or "warn", ok and "the home was claimed for an account" or "refused a claim")
     send({ type = "claim_result", id = message.id, ok = ok, code = (not ok) and "INVALID_CLAIM" or nil })
 end

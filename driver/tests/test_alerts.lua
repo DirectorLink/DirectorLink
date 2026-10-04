@@ -150,7 +150,8 @@ function tests.each_key_chooses_its_own_alerts_among_those_of_its_role()
     T.eq(mine.status, 200, mine.body)
     T.same(mine.json, { on = false, kinds = { doorbell = true, door_opened = false, schedule_failed = true } })
     -- The refrigerator's door is not there: this home has none (yet).
-    T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = viewer }).json, { on = false, kinds = { doorbell = true } }, "a viewer: the doorbell")
+    -- A viewer of 1.7.0 has no rooms (ADR-054): no doorbell of theirs.
+    T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = viewer }).json, { on = false, kinds = {} }, "a viewer: nothing")
     T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = member }).json.kinds, { doorbell = true })
     T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = doors }).json.kinds, { doorbell = true })
 
@@ -160,7 +161,7 @@ function tests.each_key_chooses_its_own_alerts_among_those_of_its_role()
     T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = admin }).json, changed.json, "kept")
     T.same(T.http(mock, "PUT", "/v1/alerts/choices", { key = admin, body = { on = false } }).json.kinds, changed.json.kinds, "switched off, the choices stay")
     -- Only its own: another key's are untouched.
-    T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = viewer }).json, { on = false, kinds = { doorbell = true } })
+    T.same(T.http(mock, "GET", "/v1/alerts/choices", { key = viewer }).json, { on = false, kinds = {} })
     -- What its role may not get is not kept.
     T.same(T.http(mock, "PUT", "/v1/alerts/choices", { key = member, body = { on = true, kinds = { door_opened = true } } }).json, { on = true, kinds = { doorbell = true } })
 
@@ -195,7 +196,7 @@ end
 
 function tests.a_ring_goes_sealed_to_every_key_that_switched_alerts_on_and_wants_it()
     local home = home()
-    home.add("Hall tablet", "viewer")
+    home.add("Hall tablet", "member")
     home.add("Kids phone", "member")
     home.add("Guest phone", "viewer")
     home.on("admin")
@@ -461,11 +462,16 @@ function tests.the_refrigerator_door_reaches_members_and_admins()
     -- Members choose it only in a home with a refrigerator: the integration says so (hasFridge).
     local kids = home.keys["Kids phone"]
     T.eq(T.http(home.mock, "GET", "/v1/alerts/choices", { key = kids.key }).json.kinds.fridge_door, nil)
+    -- A refrigerator in the kitchen, as the registry would list it.
+    local fridge = { id = 500, kind = "refrigerator", name = "Refrigerator", room_name = "Kitchen", room_id = 10 }
+    local Registry = require("src.core.registry")
     Alerts.start({
         relay = require("src.cloud.relay"),
         remote = require("src.cloud.remote"),
         keys = require("src.auth.keys"),
-        registry = require("src.core.registry"),
+        registry = setmetatable({ refrigeratorList = function()
+            return { fridge }
+        end }, { __index = Registry }),
         adapters = require("src.adapters.manager"),
         activity = require("src.core.activity"),
         hasFridge = function()
@@ -473,8 +479,7 @@ function tests.the_refrigerator_door_reaches_members_and_admins()
         end,
     })
     T.same(T.http(home.mock, "GET", "/v1/alerts/choices", { key = kids.key }).json.kinds, { doorbell = true, fridge_door = true })
-    T.same(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key }).json.kinds, { doorbell = true }, "not for a viewer")
-    local fridge = { id = 500, name = "Refrigerator", room_name = "Kitchen", room_id = 10 }
+    T.same(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key }).json.kinds, {}, "not for a viewer, who has no rooms")
     T.eq(Alerts.fridgeDoor(fridge, 300), 2)
     local message = home.notified()[1].message
     T.eq(count(message["for"]), 2, "not the viewer")
@@ -486,6 +491,46 @@ function tests.the_refrigerator_door_reaches_members_and_admins()
     T.eq(#home.notified(), 0)
     home.clock.now = home.clock.now + 200
     T.eq(Alerts.fridgeDoor(fridge), 2)
+end
+
+-- Who gets an alert asks Access (ADR-054): a ring and the refrigerator's door go to those who see
+-- that doorbell or refrigerator (its room theirs; the refrigerator a kind they have), cameras or not;
+-- doors opened and schedules that failed to admins only.
+function tests.alerts_go_to_those_who_see_what_they_are_about()
+    local home = home()
+    local function member(name, access)
+        local created = T.http(home.mock, "POST", "/v1/api-keys", { key = home.admin, body = { name = name, role = "member", access = access } })
+        T.eq(created.status, 201, created.body)
+        home.keys[name] = { key = created.json.key, id = created.json.id }
+    end
+    member("Living room", { all_rooms = false, rooms = { 11 } })
+    member("No cameras", { cameras = false })
+    member("No fridge", { kinds = { refrigerator = false } })
+    member("Doors", { doors = true })
+    for _, name in ipairs({ "admin", "Living room", "No cameras", "No fridge", "Doors" }) do
+        home.on(name, { door_opened = true })
+    end
+    home.notified()
+    home.clock.now = os.time() + 3600
+    T.eq(Mock.fireDeviceEvent(home.mock, 110, 102), 1)
+    local ring = home.notified()[1].message["for"]
+    T.truthy(ring[home.keys["No cameras"].id] and ring[home.keys["No fridge"].id] and ring[home.keys.Doors.id] and ring[home.adminId], "whoever sees the doorbell")
+    T.eq(ring[home.keys["Living room"].id], nil, "the doorbell's room is not theirs")
+    T.same(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys["Living room"].key }).json.kinds, {}, "nothing offered to them")
+
+    local Alerts = require("src.cloud.alerts")
+    local fridge = { id = 500, name = "Refrigerator", room_name = "Kitchen", room_id = 10 }
+    Alerts.fridgeDoor(fridge, 300)
+    local cold = home.notified()[1].message["for"]
+    T.eq(cold[home.keys["No fridge"].id], nil, "not given refrigerators")
+    T.eq(cold[home.keys["Living room"].id], nil)
+    T.truthy(cold[home.keys["No cameras"].id] and cold[home.adminId])
+
+    Properties["Door Control"] = "Enabled"
+    T.eq(T.http(home.mock, "POST", "/v1/relays/70/pulse", { key = home.keys.Doors.key }).status, 202)
+    local opened = home.notified()[1].message["for"]
+    T.eq(count(opened), 1, "doors opened: the admins only, even for a member who opens doors")
+    T.truthy(opened[home.adminId])
 end
 
 -- The integration (src/main.lua): the refrigerator driver's Door Left Open goes to the history and

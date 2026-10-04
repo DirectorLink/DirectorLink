@@ -36,6 +36,7 @@ local suites = {
     "test_cpace_pairing",
     "test_key_expiry",
     "test_access",
+    "test_people",
     "test_security",
     "test_light_v1",
     "test_thermostat_v2_heat",
@@ -58,6 +59,7 @@ local suites = {
 local SECONDS = {
     test_json = 1,
     test_access = 1,
+    test_people = 10,
     test_http = 1,
     test_router = 1,
     test_api = 16,

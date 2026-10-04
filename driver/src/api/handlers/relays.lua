@@ -3,6 +3,7 @@ local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Activity = require("src.core.activity")
+local Access = require("src.auth.access")
 
 -- How the history names what a relay was told (a relay held closed holds its door open).
 local HISTORY = { pulse = "pulse", close = "hold", open = "release" }
@@ -17,13 +18,18 @@ local function findRelay(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "relay" or device.supported ~= true then
+    -- A door or gate the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "relay" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Relay", id)
     end
     return device
 end
 
 local function run(ctx, device, action)
+    -- Seen but not theirs to open: 403, as for the doors role of 1.7.0 (ADR-054).
+    if not Access.canOpen(ctx.apiKey, device) then
+        return Problem.new(403, "FORBIDDEN", "Opening doors and gates is not among this person's permissions")
+    end
     if not ctx.services.doorControlEnabled() then
         return Problem.new(403, "DOOR_CONTROL_DISABLED",
             "Door control is off; turn on the Door Control property of DirectorLink in Composer")
@@ -54,7 +60,7 @@ function Relays.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.relayList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.relayList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.relay(registry, device)
         end

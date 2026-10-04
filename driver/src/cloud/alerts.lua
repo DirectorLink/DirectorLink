@@ -5,8 +5,10 @@
 -- it as the history names them), so that the servers can deliver it to the browsers of those keys
 -- (Web Push) without being able to read it. Only the device of that key can open its part.
 --
--- Who gets what is decided here: a key whose role may get the kind (ROLES), whose device has
--- switched alerts on, and whose own choices include it (DEFAULTS until it chose). The choices are
+-- Who gets what is decided here: a key whose person may get the kind (src/auth/access.lua, ADR-054:
+-- a doorbell's ring whoever sees that doorbell, the refrigerator's door whoever sees that
+-- refrigerator, doors opened and schedules that failed the admins), whose device has switched
+-- alerts on, and whose own choices include it (DEFAULTS until it chose). The choices are
 -- each key's, kept in the driver's persistent data and read and set by that key only
 -- (GET and PUT /v1/alerts/choices, src/api/handlers/alerts.lua).
 --
@@ -22,7 +24,7 @@ local KnxRelay = require("src.adapters.knx_relay")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 local Random = require("src.core.random")
-local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
 local Store = require("src.core.store")
 
 local Alerts = {}
@@ -30,9 +32,11 @@ local Alerts = {}
 Alerts.LABEL = "DirectorLink alert v1"
 -- In the order the app lists them.
 Alerts.KINDS = { "doorbell", "door_opened", "fridge_door", "schedule_failed" }
--- The least role that gets each: whoever may see a doorbell (every key), the admins for doors
--- opened and schedules, members and admins (and doors keys) for the refrigerator.
-Alerts.ROLES = { doorbell = "viewer", door_opened = "admin", fridge_door = "member", schedule_failed = "admin" }
+-- The kinds only admins get (ADR-054); a doorbell's ring and the refrigerator's door go to whoever
+-- sees that doorbell or refrigerator (Access.canSee), whatever their role.
+Alerts.ADMINS_ONLY = { door_opened = true, schedule_failed = true }
+-- The device a kind is about.
+local DEVICE_KIND = { doorbell = "doorbell", fridge_door = "refrigerator" }
 -- A key that never chose gets these.
 Alerts.DEFAULTS = { doorbell = true, door_opened = false, fridge_door = true, schedule_failed = true }
 -- At most one alert per doorbell in RING_SECONDS, per door in DOOR_SECONDS, per refrigerator in
@@ -199,6 +203,31 @@ local function present(kind)
     return options ~= nil and options.present ~= nil and options.present(kind) == true
 end
 
+-- Whether `key` may get alerts of `kind` about `device` (a registry device, or the id, kind and room
+-- an alert's detail names), or, without one, about something of that kind it sees here.
+local function mayGet(key, kind, device)
+    if Alerts.ADMINS_ONLY[kind] then
+        return Access.isAdmin(key)
+    end
+    if not DEVICE_KIND[kind] then
+        return false
+    end
+    if device then
+        return Access.canSee(key, device)
+    end
+    local options = state.options
+    local devices = options and options.devices and options.devices(kind)
+    if not devices then
+        return Access.canSee(key, { kind = DEVICE_KIND[kind] })
+    end
+    for _, item in ipairs(devices) do
+        if Access.canSee(key, item) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Wires the alerts to the rest of the driver (main.lua, at start): deps = { relay, remote, keys,
 -- registry, adapters (src/adapters/manager.lua), activity (src/core/activity.lua), hasFridge? }.
 -- `hasFridge()`: the home has a refrigerator (ADR-049), so its members may choose its alert.
@@ -221,6 +250,15 @@ function Alerts.start(deps)
             end
             return kind == "fridge_door" and deps.hasFridge ~= nil and deps.hasFridge() == true
         end,
+        -- What a kind is about, for who sees it (ADR-054).
+        devices = function(kind)
+            if kind == "doorbell" then
+                return deps.registry.doorbellList()
+            elseif kind == "fridge_door" then
+                return deps.registry.refrigeratorList()
+            end
+            return nil
+        end,
         doorbellEvent = function(eventId)
             return DoorBird.EVENTS[tonumber(eventId)]
         end,
@@ -241,12 +279,12 @@ local function wants(choice, kind)
 end
 
 -- What a key may choose, and what it chose: { on, kinds = { kind -> boolean } } for the kinds its
--- role may get that this home has.
+-- person may get that this home has.
 function Alerts.view(key)
     local choice = state.choices[key.id]
     local kinds = {}
     for _, kind in ipairs(Alerts.KINDS) do
-        if Roles.allows(key.role, Alerts.ROLES[kind]) and present(kind) then
+        if present(kind) and mayGet(key, kind) then
             kinds[kind] = wants(choice, kind)
         end
     end
@@ -254,7 +292,7 @@ function Alerts.view(key)
 end
 
 -- A key's new choices: `on` (its device switched alerts on or off) and `kinds` (kind -> boolean;
--- kinds its role may not get are left out). Returns the view, or nil and UNAVAILABLE (the store
+-- kinds only admins get are left out for a member). Returns the view, or nil and UNAVAILABLE (the store
 -- could not be read at start, or not written now).
 function Alerts.choose(key, on, kinds)
     if not state.readable then
@@ -269,7 +307,7 @@ function Alerts.choose(key, on, kinds)
         choice.on = on
     end
     for kind, value in pairs(kinds or {}) do
-        if Roles.allows(key.role, Alerts.ROLES[kind]) then
+        if KNOWN[kind] and (not Alerts.ADMINS_ONLY[kind] or Access.isAdmin(key)) then
             choice.kinds[kind] = value
         end
     end
@@ -391,9 +429,10 @@ local function send(detail, now, brief, at)
         return nil, "too large"
     end
     local recipients, count = {}, 0
+    local about = DEVICE_KIND[detail.kind] and { id = detail.id, kind = DEVICE_KIND[detail.kind], room_id = detail.room_id } or nil
     for _, key in ipairs(options.keys.list()) do
         local choice = state.choices[key.id]
-        if choice and choice.on and Roles.allows(key.role, Alerts.ROLES[detail.kind]) and wants(choice, detail.kind) then
+        if choice and choice.on and mayGet(key, detail.kind, about) and wants(choice, detail.kind) then
             local remote = options.keys.remote(key.id)
             if remote and remote.lock then
                 recipients[key.id] = Alerts.seal(remote.lock, home, key.id, plaintext)

@@ -11,6 +11,7 @@ local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Protocol = require("src.sonos.protocol")
 local Sonos = require("src.sonos.sonos")
+local Access = require("src.auth.access")
 
 local Music = {}
 
@@ -42,7 +43,9 @@ local function findPlayer(ctx)
         return nil, off()
     end
     local player = Sonos.find(id)
-    if not player then
+    -- A Sonos room the caller may not see is, for them, one that does not exist (ADR-054): music
+    -- is a kind of device a member is given, in the rooms they see.
+    if not player or not Access.canSee(ctx.apiKey, { id = player.id, kind = "music", room_id = Sonos.roomOf(player) }) then
         return nil, Problem.notFound("Sonos room", id)
     end
     return player
@@ -72,7 +75,14 @@ function Music.list(ctx)
         return 200, { enabled = false, status = "off", items = Json.array() }
     end
     Sonos.wanted(roomId)
-    return 200, { enabled = true, status = Sonos.status(), items = Sonos.list(roomId) }
+    local items = Json.array()
+    for _, item in ipairs(Sonos.list(roomId)) do
+        local room = item.room_id ~= Json.null and item.room_id or nil
+        if Access.canSee(ctx.apiKey, { id = item.id, kind = "music", room_id = room }) then
+            items[#items + 1] = item
+        end
+    end
+    return 200, { enabled = true, status = Sonos.status(), items = items }
 end
 
 function Music.get(ctx)

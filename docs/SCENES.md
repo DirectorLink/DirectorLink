@@ -11,12 +11,14 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
 
 ## Who does what
 
-| Role | Scenes |
+| Role (1.8.0, ADR-054) | Scenes |
 | --- | --- |
-| viewer | sees them |
-| member | also runs them |
-| doors | also runs their doors and gates |
-| admin | also makes, changes, tries and deletes them, and gives them links for automations (1.7.0) |
+| member | sees and runs only the scenes an admin chose for them (none at first), in full: devices they could not control themselves too, doors and gates included (with Door Control on in Composer) |
+| admin | sees and runs every scene; makes, changes, tries and deletes them, chooses which members may run each, and gives them links for automations (1.7.0) |
+
+A scene a member may not run answers `404` for them, like one that does not exist. Up to 1.7.0 each
+key had a role: `viewer` saw scenes, `member` ran them without their doors and gates, `doors` ran
+them in full (ADR-025); ADR-054 says what each became.
 
 ## A scene
 
@@ -55,8 +57,8 @@ Composer scenes and programming are never read or changed (docs/DECISIONS.md).
     the refrigerator's driver as its own command, through Samsung's cloud; the step counts as ran
     once the commands are handed over (the refrigerator confirms seconds later). A feature a
     refrigerator does not have (its driver says which it has) is left out on it (`partial`), or the
-    refrigerator is skipped with `NOT_SUPPORTED` when none is left. A member may run it, so
-    schedules do: Sabbath Mode on before Shabbat and off after it.
+    refrigerator is skipped with `NOT_SUPPORTED` when none is left. Schedules run it too: Sabbath
+    Mode on before Shabbat and off after it.
 - At most 50 scenes. `version` goes up with every change; sent back with a change
   (`PATCH /v1/scenes/{id}`), it makes the change conditional (409 `VERSION_CONFLICT`).
 
@@ -99,8 +101,8 @@ restart reads them, so they are never overwritten by an empty list.
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
 
 `POST /v1/off` with `type` (lights, climate, blinds) and `device_ids` runs one step on those devices
-(members, 1.3.0): lights off, AC off or blinds closed, and answers the same way. It is Home's "Turn
-off all" in the app.
+(members, 1.3.0; since 1.8.0 a member names only devices they control, any other is `400`): lights
+off, AC off or blinds closed, and answers the same way. It is Home's "Turn off all" in the app.
 
 ## Links for automations (1.7.0, ADR-051)
 
@@ -124,7 +126,7 @@ else, from anywhere; every run is in History.
   refrigerators can have a link; a scene with a doors-and-gates step (or a kind of step added later
   and not yet allowed) gets none (`409 SCENE_OPENS_DOORS`); adding such a step to a linked scene
   removes its link (the app warns and asks before saving), and so does deleting the scene. A run
-  checks again and runs the scene as a member's key would (as schedules do), which never opens a
+  checks again and runs the scene as DirectorLink itself (as schedules do), which never opens a
   door or gate.
 - **What it needs:** Remote Access on in Composer and the home linked to an account (`409
   REMOTE_ACCESS_OFF`, `HOME_NOT_LINKED` when making one; the app says which).
@@ -174,9 +176,9 @@ loses its link at the next start of 1.7.0.
 
 ## The app
 
-- **Scenes** tab: every scene with a Run button (members and above); admins tap a name to change
-  it, make a **New scene**, or start from an idea (All off, Good night, Good morning, Leaving home,
-  Cool the house) that opens the editor filled in.
+- **Scenes** tab: every scene with a Run button (for a member, only the scenes they may run);
+  admins tap a name to change it, make a **New scene**, or start from an idea (All off, Good night,
+  Good morning, Leaving home, Cool the house) that opens the editor filled in.
 - The editor: the name and an icon; **What happens** (the actions, which can be moved, changed and
   removed); **Add an action** — where (a room or the whole home), what (lights, AC, fans, blinds,
   doors and gates, refrigerators, with how many there are) and what to do (fans: Off, On or a

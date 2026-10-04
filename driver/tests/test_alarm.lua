@@ -172,15 +172,25 @@ function tests.on_members_and_admins_read_the_partitions_in_sealed_answers()
 
     -- Composer counts them for the installer; the API's device list and inventory do not change.
     T.eq(mock.properties["Inventory"], INVENTORY .. ", 2 alarm partitions")
-    T.eq(T.http(mock, "GET", "/v1/devices/81", { key = viewer }).json.type, "other")
+    T.eq(T.http(mock, "GET", "/v1/devices/81", { key = key }).json.type, "other")
     T.eq(T.http(mock, "GET", "/v1/system", { key = viewer }).json.inventory.supported_devices, 11)
 end
 
-function tests.viewers_get_403_whether_it_is_on_or_off()
+-- A person not given the alarm's status (ADR-054; a viewer of 1.7.0) gets 403 while it is on, and
+-- while it is off only what everyone gets then.
+function tests.a_person_not_given_the_alarm_gets_403_and_nothing_while_it_is_off()
     local mock, key = start(false)
     local viewer, viewerId = createKey(mock, key, "viewer")
+    local off = alarm(mock, viewer, viewerId)
+    T.eq(off.status, 200)
+    T.eq(off.json.enabled, false)
+    T.eq(#off.json.partitions, 0)
+    T.eq(T.http(mock, "GET", "/v1/alarm", { key = viewer }).json.enabled, false)
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { alarm = false } } }).json
+    Properties["Alarm Status"] = "On"
+    OnPropertyChanged("Alarm Status")
     T.eq(alarm(mock, viewer, viewerId).status, 403)
-    T.eq(T.http(mock, "GET", "/v1/alarm", { key = viewer }).status, 403)
+    T.eq(alarm(mock, member.key, member.id).json.code, "FORBIDDEN")
 end
 
 function tests.on_a_request_in_the_clear_gets_nothing_about_the_alarm()

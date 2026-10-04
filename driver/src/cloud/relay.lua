@@ -9,6 +9,7 @@ local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
 local Activity = require("src.core.activity")
+local Access = require("src.auth.access")
 
 local Relay = {}
 
@@ -369,7 +370,8 @@ function Relay.announceKeys()
     for _, key in ipairs(state.services.keys.list()) do
         ids[#ids + 1] = key.id
         -- Which of them are admin keys (1.6.0): only their accounts get the home's alerts (ADR-047).
-        if key.role == "admin" then
+        -- Since 1.8.0 the keys of the people who are admins (ADR-054).
+        if Access.isAdmin(key) then
             admins[#admins + 1] = key.id
         end
     end

@@ -133,17 +133,17 @@ SECURITY_CONTRACT = {
         # Replays across a restart: ids of requests dated ahead of the clock are saved and loaded.
         "remember(keyId, requestId, ts, now)",
         "state.seen[item.k][item.i] = state.startedAt",
-        # A claim token dies with its admin key.
-        'return owner ~= nil and owner.role == "admin"',
+        # A claim token dies with its admin key (an admin's: ADR-054).
+        "return owner ~= nil and Access.isAdmin(owner), owner",
         "state.services.invitations.consume(invitationId)",
         # A sealed request never carries another (it would run as one from the home network).
         'if path:gsub("/+$", "") == "/v1/sealed" then',
         "state.services.keys.remote(keyId)",
     ),
-    # Doors and gates in a scene: only a pulse (never held closed), only for keys with door access,
-    # and only with Door Control on.
+    # Doors and gates in a scene: only a pulse (never held closed), never when DirectorLink runs a
+    # scene itself (schedules, links: ADR-054), and only with Door Control on.
     "src/api/handlers/scenes.lua": (
-        'if not Roles.allows(ctx.apiKey.role, "doors") then',
+        "if not Access.scenesOpenDoors(ctx.apiKey) then",
         "elseif not services.doorControlEnabled() then",
         'return { { action = "pulse" } }',
     ),

@@ -62,7 +62,7 @@ At home the browser talks to DirectorLink directly. Remote access, when switched
 
 ## V1 authentication
 
-- One owner and invited family members; every client (browser, phone, Home Assistant, script) gets its own named API key with a role (`viewer`, `member`, `doors`, `admin`), grouped by person (profiles)
+- One owner and invited family members; every client (browser, phone, Home Assistant, script) gets its own named API key, grouped by person (profiles). Up to 1.7.0 each key had a role (`viewer`, `member`, `doors`, `admin`); since 1.8.0 each person is an admin or a member, with the rooms, kinds of devices and scenes an admin chose, and every key has its person's permissions (ADR-054)
 - Authenticated API even on LAN: `Authorization: Bearer <api key>`, or a request sealed with the key's lock key (`/v1/sealed`, the app's way since 1.0.0), on every route except health, the API description and pairing
 - No default/shared password; credentials do not depend on Control4 cloud credentials
 - Keys are random; Director keeps only a SHA-256 hash of each (SHA-1 where SHA-256 is missing) and, for sealed requests, each key's lock key; keys survive driver updates and restarts; listed without secrets and revocable (through the API, or all at once with a Composer action)
@@ -314,8 +314,8 @@ unsupported as before):
   all) and `trouble`.
 - Nothing is sent to a partition, and its state is never logged; `scripts/check_package.py` keeps
   the adapter to `C4:GetVariable`, `C4:RegisterVariableListener` and `C4:UnregisterVariableListener`.
-- Members and admins read it, only in sealed answers (`403 SEALED_REQUEST_REQUIRED` in the clear);
-  viewers get `403`.
+- Admins, and members given the alarm's status (ADR-054), read it, only in sealed answers
+  (`403 SEALED_REQUEST_REQUIRED` in the clear); others get `403`.
 
 No DirectorLink build has run against a real alarm yet.
 

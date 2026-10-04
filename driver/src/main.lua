@@ -22,6 +22,7 @@ local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
 local Clock = require("src.core.clock")
 local Profiles = require("src.auth.profiles")
+local People = require("src.auth.people")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
@@ -107,6 +108,14 @@ end
 -- key made (ADR-051), then Composer's count and the cloud's list of key ids.
 local function keysChanged()
     Profiles.prune(Keys.list())
+    -- A person keeps their role and permissions while they have a key, and every key the 1.7.0
+    -- role of its person (ADR-054).
+    if Keys.complete() then
+        if Scenes.complete() then
+            People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
+        end
+        People.syncKeys(Keys)
+    end
     if Keys.complete() then
         Alerts.prune(Keys.list())
     end
@@ -203,6 +212,9 @@ local function restored(restore)
     Remote.clearClaim()
     if Keys.complete() then
         assignProfiles()
+        -- People from a backup made before 1.8.0 are worked out from their keys (ADR-054).
+        People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
+        People.syncKeys(Keys)
     end
     publishKeyCount()
     if restore.switching then
@@ -494,11 +506,21 @@ function OnDriverLateInit(driverInitType)
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
+    -- Admins and members (1.8.0, ADR-054).
+    local peopleCount, peopleStoredAs = People.load()
+    Log.info("auth", "people loaded", { count = peopleCount, stored_as = peopleStoredAs })
     SonosRooms.load()
     AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
         assignProfiles()
+        -- Each person's role from their keys' 1.7.0 roles, the first time (the update to 1.8.0), and
+        -- again for a person whose keys DirectorLink 1.7.0 changed meanwhile; with every scene there
+        -- is, so only once the scenes could be read (until then a key answers as its 1.7.0 role).
+        if Scenes.complete() then
+            People.reconcile(Keys.list(), Profiles.list(), Scenes.list())
+        end
+        People.syncKeys(Keys)
     end
     publishKeyCount()
 

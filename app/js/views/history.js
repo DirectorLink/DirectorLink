@@ -246,6 +246,10 @@ function title(entry) {
     case "access.revoked":
     case "access.forgotten":
     case "access.expired":
+    // A member's access changed, a room hidden from or shown to members (1.8.0, ADR-054).
+    case "access.permissions_changed":
+    case "access.room_hidden":
+    case "access.room_shown":
       return withName(`history.access.${entry.action}`, what);
     case "access.all_revoked":
       return t("history.access.all_revoked", { count: entry.count ?? 0 });

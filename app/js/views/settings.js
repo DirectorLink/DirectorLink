@@ -24,6 +24,8 @@ import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { alertsPanel } from "./alerts.js";
 import { makeInvitation, pasteInvitationPanel } from "./device-join.js";
+import { accessBody, newMemberAccess, peopleSupported, permissionsEditor } from "./permissions.js";
+import { loadScenes } from "../scenes.js";
 import { backupPanel } from "./backup.js";
 import { historyRow } from "./history.js";
 import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
@@ -291,6 +293,8 @@ function roomsSection() {
     "rooms",
     t("settings.rooms.listTitle"),
     h("p", { class: "field-help" }, personal ? (admin ? t("settings.rooms.orderHelpAdmin") : t("settings.rooms.orderHelp")) : t("settings.rooms.updateForHiding")),
+    // Rooms hidden from every member (1.8.0, ADR-054).
+    admin && peopleSupported() ? h("p", { class: "field-help" }, t("settings.rooms.membersHelp")) : null,
     admin ? h("p", { class: "visually-hidden", id: "room-order-keys" }, t("settings.rooms.moveKeys")) : null,
     ui.roomOrderMessage ? h("p", { class: `notice notice-${ui.roomOrderMessage.kind}`, role: "alert" }, ui.roomOrderMessage.text) : null,
     h("ul", { class: "room-order-list" }, state.rooms.map((room, index) => roomRow(room, index, hidden, { admin, personal })))
@@ -334,8 +338,10 @@ function roomRow(room, index, hidden, { admin, personal }) {
       "label",
       { class: "room-order-name", for: personal ? id : null },
       name(roomName(room), "span"),
-      shown ? null : h("span", { class: "room-order-hidden" }, t("settings.rooms.hiddenForYou"))
+      shown ? null : h("span", { class: "room-order-hidden" }, t("settings.rooms.hiddenForYou")),
+      room.hidden_from_members ? h("span", { class: "room-order-hidden", dataset: { key: `room-members-hidden:${room.id}` } }, t("settings.rooms.hiddenFromMembers")) : null
     ),
+    admin && peopleSupported() ? membersToggle(room) : null,
     admin
       ? h(
           "span",
@@ -374,6 +380,43 @@ function roomRow(room, index, hidden, { admin, personal }) {
         )
       : null
   );
+}
+
+// Hidden from every member, or not (1.8.0, ADR-054): PATCH /v1/rooms/{id}, for admins. Members never
+// see such a room or its devices; admins see it, marked.
+const membersSaving = new Set();
+
+function membersToggle(room) {
+  const hidden = room.hidden_from_members === true;
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "button button-small button-quiet room-members",
+      "aria-pressed": String(hidden),
+      disabled: membersSaving.has(room.id),
+      title: t(hidden ? "settings.rooms.showToMembersFor" : "settings.rooms.hideFromMembersFor", { name: roomName(room) }),
+      dataset: { key: `room-members:${room.id}` },
+      onclick: () => setHiddenFromMembers(room, !hidden),
+    },
+    t(hidden ? "settings.rooms.showToMembers" : "settings.rooms.hideFromMembers")
+  );
+}
+
+async function setHiddenFromMembers(room, hidden) {
+  membersSaving.add(room.id);
+  ui.roomOrderMessage = null;
+  notify();
+  try {
+    const answer = await api(`/v1/rooms/${room.id}`, { method: "PATCH", body: { hidden_from_members: hidden } });
+    state.rooms = state.rooms.map((item) => (item.id === room.id ? { ...item, hidden_from_members: answer?.hidden_from_members === true } : item));
+  } catch (error) {
+    noteForbidden(error);
+    ui.roomOrderMessage = { kind: "error", text: errorText(error) };
+  } finally {
+    membersSaving.delete(room.id);
+    notify();
+  }
 }
 
 // Why the room order was not saved. Drivers before 0.12.0 have no room order (404, 405), and 1.0.0
@@ -968,7 +1011,7 @@ function controllerSection(navigate) {
   const system = state.system;
   const rows = [
     [t("settings.controller.status"), t(`status.${state.status}`)],
-    state.role ? [t("settings.controller.access"), roleLabel(state.role)] : null,
+    state.role ? [t("settings.controller.access"), roleLabel(state.access?.role || state.role)] : null,
     state.lastUpdated && state.loaded ? [t("settings.controller.updated"), formatTime(state.lastUpdated)] : null,
     system?.controller?.model ? [t("settings.controller.model"), system.controller.model] : null,
     system?.controller?.os_version ? [t("settings.controller.os"), system.controller.os_version] : null,
@@ -1182,9 +1225,17 @@ function secretPanel() {
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// The person an invitation makes (1.8.0, ADR-054): an admin, or a member and what they may do.
+function inviteAccess() {
+  ui.inviteAccess ??= newMemberAccess();
+  return ui.inviteAccess;
+}
+
 async function createInvitation({ forSelf }) {
   const email = forSelf ? state.account.user.email : (ui.drafts["invite-email"] || "").trim();
-  const role = forSelf ? state.role || "admin" : ui.drafts["invite-role"] || "member";
+  const people = !forSelf && peopleSupported();
+  const role = forSelf ? state.role || "admin" : people ? inviteAccess().role : ui.drafts["invite-role"] || "member";
+  const access = people && role === "member" ? accessBody(inviteAccess()) : undefined;
   if (!EMAIL.test(email)) {
     ui.homeMessage = { kind: "error", text: t("settings.account.home.badEmail") };
     notify();
@@ -1195,9 +1246,10 @@ async function createInvitation({ forSelf }) {
   notify();
   try {
     // The same invitation as a device approving another of this account makes (ADR-053).
-    const invitation = await makeInvitation({ forSelf, email, role });
+    const invitation = await makeInvitation({ forSelf, email, role, access });
     ui.homeInvitation = { link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at, forSelf, email };
     ui.inviteForm = false;
+    ui.inviteAccess = null;
   } catch (error) {
     ui.homeMessage = { kind: "error", text: errorText(error) };
   } finally {
@@ -1248,24 +1300,33 @@ function invitePanel() {
     return invitationResult(ui.homeInvitation);
   }
   if (ui.inviteForm) {
-    const roles = ["viewer", "member", "doors", "admin"];
-    const role = h("select", { id: "invite-role", dataset: { key: "invite-role" } }, ...roles.map((value) => h("option", { value, selected: (ui.drafts["invite-role"] || "member") === value }, roleLabel(value))));
-    role.addEventListener("change", () => {
-      ui.drafts["invite-role"] = role.value;
-    });
+    // 1.8.0: an admin, or a member and what they may do (views/permissions.js); older controllers
+    // have four roles per device.
+    const people = peopleSupported();
+    let role = null;
+    if (!people) {
+      const roles = ["viewer", "member", "doors", "admin"];
+      role = h("select", { id: "invite-role", dataset: { key: "invite-role" } }, ...roles.map((value) => h("option", { value, selected: (ui.drafts["invite-role"] || "member") === value }, roleLabel(value))));
+      role.addEventListener("change", () => {
+        ui.drafts["invite-role"] = role.value;
+      });
+    } else if (state.scenes === null) {
+      loadScenes();
+    }
     return h(
       "form",
       { class: "invite-form", novalidate: true, onsubmit: (event) => { event.preventDefault(); createInvitation({ forSelf: false }); } },
       h("label", { class: "field-label", for: "invite-email" }, t("settings.account.home.email")),
       draftField("invite-email", "", { id: "invite-email", type: "email", autocomplete: "off", dir: "ltr", placeholder: "name@example.com" }),
-      h("label", { class: "field-label", for: "invite-role" }, t("settings.account.home.role")),
+      people ? h("div", { class: "perm-editor", dataset: { key: "invite-access" } }, permissionsEditor(inviteAccess(), { prefix: "invite", changed: notify })) : null,
+      people ? null : h("label", { class: "field-label", for: "invite-role" }, t("settings.account.home.role")),
       role,
       h("p", { class: "field-help" }, t("settings.account.home.inviteHelp")),
       h(
         "div",
         { class: "button-row" },
         h("button", { type: "submit", class: "button button-primary", dataset: { key: "invite-create" }, disabled: Boolean(ui.homeBusy) }, t("settings.account.home.create")),
-        h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.inviteForm = false; notify(); } }, t("common.cancel"))
+        h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.inviteForm = false; ui.inviteAccess = null; notify(); } }, t("common.cancel"))
       )
     );
   }

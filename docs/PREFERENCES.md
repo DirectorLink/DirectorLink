@@ -1,13 +1,14 @@
 # Preferences, profiles and the home's settings
 
 **Status: built in DirectorLink 0.12.0.** Scenes (0.13.0, `docs/SCENES.md`) and schedules (0.14.0,
-`docs/SCHEDULES.md`) follow the same rules.
+`docs/SCHEDULES.md`) follow the same rules. People's roles and permissions: 1.8.0 (ADR-054, *People:
+admins and members* below).
 
 ## Where each setting lives
 
 | Whose | Examples | Where | Who changes it |
 | --- | --- | --- | --- |
-| The home's | room names per language, the room order, scenes, schedules | the controller | admins (members run scenes) |
+| The home's | room names per language, the room order, rooms hidden from members, scenes, schedules, people's roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
 | A person's | language, theme, palette, favorites, hidden rooms | the controller, in their **profile** | that person, from any of their devices |
 | This device's | the controller's address, the access key, the browser's notification permission | the browser | this device |
 
@@ -19,17 +20,55 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
 
 - A profile is a person. **Every API key belongs to one profile** (`profile_id` on the key).
 - Pairing with a code, an admin creating a key, and an invitation for someone else each make a new
-  profile, named after the key. **Add my other device** (an invitation with `for_me`) puts the new
-  key in the inviter's profile, so a person's phone starts with their language, theme and
-  favorites.
+  profile, named after the key (a key created with `profile_id` joins that person instead, 1.8.0).
+  **Add my other device** (an invitation with `for_me`) puts the new key in the inviter's profile,
+  so a person's phone starts with their language, theme and favorites.
 - An admin can move a key to another profile (`PATCH /v1/api-keys/{id}` `profile_id`, or People and
-  devices → Person) — for two devices of one person that were paired separately — and rename a
-  profile (`PATCH /v1/profiles/{id}`). A profile goes with its last key.
+  devices → Person) — for two devices of one person that were paired separately; since 1.8.0 the key
+  then has that person's permissions — and rename a profile (`PATCH /v1/profiles/{id}`). A profile
+  goes with its last key.
 - Keys from before 0.12.0 get a profile each at the first start; an admin can then merge them.
 - `GET /v1/profile` / `PATCH /v1/profile` are the caller's own (any role): `prefs` with `language`
   (`auto` or a tag), `theme` (`auto`, `light`, `dark`), `palette`, `favorites` (`"kind:id"`, in
   order) and `hidden_rooms` (room ids). `null` clears one. `version` goes up with every change; sent
   back, it makes the change conditional (409 `VERSION_CONFLICT` if another device changed it).
+  Since 1.8.0 `GET /v1/profile` also has `access`: what the caller may see and do (below).
+
+## People: admins and members (1.8.0, ADR-054)
+
+A person has a role, **admin** or **member**, and every key of theirs has that person's permissions:
+all of a person's devices follow one change. Before 1.8.0 each key had a role of its own (`viewer`,
+`member`, `doors`, `admin`; ADR-025).
+
+- **Admins** do everything: people and their permissions, keys, invitations, rooms, scenes,
+  schedules, settings, History, backups, remote access, the log.
+- **Members** have what an admin chose for them in Settings → People and devices, or when inviting
+  them (`GET`/`PATCH /v1/profiles/{profileId}/access`):
+
+| Permission | What it gives | A new member |
+| --- | --- | --- |
+| Rooms | the rooms they see: all, or a list | all |
+| Lights, Climate (AC and heating), Fans, Blinds, Music (Sonos), Refrigerators | that kind of device in their rooms; off hides the kind from them (lists, Home, Turn off all) and the controller refuses it. Heaters wired as KNX lights follow Lights | all on |
+| Cameras | the cameras in their rooms, and a doorbell's picture | on |
+| Doors and gates | opening the doors and gates in their rooms (they see them and their state either way); Door Control must be on in Composer too | off |
+| Sees the alarm | the alarm's status; Alarm Status must be On in Composer too | on |
+| Scenes they may run | those scenes, run in full: devices they could not control themselves too, doors and gates included (with Door Control on) | none |
+
+- A doorbell in a member's rooms rings for them (with its ring alert) either way; its picture shows
+  only with Cameras on.
+- Members never edit scenes and never see schedules, History, keys, invitations, profiles, room
+  settings, controller settings or backups.
+- The controller checks every request. A device, room or scene a member may not see answers `404`
+  like one that does not exist; a door or gate they see but may not open, `403 FORBIDDEN`.
+- `GET /v1/profiles` gives each person's `access`; `GET /v1/profile` and `GET /v1/api-keys/current`
+  give the caller's own (an admin's all true), so that the app shows only what they may use.
+- The home's **owner** (the person who last claimed it for an account, else the oldest admin) is
+  always an admin: no other admin can demote them, change their permissions or revoke or move their
+  devices (`403 OWNER_PROTECTED`). There is always an admin (`409 LAST_ADMIN`).
+- From 1.7.0, each person gets the highest role among their keys: `admin` an admin, `doors` and
+  `member` a member with every room and kind (doors and gates for `doors` only), `viewer` a member
+  with no rooms and cameras only. ADR-054 has the details. Every key keeps a 1.7.0 `role` worked
+  out from its person, for 1.7.0 apps and for a downgrade.
 
 ## The app
 
@@ -47,3 +86,7 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
 - **Hiding is personal**: anyone unticks a room in Settings → Rooms; it goes into their profile's
   `hidden_rooms` and disappears from their Home and Climate, not anyone else's. Favorites in a
   hidden room still show.
+- **Hidden from members is the home's** (1.8.0): an admin marks a room in Settings → Rooms
+  (`PATCH /v1/rooms/{roomId}` `{"hidden_from_members": true}`), and it and its devices disappear
+  for every member, whatever rooms they were given. Admins still see it, marked
+  (`hidden_from_members` in `GET /v1/rooms`). Personal hiding stays as it is, on top, for anyone.

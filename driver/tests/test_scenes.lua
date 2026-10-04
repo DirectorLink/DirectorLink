@@ -59,18 +59,20 @@ function tests.an_admin_makes_a_scene_and_a_member_runs_it()
     T.contains(created.body, '"room_id":null', "the whole home")
     T.contains(created.body, '"device_ids":[22]')
 
-    local member = createKey(mock, admin, "member")
+    -- A member runs the scenes an admin chose for them, in full (ADR-054): the door too, while
+    -- Door Control is on.
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "member phone", role = "member", access = { scenes = { scene.id } } } }).json.key
     T.eq(T.http(mock, "GET", "/v1/scenes", { key = member }).json.items[1].name, "Good night")
     local before = #mock.commands
     local ran = T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member })
     T.eq(ran.status, 202, ran.body)
     T.eq(ran.json.scene_id, scene.id)
     T.eq(ran.json.ran, 6, "3 lights, the AC, a blind and the desk lamp")
-    T.eq(ran.json.skipped, 1, "the door needs door access")
+    T.eq(ran.json.skipped, 1, "the door: Door Control is off")
     T.eq(ran.json.failed, 0)
     T.eq(ran.json.problems[1].step, 5)
     T.eq(ran.json.problems[1].device_id, 70)
-    T.eq(ran.json.problems[1].code, "FORBIDDEN")
+    T.eq(ran.json.problems[1].code, "DOOR_CONTROL_DISABLED")
 
     local sent = commandsSince(mock, before)
     local devices = devicesOf(sent)
@@ -118,8 +120,11 @@ function tests.roles_limit_who_changes_and_runs_scenes()
     local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "All off", steps = { { type = "lights", set = { on = false } } } } }).json
     local member = createKey(mock, admin, "member")
     local viewer = createKey(mock, admin, "viewer")
-    T.eq(T.http(mock, "GET", "/v1/scenes/" .. scene.id, { key = viewer }).status, 200, "everyone sees them")
-    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = viewer }).status, 403, "viewers do not run them")
+    -- 1.7.0 roles (ADR-054): a viewer runs no scene (for them it does not exist); a member got
+    -- the scenes there were.
+    T.eq(T.http(mock, "GET", "/v1/scenes/" .. scene.id, { key = viewer }).status, 404, "a viewer sees none")
+    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = viewer }).status, 404, "nor runs one")
+    T.eq(T.http(mock, "GET", "/v1/scenes/" .. scene.id, { key = member }).status, 200)
     T.eq(T.http(mock, "POST", "/v1/scenes", { key = member, body = { name = "Mine" } }).status, 403, "members do not make them")
     T.eq(T.http(mock, "PATCH", "/v1/scenes/" .. scene.id, { key = member, body = { name = "X" } }).status, 403)
     T.eq(T.http(mock, "DELETE", "/v1/scenes/" .. scene.id, { key = member }).status, 403)
@@ -543,7 +548,7 @@ function tests.turn_off_is_for_members_and_never_opens_or_turns_on_anything()
     local viewer = createKey(mock, admin, "viewer")
     local doors = createKey(mock, admin, "doors")
     local before = #mock.commands
-    T.eq(T.http(mock, "POST", "/v1/off", { key = viewer, body = { type = "lights", device_ids = { 20 } } }).status, 403, "viewers do not control")
+    T.eq(T.http(mock, "POST", "/v1/off", { key = viewer, body = { type = "lights", device_ids = { 20 } } }).status, 400, "a viewer has no rooms: a light they do not see")
     T.eq(T.http(mock, "POST", "/v1/off", { body = { type = "lights", device_ids = { 20 } } }).status, 401)
     local refused = function(body, field)
         local answer = T.http(mock, "POST", "/v1/off", { key = doors, body = body })

@@ -214,11 +214,12 @@ function clearRunLater(id, stamp, delay) {
 }
 
 // Runs a saved scene; the button shows what happened for a few seconds, then the devices' new
-// state is read. A scene that opens doors or gates asks for a second tap, like their Open button.
+// state is read. A scene that opens doors or gates asks for a second tap, like their Open button;
+// with 1.8.0 (ADR-054) for everyone who may run it, since it runs in full.
 export async function runScene(scene) {
   const current = ui.sceneRuns[scene.id];
   if (current?.stage === "running") return;
-  if (sceneOpensDoors(scene) && can("doors") && current?.stage !== "confirm") {
+  if (sceneOpensDoors(scene) && (can("doors") || state.access) && current?.stage !== "confirm") {
     const stamp = Date.now();
     setRun(scene.id, { stage: "confirm", text: t("scenes.confirmDoors"), stamp });
     clearRunLater(scene.id, stamp, CONFIRM_MS);

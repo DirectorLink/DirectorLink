@@ -1,5 +1,6 @@
 -- Schedules (docs/SCHEDULES.md, src/core/schedules.lua, src/core/scheduler.lua) and the weather
--- they use (GET /v1/weather). Everyone sees them; admins make, change and delete them.
+-- they use (GET /v1/weather). Only admins see them (ADR-054), and make, change and delete them; the
+-- weather is everyone's.
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -10,6 +11,7 @@ local Scenes = require("src.core.scenes")
 local Scheduler = require("src.core.scheduler")
 local Schedules = require("src.core.schedules")
 local Weather = require("src.core.weather")
+local Access = require("src.auth.access")
 
 local Handlers = {}
 
@@ -250,7 +252,7 @@ function Handlers.weather(ctx)
         status = data and "ok" or string.lower(reason or "waiting"),
         detail = nullable(detail),
         -- Where the home is: for admins only (rounded).
-        location = latitude and ctx.apiKey and ctx.apiKey.role == "admin" and { latitude = rounded(latitude), longitude = rounded(longitude) } or Json.null,
+        location = latitude and Access.isAdmin(ctx.apiKey) and { latitude = rounded(latitude), longitude = rounded(longitude) } or Json.null,
         fetched_at = fetchedAt and Clock.iso(fetchedAt) or Json.null,
         current = data and {
             temperature = data.temperature,

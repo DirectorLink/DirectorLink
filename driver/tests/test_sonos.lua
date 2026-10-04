@@ -838,11 +838,11 @@ function tests.a_picture_that_fails_is_not_asked_for_again_at_once()
         end
         return fake(request)
     end
-    local viewer = createKey(mock, key, "viewer")
+    local member = createKey(mock, key, "member")
     mock.httpDeferred = true
     local waiting = {}
     for _ = 1, 50 do
-        waiting[#waiting + 1] = T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).handle
+        waiting[#waiting + 1] = T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = member }).handle
     end
     Mock.deliverHttp(mock)
     mock.httpDeferred = false
@@ -853,13 +853,13 @@ function tests.a_picture_that_fails_is_not_asked_for_again_at_once()
         T.eq(answer.json.code, "PLAYER_UNREACHABLE")
     end
     for _ = 1, 20 do
-        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).status, 502)
+        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = member }).status, 502)
     end
     T.eq(asked, 1, "not asked again within " .. module().ART_RETRY_SECONDS .. " seconds")
     T.eq(item(music(mock, key), KITCHEN).reachable, true)
     -- Later it is asked for again.
     withClock(os.time() + module().ART_RETRY_SECONDS + 1, function()
-        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).status, 502)
+        T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = member }).status, 502)
     end)
     T.eq(asked, 2)
 end
@@ -971,27 +971,29 @@ function tests.a_command_answered_after_the_rooms_were_read_again_still_shows()
     T.eq(T.http(mock, "GET", "/v1/music/" .. LIVING, { key = key }).json.volume, 35)
 end
 
-function tests.viewers_read_members_control()
+-- Music is a kind a member is given (ADR-054): without it a Sonos room is, for them, one that does
+-- not exist; with it they play and set the volume, in their rooms; placing one is the admins'.
+function tests.members_given_music_control_it_and_others_do_not_see_it()
     local mock, home, key = start({ grouped = true })
     discover(mock, home)
-    local viewer = createKey(mock, key, "viewer")
+    local without = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Guest", role = "member", access = { kinds = { music = false } } } }).json.key
+    local elsewhere = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { all_rooms = false, rooms = { 11 } } } }).json.key
     local member = createKey(mock, key, "member")
     music(mock, key)
     home:clear()
-    T.eq(T.http(mock, "GET", "/v1/music", { key = viewer }).status, 200)
-    T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN, { key = viewer }).status, 200)
-    T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/favorites", { key = viewer }).status, 200)
-    T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN .. "/art", { key = viewer }).status, 200)
+    T.eq(#T.http(mock, "GET", "/v1/music", { key = without }).json.items, 0)
+    T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN, { key = without }).status, 404)
+    T.eq(T.http(mock, "GET", "/v1/music/" .. KITCHEN, { key = elsewhere }).status, 404, "the kitchen is not theirs")
+    T.eq(T.http(mock, "GET", "/v1/music/" .. LIVING, { key = elsewhere }).status, 200)
     for _, request in ipairs({
-        { "POST", "/play" }, { "POST", "/pause" }, { "POST", "/next" }, { "POST", "/previous" }, { "PATCH", "", { volume = 5 } },
-        { "POST", "/favorites/10/play" }, { "PUT", "/room", { room_id = 10 } },
+        { "GET", "/favorites" }, { "GET", "/art" }, { "POST", "/play" }, { "POST", "/pause" }, { "POST", "/next" }, { "POST", "/previous" },
+        { "PATCH", "", { volume = 5 } }, { "POST", "/favorites/10/play" },
     }) do
-        local refused = T.http(mock, request[1], "/v1/music/" .. KITCHEN .. request[2], { key = viewer, body = request[3] })
-        T.eq(refused.status, 403, request[1] .. " " .. request[2])
+        local refused = T.http(mock, request[1], "/v1/music/" .. KITCHEN .. request[2], { key = without, body = request[3] })
+        T.eq(refused.status, 404, request[1] .. " " .. request[2])
     end
-    for _, action in ipairs(home:sent()) do
-        T.truthy(action:match(" Get") or action:match(" Browse"), "a viewer only read: " .. action)
-    end
+    T.eq(T.http(mock, "PUT", "/v1/music/" .. KITCHEN .. "/room", { key = member, body = { room_id = 10 } }).status, 403, "placing is the admins'")
+    T.eq(#home:sent(), 0, "nothing reached a player for them")
     T.eq(T.http(mock, "POST", "/v1/music/" .. KITCHEN .. "/pause", { key = member }).status, 200)
     T.eq(T.http(mock, "PATCH", "/v1/music/" .. KITCHEN, { key = member, body = { volume = 12 } }).status, 200)
     T.eq(T.http(mock, "GET", "/v1/music", {}).status, 401)

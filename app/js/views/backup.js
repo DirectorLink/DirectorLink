@@ -270,6 +270,8 @@ function whereText(use) {
   if (use.section === "scenes") return t("backup.where.scene", { name: use.name || "" });
   if (use.section === "sonos_rooms") return t("backup.where.sonosRoom", { name: use.name || "" });
   if (use.section === "profiles") return t("backup.where.profile", { name: use.name || "" });
+  // A member's rooms, or the rooms hidden from members (1.8.0, ADR-054).
+  if (use.section === "people") return use.name ? t("backup.where.personRooms", { name: use.name }) : t("backup.where.hiddenRooms");
   return t(`backup.where.${use.section === "room_order" ? "roomOrder" : "roomNames"}`);
 }
 

@@ -244,6 +244,8 @@ function signature() {
     ringingDoorbells().map((doorbell) => doorbell.id),
     state.doorbells.length ? Math.floor(Date.now() / 60000) : 0,
     state.role,
+    // What this person may do (1.8.0, ADR-054).
+    state.access,
     state.account,
     // The sign-ins the account server has set up (account.js), once asked.
     signInProviders(),
@@ -277,6 +279,7 @@ function signature() {
     ui.homeMessage,
     ui.homeInvitation,
     ui.inviteForm,
+    ui.inviteAccess,
     ui.joinBusy,
     ui.joinMessage,
     ui.joinWait,

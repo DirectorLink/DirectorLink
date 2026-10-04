@@ -17,7 +17,9 @@ ROUTE_PATTERN = re.compile(
     r'\{\s*method\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)",\s*handler\s*=\s*"([^"]+)"'
     r'(\s*,\s*public\s*=\s*true)?(?:\s*,\s*role\s*=\s*"(\w+)")?\s*\}'
 )
-ROLES = ("viewer", "member", "doors", "admin")
+# Two roles since 1.8.0 (ADR-054): admin routes are the admins'; on member routes every person may
+# ask, and what a member sees and may do there is the handler's to check (src/auth/access.lua).
+ROLES = ("member", "admin")
 
 
 def fail(message):
@@ -56,7 +58,7 @@ def check_operation(key, operation, public, role):
         spec_role = operation.get("x-directorlink-role")
         if spec_role != role:
             fail(f"{label}: x-directorlink-role is {spec_role!r} in the spec but {role!r} in routes.lua")
-        if role != "viewer" and "403" not in operation.get("responses", {}):
+        if role == "admin" and "403" not in operation.get("responses", {}):
             fail(f"{label} needs the {role} role but does not document 403")
     for field in ("operationId", "summary", "tags"):
         if not operation.get(field):

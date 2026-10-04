@@ -6,7 +6,8 @@ register its own invitations (ADR-032). 1.3.0 switches Sign in with Apple on, le
 approve an invitation accepted with another email, and follows Apple's notifications about its
 accounts (ADR-041); it also pairs with CPace, so the pairing code never crosses the network
 (ADR-039), and the API console's own key lasts a day (ADR-040). 1.7.0 lets a new device join by
-approval from another device of the same account, and paste an invitation link (ADR-053).** The
+approval from another device of the same account, and paste an invitation link (ADR-053). 1.8.0
+sets roles per person, admin or member, with each member's rooms, devices and scenes (ADR-054).** The
 driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
@@ -21,7 +22,9 @@ app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay p
 - The owner proves control of the home once, on the home network. Everyone else joins by
   invitation, without Composer and without the home network: family, and the owner's own other
   devices.
-- Roles stay those of API keys (`viewer`, `member`, `doors`, `admin`), enforced by the controller.
+- Roles stay the controller's, enforced by it: since 1.8.0 each person is an admin or a member, and
+  every key has its person's permissions (ADR-054; before, each key had `viewer`, `member`, `doors`
+  or `admin`).
 - Using the app on the home network without an account keeps working.
 
 Not part of this design: local HTTPS, native apps, billing. Alerts (1.6.0, ADR-047; sealed to each
@@ -33,7 +36,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | --- | --- | --- | --- |
 | Account: email, name, sign-in provider | yes | yes | no |
 | Which homes the account belongs to | yes | yes | — |
-| Which key ids are admin keys (1.6.0) | its own role | yes (ids only) | yes |
+| Which key ids are admin keys (1.6.0; since 1.8.0 the keys of admin people) | its own role | yes (ids only) | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
 | Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring, one that is not brief for a key that is not an admin key is the refrigerator | yes |
@@ -194,7 +197,9 @@ either:
 From then on this device also works away from home. Another device of the same account links with
 its own key and skips the claim. A later claim from the home network, which again needs an admin
 key there, moves the home to the new account and removes the previous members and invitations:
-whoever controls the controller controls the home (ADR-027). The app asks before doing that.
+whoever controls the controller controls the home (ADR-027). The app asks before doing that. Once
+a person has claimed the home with DirectorLink 1.8.0 or later, only they (the home's owner) claim
+it again (`403 OWNER_ONLY`, ADR-054).
 
 ### 2. Away from home
 
@@ -206,8 +211,9 @@ key's role), locks the answer and sends it back.
 
 ### 3. Invitations: family, and the owner's own other devices
 
-1. An admin taps **Invite**, picks a role and enters the person's email, or chooses *my other
-   device*.
+1. An admin taps **Invite**, picks admin or member (for a member, what they may see and do; 1.8.0)
+   and enters the person's email, or chooses *my other device* (the new device joins the admin's
+   own person).
 2. The admin's app asks the controller, locally or through the lock, for an invitation. The
    controller creates an invitation id and a random secret `I`, and remembers the role and the
    expiry.
@@ -218,7 +224,7 @@ key's role), locks the answer and sends it back.
    expiry, once: an invitation cannot be moved to another email. Since 1.0.0 the controller tells
    it itself, over its relay connection, before answering the admin (`{"type":"invitation"}`,
    `docs/RELAY.md`); if that fails the invitation is revoked. Only the home can therefore bind an
-   invitation to an email: the cloud does not know members' roles, so a viewer cannot. For drivers
+   invitation to an email: the cloud does not know members' roles, so a member cannot. For drivers
    before 1.0.0 the home's owner registers it from the app; other members are refused
    (`OWNER_ONLY`).
 4. The invited person opens the link and signs in. The cloud checks their email against the
@@ -226,7 +232,8 @@ key's role), locks the answer and sends it back.
    below). Then it passes on the person's first envelope, which is locked with keys derived from
    `I` (`HMAC-SHA256(I, "DirectorLink invite v1")`).
 5. The controller checks the invitation (unused, not expired), creates a new API key with the
-   invitation's role and returns it inside the locked answer. The invitation is used up.
+   invitation's role (since 1.8.0 a new person with the invitation's role and permissions) and
+   returns it inside the locked answer. The invitation is used up.
 
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
 still has to sign in as the invited email, or be approved by the home's owner, who compares a code
@@ -352,7 +359,8 @@ there too (*On the home network*). No cloud is involved.
 
 Anyone with a key at the home can get notifications on their phones and computers, with the app
 closed: a doorbell rang, a door or gate was opened (admins, if they choose), the refrigerator's
-door was left open (members and admins), a schedule had a problem (admins), and the home has been
+door was left open (members and admins; since 1.8.0 whoever sees that refrigerator), a schedule had
+a problem (admins), and the home has been
 unreachable for 10 minutes (admins). Before 1.7.0 on the controller, only the last two, for admins.
 
 1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
@@ -366,7 +374,8 @@ unreachable for 10 minutes (admins). Before 1.7.0 on the controller, only the la
    home's admin keys, which the controller lists (`{"type":"keys","ids":[…],"admins":[…]}`,
    `docs/RELAY.md`). The same checks are made for every alert, so a key revoked, or made a member,
    stops what it may no longer get at once.
-3. *What the controller alerts about* it decides and seals: for each key whose role may get it,
+3. *What the controller alerts about* it decides and seals: for each key whose person may get it
+   (since 1.8.0: a ring whoever sees that doorbell, the refrigerator whoever sees it; ADR-054),
    whose device switched alerts on and which chose it, the details sealed with that key's alert key
    (`HMAC-SHA256(lock key, "DirectorLink alert v1")`), in one `{"type":"notify"}` that names only the
    key ids (`docs/RELAY.md`). The cloud pushes each part, at once, to the browsers registered with

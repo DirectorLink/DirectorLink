@@ -4,6 +4,7 @@ local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local CameraClient = require("src.control4.camera")
+local Access = require("src.auth.access")
 
 local Cameras = {}
 
@@ -17,13 +18,26 @@ local STATUS_BY_ERROR = {
     CAMERA_BUSY = 503,
 }
 
+-- Whether the caller may see a doorbell's picture whose camera this is (a member with cameras
+-- sees the picture of a doorbell in their rooms, wherever its camera is placed).
+local function atTheirDoorbell(ctx, camera)
+    for _, doorbell in ipairs(ctx.services.registry.doorbellList()) do
+        if doorbell.linked and tonumber(doorbell.linked.camera) == tonumber(camera.id) and Access.canSeePictures(ctx.apiKey, doorbell) then
+            return true
+        end
+    end
+    return false
+end
+
+-- A camera the caller may not see is, for them, one that does not exist (ADR-054).
 local function findCamera(ctx)
     local id, problem = Validate.id(ctx.params.cameraId, "cameraId")
     if not id then
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "camera" or device.supported ~= true then
+    if not device or device.kind ~= "camera" or device.supported ~= true
+        or not (Access.canSeePictures(ctx.apiKey, device) or atTheirDoorbell(ctx, device)) then
         return nil, Problem.notFound("Camera", id)
     end
     return device
@@ -36,7 +50,7 @@ function Cameras.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.cameraList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.cameraList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.camera(registry, device)
         end

@@ -396,6 +396,40 @@ function Keys.exists(id)
     return false
 end
 
+-- The profile (person) of the key with this id, without the look at expiry: Access asks it often.
+function Keys.profileOf(id)
+    for _, key in ipairs(state.keys) do
+        if key.id == id then
+            return key.profile
+        end
+    end
+    return nil
+end
+
+-- Sets the 1.7.0 role every key keeps from its person (ADR-054): `roleOf(key)` answers it, or nil
+-- to leave the key as it is. Saved once. Returns how many changed, and false when that could not
+-- be saved (the roles are then as before).
+function Keys.setRoles(roleOf)
+    local before = {}
+    for _, key in ipairs(state.keys) do
+        local role = roleOf(key)
+        if Roles.valid(role) and role ~= key.role then
+            before[#before + 1] = { key = key, role = key.role }
+            key.role = role
+        end
+    end
+    if #before == 0 then
+        return 0, true
+    end
+    if not save() then
+        for _, item in ipairs(before) do
+            item.key.role = item.role
+        end
+        return 0, false
+    end
+    return #before, true
+end
+
 function Keys.touch(id)
     for _, key in ipairs(state.keys) do
         if key.id == id then

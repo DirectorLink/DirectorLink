@@ -1,15 +1,15 @@
--- Scenes (docs/SCENES.md, src/core/scenes.lua): the home's one-tap actions. Everyone sees them,
--- members and above run them, admins make and change them, and try steps before saving
--- (POST /v1/scenes/try). A run sends the same commands as the device routes do; doors and gates
--- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
--- POST /v1/off (1.3.0, Home's "Turn off all") runs one step of that kind: lights off, AC off or
--- blinds closed, on the devices it names. A music step (1.5.0, ADR-044) pauses or stops the Sonos
+-- Scenes (docs/SCENES.md, src/core/scenes.lua): the home's one-tap actions. Admins make and change
+-- them, and try steps before saving (POST /v1/scenes/try); a member sees and runs only the scenes an
+-- admin chose for them (ADR-054), in full. A run sends the same commands as the device routes do;
+-- doors and gates get a pulse (their Open button), while Door Control is on, never when DirectorLink
+-- runs a scene itself (schedules, scene links). POST /v1/off (1.3.0, Home's "Turn off all") runs one
+-- step of that kind: lights off, AC off or blinds closed, on the devices it names (a member's own). A music step (1.5.0, ADR-044) pauses or stops the Sonos
 -- music in a room or the whole home; it names no devices. A refrigerators step (1.7.0, ADR-049)
 -- switches features of Samsung refrigerators on or off: Sabbath Mode in a Shabbat schedule.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
-local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Scenes = require("src.core.scenes")
@@ -206,8 +206,8 @@ local function validateSet(stepType, set, field)
 end
 
 -- 1 to `maximum` ids of supported devices of the step type, without repeats; nil and a problem
--- otherwise.
-local function validateDeviceIds(registry, ids, stepType, field, maximum)
+-- otherwise. With `actor`, only devices it may control: another is, for it, one that does not exist.
+local function validateDeviceIds(registry, ids, stepType, field, maximum, actor)
     if not isList(ids) or #ids == 0 or #ids > maximum then
         return nil, Problem.invalidField(field, "device_ids must be a list of 1 to " .. maximum .. " device ids")
     end
@@ -215,7 +215,7 @@ local function validateDeviceIds(registry, ids, stepType, field, maximum)
     local seen = {}
     for _, id in ipairs(ids) do
         local device = isWhole(id, 1, math.huge) and registry.getDevice(id) or nil
-        if not device or device.kind ~= KINDS[stepType] or device.supported ~= true then
+        if not device or device.kind ~= KINDS[stepType] or device.supported ~= true or (actor and not Access.canControl(actor, device)) then
             return nil, Problem.invalidField(field, "Device " .. tostring(id) .. " is not one of this home's " .. stepType)
         end
         if not seen[id] then
@@ -334,7 +334,8 @@ local function findScene(ctx)
         return nil, Problem.invalidParameter("sceneId", "sceneId is 8 hex characters")
     end
     local scene = Scenes.find(id)
-    if not scene then
+    -- A scene a member may not run is, for them, one that does not exist (ADR-054).
+    if not scene or not Access.mayRunScene(ctx.apiKey, scene.id) then
         return nil, Problem.notFound("Scene", id)
     end
     return scene
@@ -514,8 +515,10 @@ local function run(ctx, steps, via)
                 note("skipped", index, 0, missing, MUSIC_SKIPPED[missing] or MUSIC_SKIPPED.NO_PLAYERS)
             end
         elseif step.type == "relays" then
-            if not Roles.allows(ctx.apiKey.role, "doors") then
-                refusal, why = "FORBIDDEN", "Doors and gates run only for keys with door access"
+            -- A scene runs in full for whoever may run it (ADR-054: an admin chose what it does);
+            -- DirectorLink's own runs (schedules, scene links) never open doors or gates.
+            if not Access.scenesOpenDoors(ctx.apiKey) then
+                refusal, why = "FORBIDDEN", "Doors and gates open only when a person runs the scene"
             elseif not services.doorControlEnabled() then
                 refusal, why = "DOOR_CONTROL_DISABLED", "Door control is off; turn on the Door Control property of DirectorLink in Composer"
             end
@@ -568,10 +571,13 @@ local function run(ctx, steps, via)
     return result
 end
 
+-- Admins get every scene; a member the scenes they may run (ADR-054).
 function Handlers.list(ctx)
     local items = Json.array()
     for _, scene in ipairs(Scenes.list()) do
-        items[#items + 1] = view(scene)
+        if Access.mayRunScene(ctx.apiKey, scene.id) then
+            items[#items + 1] = view(scene)
+        end
     end
     return 200, { items = items }
 end
@@ -733,7 +739,8 @@ function Handlers.off(ctx)
         return Problem.invalidField("type", "type must be one of lights, climate, blinds")
     end
     local deviceIds
-    deviceIds, problem = validateDeviceIds(ctx.services.registry, body.device_ids, offType, "device_ids", MAX_OFF_DEVICES)
+    -- Only the devices the caller may control (ADR-054): what a member's Home shows.
+    deviceIds, problem = validateDeviceIds(ctx.services.registry, body.device_ids, offType, "device_ids", MAX_OFF_DEVICES, ctx.apiKey)
     if not deviceIds then
         return problem
     end
