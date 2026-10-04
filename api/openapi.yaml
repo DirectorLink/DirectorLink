@@ -355,7 +355,10 @@ paths:
         A key for a new person, an admin or a member with `access` (since 1.8.0), or with
         `profile_id` another device of a person, which has that person's permissions. The roles of
         DirectorLink 1.7.0 still work: `viewer`, `member` without `access` and `doors` make the person
-        that role became in 1.8.0 (ADR-054).
+        that role became in 1.8.0 (ADR-054). Only the home's owner adds a key to the owner's person
+        (`403 OWNER_PROTECTED`). `503 UNAVAILABLE` while DirectorLink could not read who the owner
+        is (for a key added to an admin's person) or the people's profiles or permissions (for a new
+        person) when it started.
       requestBody:
         required: true
         content:
@@ -379,6 +382,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/api-keys/current:
     get:
@@ -422,10 +427,12 @@ paths:
         A key has its person's permissions (ADR-054): `profile_id` moves it to another person, and
         it then has theirs. `role`, as DirectorLink 1.7.0 clients send it, changes the key's person
         (all of their devices) into what that role became in 1.8.0, unless the key has that role
-        already. The home's owner's devices are only theirs to move (`403 OWNER_PROTECTED`), the
-        owner stays an admin (`409 OWNER_STAYS_ADMIN`), and there is always an admin
-        (`409 LAST_ADMIN`). Use `PATCH /v1/profiles/{profileId}/access` to set a person's role and
-        permissions.
+        already. The home's owner's devices are only theirs to move, and only they move a device to
+        the owner (`403 OWNER_PROTECTED`), the owner stays an admin (`409 OWNER_STAYS_ADMIN`), and
+        there is always an admin (`409 LAST_ADMIN`). A moved key's 1.7.0 `role` becomes its new
+        person's at once. `500` when the keys could not be saved: nothing changed. `503 UNAVAILABLE`
+        for an admin's device while DirectorLink could not read who the owner is when it started. Use
+        `PATCH /v1/profiles/{profileId}/access` to set a person's role and permissions.
       requestBody:
         required: true
         content:
@@ -451,6 +458,8 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     delete:
       tags: [Auth]
       operationId: deleteApiKey
@@ -459,7 +468,8 @@ paths:
       description: |
         Revoking the key used for this request is allowed; later requests with it get 401. The home's
         owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke
-        (`403 OWNER_PROTECTED`).
+        (`403 OWNER_PROTECTED`); an admin's device waits (`503 UNAVAILABLE`) while DirectorLink could
+        not read who the owner is when it started.
       responses:
         "204":
           description: Revoked.
@@ -469,6 +479,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/remote:
     get:
@@ -498,7 +510,8 @@ paths:
         over remote access. It works once, for 5 minutes. Only from the home network: holding an
         admin key here is what proves the home is yours. Whoever claims it is the home's owner
         (ADR-054); once a person has claimed it with DirectorLink 1.8.0, only they claim it again
-        (403 `OWNER_ONLY`), so that no other admin can take it from them.
+        (403 `OWNER_ONLY`), so that no other admin can take it from them; and nobody while
+        DirectorLink could not read who the owner is when it started (503 `UNAVAILABLE`).
       responses:
         "201":
           description: A new token (it replaces any earlier one).
@@ -571,7 +584,9 @@ paths:
         shares, so it never reaches a server; the controller keeps only a key derived from it.
         Whoever accepts gets their own API key, as a new person with this role and, for a member,
         the permissions in `access` (since 1.8.0, ADR-054); `for_me` keys join the admin's own
-        person. The roles of DirectorLink 1.7.0 still work (`viewer`, `member` without `access`,
+        person, and only while that admin may add a device to it (the owner's person only by the
+        owner, ADR-054; else the join is refused as `INVITATION_NOT_FOUND`, and `503 UNAVAILABLE`
+        here while DirectorLink could not read who the owner is when it started). The roles of DirectorLink 1.7.0 still work (`viewer`, `member` without `access`,
         `doors`): the person is then what that role became in 1.8.0. Needs Remote Access switched on.
         With `email`, the controller registers the invitation with the account service first; if
         that fails (`REMOTE_OFFLINE`, or the service's own code with 502) the invitation is
@@ -630,7 +645,8 @@ paths:
       summary: The caller's profile
       description: |
         The preferences of the person this API key belongs to, shared by all their devices, and
-        (since 1.8.0) what they may do (`access`).
+        (since 1.8.0) what they may do (`access`). `503 UNAVAILABLE` (1.8.0) while the profiles
+        could not be read when DirectorLink started.
       responses:
         "200":
           description: The profile.
@@ -642,6 +658,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
     patch:
       tags: [Profiles]
       operationId: updateProfile
@@ -675,6 +693,8 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/profiles:
     get:
@@ -757,11 +777,16 @@ paths:
       x-directorlink-role: admin
       summary: Set a person's role and permissions
       description: |
-        Any of the fields; the others keep their values. Every key of the person follows at once,
-        at home and away. Rooms must be the home's and scenes its scenes. Only the home's owner
-        changes the owner's (`403 OWNER_PROTECTED`), and the owner stays an admin
-        (`409 OWNER_STAYS_ADMIN`); there is always an admin (`409 LAST_ADMIN`). A person no longer an
-        admin keeps no invitation their devices made.
+        Any of the fields; the others keep their values (for a person without a record yet, those of
+        what their keys' 1.7.0 role became; for a member that needs the scenes, `503 UNAVAILABLE`
+        while they could not be read). Every key of the person follows at once, at home and away;
+        their 1.7.0 `role` is saved first, and when it cannot be, nothing changes (`500`). Rooms must
+        be the home's and scenes its scenes. Only the home's owner changes the owner's, and only the
+        owner makes a person an admin who would then be the owner (`403 OWNER_PROTECTED`); the owner
+        stays an admin (`409 OWNER_STAYS_ADMIN`); there is always an admin (`409 LAST_ADMIN`). While
+        DirectorLink could not read who the owner is when it started, admins' and new admins' wait
+        (`503 UNAVAILABLE`). A person no longer an admin keeps no invitation their devices made, nor
+        scene links.
       requestBody:
         required: true
         content:
@@ -3631,6 +3656,7 @@ components:
               type: [string, "null"]
         inventory:
           type: object
+          description: What the home has; for a member (1.8.0, ADR-054) only what they see, their rooms and the devices there that they see.
           required: [rooms, devices, supported_devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, refrigerators]
           properties:
             rooms:
@@ -4183,10 +4209,18 @@ components:
         plays a Sonos favorite in the Sonos rooms of `room_id` (required then), with those of
         `with_room_ids` grouped with them.
         A `refrigerators` step (1.7.0) switches features of Samsung refrigerators.
+        A member (1.8.0, ADR-054) gets only the rooms and devices they see: a room they do not see
+        is null, `device_ids` and `with_room_ids` leave out the ones they do not see (`device_ids`
+        is null when none is left), `elsewhere` says the step does more than that, and a favorite
+        comes without its `uri` and `meta`.
       properties:
         type:
           type: string
           enum: [lights, climate, fans, blinds, relays, music, refrigerators]
+        elsewhere:
+          type: boolean
+          readOnly: true
+          description: In a member's scenes only (1.8.0); true when the step also works on rooms or devices left out for them.
         room_id:
           type: [integer, "null"]
           minimum: 1
@@ -4434,7 +4468,7 @@ components:
         made_by:
           type: [string, "null"]
           pattern: "^[0-9a-f]{8}$"
-          description: The id of the API key that made it. Revoking that key, or its expiry, removes the link; Revoke All API Keys removes every link. Null for a link made before this was kept (a test build of 1.7.0), which only Revoke All API Keys ends.
+          description: The id of the API key that made it. Revoking that key, or its expiry, removes the link, and so does its person being made a member (1.8.0, ADR-054); Revoke All API Keys removes every link. Null for a link made before this was kept (a test build of 1.7.0), which only Revoke All API Keys ends.
         created_at:
           type: string
           format: date-time
@@ -4616,7 +4650,7 @@ components:
                 description: The step, counted from 1.
               device_id:
                 type: integer
-                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`, and since 1.8.0 `FORBIDDEN` for Sonos rooms this key may not control, `FAVORITE_GONE`, `FAVORITE_NOT_PLAYABLE`).
+                description: The device; 0 for a music step (`SONOS_OFF`, `NO_PLAYERS`, `NO_SONOS_ROOM`, and since 1.8.0 `FORBIDDEN` for Sonos rooms this key may not control, `FAVORITE_GONE`, `FAVORITE_NOT_PLAYABLE`), and for a member's run a device they do not see (1.8.0, ADR-054).
               outcome:
                 type: string
                 enum: [skipped, failed, partial]
@@ -5573,7 +5607,10 @@ components:
 
     MusicGroup:
       type: object
-      description: A Sonos group (a room on its own is a group of one).
+      description: |
+        A Sonos group (a room on its own is a group of one). A member (ADR-054) gets the groups with
+        a Sonos room they see, naming only those: `volume` is theirs, and when the coordinator is not
+        theirs, `id` and `now_playing.art_href` are those of the first of their rooms.
       required: [id, rooms, state, volume, now_playing]
       properties:
         id:
@@ -5642,12 +5679,16 @@ components:
           description: How the room was found, by its name or an admin's pick.
         group:
           type: object
-          description: The Sonos group it plays in (each room on its own is a group of one).
+          description: |
+            The Sonos group it plays in (each room on its own is a group of one). A member
+            (1.8.0, ADR-054) gets only the Sonos rooms they see: the others are counted in `others`,
+            `volume` is that of their rooms, and when the coordinator is not theirs, `id` is the
+            first of their rooms in the group.
           required: [id, coordinator, rooms]
           properties:
             id:
               type: string
-              description: The group's coordinator, which play, pause and skip go to.
+              description: The group's coordinator, which play, pause and skip go to (for a member who does not see it, one of their rooms in the group).
             coordinator:
               type: boolean
               description: This room leads the group.
@@ -5656,9 +5697,13 @@ components:
               minimum: 0
               maximum: 100
               description: The group's volume (1.8.0), the average of its rooms' own; null while none is read. Missing before 1.8.0.
+            others:
+              type: integer
+              minimum: 0
+              description: How many of the group's rooms are left out of `rooms` because the caller does not see them (1.8.0); 0 for admins. Missing before 1.8.0.
             rooms:
               type: array
-              description: The group's rooms, its coordinator first.
+              description: The group's rooms, its coordinator first (for a member, those they see).
               items:
                 type: object
                 required: [id, name]
@@ -6366,7 +6411,8 @@ components:
           `link_replaced`, `link_removed` (`what` is the scene, `note` the link's label; `reason`
           `doors` when a change made the scene open doors or gates, `scene_gone` when the scene was
           deleted, `other_home` when it was made for another home connection, `key_gone` when the
-          key that made it was revoked or expired; none when an admin removed it), `links_removed`
+          key that made it was revoked or expired, `no_access` (1.8.0) when that key's person is no
+          longer an admin; none when an admin removed it), `links_removed`
           (all of them: Composer's Remove All Scene Links, `reason` `keys_revoked` after Revoke All
           API Keys, or `new_identity` after Reset Remote Identity; `count`; `outcome` `failed` when
           the controller could not save it, and the links still work).

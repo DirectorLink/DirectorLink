@@ -63,8 +63,15 @@ all of a person's devices follow one change. Before 1.8.0 each key had a role of
 - `GET /v1/profiles` gives each person's `access`; `GET /v1/profile` and `GET /v1/api-keys/current`
   give the caller's own (an admin's all true), so that the app shows only what they may use.
 - The home's **owner** (the person who last claimed it for an account, else the oldest admin) is
-  always an admin: no other admin can demote them, change their permissions or revoke or move their
-  devices (`403 OWNER_PROTECTED`). There is always an admin (`409 LAST_ADMIN`).
+  always an admin: no other admin can demote them, change their permissions, revoke or move their
+  devices, add a key or device to them (a key with `profile_id`, a device moved in, an invitation
+  for another device of theirs), or make someone an admin who would then be the owner
+  (`403 OWNER_PROTECTED`). There is always an admin (`409 LAST_ADMIN`). While DirectorLink could
+  not read the people's or the profiles' store when it started, admins' devices and permissions
+  and claims wait (`503 UNAVAILABLE`), and nothing is written over the store it could not read.
+- A member's lists and answers name nothing they may not see: their rooms' alarm partitions only
+  with the alarm, a Sonos group only through their Sonos rooms, a scene's steps only with their
+  rooms and devices (`elsewhere` for the rest), the controller's inventory only what they see.
 - From 1.7.0, each person gets the highest role among their keys: `admin` an admin, `doors` and
   `member` a member with every room and kind (doors and gates for `doors` only), `viewer` a member
   with no rooms and cameras only. ADR-054 has the details. Every key keeps a 1.7.0 `role` worked

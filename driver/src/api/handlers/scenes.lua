@@ -62,20 +62,67 @@ local function contains(list, value)
     return false
 end
 
-local function stepView(step)
+-- A step as `actor` sees it: an admin (or nil: the controller itself) the whole step; a member
+-- (ADR-054) only the rooms and devices they see, with `elsewhere` when the step also works on others
+-- (a room left out: room_id null; devices left out of device_ids, null when none is left; rooms
+-- left out of a favorite's with_room_ids), and a favorite without what only Sonos reads (its uri
+-- and meta).
+local function stepView(step, actor, registry)
     local set = Scenes.copySet(step.set)
-    return {
+    local result = {
         type = step.type,
         room_id = nullable(step.room_id),
         device_ids = step.device_ids and step.device_ids or Json.null,
         set = set,
     }
+    if actor == nil or Access.isAdmin(actor) then
+        return result
+    end
+    local elsewhere = false
+    if step.room_id ~= nil and not Access.seesRoom(actor, step.room_id) then
+        result.room_id = Json.null
+        elsewhere = true
+    end
+    if step.device_ids then
+        local ids = Json.array()
+        for _, id in ipairs(step.device_ids) do
+            local device = registry and registry.getDevice(id)
+            if device and Access.canSee(actor, device) then
+                ids[#ids + 1] = id
+            else
+                elsewhere = true
+            end
+        end
+        -- None of them: the step names no device (and says elsewhere).
+        result.device_ids = #ids > 0 and ids or Json.null
+    end
+    if type(set.with_room_ids) == "table" then
+        local rooms = Json.array()
+        for _, id in ipairs(set.with_room_ids) do
+            if Access.seesRoom(actor, id) then
+                rooms[#rooms + 1] = id
+            else
+                elsewhere = true
+            end
+        end
+        set.with_room_ids = rooms
+    end
+    if type(set.favorite) == "table" then
+        set.favorite.uri, set.favorite.meta = nil, nil
+    end
+    if elsewhere then
+        result.elsewhere = true
+    end
+    return result
 end
 
-local function view(scene)
+-- A scene as `ctx`'s caller sees it (stepView).
+local function view(scene, ctx)
+    local actor = ctx and ctx.apiKey or nil
+    local registry = ctx and ctx.services and ctx.services.registry or nil
     local steps = Json.array()
     for _, step in ipairs(scene.steps) do
-        steps[#steps + 1] = stepView(step)
+        steps[#steps + 1] = stepView(step, actor, registry)
     end
     return {
         id = scene.id,
@@ -655,7 +702,7 @@ function Handlers.list(ctx)
     local items = Json.array()
     for _, scene in ipairs(Scenes.list()) do
         if Access.mayRunScene(ctx.apiKey, scene.id) then
-            items[#items + 1] = view(scene)
+            items[#items + 1] = view(scene, ctx)
         end
     end
     return 200, { items = items }
@@ -666,7 +713,7 @@ function Handlers.get(ctx)
     if not scene then
         return problem
     end
-    return 200, view(scene)
+    return 200, view(scene, ctx)
 end
 
 function Handlers.create(ctx)
@@ -764,6 +811,24 @@ function Handlers.runSaved(services, sceneId, caller)
     return run({ services = services, apiKey = caller }, scene.steps)
 end
 
+-- What a member is told of a scene's run (ADR-054): a device they do not see is not named in its
+-- problems (device_id 0, a general detail), as in the scene's steps (stepView).
+local function forCaller(ctx, result)
+    if Access.isAdmin(ctx.apiKey) then
+        return result
+    end
+    for _, problem in ipairs(result.problems) do
+        if problem.device_id ~= 0 then
+            local device = ctx.services.registry.getDevice(problem.device_id)
+            if not (device and Access.canSee(ctx.apiKey, device)) then
+                problem.device_id = 0
+                problem.detail = "A device elsewhere (" .. tostring(problem.code) .. ")"
+            end
+        end
+    end
+    return result
+end
+
 function Handlers.run(ctx)
     local scene, problem = findScene(ctx)
     if not scene then
@@ -780,7 +845,7 @@ function Handlers.run(ctx)
     ctx.services.log.info("scenes", "scene ran", {
         scene = scene.id, by = ctx.apiKey.id, ran = result.ran, skipped = result.skipped, failed = result.failed,
     })
-    return 202, result
+    return 202, forCaller(ctx, result)
 end
 
 -- POST {"steps": [...]}: runs steps once without saving them, for "Try it now" (admins).

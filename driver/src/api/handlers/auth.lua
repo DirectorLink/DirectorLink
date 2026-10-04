@@ -36,7 +36,9 @@ local function createKey(ctx, name, role, profileId, expiresAt, person)
     local profiles = ctx.services.profiles
     if not profileId and profiles then
         local profile, profileFailure = profiles.create(name)
-        if not profile then
+        if profileFailure == "UNAVAILABLE" then
+            return nil, Problem.new(503, "UNAVAILABLE", "The people's profiles could not be read when DirectorLink started; restart the driver and try again")
+        elseif not profile then
             return nil, Problem.new(409, profileFailure, "This controller has as many profiles as it allows")
         end
         profileId = profile.id
@@ -56,8 +58,17 @@ local function createKey(ctx, name, role, profileId, expiresAt, person)
         end
         return nil, Problem.internal("The API key could not be created (" .. tostring(failure) .. ")")
     end
-    if person then
-        People.set(profileId, person)
+    -- A member whose person could not be kept would answer as the 1.7.0 role, which may be more
+    -- than they were given (every room): the key goes again. An admin is an admin either way.
+    if person and not People.set(profileId, person) and person.role ~= "admin" then
+        keys.revoke(record.id)
+        if profiles then
+            profiles.prune(keys.list())
+        end
+        if not People.complete() then
+            return nil, Problem.new(503, "UNAVAILABLE", "The people's permissions could not be read when DirectorLink started; restart the driver and try again")
+        end
+        return nil, Problem.internal("The new person's permissions could not be saved, so no key was made")
     end
     return record
 end
@@ -332,9 +343,16 @@ function Auth.create_key(ctx)
     if not Roles.valid(role) then
         return roleProblem()
     end
-    -- Another device of an existing person: it joins their profile.
-    if body.profile_id ~= nil and not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
-        return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+    -- Another device of an existing person: it joins their profile, and has their permissions; the
+    -- owner's only by the owner (ADR-054), or another admin would hold the owner's key.
+    if body.profile_id ~= nil then
+        if not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
+            return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+        end
+        local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)
+        if not allowed then
+            return ProfileHandlers.refused(refusal, "This is the home's owner: only the owner adds a device of theirs")
+        end
     end
     local person = nil
     if body.access ~= nil then
@@ -373,22 +391,22 @@ function Auth.current_key(ctx)
     return 200, view
 end
 
--- Whether `keyId`'s person is the home's owner while the caller is not: then only the owner (or
--- Composer's Revoke All API Keys) may revoke or move that key (ADR-054).
-local function ownersKey(ctx, profileId)
-    local owner = Access.owner()
-    return owner ~= nil and profileId == owner and not Access.isOwner(ctx.apiKey)
-end
-
-local function ownerProtected()
-    return Problem.new(403, "OWNER_PROTECTED", "This is a device of the home's owner: only the owner removes or moves it")
+-- Whether the caller may change the person `profileId` by revoking, moving or adding a device
+-- (Access.mayChangePerson: the owner's devices are only the owner's, or Composer's Revoke All API
+-- Keys); nil, or the problem.
+local function personRefused(ctx, profileId)
+    local allowed, refusal = Access.mayChangePerson(ctx.apiKey, profileId)
+    if allowed then
+        return nil
+    end
+    return ProfileHandlers.refused(refusal, "This is a device of the home's owner: only the owner removes or moves it, or moves a device to them")
 end
 
 -- Whether some key would still be an admin's if the key `keyId` were moved to `profileId`.
 local function adminLeftAfterMove(ctx, keyId, profileId)
-    for _, key in ipairs(ctx.services.keys.list()) do
-        local person = People.peek(key.id == keyId and profileId or key.profile)
-        if person and person.role == "admin" then
+    local keys = ctx.services.keys.list()
+    for _, key in ipairs(keys) do
+        if Access.isAdminPerson(key.id == keyId and profileId or key.profile, keys) then
             return true
         end
     end
@@ -445,17 +463,23 @@ function Auth.update_key(ctx)
         return Problem.notFound("API key", id)
     end
     if changes.profile and changes.profile ~= before.profile then
-        if ownersKey(ctx, before.profile) or ownersKey(ctx, changes.profile) then
-            return ownerProtected()
+        problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)
+        if problem then
+            return problem
         end
         if not adminLeftAfterMove(ctx, id, changes.profile) then
             return Problem.new(409, "LAST_ADMIN", "This is the only admin's device; make someone else an admin first")
         end
+        -- With its new person's 1.7.0 role, saved at once: a key whose role says otherwise would
+        -- make that person be read again from it at the next start (People.reconcile).
+        changes.role = People.legacyRole(People.peek(changes.profile))
     end
     local record, failure = ctx.services.keys.update(id, changes)
     if not record then
         if failure == "NOT_FOUND" then
             return Problem.notFound("API key", id)
+        elseif failure == "LAST_ADMIN" then
+            return Problem.new(409, "LAST_ADMIN", "This is the only admin's device; make someone else an admin first")
         end
         return Problem.internal("The API key could not be changed (" .. tostring(failure) .. ")")
     end
@@ -486,8 +510,9 @@ end
 function Auth.delete_key(ctx)
     local id = ctx.params.keyId
     local revoked = ctx.services.keys.find(id)
-    if revoked and ownersKey(ctx, revoked.profile) then
-        return ownerProtected()
+    local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil
+    if problem then
+        return problem
     end
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)

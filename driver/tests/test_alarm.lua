@@ -173,7 +173,8 @@ function tests.on_members_and_admins_read_the_partitions_in_sealed_answers()
     -- Composer counts them for the installer; the API's device list and inventory do not change.
     T.eq(mock.properties["Inventory"], INVENTORY .. ", 2 alarm partitions")
     T.eq(T.http(mock, "GET", "/v1/devices/81", { key = key }).json.type, "other")
-    T.eq(T.http(mock, "GET", "/v1/system", { key = viewer }).json.inventory.supported_devices, 11)
+    T.eq(T.http(mock, "GET", "/v1/system", { key = key }).json.inventory.supported_devices, 11)
+    T.eq(T.http(mock, "GET", "/v1/system", { key = viewer }).json.inventory.supported_devices, 0, "a person without rooms counts nothing (ADR-054)")
 end
 
 -- A person not given the alarm's status (ADR-054; a viewer of 1.7.0) gets 403 while it is on, and
@@ -191,6 +192,26 @@ function tests.a_person_not_given_the_alarm_gets_403_and_nothing_while_it_is_off
     OnPropertyChanged("Alarm Status")
     T.eq(alarm(mock, viewer, viewerId).status, 403)
     T.eq(alarm(mock, member.key, member.id).json.code, "FORBIDDEN")
+end
+
+-- Among the devices too, a partition is only for those given the alarm (ADR-054), in their rooms.
+function tests.a_person_not_given_the_alarm_sees_no_partition_among_the_devices()
+    local mock, key = start(true)
+    local function partitions(apiKey)
+        local found = {}
+        for _, device in ipairs(T.http(mock, "GET", "/v1/devices", { key = apiKey }).json.items) do
+            if device.id == 80 or device.id == 81 or device.id == 82 then
+                found[#found + 1] = device.id
+            end
+        end
+        table.sort(found)
+        return found
+    end
+    local without = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { alarm = false } } }).json.key
+    local living = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Guest", role = "member", access = { all_rooms = false, rooms = { 11 } } } }).json.key
+    T.same(partitions(without), {})
+    T.same(partitions(living), { 80, 82 }, "the ones in their rooms")
+    T.same(partitions(key), PARTITIONS)
 end
 
 -- The alarm is the home's (ADR-054): a member given it reads every partition, but the room of one

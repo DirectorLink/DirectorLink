@@ -214,6 +214,27 @@ function tests.a_key_without_a_person_answers_as_its_1_7_role_became()
     T.eq(Access.mayRunScene(viewer, "s1"), false)
     T.eq(Access.isAdmin(doors), false)
     T.eq(Access.isAdmin(admin), true)
+    -- Never more than 1.7.0: a member's scenes ran without their doors and gates.
+    T.eq(Access.scenesOpenDoors(member), false)
+    T.eq(Access.scenesOpenDoors(doors), true)
+    T.eq(Access.scenesOpenDoors(admin), true)
+end
+
+function tests.a_person_runs_their_scenes_in_full_and_directorlink_itself_opens_no_door()
+    setPeople({ ["eeee0001"] = { scenes = { "abcd0001" } } })
+    T.eq(Access.scenesOpenDoors(person("eeee0001")), true, "the admin chose the scene for them")
+    T.eq(Access.scenesOpenDoors({ id = "link:abcd0001", role = "member", system = true }), false)
+end
+
+function tests.an_alarm_partition_is_seen_only_with_the_alarm()
+    setPeople({ ["eeee0001"] = { alarm = false }, ["eeee0002"] = { all_rooms = false, rooms = { 11 } }, ["aaaa0001"] = { role = "admin" } })
+    local partition = { id = 80, kind = "alarm", room_id = 11 }
+    T.eq(Access.canSee(person("eeee0001"), partition), false, "not given the alarm")
+    T.eq(Access.canSee(person("eeee0002"), partition), true)
+    T.eq(Access.canSee(person("eeee0002"), { id = 81, kind = "alarm", room_id = 10 }), false, "not their room")
+    T.eq(Access.canSee(person("aaaa0001"), partition), true)
+    -- What DirectorLink does not control stays seen in their rooms (ADR-054).
+    T.eq(Access.canSee(person("eeee0001"), { id = 90, kind = "other", room_id = 11 }), true)
 end
 
 function tests.no_actor_or_no_device_may_do_nothing()

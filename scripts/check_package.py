@@ -109,6 +109,11 @@ SECURITY_CONTRACT = {
     ),
     "src/api/handlers/auth.lua": (
         "local paired, failure = ctx.services.pairing.conclude(session.attempt, isk ~= nil)\n    if not paired then\n        return pairingFailure(ctx, failure)\n    end",
+        # The owner's person is only the owner's (ADR-054: Access.mayChangePerson): no key made
+        # into it, no device moved into or out of it, none revoked, by anyone else.
+        "local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)",
+        "problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)",
+        "local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil",
     ),
     "src/cloud/relay.lua": (
         # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.
@@ -133,9 +138,12 @@ SECURITY_CONTRACT = {
         # Replays across a restart: ids of requests dated ahead of the clock are saved and loaded.
         "remember(keyId, requestId, ts, now)",
         "state.seen[item.k][item.i] = state.startedAt",
-        # A claim token dies with its admin key (an admin's: ADR-054).
-        "return owner ~= nil and Access.isAdmin(owner), owner",
+        # A claim token dies with its admin key (an admin's: ADR-054), and works only while that
+        # admin may claim the home (only the owner, once the home was claimed with 1.8.0).
+        "return owner ~= nil and Access.isAdmin(owner) and (Access.mayClaim(owner)) == true, owner",
         "state.services.invitations.consume(invitationId)",
+        # An invitation into an existing person joins only while its maker may add a device there.
+        "allowed, refusal = Access.mayChangePerson(inviter, profile.id)",
         # A sealed request never carries another (it would run as one from the home network).
         'if path:gsub("/+$", "") == "/v1/sealed" then',
         "state.services.keys.remote(keyId)",
@@ -171,7 +179,9 @@ SECURITY_CONTRACT = {
     "src/api/handlers/scene_links.lua": (
         'return Problem.new(409, "SCENE_OPENS_DOORS", "A scene that opens doors or gates cannot have a link")',
         '{ id = "link:" .. link.id, role = "member" }',
-        "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then",
+        # The key that made it still there, and still an admin's (ADR-054: mayLink).
+        "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not mayLink(link.by)) then",
+        "return key ~= nil and Access.isAdmin(key)",
     ),
     # Ask to open (ADR-058): only a hash of each secret, compared in constant time; a request lasts
     # two minutes, and only a pulse from a device it was sent to, by a key that may open the door,

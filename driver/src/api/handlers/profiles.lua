@@ -27,20 +27,26 @@ local function nullable(value)
     return value
 end
 
--- A person's role and permissions, as kept (their keys' 1.7.0 roles say it while the people's
--- store could not be read), and whether they are the home's owner.
-local function accessView(services, profileId, owner)
+-- A person's role and permissions: as kept; for a person without a record (the people's store could
+-- not be read, or the scenes at the first start of 1.8.0), what the highest 1.7.0 role among their
+-- keys becomes (ADR-054), as Access answers for those keys. True as a second value when kept.
+local function personRecord(services, profileId)
     local record = People.get(profileId)
-    if not record then
-        local highest, rank = "viewer", { viewer = 1, member = 2, doors = 3, admin = 4 }
-        for _, key in ipairs(services.keys.list()) do
-            if key.profile == profileId and (rank[key.role] or 0) > rank[highest] then
-                highest = key.role
-            end
-        end
-        record = People.fromLegacy(highest, Scenes.list())
+    if record then
+        return record, true
     end
-    local result = People.view(record)
+    local highest, rank = "viewer", { viewer = 1, member = 2, doors = 3, admin = 4 }
+    for _, key in ipairs(services.keys.list()) do
+        if key.profile == profileId and (rank[key.role] or 0) > rank[highest] then
+            highest = key.role
+        end
+    end
+    return People.fromLegacy(highest, Scenes.list()), false
+end
+
+-- A person's role and permissions, and whether they are the home's owner.
+local function accessView(services, profileId, owner)
+    local result = People.view((personRecord(services, profileId)))
     result.owner = profileId == (owner or Access.owner())
     return result
 end
@@ -91,7 +97,10 @@ local function ownProfile(ctx)
         return profile
     end
     local created, failure = services.profiles.create(key.name)
-    if not created then
+    if failure == "UNAVAILABLE" then
+        -- The profiles could not be read at start: the key's own comes back at the next start.
+        return nil, Problem.new(503, "UNAVAILABLE", "The people's profiles could not be read when DirectorLink started; restart the driver and try again")
+    elseif not created then
         return nil, Problem.new(409, failure, "This controller has as many profiles as it allows")
     end
     services.keys.update(key.id, { profile = created.id })
@@ -347,12 +356,11 @@ function Profiles.readAccess(services, body, base, field)
     return record
 end
 
--- How many people other than `except` are admins.
+-- How many people other than `except` are admins (a person without a record as their keys say).
 local function otherAdmins(services, except)
-    local count = 0
+    local count, keys = 0, services.keys.list()
     for _, profile in ipairs(services.profiles.list()) do
-        local record = People.peek(profile.id)
-        if profile.id ~= except and record and record.role == "admin" then
+        if profile.id ~= except and Access.isAdminPerson(profile.id, keys) then
             count = count + 1
         end
     end
@@ -363,11 +371,22 @@ local function unavailable()
     return Problem.new(503, "UNAVAILABLE", "The people's permissions could not be read when DirectorLink started; restart the driver and try again")
 end
 
+-- The problem for a change Access.mayChangePerson refused (`code`: OWNER_PROTECTED or UNAVAILABLE).
+-- `detail`: what only the owner does, for OWNER_PROTECTED.
+function Profiles.refused(code, detail)
+    if code == "UNAVAILABLE" then
+        return Problem.new(503, "UNAVAILABLE", "Who the home's owner is could not be read when DirectorLink started, so admins' devices and permissions stay as they are; restart the driver and try again")
+    end
+    return Problem.new(403, "OWNER_PROTECTED", detail or "Only the home's owner changes the owner's devices and permissions")
+end
+
 -- Sets the person `profileId`'s role and permissions to `record`, for the caller `ctx.apiKey`: the
--- owner's are only theirs to change, and stay an admin's; the last admin stays one. Every key of the
--- person follows (its 1.7.0 role too); a person no longer an admin keeps no invitation their keys
--- made (only admins make them); the history says what changed, and the account service learns the
--- admins' keys again. Returns the person's view, or nil and a problem.
+-- owner's are only theirs to change, and stay an admin's, and only the owner makes an admin who
+-- would then be the owner (Access.mayChangePerson); the last admin stays one. Every key of the
+-- person follows (its 1.7.0 role, saved first: when the keys' store cannot be written, nothing
+-- changes); a person no longer an admin keeps no invitation their keys made (only admins make
+-- them); the history says what changed, and the account service learns the admins' keys again.
+-- Returns the person's view, or nil and a problem.
 function Profiles.setAccess(ctx, profileId, record)
     local services = ctx.services
     local profile = services.profiles.find(profileId)
@@ -377,22 +396,39 @@ function Profiles.setAccess(ctx, profileId, record)
     if not People.complete() then
         return nil, unavailable()
     end
-    local before = People.get(profileId)
-    local wasAdmin = before ~= nil and before.role == "admin"
-    if profileId == Access.owner() then
-        if not Access.isOwner(ctx.apiKey) then
-            return nil, Problem.new(403, "OWNER_PROTECTED", "Only the home's owner changes the owner's role and permissions")
-        end
-        if record.role ~= "admin" then
-            return nil, Problem.new(409, "OWNER_STAYS_ADMIN", "The home's owner is always an admin")
-        end
+    -- A person without a record is what their keys say (accessView), an admin too.
+    local before = personRecord(services, profileId)
+    local wasAdmin = before.role == "admin"
+    local allowed, refusal = Access.mayChangePerson(ctx.apiKey, profileId, record.role == "admin" and not wasAdmin)
+    if not allowed then
+        return nil, Profiles.refused(refusal, wasAdmin and "Only the home's owner changes the owner's role and permissions"
+            or "Only the home's owner makes this person an admin: they would be the home's owner")
+    end
+    if profileId == Access.owner() and record.role ~= "admin" then
+        return nil, Problem.new(409, "OWNER_STAYS_ADMIN", "The home's owner is always an admin")
     end
     if wasAdmin and record.role ~= "admin" and otherAdmins(services, profileId) == 0 then
         return nil, Problem.new(409, "LAST_ADMIN", "This is the only admin; make someone else an admin first")
     end
+    -- The keys' 1.7.0 role first: a person kept with keys whose role says otherwise would be read
+    -- again from those keys at the next start (People.reconcile).
+    local legacy, previous = People.legacyRole(record), {}
+    local _, keysSaved = services.keys.setRoles(function(key)
+        if key.profile ~= profileId then
+            return nil
+        end
+        previous[key.id] = key.role
+        return legacy
+    end)
+    if not keysSaved then
+        return nil, Problem.internal("The devices' roles could not be saved, so nothing was changed")
+    end
     local ok, failure = People.set(profileId, record)
     if not ok then
-        return nil, failure == "UNAVAILABLE" and unavailable() or Problem.internal("The permissions could not be saved")
+        services.keys.setRoles(function(key)
+            return previous[key.id]
+        end)
+        return nil, failure == "UNAVAILABLE" and unavailable() or Problem.internal("The permissions could not be saved, so nothing was changed")
     end
     People.syncKeys(services.keys)
     local after = People.get(profileId)
@@ -403,9 +439,8 @@ function Profiles.setAccess(ctx, profileId, record)
             end
         end
     end
-    local beforeRole = before and before.role or nil
-    if beforeRole ~= after.role then
-        Activity.record("access", "role_changed", { by = ctx.apiKey, what = profile.name, from = beforeRole, to = after.role })
+    if before.role ~= after.role then
+        Activity.record("access", "role_changed", { by = ctx.apiKey, what = profile.name, from = before.role, to = after.role })
     elseif after.role == "member" and Json.encode(People.view(before)) ~= Json.encode(People.view(after)) then
         Activity.record("access", "permissions_changed", { by = ctx.apiKey, what = profile.name })
     end
@@ -449,8 +484,15 @@ function Profiles.update_access(ctx)
     if problem then
         return problem
     end
+    -- Onto what the person has now; for a person without a record, what their keys' 1.7.0 role
+    -- becomes, which for a member needs the scenes (theirs are every scene there is, or every one
+    -- that opens no door).
+    local base, kept = personRecord(ctx.services, id)
+    if not kept and base.role ~= "admin" and not Scenes.complete() then
+        return Problem.new(503, "UNAVAILABLE", "The scenes could not be read when DirectorLink started, so this person's permissions are not known yet; restart the driver and try again")
+    end
     local record
-    record, problem = Profiles.readAccess(ctx.services, body, People.get(id) or People.fromLegacy(nil))
+    record, problem = Profiles.readAccess(ctx.services, body, base)
     if not record then
         return problem
     end

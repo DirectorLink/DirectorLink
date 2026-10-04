@@ -321,6 +321,46 @@ function tests.members_not_given_music_do_not_group_and_members_do()
     T.eq(T.http(mock, "POST", "/v1/music/" .. BEDROOM .. "/group", { key = member, body = { with = KITCHEN } }).status, 200)
 end
 
+-- A member sees a group only through the Sonos rooms they see (ADR-054): the others are counted,
+-- never named (no id, no name), the group's volume is that of their rooms, and when the coordinator
+-- is not theirs, a room of theirs stands for the group (its id, the address of what plays).
+function tests.a_member_sees_of_a_group_only_the_sonos_rooms_they_see()
+    local mock, home, key = start()
+    local kitchen = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { all_rooms = false, rooms = { 10 } } } }).json.key
+    local living = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Guest", role = "member", access = { all_rooms = false, rooms = { 11 } } } }).json.key
+    -- Kitchen (in room 10) leads Living Room (in room 11).
+    local list = music(mock, kitchen)
+    T.notContains(Json.encode(list), "Living Room")
+    T.notContains(Json.encode(list), LIVING)
+    local item = list.items[1]
+    T.eq(item.id, KITCHEN)
+    T.same(item.group.rooms, { { id = KITCHEN, name = "Kitchen" } })
+    T.eq(item.group.others, 1)
+    T.eq(item.group.volume, item.volume, "their rooms' volume")
+    local one = T.http(mock, "GET", "/v1/music/" .. KITCHEN, { key = kitchen })
+    T.notContains(one.body, "Living Room")
+    T.notContains(one.body, LIVING)
+    local muted = T.http(mock, "PATCH", "/v1/music/" .. KITCHEN, { key = kitchen, body = { muted = true } })
+    T.eq(muted.status, 200, muted.body)
+    T.notContains(muted.body, LIVING, "nor in a command's answer")
+    -- The coordinator is not theirs: the living room stands for the group.
+    list = music(mock, living)
+    T.notContains(Json.encode(list), KITCHEN)
+    T.notContains(Json.encode(list), "Kitchen")
+    T.eq(list.items[1].group.id, LIVING)
+    T.eq(list.groups[1].id, LIVING)
+    T.eq(list.groups[1].now_playing.art_href, "/v1/music/" .. LIVING .. "/art")
+    T.eq(T.http(mock, "GET", "/v1/music/" .. LIVING .. "/art", { key = living }).status ~= 404, true, "an address that answers them")
+    -- An admin sees the whole group.
+    local all = music(mock, key)
+    for _, entry in ipairs(all.items) do
+        if entry.id == KITCHEN then
+            T.eq(#entry.group.rooms, 2)
+            T.eq(entry.group.others, 0)
+        end
+    end
+end
+
 -- Every room involved goes through Access.canControl, in the Control4 room it is shown in; a
 -- command on a group needs every room in it.
 function tests.every_room_involved_must_be_one_the_key_may_control()
