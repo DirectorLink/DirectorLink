@@ -19,6 +19,10 @@
 11. Back up, then restore on a test controller: the people, their rooms and the hidden rooms come back. A 1.7.0 backup restores, and the people are worked out from its keys.
 12. Downgrade to 1.7.0: every device has a role close to its person's (a member with a room list is `member` and controls every room again); back on 1.8.0 the permissions are as before.
 13. The People and Rooms screens in Hebrew, at 320 and 390 px, light and dark.
+14. As a second admin, in the API console: `POST /v1/api-keys` with the owner's `profile_id`: 403 `OWNER_PROTECTED`.
+15. An admin who made a scene link is made a member: the link's run gets 404, and History says "Its person is no longer an admin".
+16. Through the account, right after opening the app, edit a member in People while their scenes still say loading, change Cameras and save: their scenes stay as they were.
+17. As a member with only some rooms: a Sonos group shows only their rooms; scene cards say "… elsewhere", never "A removed room"; the controller's totals count only what they see; an alarm partition shows only with Sees the alarm.
 
 ## 0zy. Ask before opening, and Siri and Google Assistant (1.8.0)
 
@@ -26,13 +30,14 @@
 2. iPhone Shortcuts: a shortcut with Get Contents of URL (POST, Request Body JSON, field `secret`). Run it by hand: it returns "Asked: answer the notification on your phone to open.", and within seconds the iPhone shows "Open Main gate?" ("Your link “Arriving home” asked at HH:MM. Tap to answer."). History → Doors: "Asked whether to open Main gate", asked on 1 device.
 3. Tap it: the app shows "Open Main gate?" with Open and Cancel. **Open**: the gate opens, and History shows the opening by your person and device, "Answering the link “Arriving home”".
 4. Run it again and tap the notification after 2 minutes: "This question is over: nothing was opened." Run it, Open, then tap the same notification again: "answered already", nothing opens. Run it twice within 2 minutes: one notification.
-5. Run it 11 times within an hour: from the 11th nothing is asked. A wrong secret: 404.
+5. Run it 11 times within an hour: from the 11th nothing is asked, and the answer (429) says in how many minutes it can ask again. A wrong secret: 404.
 6. Turn alerts off on the iPhone and run it: "Nobody was asked…" in the answer and History. Door Control off in Composer: nobody asked, and why.
 7. As an admin, take away the person's Doors and gates (or the gate's room): the link is removed (History says why) and its run gets 404. Revoke the iPhone's key: the same. Composer's Remove All Scene Links removes ask links too.
 8. Make the same request an Arrive (home) automation with Run Immediately and drive home: the question comes near the gate; Open opens it.
 9. **Siri:** a shortcut named "Open Main gate" with the same action: "Hey Siri, Open Main gate" makes the phone ask. For a scene link, a shortcut named "Good night": "Hey Siri, Good night" runs the scene.
 10. **Google Assistant:** HTTP Shortcuts with the scene link's request named "Good night", started by an Assistant routine: the scene runs.
 11. Another person's devices get nothing from your link; an admin sees everyone's links in Scenes → Links for automations, with Remove.
+12. The ask link's screen: the iPhone steps end with an optional Show Notification, and the Siri steps with Show Result, in English and Hebrew; with alerts off on the iPhone, that step shows "Nobody was asked…" at the gate.
 
 ## 0zx. Sonos in several rooms, and in scenes (1.8.0)
 
