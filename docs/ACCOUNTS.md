@@ -46,6 +46,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Joining from another device (1.7.0): the new device's label ("Safari on iPhone"), both devices' public keys | yes | yes, while the request lasts (10 minutes; deleted within a day) | no |
 | Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
 | Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
+| Ask-before-opening links (1.8.0): a door's link that asks its person | shown once, when its person makes it; the question opened with the device's alert key | as a scene link's run: **its id and secret in transit**, when, and the result word (asked, waiting, nobody, doors_off, not_asked), so that it is an ask link; then a brief sealed `notify` for its person's key ids, so which keys a link asks; which door, and the question, **never** | the link's id, a hash of its secret, its door and the key that made it; every question and the opening that answered it in History |
 | When, and how much data, flows | yes | yes | yes |
 
 A stolen or hacked cloud database gives an attacker email addresses and which account belongs to
@@ -65,6 +66,15 @@ Workers Free, 7 on Paid), beside its own line for the request with the phone's I
 who could read the account service's traffic could run the linked scenes they saw; a scene that
 opens doors or gates can never have a link, so that is at most lights, AC, fans, blinds, music and
 refrigerator settings. Everything else stays sealed. Homes without links are as before.
+
+**Ask-before-opening links (1.8.0, ADR-058)** run the same way, but open nothing: the controller
+asks the link's person, by an alert sealed to each of their devices that has alerts on, whether to
+open the door, and only their **Open**, an ordinary sealed request with that device's own key,
+opens it. A leaked link can only make that person's phone ask. Beyond a scene link's run, the
+account service learns the result word (that the link is an ask link, and whether anyone was
+asked) and, right after it, a brief `notify` for the person's key ids: so which keys a link asks,
+and, from a sealed request of one of those devices soon after, that the question was likely
+answered. Never which door, nor what the question says.
 
 ## Keys
 
@@ -406,6 +416,16 @@ the key that made it (or its expiry), and Composer's Remove All Scene Links, Rev
 Reset Remote Identity. Another account claiming the home does not: its new owner should run Revoke
 All API Keys, which ends every link the old family had.
 
+A door's **ask-before-opening link** (1.8.0, ADR-058) uses the same address and run. The
+controller then makes a question that lasts two minutes and sends it as an alert (step 3 of
+*Alerts*, kind `open_request`, brief) to the devices of the person who made the link that may open
+the door and have alerts on; the phone gets `asked` (or `waiting`, `nobody`, `doors_off`,
+`not_asked`). Tapping the question opens the app, whose **Open** is the door's pulse sealed with
+that device's key, with the question's id: the controller opens only for a device the question went
+to, within its two minutes, once, and checks the opening as any other (the key's role, Door
+Control). The link goes with the key that made it, when its person may no longer open the door, and
+with the same Composer actions.
+
 ## Google and Apple
 
 Both are OpenID Connect sign-ins run by `api.directorlink.io` (`google.js`, `apple.js`, the shared
@@ -579,7 +599,8 @@ device's key.
   unreadable to them.
 - **Scene links** (1.7.0, ADR-051): not sealed. Whoever holds one runs its scene; the account
   service, and Cloudflare beneath it, see its secret when a phone uses it. Never a scene with doors
-  or gates; remove or replace a link that may have leaked.
+  or gates; remove or replace a link that may have leaked. A door's ask-before-opening link (1.8.0,
+  ADR-058) is not sealed either, but whoever holds it can only make its person's phone ask.
 - **Metadata:** which account uses which home, when, and how much. With alerts (1.6.0), also when
   a home was offline, and which key ids are admin keys. Since 1.7.0, when the home notified which
   key ids, and whether the notice was brief; every sealed part has the same size, and none names
@@ -589,7 +610,9 @@ device's key.
   admin keys only); one for admin keys only is a door or gate opened, a schedule that failed or the
   refrigerator. Never which doorbell, door or refrigerator, who opened it, or which schedule.
   With requests from new devices (1.7.0), also the kind of device and browser that asked, and
-  when. With scene links (1.7.0), when a home's linked scenes run and whether they ran. An alert's
+  when. With scene links (1.7.0), when a home's linked scenes run and whether they ran. With
+  ask-before-opening links (1.8.0), which links are those, when they ask, and which key ids each
+  asks; a brief notice is then a ring or a question. An alert's
   words are the app's, never the cloud's: whoever could send pushes in DirectorLink's name could
   only choose among its own sentences and a time, and could not seal a detail a device would open;
   the cloud could send a sealed alert again to the same device, which shows its own time.

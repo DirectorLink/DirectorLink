@@ -1,5 +1,6 @@
 // Building blocks shared by the screens: device controls, tiles, empty and loading states.
 
+import { askLinksSupported } from "./ask-links.js";
 import { attachCameraImages } from "./camera-feed.js";
 import {
   blindMove,
@@ -603,6 +604,17 @@ export function relayButton(relay, { compact = false } = {}) {
   );
 }
 
+// Ask before opening (1.8.0, ADR-058): the way to this door's link, for keys that may open it.
+function askLinkButton(relay) {
+  if (!askLinksSupported() || !can("doors")) return null;
+  return h(
+    "a",
+    { class: "button button-quiet button-small relay-ask", href: `#/door/${relay.id}/ask`, "aria-label": t("askLinks.rowLabel", { name: relay.name }), dataset: { key: `relay:${relay.id}:ask` } },
+    icon("link"),
+    h("span", {}, t("askLinks.rowShort"))
+  );
+}
+
 export function relayRow(relay, { showRoom = false } = {}) {
   const key = deviceKey("relay", relay.id);
   const confirming = ui.relayStage[relay.id] === "confirm";
@@ -637,7 +649,7 @@ export function relayRow(relay, { showRoom = false } = {}) {
             { type: "button", class: "button button-quiet", dataset: { key: `relay:${relay.id}:cancel` }, onclick: () => cancelRelay(relay) },
             t("common.cancel")
           )
-        : null
+        : askLinkButton(relay)
     )
       : null,
     inlineError(key)

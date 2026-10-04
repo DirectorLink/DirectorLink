@@ -481,3 +481,36 @@ test("a ring the app already shows, or shows on its banner now, is shown again q
   await push(sealedPush(sealDetail({ v: 1, kind: "doorbell", at: "2026-10-03T05:05:00Z", id: 93, name: "Front Gate" })));
   assert.equal(shown[2].options.silent, true);
 });
+
+// Ask before opening (1.8.0, ADR-058): the question an ask-to-open link sends its person. Its tap
+// opens the app's question (#/open/<door>/<request>/<until>), lasting as long as the controller said
+// from when it came; only Open there, with the device's own key, opens the door.
+test("an ask-to-open link's question opens the app's question, for as long as it lasts", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await keepAlertKey(storage);
+  const at = "2026-10-03T07:15:00Z";
+  const question = { v: 1, kind: "open_request", at, id: 70, name: "Main gate", room: "Entrance", room_id: 11, request: "0123456789abcdef", seconds: 120, via: "Arriving home" };
+  const before = Date.now();
+  await push(sealedPush(sealDetail(question)));
+  const after = Date.now();
+  const last = shown.at(-1);
+  assert.equal(last.title, "Open Main gate?");
+  assert.equal(last.options.body, `Your link “Arriving home” asked at ${sealedClock(at)}. Tap to answer.`);
+  assert.equal(last.options.tag, "open-70", "a newer question about the door takes its place");
+  const match = /^\/#\/open\/70\/0123456789abcdef\/(\d+)$/.exec(last.options.data.url);
+  assert.ok(match, last.options.data.url);
+  const until = Number(match[1]);
+  assert.ok(until >= before + 120000 && until <= after + 120000, "two minutes from when it came, on this device's clock");
+  await notificationClick(last.options.data);
+  assert.equal(opened.at(-1), `${ORIGIN}${last.options.data.url}`);
+
+  // Without a label; and one without a request, door or name is no question: the general words.
+  await push(sealedPush(sealDetail({ ...question, via: undefined })));
+  assert.equal(shown.at(-1).options.body, `Your link asked at ${sealedClock(at)}. Tap to answer.`);
+  for (const broken of [{ request: undefined }, { request: "not a request" }, { id: undefined }, { name: undefined }]) {
+    await push(sealedPush(sealDetail({ ...question, ...broken })));
+    assert.equal(shown.at(-1).options.body, GENERAL, JSON.stringify(broken));
+  }
+});

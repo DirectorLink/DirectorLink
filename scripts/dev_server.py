@@ -41,6 +41,7 @@ import socketserver
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -156,6 +157,12 @@ class Bridge:
         relay here): scene links can be made (ADR-051). Returns the home id."""
         return self._ask("linked", "LINKED")
 
+    def ask(self, link, secret):
+        """Runs an ask-to-open link (ADR-058) as the account service would pass it on: {answer,
+        questions: [{key_id, detail}]}, each question as that device's worker would open it."""
+        asked = json.dumps({"link": link, "secret": secret})
+        return json.loads(bytes.fromhex(self._ask(f"ask {asked.encode().hex()}", "ASKED")))
+
     def seal(self, key, key_id, request):
         """The envelope the app would send to POST /v1/sealed for `request` ({method, path, body})."""
         asked = json.dumps({"key": key, "key_id": key_id, "request": request})
@@ -223,7 +230,7 @@ def main():
             print(f"Sonos: On (fake players on port {args.sonos})")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>".')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run).')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
@@ -241,6 +248,14 @@ def main():
                     print(f"Sonos: {words[1].capitalize()}")
                 elif len(words) == 3 and words[0] == "event" and words[1].isdigit() and words[2].isdigit():
                     print(f"Delivered to {bridge.fire_event(words[1], words[2])} registration(s)")
+                elif len(words) == 3 and words[0] == "ask":
+                    # An ask-to-open link's run (ADR-058); each question's address, as its tap opens it.
+                    asked = bridge.ask(words[1], words[2])
+                    print(f"Answer: {json.dumps(asked['answer'])}")
+                    for question in asked["questions"]:
+                        detail = question["detail"] or {}
+                        until = int((time.time() + int(detail.get("seconds") or 120)) * 1000)
+                        print(f"Question for key {question['key_id']}: #/open/{detail.get('id')}/{detail.get('request')}/{until}")
                 elif len(words) >= 3 and words[0] == "var" and words[1].isdigit() and words[2].isdigit():
                     value = line.split(None, 3)[3].strip() if len(words) > 3 else ""
                     print(f"Reported to {bridge.report_variable(words[1], words[2], value)} listener(s)")

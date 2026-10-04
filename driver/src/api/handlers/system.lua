@@ -112,6 +112,8 @@ function System.info(ctx)
         -- scene_links: /v1/scene-links and a scene's link (1.7.0, ADR-051), always there.
         -- refrigerators: /v1/refrigerators and the scene step that switches their features (1.7.0,
         -- ADR-049), always there.
+        -- ask_links: /v1/ask-links, open requests sealed as alerts, and a pulse that answers one
+        -- (1.8.0, ADR-058), always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -121,6 +123,7 @@ function System.info(ctx)
             alert_choices = true,
             scene_links = true,
             refrigerators = true,
+            ask_links = true,
         },
     }
 end

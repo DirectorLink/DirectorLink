@@ -18,6 +18,7 @@ local JewishCalendar = require("src.core.jewish_calendar")
 local SceneHandlers = require("src.api.handlers.scenes")
 local SceneLinks = require("src.core.scene_links")
 local SceneLinkHandlers = require("src.api.handlers.scene_links")
+local AskLinks = require("src.core.ask_links")
 local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
 local Clock = require("src.core.clock")
@@ -490,6 +491,9 @@ function OnDriverLateInit(driverInitType)
     -- loses its link now.
     local linkCount, linksStoredAs = SceneLinks.load()
     Log.info("scenes", "scene links loaded", { count = linkCount, stored_as = linksStoredAs })
+    -- Ask-to-open links (ADR-058): a key gone meanwhile takes its links now (the prune below).
+    local askCount, asksStoredAs = AskLinks.load()
+    Log.info("doors", "ask-to-open links loaded", { count = askCount, stored_as = asksStoredAs })
     SceneLinkHandlers.prune()
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
@@ -625,12 +629,15 @@ function OnDriverLateInit(driverInitType)
     end
 end
 
--- Every scene link goes (ADR-051): Composer's Remove All Scene Links (`always`: in the history even
--- when there were none), Revoke All API Keys and Reset Remote Identity (`reason`). Links that could
--- not be removed for good (the store was not written) stay, and the history, the log and Remote
--- Status say so. Returns how many there were and whether they went.
+-- Every scene link goes (ADR-051), and every ask-to-open link (ADR-058): Composer's Remove All Scene
+-- Links (`always`: in the history even when there were none), Revoke All API Keys and Reset Remote
+-- Identity (`reason`). Links that could not be removed for good (the store was not written) stay,
+-- and the history, the log and Remote Status say so. Returns how many there were and whether they
+-- went.
 local function removeSceneLinks(reason, always)
-    local count, saved = SceneLinks.removeAll()
+    local sceneCount, scenesSaved = SceneLinks.removeAll()
+    local askCount, asksSaved = AskLinks.removeAll()
+    local count, saved = sceneCount + askCount, scenesSaved and asksSaved
     if not saved then
         Log.error("scenes", "scene links not removed: they could not be saved", { count = count, reason = reason })
         updateProperty("Remote Status", "Scene links not removed: could not save")

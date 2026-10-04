@@ -173,6 +173,18 @@ SECURITY_CONTRACT = {
         '{ id = "link:" .. link.id, role = "member" }',
         "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then",
     ),
+    # Ask to open (ADR-058): only a hash of each secret, compared in constant time; a request lasts
+    # two minutes, and only a pulse from a device it was sent to, by a key that may open the door,
+    # answers it (check_ask_links_open_nothing: the link's own code never opens anything).
+    "src/core/ask_links.lua": (
+        "if SceneLinks.secretMatches(found and found.alg, found and found.hash, secret) and found then",
+        "AskLinks.OPEN_SECONDS = 120",
+    ),
+    "src/api/handlers/ask_links.lua": (
+        "if not Access.canOpen(ctx.apiKey, relay) then",
+        "if not request or request.relay_id ~= tonumber(device.id) or not request.keys[ctx.apiKey.id] then",
+        "if not maker or not relay or link.home ~= linkedHome() or not Access.canOpen(maker, relay) then",
+    ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
     ),
@@ -537,6 +549,27 @@ PARTITION_COMMANDS = re.compile(r"\bPARTITION_(?:ARM|DISARM)\b")
 ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
 
 
+# An ask-to-open link (ADR-058) asks; it never opens. Its modules send no command to a device:
+# only the pulse route does, with the answering device's own key.
+ASK_LINK_MODULES = ("src/core/ask_links.lua", "src/api/handlers/ask_links.lua")
+
+
+def check_ask_links_open_nothing(files):
+    for name in ASK_LINK_MODULES:
+        text = files.get(name)
+        if text is None:
+            fail(f"{name} is missing")
+        code = lua_code(text)
+        for pattern, what in (
+            (r"\badapters\b", "reach the device adapters"),
+            (r"\bexecute\s*\(", "send a command"),
+            (r"\bC4:SendToDevice\b", "send a command to a device"),
+            (r"\brunSaved\b", "run a scene"),
+        ):
+            if re.search(pattern, code):
+                fail(f"{name} must not {what}: an ask-to-open link only asks")
+
+
 def check_alarm_read_only(files):
     adapter = files.get(ALARM_ADAPTER)
     if adapter is None:
@@ -663,6 +696,7 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_ask_links_open_nothing(files)
     check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)

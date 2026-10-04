@@ -51,7 +51,7 @@ driver/     the DriverWorks driver
                   again without a restart) and device events; camera snapshots
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, scene links (a private link per scene for the phone's automations,
-                  ADR-051), schedules, scheduler, sun, weather, installer view; room names and layout;
+                  ADR-051), ask-to-open links (a door's link that asks its person, ADR-058), schedules, scheduler, sun, weather, installer view; room names and layout;
                   backup (backup and restore, ADR-042; docs/BACKUP.md);
                   activity (the history admins read, ADR-046; docs/HISTORY.md);
                   the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,

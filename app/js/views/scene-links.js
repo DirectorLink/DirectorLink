@@ -2,9 +2,11 @@
 // the phone's own automations. The scene editor has a section for it (sceneLinkSection); the scene's
 // link screen (#/scene/<id>/link) makes, replaces and removes it, and shows a new link's secret once,
 // with Copy buttons, a QR code and short steps for iPhone Shortcuts, Android and an NFC tag; the
-// list of linked scenes is #/links, from the Scenes list. A scene that opens doors or gates has no
-// link: the editor warns before a change that adds one removes it. Shown only when the controller
-// has them (features.scene_links, 1.7.0).
+// list of linked scenes is #/links, from the Scenes list, with the doors' ask-before-opening links
+// below (views/ask-links.js, 1.8.0). A scene that opens doors or gates has no link: the editor warns
+// before a change that adds one removes it. A new link's screen also says how to run it by voice:
+// Siri, and Google Assistant (1.8.0). Shown only when the controller has them (features.scene_links,
+// 1.7.0).
 
 import { emptyState } from "../components.js";
 import { h, name } from "../dom.js";
@@ -17,6 +19,7 @@ import { findScene, isolate } from "../scenes.js";
 import { roleLabel } from "../session.js";
 import { can, notify, state } from "../state.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
+import { askLinksSection } from "./ask-links.js";
 import {
   ensureLinks,
   forgetMade,
@@ -125,7 +128,8 @@ export function deleteQuestion(draft) {
 
 // ---- the scene's link screen (#/scene/<id>/link) -----------------------------------------------
 
-function copyButton(text, key, label) {
+// A Copy button; `holder` keeps which was copied (this screen's state, or an ask link's).
+export function copyButton(text, key, label, holder = linksState()) {
   return h(
     "button",
     {
@@ -133,23 +137,75 @@ function copyButton(text, key, label) {
       class: "button button-secondary button-small",
       dataset: { key },
       onclick: async () => {
-        const links = linksState();
         try {
           await navigator.clipboard.writeText(text);
-          links.copied = key;
+          holder.copied = key;
         } catch {
-          links.copied = `${key}:failed`;
+          holder.copied = `${key}:failed`;
         }
         notify();
       },
     },
-    icon(linksState().copied === key ? "check" : "copy"),
-    linksState().copied === key ? t("sceneLinks.copied") : label
+    icon(holder.copied === key ? "check" : "copy"),
+    holder.copied === key ? t("sceneLinks.copied") : label
   );
 }
 
 function step(text, ...extra) {
   return h("li", {}, h("span", {}, text), extra.length ? h("div", { class: "button-row scene-link-copies" }, extra) : null);
+}
+
+// How to use a link just made, on iPhone (Shortcuts) and Android: `iphone`, the four steps' words
+// (the address and the secret get their Copy buttons on the second and third).
+export function freshSteps({ key, copyAddress, copySecret, iphone, iphoneTitle }) {
+  return [
+    h(
+      "details",
+      { class: "card scene-section scene-link-how", open: IS_IOS || !IS_ANDROID, dataset: { key: `${key}-iphone` } },
+      h("summary", {}, iphoneTitle),
+      h(
+        "ol",
+        { class: "scene-link-steps" },
+        step(iphone[0]),
+        step(iphone[1], copyAddress(`${key}-iphone-address`)),
+        step(iphone[2], copySecret(`${key}-iphone-secret`)),
+        step(iphone[3])
+      )
+    ),
+    h(
+      "details",
+      { class: "card scene-section scene-link-how", open: IS_ANDROID, dataset: { key: `${key}-android` } },
+      h("summary", {}, t("sceneLinks.android.title")),
+      h(
+        "ol",
+        { class: "scene-link-steps" },
+        step(t("sceneLinks.android.request"), copyAddress(`${key}-android-address`)),
+        step(t("sceneLinks.android.body"), copySecret(`${key}-android-secret`))
+      )
+    ),
+  ];
+}
+
+// By voice (1.8.0): Siri runs a shortcut named like the scene ("Good night"); on Android, a Google
+// Assistant routine starts the automation app's request. `phrase`: what to say; `ask`: an
+// ask-to-open link's words (the phone then asks before the door opens).
+export function voiceHelp({ phrase, key, ask = false }) {
+  const words = ask ? "askLinks" : "sceneLinks";
+  const said = { phrase: isolate(phrase) };
+  return [
+    h(
+      "details",
+      { class: "card scene-section scene-link-how", open: IS_IOS, dataset: { key: `${key}-siri` } },
+      h("summary", {}, t("sceneLinks.siri.title")),
+      h("ol", { class: "scene-link-steps" }, step(t(`${words}.siri.name`, said)), step(t(`${words}.siri.say`, said)))
+    ),
+    h(
+      "details",
+      { class: "card scene-section scene-link-how", open: IS_ANDROID, dataset: { key: `${key}-google` } },
+      h("summary", {}, t("sceneLinks.google.title")),
+      h("ol", { class: "scene-link-steps" }, step(t(`${words}.google.name`, said)), step(t("sceneLinks.google.say", said)))
+    ),
+  ];
 }
 
 // A link just made: its secret, once, and how to use it.
@@ -174,30 +230,15 @@ function freshLink(scene, link) {
       h("input", { class: "invitation-link", type: "text", readonly: true, dir: "ltr", value: url, "aria-label": t("sceneLinks.linkTitle"), dataset: { key: "scene-link-url" }, onfocus: (event) => event.target.select() }),
       h("div", { class: "button-row" }, copyButton(url, "scene-link-copy-url", t("sceneLinks.copyLink")))
     ),
-    h(
-      "details",
-      { class: "card scene-section scene-link-how", open: IS_IOS || !IS_ANDROID, dataset: { key: "scene-link-iphone" } },
-      h("summary", {}, t("sceneLinks.iphone.title")),
-      h(
-        "ol",
-        { class: "scene-link-steps" },
-        step(t("sceneLinks.iphone.action")),
-        step(t("sceneLinks.iphone.url"), copyAddress("scene-link-iphone-address")),
-        step(t("sceneLinks.iphone.body"), copySecret("scene-link-iphone-secret")),
-        step(t("sceneLinks.iphone.immediately"))
-      )
-    ),
-    h(
-      "details",
-      { class: "card scene-section scene-link-how", open: IS_ANDROID, dataset: { key: "scene-link-android" } },
-      h("summary", {}, t("sceneLinks.android.title")),
-      h(
-        "ol",
-        { class: "scene-link-steps" },
-        step(t("sceneLinks.android.request"), copyAddress("scene-link-android-address")),
-        step(t("sceneLinks.android.body"), copySecret("scene-link-android-secret"))
-      )
-    ),
+    ...freshSteps({
+      key: "scene-link",
+      copyAddress,
+      copySecret,
+      iphone: [t("sceneLinks.iphone.action"), t("sceneLinks.iphone.url"), t("sceneLinks.iphone.body"), t("sceneLinks.iphone.immediately")],
+      iphoneTitle: t("sceneLinks.iphone.title"),
+    }),
+    // Siri and Google Assistant (1.8.0): the same request, named like the scene.
+    ...voiceHelp({ phrase: scene.name, key: "scene-link" }),
     h(
       "details",
       { class: "card scene-section scene-link-how", dataset: { key: "scene-link-nfc" } },
@@ -302,6 +343,7 @@ export function sceneLinkView(sceneId) {
         )
       ),
       h("p", { class: "field-help" }, t("sceneLinks.lostSecret")),
+      h("p", { class: "field-help", dataset: { key: "scene-link-voice" } }, t("sceneLinks.voiceHint", { phrase: isolate(scene.name) })),
       ...requirements(links),
       labelField(sceneId, link.label || ""),
       h(
@@ -403,6 +445,8 @@ export function sceneLinksView() {
     );
     body.push(h("p", { class: "field-help" }, t("sceneLinks.composerNote")));
   }
+  // Ask before opening (1.8.0, ADR-058): the doors' links, everyone's for an admin.
+  body.push(askLinksSection());
   return [header, offlineBanner(), h("div", { class: "scene-links" }, body)];
 }
 
