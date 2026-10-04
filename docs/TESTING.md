@@ -50,7 +50,7 @@
 
 1. Log Level Debug. Open Cameras through the account (mobile data): every tile gets its picture within a few seconds, and the browser's console says "DirectorLink: 11 camera pictures in … ms, 4 at once (remote)". Note it, and the same at home.
 2. The driver log's `snapshot` lines: after the first round, `requests` is 1 a picture (2 means that camera or NVR took only one kept login at a time: note which), and `in_flight` is never above 8.
-3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`.
+3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`. At home, a camera's full view (and the doorbell's banner when it rings) shows a new picture about every second, not every two.
 4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Controller → Alerts on this device shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
 5. Walk past again within a minute: no second alert. A member without cameras, or without that camera's room, gets none. In Hebrew the words are Hebrew.
 6. This checks that the Hikvision driver's Alert reaches DirectorLink and that `LAST_ALERT` is read at it (Person, Vehicle, Line Crossing…).
