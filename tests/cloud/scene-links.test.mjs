@@ -269,6 +269,18 @@ test("too many runs: the home's limit, and the link's on the controller", TEST, 
   const byLink = await post(runPath(other.home, otherLink.id), JSON.stringify({ secret: otherLink.secret }));
   assert.equal(byLink.status, 429);
   assert.equal(byLink.headers.get("retry-after"), "42");
+  assert.match(byLink.json.detail, /in a minute/);
+  // An ask link's hourly limit (ADR-058): the real wait, up to an hour, said in minutes.
+  other.answer = () => ({ ok: false, code: "RATE_LIMITED", retry_s: 2990 });
+  const hourly = await post(runPath(other.home, otherLink.id), JSON.stringify({ secret: otherLink.secret }));
+  assert.equal(hourly.status, 429);
+  assert.equal(hourly.json.code, "TOO_MANY_RUNS");
+  assert.equal(hourly.headers.get("retry-after"), "2990");
+  assert.match(hourly.json.detail, /in 50 minutes/);
+  // The browser's page says the same from Retry-After.
+  const page = await (await fetch(`${worker.http}${runPath(other.home, otherLink.id)}`)).text();
+  assert.match(page, /tooManyFor: "This link asked too often in the last hour\. It can ask again in \{minutes\} minutes\."/);
+  assert.match(page, /retry-after/);
 });
 
 // Someone who knows a home's id (it is in every link and invitation) guesses: after 10 wrong runs in

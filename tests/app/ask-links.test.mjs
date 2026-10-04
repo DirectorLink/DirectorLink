@@ -304,6 +304,14 @@ test("making a door's link shows its secret once, with the steps for iPhone, Sir
   assert.match(textOf(byKey(nodes, "ask-link-iphone")), /Arrive.*Get Contents of URL.*POST.*JSON.*secret.*Run Immediately.*Open Main gate\?/s);
   assert.match(textOf(byKey(nodes, "ask-link-siri")), /“Open Main gate”.*Hey Siri, Open Main gate.*only your Open opens the door/s);
   assert.match(textOf(byKey(nodes, "ask-link-google")), /HTTP Shortcuts.*“Open Main gate”.*Google Assistant.*routine/s);
+  // A run that asked nobody shows nothing by itself: an optional last step shows its answer.
+  assert.match(textOf(byKey(nodes, "ask-link-iphone")), /Run Immediately.*Optional.*Show Notification.*Contents of URL/s);
+  assert.match(textOf(byKey(nodes, "ask-link-siri")), /Hey Siri, Open Main gate.*Optional.*Show Result.*Contents of URL/s);
+  await setLanguage("he");
+  assert.match(textOf(byKey(views.askLinkView(GATE), "ask-link-iphone")), /לא חובה.*„הצג עדכון” \(Show Notification\)/s);
+  assert.match(textOf(byKey(views.askLinkView(GATE), "ask-link-siri")), /„הצג תוצאה” \(Show Result\)/);
+  await setLanguage("en");
+  nodes = views.askLinkView(GATE);
   assert.ok(byKey(nodes, "ask-link-android"));
   await press(nodes, "ask-link-iphone-address");
   await press(views.askLinkView(GATE), "ask-link-iphone-secret");
@@ -382,6 +390,7 @@ test("a scene link's screen says how to run it by voice, in English and Hebrew",
     await makeLink(SCENE, "");
     let nodes = sceneViews.sceneLinkView(SCENE);
     assert.match(textOf(byKey(nodes, "scene-link-siri")), /name it like the scene: “Good night”.*Say “Hey Siri, Good night”/s);
+    assert.doesNotMatch(textOf(byKey(nodes, "scene-link-siri")), /Show Result/, "only an ask link's steps have it");
     assert.equal(byKey(nodes, "scene-link-siri").attributes.open, "", "open on an iPhone");
     assert.match(textOf(byKey(nodes, "scene-link-google")), /HTTP Shortcuts, Tasker or MacroDroid.*“Good night”.*Google Assistant.*Routines.*“Good night”/s);
     await setLanguage("he");

@@ -94,7 +94,8 @@ function freshLink(relay, link) {
       key: "ask-link",
       copyAddress: (key) => copy(address, key, t("sceneLinks.copyAddress")),
       copySecret: (key) => copy(link.secret, key, t("sceneLinks.copySecret")),
-      iphone: [t("askLinks.iphone.action"), t("sceneLinks.iphone.url"), t("sceneLinks.iphone.body"), t("askLinks.iphone.immediately", { name: isolate(relay.name) })],
+      // The last step is optional: without it, a run that asked nobody shows nothing at the gate.
+      iphone: [t("askLinks.iphone.action"), t("sceneLinks.iphone.url"), t("sceneLinks.iphone.body"), t("askLinks.iphone.immediately", { name: isolate(relay.name) }), t("askLinks.iphone.show")],
       iphoneTitle: t("askLinks.iphone.title"),
     }),
     ...voiceHelp({ phrase: phraseOf(relay), key: "ask-link", ask: true }),

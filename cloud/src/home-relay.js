@@ -685,9 +685,14 @@ export class HomeRelay extends DurableObject {
       return json({ result: reply.result, message: RESULT_MESSAGES[reply.result] });
     }
     if (reply.code === "RATE_LIMITED") {
-      const retry = Math.min(60, Math.max(1, Math.round(Number(reply.retry_s) || 60)));
-      done(429, { why: "link limit" });
-      return problem(429, "TOO_MANY_RUNS", "This link ran too often; try again in a minute", { "Retry-After": String(retry) });
+      // The real wait: a minute at most for runs in a row (any link), up to an hour for an ask
+      // link that asked (or said why nobody was asked) 10 times in the last hour (ADR-058).
+      const retry = Math.min(3600, Math.max(1, Math.round(Number(reply.retry_s) || 60)));
+      const minutes = Math.ceil(retry / 60);
+      done(429, { why: retry > 60 ? "link hour limit" : "link limit" });
+      const detail =
+        retry > 60 ? `This link asked too often in the last hour; it can ask again in ${minutes} minutes` : "This link ran too often; try again in a minute";
+      return problem(429, "TOO_MANY_RUNS", detail, { "Retry-After": String(retry) });
     }
     if (reply.code === "INTERNAL") {
       done(502, { why: "the home failed" });

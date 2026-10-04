@@ -712,10 +712,12 @@ export default {
       title: "iPhone: when you arrive home",
       action: "In Shortcuts → Automation, make a new automation for Arrive (your home), and add the action Get Contents of URL.",
       immediately: "Choose Run Immediately. When you arrive, your phone asks “Open {name}?”.",
+      show: "Optional, so that you see at the gate when nobody was asked: add the action Show Notification after it, with Contents of URL as its text.",
     },
     siri: {
       name: "To ask by voice, make a shortcut with the same action and name it “{phrase}”.",
       say: "Say “Hey Siri, {phrase}”: your phone asks, and only your Open opens the door.",
+      show: "Optional: end the shortcut with the action Show Result, with Contents of URL. Siri then says whether your phone was asked.",
     },
     google: {
       name: "On Android, make the request above in HTTP Shortcuts, Tasker or MacroDroid, and name it “{phrase}”.",

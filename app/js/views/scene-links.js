@@ -155,8 +155,8 @@ function step(text, ...extra) {
   return h("li", {}, h("span", {}, text), extra.length ? h("div", { class: "button-row scene-link-copies" }, extra) : null);
 }
 
-// How to use a link just made, on iPhone (Shortcuts) and Android: `iphone`, the four steps' words
-// (the address and the secret get their Copy buttons on the second and third).
+// How to use a link just made, on iPhone (Shortcuts) and Android: `iphone`, the steps' words, four
+// or more (the address and the secret get their Copy buttons on the second and third).
 export function freshSteps({ key, copyAddress, copySecret, iphone, iphoneTitle }) {
   return [
     h(
@@ -169,7 +169,7 @@ export function freshSteps({ key, copyAddress, copySecret, iphone, iphoneTitle }
         step(iphone[0]),
         step(iphone[1], copyAddress(`${key}-iphone-address`)),
         step(iphone[2], copySecret(`${key}-iphone-secret`)),
-        step(iphone[3])
+        ...iphone.slice(3).map((text) => step(text))
       )
     ),
     h(
@@ -197,7 +197,14 @@ export function voiceHelp({ phrase, key, ask = false }) {
       "details",
       { class: "card scene-section scene-link-how", open: IS_IOS, dataset: { key: `${key}-siri` } },
       h("summary", {}, t("sceneLinks.siri.title")),
-      h("ol", { class: "scene-link-steps" }, step(t(`${words}.siri.name`, said)), step(t(`${words}.siri.say`, said)))
+      h(
+        "ol",
+        { class: "scene-link-steps" },
+        step(t(`${words}.siri.name`, said)),
+        step(t(`${words}.siri.say`, said)),
+        // An ask link's run that asked nobody shows nothing by itself (1.8.0): Siri can say so.
+        ask ? step(t("askLinks.siri.show")) : null
+      )
     ),
     h(
       "details",
