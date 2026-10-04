@@ -9,12 +9,13 @@
 //                                    nothing about the home or the scene
 //   POST /run/{home_id}.{link_id}    the secret in the body: {"secret": "…"} (JSON), secret=… (a
 //                                    form), or the secret alone (text). 200 {"result", "message"}:
-//                                    ran, partly or failed. 404 for an unknown home, link or secret
-//                                    alike; 429 too many runs; 503 the home is offline.
+//                                    ran, partly, failed or nothing. 404 for an unknown home, link
+//                                    or secret alike; 429 too many runs; 503 the home is offline.
 //
 // The home's Durable Object passes the link and its secret to the controller (`link`,
 // docs/RELAY.md), which checks the secret against the hash it keeps and runs the scene. The secret
-// is never logged here.
+// is never logged here; each run is (the home, the link's id, the answer, how long it took), and
+// the request's address goes to the home's object for its limit on wrong guesses, in memory only.
 
 import { json, problem, readText } from "./http.js";
 
@@ -29,6 +30,7 @@ export const RESULT_MESSAGES = {
   ran: "The scene ran.",
   partly: "The scene ran, but some devices were skipped or did not respond.",
   failed: "Nothing ran: the scene's devices were skipped or did not respond.",
+  nothing: "Nothing ran: the scene has no devices left to switch.",
 };
 
 export function linkNotFound() {
@@ -48,12 +50,14 @@ export async function secretOf(request) {
   if (text === null) {
     return null;
   }
-  const type = (request.headers.get("content-type") ?? "").toLowerCase();
+  // A multipart boundary is case-sensitive (RFC 2046): the form is read with the header as it came.
+  const rawType = request.headers.get("content-type") ?? "";
+  const type = rawType.toLowerCase();
   const trimmed = text.trim();
   let value = null;
   if (type.includes("multipart/form-data")) {
     try {
-      const form = await new Request("https://link.invalid/", { method: "POST", headers: { "content-type": type }, body: text }).formData();
+      const form = await new Request("https://link.invalid/", { method: "POST", headers: { "content-type": rawType }, body: text }).formData();
       value = form.get("secret");
     } catch {
       value = null;
@@ -116,7 +120,8 @@ export async function handleSceneLink(request, env) {
   const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
   return stub.fetch("https://home-relay/link", {
     method: "POST",
-    headers: { "X-DirectorLink-Home": homeId, "content-type": "application/json" },
+    // The phone's address, for the limit on wrong guesses from one place (HomeRelay.link).
+    headers: { "X-DirectorLink-Home": homeId, "X-DirectorLink-Client": request.headers.get("cf-connecting-ip") ?? "", "content-type": "application/json" },
     body: JSON.stringify({ link: linkId, secret }),
   });
 }
@@ -175,14 +180,16 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
     en: {
       title: "Run a scene", help: "This private link runs one scene of a home with DirectorLink.", run: "Run", running: "Running…", again: "Run again",
       ran: "Done: the scene ran.", partly: "The scene ran, but some devices were skipped or did not respond.", failed: "Nothing ran: the scene's devices were skipped or did not respond.",
-      notFound: "This link does not work: it was removed or replaced, or it was copied wrong.", tooMany: "Too many runs. Try again in a minute.",
+      nothing: "Nothing ran: the scene has no devices left to switch.",
+      notFound: "This link does not work: it was removed or replaced, or it was copied wrong.", tooMany: "Too many runs. Try again later.",
       offline: "The home is not connected right now. Try again later.", noAnswer: "The home did not answer. Try again.", error: "Something went wrong. Try again.",
       incomplete: "This link is not complete: the part after # is missing.",
     },
     he: {
       title: "הפעלת סצנה", help: "הקישור הפרטי הזה מפעיל סצנה אחת בבית עם DirectorLink.", run: "הפעלה", running: "מפעילים…", again: "הפעלה נוספת",
       ran: "בוצע: הסצנה הופעלה.", partly: "הסצנה הופעלה, אבל חלק מהמכשירים דולגו או לא הגיבו.", failed: "שום דבר לא הופעל: המכשירים של הסצנה דולגו או לא הגיבו.",
-      notFound: "הקישור הזה לא עובד: הוא הוסר או הוחלף, או שהועתק לא נכון.", tooMany: "יותר מדי הפעלות. נסו שוב בעוד דקה.",
+      nothing: "שום דבר לא הופעל: לא נשארו בסצנה מכשירים להפעלה.",
+      notFound: "הקישור הזה לא עובד: הוא הוסר או הוחלף, או שהועתק לא נכון.", tooMany: "יותר מדי הפעלות. נסו שוב מאוחר יותר.",
       offline: "הבית לא מחובר כרגע. נסו שוב מאוחר יותר.", noAnswer: "הבית לא ענה. נסו שוב.", error: "משהו השתבש. נסו שוב.",
       incomplete: "הקישור לא שלם: החלק שאחרי # חסר.",
     },

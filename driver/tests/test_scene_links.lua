@@ -422,28 +422,64 @@ function tests.backups_hold_the_links_hashes_and_bring_them_back()
     T.eq(section.links[1].id, link.link_id)
     T.truthy(section.links[1].hash, "the hash")
     T.notContains(Json.encode(document), link.secret, "never the secret")
+    T.eq(section.links[1].by, s.keyId, "and the key that made it")
     T.eq(plan.preview.counts.scene_links, 1)
     T.eq(run(s, link.link_id, link.secret).ok, true, "still works after the restore")
 
-    -- Removed since the backup: the restore brings it back.
-    T.eq(T.http(s.mock, "DELETE", "/v1/scenes/" .. s.scene.id .. "/link", { key = s.key }).status, 204)
+    -- The driver was removed and added again (or the controller replaced): the backup's keys come
+    -- back, and its links with them.
+    local fresh = Mock.startDriver()
+    local admin = T.pair(fresh, "New phone")
     local Backup = require("src.core.backup")
-    local again = Backup.plan(document, { registry = require("src.core.registry"), restorer = s.keyId, controller = Backup.controllerId() })
+    local again, problem = Backup.plan(document, { registry = require("src.core.registry"), restorer = T.http(fresh, "GET", "/v1/api-keys/current", { key = admin }).json.id, controller = Backup.controllerId() })
+    T.truthy(again, problem and problem.detail)
+    T.eq(again.preview.keys.action, "restore")
+    T.eq(again.preview.counts.scene_links, 1)
     T.truthy(Backup.apply(again))
-    T.eq(run(s, link.link_id, link.secret).ok, true)
+    local _, connection = Harness.connected({ mock = fresh })
+    T.eq(run({ mock = fresh, connection = connection }, link.link_id, link.secret).ok, true, "the family's tags and Shortcuts work on")
+end
+
+-- With the keys kept (other devices are paired), the links stay as they are now, as the keys do: a
+-- link removed or replaced since the backup was made never comes back, and its replacement stays.
+function tests.a_restore_never_brings_back_a_link_removed_or_replaced_since()
+    local s = start()
+    local old = makeLink(s, nil, { label = "Old phone" }).json
+    local Backup = require("src.core.backup")
+    local document = Json.decode(Json.encode(Backup.export(require("src.core.registry"))))
+    local new = makeLink(s, nil, { label = "New phone" }).json
+    local plan, problem = Backup.plan(document, { registry = require("src.core.registry"), restorer = s.keyId, controller = Backup.controllerId() })
+    T.truthy(plan, problem and problem.detail)
+    T.eq(plan.preview.keys.action, "kept")
+    T.eq(plan.preview.counts.scene_links, 1, "the one here")
+    T.truthy(Backup.apply(plan))
+    T.eq(run(s, old.link_id, old.secret).code, "NOT_FOUND", "the lost phone's link stays dead")
+    T.eq(run(s, new.link_id, new.secret).ok, true, "the new one works")
+
+    T.eq(T.http(s.mock, "DELETE", "/v1/scenes/" .. s.scene.id .. "/link", { key = s.key }).status, 204)
+    T.truthy(Backup.apply((Backup.plan(document, { registry = require("src.core.registry"), restorer = s.keyId, controller = Backup.controllerId() }))))
+    T.eq(run(s, old.link_id, old.secret).code, "NOT_FOUND", "removed since: not back")
+    T.eq(#T.http(s.mock, "GET", "/v1/scene-links", { key = s.key }).json.items, 0)
 end
 
 function tests.a_restore_keeps_only_links_for_the_home_in_use_and_scenes_that_came_back()
     local s = start()
     local link = makeLink(s).json
-    -- Another home's backup: its identity stays out unless asked for, and so do its links.
+    -- Another home's backup: its identity stays out unless asked for, and so do its links; the
+    -- links here, for this home, stay.
     local plan = backupAndRestore(s, function(document)
         document.sections.remote_identity.home_id = string.rep("a", 32)
         document.sections.scene_links.links[1].home = string.rep("a", 32)
     end)
     T.eq(plan.preview.remote.action, "kept")
-    T.eq(plan.preview.counts.scene_links, 0)
-    T.eq(run(s, link.link_id, link.secret).code, "NOT_FOUND")
+    T.eq(plan.preview.counts.scene_links, 1)
+    T.eq(run(s, link.link_id, link.secret).ok, true)
+    -- The same backup moving its identity here: the links here name the old home and go.
+    local moved = backupAndRestore(s, function(document)
+        document.sections.remote_identity.home_id = string.rep("a", 32)
+    end, { registry = require("src.core.registry"), restorer = s.keyId, controller = require("src.core.backup").controllerId(), move_remote = true })
+    T.eq(moved.preview.remote.action, "restore")
+    T.eq(moved.preview.counts.scene_links, 0)
 
     -- A backup made before 1.7.0 (no links): the links here stay for the scenes that come back.
     local t = start()
@@ -460,6 +496,155 @@ function tests.a_restore_keeps_only_links_for_the_home_in_use_and_scenes_that_ca
     end)
     T.eq(gone.preview.counts.scene_links, 0, "its scene did not come back")
     T.eq(run(t, kept.link_id, kept.secret).code, "NOT_FOUND")
+end
+
+-- ---- The key that made a link ----------------------------------------------------------------
+
+local function adminKey(s, name)
+    local created = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = name, role = "admin" } })
+    T.eq(created.status, 201, created.body)
+    return created.json.key, created.json.id
+end
+
+function tests.revoking_the_key_that_made_a_link_ends_the_link()
+    local s = start()
+    local housekeeper, housekeeperId = adminKey(s, "Housekeeper phone")
+    local theirs = T.http(s.mock, "POST", "/v1/scenes/" .. s.scene.id .. "/link", { key = housekeeper, body = { label = "Cleaning done" } }).json
+    local other = T.http(s.mock, "POST", "/v1/scenes", { key = s.key, body = { name = "Morning", steps = { { type = "lights", room_id = 10, set = { on = true } } } } }).json
+    local mine = makeLink(s, other.id).json
+    local listed = T.http(s.mock, "GET", "/v1/scene-links", { key = s.key }).json.items
+    local madeBy = {}
+    for _, item in ipairs(listed) do
+        madeBy[item.link_id] = item.made_by
+    end
+    T.eq(madeBy[theirs.link_id], housekeeperId, "the list says which key made each")
+    T.eq(madeBy[mine.link_id], s.keyId)
+    T.eq(stored(s.mock).links[1].by, housekeeperId, "kept with the link")
+
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. housekeeperId, { key = s.key }).status, 204)
+    T.eq(run(s, theirs.link_id, theirs.secret).code, "NOT_FOUND", "their link stopped with their key")
+    T.eq(run(s, mine.link_id, mine.secret).ok, true, "the others' links work on")
+    local entries = history(s, "access")
+    T.eq(entries[1].action, "link_removed")
+    T.eq(entries[1].reason, "key_gone")
+    T.eq(entries[1].what, "Good night")
+    T.eq(entries[1].note, "Cleaning done")
+    T.eq(entries[2].action, "revoked", "after the key itself")
+
+    -- A key that removes itself (Forget key) takes its links along too.
+    local again, againId = adminKey(s, "Tablet")
+    local tablets = T.http(s.mock, "POST", "/v1/scenes/" .. s.scene.id .. "/link", { key = again }).json
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/current", { key = again }).status, 204)
+    T.eq(run(s, tablets.link_id, tablets.secret).code, "NOT_FOUND")
+    T.truthy(againId)
+end
+
+function tests.a_link_ends_when_the_key_that_made_it_expires()
+    local s = start()
+    ExecuteCommand("LUA_ACTION", { ACTION = "NEW_PAIRING_CODE" })
+    local paired = T.http(s.mock, "POST", "/v1/auth/pair", { body = { pairing_code = s.mock.properties["Pairing Code"], name = "DirectorLink Console", expires_in = 60 } })
+    T.eq(paired.status, 201, paired.body)
+    local link = T.http(s.mock, "POST", "/v1/scenes/" .. s.scene.id .. "/link", { key = paired.json.key }).json
+    T.eq(run(s, link.link_id, link.secret).ok, true, "while the key lasts")
+    local realTime = os.time
+    os.time = function(...)
+        if select("#", ...) > 0 then
+            return realTime(...)
+        end
+        return realTime() + 61
+    end
+    local ok, reply = pcall(run, s, link.link_id, link.secret)
+    os.time = realTime
+    T.truthy(ok, tostring(reply))
+    T.eq(reply.code, "NOT_FOUND", "the run finds its key gone")
+    T.eq(#T.http(s.mock, "GET", "/v1/scene-links", { key = s.key }).json.items, 0)
+    local entry = history(s, "access")[1]
+    T.eq(entry.action, "link_removed")
+    T.eq(entry.reason, "key_gone")
+end
+
+-- Revoke All API Keys is "nobody from before": every link goes, a link that names no key too (made
+-- by a test build of 1.7.0, before the key was kept with it: only this ends those).
+function tests.revoke_all_api_keys_ends_every_link()
+    local s = start()
+    local link = makeLink(s).json
+    local legacy = stored(s.mock)
+    legacy.links[1].by = nil
+    s.mock.persist[STORE] = "json:" .. Json.encode(legacy)
+    local updated = Mock.updateDriver(s.mock)
+    local _, connection = Harness.connected({ mock = updated })
+    s = { mock = updated, key = s.key, connection = connection }
+    local other, otherId = adminKey(s, "Other admin")
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. T.http(s.mock, "GET", "/v1/api-keys/current", { key = s.key }).json.id, { key = other }).status, 204)
+    T.eq(run(s, link.link_id, link.secret).ok, true, "a link that names no key outlives a revoked key")
+    T.eq(T.http(s.mock, "GET", "/v1/scene-links", { key = other }).json.items[1].made_by, Json.null)
+
+    ExecuteCommand("LUA_ACTION", { ACTION = "REVOKE_API_KEYS" })
+    T.eq(run(s, link.link_id, link.secret).code, "NOT_FOUND")
+    T.eq(stored(s.mock).links[1], nil, "none kept")
+    local admin = T.pair(s.mock, "New phone")
+    local entries = T.http(s.mock, "GET", "/v1/activity?kind=access", { key = admin }).json.items
+    local actions = {}
+    for _, entry in ipairs(entries) do
+        actions[#actions + 1] = entry.action .. (entry.reason and ("/" .. entry.reason) or "")
+    end
+    T.contains(table.concat(actions, ","), "links_removed/keys_revoked,all_revoked")
+    T.truthy(otherId)
+end
+
+-- Remove All Scene Links whose store cannot be written: the links stay (as a restart would load
+-- them), and History, the log and Composer say they were not removed.
+function tests.remove_all_scene_links_that_cannot_be_saved_says_so()
+    local s = start()
+    local link = makeLink(s).json
+    local original = C4.PersistSetValue
+    C4.PersistSetValue = function(self, key, ...)
+        if key == STORE then
+            error("flash full")
+        end
+        return original(self, key, ...)
+    end
+    local ok, failure = pcall(ExecuteCommand, "LUA_ACTION", { ACTION = "REMOVE_SCENE_LINKS" })
+    C4.PersistSetValue = original
+    T.truthy(ok, tostring(failure))
+    T.eq(run(s, link.link_id, link.secret).ok, true, "what runs is what the store holds")
+    T.contains(s.mock.properties["Remote Status"], "Scene links not removed")
+    local entry = history(s, "access")[1]
+    T.eq(entry.action, "links_removed")
+    T.eq(entry.outcome, "failed")
+    T.contains(T.http(s.mock, "GET", "/v1/logs?limit=50", { key = s.key }).body, "scene links not removed")
+    -- And once it can be written, they go.
+    ExecuteCommand("LUA_ACTION", { ACTION = "REMOVE_SCENE_LINKS" })
+    T.eq(run(s, link.link_id, link.secret).code, "NOT_FOUND")
+    T.eq(history(s, "access")[1].outcome, nil)
+end
+
+-- ---- What a link may run ------------------------------------------------------------------------
+
+-- Every step type a scene can have is either one a link may run or one it never runs: a type added
+-- later must be put on one list before it can be in a linked scene.
+function tests.every_step_type_is_allowed_or_refused_for_links()
+    local Scenes = require("src.core.scenes")
+    local SceneLinks = require("src.core.scene_links")
+    for name in pairs(Scenes.TYPES) do
+        T.truthy(SceneLinks.ALLOWED[name] or SceneLinks.REFUSED[name], "step type " .. name .. " is neither allowed nor refused for scene links")
+        T.truthy(not (SceneLinks.ALLOWED[name] and SceneLinks.REFUSED[name]), name .. " is on both lists")
+        T.eq(SceneLinks.linkable({ steps = { { type = name } } }), SceneLinks.ALLOWED[name] == true, name)
+    end
+    T.eq(SceneLinks.REFUSED.relays, true, "never doors or gates")
+    T.eq(SceneLinks.linkable({ steps = { { type = "lights" }, { type = "garage_door" } } }), false, "a type on no list: no link")
+    T.eq(SceneLinks.linkable({ steps = { { type = "lights" }, { type = "refrigerators" } } }), true)
+end
+
+function tests.a_run_that_found_nothing_to_run_says_so()
+    -- A room-wide step in a room without such devices (they were removed in Composer since).
+    local s = start({ scene = { name = "Empty room", steps = { { type = "fans", room_id = 10, set = { on = false } } } } })
+    local link = makeLink(s).json
+    local before = #s.mock.commands
+    local reply = run(s, link.link_id, link.secret)
+    T.eq(reply.ok, true)
+    T.eq(reply.result, "nothing", "not \"ran\"")
+    T.eq(#s.mock.commands, before)
 end
 
 return tests

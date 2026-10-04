@@ -1187,18 +1187,29 @@ function Backup.plan(document, context)
     local from = origin(document, { controller = context.controller, homeName = homeName(context.registry) }, m, current)
     local identity, action = chooseIdentity(sections.remote_identity, current, from, context.move_remote == true, now)
 
-    -- Scene links (1.7.0, ADR-051): the backup's, or from a backup made before them the ones here,
-    -- each only while its scene comes back without doors or gates and the link names the home whose
-    -- identity is in use after the restore (its address names that home). Hashes only, like keys.
+    -- Scene links (1.7.0, ADR-051) follow the keys' rule: the backup's only when its keys come back
+    -- (the driver added again, or the controller replaced), else the ones here, so that a link
+    -- removed or replaced since the backup was made never comes back. Each only while its scene
+    -- comes back without doors or gates, the link names the home whose identity is in use after the
+    -- restore (its address names that home) and the key that made it is among the keys after it
+    -- (one this device replaces passes its links to this device's). Hashes only, like keys.
     local restoredScenes = {}
     for _, scene in ipairs(matchedScenes) do
         restoredScenes[scene.id] = scene
     end
+    local keyIds = {}
+    for _, key in ipairs(keys) do
+        keyIds[key.id] = true
+    end
     local links = Json.array()
     local home = identity and identity.linked and identity.home_id or nil
-    for _, link in ipairs((SceneLinks.read(sections.scene_links or SceneLinks.backup()))) do
+    local source = keyInfo.action == "restore" and sections.scene_links or SceneLinks.backup()
+    for _, link in ipairs((SceneLinks.read(source))) do
         local scene = restoredScenes[link.scene_id]
-        if scene and home and link.home == home and not SceneLinks.opensDoors(scene) then
+        if link.by and context.replaces ~= nil and link.by == context.replaces and restorer then
+            link.by = restorer.id
+        end
+        if scene and home and link.home == home and SceneLinks.linkable(scene) and (not link.by or keyIds[link.by]) then
             links[#links + 1] = link
         end
     end

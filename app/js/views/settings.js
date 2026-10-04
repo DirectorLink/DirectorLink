@@ -18,6 +18,7 @@ import { setRoomHidden } from "../profile.js";
 import { installApp } from "../pwa.js";
 import { dropIndex, edgeScroll, keyTarget, moveItem, sameOrder, shiftOf, slotOffset } from "../reorder.js";
 import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
+import { linksMadeBy, linksSupported } from "../scene-links.js";
 import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
@@ -914,6 +915,19 @@ function calendarUnavailable() {
 
 // ---- controller ----------------------------------------------------------------------------
 
+// " The 2 scene links made on this device stop working too." for Forget and Pair again, when this
+// admin key made scene links (they go with it, ADR-051); "" otherwise, or when that is not known.
+async function ownLinksNote() {
+  if (!linksSupported() || !can("admin") || state.status !== "connected") return "";
+  try {
+    const [me, links] = await Promise.all([api("/v1/api-keys/current"), api("/v1/scene-links")]);
+    const count = linksMadeBy(links?.items, me?.id);
+    return count ? ` ${t("settings.controller.forgetLinks", { count })}` : "";
+  } catch {
+    return "";
+  }
+}
+
 function controllerSection(navigate) {
   const hostInput = h("input", {
     id: "settings-host",
@@ -1017,7 +1031,7 @@ function controllerSection(navigate) {
               class: "button button-secondary",
               dataset: { key: "settings-pair-again" },
               onclick: async () => {
-                if (!window.confirm(t("settings.controller.pairAgainConfirm"))) return;
+                if (!window.confirm(t("settings.controller.pairAgainConfirm") + (await ownLinksNote()))) return;
                 await revokeAndForget();
                 state.notice = { kind: "info", text: t("connect.pairNew") };
                 navigate("#/");
@@ -1035,7 +1049,7 @@ function controllerSection(navigate) {
               class: "button button-danger",
               dataset: { key: "settings-forget" },
               onclick: async () => {
-                if (!window.confirm(t("settings.controller.forgetConfirm"))) return;
+                if (!window.confirm(t("settings.controller.forgetConfirm") + (await ownLinksNote()))) return;
                 await revokeAndForget();
                 state.notice = { kind: "info", text: t("settings.controller.forgotten") };
                 navigate("#/");

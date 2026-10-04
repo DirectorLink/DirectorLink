@@ -3,9 +3,10 @@
 -- service takes the link and its secret and passes them to this home over the relay (docs/RELAY.md,
 -- `link`); src/api/handlers/scene_links.lua runs the scene.
 -- One link per scene. The controller keeps only a hash of its secret, as it keeps API keys
--- (ADR-028), and the home id the link was made for (the address names it). A scene that opens
--- doors or gates (a `relays` step) never has one: making one is refused, a change that adds such a
--- step removes the scene's link, and every run checks again.
+-- (ADR-028), the home id the link was made for (the address names it) and the key that made it:
+-- revoking that key, or its expiry, removes the link. Only a scene whose steps are all of types a
+-- link may run (SceneLinks.ALLOWED: never doors or gates) has one: making one is refused
+-- otherwise, a change that adds another step removes the scene's link, and every run checks again.
 
 local Clock = require("src.core.clock")
 local Json = require("src.core.json")
@@ -81,14 +82,20 @@ local function sameText(left, right)
     return same
 end
 
--- True for a scene that opens doors or gates: such a scene has no link.
-function SceneLinks.opensDoors(scene)
+-- The step types a linked scene may have: what anyone holding its link may switch, from anywhere.
+-- Doors and gates never (REFUSED). A step type on neither list (one added later) keeps a scene
+-- from having a link until it is put on one (tests/test_scene_links.lua checks Scenes.TYPES).
+SceneLinks.ALLOWED = { lights = true, climate = true, fans = true, blinds = true, music = true, refrigerators = true }
+SceneLinks.REFUSED = { relays = true }
+
+-- True for a scene that may have a link: every one of its steps is of an allowed type.
+function SceneLinks.linkable(scene)
     for _, step in ipairs(type(scene) == "table" and scene.steps or {}) do
-        if type(step) == "table" and step.type == "relays" then
-            return true
+        if type(step) ~= "table" or not SceneLinks.ALLOWED[step.type] then
+            return false
         end
     end
-    return false
+    return true
 end
 
 -- A link as stored (with its hash), or nil when it is not one.
@@ -108,6 +115,9 @@ local function readLink(item)
         alg = item.alg,
         hash = item.hash,
         home = item.home,
+        -- The key that made it; none for a link made before DirectorLink recorded it (a test build
+        -- of 1.7.0): Revoke All API Keys ends those.
+        by = isLowerHex(item.by, 8) and item.by or nil,
         created_at = type(item.created_at) == "string" and item.created_at or Clock.iso(),
         last_used_at = type(item.last_used_at) == "string" and item.last_used_at or nil,
     }
@@ -121,6 +131,7 @@ local function record(link)
         alg = link.alg,
         hash = link.hash,
         home = link.home,
+        by = link.by,
         created_at = link.created_at,
         last_used_at = link.last_used_at,
     }
@@ -133,6 +144,7 @@ local function view(link)
         scene_id = link.scene_id,
         label = link.label,
         home = link.home,
+        by = link.by,
         created_at = link.created_at,
         last_used_at = link.last_used_at,
     }
@@ -209,10 +221,10 @@ function SceneLinks.forScene(sceneId)
     return index and view(state.links[index]) or nil
 end
 
--- A new link for `sceneId`, made for the home `home` (its id), with an optional `label`. It
--- replaces the scene's link, which stops working at once. Returns the link (as the API shows it),
--- its secret (never kept), and the link it replaced, or nil and a code.
-function SceneLinks.create(sceneId, label, home)
+-- A new link for `sceneId`, made for the home `home` (its id) by the key `by` (its id), with an
+-- optional `label`. It replaces the scene's link, which stops working at once. Returns the link (as
+-- the API shows it), its secret (never kept), and the link it replaced, or nil and a code.
+function SceneLinks.create(sceneId, label, home, by)
     if not state.complete then
         return nil, "STORE_UNREADABLE"
     end
@@ -241,7 +253,7 @@ function SceneLinks.create(sceneId, label, home)
     if not id then
         return nil, "RANDOM_UNAVAILABLE"
     end
-    local link = { id = id, scene_id = sceneId, label = label, alg = alg, hash = hash, home = home, created_at = Clock.iso() }
+    local link = { id = id, scene_id = sceneId, label = label, alg = alg, hash = hash, home = home, by = by, created_at = Clock.iso() }
     local before = state.links
     local index = indexOfScene(sceneId)
     local replaced = index and view(before[index]) or nil
@@ -307,19 +319,24 @@ function SceneLinks.remove(sceneId)
     return removed[1]
 end
 
--- Composer's Remove All Scene Links, and a new remote identity (the addresses named the old home).
--- Returns how many there were. A store that could not be read at start is written empty: whatever
--- it still held is removed too.
+-- Composer's Remove All Scene Links and Revoke All API Keys, and a new remote identity (the
+-- addresses named the old home). Returns how many there were and whether that was saved: when it
+-- could not be, they stay, here as in the store (a restart would bring them back). A store that
+-- could not be read at start is written empty: whatever it still held is removed too.
 function SceneLinks.removeAll()
-    local count = #state.links
+    local count, links, runs = #state.links, state.links, state.runs
     state.links = {}
     state.runs = {}
-    save()
-    return count
+    if not save() then
+        state.links, state.runs = links, runs
+        return count, false
+    end
+    return count, true
 end
 
 -- A link that went without an admin removing it: logged, and in the history with why (`reason`:
--- doors, scene_gone, other_home) and the scene's name; `by`: the key whose change made it go.
+-- doors, scene_gone, other_home, key_gone) and the scene's name; `by`: the key whose change made
+-- it go.
 local function noteRemoved(link, reason, sceneName, by)
     Log.info("scenes", "scene link removed", { link_id = link.id, scene = link.scene_id, reason = reason })
     Activity.record("access", "link_removed", {
@@ -331,9 +348,11 @@ local function noteRemoved(link, reason, sceneName, by)
     })
 end
 
--- The links whose scene is gone or now opens doors or gates, or that were made for another home
--- than `home` (when given), go. `findScene(id)` gives a scene or nil. Returns them.
-function SceneLinks.prune(findScene, home)
+-- The links whose scene is gone or now has a step a link may not run (doors or gates), that were
+-- made for another home than `home` (when given), or whose key is gone (`keyExists(id)`, when
+-- given: revoked or expired; a link that names no key stays) go. `findScene(id)` gives a scene or
+-- nil. Returns them.
+function SceneLinks.prune(findScene, home, keyExists)
     if not state.complete or #state.links == 0 then
         return {}
     end
@@ -342,10 +361,12 @@ function SceneLinks.prune(findScene, home)
         local scene = findScene(link.scene_id)
         if not scene then
             why[link.id] = { reason = "scene_gone" }
-        elseif SceneLinks.opensDoors(scene) then
+        elseif not SceneLinks.linkable(scene) then
             why[link.id] = { reason = "doors", name = scene.name }
         elseif home and link.home ~= home then
             why[link.id] = { reason = "other_home", name = scene.name }
+        elseif keyExists and link.by and not keyExists(link.by) then
+            why[link.id] = { reason = "key_gone", name = scene.name }
         end
         return why[link.id] ~= nil
     end) or {}
@@ -355,10 +376,10 @@ function SceneLinks.prune(findScene, home)
     return removed
 end
 
--- A scene was changed (`scene`, as saved) by the key `by`: once it opens doors or gates, its link
--- goes. Returns the link removed, or nil.
+-- A scene was changed (`scene`, as saved) by the key `by`: once it has a step a link may not run
+-- (doors or gates), its link goes. Returns the link removed, or nil.
 function SceneLinks.sceneChanged(scene, by)
-    if not state.complete or not SceneLinks.opensDoors(scene) or not indexOfScene(scene.id) then
+    if not state.complete or SceneLinks.linkable(scene) or not indexOfScene(scene.id) then
         return nil
     end
     local removed = removeWhere(function(link)

@@ -63,9 +63,18 @@ export function linkOf(sceneId) {
   return linksState().items.find((item) => item.scene_id === sceneId) || null;
 }
 
-// Doors and gates (a `relays` step): such a scene has no link.
-export function opensDoors(steps) {
-  return (steps || []).some((step) => step?.type === "relays");
+// The step types a linked scene may have, as the controller allows them (src/core/scene_links.lua):
+// never doors and gates (`relays`), nor a type this app does not know.
+const LINKABLE = new Set(["lights", "climate", "fans", "blinds", "music", "refrigerators"]);
+
+// A scene whose steps a link may all run; any other has no link (it opens doors or gates).
+export function linkable(steps) {
+  return (steps || []).every((step) => LINKABLE.has(step?.type));
+}
+
+// The links the key `keyId` made: they stop when it is revoked (Access, Settings' Forget key).
+export function linksMadeBy(items, keyId) {
+  return keyId ? (items || []).filter((item) => item?.made_by === keyId).length : 0;
 }
 
 // What a phone calls: the address (POST, the secret in the body) and the whole link (a browser or

@@ -148,9 +148,12 @@
         sends the link and its secret to our servers over HTTPS, and they pass them to your controller,
         which checks them and runs that one scene. So our servers see the link and its secret each time
         it is used, with when and whether the scene ran, but never which scene it is: they have no
-        names. We keep neither the secret nor the runs, and the secret is never in our logs. Whoever
-        has a link can run its scene until an admin removes or replaces it. A scene that opens doors or
-        gates can never have a link, and homes without links send nothing of the kind.
+        names. We keep no secret, and the secret is never in our logs. Each run is in our service
+        logs for a few days: the home, the link's id, the answer, whether the scene ran and how long
+        it took. Whoever has a link can run its scene until an admin removes or replaces it, or
+        revokes the key of the device that made it. A scene that opens doors or gates can never have
+        a link, so a link can switch at most lights, air conditioning, fans, blinds, music and
+        refrigerator settings, and homes without links send nothing of the kind.
       </p>
 
       <h2>Automatic backups</h2>
@@ -188,7 +191,8 @@
 
       <h2>DirectorLink in numbers</h2>
       <p>
-        Once an hour our servers count how many homes are linked to an account, how many accounts can
+        Once an hour our servers count how many homes are linked to an account (a home stays counted
+        until its owner's account is deleted, also once it is no longer used), how many accounts can
         sign in, and how often the driver was downloaded (from GitHub's public list of releases). Only
         these three totals are kept, and anyone can read them at api.directorlink.io/v1/stats. Nothing
         about any one home or person is in them, and your controller sends nothing for them. When this

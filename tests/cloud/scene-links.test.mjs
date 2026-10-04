@@ -127,8 +127,15 @@ test("a POST with the secret runs the scene, in every form an automation app sen
   }
   const response = await fetch(`${worker.http}${path}`, { method: "POST", body: multipart });
   assert.equal(response.status, 200, await response.text());
+  // Multipart as browsers (WebKit) and URLSession-style apps write it: a boundary is case-sensitive.
+  const boundaries = ["----WebKitFormBoundary7MA4YWxkTrZu0gW", "Boundary-ABCDEF0123-mixedCase"];
+  for (const boundary of boundaries) {
+    const body = `--${boundary}\r\nContent-Disposition: form-data; name="secret"\r\n\r\n${link.secret}\r\n--${boundary}--\r\n`;
+    const ran = await post(path, body, `multipart/form-data; boundary=${boundary}`);
+    assert.equal(ran.status, 200, `${boundary}: ${ran.text}`);
+  }
   const sent = runs(state);
-  assert.equal(sent.length, forms.length + 1);
+  assert.equal(sent.length, forms.length + 1 + boundaries.length);
   for (const message of sent) {
     assert.deepEqual(Object.keys(message).sort(), ["id", "link", "secret", "type"], "only the link and its secret reach the home");
     assert.equal(message.link, link.id);
@@ -145,6 +152,9 @@ test("the controller's answer says how it went", TEST, async () => {
   assert.deepEqual((await post(path, body)).json, { result: "partly", message: "The scene ran, but some devices were skipped or did not respond." });
   state.answer = () => ({ ok: true, result: "failed" });
   assert.equal((await post(path, body)).json.result, "failed");
+  // Nothing was there to run (its devices were removed): not "The scene ran."
+  state.answer = () => ({ ok: true, result: "nothing" });
+  assert.deepEqual((await post(path, body)).json, { result: "nothing", message: "Nothing ran: the scene has no devices left to switch." });
   state.answer = () => ({ ok: true, result: "exploded" });
   assert.equal((await post(path, body)).status, 404, "an answer it does not know is no run");
   state.answer = () => ({ ok: false, code: "INTERNAL" });
@@ -243,11 +253,11 @@ test("an offline home answers 503", TEST, async () => {
 test("too many runs: the home's limit, and the link's on the controller", TEST, async () => {
   const state = await home();
   const link = newLink(state);
-  const body = JSON.stringify({ secret: "0".repeat(40) });
+  const body = JSON.stringify({ secret: link.secret });
   for (let index = 0; index < 30; index += 1) {
-    assert.equal((await post(runPath(state.home, link.id), body)).status, 404, `run ${index + 1} reaches the home`);
+    assert.equal((await post(runPath(state.home, link.id), body)).status, 200, `run ${index + 1} reaches the home`);
   }
-  const limited = await post(runPath(state.home, link.id), JSON.stringify({ secret: link.secret }));
+  const limited = await post(runPath(state.home, link.id), body);
   assert.equal(limited.status, 429);
   assert.equal(limited.json.code, "TOO_MANY_RUNS");
   assert.ok(Number(limited.headers.get("retry-after")) >= 1 && Number(limited.headers.get("retry-after")) <= 60);
@@ -259,6 +269,38 @@ test("too many runs: the home's limit, and the link's on the controller", TEST, 
   const byLink = await post(runPath(other.home, otherLink.id), JSON.stringify({ secret: otherLink.secret }));
   assert.equal(byLink.status, 429);
   assert.equal(byLink.headers.get("retry-after"), "42");
+});
+
+// Someone who knows a home's id (it is in every link and invitation) guesses: after 10 wrong runs in
+// 10 minutes their address gets 429 before anything reaches the home, and the family's runs from
+// elsewhere still go (the home's 30 a minute are not used up by one stranger). An IPv6 address
+// counts by its /64.
+test("wrong guesses from one address are stopped there, not at the family's runs", TEST, async () => {
+  const state = await home();
+  const link = newLink(state);
+  const from = (address) => ({ "content-type": "application/json", "CF-Connecting-IP": address });
+  const guess = (address) =>
+    fetch(`${worker.http}${runPath(state.home, randomHex(4))}`, { method: "POST", headers: from(address), body: JSON.stringify({ secret: randomHex(20) }) });
+  for (let index = 0; index < 10; index += 1) {
+    assert.equal((await guess("198.51.100.7")).status, 404, `guess ${index + 1}`);
+  }
+  const stopped = await guess("198.51.100.7");
+  assert.equal(stopped.status, 429);
+  assert.equal((await stopped.json()).code, "TOO_MANY_RUNS");
+  const wait = Number(stopped.headers.get("retry-after"));
+  assert.ok(wait > 60 && wait <= 600, `until the first guess is 10 minutes old: ${wait}`);
+  // Even the right secret, from there: nothing more reaches the home from that address for now.
+  const right = (address) => fetch(`${worker.http}${runPath(state.home, link.id)}`, { method: "POST", headers: from(address), body: JSON.stringify({ secret: link.secret }) });
+  assert.equal((await right("198.51.100.7")).status, 429);
+  assert.equal(runs(state).length, 10, "the stopped runs never reached the home");
+  // The family, elsewhere: their run goes.
+  assert.equal((await right("203.0.113.20")).status, 200);
+  // An IPv6 network is one client, whatever the last 64 bits.
+  for (let index = 0; index < 10; index += 1) {
+    assert.equal((await guess(`2001:db8:1:2::${(index + 1).toString(16)}`)).status, 404);
+  }
+  assert.equal((await guess("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).status, 429);
+  assert.equal((await right("2001:db8:1:3::1")).status, 200, "another network");
 });
 
 test("the secret is never in what the Worker logs", TEST, async () => {

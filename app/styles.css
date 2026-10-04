@@ -2792,6 +2792,13 @@ select:disabled {
   margin: 0;
 }
 
+/* The code the new device shows, typed here before Approve. */
+.device-request-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .connect-or {
   display: flex;
   align-items: center;

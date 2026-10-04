@@ -254,7 +254,7 @@ function title(entry) {
     case "access.link_removed":
       return withName(`history.access.${entry.action}`, what || t("history.sceneGone"));
     case "access.links_removed":
-      return t("history.access.links_removed", { count: entry.count ?? 0 });
+      return entry.outcome === "failed" ? t("history.access.links_not_removed") : t("history.access.links_removed", { count: entry.count ?? 0 });
     case "composer.project": {
       const changes = entry.changes || [];
       const count = changes.length + (entry.more || 0);
@@ -283,8 +283,11 @@ function title(entry) {
   }
 }
 
+// Why a scene link went without an admin removing it (1.7.0), besides its scene's deletion.
+const LINK_REASONS = ["doors", "other_home", "new_identity", "key_gone", "keys_revoked"];
+
 // Why a backup to the account was not made (GET /v1/activity's reasons for cloud_backup).
-const BACKUP_REASONS = ["remote_off", "account_unreachable", "not_linked", "too_large", "limit", "account_full", "stopped"];
+const BACKUP_REASONS =["remote_off", "account_unreachable", "not_linked", "too_large", "limit", "account_full", "stopped"];
 
 // How it went, in plain words: what ran, what was skipped and why, what failed. "" when there is
 // nothing to add.
@@ -292,8 +295,10 @@ export function outcomeText(entry) {
   const counts = entry.counts;
   // Scene links (1.7.0): why one went without an admin removing it, and its label.
   if (entry.kind === "access" && /^links?_/.test(entry.action || "")) {
-    const reason = entry.reason === "scene_gone" ? t("history.linkGone") : ["doors", "other_home", "new_identity"].includes(entry.reason) ? t(`history.reason.${entry.reason}`) : null;
-    return [reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
+    const reason = entry.reason === "scene_gone" ? t("history.linkGone") : LINK_REASONS.includes(entry.reason) ? t(`history.reason.${entry.reason}`) : null;
+    // Remove All Scene Links that the controller could not save: the links still work.
+    const failed = entry.outcome === "failed" ? t("history.reason.not_saved") : null;
+    return [failed, reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
   }
   if (entry.kind === "schedule" && entry.outcome === "skipped") {
     return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);

@@ -21,13 +21,13 @@ import {
   ensureLinks,
   forgetMade,
   linkAddress,
+  linkable,
   linkOf,
   linksState,
   linksSupported,
   linkUrl,
   madeLink,
   makeLink,
-  opensDoors,
   removeLink,
 } from "../scene-links.js";
 
@@ -70,7 +70,7 @@ export function sceneLinkSection(draft) {
   if (!draft?.id || !linksSupported() || !can("admin")) return null;
   const links = ensureLinks();
   const link = linkOf(draft.id);
-  const doors = opensDoors(draft.steps);
+  const doors = !linkable(draft.steps);
   const content = [];
   if (!links.loaded) {
     content.push(h("p", { class: "field-help", role: "status" }, t("common.loading")));
@@ -114,7 +114,7 @@ export function doorLinkWarning(draft) {
 // Before saving `steps`: a linked scene that would open doors or gates loses its link, so the admin
 // is asked first. True to go on.
 export function confirmLinkLoss(draft, steps) {
-  if (!draft?.id || !linksSupported() || !linkOf(draft.id) || !opensDoors(steps)) return true;
+  if (!draft?.id || !linksSupported() || !linkOf(draft.id) || linkable(steps)) return true;
   return window.confirm(t("sceneLinks.saveConfirm"));
 }
 
@@ -286,7 +286,7 @@ export function sceneLinkView(sceneId) {
     body.push(h("p", { class: "field-help", role: "status" }, t("common.loading")));
   } else if (links.error) {
     body.push(notice("error", links.error));
-  } else if (opensDoors(scene.steps)) {
+  } else if (!linkable(scene.steps)) {
     body.push(notice("info", t("sceneLinks.noDoors"), "scene-link-doors"));
   } else if (link) {
     body.push(
