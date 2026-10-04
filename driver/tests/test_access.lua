@@ -141,9 +141,13 @@ function tests.doors_and_gates_open_only_with_doors_and_only_in_their_rooms()
     setPeople({ ["eeee0001"] = { doors = true, all_rooms = false, rooms = { 11 } } })
     T.eq(Access.canOpen(member, gate), false)
     T.eq(Access.canSee(member, gate), false)
+    T.eq(Access.opensDoors(member), true)
     setPeople({ ["eeee0001"] = { doors = false } })
     T.eq(Access.canSee(member, gate), true, "seen (its state), not opened")
     T.eq(Access.canOpen(member, gate), false)
+    T.eq(Access.opensDoors(member), false)
+    T.eq(Access.opensDoors({ id = "schedule:1a2b3c4d", role = "member" }), false, "DirectorLink itself opens none")
+    T.eq(Access.opensDoors({ role = "admin" }), true)
 end
 
 function tests.the_alarm_status_is_a_members_switch()

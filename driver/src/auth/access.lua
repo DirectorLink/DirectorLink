@@ -164,6 +164,13 @@ function Access.canOpen(actor, device)
     return rule.doors == true and (device.kind == "relay" or device.kind == "doorbell")
 end
 
+-- Whether the actor opens doors and gates at all (an admin; a member given doors and gates, in
+-- their rooms): for what is about doors without naming one, such as a list of ask links.
+function Access.opensDoors(actor)
+    local rule = resolve(actor)
+    return rule ~= nil and (rule.admin == true or rule.doors == true)
+end
+
 -- May read the alarm's status (when Alarm Status is On in Composer).
 function Access.canSeeAlarm(actor)
     local rule = resolve(actor)
