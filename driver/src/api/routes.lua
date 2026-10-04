@@ -116,6 +116,10 @@ return {
     { method = "POST", path = "/v1/music/{musicId}/favorites/{favoriteId}/play", handler = "music.play_favorite", role = "member" },
     { method = "GET", path = "/v1/music/{musicId}/art", handler = "music.art", role = "viewer" },
     { method = "PUT", path = "/v1/music/{musicId}/room", handler = "music.room", role = "admin" },
+    -- Groups (1.8.0, ADR-057): join another room's group, leave it, the group's volume.
+    { method = "POST", path = "/v1/music/{musicId}/group", handler = "music.join", role = "member" },
+    { method = "DELETE", path = "/v1/music/{musicId}/group", handler = "music.leave", role = "member" },
+    { method = "PATCH", path = "/v1/music/{musicId}/group", handler = "music.group_volume", role = "member" },
 
     -- Everything DirectorLink keeps, for admins, only in sealed requests (ADR-042).
     { method = "GET", path = "/v1/backup", handler = "backup.export", role = "admin" },

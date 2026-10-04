@@ -2,7 +2,8 @@
 -- dev server, the contract test and the browser check on a port). They answer the SOAP calls
 -- DirectorLink sends with the players' own XML: the owner's real answers, anonymised
 -- (tests/sonos/real/), and answers made in the same shapes (tests/sonos/made/): a track from the
--- queue, a radio station, favorites, a group, a refused command.
+-- queue, a radio station, favorites, a group, a refused command. Rooms join and leave groups
+-- (1.8.0): the zone group state they answer follows.
 --
 --   local home = SonosFake.household()             -- the owner's three rooms, each on its own
 --   local home = SonosFake.household({ grouped = true })
@@ -115,6 +116,119 @@ local function argument(body, name)
 end
 SonosFake.argument = argument
 
+-- ---- groups (1.8.0): the zone group state follows the rooms that join and leave groups ------
+
+local function unescape(text)
+    return (text:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&apos;", "'"):gsub("&amp;", "&"))
+end
+
+local function escape(text)
+    return (text:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"):gsub('"', "&quot;"))
+end
+
+-- The zone groups of a GetZoneGroupState answer: { { coordinator, parts = { { id, text } } } },
+-- a part being a room as Sonos shows it (a stereo pair's hidden speaker goes with its room; a
+-- Boost is a part of its own), and what goes around them.
+local function zoneGroups(topology)
+    local before, inner, after = topology:match("^(.-<ZoneGroupState>)(.-)(</ZoneGroupState>.*)$")
+    local head, body, tail = unescape(inner):match("^(.-<ZoneGroups>)(.-)(</ZoneGroups>.*)$")
+    local groups = {}
+    for attrs, members in body:gmatch("<ZoneGroup ([^>]*)>(.-)</ZoneGroup>") do
+        local group = { coordinator = attrs:match('Coordinator="([^"]+)"'), parts = {} }
+        local at = 1
+        while true do
+            local first, last = members:find("<ZoneGroupMember ", at, true)
+            if not first then
+                break
+            end
+            local close = members:find(">", last, true)
+            local stop = members:sub(close - 1, close) == "/>" and close or select(2, members:find("</ZoneGroupMember>", close, true))
+            local text = members:sub(first, stop)
+            local tag = text:match("^<ZoneGroupMember ([^>]*)")
+            local hidden = tag:find('Invisible="1"', 1, true) and not tag:find('IsZoneBridge="1"', 1, true)
+            if hidden and #group.parts > 0 then
+                group.parts[#group.parts].text = group.parts[#group.parts].text .. text
+            else
+                group.parts[#group.parts + 1] = { id = tag:match('UUID="([^"]+)"'), text = text }
+            end
+            at = stop + 1
+        end
+        groups[#groups + 1] = group
+    end
+    return groups, { before, head, tail, after }
+end
+
+local function zoneGroupState(groups, frame)
+    local list = {}
+    for index, group in ipairs(groups) do
+        local texts = {}
+        for _, part in ipairs(group.parts) do
+            texts[#texts + 1] = part.text
+        end
+        list[#list + 1] = '<ZoneGroup Coordinator="' .. group.coordinator .. '" ID="' .. group.coordinator .. ":" .. (900 + index) .. '">' .. table.concat(texts) .. "</ZoneGroup>"
+    end
+    return frame[1] .. escape(frame[2] .. table.concat(list) .. frame[3]) .. frame[4]
+end
+
+function Household:playerById(id)
+    for _, player in pairs(self.players) do
+        if player.id == id then
+            return player
+        end
+    end
+    return nil
+end
+
+-- The room `id` joins the group led by `coordinatorId` (nil: it leaves its group), as Sonos does
+-- it: its zone group state changes. False when there is no such group or room.
+function Household:regroup(id, coordinatorId)
+    local groups, frame = zoneGroups(self.topology)
+    local from, index, target
+    for _, group in ipairs(groups) do
+        for at, part in ipairs(group.parts) do
+            if part.id == id then
+                from, index = group, at
+            end
+        end
+        if coordinatorId and group.coordinator == coordinatorId then
+            target = group
+        end
+    end
+    if not from or (coordinatorId and (not target or target == from)) or (not coordinatorId and #from.parts == 1) then
+        return false
+    end
+    local part = table.remove(from.parts, index)
+    local player = self:playerById(id)
+    if #from.parts == 0 then
+        for at, group in ipairs(groups) do
+            if group == from then
+                table.remove(groups, at)
+                break
+            end
+        end
+    elseif from.coordinator == id then
+        -- The others go on together, led by the next of them.
+        from.coordinator = from.parts[1].id
+        local led = self:playerById(from.coordinator)
+        if led and player then
+            led.playing, led.transport = player.playing, player.transport
+        end
+    end
+    if target then
+        target.parts[#target.parts + 1] = part
+        if player then
+            player.playing = "member"
+        end
+    else
+        groups[#groups + 1] = { coordinator = id, parts = { part } }
+        if player then
+            player.playing, player.transport = "track", "STOPPED"
+        end
+    end
+    self.topology = zoneGroupState(groups, frame)
+    return true
+end
+
 local SERVICE_OF = {
     ["/MediaRenderer/AVTransport/Control"] = "AVTransport",
     ["/MediaRenderer/RenderingControl/Control"] = "RenderingControl",
@@ -187,8 +301,18 @@ function Household:answer(player, request, path)
     elseif action == "SetAVTransportURI" then
         local uri = argument(body, "CurrentURI") or ""
         player.uri = uri
-        player.playing = uri:match("^x%-rincon%-queue:") and "track" or "radio"
-        player.transport = "STOPPED"
+        local coordinator = uri:match("^x%-rincon:(RINCON_%x+)$")
+        if coordinator then
+            -- Joins that group (1.8.0): only a group's coordinator, not itself.
+            if not self:regroup(player.id, coordinator) then
+                return fault(701)
+            end
+        else
+            player.playing = uri:match("^x%-rincon%-queue:") and "track" or "radio"
+            player.transport = "STOPPED"
+        end
+    elseif action == "BecomeCoordinatorOfStandaloneGroup" then
+        self:regroup(player.id, nil)
     else
         return fault(401)
     end

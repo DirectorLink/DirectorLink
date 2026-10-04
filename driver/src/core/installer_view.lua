@@ -262,7 +262,26 @@ local function stepText(step, registry)
     elseif step.type == "blinds" then
         action = set.position .. "% open"
     elseif step.type == "music" then
-        action = set.action
+        -- 1.8.0 (ADR-057): resume, a volume, a favorite (at a volume, with other rooms).
+        if set.action == "volume" then
+            action = "volume " .. set.volume
+        elseif set.action == "play_favorite" then
+            local favorite = set.favorite or {}
+            action = 'play favorite "' .. tostring(favorite.title or ("favorite " .. tostring(favorite.id))) .. '"'
+            if set.volume then
+                action = action .. " at volume " .. set.volume
+            end
+            if set.with_room_ids then
+                local rooms = {}
+                for _, id in ipairs(set.with_room_ids) do
+                    local room = (registry.rooms or {})[id]
+                    rooms[#rooms + 1] = (room and room.name or "a removed room") .. " (" .. id .. ")"
+                end
+                action = action .. ", grouped with " .. table.concat(rooms, ", ")
+            end
+        else
+            action = set.action
+        end
     elseif step.type == "refrigerators" then
         local parts = {}
         for _, feature in ipairs({ "power_cool", "power_freeze", "sabbath_mode", "ice_maker" }) do

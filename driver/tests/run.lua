@@ -47,6 +47,7 @@ local suites = {
     "test_backup",
     "test_auto_backup",
     "test_sonos",
+    "test_sonos_groups",
     "test_activity",
     "test_alerts",
 }
@@ -93,6 +94,7 @@ local SECONDS = {
     test_alarm = 41,
     test_backup = 93,
     test_sonos = 14,
+    test_sonos_groups = 8,
 }
 local DEFAULT_SECONDS = 5
 

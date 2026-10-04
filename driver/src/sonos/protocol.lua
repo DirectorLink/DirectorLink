@@ -51,8 +51,10 @@ Protocol.SERVICES = {
     ContentDirectory = { path = "/MediaServer/ContentDirectory/Control", urn = "urn:schemas-upnp-org:service:ContentDirectory:1" },
 }
 
--- Every action DirectorLink sends, and its service: nothing else is ever sent to a player. No
--- grouping, no alarms, no settings.
+-- Every action DirectorLink sends, and its service: nothing else is ever sent to a player. Grouping
+-- (1.8.0, ADR-057) is two of them: joining a group is SetAVTransportURI with the coordinator's
+-- address (Protocol.groupUri), leaving one is BecomeCoordinatorOfStandaloneGroup; a group's volume
+-- is each room's own SetVolume. No alarms, no settings.
 Protocol.ACTIONS = {
     GetTransportInfo = "AVTransport",
     GetPositionInfo = "AVTransport",
@@ -65,6 +67,7 @@ Protocol.ACTIONS = {
     SetAVTransportURI = "AVTransport",
     RemoveAllTracksFromQueue = "AVTransport",
     AddURIToQueue = "AVTransport",
+    BecomeCoordinatorOfStandaloneGroup = "AVTransport",
     GetVolume = "RenderingControl",
     SetVolume = "RenderingControl",
     GetMute = "RenderingControl",
@@ -99,6 +102,17 @@ end
 -- A player's id as Sonos writes it: RINCON_ and its hex digits.
 function Protocol.validId(value)
     return type(value) == "string" and #value <= 40 and value:match("^RINCON_%x+$") ~= nil
+end
+
+-- The address a room is given to join the group of `coordinatorId` (SetAVTransportURI), as the
+-- Sonos app does it; nil for anything that is not a player's id. The only place this address is
+-- made (scripts/check_package.py); src/sonos/sonos.lua uses it only for a coordinator it found in
+-- the household's zone group state.
+function Protocol.groupUri(coordinatorId)
+    if not Protocol.validId(coordinatorId) then
+        return nil
+    end
+    return "x-rincon:" .. coordinatorId
 end
 
 -- ---- SOAP ----------------------------------------------------------------------------------
