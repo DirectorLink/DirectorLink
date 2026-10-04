@@ -60,8 +60,9 @@ them in full (ADR-025); ADR-054 says what each became.
     step's room and of `with_room_ids` are grouped, get the volume, and play the Sonos favorite.
     The step keeps the favorite's id, name, address and description as the favorites list gives
     them; a favorite since removed in Sonos is skipped with `FAVORITE_GONE` and nothing of the step
-    runs. Sonos rooms the key that runs it may not control are skipped with `FORBIDDEN` (a group:
-    all its rooms). Each room, or group for resume, counts as ran.
+    runs. The step runs in full whoever runs the scene (a member it was chosen for, a schedule, a
+    link): every Sonos room it names, grouped rooms included. Each room, or group for resume,
+    counts as ran.
   - refrigerators (1.7.0, ADR-049): any of `power_cool`, `power_freeze`, `sabbath_mode` and
     `ice_maker`, `true` (on) or `false` (off), at least one: `{"sabbath_mode": true}`. Each goes to
     the refrigerator's driver as its own command, through Samsung's cloud; the step counts as ran
@@ -80,8 +81,9 @@ the device routes, and answers `202` with what happened to each device:
 - `ran`: commands handed to the controller (a device that ran with a setting it does not have left
   out, such as a fan speed, or a setpoint the thermostat refuses, is also listed in `problems` as
   `partial`, `NOT_SUPPORTED`);
-- `skipped`: left alone, with the reason in `problems` — doors and gates for a key without door
-  access (`FORBIDDEN`) or with Door Control off in Composer (`DOOR_CONTROL_DISABLED`), a mode a
+- `skipped`: left alone, with the reason in `problems` — doors and gates when DirectorLink runs
+  the scene itself, from a schedule or a link (`FORBIDDEN`), or with Door Control off in Composer
+  (`DOOR_CONTROL_DISABLED`), a mode a
   unit does not have (`MODE_NOT_SUPPORTED`), a device no longer in the project (`NOT_FOUND`), a
   thermostat left with nothing to do once its refused setpoints are left out;
 - `failed`: refused by the controller.

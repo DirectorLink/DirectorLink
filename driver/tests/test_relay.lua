@@ -623,6 +623,54 @@ function tests.a_version_the_relay_no_longer_takes_says_update_and_tries_hourly_
     T.eq(entries2[1].to, nil, "no minimum said, none recorded")
 end
 
+-- At home, GET /v1/remote says why remote access is down, so the app can say "Update DirectorLink"
+-- where it shows remote access (it only learns it through the account otherwise).
+function tests.remote_status_says_an_update_is_required_until_a_connection_opens()
+    local mock = Mock.startDriver()
+    local key = T.pair(mock)
+    local function status()
+        local answer = T.http(mock, "GET", "/v1/remote", { key = key })
+        T.eq(answer.status, 200)
+        return answer.json
+    end
+    local function none(value)
+        return value == nil or value == Json.null
+    end
+    T.eq(status().update_required, false, "off")
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    T.eq(status().update_required, false, "trying")
+    refusedAsTooOld("1.8.0")
+    local refused = status()
+    T.eq(refused.connected, false)
+    T.eq(refused.update_required, true)
+    T.eq(refused.minimum_version, "1.8.0")
+
+    -- Switched off, nothing is required; on again and refused without a minimum: no version said.
+    Properties["Remote Access"] = "Off"
+    OnPropertyChanged("Remote Access")
+    T.eq(status().update_required, false, "off")
+    T.truthy(none(status().minimum_version))
+    Properties["Remote Access"] = "On"
+    OnPropertyChanged("Remote Access")
+    refusedAsTooOld(nil)
+    T.eq(status().update_required, true)
+    T.truthy(none(status().minimum_version), "none named")
+
+    -- The minimum lowered: an hour later it connects, and nothing is required any more.
+    local retry = lastTimer(mock, 3600 * 1000)
+    retry.fired = true
+    retry.callback()
+    local connection = mock.network[BINDING]
+    connection.sent = ""
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    Harness.accept(connection.sent)
+    local now = status()
+    T.eq(now.connected, true)
+    T.eq(now.update_required, false)
+    T.truthy(none(now.minimum_version))
+end
+
 function tests.a_close_from_the_relay_is_answered_then_retried()
     local mock, connection = connected()
     ReceivedFromNetwork(BINDING, 443, serverFrame(8, bigEndian(4000, 2) .. "replaced"))

@@ -78,8 +78,9 @@ local state = {
     -- current one: the owner may have approved one of them meanwhile.
     trying = nil,
     -- The account service refused this version (ADR-059) since the last connection: in the history
-    -- once, until a connection opens again.
+    -- once, until a connection opens again; and the minimum it named, if any (GET /v1/remote).
     updateRequired = false,
+    minimumVersion = nil,
 }
 
 local function log(level, message, data)
@@ -444,6 +445,7 @@ local function onOpen()
     state.tries = 0
     state.downSince = nil
     state.updateRequired = false
+    state.minimumVersion = nil
 end
 
 -- The relay refused this version of DirectorLink (426 DRIVER_UPDATE_REQUIRED, ADR-059): drivers
@@ -456,6 +458,7 @@ local function updateRequired(problem, status)
         state.updateRequired = true
         Activity.record("system", "remote_update_required", { from = Version.BRIDGE_VERSION, to = minimum })
     end
+    state.minimumVersion = minimum
     scheduleReconnect("update required", Relay.UPDATE_RETRY_SECONDS, {
         level = "warn",
         message = "the relay no longer takes this version of DirectorLink; update it in Composer",
@@ -723,6 +726,15 @@ function Relay.connected()
     return state.enabled and state.connectedAt ~= nil
 end
 
+-- Whether the account service turned this version away (426, ADR-059) and no connection has opened
+-- since, while Remote Access is on; and the minimum version it named (nil when it named none).
+function Relay.updateRequired()
+    if not state.enabled or state.connectedAt ~= nil or not state.updateRequired then
+        return false, nil
+    end
+    return true, state.minimumVersion
+end
+
 function Relay.start()
     if state.enabled then
         return
@@ -779,6 +791,7 @@ function Relay.reset()
     state.identity = nil
     state.status = "Off"
     state.updateRequired = false
+    state.minimumVersion = nil
 end
 
 return Relay

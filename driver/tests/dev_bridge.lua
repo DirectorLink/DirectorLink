@@ -21,6 +21,8 @@
 --        questions: [{ key_id, detail }] }>\n", each question opened as that device's worker would
 --   in:  "alert <driver id> <hex label>\n" a camera's DirectorLink · Hikvision Camera driver raises
 --        an alert (LAST_ALERT, then its Alert event); out: "ALERTED <times delivered>\n"
+--   in:  "scene_links unreadable\n" / "scene_links readable\n": the scene links' store cannot be read
+--        (and is read again at once), or has what it had back; out: "SCENE_LINKS <complete>\n"
 -- With an argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
@@ -395,6 +397,9 @@ local Remote = require("src.cloud.remote")
 local Clock = require("src.core.clock")
 local sealCount = 0
 
+-- The scene links' store while "scene_links unreadable" holds it.
+local keptSceneLinks = nil
+
 local function command(line)
     local name, value = line:match("^property (%x*) (%x*)$")
     if name then
@@ -428,6 +433,18 @@ local function command(line)
         Properties["Remote Access"] = "On"
         OnPropertyChanged("Remote Access")
         return "LINKED " .. identity.home_id
+    end
+    local storeState = line:match("^scene_links (%a+)$")
+    if storeState then
+        local SceneLinks = require("src.core.scene_links")
+        if storeState == "unreadable" then
+            keptSceneLinks = mock.persist["directorlink_scene_links"]
+            mock.persist["directorlink_scene_links"] = "json:{not json"
+        else
+            mock.persist["directorlink_scene_links"] = keptSceneLinks
+        end
+        SceneLinks.load()
+        return "SCENE_LINKS " .. tostring(SceneLinks.complete())
     end
     local fired, event = line:match("^event (%d+) (%d+)$")
     if fired then

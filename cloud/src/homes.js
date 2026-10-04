@@ -696,8 +696,9 @@ function cors(request, env) {
   return { "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true", Vary: "Origin" };
 }
 
-// Answers the routes above; null for any other path.
-export async function handleHomes(request, env) {
+// Answers the routes above; null for any other path. `ctx`: the Worker's, for work that goes on
+// after the answer (ctx.waitUntil).
+export async function handleHomes(request, env, ctx) {
   const path = new URL(request.url).pathname;
   let route = null;
   let match = null;
@@ -738,5 +739,5 @@ export async function handleHomes(request, env) {
   if (!user) {
     return withCors(problem(401, "NOT_SIGNED_IN", "Sign in first"));
   }
-  return withCors(await handler(request, env, user, match));
+  return withCors(await handler(request, env, user, match, ctx));
 }

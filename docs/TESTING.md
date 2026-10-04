@@ -50,17 +50,17 @@
 
 1. Log Level Debug. Open Cameras through the account (mobile data): every tile gets its picture within a few seconds, and the browser's console says "DirectorLink: 11 camera pictures in … ms, 4 at once (remote)". Note it, and the same at home.
 2. The driver log's `snapshot` lines: after the first round, `requests` is 1 a picture (2 means that camera or NVR took only one kept login at a time: note which), and `in_flight` is never above 8.
-3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`.
+3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`. At home, a camera's full view (and the doorbell's banner when it rings) shows a new picture about every second, not every two.
 4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Controller → Alerts on this device shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
 5. Walk past again within a minute: no second alert. A member without cameras, or without that camera's room, gets none. In Hebrew the words are Hebrew.
 6. This checks that the Hikvision driver's Alert reaches DirectorLink and that `LAST_ALERT` is read at it (Person, Vehicle, Line Crossing…).
 
 ## 0zv. What DirectorLink does by itself (1.8.0)
 
-1. **A driver updated in Composer:** update a device's driver to a new version in Composer (the Samsung Refrigerator driver, for example), without Refresh Project. Within a few minutes the log says "a device's driver was updated in Composer; set up again" with the versions, and what the new driver adds shows.
+1. **A driver updated in Composer:** update a device's driver to a new version in Composer (the Samsung Refrigerator driver, for example), without Refresh Project. Within a few minutes the log says "a device's driver was updated in Composer; set up again" with the versions, and what the new driver adds shows. If it says `"supported":false` (Director showed the new version while it still started the driver), it says "set up again on a later try" a minute or two later.
 2. **Favorites of removed devices:** make a camera a favorite, then remove it in Composer. Home shows "Removed in Composer" with Remove; Remove takes it away. Leave another one: after 7 days it goes by itself (the log says so). A device added back within the 7 days (Undo in Composer) is a tile again.
 3. **A new device asks to join:** on an admin device with alerts on ("A new device of mine asks to join" on) and the app closed, tap Join from another device on a new device: the admin device gets "A new device asks to join your home…"; tapping it opens the app with the request. With the switch off: no notification.
-4. **The minimum driver version,** only on a test Worker (`wrangler dev`; never on api.directorlink.io while other homes use it): `MIN_DRIVER_VERSION` "1.9.0" with a 1.8.0 driver: Remote Status says "Update DirectorLink…", the next try is an hour later, History has "Remote access stopped: update DirectorLink to 1.9.0 or later…", and the app through the account says "Update DirectorLink…". At home the app works. Unset it: the driver connects at its next try, or at once with Remote Access off and on.
+4. **The minimum driver version,** only on a test Worker (`wrangler dev`; never on api.directorlink.io while other homes use it): `MIN_DRIVER_VERSION` "1.9.0" with a 1.8.0 driver: Remote Status says "Update DirectorLink…", the next try is an hour later, History has "Remote access stopped: update DirectorLink to 1.9.0 or later…", and the app through the account says "Update DirectorLink…". At home the app works, and Settings → Account → This home says "Update DirectorLink…" too. Unset it: the driver connects at its next try, or at once with Remote Access off and on.
 
 ## 0zu. Join from another device, and Paste invitation link (1.7.0)
 

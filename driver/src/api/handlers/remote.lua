@@ -8,14 +8,22 @@ local People = require("src.auth.people")
 
 local Remote = {}
 
+-- `update_required` (1.8.0, ADR-059): the account service no longer takes this version, so remote
+-- access stays down until DirectorLink is updated; `minimum_version`, the one it named.
 function Remote.status(ctx)
     local remote = ctx.services.remote
     local enabled = remote.enabled()
+    local updateRequired, minimum = false, nil
+    if enabled then
+        updateRequired, minimum = remote.updateRequired()
+    end
     return 200, {
         enabled = enabled,
         connected = enabled and remote.connected() or false,
         lock = remote.available(),
         home_id = enabled and remote.homeId() or Json.null,
+        update_required = updateRequired == true,
+        minimum_version = updateRequired and minimum or Json.null,
     }
 end
 

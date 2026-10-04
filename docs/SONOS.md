@@ -82,7 +82,10 @@ a Sonos room was renamed).
 1.8.0 (ADR-057):
 
 - **Resume**: each group with a room there that is paused or stopped plays again (a radio station
-  a scene stopped starts again); one that plays, or has nothing to play, is left alone.
+  a scene stopped starts again); one that plays, or has nothing to play, is left alone. It does
+  not remember what a scene paused: a room paused earlier by someone else plays too, and Sonos
+  rooms not in use usually sit paused, so a Resume for the whole home starts every room that has
+  something to play. The editor says so under Resume.
 - **Volume**: each Sonos room there gets that volume, its own.
 - **Play a favorite**, in a room: the Sonos favorite picked in the editor, at a volume if one is
   set, and in other rooms too (**Also play in**). The rooms are grouped first, as in the Sonos app:
@@ -96,9 +99,12 @@ a Sonos room was renamed).
   same address or name, or the same address under another id) and starts it as the list has it.
   While a scene plays a favorite, the favorites are read every half hour, so a run knows at once;
   just after a start they are read first, and a favorite found gone then is only logged.
-- **Who may**: a scene changes only the Sonos rooms whoever runs it may control (a schedule: a
-  member's key); the others are skipped with `FORBIDDEN`. A group is changed only when every room
-  in it may be.
+- **Who may**: a scene's music steps run in full, as its other steps do (ADR-054): a member an
+  admin chose the scene for, a schedule and a link change every Sonos room the step names, grouped
+  rooms included, also rooms the member could not control themselves (DirectorLink's own runs,
+  schedules and links, leave out only doors and gates). The Music screen and `/v1/music` change
+  only the rooms the person may control (`FORBIDDEN` for the others; a group only when every room in
+  it may be).
 
 ## How DirectorLink talks to the speakers
 

@@ -13,6 +13,10 @@
 -- (src/adapters/manager.lua setUpAgain), each logged; nothing else is touched. A home with 200
 -- drivers has each looked at within 8 minutes, one Director call a driver.
 --
+-- A device that could not be set up just after its driver's version changed is tried again
+-- (RETRY_MINUTES): Director may show the new version while it is still starting the updated driver,
+-- before that driver has added its variables. After the last try it is left to Refresh Project.
+--
 -- What it does not see: an update that keeps the driver's version number (the installer runs
 -- Refresh Project then), and a driver Director gives no version for (it is not watched).
 
@@ -22,6 +26,9 @@ local DriverUpdates = {}
 
 -- Drivers looked at each minute.
 DriverUpdates.CHECK_PER_TICK = 25
+-- A device not set up after its driver's update is tried again this many minutes after that
+-- (minute ticks), then left as it is.
+DriverUpdates.RETRY_MINUTES = { 1, 2, 5 }
 
 local state = {
     manager = nil,
@@ -29,6 +36,9 @@ local state = {
     next = 1, -- the next to look at
     drivers = {}, -- driver id -> { version, devices = { device id, ... } }
     unavailable = false, -- Director gave no driver a version (logged once)
+    -- Devices not set up after their driver's update: device id -> { driver, from, to, minutes
+    -- (since that setup), tries (made again so far) }.
+    retries = {},
 }
 
 -- The driver's version as Director gives it, or nil.
@@ -51,7 +61,7 @@ end
 -- many drivers are watched.
 function DriverUpdates.track(manager)
     state.manager = manager
-    state.order, state.next, state.drivers = {}, 1, {}
+    state.order, state.next, state.drivers, state.retries = {}, 1, {}, {}
     local drivers = 0
     for id, device in pairs(manager.matchedDevices()) do
         for _, driverId in ipairs(manager.driverIds(device)) do
@@ -77,8 +87,58 @@ function DriverUpdates.track(manager)
     return #state.order
 end
 
--- Looks at the next CHECK_PER_TICK drivers (the scheduler's minute tick). Returns how many devices
--- were set up again.
+-- The devices whose setup after their driver's update failed, a minute older: those due are set
+-- up again (not `skip`, just set up). Returns how many were.
+local function retry(manager, skip)
+    local due = {}
+    for deviceId, entry in pairs(state.retries) do
+        if not skip[deviceId] then
+            entry.minutes = entry.minutes + 1
+            if entry.minutes >= DriverUpdates.RETRY_MINUTES[entry.tries + 1] then
+                due[#due + 1] = deviceId
+            end
+        end
+    end
+    if #due == 0 then
+        return 0
+    end
+    table.sort(due)
+    local results = manager.setUpAgain(due)
+    local total = 0
+    for _, deviceId in ipairs(due) do
+        local entry = state.retries[deviceId]
+        local works = results[deviceId]
+        entry.tries = entry.tries + 1
+        local last = entry.tries >= #DriverUpdates.RETRY_MINUTES
+        if works == nil or works or last then
+            state.retries[deviceId] = nil
+        end
+        if works ~= nil then
+            total = total + 1
+            local device = manager.matchedDevices()[deviceId] or {}
+            local data = {
+                device_id = deviceId,
+                driver_id = entry.driver,
+                from = entry.from,
+                to = entry.to,
+                try = entry.tries + 1,
+                supported = works,
+                error = not works and device.adapter_error or nil,
+            }
+            if works then
+                Log.info("adapters", "a device's driver was updated in Composer; set up again on a later try", data)
+            elseif last then
+                Log.warn("adapters", "a device's driver was updated in Composer; it could not be set up again (Refresh Project tries again)", data)
+            else
+                Log.info("adapters", "a device's driver was updated in Composer; not set up yet, tried again later", data)
+            end
+        end
+    end
+    return total
+end
+
+-- Looks at the next CHECK_PER_TICK drivers (the scheduler's minute tick), and tries again devices
+-- that could not be set up after their driver's update. Returns how many devices were set up again.
 function DriverUpdates.tick()
     local manager = state.manager
     local count = #state.order
@@ -100,11 +160,19 @@ function DriverUpdates.tick()
         end
     end
     local total = 0
+    local tried = {}
     for _, driver in ipairs(updated) do
         local results = manager.setUpAgain(driver.devices)
         for _, deviceId in ipairs(driver.devices) do
             if results[deviceId] ~= nil then
                 total = total + 1
+                tried[deviceId] = true
+                -- Not set up: perhaps the driver is still starting. Tried again in a minute.
+                if results[deviceId] then
+                    state.retries[deviceId] = nil
+                else
+                    state.retries[deviceId] = { driver = driver.id, from = driver.from, to = driver.to, minutes = 0, tries = 0 }
+                end
                 local device = manager.matchedDevices()[deviceId] or {}
                 Log.info("adapters", "a device's driver was updated in Composer; set up again", {
                     device_id = deviceId,
@@ -117,7 +185,7 @@ function DriverUpdates.tick()
             end
         end
     end
-    return total
+    return total + retry(manager, tried)
 end
 
 -- The version DirectorLink last saw for a driver (tests and the log).

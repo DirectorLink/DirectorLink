@@ -469,7 +469,7 @@ function tests.snapshots_asked_for_before_a_refresh_are_answered()
         local answer = T.response(mock, waiting[index].handle)
         T.eq(answer.status, 200, "snapshot " .. index)
     end
-    -- And the limits still hold: a picture asked for again within 2 s is the one that just came.
+    -- And the limits still hold: a picture asked for again at once is the one that just came.
     T.eq(get(mock, key, "/v1/cameras/60/snapshot?width=320").status, 200)
     T.eq(#held, 0, "no new request")
     mock.clock = mock.clock + 2500

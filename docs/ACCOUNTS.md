@@ -41,7 +41,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Which key ids are admin keys (1.6.0; since 1.8.0 the keys of admin people) | its own role | yes (ids only) | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
-| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
@@ -427,7 +427,7 @@ a hash of it. A phone's automation posts the secret to `https://api.directorlink
 account service checks that an account has claimed the home, lets at most 30 runs a minute reach
 it (and none from an address whose runs were refused as unknown 10 times in 10 minutes), and passes
 the link's id and secret over the relay (`link`, docs/RELAY.md). The controller checks the hash in
-constant time, runs the scene as a member's key would and records the run in History; the phone gets
+constant time, runs the scene as DirectorLink itself (before 1.8.0: as a member's key would) and records the run in History; the phone gets
 `ran`, `partly`, `failed` or `nothing`, and an unknown home, link or secret all get the same 404 (but
 a claimed home that is offline gets 503, so that the family knows: whoever has the home's id, which
 every link and invitation link carries, can tell whether it is online). No account and no session is
@@ -625,8 +625,9 @@ device's key.
   a home was offline, and which key ids are admin keys. Since 1.7.0, when the home notified which
   key ids, and whether the notice was brief; every sealed part has the same size, and none names
   anything the cloud can read. The keys and the brevity tell some kinds for certain: a brief notice
-  is a doorbell's ring (only rings are brief); one that is not brief and reaches a key that is not
-  an admin key is the refrigerator's door left open or, since 1.8.0, a camera's alert (doors opened
+  is a doorbell's ring or, since 1.8.0, an ask-before-opening question (only those are brief); one
+  that is not brief and reaches a key that is not an admin key is the refrigerator's door left open
+  or, since 1.8.0, a camera's alert (doors opened
   and schedules that failed go to admin keys only); one for admin keys only is a door or gate
   opened, a schedule that failed, the refrigerator or a camera. Camera alerts (1.8.0, ADR-056) are
   one more kind of the same notice, sealed and padded like the others: the cloud learns that more

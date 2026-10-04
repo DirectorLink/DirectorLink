@@ -476,7 +476,11 @@ paths:
       operationId: getRemoteAccess
       x-directorlink-role: member
       summary: Remote access status
-      description: Whether Remote Access is switched on in Composer, connected, and able to seal requests, and this home's id while it is on.
+      description: |
+        Whether Remote Access is switched on in Composer, connected, and able to seal requests, and
+        this home's id while it is on. Since 1.8.0 (ADR-059) also `update_required`: the account
+        service no longer takes this version of DirectorLink, so remote access stays down until it is
+        updated in Composer (the app says "Update DirectorLink" on the home network too).
       responses:
         "200":
           description: The status.
@@ -1161,7 +1165,8 @@ paths:
         stops working at once. The answer is the only place its `secret` ever appears: the controller
         keeps a hash of it, as of API keys. A phone runs the scene with a POST to `url` without what
         follows `#`, with the secret in the body (docs/SCENES.md); the account service passes it to
-        the home (`link`, docs/RELAY.md), and the scene runs as a member's key would run it.
+        the home (`link`, docs/RELAY.md), and the scene runs as DirectorLink itself runs it, as a
+        schedule does (before 1.8.0: as a member's key would).
 
         Refused for a scene that opens doors or gates (409 `SCENE_OPENS_DOORS`: a step of a type a
         link may not run; only lights, climate, fans, blinds, music and refrigerators may), while
@@ -1201,7 +1206,7 @@ paths:
       operationId: deleteSceneLink
       x-directorlink-role: admin
       summary: Remove a scene's link
-      description: Since 1.7.0 (ADR-051). The link stops working at once. The Composer action Remove All Scene Links removes every one.
+      description: Since 1.7.0 (ADR-051). The link stops working at once. The Composer action Remove All Scene Links removes every one. While the stored links could not be read, `503 UNAVAILABLE` (nothing is written until they can).
       responses:
         "204":
           description: Removed.
@@ -1213,6 +1218,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
 
   /v1/ask-links:
     get:
@@ -6145,6 +6152,17 @@ components:
           type: [string, "null"]
           pattern: "^[0-9a-f]{32}$"
           description: This home's id at api.directorlink.io; null while Remote Access is off.
+        update_required:
+          type: boolean
+          description: |
+            Since 1.8.0 (ADR-059). The account service answered this version `426`
+            `DRIVER_UPDATE_REQUIRED` and no connection has opened since: remote access stays down
+            until DirectorLink is updated in Composer (the driver tries again hourly). False while
+            Remote Access is off. Missing before 1.8.0.
+        minimum_version:
+          type: [string, "null"]
+          pattern: "^[0-9]+[.][0-9]+[.][0-9]+$"
+          description: Since 1.8.0. The oldest version the account service takes, when `update_required` is true and it named one; else null.
 
     ClaimToken:
       type: object

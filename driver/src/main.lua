@@ -247,6 +247,10 @@ local services = {
         connected = function()
             return Relay.connected()
         end,
+        -- The account service turned this version away (ADR-059): true, and the minimum it named.
+        updateRequired = function()
+            return Relay.updateRequired()
+        end,
         available = function()
             return Remote.available()
         end,

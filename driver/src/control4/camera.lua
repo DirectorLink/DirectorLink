@@ -29,8 +29,11 @@ Camera.PER_NVR = 3
 -- CAMERA_BUSY.
 Camera.MAX_QUEUED = 24
 Camera.MAX_WAITERS = 16
--- A picture is given again to whoever asks for it this long after it arrived (milliseconds).
-Camera.SHARE_MS = 2000
+-- A picture is given again to whoever asks for it this long after it arrived (milliseconds): less
+-- than the app's fastest refresh (a live picture on the home network, asked a second after each
+-- answer), so that every ask of one viewer gets a new picture, while tiles and devices that ask in
+-- the same moment share one.
+Camera.SHARE_MS = 800
 -- A login unused this long starts again with a new challenge (seconds).
 Camera.LOGIN_IDLE_SECONDS = 60
 -- Camera setup (address, login, snapshot path) is cached this long.
@@ -290,7 +293,7 @@ end
 
 local function contentType(headers)
     local value = header(headers, "content-type")
-    return value and value:match("^%s*([^;%s]+)") or "image/jpeg"
+    return type(value) == "string" and value:match("^%s*([^;%s]+)") or "image/jpeg"
 end
 
 -- A digest login for one picture from `source`'s address: a free one that was used recently, or a
@@ -329,45 +332,74 @@ local function answer(login, source)
     return Camera.digestHeader(login.challenge, source.username, source.password, "GET", source.path, cnonce, login.nc)
 end
 
--- Fetches the picture: done(code, body, mediaType, error, requests). A camera set to Basic login
--- that asks for digest gets digest, kept as for any other.
+-- Fetches the picture: done(code, body, mediaType, error, requests), exactly once. A camera set to
+-- Basic login that asks for digest gets digest, kept as for any other. An error while a request is
+-- made or its answer read (C4:Hash failing, a header in a shape Director does not usually give)
+-- ends the picture as unreachable, its login's challenge dropped: the transfer's guard is already
+-- cancelled then, and nothing else would give its place back.
 local function fetch(source, done)
     local target = url(source)
     local basic = source.auth and source.authType ~= "DIGEST" and source.username ~= ""
     local login = nil
+    local requests = 0
+    local over = false
+    local function finish(code, body, mediaType, err)
+        if over then
+            return
+        end
+        over = true
+        if login then
+            login.busy, login.used = false, os.time()
+        end
+        done(code, body, mediaType, err, requests)
+    end
+    local function failed(problem)
+        Log.error("camera", "snapshot request failed", { host = source.host, error = tostring(problem) })
+        if not over and login then
+            login.challenge, login.nc = nil, 0
+        end
+        finish(nil, nil, nil, "error")
+    end
+    local ask
+    ask = function(mayRetry)
+        local ok, problem = pcall(function()
+            local headers = { Accept = "image/*" }
+            if login and login.challenge then
+                headers.Authorization = answer(login, source)
+            elseif basic then
+                headers.Authorization = "Basic " .. C4:Base64Encode(source.username .. ":" .. source.password)
+            end
+            requests = requests + 1
+            get(target, headers, function(code, body, responseHeaders, err)
+                local handled, failure = pcall(function()
+                    if code == 401 and source.username ~= "" then
+                        local challenge = digestChallenge(responseHeaders)
+                        if challenge and mayRetry then
+                            -- The first picture from this address, a stale nonce, or one the camera
+                            -- no longer knows: answered once, and kept for the next pictures.
+                            login = login or takeLogin(source)
+                            login.challenge, login.nc = challenge, 0
+                            ask(false)
+                            return
+                        end
+                        -- Refused even so: the next picture starts again without a challenge.
+                        if login then
+                            login.challenge, login.nc = nil, 0
+                        end
+                    end
+                    finish(code, body, responseHeaders and contentType(responseHeaders), err)
+                end)
+                if not handled then
+                    failed(failure)
+                end
+            end)
+        end)
+        if not ok then
+            failed(problem)
+        end
+    end
     if source.username ~= "" then
         login = takeLogin(source, basic)
-    end
-    local requests = 0
-    local function ask(mayRetry)
-        local headers = { Accept = "image/*" }
-        if login and login.challenge then
-            headers.Authorization = answer(login, source)
-        elseif basic then
-            headers.Authorization = "Basic " .. C4:Base64Encode(source.username .. ":" .. source.password)
-        end
-        requests = requests + 1
-        get(target, headers, function(code, body, responseHeaders, err)
-            if code == 401 and source.username ~= "" then
-                local challenge = digestChallenge(responseHeaders)
-                if challenge and mayRetry then
-                    -- The first picture from this address, a stale nonce, or one the camera no
-                    -- longer knows: answered once, and kept for the next pictures.
-                    login = login or takeLogin(source)
-                    login.challenge, login.nc = challenge, 0
-                    ask(false)
-                    return
-                end
-                -- Refused even so: the next picture starts again without a challenge.
-                if login then
-                    login.challenge, login.nc = nil, 0
-                end
-            end
-            if login then
-                login.busy, login.used = false, os.time()
-            end
-            done(code, body, responseHeaders and contentType(responseHeaders), err, requests)
-        end)
     end
     ask(true)
 end

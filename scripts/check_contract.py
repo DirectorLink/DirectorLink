@@ -898,6 +898,14 @@ def scenario(client, bridge):
     if client.check("POST", f"/v1/scenes/{gate['id']}/link", 409)["code"] != "SCENE_OPENS_DOORS":
         fail("a scene that opens doors or gates should never get a link")
     client.check("POST", "/v1/scenes/deadbeef/link", 404)
+    # A store that could not be read is not written: changes answer 503 until it can be.
+    if bridge.scene_links_unreadable(True):
+        fail("the dev bridge should have made the scene links' store unreadable")
+    for method in ("POST", "DELETE"):
+        if client.check(method, link_path, 503)["code"] != "UNAVAILABLE":
+            fail(f"{method} {link_path} with the store unreadable should be 503 UNAVAILABLE")
+    if not bridge.scene_links_unreadable(False):
+        fail("the scene links' store should be readable again")
     client.check("DELETE", link_path, 204)
     client.check("GET", "/v1/scene-links", 401, auth=False)
 

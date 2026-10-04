@@ -142,7 +142,7 @@ async function findRequest(env, user, homeId, id) {
   return row;
 }
 
-async function startRequest(request, env, user, homeId) {
+async function startRequest(request, env, user, homeId, ctx) {
   if (!(await isMember(env, homeId, user.id))) return notMember();
   const input = await body(request);
   const label = cleanLabel(input?.label);
@@ -188,13 +188,18 @@ async function startRequest(request, env, user, homeId) {
     return problem(429, "DEVICE_REQUEST_LIMIT_REACHED", `At most ${MAX_OPEN_PER_ACCOUNT} requests may wait at a time; withdraw one, or wait 10 minutes`);
   }
   log("device_request_created", { home: homeId, user: user.id, request: row.id });
-  await pushRequest(env, homeId, user.id, row.id);
+  // The new device is answered at once: the push goes on after the answer (a push service may take
+  // seconds), its failure only logged.
+  const pushed = pushRequest(env, homeId, user.id, row.id);
+  if (ctx?.waitUntil) ctx.waitUntil(pushed);
+  else await pushed;
   return json(view(row), 201);
 }
 
 // The account's devices with an admin key at the home hear of the request at once, with the app
 // closed (1.8.0, ADR-053 as amended by ADR-059): the home's object pushes "A new device asks to
-// join" to the browsers that want it (alerts.js). The request is made whatever happens to the push.
+// join" to the browsers that want it (alerts.js). The request is made whatever happens to the push,
+// and answered without waiting for it (ctx.waitUntil in startRequest); this never throws.
 async function pushRequest(env, homeId, userId, requestId) {
   try {
     await homeObject(env, homeId, { op: "device_request", user: userId, request: requestId });
@@ -311,7 +316,7 @@ async function deleteRequest(env, user, homeId, id) {
 const ONE = /^\/v1\/homes\/([0-9a-f]{32})\/device-requests\/([0-9a-f]{32})/;
 
 export const DEVICE_REQUEST_ROUTES = [
-  [/^\/v1\/homes\/([0-9a-f]{32})\/device-requests$/, { GET: (r, env, user, m) => listRequests(env, user, m[1]), POST: (r, env, user, m) => startRequest(r, env, user, m[1]) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})\/device-requests$/, { GET: (r, env, user, m) => listRequests(env, user, m[1]), POST: (r, env, user, m, ctx) => startRequest(r, env, user, m[1], ctx) }],
   [new RegExp(`${ONE.source}$`), { GET: (r, env, user, m) => getRequest(env, user, m[1], m[2]), DELETE: (r, env, user, m) => deleteRequest(env, user, m[1], m[2]) }],
   [new RegExp(`${ONE.source}/answer$`), { POST: (r, env, user, m) => answerRequest(r, env, user, m[1], m[2]) }],
   [new RegExp(`${ONE.source}/key$`), { POST: (r, env, user, m) => showKey(r, env, user, m[1], m[2]) }],

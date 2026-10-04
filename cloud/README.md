@@ -57,20 +57,20 @@ The test endpoints are version 0's: they need `Authorization: Bearer <TEST_TOKEN
 | 400 | `SECRET_REQUIRED` | a scene link's POST without a secret (below) |
 | 401 | `WRONG_HOME_SECRET` | another secret is registered for this `home_id` |
 | 401 | `UNAUTHORIZED` | a test endpoint without the right token |
-| 426 | `DRIVER_UPDATE_REQUIRED` | `/relay/connect` from a driver below `MIN_DRIVER_VERSION`, with `minimum_version` (below) |
 | 404 | `NOT_FOUND` | any other path |
 | 405 | `METHOD_NOT_ALLOWED` | anything but GET (`Allow: GET`) |
+| 426 | `DRIVER_UPDATE_REQUIRED` | `/relay/connect` from a driver below `MIN_DRIVER_VERSION`, with `minimum_version` (below) |
 | 502 | `HOME_DISCONNECTED` | the driver's connection closed while the request waited |
 | 502 | `INVALID_RESPONSE` | the driver's `response` was malformed (status, body or base64) |
 | 503 | `HOME_OFFLINE` | no driver is connected for this home (after waiting up to 8 s for one that disconnected in the last 30 s, or after a restart) |
 | 503 | `HOME_UPDATE_REQUIRED` | the same, for a home whose last driver is below `MIN_DRIVER_VERSION`: it cannot come back until DirectorLink is updated (not for a scene link's run, which stays `HOME_OFFLINE`) |
-
-### The oldest driver version (1.8.0, ADR-059)
-
-`MIN_DRIVER_VERSION`, a var (`wrangler.jsonc` → `vars`, or the dashboard), is unset: every DirectorLink connects. Set it (`"1.8.0"`) only when a flaw in the remote protocol needs drivers with the fix. `src/min-version.js`: the Worker compares the first three numbers of `X-DirectorLink-Version` with it before the home's object is asked, and refuses a lower one, or one without three numbers (`dev`, none), with `426 DRIVER_UPDATE_REQUIRED` and `minimum_version` (logged `driver_refused`, with the home and the version); a minimum that is not three numbers is ignored (logged `min_driver_version_invalid`). Drivers from 1.8.0 say "Update DirectorLink" in Composer and try again hourly; older ones try every minute, each a refused Worker request. The home's object answers requests for a home whose last driver is below the minimum `503 HOME_UPDATE_REQUIRED`, and `GET /v1/homes` marks it `update_required`, so the app says to update DirectorLink. Setting or changing it is a deploy, which ends every driver's connection, so each is checked again as it reconnects. Tests: `min-version.test.mjs`.
 | 503 | `TEST_TOKEN_NOT_SET` | the `TEST_TOKEN` secret is missing |
 | 504 | `HOME_TIMEOUT` | no answer within 15 s |
 | 500 | `INTERNAL_ERROR` | the relay itself failed |
+
+### The oldest driver version (1.8.0, ADR-059)
+
+`MIN_DRIVER_VERSION`, a var, is unset: every DirectorLink connects. Set it (`"1.8.0"`) only when a flaw in the remote protocol needs drivers with the fix, in `wrangler.jsonc` → `vars`, and deploy; never only in Cloudflare's dashboard: `wrangler deploy` replaces the Worker's vars with those of `wrangler.jsonc` (it has no `keep_vars`), so the next deploy of anything would drop the minimum and let old drivers connect again. `src/min-version.js`: the Worker compares the first three numbers of `X-DirectorLink-Version` with it before the home's object is asked, and refuses a lower one, or one without three numbers (`dev`, none), with `426 DRIVER_UPDATE_REQUIRED` and `minimum_version` (logged `driver_refused`, with the home and the version); a minimum that is not three numbers is ignored (logged `min_driver_version_invalid`). Drivers from 1.8.0 say "Update DirectorLink" in Composer and try again hourly; older ones try every minute, each a refused Worker request. The home's object answers requests for a home whose last driver is below the minimum `503 HOME_UPDATE_REQUIRED`, and `GET /v1/homes` marks it `update_required`, so the app says to update DirectorLink. Setting or changing it is a deploy, which ends every driver's connection, so each is checked again as it reconnects. Tests: `min-version.test.mjs`.
 
 ## Local development
 

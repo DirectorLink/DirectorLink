@@ -294,6 +294,11 @@ class Bridge:
         relay here): scene links can be made (ADR-051). Returns the home id."""
         return self._ask("linked", "LINKED")
 
+    def scene_links_unreadable(self, unreadable=True):
+        """The scene links' store cannot be read (the driver answers changes 503), or is back as it
+        was. Returns whether the driver has every link (False while unreadable)."""
+        return self._ask(f"scene_links {'unreadable' if unreadable else 'readable'}", "SCENE_LINKS") == "true"
+
     def ask(self, link, secret):
         """Runs an ask-to-open link (ADR-058) as the account service would pass it on: {answer,
         questions: [{key_id, detail}]}, each question as that device's worker would open it."""
