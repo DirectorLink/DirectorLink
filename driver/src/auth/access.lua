@@ -1,7 +1,8 @@
 -- Who may see and do what (1.8.0, ADR-054). Every question about a person's permissions goes
 -- through here, so that the rules live in one place and every handler asks the same way.
 --
--- `actor` is the caller: the request's key (ctx.apiKey: { id, role, profile, ... }) or an actor
+-- `actor` is the caller: the request's key (ctx.apiKey: { id, role, profile, ... }, or a record of
+-- Keys.list(), shaped the same) or an actor
 -- DirectorLink acts as itself (a schedule, a scene's link: { id = "schedule:…" | "link:…",
 -- role = "member", system = true }). `device` is a registry device ({ id, kind, room_id, ... }), or
 -- a table with the same fields for something that is not one (a Sonos room: kind "music").
@@ -68,7 +69,9 @@ local function resolve(actor)
     if actor.system or (type(actor.id) == "string" and actor.id:find(":", 1, true)) then
         return { system = true }
     end
-    local profileId = actor.profile
+    -- A request's key (ctx.apiKey) and Keys.list()'s records say `profile`; a key's API view says
+    -- `profile_id`.
+    local profileId = actor.profile or actor.profile_id
     if profileId == nil and type(actor.id) == "string" then
         profileId = Keys.profileOf(actor.id)
     end

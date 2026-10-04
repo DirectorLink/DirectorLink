@@ -204,13 +204,14 @@ local function present(kind)
 end
 
 -- Whether `key` may get alerts of `kind` about `device` (a registry device, or the id, kind and room
--- an alert's detail names), or, without one, about something of that kind it sees here.
+-- an alert's detail names), or, without one, about something of that kind it sees here. A kind
+-- this does not know is left to whoever sends it (who may see what it is about).
 local function mayGet(key, kind, device)
     if Alerts.ADMINS_ONLY[kind] then
         return Access.isAdmin(key)
     end
     if not DEVICE_KIND[kind] then
-        return false
+        return KNOWN[kind] == true
     end
     if device then
         return Access.canSee(key, device)

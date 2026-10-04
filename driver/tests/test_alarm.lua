@@ -193,6 +193,19 @@ function tests.a_person_not_given_the_alarm_gets_403_and_nothing_while_it_is_off
     T.eq(alarm(mock, member.key, member.id).json.code, "FORBIDDEN")
 end
 
+-- The alarm is the home's (ADR-054): a member given it reads every partition, but the room of one
+-- only when that room is theirs (a room hidden from members is never named to them).
+function tests.a_member_reads_every_partition_and_the_rooms_that_are_theirs()
+    local mock, key = start(true)
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { all_rooms = false, rooms = { 11 } } } }).json
+    local garage = partition(mock, member.key, member.id, 81)
+    T.truthy(garage, "every partition")
+    T.eq(garage.state, "armed")
+    T.truthy(isNull(garage.room), "the kitchen is not theirs")
+    T.eq(partition(mock, member.key, member.id, 80).room.id, 11)
+    T.eq(partition(mock, key, T.http(mock, "GET", "/v1/api-keys/current", { key = key }).json.id, 81).room.id, 10, "an admin sees every room")
+end
+
 function tests.on_a_request_in_the_clear_gets_nothing_about_the_alarm()
     local mock, key = start(true)
     local plain = T.http(mock, "GET", "/v1/alarm", { key = key })

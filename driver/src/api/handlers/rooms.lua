@@ -154,6 +154,10 @@ function Rooms.update(ctx)
         end
         ctx.services.log.info("rooms", hidden and "room hidden from members" or "room shown to members", { room_id = id, by = ctx.apiKey.id })
         Activity.record("access", hidden and "room_hidden" or "room_shown", { by = ctx.apiKey, what = room.name, ids = { room_id = id } })
+        -- What members may see changed: the keys-changed path drops what they may no longer use.
+        if ctx.services.onKeysChanged then
+            ctx.services.onKeysChanged()
+        end
     end
     if next(changes) then
         RoomNames.update(id, changes)

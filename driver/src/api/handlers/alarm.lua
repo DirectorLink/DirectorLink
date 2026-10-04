@@ -38,6 +38,10 @@ function Alarm.status(ctx)
     local partitions, longest = Json.array(), Json.array()
     for _, device in ipairs(registry.alarmList()) do
         local view = Views.alarmPartition(registry, device)
+        -- The alarm is the home's; a partition's room only when the caller sees that room (ADR-054).
+        if not Access.seesRoom(ctx.apiKey, device.room_id) then
+            view.room = Json.null
+        end
         partitions[#partitions + 1] = view
         longest[#longest + 1] = Views.alarmPartitionLongest(view)
     end

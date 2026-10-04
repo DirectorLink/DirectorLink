@@ -176,6 +176,15 @@ function tests.a_room_hidden_from_members_disappears_whatever_their_rooms()
     T.same(Access.describe(person("eeee0002")).rooms, { 11 }, "the hidden room is not among theirs")
 end
 
+-- Keys.list()'s records ({ id, role, profile }), as ask links and alerts pass them, and a key's API
+-- view ({ id, role, profile_id }) answer as the request's key does.
+function tests.key_records_and_views_answer_as_their_person()
+    setPeople({ ["eeee0001"] = { doors = true, all_rooms = false, rooms = { 10 } } })
+    T.eq(Access.canOpen({ id = "0a1b2c3d", role = "doors", profile = "eeee0001" }, gate), true)
+    T.eq(Access.canOpen({ id = "0a1b2c3d", role = "doors", profile_id = "eeee0001" }, gate), true)
+    T.eq(Access.canSee({ id = "0a1b2c3d", role = "doors", profile_id = "eeee0001" }, hall), false)
+end
+
 function tests.directorlink_itself_controls_everything_but_opens_no_door()
     setPeople({}, { 10 })
     for _, actor in ipairs({ { id = "schedule:1a2b3c4d", role = "member" }, { id = "link:1a2b3c4d", role = "member" }, { id = "x", role = "member", system = true } }) do

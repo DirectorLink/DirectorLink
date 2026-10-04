@@ -702,8 +702,20 @@ img {
   gap: 12px;
 }
 
+/* Settings → Rooms, admins: Hide from members goes after the arrows, and to a line of its own,
+   under the name, when the row is narrow (a phone). */
+.room-order-row:has(.room-members) {
+  flex-wrap: wrap;
+}
+
+.room-order-row:has(.room-members) .room-order-name {
+  flex: 1 1 8em;
+}
+
 .room-members {
   flex: none;
+  order: 1;
+  margin-inline-start: 20px;
 }
 
 .access-person {

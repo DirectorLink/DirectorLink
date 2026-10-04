@@ -9,6 +9,7 @@ local Routes = require("src.api.routes")
 local Problem = require("src.api.problem")
 local Response = require("src.api.response")
 local Access = require("src.auth.access")
+local Roles = require("src.auth.roles")
 local Random = require("src.core.random")
 
 local HANDLERS = {
@@ -78,8 +79,9 @@ end
 for _, route in ipairs(Routes) do
     assert(resolveHandler(route.handler), "missing API handler " .. route.handler)
     -- Two roles (ADR-054): admin routes are for admins; on member routes every person may ask, and
-    -- the handler answers with what they may see and do (src/auth/access.lua).
-    assert(route.public or route.role == "member" or route.role == "admin", "route needs a role, member or admin: " .. route.method .. " " .. route.path)
+    -- the handler answers with what they may see and do (src/auth/access.lua). The other names of
+    -- 1.7.0 (viewer, doors) read as member here; scripts/check_api.py wants member or admin.
+    assert(route.public or Roles.valid(route.role), "route needs a role, member or admin: " .. route.method .. " " .. route.path)
 end
 
 -- Browsers send Origin; other clients (curl, Postman, Home Assistant) do not. Only DirectorLink's
