@@ -58,12 +58,34 @@ export function moveFavorite(entry, offset) {
   save(list);
 }
 
-// Favorites whose device still exists, resolved to { entry, kind, device }.
+// Favorites of devices removed in Composer (1.8.0, ADR-059): the controller says which, as its last
+// project read that worked found them (GET /v1/profile `gone_favorites`), and drops them by itself
+// some days later. Never guessed from this app's own lists, which leave out what a person may not
+// see, or are a moment old. [{ entry, kind, name }] in the favorites' order; name null when the
+// controller did not know it.
+export function goneFavorites() {
+  const gone = state.profile?.gone_favorites;
+  if (!Array.isArray(gone)) return [];
+  const names = new Map(gone.filter((item) => typeof item?.entry === "string").map((item) => [item.entry, typeof item.name === "string" && item.name ? item.name : null]));
+  return favorites()
+    .filter((entry) => names.has(entry))
+    .map((entry) => ({ entry, kind: entry.split(":")[0], name: names.get(entry) }));
+}
+
+// Remove, on a gone favorite's tile.
+export function removeFavorite(entry) {
+  save(favorites().filter((item) => item !== entry));
+}
+
+// Favorites whose device still exists, resolved to { entry, kind, device }. One the controller says
+// is gone is left out even while this app's list still has its device (it is a moment old): its
+// pictures and state would not come.
 export function favoriteDevices() {
+  const gone = new Set(goneFavorites().map((item) => item.entry));
   return favorites()
     .map((entry) => {
       const [kind, id] = entry.split(":");
-      const device = findDevice(kind, id);
+      const device = gone.has(entry) ? null : findDevice(kind, id);
       return device ? { entry, kind, device } : null;
     })
     .filter(Boolean);

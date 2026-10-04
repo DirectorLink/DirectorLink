@@ -217,7 +217,10 @@ async function listHomes(env, user) {
   const items = [];
   for (const row of results) {
     const status = await homeStatus(env, row.id);
-    items.push({ home_id: row.id, owner: row.owner_id === user.id, added_at: row.added_at, connected: Boolean(status.connected) });
+    const item = { home_id: row.id, owner: row.owner_id === user.id, added_at: row.added_at, connected: Boolean(status.connected) };
+    // Its DirectorLink is older than the relay takes (ADR-059): it stays away until updated.
+    if (status.update_required === true) item.update_required = true;
+    items.push(item);
   }
   return json({ items });
 }

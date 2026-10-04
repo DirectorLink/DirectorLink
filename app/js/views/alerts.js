@@ -1,10 +1,24 @@
 // Settings → Controller: "Alerts on this device" (ADR-047, ADR-050, js/alerts.js), for anyone signed
 // in to an account with DirectorLink 1.7.0 on the controller (admins only before), on a device linked
 // to the home. Once on, a switch per kind this key may get: the controller says which (its role, and
-// what the home has); admins also choose the servers' offline alert. On iPhone and iPad they work
-// only in the app added to the Home Screen (iOS 16.4 or later): the card says so there.
+// what the home has); admins also choose the servers' offline alert, and (1.8.0) their push when a
+// new device of their account asks to join, so the device that approves need not be open. On iPhone
+// and iPad they work only in the app added to the Home Screen (iOS 16.4 or later): the card says so
+// there.
 
-import { ALERT_KINDS, alertsAllowed, alertsOn, alertsSupport, alertsUi, chooseAlert, controllerChooses, offlineAlertsOn, turnAlertsOff, turnAlertsOn } from "../alerts.js";
+import {
+  ALERT_KINDS,
+  alertsAllowed,
+  alertsOn,
+  alertsSupport,
+  alertsUi,
+  chooseAlert,
+  controllerChooses,
+  deviceRequestAlertsOn,
+  offlineAlertsOn,
+  turnAlertsOff,
+  turnAlertsOn,
+} from "../alerts.js";
 import { h } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
@@ -56,10 +70,11 @@ function kindRow(kind, on) {
   );
 }
 
-// The kinds this device may choose: the offline alert for admins, then the controller's.
+// The kinds this device may choose: the servers' own for admins (the home offline, a new device of
+// theirs asking to join), then the controller's.
 function kindsList() {
   const rows = [];
-  if (can("admin")) rows.push(kindRow("offline", offlineAlertsOn()));
+  if (can("admin")) rows.push(kindRow("offline", offlineAlertsOn()), kindRow("device_requests", deviceRequestAlertsOn()));
   const kinds = alertsUi.choices?.kinds || {};
   for (const kind of ALERT_KINDS) {
     if (typeof kinds[kind] === "boolean") rows.push(kindRow(kind, kinds[kind]));

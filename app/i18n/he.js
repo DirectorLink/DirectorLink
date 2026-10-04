@@ -129,6 +129,7 @@ export default {
     remote: {
       signIn: "יש להתחבר שוב לחשבון (הגדרות ← חשבון) כדי להגיע לבית מכאן.",
       homeOffline: "הבית לא מחובר כרגע ל-DirectorLink. בדקו שהבקר מחובר ושהגישה מרחוק מופעלת.",
+      updateRequired: "עדכנו את DirectorLink: הגרסה שבבקר כבר לא יכולה להתחבר לגישה מרחוק. עדכנו אותה ב-Composer; בבית האפליקציה עובדת כרגיל.",
       notMember: "החשבון הזה כבר לא שייך לבית הזה.",
       unknownKey: "הבית לא מכיר את המפתח של המכשיר הזה. פתחו את האפליקציה פעם אחת ברשת הביתית, או בקשו הזמנה חדשה.",
       lock: "הבקר לא יכול לנעול בקשות מרחוק. עדכנו את DirectorLink ובדקו את היומן שלו.",
@@ -198,6 +199,11 @@ export default {
     moveLater: "הזזת {name} קדימה ברשימה",
     pickerTitle: "בחירת מועדפים",
     pickerHelp: "מכשירים מסומנים בכוכב מופיעים בראש מסך הבית.",
+    gone: {
+      label: "הוסר ב-Composer",
+      unnamed: "מכשיר שהוסר",
+      remove: "הסרה",
+    },
   },
   sections: {
     lights: "תאורה",
@@ -972,6 +978,7 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – הדלת פתוחה כבר לפחות {minutes} דק׳ ({time}).",
     fridgeDoorNow: "{name} – הדלת נשארה פתוחה ({time}).",
+    deviceRequest: "מכשיר חדש מבקש להצטרף לבית שלכם. פתחו את DirectorLink כדי לאשר או לדחות.",
     settings: {
       title: "התראות",
       label: "התראות במכשיר הזה",
@@ -980,6 +987,7 @@ export default {
       kindsTitle: "על מה להתריע",
       kinds: {
         offline: "הבית מנותק כבר 10 דקות",
+        device_requests: "מכשיר חדש שלי מבקש להצטרף",
         doorbell: "מצלצלים בדלת",
         door_opened: "נפתחים דלת או שער",
         fridge_door: "דלת המקרר נשארת פתוחה",
@@ -1103,6 +1111,8 @@ export default {
       updatedFrom: "עדכון DirectorLink מגרסה {from} לגרסה {to}",
       started: "הפעלה מחדש של DirectorLink (הבקר או הדרייבר)",
       added: "הוספת DirectorLink לפרויקט",
+      updateRequired: "הגישה מרחוק הופסקה: עדכנו את DirectorLink, הגרסה הזו כבר לא יכולה להתחבר",
+      updateRequiredTo: "הגישה מרחוק הופסקה: עדכנו את DirectorLink לגרסה {to} ומעלה, הגרסה הזו כבר לא יכולה להתחבר",
     },
     counts: {
       ran: { one: "הופעל במכשיר אחד", two: "הופעל בשני מכשירים", many: "הופעל ב-{count} מכשירים", other: "הופעל ב-{count} מכשירים" },

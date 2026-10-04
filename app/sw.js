@@ -196,7 +196,9 @@ self.addEventListener("activate", (event) => {
 // failed). The words are the app's, in its language (js/alerts.js keeps them here); English when
 // there are none, and the general words when the detail is missing or does not open. Every push
 // shows a notification (browsers revoke a subscription that does not). Tapping a doorbell's opens
-// Home (its banner), a refrigerator's its room, any other the home's history.
+// Home (its banner), a refrigerator's its room, any other the home's history. The servers' push of
+// a new device asking to join (1.8.0), { kind: "device_request", home, at, request }, says only
+// that, and opens the app, where the request shows under every screen's header.
 const ALERT_TEXTS_CACHE = "directorlink-alerts";
 const ALERT_TEXTS_PATH = "/alert-texts.json";
 const ALERT_KEY_PATH = "/alert-key.json";
@@ -218,6 +220,7 @@ const ALERT_TEXTS = {
   unknown_device: "a removed device",
   fridge_door: "{name} – the door has been open for at least {minutes} min ({time}).",
   fridge_door_now: "{name} – the door was left open ({time}).",
+  device_request: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
 };
 const HISTORY_URL = "/#/settings/history";
 
@@ -365,6 +368,20 @@ async function showAlert(data) {
     } catch {
       // The general words, below.
     }
+  }
+  if (alert?.kind === "device_request") {
+    // One notification per home: a newer request replaces the one before. The app opens on Home,
+    // and looks for requests at once as it comes to the front.
+    await self.registration.showNotification(texts.title, {
+      body: texts.device_request,
+      tag: `device-request-${home}`,
+      renotify: true,
+      lang: texts.lang,
+      dir: texts.dir,
+      icon: "/icons/icon-192.png",
+      data: { url: "/#/" },
+    });
+    return;
   }
   const kind = alert?.kind === "offline" || alert?.kind === "schedule_failed" ? alert.kind : "other";
   await self.registration.showNotification(texts.title, {

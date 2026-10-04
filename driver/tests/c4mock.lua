@@ -416,6 +416,9 @@ function Mock.withRefrigerator(project, options)
         }
     end
     project.devices[protocol] = { deviceName = driverName, driverFileName = file, roomId = roomId, roomName = roomName, proxies = proxies }
+    -- Its driver.xml's <version> (C4:GetDeviceData).
+    project.deviceData = project.deviceData or {}
+    project.deviceData[protocol] = { version = options.version or "100" }
     local values = {
         POWER_COOL = "0", POWER_FREEZE = "0", SABBATH_MODE = "0", ICE_MAKER = "0", ONLINE = "1", DOOR_OPEN = "0",
         FRIDGE_TEMP = "3", FREEZER_TEMP = "-18", FRIDGE_SETPOINT = "3", FREEZER_SETPOINT = "-18", POWER_W = "95",
@@ -441,6 +444,32 @@ function Mock.withRefrigerator(project, options)
         project.variableNames[protocol][1000 + index] = name
     end
     return project
+end
+
+-- Composer updates a driver (1.8.0): its <version> changes and, as the refrigerator driver 1.1.0 did,
+-- it may add variables after its own (`added`: { NAME = value, ... }, in that order by name), each
+-- with the next id. Director tells other drivers nothing.
+function Mock.updateDeviceDriver(mock, deviceId, version, added)
+    local project = mock.project
+    project.deviceData = project.deviceData or {}
+    project.deviceData[deviceId] = project.deviceData[deviceId] or {}
+    project.deviceData[deviceId].version = version
+    local names = {}
+    for name in pairs(added or {}) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    project.variables[deviceId] = project.variables[deviceId] or {}
+    project.variableNames[deviceId] = project.variableNames[deviceId] or {}
+    local last = 1000
+    for id in pairs(project.variables[deviceId]) do
+        last = math.max(last, id)
+    end
+    for _, name in ipairs(names) do
+        last = last + 1
+        project.variables[deviceId][last] = added[name]
+        project.variableNames[deviceId][last] = name
+    end
 end
 
 -- The refrigerator's driver reports: variables by name, e.g. { DOOR_OPEN = "1" }.
@@ -647,6 +676,21 @@ function Mock.install(project)
             result[id] = { name = names[id] or tostring(id), value = value }
         end
         return result
+    end
+
+    -- The <devicedata> tags of a driver's driver.xml (project.deviceData[id][tag]); a driver without
+    -- any says "" for "version", as Director gives a missing tag. Every protocol driver has version
+    -- "1" unless a test says otherwise; Director updating a driver changes it (Mock.updateDeviceDriver).
+    function C4:GetDeviceData(deviceId, tag)
+        local data = (project.deviceData or {})[deviceId]
+        if data and data[tag] ~= nil then
+            return data[tag]
+        end
+        local device = project.devices[deviceId]
+        if tag == "version" and device and type(device.proxies) == "table" and next(device.proxies) ~= nil then
+            return "1"
+        end
+        return ""
     end
 
     function C4:RegisterDeviceEvent(deviceId, eventId)

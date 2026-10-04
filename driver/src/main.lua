@@ -4,6 +4,7 @@ local Registry = require("src.core.registry")
 local Discovery = require("src.control4.discovery")
 local Normalize = require("src.control4.normalize")
 local ProjectEvents = require("src.control4.project_events")
+local DriverUpdates = require("src.control4.driver_updates")
 local AdapterManager = require("src.adapters.manager")
 local Alarm = require("src.adapters.alarm")
 local Refrigerator = require("src.adapters.refrigerator")
@@ -22,6 +23,7 @@ local InstallerView = require("src.core.installer_view")
 local Store = require("src.core.store")
 local Clock = require("src.core.clock")
 local Profiles = require("src.auth.profiles")
+local FavoritesGone = require("src.core.favorites_gone")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
 local Relay = require("src.cloud.relay")
@@ -393,6 +395,16 @@ local function discover(reason)
     Registry.reset()
     Registry.replace(normalized)
     AdapterManager.initialize(Registry, reason and previousDevices or nil)
+    -- Each device's driver version, to set it up again when its driver is updated (ADR-059).
+    local tracked, trackError = pcall(DriverUpdates.track, AdapterManager)
+    if not tracked then
+        Log.warn("adapters", "driver versions not read", { error = tostring(trackError) })
+    end
+    -- Favorites of devices no longer in the project: marked, and dropped after some days (ADR-059).
+    local looked, lookError = pcall(FavoritesGone.projectRead, Registry.devices, previousDevices)
+    if not looked then
+        Log.warn("profiles", "favorites not checked against the project", { error = tostring(lookError) })
+    end
 
     local counts = publishInventory()
     if reason then
@@ -494,6 +506,7 @@ function OnDriverLateInit(driverInitType)
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
     Profiles.load()
+    FavoritesGone.load()
     SonosRooms.load()
     AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
@@ -571,6 +584,10 @@ function OnDriverLateInit(driverInitType)
             Keys.count()
             -- The day's automatic backup, at the home's minute (ADR-048).
             AutoBackup.tick(now)
+            -- A few drivers' versions: a device whose driver was updated is set up again, and
+            -- favorites of devices gone for days are dropped (ADR-059).
+            pcall(DriverUpdates.tick)
+            pcall(FavoritesGone.prune, now)
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil
