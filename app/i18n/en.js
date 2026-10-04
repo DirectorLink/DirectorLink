@@ -511,7 +511,7 @@ export default {
       copiedSome: "Copied {count} actions; {left} more didn’t fit (a scene has at most 40). Remove some and add them by hand.",
       discard: "Leave without saving the changes to this scene?",
       inUse: "Schedules run this scene. Change or delete them first (Scenes → Schedules).",
-      needsDoors: "needs door access",
+      needsDoors: "not from schedules or links",
       showOnHome: "Show on Home",
       showOnHomeHelp: "A Run button at the top of Home",
       try: "Try it now",

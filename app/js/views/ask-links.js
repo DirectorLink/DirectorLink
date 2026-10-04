@@ -9,7 +9,7 @@
 
 import { emptyState } from "../components.js";
 import { h, name } from "../dom.js";
-import { formatDateTime, formatTime, t } from "../i18n.js";
+import { formatClock, formatDateTime, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { alertsOn } from "../alerts.js";
 import { roomName } from "../model.js";
@@ -348,7 +348,7 @@ export function openRequestView(relayId, requestId, until) {
     body.push(
       h("h2", { class: "open-request-question", dataset: { key: "open-request-question" } }, t("openRequest.question", { name: isolate(relay.name) })),
       relay.room ? h("p", { class: "field-help" }, roomName(relay.room)) : null,
-      h("p", { class: "field-help" }, t("openRequest.until", { time: formatTime(new Date(until)) })),
+      h("p", { class: "field-help" }, t("openRequest.until", { time: formatClock(new Date(until)) })),
       request.stage === "error" ? notice("error", request.text || t("openRequest.failed"), "open-request-error") : null,
       h(
         "div",

@@ -204,7 +204,7 @@ test("the question an alert's tap opens: Open answers with this device's key, on
   const until = Date.now() + 120000;
   let nodes = views.openRequestView(GATE, REQUEST, until);
   assert.equal(textOf(byKey(nodes, "open-request-question")), "Open Main gate?");
-  assert.match(textOf(nodes), /You can answer until/);
+  assert.match(textOf(nodes), /You can answer until \d{2}:\d{2}\./, "the time as the rest of the app shows it (24 h, no seconds)");
   assert.equal(byKey(nodes, "open-request-cancel").attributes.href, "#/", "Cancel goes Home");
   assert.equal(controller.calls.filter((call) => call.path.endsWith("/pulse")).length, 0, "nothing is sent before Open");
   await press(nodes, "open-request-open");
