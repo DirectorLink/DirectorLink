@@ -4,6 +4,11 @@
 -- The preferences are what the app keeps per person: language, theme, palette, favorites and the
 -- rooms they hide from their lists.
 -- A profile goes when its last key does.
+--
+-- A store Director could not read at start may still hold the profiles (they come back at the
+-- next start): until then nothing is written over it, no profile is made or removed, and keys keep
+-- the profile ids they name (Profiles.complete), so that the people (src/auth/people.lua), kept by
+-- those ids, are not worked out again from their keys.
 
 local Clock = require("src.core.clock")
 local Random = require("src.core.random")
@@ -18,7 +23,8 @@ Profiles.MAX_PROFILES = 100
 Profiles.MAX_FAVORITES = 200
 Profiles.THEMES = { auto = true, light = true, dark = true }
 
-local state = { profiles = {} }
+-- `complete` is false after the store could not be read at start.
+local state = { profiles = {}, complete = true }
 
 local function randomHex(length)
     return Random.hex(length)
@@ -43,6 +49,10 @@ local function copy(profile)
 end
 
 local function save()
+    if not state.complete then
+        Log.error("profiles", "profiles not saved: their store could not be read at start")
+        return false
+    end
     local records = Json.array()
     for _, profile in ipairs(state.profiles) do
         records[#records + 1] = copy(profile)
@@ -83,8 +93,17 @@ end
 
 function Profiles.load()
     local data, form = Store.read(STORE_KEY, false)
+    state.complete = form ~= "unreadable"
     state.profiles = Profiles.read(data)
+    if not state.complete then
+        Log.error("profiles", "the profiles could not be read; nothing is changed in them until the next start")
+    end
     return #state.profiles, form
+end
+
+-- False after a load that could not read the store: nothing is written over it.
+function Profiles.complete()
+    return state.complete
 end
 
 -- Backups (ADR-042, src/core/backup.lua): the profiles as the store keeps them.
@@ -99,6 +118,7 @@ end
 -- Replaces every profile with the ones of `data`, read as the store's are. Returns true once saved.
 function Profiles.restore(data)
     state.profiles = Profiles.read(data)
+    state.complete = true
     return save()
 end
 
@@ -124,8 +144,12 @@ function Profiles.list()
     return items
 end
 
--- A new, empty profile named `name`; nil and PROFILE_LIMIT_REACHED when there are too many.
+-- A new, empty profile named `name`; nil and PROFILE_LIMIT_REACHED when there are too many, or
+-- UNAVAILABLE when the store could not be read at start.
 function Profiles.create(name)
+    if not state.complete then
+        return nil, "UNAVAILABLE"
+    end
     if #state.profiles >= Profiles.MAX_PROFILES then
         return nil, "PROFILE_LIMIT_REACHED"
     end
@@ -177,8 +201,12 @@ function Profiles.updatePrefs(id, changes, expected)
     return copy(profile)
 end
 
--- Deletes the profiles no key belongs to (`keys`: Keys.list()); returns how many went.
+-- Deletes the profiles no key belongs to (`keys`: Keys.list()); returns how many went. None while
+-- the store could not be read.
 function Profiles.prune(keys)
+    if not state.complete then
+        return 0
+    end
     local used = {}
     for _, key in ipairs(keys) do
         if key.profile then

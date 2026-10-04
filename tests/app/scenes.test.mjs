@@ -71,3 +71,29 @@ test("cool stays above heat once both are kept in range, or neither is copied", 
   assert.deepEqual(copy({ ...study, heat_setpoint: 3, cool_setpoint: 4.5 }), [{ ids: [31], set: { mode: "auto", fan_speed: "auto" } }]);
   assert.deepEqual(copy({ ...study, heat_setpoint: 3, cool_setpoint: 5.5 }), [{ ids: [31], set: { mode: "auto", heat_setpoint: 5, cool_setpoint: 5.5, fan_speed: "auto" } }]);
 });
+
+// A member's scene (1.8.0, ADR-054): the controller leaves out the rooms and devices they don't
+// see and says the step works `elsewhere`; the card names none of those, and never calls a room that
+// exists "A removed room".
+test("a member's scene names only their rooms and devices: the rest is elsewhere", async () => {
+  const { sceneSummary, stepWhat, stepWhere } = await import("../../app/js/scenes.js");
+  const { setLanguage } = await import("../../app/js/i18n.js");
+  await setLanguage("en");
+  state.rooms = [{ id: 11, name: "Living room", names: {} }];
+  state.lights = [{ id: 21, name: "Ceiling", room: { id: 11 } }];
+  const kitchen = { type: "lights", room_id: null, device_ids: null, set: { on: false }, elsewhere: true };
+  const both = { type: "lights", room_id: null, device_ids: [21], set: { on: false }, elsewhere: true };
+  assert.equal(stepWhat(kitchen), "Lights elsewhere");
+  assert.equal(stepWhere(kitchen), "Other rooms");
+  assert.equal(stepWhat(both), "\u2068Ceiling\u2069 and more elsewhere");
+  assert.equal(stepWhere(both), "\u2068Living room\u2069 and other rooms");
+  const summary = sceneSummary({ steps: [kitchen, both] });
+  assert.equal(summary, "\u2068Lights elsewhere\u2069: Off \u00b7 \u2068\u2068Ceiling\u2069 and more elsewhere\u2069: Off");
+  assert.doesNotMatch(summary, /removed room/);
+  // Without `elsewhere` (an admin's scene), a room the app doesn't know is one that was removed.
+  assert.equal(stepWhere({ type: "lights", room_id: 10, device_ids: null, set: {} }), "A removed room");
+  assert.equal(stepWhat({ type: "lights", room_id: null, device_ids: null, set: {} }), "All lights");
+  await setLanguage("he");
+  assert.equal(stepWhere(kitchen), "חדרים אחרים");
+  await setLanguage("en");
+});

@@ -112,9 +112,10 @@ end
 local function keysChanged()
     Profiles.prune(Keys.list())
     -- A person keeps their role and permissions while they have a key, and every key the 1.7.0
-    -- role of its person (ADR-054).
+    -- role of its person (ADR-054). Not while the profiles could not be read: every person would
+    -- look gone.
     if Keys.complete() then
-        if Scenes.complete() then
+        if Scenes.complete() and Profiles.complete() then
             People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
         end
         People.syncKeys(Keys)
@@ -144,8 +145,12 @@ local function keyInfo(id)
     return key and { name = key.name, profile = profile and profile.name or nil } or nil
 end
 
--- Keys from before 0.12.0 (or whose profile is gone) each get a profile of their own.
+-- Keys from before 0.12.0 (or whose profile is gone) each get a profile of their own. Not while the
+-- profiles could not be read at start: the keys' profiles may come back at the next start.
 local function assignProfiles()
+    if not Profiles.complete() then
+        return
+    end
     local assigned = 0
     for _, key in ipairs(Keys.list()) do
         if not (key.profile and Profiles.find(key.profile)) then
@@ -216,7 +221,9 @@ local function restored(restore)
     if Keys.complete() then
         assignProfiles()
         -- People from a backup made before 1.8.0 are worked out from their keys (ADR-054).
-        People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
+        if Profiles.complete() then
+            People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
+        end
         People.syncKeys(Keys)
     end
     publishKeyCount()
@@ -522,10 +529,10 @@ function OnDriverLateInit(driverInitType)
     -- Ask-to-open links (ADR-058): a key gone meanwhile takes its links now (the prune below).
     local askCount, asksStoredAs = AskLinks.load()
     Log.info("doors", "ask-to-open links loaded", { count = askCount, stored_as = asksStoredAs })
-    SceneLinkHandlers.prune()
     local scheduleCount, schedulesStoredAs = Schedules.load()
     Log.info("schedules", "schedules loaded", { count = scheduleCount, stored_as = schedulesStoredAs })
-    Profiles.load()
+    local profileCount, profilesStoredAs = Profiles.load()
+    Log.info("profiles", "profiles loaded", { count = profileCount, stored_as = profilesStoredAs })
     -- Admins and members (1.8.0, ADR-054).
     local peopleCount, peopleStoredAs = People.load()
     Log.info("auth", "people loaded", { count = peopleCount, stored_as = peopleStoredAs })
@@ -537,12 +544,17 @@ function OnDriverLateInit(driverInitType)
         assignProfiles()
         -- Each person's role from their keys' 1.7.0 roles, the first time (the update to 1.8.0), and
         -- again for a person whose keys DirectorLink 1.7.0 changed meanwhile; with every scene there
-        -- is, so only once the scenes could be read (until then a key answers as its 1.7.0 role).
-        if Scenes.complete() then
+        -- is, so only once the scenes could be read (until then a key answers as its 1.7.0 role);
+        -- and the profiles: while they could not be read, every person would look gone.
+        if Scenes.complete() and Profiles.complete() then
             People.reconcile(Keys.list(), Profiles.list(), Scenes.list())
         end
         People.syncKeys(Keys)
     end
+    -- Scene links and ask-to-open links (ADR-051, ADR-058) whose scene, key, door or permission is
+    -- gone (its maker no longer an admin, or no longer one who opens that door), once the people
+    -- are known.
+    SceneLinkHandlers.prune()
     publishKeyCount()
 
     -- A driver without keys (just added, or all keys revoked) offers a pairing code right away;

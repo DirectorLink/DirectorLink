@@ -652,7 +652,7 @@ end
 
 -- A group's volume, as the Sonos app shows it: the average of its rooms' own (nil when none is
 -- read yet). There is no group volume in the services DirectorLink uses (ADR-057).
-local function groupVolume(players)
+function Sonos.groupVolume(players)
     local sum, count = 0, 0
     for _, player in ipairs(players) do
         if type(player.volume) == "number" then
@@ -698,7 +698,7 @@ function Sonos.view(player)
         name = player.name,
         room_id = nullable(roomId),
         room_match = nullable(how),
-        group = { id = group.id, coordinator = group.id == player.id, rooms = members, volume = nullable(groupVolume(players)) },
+        group = { id = group.id, coordinator = group.id == player.id, rooms = members, others = 0, volume = nullable(Sonos.groupVolume(players)) },
         state = transport,
         volume = nullable(player.volume),
         muted = nullable(player.muted),

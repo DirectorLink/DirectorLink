@@ -76,19 +76,33 @@ export function stepDevices(step) {
   return list.filter((device) => step.room_id == null || deviceRoomId(device) === step.room_id);
 }
 
+// A member's step that also works on rooms or devices they don't see (1.8.0, ADR-054: `elsewhere`;
+// the controller leaves those out of room_id and device_ids): nothing of theirs is named in it.
+function onlyElsewhere(step) {
+  return step.elsewhere === true && !(Array.isArray(step.device_ids) && step.device_ids.length);
+}
+
 export function stepWhat(step) {
+  if (onlyElsewhere(step)) return t(`scenes.elsewhere.${step.type}`);
   if (!Array.isArray(step.device_ids)) return t(`scenes.all.${step.type}`);
+  let what = t(`scenes.count.${step.type}`, { count: step.device_ids.length });
   if (step.device_ids.length === 1) {
     const device = devicesOfType(step.type).find((item) => item.id === step.device_ids[0]);
-    if (device) return device.name;
+    if (device) what = device.name;
   }
-  return t(`scenes.count.${step.type}`, { count: step.device_ids.length });
+  return step.elsewhere ? t("scenes.alsoElsewhere", { what: isolate(what) }) : what;
 }
 
 export function stepWhere(step) {
   if (step.room_id != null) {
     const room = roomById(step.room_id);
     return room ? roomName(room) : t("scenes.roomGone");
+  }
+  if (onlyElsewhere(step)) return t("scenes.otherRooms");
+  if (step.elsewhere) {
+    const rooms = new Set(stepDevices(step).map(deviceRoomId));
+    const room = rooms.size === 1 ? roomById([...rooms][0]) : null;
+    return room ? t("scenes.andOtherRooms", { room: isolate(roomName(room)) }) : t("scenes.severalRooms");
   }
   if (!Array.isArray(step.device_ids)) return t("scenes.wholeHome");
   const rooms = new Set(stepDevices(step).map(deviceRoomId));

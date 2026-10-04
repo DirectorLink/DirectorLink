@@ -675,7 +675,7 @@ function tests.what_each_room_plays_its_volume_and_its_group()
     T.truthy(kitchen.now_playing.art_key:match("^%x%x%x%x%x%x%x%x$"))
     T.same({ kitchen.volume, kitchen.muted, kitchen.can_skip, kitchen.reachable }, { 30, false, true, true })
     -- The group's volume (1.8.0): its rooms' average, (30 + 20) / 2.
-    T.same(kitchen.group, { id = KITCHEN, coordinator = true, rooms = { { id = KITCHEN, name = "Kitchen" }, { id = LIVING, name = "Living Room" } }, volume = 25 })
+    T.same(kitchen.group, { id = KITCHEN, coordinator = true, rooms = { { id = KITCHEN, name = "Kitchen" }, { id = LIVING, name = "Living Room" } }, others = 0, volume = 25 })
     -- Living Room follows Kitchen: the group's music, its own volume.
     T.eq(living.state, "playing")
     T.eq(living.now_playing.title, "Morning Light")

@@ -1188,6 +1188,8 @@ end
 -- could not be put back if the restore failed.
 local READ_AT_START = {
     { name = "keys", complete = Keys.complete },
+    -- The people (src/auth/people.lua) are kept by profile: profiles left out would take them.
+    { name = "profiles", complete = Profiles.complete },
     { name = "scenes", complete = Scenes.complete },
     { name = "schedules", complete = Schedules.complete },
     { name = "calendar", complete = JewishCalendar.complete },

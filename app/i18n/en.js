@@ -601,6 +601,11 @@ export default {
     wholeHome: "Whole home",
     severalRooms: "Several rooms",
     roomGone: "A removed room",
+    // A member's scene that also works where they don't see (1.8.0).
+    elsewhere: { lights: "Lights elsewhere", climate: "AC elsewhere", fans: "Fans elsewhere", blinds: "Blinds elsewhere", relays: "Doors and gates elsewhere", music: "Music elsewhere", refrigerators: "Refrigerators elsewhere" },
+    alsoElsewhere: "{what} and more elsewhere",
+    otherRooms: "Other rooms",
+    andOtherRooms: "{room} and other rooms",
     do: { off: "Off", on: "On", dimTo: "{percent}%", open: "Open", close: "Close", position: "{percent}% open", fan: "fan {speed}", speed: "{speed} speed", pulse: "Open (short press)", pauseMusic: "Pause", stopMusic: "Stop", featureOn: "{feature} on", featureOff: "{feature} off", resumeMusic: "Resume", musicVolume: "Volume {percent}%", playFavorite: "Play {name}", playFavoriteAt: "Play {name} at {percent}%", aFavorite: "a favorite", withRooms: "with {rooms}" },
   },
   // Scene links (ADR-051, views/scene-links.js): a private link per scene for the phone's own automations.
@@ -707,10 +712,12 @@ export default {
       title: "iPhone: when you arrive home",
       action: "In Shortcuts → Automation, make a new automation for Arrive (your home), and add the action Get Contents of URL.",
       immediately: "Choose Run Immediately. When you arrive, your phone asks “Open {name}?”.",
+      show: "Optional, so that you see at the gate when nobody was asked: add the action Show Notification after it, with Contents of URL as its text.",
     },
     siri: {
       name: "To ask by voice, make a shortcut with the same action and name it “{phrase}”.",
       say: "Say “Hey Siri, {phrase}”: your phone asks, and only your Open opens the door.",
+      show: "Optional: end the shortcut with the action Show Result, with Contents of URL. Siri then says whether your phone was asked.",
     },
     google: {
       name: "On Android, make the request above in HTTP Shortcuts, Tasker or MacroDroid, and name it “{phrase}”.",
@@ -1305,6 +1312,7 @@ export default {
       doors_off: "Nobody was asked: door control was off in Composer",
       not_sent: "Nobody was asked: the notification couldn’t be sent",
       no_access: "Its person may no longer open the door",
+      not_admin: "Its person is no longer an admin",
       door_gone: "The door was removed from the project",
       other: "Not run",
     },
@@ -1453,6 +1461,8 @@ export default {
     scenes: "Scenes they may run",
     scenesHelp: "They run the whole scene, and never change it.",
     noScenes: "No scenes yet.",
+    scenesLoading: "The scenes are still loading. Saving now leaves the scenes they may run as they are.",
+    scenesUnread: "The scenes couldn’t be read ({error}). Saving leaves the scenes they may run as they are.",
     sceneCount: { zero: "no scenes", one: "1 scene", other: "{count} scenes" },
     summaryAdmin: "Everything",
     summaryCameras: "cameras",

@@ -138,7 +138,9 @@ else, from anywhere; every run is in History.
   every one; so do **Revoke All API Keys** and Reset Remote Identity (the addresses name the home).
 - **A link goes with the key that made it**: revoking that key (in People and devices, by removing
   its person, or with Forget access key on that device), or its expiry, removes its links (`made_by`
-  in the list; the app says how many before it revokes a key).
+  in the list; the app says how many before it revokes a key). Only admins make links: since 1.8.0
+  a key whose person is made a member loses them too, at the change and at a start (History
+  `link_removed`, `reason` `no_access`).
 - **Never doors or gates.** Only scenes whose steps are all lights, climate, fans, blinds, music or
   refrigerators can have a link; a scene with a doors-and-gates step (or a kind of step added later
   and not yet allowed) gets none (`409 SCENE_OPENS_DOORS`); adding such a step to a linked scene
@@ -166,8 +168,8 @@ secret alone as text; the whole link in place of the secret works too. Answers:
 | --- | --- | --- |
 | 200 | `{"result": "ran", "message": "The scene ran."}` | `ran`: everything ran; `partly`: some devices were skipped or did not respond; `failed`: none ran; `nothing`: there was nothing to run (its devices were removed in Composer) |
 | 400 | `SECRET_REQUIRED` | no secret in the body |
-| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, a link whose key was revoked, and a DirectorLink before 1.7.0 |
-| 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home; or 10 runs answered 404 in 10 minutes from the same address (an IPv6 one by its /64), which then waits until the first of them is 10 minutes old |
+| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, a link whose key was revoked or whose key's person is no longer an admin (1.8.0), and a DirectorLink before 1.7.0 |
+| 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home; or 10 runs answered 404 in 10 minutes from the same address (an IPv6 one by its /64), which then waits until the first of them is 10 minutes old; an ask link's 10 an hour (1.8.0), `Retry-After` up to an hour and the wait in minutes in `detail` |
 | 503 | `HOME_OFFLINE` | the home is not connected (a claimed home's id therefore shows whether it is online: the family needs to know) |
 | 502, 504 | `HOME_DISCONNECTED`, `HOME_FAILED`, `HOME_TIMEOUT` | the home did not answer |
 
@@ -226,8 +228,12 @@ their **Open** there opens it.
   | `not_asked` | the notification could not be sent now (try again) |
 
   Also as a scene link's: `404` (an unknown link or secret; a link whose key, door or permission is
-  gone), `429` (6 runs a minute, and at most 10 runs an hour that ask or say why nobody was asked),
-  `503`.
+  gone), `429` (6 runs a minute; and at most 10 runs an hour that ask or say why nobody was asked:
+  `asked`, `nobody`, `doors_off` and `not_asked` count, `waiting` and refused runs do not; then
+  `Retry-After` is the real wait, up to an hour, and `detail` says it in minutes), `503`.
+- **Seeing the answer at the gate.** An automation that runs with Run Immediately shows nothing by
+  itself: the ask link's steps end with an optional **Show Notification** (and Siri's with **Show
+  Result**) with Contents of URL, so that `nobody`, a 404 or a 429 shows on the phone.
 - **The question.** The notification says "Open Main gate?" and "Your link “Arriving home” asked at
   07:15. Tap to answer." Tapping it opens the app on the question (`#/open/<door>/<request>/<until>`),
   with **Open** and **Cancel**. Open is the door's ordinary pulse, sealed with that device's key and

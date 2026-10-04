@@ -12,7 +12,8 @@
 //                                    ran, partly, failed or nothing; for an ask-to-open link
 //                                    (1.8.0, ADR-058) asked, waiting, nobody, doors_off or
 //                                    not_asked. 404 for an unknown home, link or secret alike; 429
-//                                    too many runs; 503 the home is offline.
+//                                    too many runs, with Retry-After (up to an hour for an ask
+//                                    link's hourly limit); 503 the home is offline.
 //
 // The home's Durable Object passes the link and its secret to the controller (`link`,
 // docs/RELAY.md), which checks the secret against the hash it keeps and runs the scene. The secret
@@ -194,6 +195,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
       nobody: "Nobody was asked: turn on alerts in DirectorLink on your phone.", doors_off: "Nobody was asked: door control is off.",
       not_asked: "Nobody was asked: the home could not send the notification. Try again.",
       notFound: "This link does not work: it was removed or replaced, or it was copied wrong.", tooMany: "Too many runs. Try again later.",
+      tooManyFor: "This link asked too often in the last hour. It can ask again in {minutes} minutes.",
       offline: "The home is not connected right now. Try again later.", noAnswer: "The home did not answer. Try again.", error: "Something went wrong. Try again.",
       incomplete: "This link is not complete: the part after # is missing.",
     },
@@ -205,6 +207,7 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
       nobody: "לא נשלחה שאלה לאף אחד: הפעילו התראות ב-DirectorLink בטלפון.", doors_off: "לא נשלחה שאלה לאף אחד: שליטה בדלתות כבויה.",
       not_asked: "לא נשלחה שאלה לאף אחד: הבית לא הצליח לשלוח את ההתראה. נסו שוב.",
       notFound: "הקישור הזה לא עובד: הוא הוסר או הוחלף, או שהועתק לא נכון.", tooMany: "יותר מדי הפעלות. נסו שוב מאוחר יותר.",
+      tooManyFor: "הקישור הזה שאל יותר מדי פעמים בשעה האחרונה. אפשר לשאול שוב בעוד {minutes} דקות.",
       offline: "הבית לא מחובר כרגע. נסו שוב מאוחר יותר.", noAnswer: "הבית לא ענה. נסו שוב.", error: "משהו השתבש. נסו שוב.",
       incomplete: "הקישור לא שלם: החלק שאחרי # חסר.",
     },
@@ -257,7 +260,9 @@ button:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
       } else if (response.status === 404) {
         text = words.notFound;
       } else if (response.status === 429) {
-        text = words.tooMany;
+        // An ask link's hourly limit (ADR-058) says how long: up to an hour.
+        const wait = Number(response.headers.get("retry-after")) || 0;
+        text = wait > 60 ? words.tooManyFor.replace("{minutes}", String(Math.ceil(wait / 60))) : words.tooMany;
       } else if (response.status === 503) {
         text = words.offline;
       } else if (response.status === 502 || response.status === 504) {

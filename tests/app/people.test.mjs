@@ -105,6 +105,7 @@ globalThis.fetch = async (url, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : null;
   controller.calls.push({ method, path, body });
   if (path === "/v1/sealed") return answer(404, { status: 404, code: "NOT_FOUND" });
+  if (method === "GET" && path === "/v1/scenes" && controller.onScenes) return controller.onScenes();
   if (method === "GET" && path === "/v1/api-keys") return answer(200, { items: controller.keys });
   if (method === "GET" && path === "/v1/profiles") return answer(200, { items: controller.profiles });
   if (method === "GET" && path === "/v1/invitations") return answer(200, { items: [] });
@@ -302,6 +303,35 @@ test("People and devices: each person with their role; a member's access changed
   await press(accessView({}), "access-save-bbbb0002");
   assert.match(confirmed[0], /Make Noa an admin\?/);
   assert.deepEqual(calls("PATCH", "/v1/profiles/bbbb0002/access")[1].body, { role: "admin" });
+});
+
+test("saved before the scenes are read, a person's scenes stay as they are (and the editor says so)", async () => {
+  connect();
+  setLanguage("en");
+  Object.assign(state, { scenes: null, scenesError: null });
+  // The relay is slow: the scenes have not come yet.
+  controller.onScenes = () => new Promise(() => {});
+  accessView({});
+  await settle();
+  await press(accessView({}), "access-edit-bbbb0002");
+  let view = accessView({});
+  assert.match(textOf(byKey(view, "perm-bbbb0002-scenes-unread")), /still loading.*leaves the scenes they may run as they are/);
+  await press(view, "perm-bbbb0002-cameras");
+  await press(accessView({}), "access-save-bbbb0002");
+  let body = calls("PATCH", "/v1/profiles/bbbb0002/access").at(-1).body;
+  assert.equal(body.cameras, false, "what was changed goes");
+  assert.equal("scenes" in body, false, "the scenes are left out: the controller keeps them");
+  // Reading them failed: the same, and the editor says why.
+  controller.onScenes = () => answer(500, { status: 500, code: "INTERNAL_ERROR", detail: "The scenes could not be read" });
+  await press(accessView({}), "access-edit-bbbb0002");
+  view = accessView({});
+  assert.ok(state.scenesError, "the read failed");
+  assert.match(textOf(byKey(view, "perm-bbbb0002-scenes-unread")), /couldn’t be read.*as they are/);
+  await press(view, "access-save-bbbb0002");
+  body = calls("PATCH", "/v1/profiles/bbbb0002/access").at(-1).body;
+  assert.equal("scenes" in body, false);
+  controller.onScenes = null;
+  Object.assign(state, { scenesError: null });
 });
 
 test("the controller's refusal about the owner is said in the app's words, in Hebrew too", async () => {

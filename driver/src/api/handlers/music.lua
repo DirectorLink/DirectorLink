@@ -5,7 +5,8 @@
 -- 409 SONOS_OFF. A request names a Sonos room by its id; the address it is reached at is the one
 -- DirectorLink found, never anything in the request. Since 1.8.0 (ADR-057) members also join a
 -- room to another room's group, take it out again, and set a group's volume; a command that acts
--- on a group needs every room in it (Access.canControl, src/auth/access.lua).
+-- on a group needs every room in it (Access.canControl, src/auth/access.lua). A group names to a
+-- member only the Sonos rooms they see, and counts the others (`others`).
 
 local Json = require("src.core.json")
 local Access = require("src.auth.access")
@@ -63,6 +64,42 @@ local function findPlayer(ctx)
     return player
 end
 
+local function nullable(value)
+    if value == nil then
+        return Json.null
+    end
+    return value
+end
+
+-- A Sonos room's view (Sonos.view) as the caller may see it (ADR-054): its group names only the
+-- Sonos rooms they see (their ids, names and volume) and counts the others; when they do not see the
+-- group's coordinator, the first room of it they see stands for the group (its id).
+local function shown(ctx, view)
+    if type(view) ~= "table" or type(view.group) ~= "table" or Access.isAdmin(ctx.apiKey) then
+        return view
+    end
+    local rooms, players, others, leader = Json.array(), {}, 0, false
+    for _, room in ipairs(view.group.rooms or {}) do
+        local player = Sonos.find(room.id)
+        if sees(ctx, player) then
+            rooms[#rooms + 1] = room
+            players[#players + 1] = player
+            leader = leader or room.id == view.group.id
+        else
+            others = others + 1
+        end
+    end
+    if others > 0 then
+        view.group.rooms = rooms
+        view.group.others = others
+        view.group.volume = nullable(Sonos.groupVolume(players))
+        if not leader then
+            view.group.id = rooms[1] and rooms[1].id or view.id
+        end
+    end
+    return view
+end
+
 -- The Sonos rooms `ctx` may not control among `players` (Access.canControl, each in the Control4
 -- room it is shown in): a problem naming them, or nil. A room the caller does not see is not named
 -- (ADR-054).
@@ -84,12 +121,12 @@ local function refused(ctx, players)
         or "This key may not control every Sonos room of this group")
 end
 
--- A command answered once the player has: the room as it is then.
-local function later(start)
+-- A command answered once the player has: the room as it is then, as the caller may see it.
+local function later(ctx, start)
     return Response.later(function(respond)
         start(function(view, code, detail)
             if view then
-                respond(200, view)
+                respond(200, shown(ctx, view))
             else
                 respond(failed(code, detail))
             end
@@ -111,19 +148,32 @@ function Music.list(ctx)
     local items = Json.array()
     for _, item in ipairs(Sonos.list(roomId)) do
         if sees(ctx, Sonos.find(item.id)) then
-            items[#items + 1] = item
+            items[#items + 1] = shown(ctx, item)
         end
     end
-    -- The groups with a Sonos room the caller sees, naming only those (ADR-054).
+    -- The groups with a Sonos room the caller sees, naming only those (ADR-054): their volume, and
+    -- when the coordinator is not one of them, the first of them stands for the group (its id and
+    -- the address of what plays).
     local groups = Json.array()
     for _, group in ipairs(Sonos.groups(roomId)) do
-        local rooms = Json.array()
+        local rooms, players = Json.array(), {}
         for _, id in ipairs(group.rooms) do
-            if sees(ctx, Sonos.find(id)) then
+            local player = Sonos.find(id)
+            if sees(ctx, player) then
                 rooms[#rooms + 1] = id
+                players[#players + 1] = player
             end
         end
         if #rooms > 0 then
+            if #rooms < #group.rooms then
+                group.volume = nullable(Sonos.groupVolume(players))
+                if not sees(ctx, Sonos.find(group.id)) then
+                    group.id = rooms[1]
+                    if type(group.now_playing) == "table" and group.now_playing.art_href ~= Json.null then
+                        group.now_playing.art_href = "/v1/music/" .. rooms[1] .. "/art"
+                    end
+                end
+            end
             group.rooms = rooms
             groups[#groups + 1] = group
         end
@@ -138,7 +188,7 @@ function Music.get(ctx)
     end
     local roomId = Sonos.roomOf(player)
     Sonos.wanted(roomId)
-    return 200, Sonos.view(player)
+    return 200, shown(ctx, Sonos.view(player))
 end
 
 local function transport(action)
@@ -152,7 +202,7 @@ local function transport(action)
         if problem then
             return problem
         end
-        return later(function(done)
+        return later(ctx, function(done)
             Sonos.transport(player, action, done)
         end)
     end
@@ -184,7 +234,7 @@ function Music.update(ctx)
     if problem then
         return problem
     end
-    return later(function(done)
+    return later(ctx, function(done)
         Sonos.setLevels(player, { volume = body.volume, muted = body.muted }, done)
     end)
 end
@@ -228,7 +278,7 @@ function Music.play_favorite(ctx)
     if problem then
         return problem
     end
-    return later(function(done)
+    return later(ctx, function(done)
         Sonos.playFavorite(player, favoriteId, done)
     end)
 end
@@ -262,7 +312,7 @@ function Music.join(ctx)
     if problem then
         return problem
     end
-    return later(function(done)
+    return later(ctx, function(done)
         Sonos.join(player, other, done)
     end)
 end
@@ -277,7 +327,7 @@ function Music.leave(ctx)
     if problem then
         return problem
     end
-    return later(function(done)
+    return later(ctx, function(done)
         Sonos.leave(player, done)
     end)
 end
@@ -301,7 +351,7 @@ function Music.group_volume(ctx)
     if problem then
         return problem
     end
-    return later(function(done)
+    return later(ctx, function(done)
         Sonos.setGroupVolume(player, body.volume, done)
     end)
 end
@@ -352,7 +402,7 @@ function Music.room(ctx)
         return Problem.internal("The room could not be saved")
     end
     ctx.services.log.info("sonos", "Sonos room placed", { player = player.id, room_id = roomId or Json.null, by = ctx.apiKey.id })
-    return 200, Sonos.view(player)
+    return 200, shown(ctx, Sonos.view(player))
 end
 
 return Music

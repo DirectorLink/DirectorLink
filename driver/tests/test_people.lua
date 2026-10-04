@@ -579,4 +579,318 @@ function tests.the_relay_learns_the_keys_of_admin_people()
     T.eq(#admins(), 3, "made an admin, their keys are")
 end
 
+-- ---- the owner's person is the owner's (review of 1.8.0) ---------------------------------------
+
+local function keyCount(mock, admin)
+    return #get(mock, admin, "/v1/api-keys").json.items
+end
+
+-- Another admin never gets a key into the owner's person: with it they would be the owner, revoke
+-- the owner's devices and claim the home.
+function tests.another_admin_puts_no_key_into_the_owners_person()
+    local s = session()
+    local ownerProfile = profileOf(s.mock, s.key)
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key })
+    T.eq(send(s, { type = "claim", id = "c1", token = claim.json.claim_token }).ok, true)
+    local partner = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner", role = "admin" } }).json
+    local before = keyCount(s.mock, s.key)
+    local sneaky = T.http(s.mock, "POST", "/v1/api-keys", { key = partner.key, body = { name = "Owner's tablet", profile_id = ownerProfile } })
+    T.eq(sneaky.status, 403, sneaky.body)
+    T.eq(sneaky.json.code, "OWNER_PROTECTED")
+    T.eq(keyCount(s.mock, s.key), before, "no key was made")
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. s.keyId, { key = partner.key }).json.code, "OWNER_PROTECTED")
+    T.eq(T.http(s.mock, "POST", "/v1/remote/claim", { key = partner.key }).json.code, "OWNER_ONLY")
+    -- Their own person, and a member's, they still add devices to; the owner adds to the owner's.
+    T.eq(T.http(s.mock, "POST", "/v1/api-keys", { key = partner.key, body = { name = "Partner's tablet", profile_id = partner.profile_id } }).status, 201)
+    local _, kid = member(s.mock, s.key, {})
+    T.eq(T.http(s.mock, "POST", "/v1/api-keys", { key = partner.key, body = { name = "Kid's tablet", profile_id = kid.profile_id } }).status, 201)
+    local mine = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Owner's tablet", profile_id = ownerProfile } })
+    T.eq(mine.status, 201)
+    T.eq(get(s.mock, mine.json.key, "/v1/api-keys/current").json.access.owner, true)
+end
+
+-- An invitation for its maker's other device (Add my other device, a device's join approved)
+-- puts the device into the maker's person only while the maker may: one whose key left the owner's
+-- person no longer adds to it.
+function tests.an_invitation_joins_the_owners_person_only_while_its_maker_is_the_owner()
+    local s = session()
+    local ownerProfile = profileOf(s.mock, s.key)
+    local phone = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Owner's phone", profile_id = ownerProfile } }).json
+    local partner = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner", role = "admin" } }).json
+    local invitation = T.http(s.mock, "POST", "/v1/invitations", { key = phone.key, body = { role = "admin", for_me = true } })
+    T.eq(invitation.status, 201, invitation.body)
+    -- The phone now is the partner's.
+    T.eq(T.http(s.mock, "PATCH", "/v1/api-keys/" .. phone.id, { key = s.key, body = { profile_id = partner.profile_id } }).status, 200)
+    local before = keyCount(s.mock, s.key)
+    local lock = Lock().invitationKey(invitation.json.secret)
+    local request = { id = "join-owner", ts = os.time(), method = "POST", path = "/v1/auth/join", body = { name = "Tablet" } }
+    local envelope = Lock().seal(lock, s.home, invitation.json.id, "req", Json.encode(request))
+    local reply = send(s, { type = "join", id = "relay-join-owner", invitation = invitation.json.id, envelope = envelope })
+    T.eq(reply.ok, false)
+    T.eq(reply.code, "INVITATION_NOT_FOUND")
+    T.eq(keyCount(s.mock, s.key), before, "no key was made")
+    T.eq(#get(s.mock, s.key, "/v1/invitations").json.items, 0, "and the invitation went")
+    -- The owner's own invitation for their other device still works.
+    local own = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "admin", for_me = true } }).json
+    local joined = join(s, own, "Owner's tablet")
+    T.eq(get(s.mock, joined.key, "/v1/api-keys/current").json.access.owner, true)
+end
+
+-- Before anyone claimed the home with 1.8.0 the owner is the oldest admin: another admin may not
+-- make an older person an admin (they would be the owner, holding a key the other admin made).
+function tests.only_the_owner_makes_an_admin_who_would_be_the_owner()
+    local mock, owner = start()
+    local partner = T.http(mock, "POST", "/v1/api-keys", { key = owner, body = { name = "Partner", role = "admin" } }).json
+    local _, kid = member(mock, owner, {})
+    -- The kid's person is older than everyone's (made by 1.7.0 long ago).
+    local stored = Json.decode(mock.persist["directorlink_profiles"]:sub(6))
+    for _, profile in ipairs(stored.profiles) do
+        if profile.id == kid.profile_id then
+            profile.created_at = "2020-01-01T00:00:00Z"
+        end
+    end
+    mock.persist["directorlink_profiles"] = "json:" .. Json.encode(stored)
+    mock = Mock.updateDriver(mock)
+    T.eq(get(mock, owner, "/v1/api-keys/current").json.access.owner, true)
+    -- The partner adds a device of theirs to the kid, then tries to make the kid an admin.
+    local planted = T.http(mock, "POST", "/v1/api-keys", { key = partner.key, body = { name = "Kid's tablet", profile_id = kid.profile_id } })
+    T.eq(planted.status, 201)
+    local promoted = setAccess(mock, partner.key, kid.profile_id, { role = "admin" })
+    T.eq(promoted.status, 403, promoted.body)
+    T.eq(promoted.json.code, "OWNER_PROTECTED")
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. kid.id, { key = partner.key, body = { role = "admin" } }).json.code, "OWNER_PROTECTED", "nor with a 1.7.0 role")
+    T.eq(get(mock, planted.json.key, "/v1/api-keys/current").json.access.role, "member")
+    -- The owner may: the kid is then the owner.
+    T.eq(setAccess(mock, owner, kid.profile_id, { role = "admin" }).status, 200)
+    T.eq(get(mock, planted.json.key, "/v1/api-keys/current").json.access.owner, true)
+    -- Someone younger the partner may make an admin.
+    local _, friend = member(mock, owner, {}, "Friend")
+    T.eq(setAccess(mock, partner.key, friend.profile_id, { role = "admin" }).status, 200)
+end
+
+-- ---- when a store cannot be read ---------------------------------------------------------------
+
+-- The people's store unreadable at a start: a key answers as its 1.7.0 role, never more: a member
+-- key runs scenes but the doors in them stay shut, as 1.7.0 did.
+function tests.while_the_people_cannot_be_read_a_member_key_opens_no_door_through_a_scene()
+    local mock, admin = start()
+    Properties["Door Control"] = "Enabled"
+    local gate = scene(mock, admin, { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } }, { type = "lights", device_ids = { 21 }, set = { on = true } } } })
+    local kid = member(mock, admin, { all_rooms = false, rooms = { 11 }, doors = false })
+    local doors = member(mock, admin, { doors = true, scenes = { gate } }, "Doors phone")
+    mock.persist["directorlink_people"] = "json:{broken"
+    local again = Mock.updateDriver(mock)
+    Properties["Door Control"] = "Enabled"
+    T.eq(get(again, kid, "/v1/api-keys/current").json.role, "member")
+    local before = #again.commands
+    local ran = T.http(again, "POST", "/v1/scenes/" .. gate .. "/run", { key = kid })
+    T.eq(ran.status, 202, "every scene, as 1.7.0's member role")
+    T.eq(ran.json.ran, 1, "the light")
+    T.eq(ran.json.problems[1].code, "FORBIDDEN", "the gate stays shut")
+    for index = before + 1, #again.commands do
+        T.truthy(again.commands[index].device ~= 70, "no command to the gate")
+    end
+    T.eq(T.http(again, "POST", "/v1/scenes/" .. gate .. "/run", { key = doors }).json.ran, 2, "a doors key opened them in 1.7.0 too")
+end
+
+-- While who the owner is cannot be known (the claim is in the people's store), nobody changes an
+-- admin's devices or person, and nobody claims the home: 503, not a free hand.
+function tests.while_the_owner_cannot_be_known_admins_devices_and_claims_wait()
+    local s = session()
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key })
+    T.eq(send(s, { type = "claim", id = "c1", token = claim.json.claim_token }).ok, true)
+    local partner = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner", role = "admin" } }).json
+    local _, kid = member(s.mock, s.key, {})
+    local ownerProfile = profileOf(s.mock, s.key)
+    local people = s.mock.persist["directorlink_people"]
+    s.mock.persist["directorlink_people"] = "json:{broken"
+    local again = Mock.updateDriver(s.mock)
+    Harness.connected({ mock = again })
+    local function unavailable(answer, what)
+        T.eq(answer.status, 503, what .. ": " .. answer.body)
+        T.eq(answer.json.code, "UNAVAILABLE", what)
+    end
+    unavailable(T.http(again, "DELETE", "/v1/api-keys/" .. s.keyId, { key = partner.key }), "the owner's device revoked")
+    unavailable(T.http(again, "PATCH", "/v1/api-keys/" .. s.keyId, { key = partner.key, body = { profile_id = partner.profile_id } }), "moved")
+    unavailable(T.http(again, "POST", "/v1/api-keys", { key = partner.key, body = { name = "x", profile_id = ownerProfile } }), "a key added")
+    unavailable(T.http(again, "POST", "/v1/remote/claim", { key = partner.key }), "the home claimed")
+    unavailable(T.http(again, "POST", "/v1/remote/claim", { key = s.key }), "even by the owner")
+    T.eq(get(again, s.key, "/v1/api-keys/current").json.access.owner, false, "not known")
+    -- A member's device is no admin's: it may go.
+    T.eq(T.http(again, "DELETE", "/v1/api-keys/" .. kid.id, { key = partner.key }).status, 204)
+    -- Read again at the next start: the owner is the owner.
+    again.persist["directorlink_people"] = people
+    local fine = Mock.updateDriver(again)
+    T.eq(get(fine, s.key, "/v1/api-keys/current").json.access.owner, true)
+    T.eq(T.http(fine, "DELETE", "/v1/api-keys/" .. s.keyId, { key = partner.key }).json.code, "OWNER_PROTECTED")
+end
+
+-- The profiles' store unreadable at a start: nothing is worked out again or written over it, so the
+-- people keep their permissions and the owner their claim; the next good start finds them all.
+function tests.an_unreadable_profiles_store_changes_nobodys_permissions()
+    local s = session()
+    local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key })
+    T.eq(send(s, { type = "claim", id = "c1", token = claim.json.claim_token }).ok, true)
+    local partner = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner", role = "admin" } }).json
+    local kid = member(s.mock, s.key, { all_rooms = false, rooms = { 11 }, kinds = { climate = false } })
+    local kidProfile = profileOf(s.mock, kid)
+    local profiles, people = s.mock.persist["directorlink_profiles"], s.mock.persist["directorlink_people"]
+    s.mock.persist["directorlink_profiles"] = "json:{broken"
+    local again = Mock.updateDriver(s.mock)
+    local me = get(again, kid, "/v1/api-keys/current").json.access
+    T.eq(me.all_rooms, false, "still only the living room")
+    T.eq(me.kinds.climate, false)
+    T.same(ids(get(again, kid, "/v1/lights").json.items), { 21, 22 })
+    T.eq(again.persist["directorlink_people"], people, "the people's store is as it was")
+    T.eq(again.persist["directorlink_profiles"], "json:{broken", "nothing written over the profiles")
+    -- The claim is known: the owner stays protected.
+    T.eq(get(again, s.key, "/v1/api-keys/current").json.access.owner, true)
+    T.eq(T.http(again, "DELETE", "/v1/api-keys/" .. s.keyId, { key = partner.key }).json.code, "OWNER_PROTECTED")
+    T.eq(T.http(again, "POST", "/v1/api-keys", { key = s.key, body = { name = "New", role = "member" } }).status, 503, "no new person meanwhile")
+    T.eq(get(again, kid, "/v1/profile").status, 503, "their preferences come back at the next start: no new profile for them")
+    T.eq(get(again, kid, "/v1/api-keys/current").json.profile_id, kidProfile, "the key keeps its person")
+    again.persist["directorlink_profiles"] = profiles
+    local fine = Mock.updateDriver(again)
+    T.eq(get(fine, kid, "/v1/api-keys/current").json.access.all_rooms, false)
+    T.eq(get(fine, s.key, "/v1/api-keys/current").json.access.owner, true)
+end
+
+-- Nobody has a record yet (the scenes could not be read at the first start of 1.8.0): a person is
+-- what their keys say, and a change starts from that, with the owner's and the last admin's
+-- protection.
+function tests.a_person_without_a_record_is_changed_from_what_their_keys_say()
+    local mock, owner = start()
+    local ownerProfile = profileOf(mock, owner)
+    local partner = T.http(mock, "POST", "/v1/api-keys", { key = owner, body = { name = "Partner", role = "admin" } }).json
+    local kid = T.http(mock, "POST", "/v1/api-keys", { key = owner, body = { name = "Kid", role = "member" } }).json
+    mock.persist["directorlink_people"] = nil
+    mock.persist["directorlink_scenes"] = "json:{broken"
+    local again = Mock.updateDriver(mock)
+    T.eq(get(again, partner.key, "/v1/profiles/" .. ownerProfile .. "/access").json.owner, true, "the oldest admin, from the keys")
+    local demoted = setAccess(again, partner.key, ownerProfile, { cameras = false })
+    T.eq(demoted.status, 403, demoted.body)
+    T.eq(demoted.json.code, "OWNER_PROTECTED")
+    T.eq(setAccess(again, partner.key, ownerProfile, { role = "member" }).json.code, "OWNER_PROTECTED")
+    T.eq(get(again, owner, "/v1/api-keys/current").json.role, "admin")
+    T.eq(setAccess(again, owner, ownerProfile, { role = "member" }).json.code, "OWNER_STAYS_ADMIN")
+    -- The partner's person, an admin, made a member by the owner: the rest as an admin had it.
+    local made = setAccess(again, owner, partner.profile_id, { role = "member" })
+    T.eq(made.status, 200, made.body)
+    T.eq(made.json.all_rooms, true)
+    T.eq(get(again, partner.key, "/v1/api-keys").status, 403)
+    -- A member's permissions need their scenes, which cannot be read yet.
+    T.eq(setAccess(again, owner, kid.profile_id, { cameras = false }).status, 503)
+    T.eq(get(again, kid.key, "/v1/api-keys/current").json.role, "member", "unchanged")
+end
+
+-- The keys' store cannot be written when a person's access changes: the request fails and nothing
+-- changes (a person kept with keys whose 1.7.0 role says otherwise would be read again from them
+-- at the next start, widened).
+function tests.when_the_keys_cannot_be_saved_a_persons_access_does_not_change()
+    local mock, admin = start()
+    local kid, created = member(mock, admin, {})
+    local original = C4.PersistSetValue
+    C4.PersistSetValue = function(self, name, value, encrypted)
+        if name == "directorlink_api_key_hashes" then
+            error("disk full")
+        end
+        return original(self, name, value, encrypted)
+    end
+    local narrowed = setAccess(mock, admin, created.profile_id, { all_rooms = false, rooms = {} })
+    C4.PersistSetValue = original
+    T.eq(narrowed.status, 500, narrowed.body)
+    local me = get(mock, kid, "/v1/api-keys/current").json
+    T.eq(me.role, "member")
+    T.eq(me.access.all_rooms, true, "nothing changed")
+    local again = Mock.updateDriver(mock)
+    me = get(again, kid, "/v1/api-keys/current").json
+    T.eq(me.access.all_rooms, true)
+    T.eq(me.role, "member")
+    -- Saved, it changes, and stays so.
+    T.eq(setAccess(again, admin, created.profile_id, { all_rooms = false, rooms = {} }).status, 200)
+    T.eq(get(Mock.updateDriver(again), kid, "/v1/api-keys/current").json.access.all_rooms, false)
+end
+
+-- ---- scene links of someone no longer an admin -------------------------------------------------
+
+function tests.a_scene_link_goes_when_its_maker_is_no_longer_an_admin()
+    local s = session()
+    local partner = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner", role = "admin" } }).json
+    local evening = scene(s.mock, s.key, { name = "Evening", steps = { { type = "lights", device_ids = { 20 }, set = { on = true } } } })
+    local link = T.http(s.mock, "POST", "/v1/scenes/" .. evening .. "/link", { key = partner.key })
+    T.eq(link.status, 201, link.body)
+    T.eq(setAccess(s.mock, s.key, partner.profile_id, { role = "member", scenes = {} }).status, 200)
+    local before = #s.mock.commands
+    local reply = send(s, { type = "link", id = "l1", link = link.json.link_id, secret = link.json.secret })
+    T.eq(reply.ok, false)
+    T.eq(reply.code, "NOT_FOUND")
+    T.eq(#s.mock.commands, before, "nothing ran")
+    T.eq(#get(s.mock, s.key, "/v1/scene-links").json.items, 0)
+    local removed = get(s.mock, s.key, "/v1/activity?kind=access").json.items[1]
+    T.eq(removed.action, "link_removed")
+    T.eq(removed.reason, "no_access")
+
+    -- At a start too: 1.7.0 made another admin's key a member meanwhile.
+    local other = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Other admin", role = "admin" } }).json
+    local second = T.http(s.mock, "POST", "/v1/scenes/" .. evening .. "/link", { key = other.key })
+    T.eq(second.status, 201)
+    local stored = Json.decode(s.mock.persist["directorlink_api_key_hashes"]:sub(6))
+    for _, key in ipairs(stored.keys) do
+        if key.id == other.id then
+            key.role = "member"
+        end
+    end
+    s.mock.persist["directorlink_api_key_hashes"] = "json:" .. Json.encode(stored)
+    local again = Mock.updateDriver(s.mock)
+    T.eq(#get(again, s.key, "/v1/scene-links").json.items, 0, "gone at the start")
+    T.eq(get(again, s.key, "/v1/activity?kind=access").json.items[1].reason, "no_access")
+end
+
+-- ---- what a member learns of what they do not see ------------------------------------------------
+
+-- A member's scene names no room or device they do not see: the step says it works elsewhere too.
+function tests.a_members_scene_names_only_their_rooms_and_devices()
+    local mock, admin = start()
+    local id = scene(mock, admin, { name = "Good night", steps = {
+        { type = "lights", room_id = 10, set = { on = false } },
+        { type = "lights", device_ids = { 20, 21 }, set = { on = false } },
+        { type = "blinds", room_id = 11, set = { position = 0 } },
+    } })
+    local kid = member(mock, admin, { all_rooms = false, rooms = { 11 }, scenes = { id } })
+    local seen = get(mock, kid, "/v1/scenes/" .. id).json
+    T.eq(Json.encode(seen.steps[1].room_id), "null")
+    T.eq(seen.steps[1].elsewhere, true)
+    T.same(seen.steps[2].device_ids, { 21 })
+    T.eq(seen.steps[2].elsewhere, true)
+    T.eq(seen.steps[3].room_id, 11)
+    T.eq(seen.steps[3].elsewhere, nil)
+    T.same(get(mock, kid, "/v1/scenes").json.items[1].steps, seen.steps)
+    local full = get(mock, admin, "/v1/scenes/" .. id).json
+    T.eq(full.steps[1].room_id, 10, "an admin sees the scene as it is")
+    T.same(full.steps[2].device_ids, { 20, 21 })
+    -- Its run names no device of theirs it skipped elsewhere.
+    local Registry = require("src.core.registry")
+    Registry.devices[20].supported = false
+    local ran = T.http(mock, "POST", "/v1/scenes/" .. id .. "/run", { key = kid }).json
+    Registry.devices[20].supported = true
+    for _, problem in ipairs(ran.problems) do
+        T.eq(problem.device_id, 0, Json.encode(problem))
+    end
+end
+
+-- GET /v1/system's inventory counts for a member only what they see.
+function tests.a_members_inventory_counts_only_what_they_see()
+    local mock, admin = start()
+    local off = { light = false, climate = false, fan = false, blind = false, music = false, refrigerator = false }
+    local kid = member(mock, admin, { all_rooms = false, rooms = { 11 }, kinds = off, cameras = false })
+    local mine = get(mock, kid, "/v1/system").json.inventory
+    local all = get(mock, admin, "/v1/system").json.inventory
+    T.eq(mine.rooms, 1)
+    T.eq(mine.lights, 0)
+    T.eq(mine.thermostats, 0)
+    T.eq(mine.cameras, 0)
+    T.truthy(all.lights > 0 and all.cameras > 0 and all.rooms == 2)
+    T.eq(mine.devices, #get(mock, kid, "/v1/devices").json.items, "the devices they see")
+end
+
 return tests

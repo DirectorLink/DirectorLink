@@ -158,7 +158,7 @@ function Invitations.find(id)
     prune(Clock.now())
     for _, item in ipairs(state.items) do
         if item.id == id then
-            return { id = item.id, role = item.role, lock = item.lock, profile = item.profile, access = item.access }
+            return { id = item.id, role = item.role, lock = item.lock, profile = item.profile, access = item.access, created_by = item.created_by }
         end
     end
     return nil

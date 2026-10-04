@@ -370,10 +370,11 @@ local function noteRemoved(link, reason, sceneName, by)
 end
 
 -- The links whose scene is gone or now has a step a link may not run (doors or gates), that were
--- made for another home than `home` (when given), or whose key is gone (`keyExists(id)`, when
--- given: revoked or expired; a link that names no key stays) go. `findScene(id)` gives a scene or
+-- made for another home than `home` (when given), whose key is gone (`keyExists(id)`, when given:
+-- revoked or expired; a link that names no key stays), or whose key's person may no longer make one
+-- (`keyMayLink(id)`, when given: no longer an admin, ADR-054) go. `findScene(id)` gives a scene or
 -- nil. Returns them.
-function SceneLinks.prune(findScene, home, keyExists)
+function SceneLinks.prune(findScene, home, keyExists, keyMayLink)
     if not state.complete or #state.links == 0 then
         return {}
     end
@@ -388,6 +389,8 @@ function SceneLinks.prune(findScene, home, keyExists)
             why[link.id] = { reason = "other_home", name = scene.name }
         elseif keyExists and link.by and not keyExists(link.by) then
             why[link.id] = { reason = "key_gone", name = scene.name }
+        elseif keyMayLink and link.by and not keyMayLink(link.by) then
+            why[link.id] = { reason = "no_access", name = scene.name }
         end
         return why[link.id] ~= nil
     end) or {}

@@ -128,7 +128,8 @@ local function useClaim(token)
     end
     state.claim = nil
     local owner = type(claim.by) == "string" and state.services.keys.find(claim.by) or nil
-    return owner ~= nil and Access.isAdmin(owner), owner
+    -- Still an admin who may claim the home (ADR-054: Access.mayClaim), as when the token was made.
+    return owner ~= nil and Access.isAdmin(owner) and (Access.mayClaim(owner)) == true, owner
 end
 
 -- Saves an accepted request dated ahead of this controller's clock (see SEEN_KEY).
@@ -354,9 +355,31 @@ local function handleJoin(message, send)
     -- is a new person, as the invitation says (ADR-054: its access, else what its 1.7.0 role became).
     local profiles = state.services.profiles
     local profile = profiles and invitation.profile and profiles.find(invitation.profile)
+    -- Into an existing person only as the admin who made the invitation may put a device there
+    -- (ADR-054: Access.mayChangePerson, the owner's only by the owner), now as when it was made.
+    if profile then
+        local inviter = type(invitation.created_by) == "string" and state.services.keys.find(invitation.created_by) or nil
+        local allowed, refusal = false, nil
+        if inviter and Access.isAdmin(inviter) then
+            allowed, refusal = Access.mayChangePerson(inviter, profile.id)
+        end
+        if not allowed then
+            log("warn", "refused an invitation into a person its maker may not change", { invitation = invitationId, code = refusal })
+            if refusal ~= "UNAVAILABLE" then
+                state.services.invitations.revoke(invitationId)
+            end
+            send({ type = "join_result", id = message.id, ok = false, code = refusal == "UNAVAILABLE" and "UNAVAILABLE" or "INVITATION_NOT_FOUND" })
+            return
+        end
+    end
     local person = nil
     if profiles and not profile then
-        profile = profiles.create(name)
+        local failure
+        profile, failure = profiles.create(name)
+        if failure == "UNAVAILABLE" then
+            send({ type = "join_result", id = message.id, ok = false, code = "UNAVAILABLE" })
+            return
+        end
         person = invitation.access or People.fromLegacy(invitation.role, Scenes.list())
     end
     local role = People.legacyRole(person or (profile and People.peek(profile.id))) or invitation.role
@@ -368,8 +391,15 @@ local function handleJoin(message, send)
         send({ type = "join_result", id = message.id, ok = false, code = failure or "KEY_NOT_CREATED" })
         return
     end
-    if person and profile then
-        People.set(profile.id, person)
+    -- A member whose person could not be kept would answer as the 1.7.0 role, which may be more
+    -- than they were given: the key goes again (as POST /v1/api-keys does).
+    if person and profile and not People.set(profile.id, person) and person.role ~= "admin" then
+        state.services.keys.revoke(record.id)
+        if profiles then
+            profiles.prune(state.services.keys.list())
+        end
+        send({ type = "join_result", id = message.id, ok = false, code = People.complete() and "INTERNAL" or "UNAVAILABLE" })
+        return
     end
     state.services.invitations.consume(invitationId)
     if state.services.onKeysChanged then

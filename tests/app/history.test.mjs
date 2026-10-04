@@ -293,6 +293,14 @@ test("automatic backups to the account: made, or not and why", () => {
   assert.doesNotMatch(history.outcomeText(backUpNow), /again/);
 });
 
+test("a scene link that went by itself says why: its person is no longer an admin, too (1.8.0)", () => {
+  const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "access", action: "link_removed", who: { type: "controller" }, what: "Evening", ...fields });
+  assert.equal(history.outcomeText(entry({ reason: "no_access" })), "Its person is no longer an admin");
+  assert.equal(history.outcomeText(entry({ reason: "key_gone" })), "The key that made it was removed or expired");
+  // An ask link's own no_access keeps its words.
+  assert.equal(history.outcomeText(entry({ action: "ask_link_removed", reason: "no_access" })), "Its person may no longer open the door");
+});
+
 test("days: today, yesterday, then the date, in the home's time zone", () => {
   home("admin");
   const now = new Date("2026-10-03T09:00:00Z"); // 12:00 in Israel

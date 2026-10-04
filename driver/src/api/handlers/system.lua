@@ -52,6 +52,52 @@ function System.openapi(_ctx)
     return 200, document
 end
 
+-- What the home has, as GET /v1/system's inventory: everything for admins; for a member only what
+-- they see (ADR-054: the rooms theirs, and there the devices Access.canSee gives them), so that it
+-- says nothing of the rest.
+local INVENTORY = { light = "lights", climate = "thermostats", fan = "fans", blind = "blinds", camera = "cameras", relay = "relays", doorbell = "doorbells", refrigerator = "refrigerators" }
+
+local function inventory(actor, registry, counts)
+    if Access.isAdmin(actor) then
+        return {
+            rooms = counts.rooms,
+            devices = counts.devices,
+            supported_devices = counts.supported,
+            lights = counts.supported_lights,
+            thermostats = counts.supported_climate,
+            fans = counts.supported_fans,
+            blinds = counts.supported_blinds,
+            cameras = counts.supported_cameras,
+            relays = counts.supported_relays,
+            doorbells = counts.supported_doorbells,
+            refrigerators = counts.supported_refrigerators,
+        }
+    end
+    local result = { rooms = 0, devices = 0, supported_devices = 0 }
+    for _, field in pairs(INVENTORY) do
+        result[field] = 0
+    end
+    for id in pairs(registry.rooms or {}) do
+        if Access.seesRoom(actor, id) then
+            result.rooms = result.rooms + 1
+        end
+    end
+    for _, device in pairs(registry.devices or {}) do
+        if Access.canSee(actor, device) then
+            result.devices = result.devices + 1
+            -- Alarm partitions are counted apart, as for admins (Registry.counts).
+            if device.supported and device.kind ~= "alarm" then
+                result.supported_devices = result.supported_devices + 1
+                local field = INVENTORY[device.kind]
+                if field then
+                    result[field] = result[field] + 1
+                end
+            end
+        end
+    end
+    return result
+end
+
 local function rounded(value)
     if type(value) ~= "number" then
         return Json.null
@@ -91,19 +137,8 @@ function System.info(ctx)
             longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
-        inventory = {
-            rooms = counts.rooms,
-            devices = counts.devices,
-            supported_devices = counts.supported,
-            lights = counts.supported_lights,
-            thermostats = counts.supported_climate,
-            fans = counts.supported_fans,
-            blinds = counts.supported_blinds,
-            cameras = counts.supported_cameras,
-            relays = counts.supported_relays,
-            doorbells = counts.supported_doorbells,
-            refrigerators = counts.supported_refrigerators,
-        },
+        -- A member's: only what they see.
+        inventory = inventory(ctx.apiKey, registry, counts),
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,
             last_init_type = text(lifecycle.last_init_type),

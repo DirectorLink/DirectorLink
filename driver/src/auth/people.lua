@@ -320,12 +320,20 @@ function People.setOwner(profileId)
 end
 
 -- The home's owner among `profiles` (Profiles.list()): the profile that claimed the home for an
--- account, while it is an admin; else the oldest admin. nil when there is no admin.
-function People.ownerOf(profiles)
+-- account, while it is an admin; else the oldest admin. nil when there is no admin. `isAdmin(id)`
+-- says who is an admin (src/auth/access.lua: a person without a record too); without it, the
+-- records do.
+function People.ownerOf(profiles, isAdmin)
     local oldest
     for _, profile in ipairs(profiles or {}) do
         local item = state.people[profile.id]
-        if item and item.role == "admin" then
+        local admin
+        if isAdmin then
+            admin = isAdmin(profile.id)
+        else
+            admin = item ~= nil and item.role == "admin"
+        end
+        if admin then
             if profile.id == state.owner then
                 return profile.id
             end
@@ -358,15 +366,16 @@ function People.setRoomHidden(roomId, hidden)
 end
 
 -- Every key keeps the 1.7.0 role of its person (`keys`: src/auth/keys.lua); the keys of a person
--- without a record stay as they are. Returns how many changed.
+-- without a record stay as they are. Returns how many changed, and false when the keys' store
+-- could not be written (they are then as before).
 function People.syncKeys(keys)
     if not state.complete then
-        return 0
+        return 0, true
     end
-    return (keys.setRoles(function(key)
+    return keys.setRoles(function(key)
         local item = key.profile and state.people[key.profile]
         return item and People.legacyRole(item) or nil
-    end))
+    end)
 end
 
 -- Brings the records in line with the keys (`keys`: Keys.list(), `profiles`: Profiles.list(),

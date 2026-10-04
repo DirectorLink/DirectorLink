@@ -8,6 +8,7 @@ local Problem = require("src.api.problem")
 local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
 local People = require("src.auth.people")
 local Scenes = require("src.core.scenes")
 local ProfileHandlers = require("src.api.handlers.profiles")
@@ -60,6 +61,11 @@ function Invitations.create(ctx)
         local me = ctx.services.keys.find(ctx.apiKey.id)
         profile = me and me.profile or nil
         role = me and me.role or role
+        -- A device put into a person (ADR-054: Access.mayChangePerson), here the caller's own.
+        local allowed, refusal = Access.mayChangePerson(ctx.apiKey, profile)
+        if not allowed then
+            return ProfileHandlers.refused(refusal)
+        end
     elseif body.access ~= nil then
         if role ~= "admin" and role ~= "member" then
             return Problem.invalidField("role", "With access, role is admin or member")
