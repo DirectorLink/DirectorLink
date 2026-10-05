@@ -34,6 +34,13 @@ class FakeElement extends FakeNode {
   get textContent() {
     return this.children.map((child) => child?.textContent ?? "").join("");
   }
+  // Home's command field is kept over redraws and brought up to date in place (views/command.js).
+  set textContent(text) {
+    this.children = [document.createTextNode(String(text))];
+  }
+  replaceChildren(...children) {
+    this.children = children;
+  }
 }
 globalThis.Node = FakeNode;
 globalThis.window = globalThis;

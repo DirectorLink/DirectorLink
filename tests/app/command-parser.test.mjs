@@ -318,8 +318,24 @@ test("small typos in names and command words", () => {
   same("kitchn lights off", { room: 1, change: { on: false } });
   same("ligths off in the kitchen", { room: 1, change: { on: false } });
   same("turn on the porch ligth", { device: { kind: "light", id: 106 } });
-  same("כבה את האורות במטבך", { room: 1, change: { on: false } });
   same("livng room lights on", { room: 2 });
+  // A typo in a word under six letters, with nothing else of the name said right, is asked.
+  const short = asks("כבה את האורות במטבך");
+  assert.equal(short.question, "partial");
+  assert.deepEqual(short.options.map((option) => [option.room, option.change]), [[1, { on: false }]]);
+});
+
+test("a name one letter from another is asked, not done: Dana for Dina, בנים for בנות", () => {
+  const girls = { rooms: [{ id: 7, names: ["חדר בנות"] }, { id: 3, names: ["Dina"] }], devices: [light(1, "תאורה", 7, { on: true }), light(3, "Ceiling", 3, { on: true })], scenes: [] };
+  for (const text of ["תכבה את האור בחדר בנים", "תכבה את האור בבנים", "turn off the lights in Dana's room", "turn off dana"]) {
+    const result = asks(text, girls);
+    assert.equal(result.partial, true, text);
+  }
+  // Both rooms there: each is itself (the other plural is not the same name).
+  const both = { ...girls, rooms: [...girls.rooms, { id: 6, names: ["חדר בנים"] }], devices: [...girls.devices, light(2, "תאורה", 6, { on: true })] };
+  same("תכבה את האור בחדר בנים", { room: 6, ids: [2] }, both);
+  same("תכבה את האור בחדר בנות", { room: 7, ids: [1] }, both);
+  same("turn off dina", { type: "roomOff", room: 3 }, both);
 });
 
 test("two names that match as well ask which one", () => {
@@ -406,6 +422,162 @@ test("not a command: don't, a question, a time, a typo of two letters in a comma
   same("deactivate the kitchen lights", { room: 1, change: { on: false } });
   unknown("deactivate good night");
   unknown("inactivate the kitchen lights");
+});
+
+test("a question mark makes it a question, even without a question word", () => {
+  // Hebrew asks yes or no with the words of a command; dictation writes "?" for a rising voice.
+  for (const text of ["האור במטבח כבוי?", "האורות במטבח דולקים?", "התריסים במטבח פתוחים?", "kitchen lights off?", "good night?", "open the main gate?", "המזגן בסלון על 23?", "האור במטבח כבוי؟", "kitchen lights off？"]) {
+    problem(text, "question");
+  }
+  same("good night!", { type: "scene", id: "aa000001" });
+});
+
+test("a time or a change by an amount is never a level, a position, a volume or a temperature", () => {
+  for (const text of [
+    "turn on the kitchen lights at 7",
+    "turn on the kitchen lights in 5",
+    "open the kitchen blinds at 7",
+    "kitchen volume for 5",
+    "set the living room AC at 23",
+    "תדליק את האור במטבח ב-7",
+    "תדליק את האור במטבח ב7",
+    "תדליק את האור במטבח ב 7",
+    "תדליק את האור במטבח בשבע",
+    "תדליק את האור במטבח בעשר",
+    "תפתח את התריסים במטבח ב-7",
+    "תדליק את האור במטבח עד 7",
+    "תדליק את האור במטבח מ-7",
+    "תוריד את האור במטבח ב-20%",
+    "תוריד את האור במטבח ב-20 אחוז",
+    "תוריד את המזגן בסלון ב-2 מעלות",
+    "dim the kitchen lights by 20%",
+    "kitchen lights 20% less",
+    "תדליק את האור במטבח בעוד 10 דקות",
+    "תדליק את האור במטבח בעוד 10",
+    "turn on the kitchen lights after 7",
+  ]) {
+    const result = parse(text);
+    assert.equal(result.status, "unknown", `${text}: ${JSON.stringify(result)}`);
+    assert.equal(result.refusal, "time", `${text}: ${JSON.stringify(result)}`);
+  }
+  // A level says so: a percent, a unit, "to", ל, על, or the number alone after the name.
+  same("kitchen lights 30", { change: { brightness: 30 } });
+  same("kitchen lights to 30", { change: { brightness: 30 } });
+  same("turn on the kitchen lights at 50%", { change: { brightness: 50 } });
+  same("set the living room AC at 23 degrees", { change: { temperature: 23 } });
+  same("אורות במטבח ל-30", { change: { brightness: 30 } });
+  same("אורות במטבח על 30 אחוז", { change: { brightness: 30 } });
+  same("תפתח את התריס במטבח עד חצי", { type: "blinds", change: { position: 50 } });
+  same("תפתח את התריס במטבח עד 40%", { type: "blinds", change: { position: 40 } });
+  // A number in a name is the name's ("Bedroom 2"), and a number word in a name stays a word.
+  same("turn off the lights in bedroom 2", { room: 6 });
+  same("תכבה את האור בשני", { room: 9, ids: [112, 113] });
+});
+
+test("hot and cold are how the user feels, not a mode; with the AC said after על, to or on, they are", () => {
+  for (const text of ["חם לי בסלון", "חם לי בחדר שינה", "קר לי בסלון", "it's cold in the bedroom", "cold in the bedroom", "warm in the living room", "I'm hot in the living room", "קר לי, תדליק את המזגן בסלון על חם", "it's freezing in the bedroom, turn on the AC"]) {
+    const result = parse(text);
+    assert.equal(result.status, "unknown", `${text}: ${JSON.stringify(result)}`);
+    assert.equal(result.refusal, "feel", `${text}: ${JSON.stringify(result)}`);
+  }
+  same("תדליק את המזגן בסלון על קר", { type: "climate", ids: [200], change: { mode: "cool" } });
+  same("מזגן בסלון על חם 24", { ids: [200], change: { mode: "heat", temperature: 24 } });
+  same("set the living room AC to warm", { ids: [200], change: { mode: "heat" } });
+  same("turn the living room AC on cold", { ids: [200], change: { mode: "cool" } });
+  // Not without the AC said (by a word or by its name).
+  unknown("set the kids room to cold");
+  same("set the living room AC to cold", { ids: [200], change: { mode: "cool" } });
+  // The modes' own words stay modes anywhere.
+  same("cool the kids room to 22", { ids: [201], change: { mode: "cool", temperature: 22 } });
+  same("מזגן בחדר ילדים קירור", { ids: [201], change: { mode: "cool" } });
+});
+
+test("heaters by their usual names stay off when a room's lights go on; lights that only sound warm do not", () => {
+  const heaters = ["Heater", "Water heater", "Boiler", "Heat lamp", "Hot water", "Floor heat", "Floor heating", "Underfloor", "Immersion", "Geyser", "Towel rail", "Towel warmer", "Towels", "Radiator", "Infrared", "Heated floor", "Hot tub", "Sauna", "דוד", "דוד הורים", "בוילר", "מקרן חום", "מים חמים", "חימום רצפה", "החימום", "תנור", "מפזר חום", "מחמם מגבות", "מחממת", "רדיאטור", "קומקום", "דוד שמש", "הסקה", "חימום תת רצפתי", "תנור אינפרא", "דודים"];
+  for (const name of heaters) {
+    const bathroom = { rooms: [{ id: 1, names: ["Bathroom", "מקלחת"] }], scenes: [], devices: [light(1, "Mirror", 1), light(2, name, 1, { dimmable: false })] };
+    same("turn on the bathroom lights", { ids: [1] }, bathroom);
+    same("תדליקו את האורות במקלחת", { ids: [1] }, bathroom);
+  }
+  for (const name of ["Warm white", "אור חם", "תאורת חומה", "Hotel sign", "Water feature", "מים"]) {
+    const bathroom = { rooms: [{ id: 1, names: ["Bathroom"] }], scenes: [], devices: [light(1, "Mirror", 1), light(2, name, 1, { dimmable: false })] };
+    same("turn on the bathroom lights", { ids: [1, 2] }, bathroom);
+  }
+});
+
+test("the only light a user has, when it is a heater, is not 'the light'", () => {
+  const kids = { rooms: [{ id: 5, names: ["חדר ילדים"] }], scenes: [], devices: [light(1, "דוד ילדים", 5, { dimmable: false })] };
+  problem("תדליק את האור", "none", kids);
+  problem("turn on the light", "none", kids);
+  same("תדליק את דוד ילדים", { device: { kind: "light", id: 1 }, change: { on: true } }, kids);
+  same("תכבה את האור", { ids: [1], change: { on: false } }, kids);
+});
+
+test("Hebrew: spellings with one vowel letter more or less, and the app's own words", () => {
+  const home = {
+    rooms: [{ id: 1, names: ["חניה"] }, { id: 2, names: ["חנייה אחורית"] }, { id: 3, names: ["גינה"] }, { id: 4, names: ["כניסה"] }, { id: 5, names: ["סלון"] }],
+    devices: [light(1, "תאורה", 1), light(2, "תאורה", 2), light(3, "תאורה", 3), light(4, "תאורה", 4), light(5, "ספוטים", 5), { kind: "relay", id: 9, name: "שער חניה", room: 1, canOpen: true }],
+    scenes: [{ id: "s1", name: "לילה טוב" }, { id: "s2", name: "שבת" }],
+  };
+  same("תדליק את האור בחנייה", { room: 1, ids: [1] }, home);
+  same("תדליק את האור בחניה האחורית", { room: 2, ids: [2] }, home);
+  same("תדליק את האור בכנסה", { room: 4, ids: [4] }, home);
+  same("תפתח את שער החנייה", { type: "door", device: { kind: "relay", id: 9 } }, home);
+  // From three letters only a typo: asked, never done (גנה, but also דנה for דינה).
+  const garden = asks("תדליק את האור בגנה", home);
+  assert.equal(garden.partial, true);
+  assert.deepEqual(garden.options.map((option) => option.room), [3]);
+  // Mode, מצב, סצנת, בכל, Celsius.
+  same("set the living room AC to cool mode", { type: "climate", ids: [200], change: { mode: "cool" } });
+  same("תעביר את המזגן בסלון למצב קירור", { ids: [200], change: { mode: "cool" } });
+  same("מזגן בסלון במצב חימום", { ids: [200], change: { mode: "heat" } });
+  same("תפעיל את סצנת לילה טוב", { type: "scene", id: "aa000002" });
+  same("תפעיל את מצב שבת", { type: "scene", id: "s2" }, home);
+  same("תכבה את האור בכל הבית", { type: "offAll", filters: ["lights"] });
+  for (const text of ["מזגן בסלון 23°C", "living room AC 23 °C", "living room AC 23C", "מזגן בסלון 23º", "מזגן בסלון 23℃", "מזגן בסלון 23 מעלות צלזיוס", "living room AC 23 celsius"]) {
+    same(text, { ids: [200], change: { temperature: 23 } });
+  }
+});
+
+test("the AC of a room with floor heating: an AC word or a cool mode is its AC", () => {
+  const home = {
+    rooms: [{ id: 1, names: ["Living room", "סלון"] }, { id: 2, names: ["Bathroom", "מקלחת"] }],
+    scenes: [],
+    devices: [
+      thermostat(30, "Split", 1, { modes: ["off", "heat", "cool", "auto"], mode: "cool" }),
+      thermostat(32, "Floor heating", 1, { modes: ["off", "heat"], mode: "heat", min: 5, max: 32 }),
+      thermostat(33, "Bathroom floor", 2, { modes: ["off", "heat"], mode: "heat", min: 5, max: 32 }),
+    ],
+  };
+  same("cool the living room", { type: "climate", ids: [30], change: { mode: "cool" } }, home);
+  same("מזגן בסלון על קירור", { ids: [30], change: { mode: "cool" } }, home);
+  same("מזגן בסלון 23", { ids: [30], change: { temperature: 23 } }, home);
+  same("living room AC cool 22", { ids: [30], change: { mode: "cool", temperature: 22 } }, home);
+  same("turn off the AC in the living room", { ids: [30], change: { mode: "off" } }, home);
+  // Not an AC word: every thermostat of the room.
+  same("living room temperature 22", { ids: [30, 32], change: { temperature: 22 } }, home);
+  same("heat the living room", { ids: [30, 32], change: { mode: "heat" } }, home);
+  // No AC there.
+  problem("מזגן במקלחת 23", "none", home);
+  problem("cool the bathroom", "noMode", home);
+});
+
+test("don't and times are refusals the speech service's other guesses cannot override", () => {
+  assert.equal(parse("אל תכבה את האור במטבח").refusal, "not");
+  assert.equal(parse("don't turn off the kitchen lights").refusal, "not");
+  assert.equal(parse("תדליק את האור במטבח מחר").refusal, "time");
+  assert.equal(parse("frobnicate the kitchen").refusal, undefined);
+  // In a name, such a word is the name's.
+  const morning = { ...HOME, scenes: [...SCENES, { id: "aa000010", name: "Good morning" }] };
+  same("run good morning", { type: "scene", id: "aa000010" }, morning);
+});
+
+test("a long text is not a command, and quickly", () => {
+  const started = performance.now();
+  unknown(`turn off the kitchen lights ${"x".repeat(400 * 1024)}`, []);
+  unknown("turn off the kitchen lights ".repeat(8), []);
+  assert.ok(performance.now() - started < 50, "at once");
+  same(`turn off the kitchen lights${" ".repeat(150)}`, { room: 1 });
 });
 
 test("a minus sign is kept, and out of range", () => {

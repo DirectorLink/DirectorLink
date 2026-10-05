@@ -28,8 +28,44 @@ class FakeElement extends FakeNode {
   addEventListener(type, listener) {
     (this.listeners[type] ||= []).push(listener);
   }
+  removeAttribute(name) {
+    delete this.attributes[name];
+  }
   append(...children) {
     this.children.push(...children);
+  }
+  replaceChildren(...children) {
+    this.children = children;
+  }
+  focus() {
+    document.activeElement = this;
+  }
+  blur() {
+    if (document.activeElement === this) document.activeElement = null;
+  }
+  contains(node) {
+    return node === this || this.children.some((child) => child instanceof FakeElement && child.contains(node));
+  }
+  querySelectorAll(selector) {
+    // Only what the app asks of its dialog: "[data-key]".
+    const found = [];
+    const visit = (node) => {
+      for (const child of node.children || []) {
+        if (child instanceof FakeElement && selector === "[data-key]" && child.dataset.key) found.push(child);
+        visit(child);
+      }
+    };
+    visit(this);
+    return found;
+  }
+  // A <dialog>.
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    if (!this.open) return;
+    this.open = false;
+    for (const listener of this.listeners.close || []) listener({ target: this });
   }
   get textContent() {
     return this.children.map((child) => child.textContent).join("");
@@ -74,17 +110,37 @@ mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: Date.pars
 globalThis.requestAnimationFrame = (callback) => setTimeout(callback, 16);
 
 // A browser's speech recognition (Chrome's webkitSpeechRecognition): what the app set and started.
+// As the Web Speech API says: stop() ends with what it heard so far as the final result, abort()
+// with none (and an "aborted" error).
 const heard = [];
 class FakeRecognition {
   constructor() {
     heard.push(this);
     this.started = false;
+    this.interim = "";
   }
   start() {
     this.started = true;
   }
   stop() {
+    if (this.interim) {
+      const result = [{ transcript: this.interim }];
+      result.isFinal = true;
+      this.onresult?.({ results: [result] });
+    }
     this.onend?.();
+  }
+  abort() {
+    this.aborted = true;
+    this.onerror?.({ error: "aborted" });
+    this.onend?.();
+  }
+  // Words heard so far, not final yet.
+  hear(transcript) {
+    this.interim = transcript;
+    const result = [{ transcript }];
+    result.isFinal = false;
+    this.onresult?.({ results: [result] });
   }
   // The service heard `alternatives` (the likeliest first), finally.
   say(...alternatives) {
@@ -235,7 +291,8 @@ async function say(text) {
   const nodes = home();
   const input = byKey(nodes, "command-input:home");
   assert.ok(input, "Home has the field");
-  fire(input, "input", { target: { value: text } });
+  input.value = text;
+  fire(input, "input", { target: input });
   fire(byClass(nodes, "command-form"), "submit");
   await settle();
 }
@@ -277,7 +334,7 @@ test("it shows what it understood, sends the same requests as a tap, then the re
     ["/v1/lights/21", { on: false }],
   ]);
   assert.equal(shown(), "⁨Kitchen⁩: lights offDone");
-  assert.equal(byKey(home(), "command-input:home").attributes.value, "", "the field empties for the next one");
+  assert.equal(byKey(home(), "command-input:home").value, "", "the field empties for the next one");
   assert.equal(state.lights.find((item) => item.id === 20).on, false);
   await advance(8000);
   assert.equal(shown(), null, "the result goes after a while");
@@ -305,6 +362,173 @@ test("two that match ask which one; the option chosen is done", async () => {
   await click("command-option:home:1");
   await advance(1500);
   assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [["/v1/lights/22", { on: true }]]);
+  assert.equal(byKey(home(), "command-input:home").value, "", "the words asked about go once one is chosen");
+});
+
+test("Home's field stays the same element over redraws, with its words: a keyboard's composition or dictation is not cut", async () => {
+  await connect();
+  const before = home();
+  const input = byKey(before, "command-input:home");
+  const section = byClass(before, "command");
+  assert.equal(input.attributes.maxlength, "201", "a command is 200 letters at most");
+  input.focus();
+  input.value = "turn on the kit";
+  fire(input, "input", { target: input });
+  // A device changes and Home is drawn again; then an answer shows under the field.
+  state.lights = state.lights.map((item) => (item.id === 22 ? { ...item, on: true } : item));
+  notify();
+  const after = home();
+  assert.equal(byKey(after, "command-input:home"), input, "the same field");
+  assert.equal(byKey(after, "command-mic:home"), byKey(before, "command-mic:home"), "and microphone");
+  assert.equal(byClass(after, "command"), section, "in the same place");
+  assert.equal(input.value, "turn on the kit");
+  await say("frobnicate the kitchen");
+  assert.equal(byKey(home(), "command-input:home"), input);
+  assert.ok(shown().startsWith("I didn’t understand"));
+  input.blur();
+});
+
+test("a redraw of the screen leaves in the page what stays the same element (dom.js replaceKeeping)", async () => {
+  const { replaceKeeping } = await import("../../app/js/dom.js");
+  // A parent that records what was taken out of it.
+  const removed = [];
+  const parent = {
+    childNodes: [],
+    get firstChild() {
+      return this.childNodes[0] || null;
+    },
+    removeChild(node) {
+      removed.push(node.name);
+      this.childNodes = this.childNodes.filter((child) => child !== node);
+      node.parentNode = null;
+    },
+    insertBefore(node, next) {
+      if (node.parentNode === this) this.removeChild(node);
+      const index = next ? this.childNodes.indexOf(next) : this.childNodes.length;
+      this.childNodes.splice(index, 0, node);
+      node.parentNode = this;
+    },
+  };
+  const node = (name) => {
+    const made = Object.assign(new FakeNode(), { name, parentNode: null });
+    Object.defineProperty(made, "nextSibling", { get: () => (made.parentNode ? made.parentNode.childNodes[made.parentNode.childNodes.indexOf(made) + 1] || null : null) });
+    return made;
+  };
+  const [header, field, rooms] = [node("header"), node("field"), node("rooms")];
+  replaceKeeping(parent, [header, field, rooms]);
+  removed.length = 0;
+  const [header2, banner, rooms2] = [node("header2"), node("banner"), node("rooms2")];
+  replaceKeeping(parent, [header2, banner, field, rooms2]);
+  assert.deepEqual(parent.childNodes.map((child) => child.name), ["header2", "banner", "field", "rooms2"]);
+  assert.deepEqual(removed, ["header", "rooms"], "the field never left");
+});
+
+test("closing the dialog or leaving Home while listening aborts: nothing heard is done", async () => {
+  await connect();
+  heard.length = 0;
+  const { openCommandDialog, commandRouteChanged } = await import("../../app/js/views/command.js");
+  openCommandDialog();
+  const dialog = body.children.find((child) => child.tagName === "DIALOG");
+  assert.ok(dialog?.open, "the dialog is open");
+  const typed = byKey(dialog, "command-input:dialog");
+  typed.value = "living";
+  fire(typed, "input", { target: typed });
+  fire(byKey(dialog, "command-mic:dialog"), "click");
+  assert.equal(heard.length, 1);
+  // "Kitchen off…", and the dialog is closed mid-sentence.
+  heard[0].hear("kitchen off");
+  assert.equal(typed.value, "kitchen off", "what it hears is in the field");
+  dialog.close();
+  await advance(1500);
+  assert.equal(heard[0].aborted, true, "aborted, not stopped");
+  assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0, "nothing heard was done");
+  assert.equal(shown(), null, "and nothing is shown");
+  assert.equal(typed.value, "living", "the field as it was before it listened");
+  assert.equal(byKey(home(), "command-input:home").value, "living");
+  typed.value = "";
+  fire(typed, "input", { target: typed });
+
+  // Home's microphone, and the user goes to another screen.
+  await click("command-mic:home");
+  assert.equal(heard.length, 2);
+  heard[1].hear("kitchen off");
+  commandRouteChanged({ name: "home" });
+  assert.equal(heard[1].aborted, undefined, "still on Home: still listening");
+  commandRouteChanged({ name: "climate", tab: "climate" });
+  await advance(1500);
+  assert.equal(heard[1].aborted, true);
+  assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0);
+  // The Stop button still sends what it heard.
+  await click("command-mic:home");
+  heard[2].hear("kitchen lights off");
+  await click("command-mic:home");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"]);
+});
+
+test("while the dialog is open, it says what it understood from a live region of its own", async () => {
+  await connect();
+  const { openCommandDialog } = await import("../../app/js/views/command.js");
+  openCommandDialog();
+  const dialog = body.children.find((child) => child.tagName === "DIALOG");
+  const live = byClass(dialog, "visually-hidden") && [dialog].flatMap(function all(node) { return [node, ...(node.children || []).flatMap(all)]; }).find((node) => node.attributes?.role === "status");
+  assert.ok(live, "the dialog has its own status region");
+  const input = byKey(dialog, "command-input:dialog");
+  input.value = "kitchen lights off";
+  fire(input, "input", { target: input });
+  fire(byClass(dialog, "command-form"), "submit");
+  await settle();
+  assert.equal(live.textContent, "⁨Kitchen⁩: lights off", "said inside the dialog");
+  await advance(1500);
+  assert.equal(live.textContent, "Done");
+  dialog.close();
+  // Closed: the page's own live region again.
+  const page = body.children.find((child) => child.tagName === "P" && child.attributes.role === "status");
+  await say("living room AC off");
+  assert.equal(page.textContent, "⁨Living Room AC⁩: off");
+  assert.equal(live.textContent, "Done", "not in the closed dialog");
+  await advance(1500);
+});
+
+test("the likeliest words that say not to, or name a time, decide: a less likely guess never does it", async () => {
+  await connect();
+  heard.length = 0;
+  await click("command-mic:home");
+  heard[0].say("don't turn off the kitchen lights", "turn off the kitchen lights");
+  await click("command-mic:home");
+  heard[1].say("turn off the kitchen lights tomorrow", "turn off the kitchen lights");
+  await click("command-mic:home");
+  heard[2].say("turn off the kitchen lights at 7", "turn off the kitchen lights");
+  await settle();
+  assert.match(shown(), /^I didn’t understand/);
+  await setLanguage("he");
+  try {
+    await click("command-mic:home");
+    heard[3].say("אל תכבו את האורות במטבח", "תכבו את האורות במטבח");
+    await click("command-mic:home");
+    heard[4].say("חם לי בסלון", "חם בסלון");
+    await settle();
+    assert.match(shown(), /^לא הבנתי/);
+  } finally {
+    await setLanguage("en");
+  }
+  await advance(1500);
+  assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0);
+});
+
+test("a change that heat and cool setpoints cannot take says why, and sends nothing", async () => {
+  await connect();
+  const office = { id: 31, name: "Office AC", room: room(12), mode: "heat", modes: ["off", "heat", "cool", "auto"], setpoints: "dual", heat_setpoint: 20, cool_setpoint: 24, setpoint_deadband: 1, target_temperature_min: 5, target_temperature_max: 35, fan_speed: null, fan_speeds: [] };
+  state.thermostats = [...state.thermostats, office];
+  controller.thermostats = [...controller.thermostats, { ...office }];
+  notify();
+  await say("office AC to 35");
+  await advance(1500);
+  assert.equal(sent("PATCH", /./).length, 0);
+  assert.match(shown(), /^⁨Office AC⁩: ⁦35°⁩.*can’t be set to ⁦35°⁩: its heat and cool setpoints stay ⁦1°⁩ apart, from ⁦5°⁩ to ⁦35°⁩\.$/);
+  const { thermostatPlan } = await import("../../app/js/commands.js");
+  assert.ok(thermostatPlan({ ...office, mode: "auto" }, { temperature: 22 }).refused, "auto, with no setpoint said");
+  assert.deepEqual(thermostatPlan(office, { temperature: 22 }), { patch: { heat_setpoint: 22 } });
 });
 
 test("not understood: says so with examples by the user's own names, sends nothing, keeps the words", async () => {
@@ -312,9 +536,9 @@ test("not understood: says so with examples by the user's own names, sends nothi
   await say("frobnicate the kitchen");
   assert.equal(shown(), "I didn’t understand “⁨frobnicate⁩”.Try:Kitchen lights offLiving Room AC to 23Run Good night");
   assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0);
-  assert.equal(byKey(home(), "command-input:home").attributes.value, "frobnicate the kitchen", "the words stay, to correct");
+  assert.equal(byKey(home(), "command-input:home").value, "frobnicate the kitchen", "the words stay, to correct");
   await click("command-example:home:1");
-  assert.equal(byKey(home(), "command-input:home").attributes.value, "Living Room AC to 23", "an example goes into the field, not sent");
+  assert.equal(byKey(home(), "command-input:home").value, "Living Room AC to 23", "an example goes into the field, not sent");
   assert.equal(sent("PATCH", /./).length, 0);
   await click("command-dismiss:home");
   assert.equal(shown(), null);
@@ -442,6 +666,7 @@ test("the microphone where the browser has speech recognition: it listens, then 
   assert.equal(heard[0].started, true);
   assert.ok(shown().includes("Listening…"));
   assert.ok(shown().includes("DirectorLink sends it nowhere"), "says where the sound goes");
+  assert.ok(shown().includes("Chrome’s sends the sound to Google, Edge’s to Microsoft, Safari’s to Apple"), shown());
   assert.equal(byKey(home(), "command-mic:home").attributes["aria-pressed"], "true");
   // The likeliest is not understood; the next guess is.
   heard[0].say("kitten lights of", "kitchen lights off");

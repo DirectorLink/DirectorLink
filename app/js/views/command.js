@@ -3,21 +3,33 @@
 // where the browser can turn speech into text (the Web Speech API: Chrome, Edge, Safari; not the
 // iPhone's Home Screen app, where the keyboard's own microphone does it). What it understood, the
 // result, the questions and the second taps come from js/commands.js.
+//
+// The field itself (its form, the words, the microphone and Go) is made once for each place and
+// kept: a redraw of Home or of the dialog changes what is around it, never takes it out of the page
+// while it is typed or dictated into (that would end the keyboard's composition, iOS dictation and
+// the caret). app.js leaves it in place (dom.js replaceKeeping).
 
+import { MAX_LENGTH } from "../command-parser.js";
 import { chooseOption, clearCommand, commandMessage, commandState, confirmCommand, submitCommand } from "../commands.js";
 import { doorbellButton, relayButton } from "../components.js";
-import { announce, h, iconButton } from "../dom.js";
+import { announce, h, iconButton, speakFrom } from "../dom.js";
 import { currentLanguage, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { IS_IOS } from "../platform.js";
 import { findScene, isolate, runScene } from "../scenes.js";
 import { can, deviceKey, notify, state, subscribe, ui } from "../state.js";
 
-// What is being typed, kept over redraws (not in the renderer's signature, so typing redraws nothing).
+// What is being typed, the same in every place's field (not in the renderer's signature, so typing
+// redraws nothing).
 let draft = "";
-// The speech service while it listens, and what it heard so far.
+// The speech service while it listens, the field it listens for, and what it heard so far.
 let listening = null;
+let listeningFor = null;
 let heard = "";
+// A speech service stopped by closing the dialog or leaving Home: what it still says is not done,
+// and the field gets back the words typed before it listened.
+let abandoned = null;
+let typedBefore = "";
 // The browser refused its speech service (no Siri, a policy): the keyboard's microphone then.
 let speechOff = false;
 
@@ -43,8 +55,17 @@ export function speechAvailable() {
   return !(IS_IOS && homeScreenApp());
 }
 
+// Each place's field: { form, input, label, mic, go, output } (bar()).
+const bars = new Map();
+
 function setFields(text) {
-  for (const input of document.querySelectorAll?.(".command-input") || []) input.value = text;
+  for (const parts of bars.values()) parts.input.value = text;
+}
+
+// The words gone from the field, for the next command.
+function clearWords() {
+  draft = "";
+  setFields("");
 }
 
 const SPEECH_ERRORS = {
@@ -56,7 +77,7 @@ const SPEECH_ERRORS = {
   "language-not-supported": "language",
 };
 
-function startListening() {
+function startListening(where) {
   const Recognition = recognitionClass();
   if (!Recognition || listening) return;
   readyToSpeak();
@@ -75,6 +96,7 @@ function startListening() {
   let finals = null;
   let failure = null;
   recognition.onresult = (event) => {
+    if (recognition === abandoned) return;
     const results = Array.from(event.results || []);
     heard = results.map((result) => result[0]?.transcript || "").join("");
     // What it hears is in the field, to send or correct if listening stops before it is final.
@@ -91,7 +113,9 @@ function startListening() {
     failure = event?.error || "failed";
   };
   recognition.onend = () => {
-    listening = null;
+    if (listening === recognition) listening = null;
+    // Closed or left while it listened: what it heard is not done, and nothing is said.
+    if (recognition === abandoned) return void notify();
     heard = "";
     if (finals?.length) {
       draft = finals[0];
@@ -106,6 +130,8 @@ function startListening() {
     }
   };
   listening = recognition;
+  listeningFor = where;
+  typedBefore = draft;
   clearCommand();
   try {
     recognition.start();
@@ -116,6 +142,7 @@ function startListening() {
   notify();
 }
 
+// The Stop button: the service says the words it heard (and they are done).
 function stopListening() {
   try {
     listening?.stop();
@@ -125,76 +152,139 @@ function stopListening() {
   }
 }
 
+// Closing the dialog or leaving Home while it listens: abort, so that nothing heard is done (stop
+// would make the service say what it heard so far, and that would be done).
+function abortListening() {
+  const recognition = listening;
+  if (!recognition) return;
+  abandoned = recognition;
+  listening = null;
+  heard = "";
+  draft = typedBefore;
+  setFields(typedBefore);
+  try {
+    if (typeof recognition.abort === "function") recognition.abort();
+    else recognition.stop();
+  } catch {
+    // Already ended.
+  }
+  notify();
+}
+
+// app.js, on every change of screen: away from Home, Home's microphone stops listening.
+export function commandRouteChanged(route) {
+  if (listening && listeningFor === "home" && route?.name !== "home") abortListening();
+}
+
 // ---- the field -----------------------------------------------------------------------------
 
 function run(text, alternatives = []) {
   const shown = submitCommand(text, alternatives);
   // Understood: the field empties for the next one. Not understood: the words stay to correct.
-  if (shown && !["ask", "problem", "unknown", "message"].includes(shown.stage)) {
-    draft = "";
-    setFields("");
+  if (shown && !["ask", "problem", "unknown", "message"].includes(shown.stage)) clearWords();
+}
+
+// The microphone button of a place, kept too (its focus, and a press under way, stay over a
+// redraw): Speak, or Stop while it listens.
+function updateMic(parts, where) {
+  const shown = speechAvailable();
+  if (shown) {
+    parts.micButton ||= iconButton("mic", t("command.speak"), {
+      class: "command-mic",
+      dataset: { key: `command-mic:${where}` },
+      onclick: () => (listening ? stopListening() : startListening(where)),
+    });
+    const on = Boolean(listening);
+    const label = on ? t("command.stopListening") : t("command.speak");
+    const button = parts.micButton;
+    button.className = `icon-button command-mic ${on ? "is-listening" : ""}`.trim();
+    button.setAttribute("aria-label", label);
+    button.setAttribute("title", label);
+    button.setAttribute("aria-pressed", String(on));
+    if (parts.micIcon !== (on ? "stop" : "mic")) {
+      parts.micIcon = on ? "stop" : "mic";
+      button.replaceChildren(icon(parts.micIcon));
+    }
+  }
+  if (parts.micShown !== shown) {
+    parts.micShown = shown;
+    parts.mic.replaceChildren(...(shown ? [parts.micButton] : []));
   }
 }
 
-function field(where) {
-  const placeholder = !speechAvailable() && IS_IOS ? t("command.placeholderDictation") : t("command.placeholder");
-  const input = h("input", {
-    type: "text",
-    id: `command-input-${where}`,
-    class: "command-input",
-    value: draft,
-    placeholder,
-    enterkeyhint: "go",
-    autocomplete: "off",
-    autocorrect: "off",
-    autocapitalize: "off",
-    spellcheck: "false",
-    dataset: { key: `command-input:${where}` },
-    onfocus: readyToSpeak,
-    oninput: (event) => {
-      draft = event.target.value;
-    },
-    onkeydown: (event) => {
-      if (event.key !== "Escape") return;
-      if (draft) {
-        draft = "";
-        event.target.value = "";
-        event.preventDefault?.();
-      } else if (commandState()) {
-        clearCommand();
-        event.preventDefault?.();
-      }
-    },
-  });
-  const mic = speechAvailable()
-    ? iconButton(listening ? "stop" : "mic", listening ? t("command.stopListening") : t("command.speak"), {
-        class: `command-mic ${listening ? "is-listening" : ""}`,
-        "aria-pressed": String(Boolean(listening)),
-        dataset: { key: `command-mic:${where}` },
-        onclick: () => (listening ? stopListening() : startListening()),
-      })
-    : null;
-  return h(
-    "form",
-    {
-      class: "command-form",
-      onsubmit: (event) => {
-        event.preventDefault?.();
-        run(draft);
+// The field of a place ("home", "dialog"), made the first time and then only brought up to date:
+// its words in the language, the microphone and the answer below it (in slots of their own, so
+// that the input itself never moves).
+function bar(where) {
+  let parts = bars.get(where);
+  if (!parts) {
+    const id = `command-input-${where}`;
+    const input = h("input", {
+      type: "text",
+      id,
+      class: "command-input",
+      // One more than a command can have, so that a longer text pasted and cut short by the field
+      // is never understood in part (command-parser.js).
+      maxlength: String(MAX_LENGTH + 1),
+      enterkeyhint: "go",
+      autocomplete: "off",
+      autocorrect: "off",
+      autocapitalize: "off",
+      spellcheck: "false",
+      dataset: { key: `command-input:${where}` },
+      onfocus: readyToSpeak,
+      oninput: (event) => {
+        draft = event.target.value;
       },
-    },
-    h("label", { class: "visually-hidden", for: `command-input-${where}` }, t("command.label")),
-    input,
-    mic,
-    iconButton("moveForward", t("command.go"), { type: "submit", class: "command-go", dataset: { key: `command-go:${where}` } })
-  );
+      onkeydown: (event) => {
+        if (event.key !== "Escape") return;
+        if (draft) {
+          clearWords();
+          event.preventDefault?.();
+        } else if (commandState()) {
+          clearCommand();
+          event.preventDefault?.();
+        }
+      },
+    });
+    input.value = draft;
+    const label = h("label", { class: "visually-hidden", for: id });
+    const mic = h("span", { class: "command-slot" });
+    const go = iconButton("moveForward", t("command.go"), { type: "submit", class: "command-go", dataset: { key: `command-go:${where}` } });
+    const form = h(
+      "form",
+      {
+        class: "command-form",
+        onsubmit: (event) => {
+          event.preventDefault?.();
+          run(draft);
+        },
+      },
+      label,
+      input,
+      mic,
+      go
+    );
+    parts = { form, input, label, mic, go, output: h("div", { class: "command-slot" }) };
+    bars.set(where, parts);
+  }
+  const { input, label, go, output: below } = parts;
+  label.textContent = t("command.label");
+  input.setAttribute("placeholder", !speechAvailable() && IS_IOS ? t("command.placeholderDictation") : t("command.placeholder"));
+  go.setAttribute("aria-label", t("command.go"));
+  go.setAttribute("title", t("command.go"));
+  // The words of the other place's field (or put there by the app), unless this one is in use.
+  if (document.activeElement !== input && input.value !== draft) input.value = draft;
+  updateMic(parts, where);
+  below.replaceChildren(...[output(where)].filter(Boolean));
+  return parts;
 }
 
 // After a button of the answer is used it goes with the redraw: the field has the focus then.
 function thenField(where, run) {
   return () => {
     run();
-    document.querySelector?.(`#command-input-${where}`)?.focus();
+    bars.get(where)?.input.focus?.();
   };
 }
 
@@ -260,7 +350,7 @@ function examples(list, where) {
           onclick: () => {
             draft = example;
             setFields(example);
-            document.querySelector?.(`#command-input-${where}`)?.focus();
+            bars.get(where)?.input.focus?.();
           },
         },
         example
@@ -286,7 +376,15 @@ function body(now, where) {
           now.labels.map((label, index) =>
             h(
               "button",
-              { type: "button", class: "button button-secondary button-small command-option", dataset: { key: `command-option:${where}:${index}` }, onclick: thenField(where, () => chooseOption(index)) },
+              {
+                type: "button",
+                class: "button button-secondary button-small command-option",
+                dataset: { key: `command-option:${where}:${index}` },
+                // Chosen: the words asked about go, for the next command.
+                onclick: thenField(where, () => {
+                  if (chooseOption(index)) clearWords();
+                }),
+              },
               h("span", { dir: "auto" }, label)
             )
           )
@@ -364,15 +462,23 @@ function readyToSpeak() {
   announce("");
 }
 
-// Home: under the header, for everyone who controls something.
+// Home: under the header, for everyone who controls something. The same section each time.
+let homeSection = null;
+
 export function commandBar() {
   if (!allowed()) return null;
-  return h("section", { class: "command", "aria-label": t("command.label") }, field("home"), output("home"));
+  const { form, output: below } = bar("home");
+  homeSection ||= h("section", { class: "command" }, form, below);
+  homeSection.setAttribute("aria-label", t("command.label"));
+  return homeSection;
 }
 
 // ---- from the other screens ----------------------------------------------------------------
 
+// The dialog, made once: its head, the field, the answer, and its own live region (a modal dialog
+// makes the rest of the page inert, the app's live region too).
 let dialog = null;
+let dialogParts = null;
 let dialogDrawn = "";
 
 function drawDialog(force = false) {
@@ -380,29 +486,33 @@ function drawDialog(force = false) {
   if (!force && now === dialogDrawn) return;
   dialogDrawn = now;
   const active = document.activeElement;
-  const key = dialog.contains(active) ? active.dataset?.key : null;
-  dialog.replaceChildren(
-    h(
-      "div",
-      { class: "dialog-head" },
-      h("h2", { id: "command-dialog-title", class: "dialog-title" }, t("command.title")),
-      iconButton("close", t("common.close"), { onclick: () => dialog.close() })
-    ),
-    field("dialog"),
-    output("dialog")
-  );
+  const key = active && dialog.contains(active) && active !== bars.get("dialog")?.input ? active.dataset?.key : null;
+  dialogParts.title.textContent = t("command.title");
+  dialogParts.close.setAttribute("aria-label", t("common.close"));
+  dialogParts.close.setAttribute("title", t("common.close"));
+  bar("dialog");
+  // A button of the answer had the focus: the same button, redrawn.
   const target = key ? [...dialog.querySelectorAll("[data-key]")].find((item) => item.dataset.key === key && !item.disabled) : null;
-  target?.focus({ preventScroll: true });
+  if (target && target !== document.activeElement) target.focus({ preventScroll: true });
 }
 
 export function openCommandDialog() {
   if (!allowed()) return;
   if (!dialog) {
-    dialog = h("dialog", { id: "command-dialog", class: "dialog command-dialog", "aria-labelledby": "command-dialog-title" });
+    const { form, output: below } = bar("dialog");
+    const title = h("h2", { id: "command-dialog-title", class: "dialog-title" });
+    const close = iconButton("close", t("common.close"), { onclick: () => dialog.close() });
+    const live = h("p", { class: "visually-hidden", role: "status" });
+    dialogParts = { title, close, live };
+    dialog = h("dialog", { id: "command-dialog", class: "dialog command-dialog", "aria-labelledby": "command-dialog-title" }, h("div", { class: "dialog-head" }, title, close), form, below, live);
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
     });
-    dialog.addEventListener("close", stopListening);
+    // Closed while listening: nothing heard is done. The page's live region speaks again.
+    dialog.addEventListener("close", () => {
+      abortListening();
+      speakFrom(null);
+    });
     document.body.append(dialog);
     subscribe(() => {
       if (dialog.open) drawDialog();
@@ -410,7 +520,8 @@ export function openCommandDialog() {
   }
   drawDialog(true);
   if (!dialog.open) dialog.showModal();
-  dialog.querySelector(".command-input")?.focus();
+  speakFrom(dialogParts.live);
+  bars.get("dialog").input.focus();
 }
 
 // A screen's header: the way to the dialog, on screens wide enough for it (styles.css).

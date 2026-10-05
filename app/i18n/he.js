@@ -458,7 +458,7 @@ export default {
     dismiss: "ניקוי",
     listening: "מאזין…",
     hearing: "נשמע: {words}",
-    speechNote: "שירות הדיבור של הדפדפן הופך את זה לטקסט (ב-Chrome הקול נשלח ל-Google, ב-Safari ל-Apple). DirectorLink לא שולח אותו לשום מקום.",
+    speechNote: "שירות הדיבור של הדפדפן הופך את זה לטקסט (ב-Chrome הקול נשלח ל-Google, ב-Edge ל-Microsoft, ב-Safari ל-Apple). DirectorLink לא שולח אותו לשום מקום.",
     speech: {
       blocked: "המיקרופון חסום לאפליקציה הזו. אפשרו אותו בהגדרות הדפדפן, או הקלידו.",
       unavailable: "אין זיהוי דיבור בדפדפן הזה. הקלידו, או השתמשו במיקרופון של המקלדת.",
@@ -549,6 +549,8 @@ export default {
         door: "אין כאן דלתות או שערים.",
       },
       range: "{name} פועל מ-{min} עד {max}.",
+      setpointGap: "אי אפשר לכוון את {name} ל-{temperature}: נקודות החימום והקירור שלו נשארות {gap} זו מזו, בין {min} ל-{max}.",
+      setpointWhich: "{name} במצב אוטומטי: אמרו חימום או קירור עם הטמפרטורה.",
       rangePercent: "אמרו עוצמה מ-0 עד 100%.",
       cannotDim: "{name} רק נדלק ונכבה.",
       cannotDimRoom: "האורות ב{room} רק נדלקים ונכבים.",

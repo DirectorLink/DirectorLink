@@ -24,8 +24,14 @@ class FakeElement extends FakeNode {
   addEventListener(type, listener) {
     (this.listeners[type] ||= []).push(listener);
   }
+  removeAttribute(name) {
+    delete this.attributes[name];
+  }
   append(...children) {
     this.children.push(...children);
+  }
+  replaceChildren(...children) {
+    this.children = children;
   }
   get textContent() {
     return this.children.map((child) => child.textContent).join("");
