@@ -229,13 +229,17 @@ def check_calendar_names(spec, dictionaries):
 
 
 def check_commands(files):
-    """Say or type a command (1.9.0, ADR-063), from {path: text}: the parser is the app's own,
-    without imports (no library, tested under Node); the words alone never open a door or gate (only
-    the door's own button, which asks for its second tap, calls pressRelay or pressDoorbell); and
-    the app's headers allow the microphone for its own pages only."""
+    """Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066), from {path: text}: the parser is the
+    app's own, without imports (no library, tested under Node) but the one rule for lights named
+    for heating, js/heaters.js, which imports nothing either; the words alone never open a door or
+    gate (only the door's own button, which asks for its second tap, calls pressRelay or
+    pressDoorbell); and the app's headers allow the microphone for its own pages only."""
     parser = files["js/command-parser.js"]
-    if re.search(r"^\s*import\b|\bimport\(|\brequire\(", parser, re.M):
-        fail("app/js/command-parser.js must not import anything: the parser is the app's own, pure and tested under Node")
+    imports = re.findall(r"^\s*import\b[^;]*?from\s+\"([^\"]+)\"", parser, re.M | re.S)
+    if any(source != "./heaters.js" for source in imports) or len(imports) != len(re.findall(r"^\s*import\b", parser, re.M)) or re.search(r"\bimport\(|\brequire\(", parser):
+        fail("app/js/command-parser.js must not import anything but ./heaters.js: the parser is the app's own, pure and tested under Node")
+    if re.search(r"^\s*import\b|\bimport\(|\brequire\(", files["js/heaters.js"], re.M):
+        fail("app/js/heaters.js must not import anything: the one rule for heaters, pure and tested under Node")
     for path in ("js/commands.js", "js/views/command.js"):
         if re.search(r"\bpress(Relay|Doorbell)\b", files[path]):
             fail(f"app/{path} must not open doors or gates itself: the door's own button takes the second tap")
@@ -444,7 +448,7 @@ def main():
         if re.search(r"\.body\b|innerHTML", path.read_text(encoding="utf-8")):
             fail(f"app/{path.relative_to(APP).as_posix()} must not use a release's body: its text is not the app's to show")
 
-    check_commands({path: (APP / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/commands.js", "js/views/command.js", "_headers")})
+    check_commands({path: (APP / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/heaters.js", "js/commands.js", "js/views/command.js", "_headers")})
 
     service_worker = (APP / "sw.js").read_text(encoding="utf-8")
     require(service_worker, "requestUrl.origin !== self.location.origin",

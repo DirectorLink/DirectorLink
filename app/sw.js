@@ -78,6 +78,7 @@ const ASSETS = [
   "/js/views/command.js",
   "/js/command-parser.js",
   "/js/commands.js",
+  "/js/heaters.js",
   "/js/views/connect.js",
   "/js/views/find.js",
   "/js/views/history.js",
