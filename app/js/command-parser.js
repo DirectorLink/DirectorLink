@@ -12,7 +12,11 @@
 //                                                `partial`: only part of a name was said ("Did you
 //                                                mean"), so even one match is asked
 //   { status: "problem", problem, ... }          understood, but it cannot be done as said
-//   { status: "unknown", words }                 not understood; `words` it does not know (or none)
+//   { status: "unknown", words, refusal }        not understood; `words` it does not know (or none);
+//                                                `refusal` (not, time, feel) when it says not to,
+//                                                names a time or a change by an amount, or how warm
+//                                                the user feels: then nothing else counts either
+//                                                (not the speech service's other guesses)
 //
 // The catalog: { rooms: [{ id, names }], scenes: [{ id, name }], devices: [{ kind, id, name, room,
 // ... }] }, the kinds: light (dimmable, on), thermostat (modes, mode, dual, min, max), blind
@@ -40,7 +44,8 @@ export function fold(word) {
 const HEBREW = /[א-ת]/;
 const PREFIXES = "והבלמשכ";
 
-// The word without a plural ending (lights, אורות) or a Hebrew feminine one (מנורה).
+// The word without a plural ending (lights, אורות) or a Hebrew feminine one (מנורה). Two Hebrew
+// plurals, ים and ות, are not the same form of a word (בנים, בנות: sameForm).
 function stem(word) {
   if (/^[a-z]+$/.test(word)) {
     if (word.length > 4 && word.endsWith("ies")) return `${word.slice(0, -3)}y`;
@@ -52,6 +57,29 @@ function stem(word) {
     if (word.endsWith("ה")) return word.slice(0, -1);
   }
   return word;
+}
+
+const hebrewPlural = (word) => (HEBREW.test(word) && word.length >= 4 ? (word.endsWith("ימ") ? "ימ" : word.endsWith("ות") ? "ות" : null) : null);
+
+// Two forms of one word: the same without their endings, unless one is a masculine plural and the
+// other a feminine one (בנים, boys, is not בנות, girls).
+function sameForm(a, b) {
+  if (stem(a) !== stem(b)) return false;
+  const one = hebrewPlural(a);
+  const other = hebrewPlural(b);
+  return !one || !other || one === other;
+}
+
+// Hebrew spelled with one vowel letter (י, ו) more or less, or doubled, not first or last: חניה,
+// חנייה; כניסה, כנסה; מטבח, מיטבח. Only for a name's word of four letters or more. "sure" when the
+// shorter has four letters too; with three (גנה for גינה, also דנה for דינה) it is only a typo.
+function spelling(name, said) {
+  if (!HEBREW.test(name) || !HEBREW.test(said) || name.length < 4 || said.length < 3 || Math.abs(name.length - said.length) !== 1) return null;
+  const [long, short] = name.length > said.length ? [name, said] : [said, name];
+  for (let index = 1; index < long.length - 1; index += 1) {
+    if ((long[index] === "י" || long[index] === "ו") && long.slice(0, index) + long.slice(index + 1) === short) return short.length >= 4 ? "sure" : "typo";
+  }
+  return null;
 }
 
 // A Hebrew word said with up to two of its prefixes taken off (ו, ה, ב, ל, מ, ש, כ: "ובסלון" is
@@ -74,6 +102,9 @@ function split(text) {
     .replace(/['’‘`׳״"“”]/g, "")
     // "A/C", "a.c." are AC.
     .replace(/\ba[./]c\b\.?/gi, "ac")
+    // Degrees Celsius: "23°C", "23 °C", "23C", "23º", "23℃".
+    .replace(/[º˚℃]/g, "°")
+    .replace(/(\d)\s*°?\s*c(?![\p{L}\p{N}])/giu, "$1°")
     .replace(/(\d)[.,](\d)/g, "$1\u0001$2")
     // A minus sign before a number ("-18"), not a hyphen after a word ("ל-23").
     .replace(/(^|\s)[-−‐–](?=\d)/g, "$1\u0002")
@@ -104,29 +135,42 @@ const VOCABULARY = [
   ["down", "down lower הורד הורידי הורידו תוריד תורידי תורידו להוריד"],
   ["stop", "stop halt עצור עצרי עצרו תעצור תעצרי תעצרו לעצור עצירה הפסק הפסיקי הפסיקו תפסיק תפסיקי תפסיקו להפסיק"],
   ["start", "start activate הפעל הפעילי הפעילו תפעיל תפעילי תפעילו להפעיל הפעלה התחל התחילי התחילו תתחיל"],
-  ["run", "run scene trigger הרץ הריצי הריצו תריץ תריצי תריצו להריץ סצנה סצינה תרחיש"],
+  ["run", "run scene trigger הרץ הריצי הריצו תריץ תריצי תריצו להריץ סצנה סצינה סצנת סצינת תרחיש"],
   ["play", "play resume unpause continue נגן נגני נגנו תנגן תנגני תנגנו לנגן השמע השמיעי השמיעו תשמיע תשמיעי תשמיעו להשמיע המשך המשיכי המשיכו תמשיך"],
   ["pause", "pause השהה השהי השהו תשהה להשהות השהיה"],
   ["next", "next skip הבא הבאה דלג דלגי דלגו תדלג לדלג"],
   ["volume", "volume vol loudness ווליום וליום עוצמה עוצמת"],
   ["level", "dim brightness level בהירות עמעם עמעמי עמעמו תעמעם לעמעם"],
-  ["cool", "cool cooling cold קירור קר לקרר"],
-  ["heat", "heat heating warm חימום חם לחמם"],
+  ["cool", "cool cooling קירור לקרר"],
+  ["heat", "heat heating חימום לחמם"],
   ["auto", "auto automatic אוטומטי אוטו"],
   ["percent", "percent pct % אחוז אחוזים"],
-  ["degrees", "degree degrees deg ° celsius מעלה מעלות"],
+  ["degrees", "degree degrees deg ° celsius מעלה מעלות צלזיוס"],
   ["all", "all every each כל"],
   ["everything", "everything הכל הכול כולם כולן"],
-  // Not a command: "don't", a question, a time (DirectorLink does it now or not at all).
+  // Not a command: "don't", a question, a time or a change by an amount (DirectorLink does it now,
+  // as said, or not at all).
   ["not", "not dont never אל לא אין בלי"],
   ["question", "is are what whats how which does did why when where who האם מה למה מתי איפה איך מי כמה"],
-  ["time", "am pm oclock minute minutes hour hours seconds tomorrow tonight morning evening afternoon later דקה דקות שעה שעות שנייה שניות מחר בוקר ערב צהריים"],
+  ["time", "am pm oclock minute minutes hour hours seconds tomorrow tonight morning evening afternoon later until till after before within by more less דקה דקות שעה שעות שנייה שניות מחר בוקר ערב צהריים עוד אחרי לפני יותר פחות קצת"],
   [
     "filler",
-    "the a an in at to into of my our your please now hey can could would will you i me want it its be for with and set turn switch make put change adjust room house home whole entire also just then thanks thank kindly air " +
-      "את של על עם ב ה ל ו מ ש כ בבקשה אנא נא לי עכשיו גם רק עד חדר בית אוויר אויר שים שימי שימו תשים תשימי תשימו כוון כווני כוונו תכוון תכווני תכוונו לכוון קבע קבעי קבעו תקבע תקבעי תקבעו שנה תשנה העבר תעביר עשה עשי עשו תעשה תעשי תעשו הגדר תגדיר אפשר תוכל",
+    "the a an in at to into of my our your please now hey can could would will you i me want it its be for with and set turn switch make put change adjust room house home whole entire also just then thanks thank kindly air mode " +
+      "את של על עם ב ה ל ו מ ש כ בבקשה אנא נא לי עכשיו גם רק עד חדר בית אוויר אויר שים שימי שימו תשים תשימי תשימו כוון כווני כוונו תכוון תכווני תכוונו לכוון קבע קבעי קבעו תקבע תקבעי תקבעו שנה תשנה העבר תעביר עשה עשי עשו תעשה תעשי תעשו הגדר תגדיר אפשר תוכל מצב",
   ],
 ];
+// How warm the user feels ("I'm cold", "חם לי") is not what the AC should do: a mode only right
+// after "on", "to" or "על" in a sentence that names the AC ("מזגן על קר", "set the AC to warm").
+const FEELINGS = [
+  ["cool", "cold chilly freezing קר קרה קרים"],
+  ["heat", "warm hot חם חמה חמים"],
+];
+// Before a number, these make it a time, not a level or a temperature, unless a unit follows
+// ("at 7", "in 5", "עד 7"; "at 50%" is a level).
+const AT_WORDS = new Set(["at", "in", "for", "until", "till", "עד"]);
+// A number with ב or מ in front ("ב-7", "בשבע", "ב-20%", "מ-7") is a time or a change by that
+// much, never a level.
+const AT_PREFIX = /^[וש]?[במ]$/;
 const KIND_WORDS = [
   ["light", "light lamp bulb אור מנורה מנורת נורה נורת", "lights lamps lighting bulbs אורות תאורה תאורת מנורות נורות"],
   ["climate", "ac aircon airco thermostat temperature temp conditioner אירקון מזגן תרמוסטט טמפרטורה טמפרטורת", "acs climate thermostats hvac conditioning מזגנים מיזוג"],
@@ -135,6 +179,9 @@ const KIND_WORDS = [
   ["music", "song track speaker שיר רמקול", "music songs speakers sonos audio radio מוזיקה מוסיקה שירים רמקולים סונוס רדיו"],
   ["door", "door gate דלת שער", "doors gates דלתות שערים"],
 ];
+// The words for an AC itself (not a thermostat, temperature or climate): a room's AC is its
+// thermostats that cool, not its floor heating.
+const AC_WORDS = new Set("ac aircon airco conditioner אירקון מזגן acs conditioning מזגנים מיזוג".split(" "));
 
 const ROLES = new Map(); // folded word -> { role, kind?, plural? }
 const ROLE_STEMS = new Map(); // its stem -> the same
@@ -142,17 +189,30 @@ for (const [role, list] of VOCABULARY) {
   for (const entry of list.split(" ")) ROLES.set(fold(entry), { role });
 }
 for (const [kind, singular, plural] of KIND_WORDS) {
-  for (const entry of singular.split(" ")) ROLES.set(fold(entry), { role: "kind", kind, plural: false });
-  for (const entry of plural.split(" ")) ROLES.set(fold(entry), { role: "kind", kind, plural: true });
+  for (const entry of singular.split(" ")) ROLES.set(fold(entry), { role: "kind", kind, plural: false, ac: AC_WORDS.has(entry) });
+  for (const entry of plural.split(" ")) ROLES.set(fold(entry), { role: "kind", kind, plural: true, ac: AC_WORDS.has(entry) });
+}
+for (const [mode, list] of FEELINGS) {
+  for (const entry of list.split(" ")) ROLES.set(fold(entry), { role: "feel", mode });
 }
 for (const [key, value] of ROLES) if (!ROLE_STEMS.has(stem(key))) ROLE_STEMS.set(stem(key), value);
 // Words close enough to a command word to be a typo of it (6 letters or more, never a filler:
 // "night" is not a typo of "light").
 const FUZZY_ROLES = [...ROLES].filter(([key, value]) => key.length >= 6 && value.role !== "filler");
 
-// Lights named for heating (heaters and boilers wired as lights): never switched on by "the lights
-// in the room", only when named.
-const HEATER_WORDS = new Set("heater heating radiator boiler warmer חימום תנור מפזר רדיאטור מחמם דוד בוילר".split(" ").map((entry) => stem(fold(entry))));
+// Lights named for heating (heaters, boilers, heat lamps and floor heating wired as lights): never
+// switched on by "the lights in the room", only when named. Words compared whole, in the singular
+// or plural ("חומה", a wall, is not "חום"; "Warm white" and "אור חם" are lights), and two-word
+// names whose words alone are not ("Hot water", "מים חמים").
+const HEATER_WORDS = new Set(
+  (
+    "heater heating heat heated radiator radiant boiler geyser immersion underfloor towel infrared convector sauna warmer " +
+    "חימום חום מחמם מחממת מחממי תנור מפזר רדיאטור דוד בוילר הסקה מקרן אינפרא אינפרה קומקום סאונה"
+  )
+    .split(" ")
+    .map(fold)
+);
+const HEATER_PAIRS = [["hot", "water"], ["hot", "tub"], ["מים", "חמים"]].map((pair) => pair.map(fold));
 
 // ---- numbers -------------------------------------------------------------------------------
 
@@ -184,11 +244,12 @@ numberWords("ninety תשעים", 90, "tens");
 numberWords("hundred מאה", 100, "hundred");
 numberWords("half halfway חצי", 50, "half");
 
+// A number word, and the prefixes said before it ("בשבע": ב).
 function numberWord(token) {
   if (!token || token.num !== null) return null;
   for (const form of token.bares) {
     const found = NUMBER_WORDS.get(form);
-    if (found) return found;
+    if (found) return { ...found, prefix: token.raw.slice(0, token.raw.length - form.length) };
   }
   return null;
 }
@@ -201,6 +262,7 @@ const isUnit = (token) => Boolean(token?.bares.some((form) => ["percent", "degre
 function readNumber(tokens, index, names) {
   const first = tokens[index];
   let value = null;
+  let prefix = "";
   let end = index + 1;
   if (first.num !== null) {
     value = first.num;
@@ -209,8 +271,9 @@ function readNumber(tokens, index, names) {
     const found = names.has(first.stem) ? null : numberWord(first);
     if (!found) return null;
     const next = numberWord(tokens[end]);
-    if (found.type === "half") return { value: 50, end };
+    if (found.type === "half") return { value: 50, end, prefix: found.prefix, half: true };
     value = found.value;
+    prefix = found.prefix;
     if (found.type === "tens" && next?.type === "unit" && next.value > 0) {
       value += next.value;
       end += 1;
@@ -233,10 +296,12 @@ function readNumber(tokens, index, names) {
     value += 0.5;
     end += and + a + 1;
   }
-  return { value, end };
+  return { value, end, prefix };
 }
 
-// The sentence as tokens: words and numbers.
+// The sentence as tokens: words and numbers. A number says `at`: "by" with ב or מ in front of it
+// ("ב-7", "בעשר", "ב-20%": a time or a change by that much), "at" after at, in, for, until, עד (a
+// time, unless a unit follows: "at 50%").
 function tokenize(text, names) {
   const words = split(text).map((display) => word(display));
   const tokens = [];
@@ -244,12 +309,16 @@ function tokenize(text, names) {
     const number = readNumber(words, index, names);
     if (number) {
       const display = words.slice(index, number.end).map((item) => item.display).join(" ");
-      tokens.push({ ...word(display), raw: `#${number.value}`, stem: "", bares: [], stems: [], num: number.value, digits: words[index].num !== null && number.end === index + 1 });
+      const before = words[index - 1];
+      const at = AT_PREFIX.test(number.prefix) || (before && AT_PREFIX.test(before.raw)) ? "by" : before && AT_WORDS.has(before.raw) ? "at" : null;
+      tokens.push({ ...word(display), raw: `#${number.value}`, stem: "", bares: [], stems: [], num: number.value, digits: words[index].num !== null && number.end === index + 1, at, half: Boolean(number.half) });
       index = number.end;
     } else {
-      // A number word kept as a word still matches a number in a name ("Bedroom two").
+      // A number word kept as a word still matches a number in a name ("Bedroom two"); with ב or
+      // מ in front ("בשבע") it is a time, unless it is in a name ("בשני").
       const found = numberWord(words[index]);
-      tokens.push(found && found.type !== "half" ? { ...words[index], wordNum: found.value } : words[index]);
+      const atWord = Boolean(found && AT_PREFIX.test(found.prefix));
+      tokens.push(found && found.type !== "half" ? { ...words[index], wordNum: found.value, atWord } : found ? { ...words[index], atWord } : words[index]);
       index += 1;
     }
   }
@@ -289,9 +358,12 @@ function closeEnough(a, b) {
 
 function roleOf(token, names) {
   if (token.num !== null) return null;
+  // "בשבע", "בעשר": at seven, at ten.
+  if (token.atWord && !token.bares.some((form) => names.has(stem(form)))) return { role: "time" };
   for (const [index, form] of token.bares.entries()) {
-    // With its prefixes off, a command word of three letters or more ("בבוקר" is not "קר").
-    if (index > 0 && form.length < 3) continue;
+    // With its prefixes off, a command word of three letters or more ("בבוקר" is not "קר"), and
+    // כל ("בכל הבית").
+    if (index > 0 && form.length < 3 && form !== "כל") continue;
     const found = ROLES.get(form) || ROLE_STEMS.get(stem(form));
     if (found) return found;
   }
@@ -305,15 +377,21 @@ function roleOf(token, names) {
 }
 
 // How well a word of a name matches a word said: 1 the same, 0.95 another form (plural), 0.9
-// with a Hebrew prefix, 0.75 a small typo (never against a command word), 0 not at all.
+// with a Hebrew prefix or another Hebrew spelling (חנייה for חניה), 0.75 a small typo (never
+// against a command word; also the other Hebrew plural, בנים for בנות), 0 not at all.
 function quality(part, token, exactOnly) {
   if (token.num !== null) return part.num !== null && part.num === token.num ? 1 : 0;
   if (part.num !== null) return token.wordNum === part.num ? 1 : 0;
   if (part.raw === token.raw) return 1;
   if (exactOnly) return part.bares.some((form) => token.bares.includes(form)) ? 0.9 : 0;
-  if (part.stem === token.stem) return 0.95;
-  if (part.stems.some((form) => token.stems.includes(form))) return 0.9;
-  if (!token.role && token.stems.some((form) => closeEnough(part.stem, form))) return 0.75;
+  if (sameForm(part.raw, token.raw)) return 0.95;
+  if (part.bares.some((form) => token.bares.some((said) => sameForm(form, said)))) return 0.9;
+  if (token.role) return 0;
+  const spelled = part.bares.flatMap((form) => token.bares.map((said) => spelling(form, said)));
+  if (spelled.includes("sure")) return 0.9;
+  if (spelled.includes("typo") || token.stems.some((form) => closeEnough(part.stem, form))) return 0.75;
+  // The other Hebrew plural of the same word.
+  if (part.bares.some((form) => token.bares.some((said) => stem(form) === stem(said)))) return 0.75;
   return 0;
 }
 
@@ -397,6 +475,9 @@ function matchEntity(entity, tokens) {
   };
   walk(0, 0, false);
   if (!best) return null;
+  // A name said only with a typo in a word under six letters (Dana for Dina, בנים for בנות): one
+  // letter there is often another name, so it is asked ("Did you mean"), never done.
+  const unsure = best.full && !best.sure && parts.some((part, index) => part.num === null && part.raw.length < 6 && quality(part, tokens[best.positions[index]], entity.exactOnly) < 0.9);
   if (!best.full) {
     // Part of a name: never by a typo or a number alone, never only by command words, never a name
     // said word for word.
@@ -409,7 +490,7 @@ function matchEntity(entity, tokens) {
     const position = tokens.findIndex((token, index) => !positions.has(index) && !token.role && token.num === null && quality(part, token, false) > 0);
     if (position >= 0) positions.add(position);
   }
-  return { entity, full: best.full, score: best.score, positions };
+  return { entity, full: best.full, unsure, score: best.score, positions };
 }
 
 // ---- what the sentence asks ------------------------------------------------------------------
@@ -421,34 +502,60 @@ function devicesOf(catalog, kind, roomId = undefined) {
   return (catalog.devices || []).filter((device) => KIND_OF[device.kind] === kind && (roomId === undefined || device.room === roomId));
 }
 
+// A word without a plural ending (heaters, דודים), for the heater words.
+function singular(word) {
+  if (/^[a-z]+$/.test(word)) return word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word;
+  return hebrewPlural(word) ? word.slice(0, -2) : word;
+}
+
 function isHeater(device) {
-  return split(device.name).some((part) => {
-    const folded = fold(part);
-    return bareForms(folded).some((form) => HEATER_WORDS.has(stem(form)));
-  });
+  // Each word of the name with its prefixes off ("החימום"), from three letters.
+  const words = split(device.name).map((part) => bareForms(fold(part)).filter((form, index) => index === 0 || form.length >= 3));
+  if (words.some((forms) => forms.some((form) => HEATER_WORDS.has(form) || HEATER_WORDS.has(singular(form))))) return true;
+  return HEATER_PAIRS.some(([one, two]) => words.some((forms) => forms.includes(one)) && words.some((forms) => forms.includes(two)));
 }
 
 const action = (type, fields) => ({ status: "ok", action: { type, room: null, device: null, ...fields } });
 const problem = (code, fields = {}) => ({ status: "problem", problem: code, ...fields });
 
+// A number that is a time or a change by an amount ("at 7", "ב-7", "ב-20%"), not a level.
+function timeNumber(tokens, position) {
+  const token = tokens[position];
+  if (token.at === "by") return true;
+  if (token.at !== "at" || token.half) return false;
+  return !["percent", "degrees"].includes(tokens[position + 1]?.role?.role);
+}
+
+// What makes a sentence not a command to do now, at that word: "not" (don't, אל), "time" (a time,
+// a change by an amount), "feel" (I'm cold, חם לי); null for any other word.
+function refusalOf(tokens, position) {
+  const token = tokens[position];
+  if (token.num !== null) return timeNumber(tokens, position) ? "time" : null;
+  const role = token.role?.role;
+  return role === "not" || role === "time" || role === "feel" ? role : null;
+}
+
 // The words left over once the names are taken out: what they ask, or null when they contradict
 // each other or say nothing this understands.
 function summarize(tokens, taken) {
-  const summary = { actions: new Set(), kinds: new Map(), modes: new Set(), units: new Set(), all: false, everything: false, numbers: [] };
+  const summary = { actions: new Set(), kinds: new Map(), modes: new Set(), units: new Set(), all: false, everything: false, numbers: [], ac: false, feel: false };
   for (const [position, token] of tokens.entries()) {
     if (taken.has(position)) continue;
+    if (refusalOf(tokens, position)) return null;
     if (token.num !== null) {
       summary.numbers.push(token.num);
       continue;
     }
     const role = token.role;
-    if (!role || role.role === "not" || role.role === "time") return null;
+    if (!role) return null;
     if (role.role === "question") {
       summary.question = true;
     } else if (role.role === "kind") {
       summary.kinds.set(role.kind, (summary.kinds.get(role.kind) || false) || role.plural);
+      if (role.ac) summary.ac = true;
     } else if (["cool", "heat", "auto"].includes(role.role)) {
       summary.modes.add(role.role);
+      if (role.feel) summary.feel = true;
     } else if (role.role === "percent" || role.role === "degrees") {
       summary.units.add(role.role);
     } else if (role.role === "all") {
@@ -635,6 +742,22 @@ function kindIntent(kind, targets, where, summary, act) {
   return null;
 }
 
+// An AC, not floor heating or another thermostat that only heats (one that lists no modes may be
+// either).
+const isAC = (thermostat) => !(thermostat.modes || []).length || thermostat.modes.includes("cool");
+
+// A room's thermostats (or the home's) for what was said: with "AC" (מזגן), those that cool; with
+// a mode, those that have it ("cool the living room": its AC, not its floor heating).
+function climateTargets(targets, summary, act) {
+  let list = summary.ac ? targets.filter(isAC) : targets;
+  const mode = [...summary.modes][0];
+  if (mode && act !== "off") {
+    const having = list.filter((device) => (device.modes || []).includes(mode));
+    if (having.length) list = having;
+  }
+  return list;
+}
+
 // What one reading of the sentence (a target T and a room R, either may be null) asks; null when
 // it does not make sense.
 function intent(target, room, summary, catalog) {
@@ -642,6 +765,8 @@ function intent(target, room, summary, catalog) {
   const act = verb(summary);
   if (act === false) return null;
   const roomId = room ? room.entity.room.id : null;
+  // "Cold", "חם" are a mode only for the AC said ("מזגן על קר").
+  if (summary.feel && !summary.kinds.has("climate") && target?.entity.kind !== "climate") return null;
 
   if (target?.entity.type === "scene") {
     if (summary.kinds.size || summary.modes.size || summary.numbers.length || summary.all || summary.everything || room) return null;
@@ -686,7 +811,11 @@ function intent(target, room, summary, catalog) {
   }
   if (summary.everything) return null;
 
-  const targets = devicesOf(catalog, kind, room ? roomId : undefined);
+  let targets = devicesOf(catalog, kind, room ? roomId : undefined);
+  if (kind === "climate" && targets.length) {
+    targets = climateTargets(targets, summary, act);
+    if (!targets.length) return problem("none", { kind, room: roomId });
+  }
   if (room) {
     if (!targets.length) return problem("none", { kind, room: roomId });
     return kindIntent(kind, targets, { room: roomId, device: null }, summary, act);
@@ -696,6 +825,8 @@ function intent(target, room, summary, catalog) {
   if (!targets.length) return problem("none", { kind, room: null });
   if (targets.length === 1) {
     const device = targets[0];
+    // The only light this user has, when it is a heater, is not "the light".
+    if (kind === "light" && act !== "off" && isHeater(device)) return problem("none", { kind, room: null });
     return kindIntent(kind, targets, { room: null, device: { kind: device.kind, id: device.id } }, summary, act);
   }
   const off = kind === "light" || kind === "climate" ? act === "off" : kind === "blind" ? act === "close" || act === "down" : false;
@@ -723,11 +854,24 @@ function effect(result) {
 
 // ---- parse ---------------------------------------------------------------------------------
 
+// Longer than this, a text is not a command (the field takes one letter more, so that a longer
+// text pasted and cut short by it is never understood in part).
+export const MAX_LENGTH = 200;
+
 export function parseCommand(text, catalog = {}) {
+  const sentence = String(text ?? "");
+  if (sentence.trim().length > MAX_LENGTH) return { status: "unknown", words: [] };
   const { entities, names } = prepare(catalog);
-  const tokens = tokenize(text, names);
+  const tokens = tokenize(sentence, names);
   if (!tokens.length || tokens.length > 30) return { status: "unknown", words: [] };
+  // A question mark makes it a question ("האור במטבח כבוי?", "kitchen lights off?"): Hebrew asks
+  // yes or no without a question word, and dictation writes "?" for a rising voice.
+  if (/[?？؟]/u.test(sentence)) return problem("question");
   for (const token of tokens) token.role = roleOf(token, names);
+  // "על קר", "to warm", "on cold": a mode (the AC must be said too: intent).
+  for (const [position, token] of tokens.entries()) {
+    if (token.role?.role === "feel" && ["על", "to", "on"].includes(tokens[position - 1]?.raw)) token.role = { role: token.role.mode, feel: true };
+  }
 
   const matches = entities.map((entity) => matchEntity(entity, tokens)).filter(Boolean);
   const rooms = [null, ...matches.filter((match) => match.entity.type === "room")];
@@ -751,12 +895,15 @@ export function parseCommand(text, catalog = {}) {
       // "Kitchen lights" is the room's lights, "the kitchen light" a light of that name.
       if (room && !target && (plural || !kindWords.length)) score += 0.3;
       if (target?.entity.type === "device" && kindWords.some((token) => token.role.kind === target.entity.kind && !token.role.plural)) score += 0.3;
-      readings.push({ result, score, partial: Boolean((room && !room.full) || (target && !target.full)) });
+      readings.push({ result, score, partial: Boolean((room && (!room.full || room.unsure)) || (target && (!target.full || target.unsure))) });
     }
   }
 
   if (!readings.length) {
     const covered = new Set(matches.flatMap((match) => [...match.positions]));
+    // Don't, a time, how warm one feels: refused, whatever else was said.
+    const refusal = tokens.map((_token, position) => (covered.has(position) ? null : refusalOf(tokens, position))).find(Boolean);
+    if (refusal) return { status: "unknown", words: [], refusal };
     const words = tokens.filter((token, position) => !token.role && token.num === null && !covered.has(position)).map((token) => token.display);
     // Two rooms said at once.
     const fullRooms = matches.filter((match) => match.entity.type === "room" && match.full);
