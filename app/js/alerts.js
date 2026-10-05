@@ -25,6 +25,10 @@ import { api, checkInThroughAccount, keyInUse, whenForgotten } from "./session.j
 import { can, notify, state, subscribe } from "./state.js";
 
 const ALERTS_KEY = "directorlink.alerts"; // { home, endpoint, keyId, offline, deviceRequests }: this browser gets that home's alerts
+// { home, keyId }: this device's alerts went off (the browser dropped its subscription, or the
+// permission) and that home's controller is still to be told (1.9.0, ADR-062): until then it would
+// count this device as asked by an ask-to-open link.
+const LOST_KEY = "directorlink.alerts.lost";
 // Where the service worker finds the words and the alert key (sw.js uses the same names).
 export const TEXTS_CACHE = "directorlink-alerts";
 export const TEXTS_PATH = "/alert-texts.json";
@@ -84,6 +88,24 @@ function remember(value) {
     else localStorage.removeItem(ALERTS_KEY);
   } catch {
     // Blocked storage: the switch shows off next time; the alerts still come.
+  }
+}
+
+function lostNote() {
+  try {
+    const value = JSON.parse(localStorage.getItem(LOST_KEY) || "null");
+    return value && /^[0-9a-f]{32}$/.test(value.home) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function noteLost(value) {
+  try {
+    if (value) localStorage.setItem(LOST_KEY, JSON.stringify({ home: value.home, keyId: value.keyId || null }));
+    else localStorage.removeItem(LOST_KEY);
+  } catch {
+    // Blocked storage: the account service tells the controller (ADR-062).
   }
 }
 
@@ -305,12 +327,76 @@ function finish(kind, key) {
 }
 
 // Tells the controller that this device's alerts are on or off (DirectorLink 1.7.0); its choices
-// come back. Throws when it could not.
-async function tellController(on) {
-  const choices = await api("/v1/alerts/choices", { method: "PUT", body: { on } });
-  alertsUi.choices = choices;
-  choicesRead = true;
-  return choices;
+// come back. Throws when it could not. One after another, so that the last said is the last heard.
+let telling = Promise.resolve();
+function tellController(on) {
+  const told = telling.then(() => api("/v1/alerts/choices", { method: "PUT", body: { on } }));
+  telling = told.catch(() => null);
+  return told.then((choices) => {
+    alertsUi.choices = choices;
+    choicesRead = true;
+    return choices;
+  });
+}
+
+// Tells the controller that this device's alerts are off, while this device has its key there and
+// is linked to that home. When it cannot be told now (its system is not read yet, or it is out of
+// reach), it is told once it can (tellLost; 1.9.0, ADR-062): until then it would count this device
+// as asked by an ask-to-open link.
+async function tellOff(home, keyId) {
+  if (!keyInUse() || !home || home !== savedRemote()?.home) return;
+  if (state.system && !controllerChooses()) return; // a controller before 1.7.0 keeps no "on"
+  if (controllerChooses()) {
+    try {
+      await tellController(false);
+      noteLost(null);
+      return;
+    } catch {
+      // Told once it can be.
+    }
+  }
+  noteLost({ home, keyId });
+}
+
+// What tellOff could not tell (lostNote), once this device reaches the controller with the same
+// key; tried again a minute later. Alerts on again, another home or another key end it.
+let lostTried = 0;
+let lostTelling = false;
+async function tellLost() {
+  const note = lostNote();
+  if (!note || lostTelling || alertsUi.busy) return;
+  const remote = savedRemote();
+  if (remembered()?.home === note.home || remote?.home !== note.home || (note.keyId && remote.keyId !== note.keyId)) {
+    noteLost(null);
+    return;
+  }
+  if (!keyInUse() || !state.system || !state.role || state.status !== "connected" || Date.now() - lostTried < CHOICES_RETRY_MS) return;
+  if (!controllerChooses()) {
+    noteLost(null);
+    return;
+  }
+  lostTelling = true;
+  lostTried = Date.now();
+  try {
+    await tellController(false);
+    noteLost(null);
+  } catch (error) {
+    // Refused by the controller itself (its key is gone, say): nothing left to tell. Out of reach,
+    // or the account's own refusal: a minute later.
+    if (error?.sealed && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) noteLost(null);
+  } finally {
+    lostTelling = false;
+  }
+  notify();
+}
+
+// This browser lost its subscription, or may no longer have it: the switch shows off, the account
+// service forgets it (and tells the controller too, ADR-062), and so does this device (tellOff).
+async function lose(saved, keyId) {
+  await cloud("DELETE", saved.home, { endpoint: saved.endpoint }).catch(() => null);
+  remember(null);
+  await saveAlertKey(null, null);
+  await tellOff(saved.home, keyId);
 }
 
 // The switch, turned on: permission (asked only here), this browser's subscription, registered
@@ -352,6 +438,7 @@ export async function turnAlertsOn() {
       }
     }
     remember({ home: remote.home, endpoint: subscription.endpoint, keyId: remote.keyId, offline: true, deviceRequests: true });
+    noteLost(null);
     await Promise.all([saveTexts(), saveAlertKey(remote.home, remote.keyId)]);
     refreshed = true;
     finish("success", "turnedOn");
@@ -361,9 +448,10 @@ export async function turnAlertsOn() {
 }
 
 // The switch, turned off; also when this device signs out, forgets its key or is linked to another
-// home (`quiet`: nothing to say). The account service forgets this browser, and the browser drops
-// its subscription, so nothing arrives even if the first could not be reached; the controller is
-// told, while this device still has its key there, so that it seals nothing more for it.
+// home, or the browser no longer lets it have them (`quiet`: nothing to say). The account service
+// forgets this browser, and the browser drops its subscription, so nothing arrives even if the first
+// could not be reached; the controller is told, while this device still has its key there, so that
+// it seals nothing more for it (since 1.9.0 also later, when it cannot be told now: tellOff).
 export async function turnAlertsOff({ quiet = false } = {}) {
   const saved = remembered();
   if (quiet ? !saved : alertsUi.busy) return;
@@ -382,9 +470,9 @@ export async function turnAlertsOff({ quiet = false } = {}) {
     // Unsubscribed or not, the switch is off: the account service drops a browser its push
     // service no longer knows.
   }
-  if (controllerChooses() && keyInUse() && saved?.home === savedRemote()?.home) await tellController(false).catch(() => null);
   remember(null);
   await saveAlertKey(null, null);
+  await tellOff(saved?.home, saved?.keyId || savedRemote()?.keyId);
   if (quiet) {
     alertsUi.choices = null;
     choicesRead = false;
@@ -426,7 +514,8 @@ async function readChoices() {
   choicesTried = Date.now();
   try {
     const choices = await api("/v1/alerts/choices");
-    alertsUi.choices = choices?.on ? choices : await tellController(true);
+    // Alerts that went meanwhile (lose) are not said to be on again.
+    alertsUi.choices = choices?.on || !remembered() ? choices : await tellController(true);
   } catch {
     choicesRead = false; // asked again a minute later
   }
@@ -455,8 +544,9 @@ async function refreshAlerts() {
     try {
       subscription = await browserSubscription(registration, key.data.public_key);
     } catch {
-      // The browser dropped it and will not make another without a tap: the switch shows off.
-      remember(null);
+      // The browser dropped it and will not make another without a tap: the switch shows off, and
+      // the controller is told (1.9.0).
+      await lose(saved, remote.keyId);
       notify();
       return;
     }
@@ -469,8 +559,7 @@ async function refreshAlerts() {
       await Promise.all([saveTexts(), saveAlertKey(saved.home, remote.keyId)]);
     } else if (result.status === 403 || result.status === 409) {
       await subscription.unsubscribe().catch(() => {});
-      remember(null);
-      await saveAlertKey(null, null);
+      await lose(saved, remote.keyId);
       alertsUi.message = { kind: "info", key: refusal(result) };
     }
   } catch {
@@ -483,6 +572,7 @@ async function refreshAlerts() {
 // controller's choices read once it says it has them.
 let textsLanguage = null;
 subscribe(() => {
+  if (lostNote()) tellLost();
   if (!remembered()) return;
   if (textsLanguage !== currentLanguage()) {
     textsLanguage = currentLanguage();
@@ -498,4 +588,19 @@ subscribe(() => {
 });
 
 // A forgotten key ends this device's alerts (it may belong to someone else next).
-whenForgotten(() => turnAlertsOff({ quiet: true }));
+whenForgotten(() => {
+  noteLost(null);
+  return turnAlertsOff({ quiet: true });
+});
+
+// The browser replaced or dropped its push subscription (sw.js, pushsubscriptionchange; 1.9.0): the
+// registration is made again, or the switch shows off and the controller is told.
+try {
+  navigator.serviceWorker?.addEventListener?.("message", (event) => {
+    if (event.data?.type !== "directorlink-push-changed" || !remembered()) return;
+    refreshed = false;
+    notify();
+  });
+} catch {
+  // No service worker here: nothing to hear.
+}

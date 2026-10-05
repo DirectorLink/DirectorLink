@@ -241,6 +241,48 @@ function tests.a_ring_goes_sealed_to_every_key_that_switched_alerts_on_and_wants
     T.eq(#home.notified(), 0)
 end
 
+-- 1.9.0 (ADR-062): the account service says which keys' browsers it no longer has ("alerts_gone":
+-- their push service no longer knew them, or they went without the device telling the controller).
+-- Their alerts are off from then on, kept so, until their app says otherwise.
+function tests.a_key_whose_browser_the_account_service_dropped_gets_nothing_more()
+    local home = home()
+    home.add("Hall tablet", "member")
+    home.on("admin")
+    home.on("Hall tablet", { doorbell = true })
+    home.notified()
+    local tabletId = home.keys["Hall tablet"].id
+    local function gone(message)
+        ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, Json.encode(message)))
+    end
+
+    -- Unknown key ids and anything that is not a list change nothing; never answered.
+    gone({ type = "alerts_gone", id = "g1", keys = { "ffffffff", 7 } })
+    gone({ type = "alerts_gone", id = "g2", keys = "all" })
+    gone({ type = "alerts_gone", id = "g3" })
+    T.eq(#sent(home.connection), 0, "no answer")
+    T.eq(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key }).json.on, true)
+
+    gone({ type = "alerts_gone", id = "g4", keys = { tabletId } })
+    T.eq(#sent(home.connection), 0, "no answer")
+    local choices = T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key }).json
+    T.eq(choices.on, false, "off, as if its app had said so")
+    T.eq(choices.kinds.doorbell, true, "its kinds stay")
+    T.eq(T.http(home.mock, "GET", "/v1/alerts/choices", { key = home.admin }).json.on, true, "another key's stay on")
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local notified = home.notified()
+    T.eq(#notified, 1)
+    T.eq(count(notified[1].message["for"]), 1, "only the admin's device")
+    T.truthy(notified[1].message["for"][home.adminId])
+    local logs = T.http(home.mock, "GET", "/v1/logs?category=alerts&limit=50", { key = home.admin }).body
+    T.contains(logs, "alerts off for devices DirectorLink's servers can no longer reach")
+
+    -- Kept through an update; its app switching alerts on again (its next start) brings them back.
+    local updated = Mock.updateDriver(home.mock)
+    T.eq(T.http(updated, "GET", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key }).json.on, false, "kept")
+    T.eq(T.http(updated, "PUT", "/v1/alerts/choices", { key = home.keys["Hall tablet"].key, body = { on = true } }).json.on, true)
+end
+
 function tests.nothing_goes_out_for_nobody_or_without_the_relay()
     local home = home()
     home.add("Hall tablet", "viewer")

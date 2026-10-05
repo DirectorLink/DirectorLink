@@ -733,6 +733,12 @@ export default {
     removeConfirm: "Remove this link? It stops working at once.",
     removeOtherConfirm: "Remove the link of {person} for {name}? It stops working at once.",
     removed: "The link was removed.",
+    // The links of the user's other devices, on a door's screen (1.9.0, ADR-062).
+    othersTitle: "On your other devices",
+    othersHelp: "Each of your devices has its own link for this door. Remove one you no longer use, such as on a lost phone: it stops working at once.",
+    otherDevice: "Another device of yours",
+    removeDeviceConfirm: "Remove the link on {device} for {name}? It stops working at once.",
+    onDevice: "on {device}",
     listTitle: "Ask before opening",
     listHelp: "Doors and gates whose link asks its person before opening. A removed link stops working at once, and so do the links of a device whose access is revoked.",
     listEmpty: "No links yet. In a room, a door’s Ask makes one.",

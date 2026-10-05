@@ -211,8 +211,11 @@ their **Open** there opens it.
   the home linked. One link per door and key: the door's row in its room has **Ask**, which opens its
   screen (`#/door/<id>/ask`); making it again replaces it. The secret is shown once, as a scene
   link's. A key sees and removes its person's links; admins see everyone's on Scenes → *Links for
-  automations*, and can remove them. In the API: `GET`, `POST /v1/ask-links` (`{"relay_id": 70,
-  "label": "Arriving home"}`) and `DELETE /v1/ask-links/{linkId}`.
+  automations*, and can remove them. Since 1.9.0 (ADR-062) the door's screen also lists the links of
+  the user's other devices for that door, each with the device it was made on and **Remove**: the
+  link on a lost phone goes there, whatever the user's role. In the API: `GET`, `POST /v1/ask-links`
+  (`{"relay_id": 70, "label": "Arriving home"}`) and `DELETE /v1/ask-links/{linkId}`; since 1.9.0
+  each link says its `device` and whether it is one of the asking user's (`this_user`).
 - **The run** is a scene link's (the same address, POST with the secret, the same limits), and opens
   nothing. The controller sends one notification, sealed to each device's key like every alert
   (ADR-050), to the devices of the link's person that may open the door and have **Alerts on this
@@ -223,7 +226,7 @@ their **Open** there opens it.
   | --- | --- |
   | `asked` | the person's devices were asked |
   | `waiting` | a question about this door is still open for this person (two minutes): nothing new is sent |
-  | `nobody` | none of the person's devices that may open the door has alerts on |
+  | `nobody` | none of the person's devices that may open the door has alerts on (since 1.9.0 also when their browsers lost their push subscription: the app or DirectorLink's servers tell the controller, ADR-062) |
   | `doors_off` | Door Control is off in Composer |
   | `not_asked` | the notification could not be sent now (try again) |
 

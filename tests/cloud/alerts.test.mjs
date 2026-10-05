@@ -74,14 +74,15 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 // A controller at a new home: its keys (id -> API key), which are admin keys, its invitations.
 // `pings`: it pings every half second, as a driver does (every 10 s); without, it goes silent.
-async function home({ pings = true } = {}) {
-  const state = { home: randomHex(16), secret: randomHex(32), keys: new Map(), admins: new Set(), invitations: new Map(), claimToken: randomHex(24), pings };
+// `features`: what its hello says it takes (1.9.0: alerts_gone); `gone`: the alerts_gone it got.
+async function home({ pings = true, features = null } = {}) {
+  const state = { home: randomHex(16), secret: randomHex(32), keys: new Map(), admins: new Set(), invitations: new Map(), claimToken: randomHex(24), pings, gone: [] };
   state.connect = async () => {
     const connection = await connectDriver({ url: worker.ws, home: state.home, secret: state.secret, pingIntervalMs: state.pings ? 500 : 0, silenceTimeoutMs: 0, hello: false });
     drivers.push(connection);
     state.connection = connection;
     // A 1.6.0 driver says how often it pings: the relay takes its socket as stale after 2.5 of them.
-    connection.sendJson({ type: "hello", home: state.home, version: "1.6.0", ping_s: 1 });
+    connection.sendJson({ type: "hello", home: state.home, version: features ? "1.9.0" : "1.6.0", ping_s: 1, ...(features ? { features } : {}) });
     connection.on("unknown", (text) => answer(state, connection, JSON.parse(text)));
     return connection;
   };
@@ -94,6 +95,8 @@ async function home({ pings = true } = {}) {
 
 function answer(state, connection, message) {
   const reply = (fields) => connection.sendJson({ id: message.id, ...fields });
+  // Told, never answered (1.9.0).
+  if (message.type === "alerts_gone") return state.gone.push(message);
   if (message.type === "claim") {
     return reply({ type: "claim_result", ok: message.token === state.claimToken, code: message.token === state.claimToken ? undefined : "INVALID_CLAIM" });
   }
@@ -160,8 +163,8 @@ const membersOf = async (state, cookie) => (await call("GET", `/v1/homes/${state
 
 // Dana (or `person`, or the account of `cookie`) pairs at home (an admin key), claims the home and
 // uses it once through the account.
-async function claimedHome({ pings, person = DANA, cookie } = {}) {
-  const state = await home({ pings });
+async function claimedHome({ pings, person = DANA, cookie, features } = {}) {
+  const state = await home({ pings, features });
   const keyId = randomHex(4);
   state.keys.set(keyId, `ak_${randomHex(24)}`);
   state.admins.add(keyId);
@@ -559,6 +562,55 @@ test("at most sixty sealed alerts an hour reach a home's browsers", TEST, async 
   await eventually(async () => logged("notify_limited", state.home), "the limit to be logged");
   await sleep(1000);
   assert.equal(sealedTo(browser).length, 60, "the sixty-first and after wait for the hour");
+});
+
+// 1.9.0 (ADR-062): a browser whose push subscription is gone cannot get the question of an
+// ask-to-open link. The controller is told which keys have no browser left, key ids only, so that it
+// answers "nobody" rather than "asked".
+test("the controller is told which keys no browser can get alerts for, by key id only", TEST, async () => {
+  const features = ["scene_links", "alerts_gone"];
+  const { state, dana, keyId: danaKey } = await claimedHome({ features });
+  const avi = await joins(state, dana, AVI);
+  await sleep(300);
+  // At each "keys": none of its keys has a browser yet.
+  await eventually(async () => state.gone.some((message) => message.keys.includes(danaKey) && message.keys.includes(avi.keyId)), "the keys without a browser");
+  const danaBrowser = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, danaBrowser, danaKey)).status, 201);
+  const aviBrowser = push.subscribe({ status: 410 });
+  assert.equal((await subscribeWithKey(state, avi.cookie, aviBrowser, avi.keyId)).status, 201);
+  state.gone.length = 0;
+  state.announce();
+  await sleep(500);
+  assert.deepEqual(state.gone, [], "both have a browser now");
+
+  // Avi's push service no longer knows his browser: his key is told, Dana's is not.
+  const danaPart = sealedFor(state.keys.get(danaKey), state.home, danaKey, { v: 1, kind: "open_request" });
+  const aviPart = sealedFor(state.keys.get(avi.keyId), state.home, avi.keyId, { v: 1, kind: "open_request" });
+  notify(state, { [danaKey]: danaPart, [avi.keyId]: aviPart }, { brief: true });
+  const [told] = await eventually(async () => (state.gone.length ? state.gone : null), "the gone browser's key");
+  assert.deepEqual(told.keys, [avi.keyId]);
+  assert.deepEqual(Object.keys(told).sort(), ["id", "keys", "type"], "key ids only: no address, nothing else");
+  assert.equal(sealedTo(danaBrowser).length, 1);
+  assert.ok(logged("alerts_gone_told", state.home));
+  // A notify for a key with no browser at all says so too.
+  state.gone.length = 0;
+  notify(state, { [avi.keyId]: aviPart }, { brief: true });
+  await eventually(async () => state.gone.some((message) => message.keys.join() === avi.keyId), "the key without a browser");
+
+  // A browser removed by its app (or its account signing out): its key is told when it was the last.
+  state.gone.length = 0;
+  assert.equal((await call("DELETE", `/v1/homes/${state.home}/alerts`, { cookie: dana, body: { endpoint: danaBrowser.subscription.endpoint } })).status, 204);
+  await eventually(async () => state.gone.some((message) => message.keys.includes(danaKey)), "Dana's key, after its browser went");
+
+  // A driver whose hello does not list alerts_gone (before 1.9.0) is never sent it.
+  const old = await claimedHome();
+  const oldBrowser = push.subscribe({ status: 410 });
+  assert.equal((await subscribeWithKey(old.state, old.dana, oldBrowser, old.keyId)).status, 201);
+  notify(old.state, { [old.keyId]: sealedFor(old.state.keys.get(old.keyId), old.state.home, old.keyId, { v: 1, kind: "doorbell" }) }, { brief: true });
+  await eventually(async () => push.received.some((entry) => entry.id === oldBrowser.id), "the push to the gone browser");
+  old.state.announce();
+  await sleep(800);
+  assert.deepEqual(old.state.gone, []);
 });
 
 test("offline alerts reach the admin keys' browsers that want them, and the browsers of apps before 1.7.0", TEST, async () => {

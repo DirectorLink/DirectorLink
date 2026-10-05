@@ -183,7 +183,13 @@ async function startWorker({ oldCaches = [], windows = [], opened = [], shown = 
     listeners.push({ data, waitUntil: (promise) => (pending = promise) });
     await pending;
   };
-  return { network, storage, request, notificationClick, push };
+  // The browser replaced or dropped the push subscription (1.9.0).
+  const subscriptionChange = async () => {
+    let pending;
+    listeners.pushsubscriptionchange({ oldSubscription: null, newSubscription: null, waitUntil: (promise) => (pending = promise) });
+    await pending;
+  };
+  return { network, storage, request, notificationClick, push, subscriptionChange };
 }
 
 async function textOf(response) {
@@ -583,4 +589,20 @@ test("an ask-to-open link's question opens the app's question, for as long as it
     await push(sealedPush(sealDetail({ ...question, ...broken })));
     assert.equal(shown.at(-1).options.body, GENERAL, JSON.stringify(broken));
   }
+});
+
+// 1.9.0 (ADR-062): the worker cannot tell the controller (it has no key); it tells the open app,
+// which registers again or shows alerts off and tells the controller (js/alerts.js).
+test("a push subscription the browser replaced or dropped is told to the open app", async () => {
+  const messages = [];
+  const windows = [
+    { url: "https://elsewhere.example/", postMessage: () => messages.push("elsewhere") },
+    { url: `${ORIGIN}/#/`, postMessage: (message) => messages.push({ ...message }) },
+  ];
+  const { subscriptionChange } = await startWorker({ windows });
+  await subscriptionChange();
+  assert.deepEqual(messages, [{ type: "directorlink-push-changed" }], "only the app's windows");
+  windows.length = 0;
+  await subscriptionChange();
+  assert.equal(messages.length, 1, "no window: the app does it at its next start");
 });

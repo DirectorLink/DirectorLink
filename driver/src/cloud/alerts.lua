@@ -12,7 +12,8 @@
 -- that failed the admins), whose device has switched alerts on, and whose own choices include it
 -- (DEFAULTS until it chose). The choices are
 -- each key's, kept in the driver's persistent data and read and set by that key only
--- (GET and PUT /v1/alerts/choices, src/api/handlers/alerts.lua).
+-- (GET and PUT /v1/alerts/choices, src/api/handlers/alerts.lua); since 1.9.0 a key's device is
+-- also switched off when DirectorLink's servers have no browser left for it (Alerts.gone).
 --
 -- A key's alert key is HMAC-SHA256(its lock key, LABEL); its "enc" and "mac" keys seal a detail as
 -- lock.lua seals a request: AES-256-CBC, then an HMAC-SHA256 over the home, the key id, the IV and
@@ -362,6 +363,45 @@ function Alerts.prune(keys)
         save()
     end
     return removed
+end
+
+-- The account service has no browser left for these key ids (1.9.0, ADR-062: its "alerts_gone"
+-- message, docs/RELAY.md): their push service no longer knew it, or it went without the device
+-- telling the controller. Their alerts are off from then on, as if their app had said so: nothing is
+-- sealed to them any more, and an ask-to-open link whose devices are all gone answers `nobody`
+-- rather than `asked`. Their kinds stay; an app that still has alerts on says so again at its next
+-- start. Only keys this controller has, at most Alerts.GONE_MAX at a time. Returns how many it
+-- switched off.
+Alerts.GONE_MAX = 200
+
+function Alerts.gone(keyIds)
+    if not state.readable or type(keyIds) ~= "table" then
+        return 0
+    end
+    local off = {}
+    for index, id in ipairs(keyIds) do
+        if index > Alerts.GONE_MAX then
+            break
+        end
+        local choice = type(id) == "string" and state.choices[id] or nil
+        if choice and choice.on and not off[id] then
+            off[id] = true
+            off[#off + 1] = id
+            choice.on = false
+        end
+    end
+    if #off == 0 then
+        return 0
+    end
+    if not save() then
+        for _, id in ipairs(off) do
+            state.choices[id].on = true
+        end
+        Log.warn("alerts", "alerts of devices DirectorLink's servers can no longer reach could not be switched off", { keys = #off })
+        return 0
+    end
+    Log.info("alerts", "alerts off for devices DirectorLink's servers can no longer reach", { keys = #off, key_ids = table.concat(off, ",") })
+    return #off
 end
 
 -- ---- sending ---------------------------------------------------------------------------------

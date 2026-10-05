@@ -34,7 +34,8 @@ import { receiveBackupChunk } from "./backups.js";
 // Scene links (ADR-051): a phone's automation runs a scene; the controller checks the secret.
 import { LINK_ID, LINK_SECRET, RESULT_MESSAGES, linkNotFound } from "./scene-links.js";
 // Alerts (ADR-047, ADR-050): this object tells alerts.js when the driver connects and disconnects,
-// the admin key ids and the controller's "alert" and "notify" messages, and runs its alarms.
+// the admin key ids and the controller's "alert" and "notify" messages, and runs its alarms; alerts.js
+// tells the driver which keys' browsers are gone (1.9.0, ADR-062: tellDriver).
 import { HomeAlerts } from "./alerts.js";
 // The oldest DirectorLink the relay takes (ADR-059): a home whose last driver is older is answered
 // HOME_UPDATE_REQUIRED, not HOME_OFFLINE (the Worker refuses that driver's connections).
@@ -477,6 +478,28 @@ export class HomeRelay extends DurableObject {
   heardDriverSocket() {
     const ws = this.driverSocket();
     return ws && !this.stale(ws) ? ws : null;
+  }
+
+  // The driver's socket while it is heard and its hello lists `feature` (1.7.0), else null.
+  driverTakes(feature) {
+    const ws = this.heardDriverSocket();
+    const { features } = ws?.deserializeAttachment() ?? {};
+    return Array.isArray(features) && features.includes(feature) ? ws : null;
+  }
+
+  // Tells the driver `message` ({ type, ... }, with an id of its own) when it takes `feature`; it
+  // answers nothing. Whether it went (alerts.js: "alerts_gone", 1.9.0).
+  tellDriver({ type, ...fields }, feature) {
+    const ws = this.driverTakes(feature);
+    if (!ws) {
+      return false;
+    }
+    try {
+      ws.send(JSON.stringify({ type, id: crypto.randomUUID(), ...fields }));
+      return true;
+    } catch {
+      return false; // the driver went away; it hears it at its next connection
+    }
   }
 
   // The live driver socket (the newest, while a replaced one is still closing), or null.
