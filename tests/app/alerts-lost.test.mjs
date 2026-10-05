@@ -240,7 +240,7 @@ test("at start, a browser that dropped its subscription shows alerts off and tel
   await until(() => told().length === 1, "the controller told");
   assert.deepEqual(told(), [{ on: false }]);
   assert.equal(home.choices.on, false);
-  assert.equal(localStorage.getItem(LOST), null);
+  await until(() => localStorage.getItem(LOST) === null, "the note gone once the controller answered");
   notify();
   await wait(50);
   assert.equal(told().length, 1, "said once");
@@ -281,7 +281,7 @@ test("alerts turned off in the browser's settings: the controller is told at the
   await until(() => told().length === 1, "the controller told");
   assert.deepEqual(told(), [{ on: false }]);
   assert.equal(alertsOn(), false);
-  assert.equal(localStorage.getItem(LOST), null);
+  await until(() => localStorage.getItem(LOST) === null, "the note gone once the controller answered");
   browser.permission = "granted";
 });
 
@@ -313,7 +313,7 @@ test("a controller out of reach is told a minute later; alerts switched on again
     notify();
     await until(() => told().length === 1, "the controller told");
     assert.deepEqual(told(), [{ on: false }]);
-    assert.equal(localStorage.getItem(LOST), null);
+    await until(() => localStorage.getItem(LOST) === null, "the note gone once the controller answered");
 
     // Again out of reach, and then alerts switched on again: nothing off is told any more.
     home.requests.length = 0;
