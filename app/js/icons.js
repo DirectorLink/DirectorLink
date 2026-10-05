@@ -85,6 +85,9 @@ const PATHS = {
   skipPrevious: '<path d="M18.5 5.5v13l-9-6.5Z"/><path d="M5.5 5.5v13"/>',
   volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
   volumeOff: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4Z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
+  // Say or type a command (ADR-063): the microphone, and the field's way in from a header.
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0"/><path d="M12 17.5V21"/>',
+  say: '<path d="M20 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2Z"/><path d="M8 8.5h8M8 12h5"/>',
 };
 
 // Icons that point along the reading direction; CSS mirrors them in right-to-left layouts.

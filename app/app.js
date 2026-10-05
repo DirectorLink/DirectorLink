@@ -29,6 +29,7 @@ import { loadSchedules } from "./js/schedules.js";
 import { findDevice, state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
+import { commandSignature } from "./js/views/command.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
@@ -285,6 +286,8 @@ function signature() {
     alertsSignature(),
     // Joining from another device (ADR-053): this device's request, or the account's new devices'.
     deviceJoinSignature(),
+    // Say or type a command (ADR-063): what it understood, asks or did, and the microphone.
+    commandSignature(),
     state.devices,
     state.sentBrightness,
     Object.fromEntries(Object.entries(state.errors).map(([key, value]) => [key, value.text])),

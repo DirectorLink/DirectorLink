@@ -34,12 +34,15 @@ import { cancelTurnOff, offTargets, pressTurnOff, resetTurnOff } from "../turn-o
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
 import { musicHomeSection } from "./music.js";
+import { commandBar } from "./command.js";
 import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
 import { updateBanner } from "./updates.js";
 
 export function homeView({ openCamera, openFavoritesPicker }) {
   const header = pageHeader({
     title: t("home.title"),
+    // Home has the field itself (commandBar).
+    command: false,
     actions: state.canInstall
       ? [iconButton("download", t("settings.app.install"), { class: "install-button", dataset: { key: "install-home" }, onclick: installApp })]
       : [],
@@ -67,6 +70,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     staleBanner(),
     // Admins: a newer DirectorLink is out, until dismissed for that version.
     updateBanner(),
+    // Say or type a command (1.9.0, ADR-063).
+    commandBar(),
     calendarLine(),
     // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
     alarmSection(),
