@@ -48,24 +48,25 @@ On Home, under the header, a field takes a sentence: type it, or tap the microph
 | Say or type | What it does |
 | --- | --- |
 | *kitchen lights off* · *כבו את האורות במטבח* | A room's lights off |
-| *living room lights 30%* · *אור בסלון 40%* | A room's dimmable lights to a level (never a light named for heating, such as a heater or a boiler, unless you name it) |
+| *living room lights 30%* · *אור בסלון 40%* | A room's dimmable lights to a level (a room's lights never include a light named for heating, such as a heater, a boiler, a heat lamp, hot water or floor heating, unless you name it) |
 | *turn on the porch light* · *porch light off* | One light, by its name |
-| *living room AC to 23* · *מזגן בסלון 23* | The AC to a temperature (an AC that is off asks which mode) |
+| *living room AC to 23* · *מזגן בסלון 23* · *living room AC 23°C* | The AC to a temperature (an AC that is off asks which mode; in a room with floor heating too, *AC* and *מזגן* are the AC alone) |
 | *AC off in the kids' room* · *כבו את המזגן בחדר הילדים* | The AC off |
-| *cool the bedroom to 22* · *מזגן בחדר שינה על קירור 22* | A mode, with or without a temperature |
+| *cool the bedroom to 22* · *מזגן בחדר שינה על קירור 22* · *מזגן בסלון במצב קירור* · *מזגן בסלון על קר* | A mode, with or without a temperature |
 | *open the kitchen blinds* · *סגרו את התריסים בסלון* · *kitchen blinds 40%* · *stop the blinds in the kitchen* | Blinds open, closed, to a position, stopped |
 | *kids room fan on* | A fan on or off |
-| *run Good night* · *Good night* · *הפעילו לילה טוב* | A scene you may run |
+| *run Good night* · *Good night* · *הפעילו לילה טוב* · *הפעילו את סצנת לילה טוב* | A scene you may run |
 | *play music in the kitchen* · *pause the music in the living room* · *next song in the kitchen* · *kitchen volume 30* · *נגנו מוזיקה במטבח* · *ווליום 30 במטבח* | Sonos in a room |
 | *kitchen off* · *כבו הכל בסלון* | The room's All off |
-| *turn off everything* · *כבו הכל* · *turn off all the lights* · *close all blinds* | Home's Turn off all, after you confirm it |
+| *turn off everything* · *כבו הכל* · *turn off all the lights* · *כבו את האור בכל הבית* · *close all blinds* | Home's Turn off all, after you confirm it |
 | *open the main gate* · *פתחו את השער* | The gate's Open button, waiting for your second tap (with door access) |
 
-- **Numbers** in digits or words: *23*, *23.5*, *twenty three*, *עשרים ושלוש*, *half*, *וחצי*; *%* or *percent*, *degrees* or *מעלות*. A number word from one to nine needs its unit (*five percent*).
-- **Names** are forgiving: any case, accents and niqqud, Hebrew with or without its prefixes (ב, ה, ל, ו…), singular or plural, a small typo, any word order. You need not say a device's kind or "room" when the rest of its name is enough.
-- **It never guesses.** When two names fit as well, it asks which one; part of a name asks "Did you mean"; when it doesn't understand, it says so with examples made from your own rooms and scenes, and does nothing. It also does nothing for *don't…* (*אל*, *לא*), questions (*is the light on?*) and times (*at 7 pm*, *בבוקר*).
+- **Numbers** in digits or words: *23*, *23.5*, *twenty three*, *עשרים ושלוש*, *half*, *וחצי*; *%* or *percent*, *degrees*, *°C* or *מעלות*. A number word from one to nine needs its unit (*five percent*).
+- **A time is never a level.** A number right after *at*, *in*, *for*, *until* or *עד* is a time unless a unit follows (*at 7* is not understood; *at 50%*, *עד 40%* are levels); a number with ב or מ in front of it (*ב-7*, *בשבע*, *ב-20%*, *מ-7*) and *by 20%*, *more*, *less*, *יותר*, *פחות* are a time or a change by that much, never understood. Say the level alone (*kitchen lights 30*), or with *to*, *ל*, *על* (*ל-30*, *על 23*).
+- **Names** are forgiving: any case, accents and niqqud, Hebrew with or without its prefixes (ב, ה, ל, ו…), singular or plural, Hebrew spelled with one *י* or *ו* more or less (*חניה*, *חנייה*; *כניסה*, *כנסה*), a small typo, any word order. You need not say a device's kind or "room" (*מצב*, *mode*) when the rest of its name is enough. A name said only with a typo in a short word, or with the other Hebrew plural (*בנים* for *בנות*, *Dana* for *Dina*), asks "Did you mean", since one letter there is often another name.
+- **It never guesses.** When two names fit as well, it asks which one; part of a name asks "Did you mean"; when it doesn't understand, it says so with examples made from your own rooms and scenes, and does nothing. It also does nothing for *don't…* (*אל*, *לא*), questions (*is the light on*, and anything with a *?*: *האור במטבח כבוי?*), times (*at 7 pm*, *בבוקר*) and how warm you feel (*I'm cold*, *חם לי*: *hot*, *cold*, *חם*, *קר* are a mode only right after *on*, *to* or *על*, with the AC said: *מזגן על קר*). More than 200 letters is not a command.
 - **Doors, gates and Turn off all** keep their second tap: the command shows the button, and only tapping it opens or turns off.
-- **The microphone** shows where the browser can turn speech into text (Chrome, Edge, Safari). Your browser's own speech service does it: Chrome sends the sound to Google, Edge to Microsoft, Safari to Apple. DirectorLink sends neither the sound nor the words anywhere. In the Home Screen app on iPhone and iPad there is no microphone button: tap the keyboard's microphone to dictate into the field.
+- **The microphone** shows where the browser can turn speech into text (Chrome, Edge, Safari). Your browser's own speech service does it: Chrome sends the sound to Google, Edge to Microsoft, Safari to Apple. DirectorLink sends neither the sound nor the words anywhere. Of the service's guesses the likeliest decides; a less likely one counts only when the likeliest says nothing it understands, never when it says not to or names a time. Closing the dialog or leaving Home while it listens does nothing with what it heard; Stop does it. In the Home Screen app on iPhone and iPad there is no microphone button: tap the keyboard's microphone to dictate into the field (the field stays in place while Home updates, so dictation and the keyboard's composing are not cut).
 - **Not understood (yet):** two things in one sentence, changes by a little (*warmer*, *a bit brighter*), fan speeds, Sonos favorites and groups, refrigerators, cameras, the alarm and schedules.
 - Tests: `tests/app/command-parser.test.mjs` (the sentences), `tests/app/command.test.mjs` (the field, its requests and second taps), `tests/app/command-ios.test.mjs` (the microphone on iPhone).
 
