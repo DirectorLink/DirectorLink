@@ -395,6 +395,17 @@ local function handleJoin(message, send)
         end
     end
     local person = nil
+    -- A new user only while its maker is still an admin: demoting or removing it revokes its
+    -- invitations (ADR-054), and this holds whatever path got it there.
+    if not profile then
+        local inviter = type(invitation.created_by) == "string" and state.services.keys.find(invitation.created_by) or nil
+        if not (inviter and Access.isAdmin(inviter)) then
+            log("warn", "refused an invitation whose maker is no longer an admin", { invitation = invitationId })
+            state.services.invitations.revoke(invitationId)
+            send({ type = "join_result", id = message.id, ok = false, code = "INVITATION_NOT_FOUND" })
+            return
+        end
+    end
     if profiles and not profile then
         local failure
         profile, failure = profiles.create(name)

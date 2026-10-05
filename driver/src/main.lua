@@ -301,6 +301,10 @@ local services = {
         tell = function(message)
             return Relay.tell(message)
         end,
+        -- Tells it now, or right after the next hello (an owner_cancel, ADR-064).
+        tellSoon = function(message)
+            return Relay.tellSoon(message)
+        end,
     },
     startedAt = os.time(),
     controllerVersion = nil,
@@ -331,14 +335,15 @@ local services = {
     end,
     onKeysChanged = keysChanged,
     -- The account service said which keys share a Google or Apple account (1.9.0, ADR-061;
-    -- src/auth/accounts.lua): users alike are brought together, the others are suggested to admins.
+    -- src/auth/accounts.lua): each account whose devices are in several users is a suggestion an
+    -- admin confirms; nothing moves by itself. What did not change is not written or recorded again.
     onAccounts = function(keys)
         if not Keys.complete() then
             return
         end
         local taken = Accounts.update(keys, Keys.exists)
         if taken then
-            Users.reconcile(keysChanged)
+            Users.suggest()
         else
             Log.warn("auth", "ignored an accounts message that is not a list of key ids and tags")
         end
@@ -671,6 +676,8 @@ function OnDriverLateInit(driverInitType)
             -- favorites of devices gone for days are dropped (ADR-059).
             pcall(DriverUpdates.tick)
             pcall(FavoritesGone.prune, now)
+            -- Which keys share an account, when a change waited to be written (ADR-061).
+            pcall(Accounts.flush)
         end,
     })
     shownScheduleStatus, shownCalendarStatus = nil, nil

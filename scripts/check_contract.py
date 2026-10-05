@@ -699,8 +699,8 @@ def scenario(client, bridge):
     client.check("POST", "/v1/pairing-code", 400, body={"profile_id": person, "name": "Two"})
     client.check("DELETE", "/v1/pairing-code", 204)
     client.check("DELETE", "/v1/pairing-code", 404)
-    client.check("POST", "/v1/users/merge", 404, body={"account": "0123456789abcdef", "keep": person})
-    client.check("POST", "/v1/users/merge", 400, body={"account": "not a tag", "keep": person})
+    client.check("POST", "/v1/users/merge", 404, body={"account": "0123456789abcdef", "keep": person, "revision": "0123456789abcdef"})
+    client.check("POST", "/v1/users/merge", 400, body={"account": "not a tag", "keep": person, "revision": "0123456789abcdef"})
     # Handing the home to another admin (1.9.0, ADR-064): only the owner, only to another admin; the
     # old owner stays an admin. This home never was in the account service: the controller's alone.
     if client.check("POST", "/v1/users/owner", 409, body={"profile_id": person})["code"] != "NOT_AN_ADMIN":
@@ -727,7 +727,7 @@ def scenario(client, bridge):
         fail(f"a member sees only their own user, and no suggestion: {mine}")
     client.check("POST", "/v1/pairing-code", 403, body={"profile_id": person})
     client.check("DELETE", f"/v1/api-keys/{me['id']}", 404)
-    client.check("POST", "/v1/users/merge", 403, body={"account": "0123456789abcdef", "keep": person})
+    client.check("POST", "/v1/users/merge", 403, body={"account": "0123456789abcdef", "keep": person, "revision": "0123456789abcdef"})
     client.check("POST", "/v1/users/owner", 403, body={"profile_id": person})
     if client.check("GET", "/v1/lights", 200)["items"]:
         fail("a member with no rooms sees no light")

@@ -3,7 +3,9 @@
 -- admin; the old owner stays an admin like any other, the new one is protected, and nobody leaves.
 -- A home the account service knows moves there too, on this controller's word: the controller asks
 -- (`owner`, with the new owner's account tag) and records the new owner only once the account
--- service has moved its record, or has none; the account service alone makes nobody the owner.
+-- service has moved its record, or has none; the account service alone makes nobody the owner. The
+-- account is never guessed, and a move the controller did not follow, or whose answer never came,
+-- is undone (`owner_cancel`).
 
 local Mock = require("c4mock")
 local T = require("helpers")
@@ -138,6 +140,7 @@ function tests.the_old_owner_is_an_admin_like_any_other_and_the_new_one_is_prote
     local mock = s.mock
     local before = keyIds(mock, s.owner)
     local users = #get(mock, s.owner, "/v1/users").json.items
+    T.eq(get(mock, s.owner, "/v1/users").json.linked, false, "the app's confirmation then says nothing of an account")
     local made = makeOwner(mock, s.owner, s.partner.profile_id)
     T.eq(made.status, 200, made.body)
     T.eq(made.json.owner.id, s.partner.profile_id)
@@ -214,6 +217,7 @@ function tests.a_linked_home_moves_in_the_account_service_first_and_only_then_he
     local tablet = T.http(s.mock, "POST", "/v1/api-keys", { key = s.owner, body = { name = "Shared tablet", profile_id = s.partner.profile_id } }).json
     accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER }, [tablet.id] = { TAG_OTHER, TAG_PARTNER } })
     T.eq(get(s.mock, tablet.key, "/v1/lights").status, 200, "the tablet used last")
+    T.eq(get(s.mock, s.owner, "/v1/users").json.linked, true)
     local pending = makeOwner(s.mock, s.owner, s.partner.profile_id)
     T.eq(pending.status, nil, "the answer waits for the account service")
     local asked = sent(s, "owner")
@@ -267,16 +271,130 @@ function tests.the_account_service_alone_makes_nobody_the_owner()
     T.eq(notAdmin.json.code, "ACCOUNT_NOT_ADMIN")
     T.eq(current(s.mock, s.owner).access.owner, true)
 
-    -- No answer at all: nothing moves, and the owner is told to try again.
+    -- No answer at all: nothing moves here, the account service is told to undo whatever it did,
+    -- and the owner is told it may not have finished.
     accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER } })
     local silent = makeOwner(s.mock, s.owner, s.partner.profile_id)
-    T.eq(#sent(s, "owner"), 1)
+    local question = sent(s, "owner")
+    T.eq(#question, 1)
     Mock.fireTimers(s.mock, 1)
     local timedOut = T.response(s.mock, silent.handle)
     T.eq(timedOut.status, 503, timedOut.body)
-    T.eq(timedOut.json.code, "REMOTE_OFFLINE")
+    T.eq(timedOut.json.code, "REMOTE_TIMEOUT")
+    T.contains(timedOut.json.detail, "may not have finished")
+    local cancel = sent(s, "owner_cancel")
+    T.eq(#cancel, 1, "told to undo it")
+    T.eq(cancel[1].id, question[1].id, "that very request")
     T.eq(current(s.mock, s.owner).access.owner, true)
     T.eq(#history(s.mock, s.owner, "owner_changed"), 0)
+end
+
+-- The account service's answer comes late or not at all (finding 2 of the owner review): the
+-- controller tells it to undo that request, even across a lost connection (right after the next
+-- hello, before anything else), ignores a late answer, and trying again finishes the hand-over.
+function tests.a_lost_answer_is_undone_and_trying_again_finishes()
+    local s = linkedHome()
+    accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER } })
+    local pending = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    local asked = sent(s, "owner")
+    -- The connection drops while the account service works on it.
+    OnConnectionStatusChanged(Harness.BINDING, 443, "OFFLINE")
+    local timer
+    for index = #s.mock.timers, 1, -1 do
+        local item = s.mock.timers[index]
+        if item.delay == 10000 and not item.fired and not item.cancelled then
+            timer = item
+            break
+        end
+    end
+    T.truthy(timer, "the 10 s wait")
+    timer.fired = true
+    timer.callback()
+    local refused = T.response(s.mock, pending.handle)
+    T.eq(refused.json.code, "REMOTE_TIMEOUT")
+    T.eq(current(s.mock, s.owner).access.owner, true)
+    -- Connected again: the undo goes first, right after the hello.
+    local retry
+    for index = #s.mock.timers, 1, -1 do
+        local item = s.mock.timers[index]
+        if item.delay == 5000 and not item.fired and not item.cancelled then
+            retry = item
+            break
+        end
+    end
+    T.truthy(retry, "the reconnect, 5 s later")
+    retry.fired = true
+    retry.callback()
+    local connection = s.mock.network[Harness.BINDING]
+    connection.sent = ""
+    OnConnectionStatusChanged(Harness.BINDING, 443, "ONLINE")
+    local request = connection.sent
+    connection.sent = ""
+    Harness.accept(request)
+    local hello = Harness.clientFrames(connection.sent)
+    connection.sent = ""
+    s.connection = connection
+    local types = {}
+    for _, frame in ipairs(hello) do
+        types[#types + 1] = Json.decode(frame.payload).type
+    end
+    T.eq(types[1], "hello")
+    T.eq(types[2], "owner_cancel", "before anything else is asked")
+    T.eq(Json.decode(hello[2].payload).id, asked[1].id)
+    -- A late answer to the first request changes nothing.
+    relaySends({ type = "owner_result", id = asked[1].id, ok = true, previous = TAG_OWNER })
+    T.eq(current(s.mock, s.partner.key).access.owner, false)
+    -- Trying again: the account service moves it (again), and the controller follows.
+    local again = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    local second = sent(s, "owner")
+    T.eq(#second, 1)
+    T.truthy(second[1].id ~= asked[1].id)
+    relaySends({ type = "owner_result", id = second[1].id, ok = true, moved = true, previous = TAG_OWNER })
+    T.eq(T.response(s.mock, again.handle).status, 200)
+    T.eq(current(s.mock, s.partner.key).access.owner, true)
+    T.eq(#sent(s, "owner_cancel"), 0)
+end
+
+-- Which account becomes the home's (finding 1 of the owner review): only one that is not in doubt.
+-- The new owner's devices with one account must all have the same one, and it may not be the
+-- owner's own: nothing is asked of the account service otherwise.
+function tests.the_new_owners_account_is_never_guessed()
+    local s = linkedHome()
+    -- The owner once signed in with their own account on Dana's phone.
+    accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_OWNER } })
+    local shared = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    T.eq(shared.status, 409, shared.body)
+    T.eq(shared.json.code, "OWNER_ACCOUNT_SHARED")
+    T.same(shared.json.device_names, { "Dana's phone" })
+    T.eq(#sent(s, "owner"), 0, "nothing asked")
+    -- Dana's tablet is used only by the kid's account, her phone by hers.
+    local tablet = T.http(s.mock, "POST", "/v1/api-keys", { key = s.owner, body = { name = "Dana's tablet", profile_id = s.partner.profile_id } }).json
+    accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER }, [tablet.id] = { TAG_OTHER }, [s.kid.id] = { TAG_OTHER } })
+    local unclear = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    T.eq(unclear.status, 409, unclear.body)
+    T.eq(unclear.json.code, "OWNER_ACCOUNT_UNCLEAR")
+    T.eq(#unclear.json.device_names, 2)
+    T.eq(#sent(s, "owner"), 0)
+    T.eq(current(s.mock, s.owner).access.owner, true)
+    -- Dana's tablet shared by both accounts says nothing: her phone's account it is.
+    accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER }, [tablet.id] = { TAG_OTHER, TAG_PARTNER } })
+    local pending = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    local asked = sent(s, "owner")
+    T.eq(asked[1].account, TAG_PARTNER)
+    relaySends({ type = "owner_result", id = asked[1].id, ok = true, previous = TAG_OWNER })
+    T.eq(T.response(s.mock, pending.handle).status, 200)
+end
+
+-- Another answer type with the request's id is not its answer (relay.lua).
+function tests.only_an_owner_result_answers_the_owner_request()
+    local s = linkedHome()
+    accounts(s, { [s.ownerId] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER } })
+    local pending = makeOwner(s.mock, s.owner, s.partner.profile_id)
+    local asked = sent(s, "owner")
+    relaySends({ type = "invitation_result", id = asked[1].id, ok = true })
+    T.eq(current(s.mock, s.partner.key).access.owner, false, "not taken as the answer")
+    relaySends({ type = "owner_result", id = asked[1].id, ok = false, code = "ACCOUNT_NOT_ADMIN" })
+    T.eq(T.response(s.mock, pending.handle).json.code, "ACCOUNT_NOT_ADMIN")
 end
 
 function tests.a_home_no_account_owns_there_moves_on_the_controller_alone()
@@ -311,7 +429,7 @@ function tests.a_linked_home_needs_remote_access_and_the_relay()
 end
 
 -- The account service moved its record, but meanwhile the new owner was made a member here: the
--- controller does not follow, and tells the account service to move it back.
+-- controller does not follow, and tells the account service to undo that request (owner_cancel).
 function tests.a_user_changed_while_the_account_service_answered_is_not_made_the_owner()
     local s = linkedHome()
     local other = newUser(s.mock, s.owner, "Other admin")
@@ -325,27 +443,36 @@ function tests.a_user_changed_while_the_account_service_answered_is_not_made_the
     T.eq(refused.status, 409, refused.body)
     T.eq(refused.json.code, "NOT_AN_ADMIN")
     T.eq(current(s.mock, s.owner).access.owner, true)
-    local back = sent(s, "owner")
-    T.eq(#back, 1, "the account service is told to move its record back")
-    T.eq(back[1].account, TAG_OWNER)
+    local back = sent(s, "owner_cancel")
+    T.eq(#back, 1, "the account service is told to undo that move")
+    T.eq(back[1].id, asked[1].id, "by the request's id: it restores what it replaced, whoever it was")
+    T.eq(#sent(s, "owner"), 0)
 end
 
--- Once the old owner is an admin like any other, users of theirs that share an account and are
--- alike come together by themselves (ADR-061), which only the owner could confirm before.
-function tests.the_old_owners_users_alike_come_together_once_they_are_not_the_owners()
+-- Once the old owner is an admin like any other, a suggestion with their user is no longer only
+-- theirs to confirm: it stays a suggestion (nothing moves by itself, ADR-061), and the new owner, or
+-- any admin who may change both users, confirms it.
+function tests.the_old_owners_suggestion_stays_one_once_they_are_not_the_owner()
     local s = linkedHome()
     local iphone = newUser(s.mock, s.owner, "Safari on iPhone")
     accounts(s, { [s.ownerId] = { TAG_OWNER }, [iphone.id] = { TAG_OWNER }, [s.partner.id] = { TAG_PARTNER } })
     local list = get(s.mock, s.owner, "/v1/users").json
     T.eq(#list.suggestions, 1, "the owner's devices: a suggestion only the owner confirms")
     T.eq(list.suggestions[1].owner, true)
+    T.eq(get(s.mock, s.partner.key, "/v1/users").json.suggestions[1].may_confirm, false)
     local pending = makeOwner(s.mock, s.owner, s.partner.profile_id)
     local asked = sent(s, "owner")
     relaySends({ type = "owner_result", id = asked[1].id, ok = true, previous = TAG_OWNER })
     T.eq(T.response(s.mock, pending.handle).status, 200)
+    T.eq(current(s.mock, iphone.key).profile_id, iphone.profile_id, "nothing moved by itself")
+    local suggestion = get(s.mock, s.partner.key, "/v1/users").json.suggestions[1]
+    T.eq(suggestion.owner, false, "no longer the owner's")
+    T.eq(suggestion.may_confirm, true, "the new owner confirms it")
+    T.eq(#history(s.mock, s.partner.key, "users_merged"), 0)
+    local confirmed = T.http(s.mock, "POST", "/v1/users/merge", { key = s.partner.key, body = { account = TAG_OWNER, keep = s.ownerProfile, revision = suggestion.revision } })
+    T.eq(confirmed.status, 200, confirmed.body)
     T.eq(current(s.mock, iphone.key).profile_id, s.ownerProfile, "the iPhone joined the old owner's user")
     T.eq(current(s.mock, iphone.key).access.role, "admin")
-    T.eq(#get(s.mock, s.partner.key, "/v1/users").json.suggestions, 0)
     T.eq(#keyIds(s.mock, s.partner.key), 4, "every device is still there")
 end
 

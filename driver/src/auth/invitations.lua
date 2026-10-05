@@ -176,6 +176,19 @@ function Invitations.revokeCreatedBy(keyId)
     end
 end
 
+-- The invitations waiting for another device of the user `profileId` itself (`for_me`, made by one
+-- of their devices; not an admin's for that user), oldest first: { { id, expires_at } }.
+function Invitations.ownPending(profileId)
+    prune(Clock.now())
+    local items = {}
+    for _, item in ipairs(state.items) do
+        if profileId ~= nil and item.profile == profileId and not item.for_user then
+            items[#items + 1] = { id = item.id, expires_at = Clock.iso(item.expires) }
+        end
+    end
+    return items
+end
+
 -- A pending invitation with its lock key, or nil.
 function Invitations.find(id)
     prune(Clock.now())

@@ -6,7 +6,7 @@
 -- with it never chooses (Composer's New Pairing Code still makes a new admin user).
 --
 --   GET    /v1/users          (members: their own user)
---   POST   /v1/users/merge    {"account", "keep"}: a suggestion confirmed (admins)
+--   POST   /v1/users/merge    {"account", "keep", "revision"}: a suggestion confirmed (admins)
 --   POST   /v1/users/owner    {"profile_id"}: the owner makes another admin the owner (1.9.0, ADR-064)
 --   POST   /v1/pairing-code   {"profile_id"} or {"name", "role", "access"} (admins)
 --   DELETE /v1/pairing-code   (admins)
@@ -34,13 +34,17 @@ end
 -- 409 USER_DEVICE_LIMIT: the user `profileId` has DEVICE_LIMIT devices already. For a caller who
 -- sees that user (an admin, or the user themself: Access.seesUser), with their devices, when each
 -- was last used and whether the caller may remove it, so that the app says "Remove a device
--- first" with the list; for anyone else (a new device pairing) without them.
+-- first" with the list; for another key without them; for a caller without a key (a device
+-- pairing, before its code is checked) without the user's name or id either.
 function Handlers.limitProblem(ctx, profileId)
     local services = ctx.services
+    local actor = ctx.apiKey
+    if not actor then
+        return Problem.new(409, "USER_DEVICE_LIMIT", "This user already has " .. Users.DEVICE_LIMIT .. " devices: remove one of them first", { limit = Users.DEVICE_LIMIT })
+    end
     local profile = services.profiles.find(profileId)
     local name = profile and profile.name or "This user"
     local extra = { limit = Users.DEVICE_LIMIT, user = { id = profileId, name = name } }
-    local actor = ctx.apiKey
     if actor and Access.seesUser(actor, profileId) then
         local devices = Json.array()
         for _, key in ipairs(Users.devices(profileId)) do
@@ -72,17 +76,25 @@ local function accessView(services)
     end
 end
 
+-- GET /v1/users. `linked`: the account service knows this home (its relay accepted it once), so
+-- that handing the home to another admin moves the home's Google or Apple account too (ADR-064).
 function Handlers.list(ctx)
-    return 200, Users.view(ctx.apiKey, accessView(ctx.services))
+    local answer = Users.view(ctx.apiKey, accessView(ctx.services))
+    local remote = ctx.services.remote
+    answer.linked = (remote and remote.linked and remote.linked()) == true
+    return 200, answer
 end
 
 local TAG = "^%x+$"
 
--- POST /v1/users/merge {"account": "<suggestion id>", "keep": "<profile id>"}: the devices of that
--- account are brought into `keep`, whose role and permissions they then have.
+-- POST /v1/users/merge {"account": "<suggestion id>", "keep": "<profile id>", "revision": "…"}: the
+-- devices of that account are brought into `keep`, whose role and permissions they then have. Only
+-- the suggestion as the admin saw it (its revision, GET /v1/users): when the account service has
+-- changed which devices share that account since, or someone changed those users, nothing moves
+-- (409 SUGGESTION_CHANGED) and the app shows it again. Every rule is asked again here.
 function Handlers.merge(ctx)
     local body = ctx.body
-    local problem = Validate.body(body, { account = true, keep = true })
+    local problem = Validate.body(body, { account = true, keep = true, revision = true })
     if problem then
         return problem
     end
@@ -92,9 +104,16 @@ function Handlers.merge(ctx)
     if not (type(body.keep) == "string" and body.keep:match("^%x%x%x%x%x%x%x%x$")) then
         return Problem.invalidField("keep", "keep is the id of the user whose permissions stay")
     end
+    if not (type(body.revision) == "string" and #body.revision == 16 and body.revision:match(TAG)) then
+        return Problem.invalidField("revision", "revision is the suggestion's revision in GET /v1/users, as it was shown")
+    end
     local group = Users.group(body.account)
     if not group then
         return Problem.new(404, "NOT_FOUND", "No such suggestion: the devices of that account are in one user already, or gone")
+    end
+    if Users.revision(group) ~= body.revision:lower() then
+        ctx.services.log.warn("auth", "a suggestion to bring an account's devices together changed before it was confirmed: nothing moved", { by = ctx.apiKey.id, devices = #group.keys })
+        return Problem.new(409, "SUGGESTION_CHANGED", "These devices or their users changed since you looked: nothing was moved. Look at the suggestion again")
     end
     local listed = false
     for _, id in ipairs(group.users) do
@@ -134,7 +153,8 @@ end
 
 -- ---- handing the home to another admin (1.9.0, ADR-064) -----------------------------------------
 
--- How long the account service has to answer, as for an invitation it registers.
+-- How long the account service has to answer, as for an invitation it registers. The app waits
+-- longer (15 s) for the controller's answer.
 local OWNER_ANSWER_SECONDS = 10
 
 local function userRef(services, profileId)
@@ -142,8 +162,9 @@ local function userRef(services, profileId)
     return { id = profileId, name = profile and profile.name or profileId }
 end
 
--- The problem for a refusal of Access.mayMakeOwner or of the account service; `user`: { id, name }.
-local function ownerRefused(code, user)
+-- The problem for a refusal of Access.mayMakeOwner, of Users.ownerAccount or of the account service;
+-- `user`: { id, name }; `devices`: the names of the devices in question, for OWNER_ACCOUNT_*.
+local function ownerRefused(code, user, devices)
     if code == "UNAVAILABLE" then
         return Problem.new(503, "UNAVAILABLE", "Who the home's owner is could not be read when DirectorLink started; restart the driver and try again")
     elseif code == "OWNER_ONLY" then
@@ -155,39 +176,53 @@ local function ownerRefused(code, user)
     elseif code == "NOT_AN_ADMIN" then
         return Problem.new(409, "NOT_AN_ADMIN", "Make " .. user.name .. " an admin first: only an admin becomes the home's owner", { user = user })
     elseif code == "OWNER_NEEDS_ACCOUNT" then
-        return Problem.new(409, "OWNER_NEEDS_ACCOUNT", user.name .. " needs to sign in to DirectorLink with their Google or Apple account on one of their devices first: the home's account moves to theirs", { user = user })
-    elseif code == "REMOTE_OFFLINE" or code == "RELAY_TIMEOUT" then
+        return Problem.new(409, "OWNER_NEEDS_ACCOUNT", "Invite " .. user.name .. "'s Google or Apple account first (Invite their account, in Settings → Users), and have them accept it on one of their devices: the home's account moves to theirs", { user = user })
+    elseif code == "OWNER_ACCOUNT_UNCLEAR" then
+        return Problem.new(409, "OWNER_ACCOUNT_UNCLEAR", user.name .. "'s devices use more than one Google or Apple account (" .. table.concat(devices or {}, ", ") .. "): it is not clear which becomes the home's account. Remove the devices of the other account from " .. user.name .. " first", { user = user, device_names = devices or Json.array() })
+    elseif code == "OWNER_ACCOUNT_SHARED" then
+        return Problem.new(409, "OWNER_ACCOUNT_SHARED", user.name .. "'s devices (" .. table.concat(devices or {}, ", ") .. ") use your own Google or Apple account: the home's account would stay yours. Sign out of it there, or remove those devices from " .. user.name .. ", first", { user = user, device_names = devices or Json.array() })
+    elseif code == "REMOTE_OFFLINE" then
         return Problem.new(503, "REMOTE_OFFLINE", "The controller is not connected to DirectorLink's servers right now, so nothing was changed; try again in a minute")
+    elseif code == "RELAY_TIMEOUT" then
+        return Problem.new(503, "REMOTE_TIMEOUT", "DirectorLink's servers did not answer in time, so the hand-over may not have finished: " .. user.name .. " is not the owner here, and the servers are told to undo it. Try again")
     end
     return Problem.new(502, tostring(code), "DirectorLink's servers did not move the home's account (" .. tostring(code) .. "), so nothing was changed")
 end
 
--- The account service moved the home's owner account but the controller did not follow (the user
--- changed meanwhile, or the store could not be written): it is told to move it back, to the account
--- it named (`previous`, a tag). Best effort; it is logged.
-local function moveBack(ctx, previous)
+-- The account service may have moved the home's owner account for the `owner` message `id` while the
+-- controller did not follow (no answer in time, the user changed meanwhile, or the store could not
+-- be written): it is told to undo exactly that move (`owner_cancel`, docs/RELAY.md), at once or as
+-- soon as the controller is connected again, before anything else it asks. Logged.
+local function cancelMove(ctx, id, why)
     local remote = ctx.services.remote
-    if type(previous) == "string" and remote and remote.tell then
-        remote.tell({ type = "owner", id = "owner-back-" .. tostring(os.time()), account = previous })
+    local queued = false
+    if type(id) == "string" and remote then
+        if remote.tellSoon then
+            queued = remote.tellSoon({ type = "owner_cancel", id = id })
+        elseif remote.tell then
+            queued = remote.tell({ type = "owner_cancel", id = id })
+        end
     end
-    ctx.services.log.warn("auth", "the home's owner did not change here; DirectorLink's servers were told to move its account back", { told = type(previous) == "string" })
+    ctx.services.log.warn("auth", "the home's owner did not change here; DirectorLink's servers are told to undo their part", { why = why, told = queued == true })
 end
 
 -- Records the new owner on the controller, once the account service has agreed (`outcome` moved), or
--- has nothing to move (not_claimed, not_linked). Returns the answer, or a problem.
-local function makeOwner(ctx, target, previous, outcome, previousTag)
+-- has nothing to move (not_claimed, not_linked). `asked`: the id of the `owner` message, to undo
+-- the account service's move if the controller cannot follow. Returns the answer, or a problem.
+local function makeOwner(ctx, target, previous, outcome, asked)
     local services = ctx.services
     if not People.setOwner(target) then
         if outcome == "moved" then
-            moveBack(ctx, previousTag)
+            cancelMove(ctx, asked, "not_saved")
         end
         return Problem.internal("The new owner could not be saved, so nothing was changed")
     end
     local to, from = userRef(services, target), userRef(services, previous)
     services.log.info("auth", "the home's owner changed", { from = previous, to = target, by = ctx.apiKey.id, account_service = outcome })
     Activity.record("access", "owner_changed", { by = ctx.apiKey, what = to.name, from = from.name })
-    -- The old owner is an admin like any other now: users alike with theirs come together (ADR-061).
-    Users.reconcile(services.onKeysChanged)
+    -- The old owner is an admin like any other now. Nothing else moves: a suggestion to bring
+    -- devices of one account together (ADR-061) with their user is still a suggestion, which any
+    -- admin who may change both users confirms now (the new owner, for one with theirs).
     return 200, { owner = to, previous = from, account_service = outcome }
 end
 
@@ -196,9 +231,11 @@ end
 -- home again and confirm bringing the owner's devices together; the old owner stays an admin, and
 -- nobody is removed. A home the account service knows (its relay accepted this home once) moves
 -- there too: the controller asks it, over its own connection, to move the home's owner account to
--- the new owner's (Users.accountOf), and records the new owner only once it has, or when no account
--- owns the home there; otherwise nothing moves (docs/ACCOUNTS.md). The account service's word never
--- makes anyone the owner here: it can only refuse.
+-- the new owner's (Users.ownerAccount: one account, not in doubt, and not the owner's own), and
+-- records the new owner only once it has, or when no account owns the home there. When the
+-- controller cannot follow, or hears no answer in time, it tells the account service to undo that
+-- move (owner_cancel); trying again then finishes it (docs/ACCOUNTS.md). The account service's word
+-- never makes anyone the owner here: it can only refuse.
 function Handlers.make_owner(ctx)
     local body = ctx.body
     local problem = Validate.body(body, { profile_id = true })
@@ -226,9 +263,14 @@ function Handlers.make_owner(ctx)
     if not remote.enabled() then
         return Problem.new(409, "REMOTE_ACCESS_OFF", "Turn on Remote Access in Composer first: DirectorLink's servers move the home's account to the new owner's too")
     end
-    local tag = Users.accountOf(target)
+    local tag, unclear, devices = Users.ownerAccount(target, previous)
+    if unclear then
+        services.log.info("auth", "the home's owner did not change: which account becomes the home's is in doubt", { code = unclear })
+        return ownerRefused(unclear, userRef(services, target), devices)
+    end
+    local message = { type = "owner", account = tag or Json.null }
     return Response.later(function(respond)
-        remote.ask({ type = "owner", account = tag or Json.null }, OWNER_ANSWER_SECONDS, function(answer, code)
+        remote.ask(message, OWNER_ANSWER_SECONDS, function(answer, code)
             local outcome
             if answer and answer.ok == true then
                 outcome = "moved"
@@ -238,6 +280,10 @@ function Handlers.make_owner(ctx)
             else
                 local failure = code or (answer and answer.code) or "REFUSED"
                 services.log.warn("auth", "the home's owner did not change: DirectorLink's servers did not move its account", { code = failure, account = tag ~= nil })
+                if code == "RELAY_TIMEOUT" then
+                    -- It may have moved it and the answer is late or lost.
+                    cancelMove(ctx, message.id, "no_answer")
+                end
                 respond(ownerRefused(failure, userRef(services, target)))
                 return
             end
@@ -248,12 +294,12 @@ function Handlers.make_owner(ctx)
             end
             if not still then
                 if outcome == "moved" then
-                    moveBack(ctx, answer.previous)
+                    cancelMove(ctx, message.id, "changed_meanwhile")
                 end
                 respond(ownerRefused(again, userRef(services, target)))
                 return
             end
-            respond(makeOwner(ctx, target, previous, outcome, answer.previous))
+            respond(makeOwner(ctx, target, previous, outcome, message.id))
         end)
     end)
 end

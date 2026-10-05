@@ -90,6 +90,25 @@ local function idOf(mock, key)
     return get(mock, key, "/v1/api-keys/current").json.id
 end
 
+-- The suggestion for the account `tag` as `key` sees it in Settings → Users, or nil.
+local function suggestionOf(mock, key, tag)
+    for _, suggestion in ipairs(users(mock, key).suggestions) do
+        if suggestion.id == tag then
+            return suggestion
+        end
+    end
+    return nil
+end
+
+-- Confirms the suggestion for `tag` as `key` sees it now, keeping `keep`.
+local function confirm(mock, key, tag, keep, revision)
+    if revision == nil then
+        local suggestion = suggestionOf(mock, key, tag)
+        revision = suggestion and suggestion.revision or "0000000000000000"
+    end
+    return T.http(mock, "POST", "/v1/users/merge", { key = key, body = { account = tag, keep = keep, revision = revision } })
+end
+
 -- ---- up to five devices a user ------------------------------------------------------------------
 
 function tests.a_sixth_device_is_refused_with_the_users_devices()
@@ -329,6 +348,110 @@ function tests.a_member_invites_their_own_other_device_within_five()
     T.truthy(join(s, late, "Kid's sixth"), "room again: the same invitation works")
 end
 
+-- The driver's messages to the relay since the last look (its key announcements left out).
+local function relayed(s)
+    local list = {}
+    for _, frame in ipairs(Harness.answers(Harness.clientFrames(s.connection.sent))) do
+        list[#list + 1] = Json.decode(frame.payload)
+    end
+    s.connection.sent = ""
+    return list
+end
+
+local function relayAnswers(message)
+    ReceivedFromNetwork(Harness.BINDING, 443, Harness.serverFrame(1, Json.encode(message)))
+end
+
+-- A member's invitation for their own other device is bound only to an account that already uses
+-- the member's device at the home: the controller asks the account service to register it for that
+-- key's account (`for_key`), never for whatever email a member names (probe p3).
+function tests.a_members_invitation_is_bound_only_to_an_account_of_their_device()
+    local s = session()
+    local phone, kid = newUser(s.mock, s.key, "Kid's phone", { all_rooms = false, rooms = { 11 } })
+    s.connection.sent = ""
+    local pending = T.http(s.mock, "POST", "/v1/invitations", { key = phone, body = { for_me = true, email = "stranger@example.com" } })
+    T.eq(pending.status, nil, "waits for the account service")
+    local asked = relayed(s)
+    T.eq(#asked, 1)
+    T.eq(asked[1].type, "invitation")
+    T.eq(asked[1].for_key, kid.id, "only for an account that uses this device's key")
+    -- The account service says that email's account does not use this key here.
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = false, code = "ACCOUNT_NOT_OF_DEVICE" })
+    local refused = T.response(s.mock, pending.handle)
+    T.eq(refused.status, 403, refused.body)
+    T.eq(refused.json.code, "ACCOUNT_NOT_OF_DEVICE")
+    -- An account service that does not know for_key registers by the email alone: refused here.
+    pending = T.http(s.mock, "POST", "/v1/invitations", { key = phone, body = { for_me = true, email = "stranger@example.com" } })
+    asked = relayed(s)
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = true })
+    refused = T.response(s.mock, pending.handle)
+    T.eq(refused.status, 502, refused.body)
+    T.eq(refused.json.code, "FOR_KEY_UNSUPPORTED")
+    local cancelled = relayed(s)
+    T.eq(cancelled[1] and cancelled[1].type, "invitation_cancel", "it is told to forget it")
+    T.eq(#get(s.mock, s.key, "/v1/invitations").json.items, 0, "neither is left at home")
+    -- The account service checked: registered.
+    pending = T.http(s.mock, "POST", "/v1/invitations", { key = phone, body = { for_me = true, email = "kid@example.com" } })
+    asked = relayed(s)
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = true, for_key = kid.id })
+    local made = T.response(s.mock, pending.handle)
+    T.eq(made.status, 201, made.body)
+    -- An admin's invitation names its email, as before.
+    pending = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member", email = "friend@example.com" } })
+    asked = relayed(s)
+    T.eq(asked[1].for_key, nil)
+    relayAnswers({ type = "invitation_result", id = asked[1].id, ok = true })
+    T.eq(T.response(s.mock, pending.handle).status, 201)
+end
+
+-- A member's invitations for their own device last 10 minutes at most, and their user keeps two
+-- waiting at most (a new one replaces the oldest), so a member never fills the controller's 20
+-- (probe p12).
+function tests.a_members_own_invitations_are_few_and_short()
+    local s = session()
+    local phone = newUser(s.mock, s.key, "Kid's phone", {})
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = phone, body = { for_me = true, expires_in = 7200 } }).json.code, "INVALID_FIELD")
+    local made = {}
+    for index = 1, 20 do
+        local answer = T.http(s.mock, "POST", "/v1/invitations", { key = phone, body = { for_me = true } })
+        T.eq(answer.status, 201, answer.body)
+        made[index] = answer.json
+    end
+    local seconds = 0
+    do
+        local function parse(text)
+            local y, mo, d, h, mi, se = text:match("^(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)Z$")
+            return os.time({ year = tonumber(y), month = tonumber(mo), day = tonumber(d), hour = tonumber(h), min = tonumber(mi), sec = tonumber(se) })
+        end
+        seconds = parse(made[20].expires_at) - parse(made[20].created_at)
+    end
+    T.eq(seconds, 600, "10 minutes")
+    local waiting = {}
+    for _, item in ipairs(get(s.mock, s.key, "/v1/invitations").json.items) do
+        waiting[#waiting + 1] = item.id
+    end
+    T.same(waiting, { made[19].id, made[20].id }, "the two newest")
+    T.eq(T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member" } }).status, 201, "an admin still invites")
+end
+
+-- Before a code is checked, a request without a key learns nothing of the user it is for (probe p4).
+function tests.a_device_without_a_key_never_learns_the_codes_user()
+    local mock, admin = start()
+    local _, kid = newUser(mock, admin, "Kid's phone")
+    for index = 2, 4 do
+        T.eq(addDevice(mock, admin, kid.profile_id, "Kid " .. index).status, 201)
+    end
+    T.eq(T.http(mock, "POST", "/v1/pairing-code", { key = admin, body = { profile_id = kid.profile_id } }).status, 201)
+    T.eq(addDevice(mock, admin, kid.profile_id, "Kid 5").status, 201)
+    local asked = T.http(mock, "POST", "/v1/auth/pair", { body = { pairing_code = "0000 0000", name = "x" } })
+    T.eq(asked.status, 409, asked.body)
+    T.eq(asked.json.code, "USER_DEVICE_LIMIT")
+    T.eq(asked.json.limit, 5)
+    T.eq(asked.json.user, nil, "no name, no id")
+    T.eq(asked.json.devices, nil)
+    T.notContains(asked.body, "Kid")
+end
+
 function tests.an_admin_invites_another_device_of_a_user()
     local s = session()
     local _, kid = newUser(s.mock, s.key, "Kid's tablet", { cameras = false })
@@ -377,13 +500,29 @@ function tests.the_hello_says_users_and_the_accounts_are_kept()
     T.eq(userById(users(restarted, s.key), s.profile).accounts, 1, "kept across a restart")
 end
 
-function tests.alike_users_of_one_account_become_one_by_themselves()
+-- Every merge asks (the owner's decision of 2026-10-05): even users with the same permissions are
+-- only a suggestion, which an admin confirms; the account service never moves a device.
+function tests.alike_users_of_one_account_are_a_suggestion_an_admin_confirms()
     local s = session()
     local first, one = newUser(s.mock, s.key, "Dana's phone", { all_rooms = false, rooms = { 11 } })
     local second, two = newUser(s.mock, s.key, "Dana's iPad", { all_rooms = false, rooms = { 11 } })
     T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = second, body = { prefs = { favorites = { "light:21" } } } }).status, 200)
-    local sent = accounts(s, { [one.id] = { TAG_A }, [two.id] = { TAG_A } })
-    T.eq(profileOf(s.mock, second), one.profile_id, "into the older user")
+    accounts(s, { [one.id] = { TAG_A }, [two.id] = { TAG_A } })
+    accounts(s, { [one.id] = { TAG_A }, [two.id] = { TAG_A } })
+    T.eq(profileOf(s.mock, second), two.profile_id, "nothing moves by itself")
+    T.eq(#history(s.mock, s.key, "users_merged"), 0)
+    T.eq(#history(s.mock, s.key, "merge_suggested"), 1, "suggested once")
+    local suggestion = suggestionOf(s.mock, s.key, TAG_A)
+    T.truthy(suggestion, "a suggestion")
+    T.eq(suggestion.keep, one.profile_id, "the same access: the older is offered")
+    T.eq(suggestion.users[1].role, "member")
+    T.eq(suggestion.users[2].role, "member")
+    T.truthy(type(suggestion.revision) == "string" and #suggestion.revision == 16, "with its revision")
+    s.connection.sent = ""
+    local confirmed = confirm(s.mock, s.key, TAG_A, one.profile_id, suggestion.revision)
+    T.eq(confirmed.status, 200, confirmed.body)
+    local sent = Harness.clientFrames(s.connection.sent)
+    T.eq(profileOf(s.mock, second), one.profile_id, "into the user the admin chose")
     T.eq(profileOf(s.mock, first), one.profile_id)
     local list = users(s.mock, s.key)
     T.eq(userById(list, two.profile_id), nil, "the user left without devices went")
@@ -391,14 +530,141 @@ function tests.alike_users_of_one_account_become_one_by_themselves()
     T.same(get(s.mock, first, "/v1/profile").json.prefs.favorites, { "light:21" }, "their favorites came along")
     local merged = history(s.mock, s.key, "users_merged")
     T.eq(#merged, 1)
-    T.eq(merged[1].who.type, "controller")
-    T.eq(merged[1].note, "automatic")
+    T.eq(merged[1].who.type, "key")
+    T.eq(merged[1].note, nil)
     T.eq(merged[1].count, 1)
     local announced = false
-    for _, message in ipairs(sent) do
+    for _, frame in ipairs(sent) do
+        local message = Json.decode(frame.payload)
         announced = announced or (type(message) == "table" and message.type == "keys")
     end
     T.truthy(announced, "the account service hears of the change")
+end
+
+-- What the admin confirms is what they saw: the account service adding a device to that account
+-- after they looked (or anyone changing those users) refuses the confirmation, and nothing moves.
+function tests.a_confirmation_is_for_the_suggestion_as_it_was_shown()
+    local s = session()
+    local _, partnerKey = newUser(s.mock, s.key, "Partner's iPad", { all_rooms = false, rooms = { 11 } })
+    local partnerPhone, partnerAdmin = newUser(s.mock, s.key, "Partner's phone", nil, "admin")
+    local guest, guestKey = newUser(s.mock, s.key, "Guest tablet", { all_rooms = false, rooms = {} })
+    accounts(s, { [partnerKey.id] = { TAG_A }, [partnerAdmin.id] = { TAG_A } })
+    local seen = suggestionOf(s.mock, s.key, TAG_A)
+    T.eq(#seen.users, 2, "the admin sees the partner's iPad and phone")
+    -- Meanwhile the account service adds the guest tablet to that account.
+    accounts(s, { [partnerKey.id] = { TAG_A }, [partnerAdmin.id] = { TAG_A }, [guestKey.id] = { TAG_A } })
+    local refused = confirm(s.mock, s.key, TAG_A, partnerAdmin.profile_id, seen.revision)
+    T.eq(refused.status, 409, refused.body)
+    T.eq(refused.json.code, "SUGGESTION_CHANGED")
+    local after = get(s.mock, guest, "/v1/api-keys/current").json
+    T.eq(after.profile_id, guestKey.profile_id, "the guest tablet, never shown, did not move")
+    T.eq(after.access.role, "member")
+    T.eq(#history(s.mock, s.key, "users_merged"), 0)
+    -- The same devices, but the user to keep was made an admin after the admin looked.
+    accounts(s, { [partnerKey.id] = { TAG_A }, [guestKey.id] = { TAG_A } })
+    local looked = suggestionOf(s.mock, s.key, TAG_A)
+    T.eq(looked.keep, guestKey.profile_id, "no rooms: within the iPad's access")
+    T.eq(T.http(s.mock, "PATCH", "/v1/profiles/" .. guestKey.profile_id .. "/access", { key = s.key, body = { role = "admin" } }).status, 200)
+    T.eq(confirm(s.mock, s.key, TAG_A, guestKey.profile_id, looked.revision).json.code, "SUGGESTION_CHANGED")
+    T.eq(get(s.mock, s.key, "/v1/api-keys/current").json.access.owner, true)
+    -- Looked at again: confirmed as shown.
+    T.eq(confirm(s.mock, s.key, TAG_A, partnerKey.profile_id).status, 200)
+    T.eq(profileOf(s.mock, guest), partnerKey.profile_id)
+    T.eq(get(s.mock, guest, "/v1/api-keys/current").json.access.role, "member", "the iPad's access, as confirmed")
+    T.eq(profileOf(s.mock, partnerPhone), partnerAdmin.profile_id, "the phone has another account now: it stays")
+end
+
+-- The owner's home right after the update (probe p1b): the owner looks at "Chrome on Windows,
+-- Safari on iPhone"; the account service then tags an Android member's key with that account too.
+function tests.the_owners_confirmation_never_takes_in_a_device_it_did_not_show()
+    local s = session()
+    local _, iphone = newUser(s.mock, s.key, "Safari on iPhone", nil, "admin")
+    local android, androidKey = newUser(s.mock, s.key, "Chrome on Android", { doors = true })
+    accounts(s, { [s.keyId] = { TAG_A }, [iphone.id] = { TAG_A } })
+    local seen = suggestionOf(s.mock, s.key, TAG_A)
+    T.eq(seen.owner, true)
+    T.eq(seen.keep, s.profile, "the owner's user is the one that stays")
+    accounts(s, { [s.keyId] = { TAG_A }, [iphone.id] = { TAG_A }, [androidKey.id] = { TAG_A } })
+    T.eq(confirm(s.mock, s.key, TAG_A, s.profile, seen.revision).json.code, "SUGGESTION_CHANGED")
+    local after = get(s.mock, android, "/v1/api-keys/current").json
+    T.eq(after.access.role, "member")
+    T.eq(after.access.owner, false)
+end
+
+-- The suggestion says each user's role, and offers the user with less access, never an admin over
+-- a member; when neither user's access is within the other's, the admin chooses.
+function tests.a_suggestion_says_each_users_role_and_offers_the_lesser_access()
+    local s = session()
+    local _, kid = newUser(s.mock, s.key, "Kid's phone", { all_rooms = false, rooms = { 11 } })
+    local _, mum = newUser(s.mock, s.key, "Mum's iPad", nil, "admin")
+    local _, small = newUser(s.mock, s.key, "Small", { all_rooms = false, rooms = { 10 }, doors = false })
+    local _, big = newUser(s.mock, s.key, "Big", { all_rooms = false, rooms = { 10, 11 }, doors = true })
+    local _, left = newUser(s.mock, s.key, "Left", { all_rooms = false, rooms = { 10 } })
+    local _, right = newUser(s.mock, s.key, "Right", { all_rooms = false, rooms = { 11 } })
+    local tagC = "c3c3c3c3c3c3c3c3"
+    -- A kid signed in to their account on Mum's iPad; two members of one account, one with fewer
+    -- rooms and no doors; two members with a room each.
+    accounts(s, { [mum.id] = { TAG_A }, [kid.id] = { TAG_A }, [small.id] = { TAG_B }, [big.id] = { TAG_B }, [left.id] = { tagC }, [right.id] = { tagC } })
+    local admins = suggestionOf(s.mock, s.key, TAG_A)
+    local roles = {}
+    for _, user in ipairs(admins.users) do
+        roles[user.id] = user.role
+        T.eq(user.owner, false)
+    end
+    T.eq(roles[mum.profile_id], "admin")
+    T.eq(roles[kid.profile_id], "member")
+    T.eq(admins.keep, kid.profile_id, "the member's access is offered, not the admin's")
+    T.eq(suggestionOf(s.mock, s.key, TAG_B).keep, small.profile_id, "the fewer rooms and no doors")
+    T.eq(suggestionOf(s.mock, s.key, tagC).keep, Json.null, "neither within the other: the admin chooses")
+end
+
+-- A merge that keeps a member's access makes an admin's device a member's: the invitations it made
+-- as an admin go, as when its user is made a member (probe p2).
+function tests.a_merge_that_makes_a_device_a_members_revokes_its_invitations()
+    local s = session()
+    local partner, partnerKey = newUser(s.mock, s.key, "Partner's phone", nil, "admin")
+    local _, kid = newUser(s.mock, s.key, "Kid's phone", { all_rooms = false, rooms = { 11 } })
+    local made = T.http(s.mock, "POST", "/v1/invitations", { key = partner, body = { role = "admin" } })
+    T.eq(made.status, 201, made.body)
+    local kept = T.http(s.mock, "POST", "/v1/invitations", { key = s.key, body = { role = "member" } }).json
+    accounts(s, { [partnerKey.id] = { TAG_A }, [kid.id] = { TAG_A } })
+    T.eq(confirm(s.mock, s.key, TAG_A, kid.profile_id).status, 200)
+    T.eq(get(s.mock, partner, "/v1/api-keys/current").json.access.role, "member")
+    local pending = {}
+    for _, item in ipairs(get(s.mock, s.key, "/v1/invitations").json.items) do
+        pending[#pending + 1] = item.id
+    end
+    T.same(pending, { kept.id }, "only the owner's invitation is left")
+    local joined, code = join(s, made.json, "Stranger")
+    T.eq(joined, nil)
+    T.eq(code, "INVITATION_NOT_FOUND")
+end
+
+-- However its maker stopped being an admin (here a store a 1.8.0 driver changed, read at the next
+-- start), an invitation for a new user works only while its maker is an admin.
+function tests.an_invitation_for_a_new_user_needs_its_maker_to_be_an_admin_still()
+    local s = session()
+    local partner = newUser(s.mock, s.key, "Partner's phone", nil, "admin")
+    local partnerProfile = profileOf(s.mock, partner)
+    local made = T.http(s.mock, "POST", "/v1/invitations", { key = partner, body = { role = "admin" } }).json
+    local stored = Json.decode(s.mock.persist["directorlink_people"]:sub(6))
+    stored.people[partnerProfile].role = "member"
+    s.mock.persist["directorlink_people"] = "json:" .. Json.encode(stored)
+    local keys = Json.decode(s.mock.persist["directorlink_api_key_hashes"]:sub(6))
+    for _, key in ipairs(keys.keys) do
+        if key.profile == partnerProfile then
+            key.role = "member"
+        end
+    end
+    s.mock.persist["directorlink_api_key_hashes"] = "json:" .. Json.encode(keys)
+    local again = Mock.updateDriver(s.mock)
+    local _, connection = Harness.connected({ mock = again })
+    local restarted = { mock = again, connection = connection, home = s.home }
+    T.eq(get(again, partner, "/v1/api-keys/current").json.access.role, "member")
+    T.truthy(#get(again, s.key, "/v1/invitations").json.items >= 1, "the invitation is still listed")
+    local joined, code = join(restarted, made, "Stranger")
+    T.eq(joined, nil)
+    T.eq(code, "INVITATION_NOT_FOUND")
 end
 
 function tests.the_account_service_never_raises_anyones_access()
@@ -420,9 +686,9 @@ function tests.the_account_service_never_raises_anyones_access()
     T.eq(#suggestion.users, 2)
     T.eq(#history(s.mock, s.key, "merge_suggested"), 1, "recorded once, however often the account service says it")
     T.eq(#users(s.mock, phone).suggestions, 0, "members see none")
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = phone, body = { account = TAG_A, keep = kid.profile_id } }).status, 403)
+    T.eq(confirm(s.mock, phone, TAG_A, kid.profile_id).status, 403)
     -- An admin confirms, keeping the member's permissions: the partner's phone becomes a member's.
-    local confirmed = T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = kid.profile_id } })
+    local confirmed = confirm(s.mock, s.key, TAG_A, kid.profile_id)
     T.eq(confirmed.status, 200, confirmed.body)
     T.eq(confirmed.json.id, kid.profile_id)
     T.eq(#confirmed.json.devices, 2)
@@ -431,7 +697,7 @@ function tests.the_account_service_never_raises_anyones_access()
     local merged = history(s.mock, s.key, "users_merged")
     T.eq(merged[1].who.type, "key")
     T.eq(#users(s.mock, s.key).suggestions, 0)
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = kid.profile_id } }).status, 404, "nothing to bring together any more")
+    T.eq(confirm(s.mock, s.key, TAG_A, kid.profile_id).status, 404, "nothing to bring together any more")
 end
 
 function tests.the_owners_devices_never_move_and_only_the_owner_brings_them_together()
@@ -447,9 +713,9 @@ function tests.the_owners_devices_never_move_and_only_the_owner_brings_them_toge
     T.eq(suggestion.owner, true)
     T.eq(suggestion.may_confirm, true)
     T.eq(users(s.mock, partner).suggestions[1].may_confirm, false, "another admin may not")
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = partner, body = { account = TAG_A, keep = s.profile } }).json.code, "OWNER_PROTECTED")
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = iphoneKey.profile_id } }).json.code, "INVALID_FIELD", "the owner's user stays")
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = s.profile } }).status, 200)
+    T.eq(confirm(s.mock, partner, TAG_A, s.profile).json.code, "OWNER_PROTECTED")
+    T.eq(confirm(s.mock, s.key, TAG_A, iphoneKey.profile_id).json.code, "INVALID_FIELD", "the owner's user stays")
+    T.eq(confirm(s.mock, s.key, TAG_A, s.profile).status, 200)
     local me = get(s.mock, iphone, "/v1/api-keys/current").json
     T.eq(me.profile_id, s.profile)
     T.eq(me.access.owner, true, "one user, with the owner's permissions")
@@ -464,7 +730,7 @@ function tests.bringing_devices_together_keeps_the_owner_an_admin_and_five_devic
     local claim = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key })
     Harness.relayRequest(s.mock, s.connection, { type = "claim", id = "c2", token = claim.json.claim_token })
     accounts(s, { [s.keyId] = { TAG_B }, [kid.id] = { TAG_B } })
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_B, keep = kid.profile_id } }).json.code, "INVALID_FIELD")
+    T.eq(confirm(s.mock, s.key, TAG_B, kid.profile_id).json.code, "INVALID_FIELD")
     T.eq(get(s.mock, s.key, "/v1/api-keys/current").json.access.role, "admin")
     -- Two alike members whose account's devices would be more than five together in the older:
     -- it waits, and keeping the older is refused with the list; the other is allowed.
@@ -486,11 +752,11 @@ function tests.bringing_devices_together_keeps_the_owner_an_admin_and_five_devic
     T.eq(found.users[1].id, a.profile_id)
     T.eq(found.users[1].devices_after, 7)
     T.eq(found.users[2].devices_after, 3)
-    local refused = T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = a.profile_id } })
+    local refused = confirm(s.mock, s.key, TAG_A, a.profile_id)
     T.eq(refused.status, 409, refused.body)
     T.eq(refused.json.code, "USER_DEVICE_LIMIT")
     T.eq(#refused.json.devices, 5)
-    T.eq(T.http(s.mock, "POST", "/v1/users/merge", { key = s.key, body = { account = TAG_A, keep = b.profile_id } }).status, 200)
+    T.eq(confirm(s.mock, s.key, TAG_A, b.profile_id).status, 200)
     T.eq(profileOf(s.mock, a.key), b.profile_id)
     T.eq(#userById(users(s.mock, s.key), a.profile_id).devices, 4, "A keeps their devices of no account")
 end
@@ -504,8 +770,8 @@ function tests.a_device_used_by_two_accounts_stays_where_it_is()
     T.eq(#users(s.mock, s.key).suggestions, 0, "a shared device is not one account's")
 end
 
--- A device of user U signs in with the account of user V: it is V's device too. Alike, it moves
--- by itself; otherwise an admin chooses.
+-- A device of user U signs in with the account of user V: it is V's device too, and an admin
+-- chooses, even when U and V have the same access.
 function tests.a_device_signed_in_with_another_users_account()
     local s = session()
     local kitchen, kitchenKey = newUser(s.mock, s.key, "Kitchen tablet", { all_rooms = false, rooms = { 10 } })
@@ -519,8 +785,89 @@ function tests.a_device_signed_in_with_another_users_account()
     T.eq(#users(s.mock, s.key).suggestions, 1)
     -- The kitchen tablet, of a user alike to the kitchen phone's, signs in to the same account as it.
     accounts(s, { [dana.id] = { TAG_A }, [otherKey.id] = { TAG_B }, [kitchenKey.id] = { TAG_B } })
-    T.eq(profileOf(s.mock, kitchen), kitchenKey.profile_id, "the older user stays")
-    T.eq(profileOf(s.mock, other), kitchenKey.profile_id, "alike: brought together by itself")
+    T.eq(profileOf(s.mock, kitchen), kitchenKey.profile_id)
+    T.eq(profileOf(s.mock, other), otherKey.profile_id, "alike, and still nothing moves by itself")
+    T.eq(suggestionOf(s.mock, s.key, TAG_B).keep, kitchenKey.profile_id, "the older of the two is offered")
+    T.eq(confirm(s.mock, s.key, TAG_B, kitchenKey.profile_id).status, 200)
+    T.eq(profileOf(s.mock, other), kitchenKey.profile_id)
+end
+
+-- The forged tags of the cloud review (probe_forged_tags): two members with the same access, Mom
+-- and the nanny, tagged as one account. Nothing moves: the nanny gets none of Mom's devices, links
+-- or prompts until an admin confirms it.
+function tests.forged_tags_give_a_member_nothing_of_another()
+    local s = session()
+    local momPhone, mom = newUser(s.mock, s.key, "Mom's phone", { doors = true })
+    local ipad = addDevice(s.mock, s.key, mom.profile_id, "Mom's iPad").json
+    local nanny, nannyKey = newUser(s.mock, s.key, "Nanny's phone", { doors = true })
+    accounts(s, { [nannyKey.id] = { TAG_A }, [mom.id] = { TAG_A } })
+    T.eq(profileOf(s.mock, nanny), nannyKey.profile_id)
+    T.eq(#users(s.mock, nanny).items[1].devices, 1, "the nanny sees only her own device")
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. ipad.id, { key = nanny }).status, 404)
+    T.eq(get(s.mock, ipad.key, "/v1/api-keys/current").status, 200)
+    T.eq(profileOf(s.mock, momPhone), mom.profile_id)
+    T.eq(#history(s.mock, s.key, "users_merged"), 0)
+end
+
+-- A cloud that changes the tags at every message (probe p13) neither fills the history nor writes
+-- the controller's flash at every message: the same devices are the same suggestion, and the tags
+-- are written at most once a minute.
+function tests.tags_that_keep_changing_are_one_suggestion_and_few_writes()
+    local s = session()
+    local _, kid = newUser(s.mock, s.key, "Kid", {})
+    local writes = 0
+    local set = C4.PersistSetValue
+    C4.PersistSetValue = function(self, key, value, enc)
+        if key == "directorlink_accounts" then
+            writes = writes + 1
+        end
+        return set(self, key, value, enc)
+    end
+    local ok, err = pcall(function()
+        for index = 1, 60 do
+            local tag = string.format("%016x", 4096 + index)
+            accounts(s, { [s.keyId] = { tag }, [kid.id] = { tag } })
+        end
+        T.eq(#history(s.mock, s.key, "merge_suggested"), 1, "one suggestion, whatever its tag")
+        T.truthy(writes <= 2, "at most the first and one more in a minute, got " .. writes)
+        local before = writes
+        accounts(s, { [s.keyId] = { "0000000000001111" }, [kid.id] = { "0000000000001111" } })
+        accounts(s, { [s.keyId] = { "0000000000001111" }, [kid.id] = { "0000000000001111" } })
+        T.eq(writes, before, "within the minute: waits")
+        -- A minute later the minute's tick writes what waited.
+        local realTime = os.time
+        os.time = function(t)
+            return t and realTime(t) or realTime() + 120
+        end
+        local flushed = pcall(function()
+            require("src.auth.accounts").flush()
+        end)
+        os.time = realTime
+        T.truthy(flushed)
+        T.eq(writes, before + 1, "written once, a minute later")
+        local stored = Json.decode(s.mock.persist["directorlink_accounts"]:sub(6))
+        T.same(stored.keys[kid.id], { "0000000000001111" })
+    end)
+    C4.PersistSetValue = set
+    if not ok then
+        error(err, 0)
+    end
+end
+
+-- Many different suggestions in a day: only the first few are in the history.
+function tests.at_most_a_few_suggestions_a_day_in_the_history()
+    local s = session()
+    local ids = {}
+    for index = 1, 12 do
+        local _, made = newUser(s.mock, s.key, "Member " .. index, { all_rooms = false, rooms = { 10 } })
+        ids[index] = made.id
+    end
+    for index = 1, 11 do
+        local tag = string.format("%016x", 8192 + index)
+        accounts(s, { [ids[index]] = { tag }, [ids[index + 1]] = { tag } })
+    end
+    T.eq(#users(s.mock, s.key).suggestions, 1, "the last message's pair")
+    T.eq(#history(s.mock, s.key, "merge_suggested"), 10, "ten a day")
 end
 
 -- ---- a restore -----------------------------------------------------------------------------------

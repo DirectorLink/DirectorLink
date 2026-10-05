@@ -605,6 +605,11 @@ paths:
         Since 1.9.0 (ADR-061) every user, admin or member, invites their own other device
         (`for_me`, Add my other device, also when a device of their account asks to join), into their
         own user with their permissions; inviting anyone else stays the admins' (`403 FORBIDDEN`).
+        A member's lasts at most 10 minutes (`expires_in` up to 600, the default), their user keeps
+        at most two waiting (a new one replaces the oldest), and with `email` it is registered only
+        for an account that already uses the member's device at the home, which the account service
+        checks: `403 ACCOUNT_NOT_OF_DEVICE` for another email, `502 FOR_KEY_UNSUPPORTED` from an
+        account service that cannot check it.
         An admin may invite another device of an existing user (`profile_id`), such as the Google or
         Apple account of a user paired at home. A user has at most five devices: `409
         USER_DEVICE_LIMIT` here, and the join is refused with that code while they still have five
@@ -858,7 +863,8 @@ paths:
         use (as the account service says; a user without one uses DirectorLink on the home network
         only), and every device: when it was last used, whether it is this one, and whether the
         caller may remove it (`DELETE /v1/api-keys/{keyId}`). Admins see every user and the
-        suggestions to bring an account's devices together; anyone else only their own user.
+        suggestions to bring an account's devices together (what the account service says: nothing
+        moves until an admin confirms it, `POST /v1/users/merge`); anyone else only their own user.
       responses:
         "200":
           description: The users the caller sees.
@@ -876,14 +882,16 @@ paths:
       x-directorlink-role: admin
       summary: Bring the devices of one account into one user
       description: |
-        Confirms a suggestion of `GET /v1/users` (1.9.0, ADR-061): the devices that use that account
-        move to `keep`, whose role and permissions they then have; a user left without devices goes,
-        and their favorites are added to `keep`'s. DirectorLink does this by itself only when no
-        device would gain anything (the users have the same role, none is the owner, and the same
-        permissions). With the owner's user, only the owner confirms (`403 OWNER_PROTECTED`), and the
-        owner's user is the one that stays (`400 INVALID_FIELD`); at most five devices
-        (`409 USER_DEVICE_LIMIT`, with the devices); there is always an admin (`409 LAST_ADMIN`).
-        `404` when the suggestion is no longer there.
+        Confirms a suggestion of `GET /v1/users` (1.9.0, ADR-061), as it was shown (`revision`): the
+        devices that use that account move to `keep`, whose role and permissions (and language,
+        theme and favorites) they then have; a device that is no longer an admin's loses the
+        invitations it made; a user left without devices goes, and their favorites are added to
+        `keep`'s. DirectorLink never does this by itself. When the account service has changed which
+        devices share that account since, or anyone changed those users' roles or permissions, nothing
+        moves: `409 SUGGESTION_CHANGED` (look again). With the owner's user, only the owner confirms
+        (`403 OWNER_PROTECTED`), and the owner's user is the one that stays (`400 INVALID_FIELD`); at
+        most five devices (`409 USER_DEVICE_LIMIT`, with the devices); there is always an admin
+        (`409 LAST_ADMIN`). `404` when the suggestion is no longer there.
       requestBody:
         required: true
         content:
@@ -893,6 +901,7 @@ paths:
             example:
               account: "3f9a1c2e7b4d5a60"
               keep: "a1b2c3d4"
+              revision: "9c41d0e2b7a35f68"
       responses:
         "200":
           description: The user who stays, as `GET /v1/users` lists them.
@@ -928,11 +937,17 @@ paths:
         removed. A home the account service knows (Remote Access, once linked) moves there too: the
         controller asks it, over its own connection (`owner`, docs/RELAY.md), to move the home's
         owner account to the new owner's Google or Apple account, and records the new owner only
-        once it has, or when no account owns the home there (`account_service`); otherwise nothing
-        moves: `409 OWNER_NEEDS_ACCOUNT` (the new owner's devices use no account, or one that does
-        not belong to the home: they sign in on one of their devices first), `409 REMOTE_ACCESS_OFF`,
-        `503 REMOTE_OFFLINE` (no answer within 10 s, or not connected: try again), `502` with the
-        account service's code. In History as `access` `owner_changed`.
+        once it has, or when no account owns the home there (`account_service`). The account is the
+        one the new owner's devices of one account all use: `409 OWNER_ACCOUNT_UNCLEAR` when they use
+        several, `409 OWNER_ACCOUNT_SHARED` when it is also used by the owner's own devices (both with
+        `device_names`, the devices in question; nothing is asked). Otherwise nothing moves:
+        `409 OWNER_NEEDS_ACCOUNT` (the new owner's devices use no account of the home: invite their
+        account first, and they accept it), `409 REMOTE_ACCESS_OFF`, `503 REMOTE_OFFLINE` (not
+        connected: nothing was asked), `503 REMOTE_TIMEOUT` (no answer within 10 s: the account
+        service is told to undo whatever it did, `owner_cancel`; try again), `502` with the account
+        service's code. When the controller cannot follow what the account service did (the users
+        changed meanwhile, or the store could not be written), it tells it to undo that move. In
+        History as `access` `owner_changed`.
       requestBody:
         required: true
         content:
@@ -959,7 +974,7 @@ paths:
         "409":
           $ref: "#/components/responses/Conflict"
         "500":
-          description: The new owner could not be saved; nothing changed (and the account service was told to move its record back).
+          description: The new owner could not be saved; nothing changed (and the account service was told to undo its move).
           content:
             application/problem+json:
               schema:
@@ -3694,7 +3709,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT` (making another admin the owner, 1.9.0, ADR-064, with `user`); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
       content:
         application/problem+json:
           schema:
@@ -3783,7 +3798,7 @@ components:
           description: The most devices a user has (`USER_DEVICE_LIMIT`, 1.9.0).
         user:
           type: object
-          description: The user who has that many (`USER_DEVICE_LIMIT`).
+          description: The user who has that many (`USER_DEVICE_LIMIT`; not to a caller without a key, such as a device pairing).
           properties:
             id:
               type: string
@@ -3797,6 +3812,11 @@ components:
             that the app says "Remove a device first" with the list (`USER_DEVICE_LIMIT`).
           items:
             $ref: "#/components/schemas/LimitDevice"
+        device_names:
+          type: array
+          description: The names of the devices in question (`OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED`, 1.9.0).
+          items:
+            type: string
         errors:
           type: array
           description: Field-level details for validation errors.
@@ -6464,6 +6484,9 @@ components:
       type: object
       required: [device_limit, accounts_known, items, suggestions]
       properties:
+        linked:
+          type: boolean
+          description: The account service knows this home (its relay accepted it once), so that making another admin the owner moves the home's Google or Apple account too (1.9.0, ADR-064).
         device_limit:
           type: integer
           description: The most devices a user has (5).
@@ -6476,7 +6499,7 @@ components:
             $ref: "#/components/schemas/User"
         suggestions:
           type: array
-          description: For admins, the accounts whose devices are in more than one user; empty for anyone else.
+          description: For admins, the accounts whose devices are in more than one user, as the account service says; empty for anyone else.
           items:
             $ref: "#/components/schemas/MergeSuggestion"
 
@@ -6557,15 +6580,23 @@ components:
 
     MergeSuggestion:
       type: object
-      required: [id, owner, may_confirm, users]
+      required: [id, revision, owner, keep, may_confirm, users]
       properties:
         id:
           type: string
           pattern: "^[0-9a-f]{16}$"
           description: "The account's tag at this home (opaque: never the account's id or email)."
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: "A digest of what is shown: the devices in each user, and each user's role, ownership and permissions. The confirmation sends it back."
         owner:
           type: boolean
           description: "One of the users is the home's owner's: only the owner confirms, keeping the owner's user."
+        keep:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{8}$"
+          description: "The user offered to keep: the owner's; else the one whose access is within every other's (never an admin over a member); null when the admin must choose."
         may_confirm:
           type: boolean
           description: Whether the caller may confirm it.
@@ -6574,13 +6605,18 @@ components:
           description: Oldest first.
           items:
             type: object
-            required: [id, name, devices, devices_after]
+            required: [id, name, role, owner, devices, devices_after]
             properties:
               id:
                 type: string
                 pattern: "^[0-9a-f]{8}$"
               name:
                 type: string
+              role:
+                $ref: "#/components/schemas/PersonRole"
+              owner:
+                type: boolean
+                description: The home's owner's user.
               devices:
                 type: array
                 description: Their devices that use the account.
@@ -6593,7 +6629,7 @@ components:
 
     UserMerge:
       type: object
-      required: [account, keep]
+      required: [account, keep, revision]
       additionalProperties: false
       properties:
         account:
@@ -6604,6 +6640,10 @@ components:
           type: string
           pattern: "^[0-9a-f]{8}$"
           description: The user whose role and permissions stay.
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: The suggestion's revision as it was shown (`409 SUGGESTION_CHANGED` when it is no longer that).
 
     OwnerChangeRequest:
       type: object
@@ -6688,11 +6728,10 @@ components:
     InvitationCreate:
       type: object
       additionalProperties: false
-      required: [role]
       properties:
         role:
           $ref: "#/components/schemas/KeyRole"
-          description: "`admin` or `member` (with `access`); the 1.7.0 roles make the person they became (ADR-054)."
+          description: "`admin` or `member` (with `access`); the 1.7.0 roles make the person they became (ADR-054). Required, except with `for_me` (the caller's own user's)."
         access:
           $ref: "#/components/schemas/PersonAccessUpdate"
           description: The invited member's permissions (since 1.8.0); not with `for_me`.
@@ -6700,10 +6739,10 @@ components:
           type: integer
           minimum: 60
           maximum: 604800
-          description: Seconds until the invitation expires (default 7 days).
+          description: Seconds until the invitation expires (default 7 days; a member's own, at most and by default 10 minutes).
         for_me:
           type: boolean
-          description: For the caller's own other device (any user since 1.9.0); the new key joins the caller's user.
+          description: For the caller's own other device (any user since 1.9.0); the new key joins the caller's user. A member's user keeps two waiting at most.
         profile_id:
           type: string
           pattern: "^[0-9a-f]{8}$"
@@ -6714,7 +6753,8 @@ components:
           description: |
             The address of the person invited. The controller then registers the invitation with
             the account service itself before answering (`registered: true`); without it, the
-            home's owner registers it from the app.
+            home's owner registers it from the app. A member's (`for_me`) only for an account that
+            already uses the member's device at the home (`403 ACCOUNT_NOT_OF_DEVICE`).
 
     Invitation:
       type: object
@@ -6916,9 +6956,10 @@ components:
         - Users (1.9.0, ADR-061): `access` `pairing_code` (an admin made a pairing code in the app;
           `what` the user it is for, `to` the role of a new user), `users_merged` (the devices of
           one account brought into the user `what`, from the users in `from`, `count` devices moved;
-          `note` `automatic` and `who` DirectorLink when the users were alike, else the key that
-          confirmed it), `merge_suggested` (the devices of one account are in the users `what`,
-          `count` devices: an admin may bring them together; once per suggestion).
+          `who` the key of the admin who confirmed it: nothing is merged by itself),
+          `merge_suggested` (the account service says the devices of one account are in the users
+          `what`, `count` devices: an admin may bring them together; once per suggestion, at most ten
+          a day).
         - The owner (1.9.0, ADR-064): `access` `owner_changed` (the owner made the admin user `what`
           the home's owner instead of `from`).
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
