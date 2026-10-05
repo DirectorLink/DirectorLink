@@ -248,3 +248,61 @@ test("the controller moves the owner account back, and a home no account claimed
     assert.equal(answer.code, "NOT_CLAIMED");
   }
 });
+
+// The owner review of 1.9.0 (findings 2 and 6): the controller did not follow a move, or heard no
+// answer in time, and says so with the request's id (`owner_cancel`): exactly that move is undone,
+// to the account it replaced, even one that never used an admin key through the account; an unknown
+// id moves nothing; trying again moves it again, and a request for the account that owns the home
+// already answers that nothing moved.
+test("owner_cancel undoes exactly the move of that request, and trying again finishes it", TEST, async () => {
+  // Dana claimed the home and never used a key through her account.
+  const state = await home();
+  const danaKey = randomHex(4);
+  state.keys.set(danaKey, `ak_${randomHex(24)}`);
+  state.admins.add(danaKey);
+  state.announce();
+  const dana = await signIn(person("dana"));
+  assert.equal((await call("POST", "/v1/homes/claim", { cookie: dana, body: { home_id: state.home, claim_token: state.claimToken } })).status, 200);
+  const avi = await joins(state, dana, person("avi"), { admin: true });
+  await sleep(300);
+
+  const id = randomHex(8);
+  const answered = new Promise((resolve) => {
+    const listener = (text) => {
+      const message = JSON.parse(text);
+      if (message.type === "owner_result" && message.id === id) {
+        state.connection.off("unknown", listener);
+        resolve(message);
+      }
+    };
+    state.connection.on("unknown", listener);
+  });
+  state.connection.sendJson({ type: "owner", id, account: tagOf(state.home, avi.id) });
+  const moved = await answered;
+  assert.equal(moved.ok, true, JSON.stringify(moved));
+  assert.equal(moved.moved, true);
+  assert.equal((await homeOf(avi.cookie, state.home)).owner, true);
+
+  // A cancel for another request moves nothing.
+  state.connection.sendJson({ type: "owner_cancel", id: randomHex(8) });
+  await sleep(500);
+  assert.equal((await homeOf(avi.cookie, state.home)).owner, true);
+  // The controller gave up on this one: Dana's account owns the home again (no admin key needed).
+  state.connection.sendJson({ type: "owner_cancel", id });
+  for (let tries = 0; tries < 50 && !(await homeOf(dana, state.home)).owner; tries += 1) await sleep(100);
+  assert.equal((await homeOf(dana, state.home)).owner, true);
+  assert.equal((await homeOf(avi.cookie, state.home)).owner, false);
+  // The same cancel again: nothing more.
+  state.connection.sendJson({ type: "owner_cancel", id });
+  await sleep(300);
+  assert.equal((await homeOf(dana, state.home)).owner, true);
+
+  // Trying again: it moves; asked once more, it says it moved nothing.
+  const again = await tellOwner(state, tagOf(state.home, avi.id));
+  assert.equal(again?.ok, true, JSON.stringify(again));
+  assert.equal(again.moved, true);
+  const retried = await tellOwner(state, tagOf(state.home, avi.id));
+  assert.equal(retried?.ok, true);
+  assert.equal(retried.moved, false, "Avi's account owned it already");
+  assert.equal((await homeOf(avi.cookie, state.home)).owner, true);
+});
