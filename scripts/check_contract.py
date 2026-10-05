@@ -494,6 +494,19 @@ def scenario(client, bridge):
     client.check("GET", "/v1/doorbells/92", 404)
     client.check("POST", "/v1/doorbells/93/open", 202)
     client.check("POST", "/v1/doorbells/99/open", 404)
+    # A camera that is a doorbell (1.10.0, ADR-065: the dev bridge's agreement cameras, 68 Entrance
+    # on driver 158): listed with the doorbells, ringing by its driver's event named Ring; it opens
+    # nothing.
+    if bridge.camera_ring(158) != 1:
+        fail("a doorbell camera's Ring should be watched by its name")
+    entrance = client.check("GET", "/v1/doorbells/68", 200)
+    if entrance["camera"] != {"id": 68, "snapshot_href": "/v1/cameras/68/snapshot"} or not entrance["last_ring_at"] or entrance["can_open"]:
+        fail(f"GET /v1/doorbells/68 should be the doorbell camera, its picture its own, rung: {entrance}")
+    if 68 not in [item["id"] for item in client.check("GET", "/v1/doorbells", 200)["items"]]:
+        fail("GET /v1/doorbells should list the doorbell camera")
+    client.check("POST", "/v1/doorbells/68/open", 409)
+    if bridge.camera_alert(157, "Animal") != 1:
+        fail("an agreement camera's Alert should be watched by its name")
 
     # The alarm's status (1.2.0, ADR-038): read-only, off by default (the dev bridge's fake home
     # has it on), and while it is on only in sealed answers (Mock.withPartitions: 80 House, 81
@@ -1038,7 +1051,7 @@ def main():
         players.terminate()
         fail(f"the fake Sonos players did not start: {started!r}")
     spec_json = ROOT / "dist" / "openapi.json"
-    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]))
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True)
     server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

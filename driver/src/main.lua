@@ -675,6 +675,9 @@ function OnDriverLateInit(driverInitType)
             -- A few drivers' versions: a device whose driver was updated is set up again, and
             -- favorites of devices gone for days are dropped (ADR-059).
             pcall(DriverUpdates.tick)
+            -- A few cameras' marker of DirectorLink's camera agreement, which may come after their
+            -- driver started: such a camera is set up again (ADR-065).
+            pcall(AdapterManager.lookAgain)
             pcall(FavoritesGone.prune, now)
             -- Which keys share an account, when a change waited to be written (ADR-061).
             pcall(Accounts.flush)

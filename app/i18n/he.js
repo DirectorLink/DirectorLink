@@ -1233,12 +1233,15 @@ export default {
     openRequestTitle: "לפתוח את {name}?",
     openRequest: "הקישור „{via}” שאל ב-{time}. הקישו כדי לענות.",
     openRequestUnnamed: "הקישור שלכם שאל ב-{time}. הקישו כדי לענות.",
-    // מצלמה של הדרייברים DirectorLink · Hikvision (ADR-056).
+    // התראת מצלמה (ADR-056; מ-1.10.0 כל דרייבר מצלמה של הסכם המצלמות של DirectorLink, ADR-065).
     cameraTitle: "התראת מצלמה",
     camera: "{what} ב-{name} ב-{time}.",
     cameraSaw: {
       person: "אדם",
       vehicle: "רכב",
+      animal: "בעל חיים",
+      package: "חבילה",
+      license_plate: "לוחית רישוי",
       face: "פנים",
       motion: "תנועה",
       line_crossing: "חציית קו",
@@ -1259,7 +1262,7 @@ export default {
       help: "התראה במכשיר הזה, גם כשהאפליקציה סגורה. מה שכתוב בה נעול למכשיר הזה: השרתים של DirectorLink לא יכולים לקרוא אותו.",
       helpAdmins: "התראה כשהבית מנותק כבר 10 דקות, או כשתזמון נתקל בבעיה. למנהלים; התראה אף פעם לא מציינת שם של חדר, מכשיר או תזמון.",
       kindsTitle: "על מה להתריע",
-      cameraHelp: "כבוי בהתחלה: מצלמות יכולות להתריע הרבה. על מה כל מצלמה מתריעה נקבע ב-Alert On שלה ב-Control4; לכל היותר התראה אחת בדקה מכל מצלמה.",
+      cameraHelp: "כבוי בהתחלה: מצלמות יכולות להתריע הרבה. על מה כל מצלמה מתריעה נקבע בדרייבר שלה ב-Control4 (בדרייברים של Hikvision, ב-Alert On שלה); לכל היותר התראה אחת בדקה מכל מצלמה.",
       kinds: {
         offline: "הבית מנותק כבר 10 דקות",
         device_requests: "מכשיר חדש שלי מבקש להצטרף",

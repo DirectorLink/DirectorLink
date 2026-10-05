@@ -19,10 +19,16 @@
 --   in:  "ask <hex JSON { link, secret }>\n" runs an ask-to-open link (ADR-058) as the account service
 --        would pass it on, the relay counting as connected meanwhile; out: "ASKED <hex JSON { answer,
 --        questions: [{ key_id, detail }] }>\n", each question opened as that device's worker would
---   in:  "alert <driver id> <hex label>\n" a camera's DirectorLink · Hikvision Camera driver raises
---        an alert (LAST_ALERT, then its Alert event); out: "ALERTED <times delivered>\n"
+--   in:  "alert <driver id> <hex label>\n" a camera's driver (the DirectorLink · Hikvision Camera
+--        driver, or one of DirectorLink's camera agreement) raises an alert (LAST_ALERT, then its
+--        event named Alert); out: "ALERTED <times delivered>\n"
+--   in:  "ring <driver id>\n" a doorbell camera's driver of the agreement rings (LAST_RING, then its
+--        event named Ring); out: "RANG <times delivered>\n"
 --   in:  "scene_links unreadable\n" / "scene_links readable\n": the scene links' store cannot be read
 --        (and is read again at once), or has what it had back; out: "SCENE_LINKS <complete>\n"
+-- With an argument "agreement" (scripts/dev_server.py --agreement-cameras), two cameras whose
+-- drivers follow DirectorLink's camera agreement (1.10.0, ADR-065) join the project: 67 "Porch" (a
+-- camera, driver 157) and 68 "Entrance" (a doorbell, driver 158), Mock.withAgreementCameras.
 -- With an argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
@@ -52,11 +58,13 @@ if specPath and specPath ~= "" then
     end
 end
 local sonosForwarding = false
+local agreementCameras = false
 local fakeCameras = 0
 for index = 2, #(arg or {}) do
     if arg[index] == "sonos" then
         sonosForwarding = true
     end
+    agreementCameras = agreementCameras or arg[index] == "agreement"
     fakeCameras = tonumber((arg[index] or ""):match("^cameras=(%d+)$")) or fakeCameras
 end
 
@@ -86,6 +94,9 @@ if fakeCameras > 0 then
         }
     end
     Mock.withHikvisionCameras(project, list)
+end
+if agreementCameras then
+    Mock.withAgreementCameras(project)
 end
 local mock = Mock.startDriver(project, specText, nil, function()
     Properties["Alarm Status"] = "On"
@@ -452,7 +463,14 @@ local function command(line)
     end
     local alerting, label = line:match("^alert (%d+) (%x*)$")
     if alerting then
-        return "ALERTED " .. Mock.hikvisionAlert(mock, tonumber(alerting), fromHex(label))
+        -- By the event's name when Director names the driver's events, else the Hikvision driver's 1.
+        local data = (mock.project.deviceData or {})[tonumber(alerting)]
+        local named = data and tostring(data.events or ""):find("<name>Alert</name>", 1, true)
+        return "ALERTED " .. (named and Mock.cameraAlert or Mock.hikvisionAlert)(mock, tonumber(alerting), fromHex(label))
+    end
+    local ringing = line:match("^ring (%d+)$")
+    if ringing then
+        return "RANG " .. Mock.cameraRing(mock, tonumber(ringing))
     end
     local answered, answerHex = line:match("^CAMERA_ANSWER (%d+) (%x*)$")
     if answered then

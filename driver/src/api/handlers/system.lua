@@ -95,6 +95,12 @@ local function inventory(actor, registry, counts)
             end
         end
     end
+    -- Cameras that are doorbells (ADR-065) are doorbells too, for whoever sees them as one.
+    for _, doorbell in ipairs(registry.doorbellList()) do
+        if doorbell.camera_doorbell and Access.canSee(actor, doorbell) then
+            result.doorbells = result.doorbells + 1
+        end
+    end
     return result
 end
 
@@ -166,7 +172,8 @@ function System.info(ctx)
         -- ask_links: /v1/ask-links, open requests sealed as alerts, and a pulse that answers one
         -- (1.8.0, ADR-058), always there.
         -- camera_alerts: a camera of the project raises alerts DirectorLink passes on (1.8.0,
-        -- ADR-056: the DirectorLink · Hikvision Camera driver), so the app offers their choice.
+        -- ADR-056: the DirectorLink · Hikvision Camera driver; since 1.10.0 every camera driver of
+        -- DirectorLink's camera agreement, ADR-065), so the app offers their choice.
         -- users: Settings → Users (1.9.0, ADR-061): GET /v1/users, up to five devices a user, an
         -- account's devices brought into one user, pairing codes for a chosen user, members adding
         -- and removing their own devices; always there.

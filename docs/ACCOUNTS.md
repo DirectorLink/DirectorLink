@@ -52,7 +52,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Whether the controller lets every user add their own devices (1.9.0) | `features.users` | that the home's last `hello` listed `users`; nothing about anyone | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0); since 1.9.0 also when the account service has no browser left for that key (`alerts_gone`, key ids only, ADR-062), which the cloud knew |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
-| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw (since 1.10.0 any camera driver of DirectorLink's camera agreement, its doorbell cameras' rings too: the same kinds, ADR-065) | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
@@ -480,7 +480,8 @@ controller, whether an account owns the home and whether Dana's belongs to it.
 
 Anyone with a key at the home can get notifications on their phones and computers, with the app
 closed: a doorbell rang, a camera of the DirectorLink · Hikvision drivers saw a person, a vehicle or
-a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose), a door or gate was
+a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose; since 1.10.0 a camera
+of any driver of DirectorLink's camera agreement, and a doorbell camera's ring, ADR-065), a door or gate was
 opened (admins, if they choose), the refrigerator's door was left open (members and admins; since
 1.8.0 whoever sees that refrigerator), a schedule had a problem (admins), the home has been
 unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join

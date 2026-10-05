@@ -265,6 +265,30 @@ function Manager.setUpAgain(deviceIds)
     return results
 end
 
+-- Devices whose driver now says something else of what they are, which their adapter looks at a few
+-- a minute (the scheduler's tick): a camera driver's marker of DirectorLink's camera agreement that
+-- came after the driver started, or its kind (ADR-065). Each is set up again, as at a driver update.
+-- Returns id -> true when the device works now, false if not.
+function Manager.lookAgain()
+    local results = {}
+    if not registry then
+        return results
+    end
+    for _, adapter in ipairs(adapters) do
+        if adapter.lookAgain then
+            local ok, ids = pcall(adapter.lookAgain, registry)
+            if not ok then
+                log("looking at devices again failed: " .. tostring(ids))
+            elseif type(ids) == "table" and #ids > 0 then
+                for id, works in pairs(Manager.setUpAgain(ids)) do
+                    results[id] = works
+                end
+            end
+        end
+    end
+    return results
+end
+
 function Manager.counts()
     return {
         total = initializedCounts.total,

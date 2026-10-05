@@ -1251,12 +1251,16 @@ export default {
     openRequestTitle: "Open {name}?",
     openRequest: "Your link “{via}” asked at {time}. Tap to answer.",
     openRequestUnnamed: "Your link asked at {time}. Tap to answer.",
-    // A camera of the DirectorLink · Hikvision drivers (ADR-056): "{what} at {name} at {time}."
+    // A camera's alert (ADR-056; any camera driver of DirectorLink's camera agreement since 1.10.0,
+    // ADR-065): "{what} at {name} at {time}."
     cameraTitle: "Camera alert",
     camera: "{what} at {name} at {time}.",
     cameraSaw: {
       person: "Person",
       vehicle: "Vehicle",
+      animal: "Animal",
+      package: "Package",
+      license_plate: "License plate",
       face: "Face",
       motion: "Motion",
       line_crossing: "Line crossed",
@@ -1277,7 +1281,7 @@ export default {
       help: "A notification on this device, also when the app is closed. What it says is sealed for this device: DirectorLink’s servers can’t read it.",
       helpAdmins: "A notification when the home has been offline for 10 minutes, or when a schedule had a problem. For admins; an alert never names a room, device or schedule.",
       kindsTitle: "What to alert about",
-      cameraHelp: "Off at first: cameras can be busy. What each camera alerts about is its Alert On in Control4; at most one a minute per camera.",
+      cameraHelp: "Off at first: cameras can be busy. What each camera alerts about is set in its driver in Control4 (on the Hikvision drivers, its Alert On); at most one a minute per camera.",
       kinds: {
         offline: "The home is offline for 10 minutes",
         device_requests: "A new device of mine asks to join",

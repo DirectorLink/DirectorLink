@@ -717,6 +717,20 @@ function tests.devices_are_matched_by_id_else_by_name_in_the_same_room_and_the_r
     T.same(list(s.mock, old.key, "/v1/profile").prefs.favorites, { "light:120", "thermostat:30", "blind:50" })
 end
 
+-- A camera that is a doorbell (1.10.0, ADR-065) is the doorbell of its favorite "doorbell:<id>":
+-- kept by a restore, as a DoorBird's is.
+function tests.a_doorbell_camera_s_favorite_comes_back_with_a_restore()
+    local s = start(Mock.withAgreementCameras(Mock.project()))
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = s.key, body = { prefs = {
+        favorites = { "doorbell:68", "camera:68", "doorbell:93" },
+    } } }).status, 200)
+    local document = export(s)
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = s.key, body = { prefs = { favorites = {} } } }).status, 200)
+    local done = replace(s, document)
+    T.eq(done.references.unmatched_count, 0, "nothing left out")
+    T.same(list(s.mock, s.key, "/v1/profile").prefs.favorites, { "doorbell:68", "camera:68", "doorbell:93" })
+end
+
 function tests.a_room_that_is_gone_never_becomes_the_whole_home()
     local old = start()
     furnish(old)
