@@ -61,7 +61,7 @@ On Home, under the header, a field takes a sentence: type it, or tap the microph
 | *turn off everything* · *כבו הכל* · *turn off all the lights* · *close all blinds* | Home's Turn off all, after you confirm it |
 | *open the main gate* · *פתחו את השער* | The gate's Open button, waiting for your second tap (with door access) |
 
-- **Numbers** in digits or words: *23*, *23.5*, *twenty three*, *עשרים ושלוש*, *half*, *וחצי*; *%* or *percent*, *degrees* or *מעלות*.
+- **Numbers** in digits or words: *23*, *23.5*, *twenty three*, *עשרים ושלוש*, *half*, *וחצי*; *%* or *percent*, *degrees* or *מעלות*. A number word from one to nine needs its unit (*five percent*).
 - **Names** are forgiving: any case, accents and niqqud, Hebrew with or without its prefixes (ב, ה, ל, ו…), singular or plural, a small typo, any word order. You need not say a device's kind or "room" when the rest of its name is enough.
 - **It never guesses.** When two names fit as well, it asks which one; part of a name asks "Did you mean"; when it doesn't understand, it says so with examples made from your own rooms and scenes, and does nothing.
 - **Doors, gates and Turn off all** keep their second tap: the command shows the button, and only tapping it opens or turns off.

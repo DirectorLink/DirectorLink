@@ -99,7 +99,7 @@ globalThis.webkitSpeechRecognition = FakeRecognition;
 // ---- the fake controller ---------------------------------------------------------------------
 const HOST = "controller.invalid";
 const KEY = "ak_test";
-const controller = { lights: [], thermostats: [], blinds: [], relays: [], calls: [], patch: null };
+const controller = { lights: [], thermostats: [], blinds: [], relays: [], calls: [], patch: null, rtt: 0 };
 
 function answer(status, json) {
   return new Response(JSON.stringify(json), { status, headers: { "Content-Type": "application/json" } });
@@ -111,6 +111,7 @@ globalThis.fetch = async (url, init = {}) => {
   const method = init.method || "GET";
   const sent = init.body ? JSON.parse(init.body) : null;
   controller.calls.push({ method, path, body: sent });
+  if (controller.rtt) await new Promise((resolve) => setTimeout(resolve, controller.rtt));
   return handle(method, path, sent);
 };
 
@@ -183,7 +184,7 @@ async function connect({ role = "member", access = null } = {}) {
   session.forgetKey();
   clearCommand();
   await advance(20000, 500);
-  Object.assign(controller, { calls: [], patch: null });
+  Object.assign(controller, { calls: [], patch: null, rtt: 0 });
   controller.lights = copies(LIGHTS);
   controller.thermostats = copies(THERMOSTATS);
   controller.relays = copies(RELAYS);
@@ -364,13 +365,35 @@ test("a scene runs; one that opens doors waits for the tap on its Run button", a
   await advance(100);
   assert.deepEqual(sent("POST", /\/run$/).map((call) => call.path), ["/v1/scenes/aa000001/run"]);
   assert.equal(shown(), "Run ⁨Good night⁩Done");
+  // Said twice while it runs: it runs once.
+  controller.rtt = 1000;
+  await say("run good night");
+  await say("good night");
+  assert.equal(shown(), "Run ⁨Good night⁩Working…", "the run on its way");
+  await advance(1500);
+  controller.rtt = 0;
+  assert.equal(sent("POST", /aa000001\/run$/).length, 2, "once more, not twice");
+  assert.equal(shown(), "Run ⁨Good night⁩Done");
+  // Run from Home's button, then said while it runs: its result.
+  controller.rtt = 1000;
+  const { runScene } = await import("../../app/js/scenes.js");
+  runScene(SCENES[0]);
+  await settle();
+  await say("good night");
+  assert.equal(shown(), "Run ⁨Good night⁩Working…");
+  await advance(1500);
+  controller.rtt = 0;
+  assert.equal(shown(), "Run ⁨Good night⁩Done");
+  assert.equal(sent("POST", /aa000001\/run$/).length, 3);
 
   await say("run leave home");
-  assert.equal(sent("POST", /\/run$/).length, 1, "not run by the words");
+  assert.equal(sent("POST", /aa000002\/run$/).length, 0, "not run by the words");
   assert.equal(byKey(home(), "command-scene:home").textContent, "Tap again to run");
+  await say("run leave home");
+  assert.equal(sent("POST", /aa000002\/run$/).length, 0, "nor by saying it again");
   await click("command-scene:home");
   await advance(100);
-  assert.deepEqual(sent("POST", /\/run$/).map((call) => call.path), ["/v1/scenes/aa000001/run", "/v1/scenes/aa000002/run"]);
+  assert.deepEqual(sent("POST", /aa000002\/run$/).map((call) => call.path), ["/v1/scenes/aa000002/run"]);
 });
 
 test("the controller refusing shows why", async () => {

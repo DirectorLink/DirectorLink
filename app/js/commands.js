@@ -362,11 +362,17 @@ export function act(action) {
       if (run?.stage !== "confirm" && run?.stage !== "running") runScene(scene);
       return show({ stage: "scene", said, action });
     }
+    // Said again while it runs: the run on its way is the one shown.
+    if (run?.stage === "running" && current?.stage === "running" && current.action?.id === scene.id) return current;
     const shown = show({ stage: "running", said, action });
-    runScene(scene).then(() => {
+    const done = () => {
+      if (current?.stamp !== shown.stamp) return;
       const result = ui.sceneRuns[scene.id];
+      // Run from elsewhere (Home's button) and still on its way: its result is waited for.
+      if (result?.stage === "running") return void window.setTimeout(done, 250);
       settle(shown.stamp, result ? { stage: result.stage === "done" ? "done" : result.stage === "partial" ? "partial" : "error", text: result.text } : NOTHING());
-    });
+    };
+    runScene(scene).then(done);
     return shown;
   }
   if (action.type === "offAll") {
