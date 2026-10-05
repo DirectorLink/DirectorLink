@@ -86,7 +86,8 @@ function kindsList() {
   const kinds = alertsUi.choices?.kinds || {};
   for (const kind of ALERT_KINDS) {
     // Camera alerts only with a controller that has them (DirectorLink 1.8.0 and a camera on the
-    // DirectorLink · Hikvision Camera driver, ADR-056).
+    // DirectorLink · Hikvision Camera driver, ADR-056; since 1.10.0 any driver of DirectorLink's
+    // camera agreement, ADR-065).
     if (kind === "camera" && state.system?.features?.camera_alerts !== true) continue;
     if (typeof kinds[kind] === "boolean") rows.push(kindRow(kind, kinds[kind], kind === "camera" ? t("alerts.settings.cameraHelp") : null));
   }

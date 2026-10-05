@@ -135,7 +135,7 @@ API key roles (drivers from v0.7.0 to 1.7.0): on connect the app reads `GET /v1/
 
 ## Doorbells
 
-DoorBird doorstations come from `GET /v1/doorbells`, polled with the other devices every 10 s (an older driver answers 404: no doorbells; other failures keep the last list).
+DoorBird doorstations come from `GET /v1/doorbells`, polled with the other devices every 10 s (an older driver answers 404: no doorbells; other failures keep the last list). Since DirectorLink 1.10.0 a doorbell camera (a camera whose driver follows DirectorLink's camera agreement and says it is a doorbell, ADR-065, docs/CAMERA_DRIVERS.md) is listed there too, under the camera's id, its `camera` itself and `can_open` false: the app shows it as any doorbell, and its camera's tile stays out of the room it is shown in.
 
 - **Ringing** — a ring is recent for 2 minutes: when its `last_ring_at` is within 2 minutes of this browser's clock (a controller clock up to 2 minutes ahead is believed), or when this page saw `last_ring_at` change within the last 2 minutes, whatever the clocks say. While it is recent, Home starts with a banner — "Someone is at the door — <name>", the doorbell's camera refreshed about every second, **Open gate** and **Dismiss** — and the other screens show one line that leads to it. Dismiss remembers that `last_ring_at` (per controller, in `localStorage`); the next ring shows the banner again.
 - **Open gate** — doors and admin keys, on doorbells with `can_open`: a second tap within 5 s sends `POST /v1/doorbells/{id}/open` (Opening… → Sent). `403 DOOR_CONTROL_DISABLED` explains the Composer switch.

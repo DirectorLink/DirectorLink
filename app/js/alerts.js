@@ -37,11 +37,14 @@ export const KEY_PATH = "/alert-key.json";
 export const ALERT_LABEL = "DirectorLink alert v1";
 // What the controller alerts about, in the order Settings lists them; offline is the servers' own.
 export const ALERT_KINDS = ["doorbell", "camera", "door_opened", "fridge_door", "schedule_failed"];
-// What a camera alert can say it saw (the DirectorLink · Hikvision Camera driver's detections,
-// ADR-056); anything else is "other".
+// What a camera alert can say it saw (the labels of DirectorLink's camera agreement, ADR-065, and
+// the DirectorLink · Hikvision Camera driver's detections, ADR-056); anything else is "other".
 export const CAMERA_DETECTIONS = [
   "person",
   "vehicle",
+  "animal",
+  "package",
+  "license_plate",
   "face",
   "motion",
   "line_crossing",

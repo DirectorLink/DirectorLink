@@ -37,7 +37,11 @@ picture comes from fake cameras here, as from real ones: a digest login (a new n
 each nonce's counts taken in order only, as Hikvision does), --camera-ms for a picture (the
 challenge takes a fifth of it; larger pictures three times as long), and a picture of about a real
 camera's size. "alert <driver id> <label>" makes a camera's driver raise an alert (e.g. "alert 701
-Person"); "stats" says how many requests the fake cameras got. --latency MS delays every request and
+Person"); "stats" says how many requests the fake cameras got.
+With --agreement-cameras (1.10.0, ADR-065), two cameras whose drivers follow DirectorLink's camera
+agreement join the project: 67 "Porch" (a camera, driver 157) and 68 "Entrance" (a doorbell, driver
+158, listed with the doorbells). "alert 157 Animal" raises an alert by the event named Alert, and
+"ring 158" rings the doorbell camera (LAST_RING, then the event named Ring). --latency MS delays every request and
 answer by half of MS each way, as the account's relay does (its round trip).
 """
 
@@ -152,7 +156,7 @@ class FakeCameras:
 class Bridge:
     """One Lua process running the driver; requests are serialized because the driver is single-threaded."""
 
-    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150):
+    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150, agreement=False):
         # Fake Sonos players on this port (tests/sonos/fake-sonos.mjs): the driver's requests to
         # players reach them through _fetch.
         self.sonos_port = sonos_port
@@ -165,6 +169,8 @@ class Bridge:
             arguments.append("sonos")
         if cameras:
             arguments.append(f"cameras={int(cameras)}")
+        if agreement:
+            arguments.append("agreement")
         self.process = subprocess.Popen(
             arguments,
             cwd=ROOT,
@@ -281,8 +287,13 @@ class Bridge:
         return int(self._ask(f"event {int(device_id)} {int(event_id)}", "EVENT"))
 
     def camera_alert(self, driver_id, label):
-        """A camera's DirectorLink · Hikvision Camera driver raises an alert ("Person", ...)."""
+        """A camera's driver (DirectorLink · Hikvision Camera, or of DirectorLink's camera agreement)
+        raises an alert ("Person", ...)."""
         return int(self._ask(f"alert {int(driver_id)} {label.encode().hex()}", "ALERTED"))
+
+    def camera_ring(self, driver_id):
+        """A doorbell camera's driver of DirectorLink's camera agreement rings (ADR-065)."""
+        return int(self._ask(f"ring {int(driver_id)}", "RANG"))
 
     def tick(self, at=None):
         """Runs the scheduler's minute (schedules, automatic backups) now, or at the Unix time `at`;
@@ -399,6 +410,7 @@ def main():
     parser.add_argument("--sonos", type=int, metavar="PORT", help="fake Sonos players on this port (tests/sonos/fake-sonos.mjs); starts with Sonos = On")
     parser.add_argument("--remote-linked", action="store_true", help="start with Remote Access On and the home as the relay accepted it (scene links can be made)")
     parser.add_argument("--cameras", type=int, default=0, metavar="N", help="N fake cameras on the DirectorLink · Hikvision Camera driver instead of the two plain ones")
+    parser.add_argument("--agreement-cameras", action="store_true", help="two cameras of DirectorLink's camera agreement: 67 Porch (a camera, driver 157) and 68 Entrance (a doorbell, driver 158)")
     parser.add_argument("--camera-ms", type=int, default=150, metavar="MS", help="how long a fake camera takes for a picture (default 150)")
     parser.add_argument("--latency", type=int, default=0, metavar="MS", help="a round trip added to every request, as the account's relay adds")
     args = parser.parse_args()
@@ -406,7 +418,7 @@ def main():
         sys.exit("Lua 5.1 not found; install it or pass --lua")
 
     spec = ROOT / "dist" / "openapi.json"
-    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms)
+    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms, args.agreement_cameras)
     if args.jewish_calendar:
         bridge.set_property("Jewish Calendar", "On")
     if args.sonos:
@@ -422,11 +434,13 @@ def main():
             print(f"Sonos: On (fake players on port {args.sonos})")
         if args.cameras:
             print(f"Cameras: {args.cameras} fake DirectorLink · Hikvision cameras (ids 601-{600 + args.cameras}), {args.camera_ms} ms a picture")
+        if args.agreement_cameras:
+            print('Agreement cameras: 67 Porch (driver 157) and the doorbell 68 Entrance (driver 158); "ring 158" rings it')
         if args.latency:
             print(f"Latency: {args.latency} ms a round trip")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run); "alert <camera driver> <label>"; "stats".')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run); "alert <camera driver> <label>"; "ring <doorbell camera driver>"; "stats".')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
@@ -458,6 +472,8 @@ def main():
                 elif len(words) >= 3 and words[0] == "alert" and words[1].isdigit():
                     label = line.split(None, 2)[2].strip()
                     print(f"Alert delivered to {bridge.camera_alert(words[1], label)} registration(s)")
+                elif len(words) == 2 and words[0] == "ring" and words[1].isdigit():
+                    print(f"Ring delivered to {bridge.camera_ring(words[1])} registration(s)")
                 elif words == ["stats"] and bridge.cameras:
                     print("Camera requests: " + json.dumps(bridge.cameras.stats()))
         except KeyboardInterrupt:

@@ -493,6 +493,10 @@ test("a camera's alert says what it saw at which camera, in the app's words, and
   for (const [what, body] of [
     ["person", `Person at Garden at ${sealedClock(at)}.`],
     ["vehicle", `Vehicle at Garden at ${sealedClock(at)}.`],
+    // DirectorLink's camera agreement's labels (1.10.0, ADR-065).
+    ["animal", `Animal at Garden at ${sealedClock(at)}.`],
+    ["package", `Package at Garden at ${sealedClock(at)}.`],
+    ["license_plate", `License plate at Garden at ${sealedClock(at)}.`],
     ["line_crossing", `Line crossed at Garden at ${sealedClock(at)}.`],
     ["intrusion", `Intrusion at Garden at ${sealedClock(at)}.`],
     ["region_entrance", `Someone entering at Garden at ${sealedClock(at)}.`],

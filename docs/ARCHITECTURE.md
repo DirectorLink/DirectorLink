@@ -51,7 +51,8 @@ driver/     the DriverWorks driver
                   backup_seal.lua; ADR-048); alerts sealed to each device's key (alerts.lua; ADR-050)
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
                   again without a restart) and device events; drivers updated in Composer (their
-                  devices set up again, ADR-059); camera snapshots
+                  devices set up again, ADR-059); camera snapshots; DirectorLink's camera agreement
+                  (camera_drivers.lua: a camera driver's marker, alerts and rings, ADR-065)
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, scene links (a private link per scene for the phone's automations,
                   ADR-051), ask-to-open links (a door's link that asks its person, ADR-058), schedules, scheduler, sun, weather, installer view; room names and layout;

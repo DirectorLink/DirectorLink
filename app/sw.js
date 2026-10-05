@@ -238,6 +238,9 @@ const ALERT_TEXTS = {
   camera: "{what} at {name} at {time}.",
   camera_person: "Person",
   camera_vehicle: "Vehicle",
+  camera_animal: "Animal",
+  camera_package: "Package",
+  camera_license_plate: "License plate",
   camera_face: "Face",
   camera_motion: "Motion",
   camera_line_crossing: "Line crossed",
@@ -340,7 +343,7 @@ function sealedNotice(detail, texts, home) {
       return { title: texts.title, body: fill(template, { name, who: whoText(by, texts), scene: text(detail.via), time }), tag: `door-${id}`, url: HISTORY_URL };
     }
     case "camera": {
-      // A camera of the DirectorLink · Hikvision drivers (ADR-056): what it saw, in the app's words.
+      // A camera's alert (ADR-056, ADR-065): what it saw, in the app's words.
       if (!name) return null;
       const what = /^[a-z_]+$/.test(detail.what ?? "") && typeof texts[`camera_${detail.what}`] === "string" ? texts[`camera_${detail.what}`] : texts.camera_other;
       return { title: texts.camera_title, body: fill(texts.camera, { what, name, time }), tag: `camera-${id}`, url: id ? `/#/cameras/${id}` : "/#/cameras" };

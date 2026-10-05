@@ -647,3 +647,16 @@ test("the app gives the service worker a word for every camera detection the wor
   assert.equal(alertTexts().camera_person, "אדם");
   await setLanguage("en");
 });
+
+// DirectorLink's camera agreement (1.10.0, ADR-065): an animal, a package and a license plate are
+// said in the app's words, in English and Hebrew.
+test("the camera agreement's new labels have their words for the service worker", async () => {
+  assert.equal(alertTexts().camera_animal, "Animal");
+  assert.equal(alertTexts().camera_package, "Package");
+  assert.equal(alertTexts().camera_license_plate, "License plate");
+  await setLanguage("he");
+  assert.equal(alertTexts().camera_animal, "בעל חיים");
+  assert.equal(alertTexts().camera_package, "חבילה");
+  assert.equal(alertTexts().camera_license_plate, "לוחית רישוי");
+  await setLanguage("en");
+});

@@ -12,7 +12,8 @@ local function findDoorbell(ctx)
     if not id then
         return nil, problem
     end
-    local device = ctx.services.registry.getDevice(id)
+    -- A DoorBird's doorstation, or a camera that is a doorbell (ADR-065), as a doorbell.
+    local device = ctx.services.registry.getDoorbell(id)
     -- A doorbell the caller may not see is, for them, one that does not exist (ADR-054).
     if not device or device.kind ~= "doorbell" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Doorbell", id)

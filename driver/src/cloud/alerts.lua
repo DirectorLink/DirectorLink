@@ -1,10 +1,12 @@
--- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang, a camera of the DirectorLink
--- · Hikvision drivers saw someone or something (1.8.0, ADR-056), a door or gate was opened, the
--- refrigerator's door was left open, a schedule failed. Each goes to DirectorLink's servers as
--- one "notify" message that names only the key ids it is for and, for each, the details sealed to
--- that key: what happened, when, by the names the controller has (the doorbell, the door, who opened
--- it as the history names them), so that the servers can deliver it to the browsers of those keys
--- (Web Push) without being able to read it. Only the device of that key can open its part.
+-- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang (a DoorBird, or since 1.10.0
+-- a doorbell camera of DirectorLink's camera agreement, ADR-065), a camera saw someone or something
+-- (1.8.0, ADR-056: the DirectorLink · Hikvision drivers; since 1.10.0 every camera driver of the
+-- agreement), a door or gate was opened, the refrigerator's door was left open, a schedule failed.
+-- Each goes to DirectorLink's servers as one "notify" message that names only the key ids it is
+-- for and, for each, the details sealed to that key: what happened, when, by the names the
+-- controller has (the doorbell, the door, who opened it as the history names them), so that the
+-- servers can deliver it to the browsers of those keys (Web Push) without being able to read it.
+-- Only the device of that key can open its part.
 --
 -- Who gets what is decided here: a key whose person may get the kind (src/auth/access.lua, ADR-054:
 -- a doorbell's ring whoever sees that doorbell, the refrigerator's door whoever sees that
@@ -265,7 +267,16 @@ function Alerts.start(deps)
                 end
                 return false
             elseif kind == "door_opened" then
-                return #registry.relayList() > 0 or #registry.doorbellList() > 0
+                -- A doorbell camera opens nothing (ADR-065): a DoorBird's doorstation does.
+                if #registry.relayList() > 0 then
+                    return true
+                end
+                for _, doorbell in ipairs(registry.doorbellList()) do
+                    if not doorbell.camera_doorbell then
+                        return true
+                    end
+                end
+                return false
             end
             return kind == "fridge_door" and deps.hasFridge ~= nil and deps.hasFridge() == true
         end,
@@ -281,9 +292,7 @@ function Alerts.start(deps)
         doorbellEvent = function(eventId)
             return DoorBird.EVENTS[tonumber(eventId)]
         end,
-        cameraAlert = function(eventId)
-            return tonumber(eventId) == CameraAdapter.ALERT_EVENT
-        end,
+        cameraEvent = CameraAdapter.eventOf,
         relayClosed = KnxRelay.closedEvent,
         commandedAt = deps.adapters.commandedAt,
         record = deps.activity.record,
@@ -547,8 +556,9 @@ local function deviceDetail(kind, device)
     }
 end
 
--- A doorbell rang (the DoorBird's event): everyone who may see it, at most once in RING_SECONDS. The
--- ring's time is the doorbell's own (its last_ring_at), so that the app knows the alert's ring.
+-- A doorbell rang (the DoorBird's event, or a doorbell camera's Ring: `device` is then that camera
+-- as a doorbell, ADR-065): everyone who may see it, at most once in RING_SECONDS. The ring's time is
+-- the doorbell's own (its last_ring_at), so that the app knows the alert's ring.
 function Alerts.ring(device, now)
     now = now or Clock.now()
     if tooSoon("doorbell:" .. tostring(device.id), Alerts.RING_SECONDS, now) then
@@ -558,8 +568,8 @@ function Alerts.ring(device, now)
     return sent("doorbell", send(deviceDetail("doorbell", device), now, true, type(last) == "string" and last or nil))
 end
 
--- A camera of the DirectorLink · Hikvision drivers raised an alert (its driver's Alert event, with
--- the camera's Alert On filter, the hub's switch and its snooze already applied:
+-- A camera raised an alert (its driver's Alert event, DirectorLink's camera agreement, ADR-065; the
+-- Hikvision drivers apply the camera's Alert On filter, the hub's switch and its snooze before:
 -- src/adapters/camera.lua): the keys that chose camera alerts and may see that camera's pictures,
 -- saying what it saw (`device.state.alert.what`: person, vehicle, line_crossing, ... or other), at
 -- most once a camera in CAMERA_SECONDS and CAMERA_PER_HOUR an hour. Not brief: someone in the
@@ -682,14 +692,14 @@ function Alerts.recorded(entry)
 end
 
 -- A device's event that its adapter took (src/adapters/manager.lua; `before`: the device's state
--- before it): a doorbell's ring, a camera's alert, or a door or gate opened that DirectorLink did
--- not open (in Control4: its app, a keypad, its programming, the DoorBird's own app), which goes
--- into the history, at most once a door in DOOR_SECONDS, and from there to the admins. A relay
--- counts only when it closes from open as last reported: a relay that reports "closed" again (a
--- status read after a restart, a cyclic report) or whose state is not known yet opened nothing.
--- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; cameraAlert(eventId);
--- relayClosed(eventId); commandedAt(deviceId) (DirectorLink's last command to it); record(kind,
--- action, fields).
+-- before it): a doorbell's ring (a doorbell camera's too), a camera's alert, or a door or gate
+-- opened that DirectorLink did not open (in Control4: its app, a keypad, its programming, the
+-- DoorBird's own app), which goes into the history, at most once a door in DOOR_SECONDS, and from
+-- there to the admins. A relay counts only when it closes from open as last reported: a relay that
+-- reports "closed" again (a status read after a restart, a cyclic report) or whose state is not
+-- known yet opened nothing. options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" |
+-- ...; cameraEvent(device, eventId) -> "alert" | "ring" | nil; relayClosed(eventId);
+-- commandedAt(deviceId) (DirectorLink's last command to it); record(kind, action, fields).
 function Alerts.deviceEvent(device, eventId, before)
     local options = state.options
     if not options or type(device) ~= "table" then
@@ -698,8 +708,11 @@ function Alerts.deviceEvent(device, eventId, before)
     local now = Clock.now()
     local opened
     if device.kind == "camera" then
+        local event = options.cameraEvent and options.cameraEvent(device, eventId)
         local capabilities = type(device.capabilities) == "table" and device.capabilities or {}
-        if capabilities.alerts == true and options.cameraAlert and options.cameraAlert(eventId) then
+        if event == "ring" and type(device.doorbell) == "table" then
+            Alerts.ring(device.doorbell, now)
+        elseif event == "alert" and capabilities.alerts == true then
             Alerts.camera(device, now)
         end
         return
