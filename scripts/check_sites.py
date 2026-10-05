@@ -8,7 +8,8 @@
 Checks the published files, the Cloudflare configuration, the security headers, that the
 console uses the app's API client unchanged, and that the pages keep to the CSP (no inline
 scripts or styles, no scripts from elsewhere). The landing page's one script asks only for
-DirectorLink in numbers, which stays hidden until it has totals (ADR-052). Links to the source
+DirectorLink in numbers, which stays hidden until it has totals (ADR-052); the demo home's script
+(try/) talks to nothing and stores nothing (ADR-060). Links to the source
 code use the short link: the repository's long address appears only where a machine needs it.
 """
 
@@ -419,7 +420,7 @@ def check_site_numbers(pages, script, headers):
     for name, html in sorted(pages.items()):
         parser = PageParser()
         parser.feed(html)
-        expected = [SITE_SCRIPT] if name == "index.html" else []
+        expected = PAGE_SCRIPTS.get(name, [])
         if parser.scripts != expected:
             fail(f"site/{name} may load only {expected or 'no scripts'}, not {parser.scripts}")
     index = pages["index.html"]
@@ -451,12 +452,54 @@ def check_site_numbers(pages, script, headers):
             fail(f"site/numbers.js must not use {forbidden}: it fills in three numbers and stores nothing")
 
 
+# The demo home (ADR-060): the app's screens with a made-up home, in the visitor's browser only.
+DEMO_PAGE = "try/index.html"
+DEMO_SCRIPT = "/try/demo.js"
+PAGE_SCRIPTS = {"index.html": [SITE_SCRIPT], DEMO_PAGE: [DEMO_SCRIPT]}
+DEMO_FORBIDDEN = (
+    "fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "postMessage", "window.open",
+    "localStorage", "sessionStorage", "indexedDB", "document.cookie", "caches.",
+    "eval(", "new Function", "import(", "outerHTML", "insertAdjacentHTML", "document.write",
+)
+
+
+def check_site_demo(page, script, pictures):
+    """page: try/index.html; script: try/demo.js; pictures: the names in try/pictures/."""
+    require(page, f'<script type="module" src="{DEMO_SCRIPT}"></script>', f"site/{DEMO_PAGE} must load {DEMO_SCRIPT} as a module")
+    # The SVG namespace is a name, not an address anything is fetched from.
+    urls = sorted(set(re.findall(r"https?://[^\s\"'`)]+", script)) - {"http://www.w3.org/2000/svg"})
+    if urls:
+        fail(f"site{DEMO_SCRIPT} must not name any address ({', '.join(urls)}): the demo talks to nothing")
+    for forbidden in DEMO_FORBIDDEN:
+        if forbidden in script:
+            fail(f"site{DEMO_SCRIPT} must not use {forbidden}: the demo talks to nothing and stores nothing")
+    markup = [line.strip() for line in script.splitlines() if "innerHTML" in line]
+    if markup != ["svg.innerHTML = ICONS[name] || \"\";"]:
+        fail(f"site{DEMO_SCRIPT} may set innerHTML only to its own icons, not: {markup}")
+    for name, text in ((DEMO_PAGE, page), (DEMO_SCRIPT.lstrip("/"), script)):
+        if re.search(r"[\u0590-\u05ff]", text):
+            fail(f"site/{name} must be in English only (the website's showcase rule)")
+    require(page, "made up", f"site/{DEMO_PAGE} must say that the home and its people are made up")
+    block = re.search(r"const CAMERAS = \[(.*?)\];", script, re.S)
+    if not block:
+        fail(f"site{DEMO_SCRIPT}: no CAMERAS list")
+    for camera in re.findall(r'id: "([a-z0-9-]+)"', block.group(1)):
+        for size in (320, 640):
+            if f"{camera}-{size}.jpg" not in pictures:
+                fail(f"site/try/pictures/{camera}-{size}.jpg is missing (camera {camera})")
+
+
 def check_site():
     page = check_common(SITE)
     check_site_numbers(
         {path.relative_to(SITE).as_posix(): path.read_text(encoding="utf-8") for path in SITE.rglob("*.html")},
         (SITE / SITE_SCRIPT.lstrip("/")).read_text(encoding="utf-8"),
         (SITE / "_headers").read_text(encoding="utf-8"),
+    )
+    check_site_demo(
+        (SITE / DEMO_PAGE).read_text(encoding="utf-8"),
+        (SITE / DEMO_SCRIPT.lstrip("/")).read_text(encoding="utf-8"),
+        {path.name for path in (SITE / "try" / "pictures").glob("*.jpg")},
     )
     html = (SITE / "index.html").read_text(encoding="utf-8")
     text = re.sub(r"<[^>]+>", " ", html)

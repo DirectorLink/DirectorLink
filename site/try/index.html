@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="Try DirectorLink in your browser: the app with a made-up home. Turn on lights, cool a room, run a scene, open the gate, play music in two rooms and look at the cameras."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <link rel="stylesheet" href="/try/demo.css" />
+    <script type="module" src="/try/demo.js"></script>
+    <title>Try DirectorLink — a demo home in your browser</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/" aria-current="page">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="try-page">
+    <div class="try-layout">
+      <div class="phone-wrap">
+        <div class="phone" role="region" aria-label="The DirectorLink app, with a made-up home">
+          <div class="screen" id="demo-screen"></div>
+        </div>
+      </div>
+      <div class="try-side">
+        <div class="try-head">
+          <p class="try-eyebrow">Demo home</p>
+          <h1 class="try-title">Try DirectorLink right here</h1>
+          <p class="try-intro">This is the DirectorLink app with a made-up home. Tap anything: lights, the AC, a scene, the gate, music, the cameras. It all runs in your browser, and nothing here reaches a real house.</p>
+        </div>
+        <div class="try-rest">
+        <section class="tasks-wrap" aria-labelledby="demo-tasks-title">
+          <div class="tasks-head">
+            <h2 id="demo-tasks-title">Things to try</h2>
+            <span class="tasks-count" id="demo-count" aria-live="polite"></span>
+          </div>
+          <ol class="tasks" id="demo-tasks"></ol>
+        </section>
+        <section class="finish" id="demo-finish" aria-labelledby="demo-finish-title">
+          <h2 id="demo-finish-title">Ready for your own home?</h2>
+          <p>DirectorLink is free and open source. Your installer adds the driver to your Control4 project once. Then you make scenes, schedules and family access yourself, in the app.</p>
+          <div class="finish-actions">
+            <a class="btn-link is-primary" href="https://github.directorlink.io/releases/latest" rel="noreferrer">Download the driver</a>
+            <a class="btn-link" href="https://app.directorlink.io">Open the app</a>
+            <a class="btn-link" href="https://github.directorlink.io" rel="noreferrer">How it works</a>
+          </div>
+        </section>
+        <div class="try-foot">
+          <button class="try-reset" id="demo-reset" type="button">Start again</button>
+          <span>No sign-in, and nothing is saved.</span>
+        </div>
+        <p class="try-note">The home, the people and the camera pictures here are made up.</p>
+        </div>
+      </div>
+    </div>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

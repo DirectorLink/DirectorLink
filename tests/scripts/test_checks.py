@@ -446,6 +446,60 @@ class SiteNumbers(unittest.TestCase):
         privacy = pages["privacy.html"].replace("</head>", '<script type="module" src="/numbers.js"></script></head>')
         self.assertIn("site/privacy.html may load only", self.refused({**pages, "privacy.html": privacy}, script, headers) or "")
 
+    def test_only_the_demo_page_loads_the_demo(self):
+        pages, script, headers = self.files()
+        demo = (self.SITE / "try" / "index.html").read_text(encoding="utf-8")
+        self.assertIsNone(self.refused({**pages, "try/index.html": demo}, script, headers))
+        privacy = pages["privacy.html"].replace("</head>", '<script type="module" src="/try/demo.js"></script></head>')
+        self.assertIn("site/privacy.html may load only", self.refused({**pages, "privacy.html": privacy}, script, headers) or "")
+
+
+class SiteDemo(unittest.TestCase):
+    """check_sites.py: the demo home's script (site/try/) talks to nothing, stores nothing, sets no
+    markup but its own icons, and is in English (ADR-060)."""
+
+    TRY = ROOT / "site" / "try"
+
+    def files(self):
+        return (
+            (self.TRY / "index.html").read_text(encoding="utf-8"),
+            (self.TRY / "demo.js").read_text(encoding="utf-8"),
+            {path.name for path in (self.TRY / "pictures").glob("*.jpg")},
+        )
+
+    def refused(self, page, script, pictures):
+        return refusal(check_sites.check_site_demo, page, script, pictures)
+
+    def test_the_demo_passes(self):
+        self.assertIsNone(self.refused(*self.files()))
+
+    def test_the_demo_talks_to_nothing_and_stores_nothing(self):
+        page, script, pictures = self.files()
+        for added, expected in (
+            ('\nfetch("/v1/stats");\n', "must not use fetch("),
+            ('\nconst where = "https://example.com/";\n', "must not name any address"),
+            ("\nlocalStorage.setItem('done', '1');\n", "must not use localStorage"),
+            ("\nnavigator.sendBeacon('/x');\n", "must not use sendBeacon"),
+            ("\nscreenEl.innerHTML = text;\n", "may set innerHTML only to its own icons"),
+            ('\nconst title = "בית";\n', "English only"),
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self.refused(page, script + added, pictures) or "")
+
+    def test_the_page_loads_the_demo_and_says_it_is_made_up(self):
+        page, script, pictures = self.files()
+        for changed, expected in (
+            (page.replace('<script type="module" src="/try/demo.js"></script>', ""), "must load /try/demo.js"),
+            (page.replace("made up", "real"), "made up"),
+        ):
+            with self.subTest(expected=expected):
+                self.assertNotEqual(changed, page)
+                self.assertIn(expected, self.refused(changed, script, pictures) or "")
+
+    def test_every_camera_has_its_two_pictures(self):
+        page, script, pictures = self.files()
+        self.assertIn("garden-640.jpg is missing", self.refused(page, script, pictures - {"garden-640.jpg"}) or "")
+
 
 if __name__ == "__main__":
     unittest.main()
