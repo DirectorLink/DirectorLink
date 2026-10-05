@@ -3,8 +3,9 @@ check_app.py): the relay's CA file holds exactly the pinned roots however its bl
 nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
 what is staged, the door switches, the Jewish calendar, the alarm's status and Sonos in driver.xml
 ship off, the alarm stays read-only, one file talks to the Sonos players, the app names every
-month, holiday and weekly reading the calendar API can send, and the website's one script asks
-only for DirectorLink in numbers (check_sites.py).
+month, holiday and weekly reading the calendar API can send, Say or type a command has a parser
+without imports and opens no door from the words, and the website's one script asks only for
+DirectorLink in numbers (check_sites.py).
 
     python -m unittest discover -s tests/scripts
 """
@@ -365,6 +366,29 @@ class CalendarNames(unittest.TestCase):
         self.setUp()
         self.dictionaries["he"]["calendar"]["holidays"]["rosh_chodesh"] = "ראש חודש"
         self.assertIn("rosh_chodesh must name the month", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
+
+
+class Commands(unittest.TestCase):
+    """check_app.py: Say or type a command (1.9.0, ADR-063) has a parser of its own without imports,
+    never opens a door or gate from the words, and the app's headers allow the microphone."""
+
+    def setUp(self):
+        self.files = {path: (ROOT / "app" / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/commands.js", "js/views/command.js", "_headers")}
+
+    def test_the_real_files_pass(self):
+        self.assertIsNone(refusal(check_app.check_commands, self.files))
+
+    def test_a_parser_with_an_import_fails(self):
+        self.files["js/command-parser.js"] = 'import { t } from "./i18n.js";\n' + self.files["js/command-parser.js"]
+        self.assertIn("must not import", refusal(check_app.check_commands, self.files) or "")
+
+    def test_opening_a_door_from_the_words_fails(self):
+        self.files["js/commands.js"] += "\nexport const open = (relay) => pressRelay(relay);\n"
+        self.assertIn("must not open doors", refusal(check_app.check_commands, self.files) or "")
+
+    def test_headers_without_the_microphone_fail(self):
+        self.files["_headers"] = self.files["_headers"].replace("microphone=(self)", "microphone=()")
+        self.assertIn("microphone=(self)", refusal(check_app.check_commands, self.files) or "")
 
 
 class StagedRoots(unittest.TestCase):

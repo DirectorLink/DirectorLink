@@ -94,6 +94,13 @@ async function sendOff(filter, targets) {
   return { ids, count: ids.size };
 }
 
+// Runs it at once: the second tap, or a command's own confirm (commands.js, ADR-063). What it did
+// is in ui.offRuns[filter] afterwards.
+export async function turnOffNow(filter) {
+  if (!TYPES[filter] || !can("member") || ui.offRuns[filter]?.stage === "running") return;
+  await turnOff(filter);
+}
+
 async function turnOff(filter) {
   const type = TYPES[filter];
   const targets = offTargets(filter);

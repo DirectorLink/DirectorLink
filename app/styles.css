@@ -2705,6 +2705,160 @@ select:disabled {
   border-color: color-mix(in srgb, var(--primary) 45%, var(--line));
 }
 
+/* ---- Say or type a command (ADR-063, js/views/command.js) ------------------------------------ */
+
+.command {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* One rounded field: its icon, the words, the microphone and Go. */
+.command-form {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 52px;
+  padding-inline: 12px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+
+.command-form:focus-within {
+  border-color: var(--primary);
+}
+
+.command-form:has(.command-input:focus-visible) {
+  outline: 3px solid var(--primary);
+  outline-offset: 2px;
+}
+
+input[type="text"].command-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 6px;
+  border: 0;
+  background: transparent;
+  text-overflow: ellipsis;
+}
+
+input[type="text"].command-input:focus-visible {
+  outline: none;
+}
+
+.command-go {
+  color: var(--primary);
+}
+
+.command-mic.is-listening {
+  background: var(--errBg);
+  color: var(--errText);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+/* What it understood, the result, a question or why not. */
+.command-output {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding-block: 10px;
+  padding-inline: 14px 4px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+
+.command-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.command-said,
+.command-question {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.command-said .icon {
+  width: 18px;
+  height: 18px;
+  color: var(--errText);
+}
+
+.command-result {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.command-result .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.command-result.is-done {
+  color: var(--okText);
+}
+
+.command-result.is-partial,
+.command-result.is-error {
+  color: var(--errText);
+}
+
+.command-options,
+.command-actions,
+.command-examples {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.command-option,
+.command-example {
+  max-width: 100%;
+  white-space: normal;
+  text-align: start;
+}
+
+.command-examples-label,
+.command-note,
+.command-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.command-dismiss {
+  margin-block: -6px;
+}
+
+/* From the other screens' headers, where there is room for it; "/" opens it anywhere. */
+.command-open {
+  display: none;
+}
+
+@media (min-width: 600px) {
+  .command-open {
+    display: inline-grid;
+  }
+}
+
+.command-dialog .command-output {
+  margin-block-start: 12px;
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {
