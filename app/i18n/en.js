@@ -462,7 +462,7 @@ export default {
     dismiss: "Clear",
     listening: "Listening…",
     hearing: "Heard: {words}",
-    speechNote: "Your browser’s speech service turns this into text (Chrome’s sends the sound to Google, Safari’s to Apple). DirectorLink sends it nowhere.",
+    speechNote: "Your browser’s speech service turns this into text (Chrome’s sends the sound to Google, Edge’s to Microsoft, Safari’s to Apple). DirectorLink sends it nowhere.",
     speech: {
       blocked: "The microphone is blocked for this app. Allow it in the browser’s settings, or type.",
       unavailable: "Speech isn’t available in this browser. Type, or use the keyboard’s microphone.",
@@ -553,6 +553,8 @@ export default {
         door: "There are no doors or gates here.",
       },
       range: "{name} goes from {min} to {max}.",
+      setpointGap: "{name} can’t be set to {temperature}: its heat and cool setpoints stay {gap} apart, from {min} to {max}.",
+      setpointWhich: "{name} is in auto: say heat or cool with the temperature.",
       rangePercent: "Say a level from 0 to 100%.",
       cannotDim: "{name} only turns on and off.",
       cannotDimRoom: "The lights in {room} only turn on and off.",

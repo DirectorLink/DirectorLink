@@ -2756,6 +2756,11 @@ select:disabled {
   gap: 8px;
 }
 
+/* The microphone and the answer, redrawn around a field that stays (no box of their own). */
+.command-slot {
+  display: contents;
+}
+
 /* One rounded field: its icon, the words, the microphone and Go. */
 .command-form {
   display: flex;

@@ -11,7 +11,7 @@ import { alertsSignature } from "./js/alerts.js";
 import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
 import { ringNotice } from "./js/components.js";
-import { h, iconButton } from "./js/dom.js";
+import { h, iconButton, replaceKeeping } from "./js/dom.js";
 import { notificationSupport, notificationsOn, ringingDoorbells } from "./js/doorbells.js";
 import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
@@ -29,7 +29,7 @@ import { loadSchedules } from "./js/schedules.js";
 import { findDevice, state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
-import { commandSignature } from "./js/views/command.js";
+import { commandRouteChanged, commandSignature } from "./js/views/command.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
@@ -143,6 +143,8 @@ window.addEventListener("hashchange", () => {
   if (route.name === "home" && previous.name !== "home") loadCalendar();
   // Sonos: Home and a room are read every 5 s while shown.
   musicRouteChanged(route);
+  // Say or type a command: away from Home, Home's microphone stops, and nothing it heard is done.
+  commandRouteChanged(route);
   closeFullView();
   render(true);
   window.scrollTo(0, 0);
@@ -427,7 +429,9 @@ function restoreUi({ key, selection, open }) {
   }
   if (!key) return;
   const target = [...view.querySelectorAll("[data-key]")].find((item) => item.dataset.key === key);
-  if (target && !target.disabled) {
+  // Still focused (Home's command field stays in the page): nothing to restore, and nothing that
+  // could end the keyboard's composition.
+  if (target && !target.disabled && target !== document.activeElement) {
     target.focus({ preventScroll: true });
     if (selection && typeof target.setSelectionRange === "function") {
       try {
@@ -455,7 +459,8 @@ function render(force = false) {
   // A new device of the account asks to join this home (ADR-053): under the header, on every screen.
   const request = deviceRequestNotice();
   if (request) content.splice(1, 0, request);
-  view.replaceChildren(...content);
+  // What stays the same element (Home's command field) stays in the page.
+  replaceKeeping(view, content);
   restoreUi(saved);
   attachCameraImages(view);
   openRouteCamera();

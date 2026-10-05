@@ -13,7 +13,7 @@ import { currentLanguage, formatTemperature, t } from "./i18n.js";
 import { climateIsOn, fanIsOn, lightIsOn, modeLabel, roomById, roomGroup, roomName } from "./model.js";
 import { findMusic, musicAvailable, musicCommand, musicKey, musicRooms, setMusicLevels } from "./music.js";
 import { findScene, isolate, runScene, sceneOpensDoors } from "./scenes.js";
-import { isDual, withSetpoint } from "./setpoints.js";
+import { isDual, setpointGap, withSetpoint } from "./setpoints.js";
 import { canSetPosition } from "./shades.js";
 import { can, deviceKey, findDevice, notify, state, ui } from "./state.js";
 import { offTargets, turnOffNow } from "./turn-off.js";
@@ -249,9 +249,9 @@ function outcome(keys, started) {
 const NOTHING = () => ({ stage: "done", text: t("command.result.nothing") });
 
 // A thermostat's PATCH for a change the parser made: a target temperature, or with heat and cool
-// setpoints the one of its mode (or the one named), the other kept apart (setpoints.js); null when
-// there is nothing to send.
-export function thermostatChange(thermostat, change) {
+// setpoints the one of its mode (or the one named), the other kept apart (setpoints.js). null when
+// there is nothing to send; { refused } (why, in words) when the setpoints cannot be set so.
+export function thermostatPlan(thermostat, change) {
   if (change.mode === "off" && !climateIsOn(thermostat)) return null;
   const patch = {};
   if (change.mode) patch.mode = change.mode;
@@ -259,8 +259,18 @@ export function thermostatChange(thermostat, change) {
     if (isDual(thermostat)) {
       const mode = change.mode || thermostat.mode;
       const field = change.setpoint ? `${change.setpoint}_setpoint` : mode === "heat" ? "heat_setpoint" : mode === "cool" ? "cool_setpoint" : null;
-      const both = field ? withSetpoint(thermostat, field, change.temperature) : null;
-      if (!both) return null;
+      const name = isolate(thermostat.name || "");
+      // In auto (it changed since the words were understood): which setpoint is not said.
+      if (!field) return { refused: t("command.problem.setpointWhich", { name }) };
+      const both = withSetpoint(thermostat, field, change.temperature);
+      if (!both) {
+        const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : 5;
+        const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : 35;
+        const range = { name, min: formatTemperature(min), max: formatTemperature(max) };
+        if (change.temperature < min || change.temperature > max) return { refused: t("command.problem.range", range) };
+        // The other setpoint would have to leave the range to stay apart.
+        return { refused: t("command.problem.setpointGap", { ...range, temperature: formatTemperature(change.temperature), gap: formatTemperature(setpointGap(thermostat)) }) };
+      }
       patch[field] = both[field];
       const other = field === "heat_setpoint" ? "cool_setpoint" : "heat_setpoint";
       if (Number.isFinite(both[other]) && both[other] !== thermostat[other]) patch[other] = both[other];
@@ -268,23 +278,37 @@ export function thermostatChange(thermostat, change) {
       patch.target_temperature = change.temperature;
     }
   }
-  return Object.keys(patch).length ? patch : null;
+  return Object.keys(patch).length ? { patch } : null;
 }
 
+// The PATCH alone: null when there is nothing to send or it cannot be sent.
+export function thermostatChange(thermostat, change) {
+  return thermostatPlan(thermostat, change)?.patch || null;
+}
+
+// Each device's request (`plan` gives a function that sends it, null for nothing to change, or
+// { refused } with why it cannot be done), then what they did.
 async function changeEach(kind, ids, plan) {
   const started = Date.now();
   const keys = [];
   const sent = [];
+  const refused = [];
   for (const id of ids) {
     const device = findDevice(kind, id);
     const send = device ? plan(device) : null;
     if (!send) continue;
+    if (send.refused) {
+      refused.push(send.refused);
+      continue;
+    }
     keys.push(deviceKey(kind, id));
     sent.push(send());
   }
-  if (!sent.length) return NOTHING();
+  if (!sent.length) return refused.length ? { stage: "error", text: refused[0] } : NOTHING();
   await Promise.all(sent);
-  return outcome(keys, started);
+  const result = outcome(keys, started);
+  if (!refused.length || result.stage !== "done") return result;
+  return { stage: "partial", text: t("command.result.someFailed", { count: refused.length, total: keys.length + refused.length, error: refused[0] }) };
 }
 
 async function runMusic(action) {
@@ -329,8 +353,8 @@ async function perform(action) {
       });
     case "climate":
       return changeEach("thermostat", action.ids, (thermostat) => {
-        const patch = thermostatChange(thermostat, action.change);
-        return patch ? () => setThermostat(thermostat, patch) : null;
+        const plan = thermostatPlan(thermostat, action.change);
+        return plan?.patch ? () => setThermostat(thermostat, plan.patch) : plan;
       });
     case "blinds":
       return changeEach("blind", action.ids, (blind) => (action.change.stop ? () => stopBlind(blind) : () => setBlind(blind, action.change.position)));
@@ -409,10 +433,11 @@ export async function confirmCommand() {
   settle(stamp, { stage: "partial", text: run.stage === "error" ? run.text : t(`home.off.failed.${filter}`, { count: run.count }).replace(/:$/, ".") });
 }
 
-// One of a question's options, chosen.
+// One of a question's options, chosen; true when there was one.
 export function chooseOption(index) {
   const option = current?.stage === "ask" ? current.options[index] : null;
   if (option) act(option);
+  return Boolean(option);
 }
 
 // The words typed or heard (with the speech service's other guesses, the likeliest first):
@@ -423,9 +448,10 @@ export function submitCommand(text, alternatives = []) {
   if (!can("member")) return show({ stage: "problem", text: t("command.problem.viewOnly") });
   const catalog = commandCatalog();
   const results = said.map((item) => parseCommand(item, catalog));
-  // The likeliest words decide, a question or a problem included; the speech service's other
-  // guesses only when it did not understand them at all.
-  const result = results[0].status !== "unknown" ? results[0] : results.find((item) => item.status === "ok") || results.find((item) => item.status === "ask") || results[0];
+  // The likeliest words decide, a question, a problem or a refusal included ("don't", a time: the
+  // service's next guess may have left that word out); its other guesses only when it did not
+  // understand them at all, and then the likeliest of them that says anything.
+  const result = results.find((item) => item.status !== "unknown" || item.refusal) || results[0];
   if (result.status === "ok") return act(result.action);
   if (result.status === "ask") {
     const withRoom = result.question === "which" || result.question === "partial";
