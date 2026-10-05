@@ -110,7 +110,11 @@ globalThis.fetch = async (url, init = {}) => {
     return answer(201, { code: "1234 5678", expires_at: "2026-10-05T08:15:00Z", user: { id: body.profile_id ?? null, name: body.name ?? "Noa", role: body.role ?? "member" } });
   }
   if (method === "DELETE" && path === "/v1/pairing-code") return answer(204);
-  if (method === "POST" && path === "/v1/users/merge") return answer(200, controller.users.items[0]);
+  if (method === "POST" && path === "/v1/users/merge") {
+    const suggestion = controller.users.suggestions.find((item) => item.id === body.account);
+    if (suggestion?.revision && body.revision !== suggestion.revision) return answer(409, { type: "about:blank", title: "Conflict", status: 409, code: "SUGGESTION_CHANGED", detail: "changed" });
+    return answer(200, controller.users.items[0]);
+  }
   if (method === "DELETE" && path.startsWith("/v1/api-keys/")) return answer(204);
   if (method === "POST" && path === "/v1/invitations") {
     return answer(201, { id: "1c2d3e4f", role: body.role, for_me: body.for_me === true, secret: "5e".repeat(32), home_id: "ab".repeat(16), expires_at: "2026-10-05T08:10:00Z", registered: true, email: body.email });
@@ -170,7 +174,7 @@ function homeUsers() {
       { id: "bbbb0003", name: "Noa", created_at: "2026-09-03T08:00:00Z", you: false, access: { ...MEMBER }, accounts: 0, devices: [device("0a1b2c3f", "Chrome on Android", { accounts: 0 }), device("0a1b2c40", "Noa's tablet", { accounts: 0, last_used_at: null })] },
     ],
     suggestions: [
-      { id: "3f9a1c2e7b4d5a60", owner: true, may_confirm: true, users: [{ id: "aaaa0001", name: "Dana", devices: ["0a1b2c3d"], devices_after: 2 }, { id: "aaaa0002", name: "Chrome on iPhone", devices: ["0a1b2c3e"], devices_after: 2 }] },
+      { id: "3f9a1c2e7b4d5a60", revision: "77aa77aa77aa77aa", owner: true, keep: "aaaa0001", may_confirm: true, users: [{ id: "aaaa0001", name: "Dana", role: "admin", owner: true, devices: ["0a1b2c3d"], devices_after: 2 }, { id: "aaaa0002", name: "Chrome on iPhone", role: "admin", owner: false, devices: ["0a1b2c3e"], devices_after: 2 }] },
     ],
   };
 }
@@ -324,13 +328,16 @@ test("devices of one account: the owner's access stays, and only the owner confi
   setLanguage("en");
   let view = await open();
   const suggestion = byKey(view, "users-suggestion-3f9a1c2e7b4d5a60");
-  assert.match(textOf(suggestion), /Dana, Chrome on iPhone: the same account/);
+  assert.match(textOf(suggestion), /Dana, Chrome on iPhone: the same account, DirectorLink’s servers say/, "the servers' word, not a fact");
   assert.match(textOf(suggestion), /the owner’s access stays/);
+  assert.equal(textOf(byKey(suggestion, "users-keep-role-3f9a1c2e7b4d5a60:aaaa0001")), "Owner");
+  assert.equal(textOf(byKey(suggestion, "users-keep-role-3f9a1c2e7b4d5a60:aaaa0002")), "Admin");
   assert.ok("disabled" in byKey(suggestion, "users-keep-3f9a1c2e7b4d5a60:aaaa0002").attributes, "the owner's user stays");
   await press(view, "users-merge-3f9a1c2e7b4d5a60");
-  assert.match(confirmed.at(-1), /one user with the access of Dana/);
-  assert.deepEqual(calls("POST", "/v1/users/merge")[0].body, { account: "3f9a1c2e7b4d5a60", keep: "aaaa0001" });
-  // Another admin sees it, and may not confirm it.
+  assert.match(confirmed.at(-1), /one user with the access of Dana \(Admin\)\?/);
+  assert.match(confirmed.at(-1), /then have Dana’s access, language, theme and favorites/, "what the moved devices take");
+  assert.deepEqual(calls("POST", "/v1/users/merge")[0].body, { account: "3f9a1c2e7b4d5a60", keep: "aaaa0001", revision: "77aa77aa77aa77aa" }, "with what was shown");
+  // Another admin, on the owner's other device of 1.8.0: who may confirm it, and where.
   const users = homeUsers();
   users.items[0].you = false;
   users.items[1].you = true;
@@ -338,21 +345,57 @@ test("devices of one account: the owner's access stays, and only the owner confi
   connect({ access: { ...ADMIN }, users });
   view = await open();
   assert.equal(byKey(view, "users-merge-3f9a1c2e7b4d5a60"), null);
-  assert.match(textOf(byKey(view, "users-suggestion-3f9a1c2e7b4d5a60")), /Only the home’s owner can do this/);
+  assert.match(textOf(byKey(view, "users-suggestion-who-3f9a1c2e7b4d5a60")), /Only the home’s owner, Dana, can confirm this, on one of their devices: Chrome on Windows\./);
 });
 
 test("devices of one account between two members: the admin chooses whose access stays", async () => {
   const users = homeUsers();
-  users.suggestions = [{ id: "1111222233334444", owner: false, may_confirm: true, users: [{ id: "bbbb0003", name: "Noa", devices: ["0a1b2c3f"], devices_after: 3 }, { id: "aaaa0002", name: "Chrome on iPhone", devices: ["0a1b2c3e"], devices_after: 7 }] }];
+  users.suggestions = [{ id: "1111222233334444", revision: "1234123412341234", owner: false, keep: null, may_confirm: true, users: [{ id: "bbbb0003", name: "Noa", role: "member", owner: false, devices: ["0a1b2c3f"], devices_after: 3 }, { id: "aaaa0002", name: "Chrome on iPhone", role: "member", owner: false, devices: ["0a1b2c3e"], devices_after: 7 }] }];
   connect({ users });
   setLanguage("en");
   const view = await open();
   assert.match(textOf(byKey(view, "users-suggestion-1111222233334444")), /Together 7 devices, at most 5/);
+  assert.ok("disabled" in byKey(view, "users-merge-1111222233334444").attributes, "neither has less: nothing chosen yet");
+  assert.match(textOf(byKey(view, "users-suggestion-choose-1111222233334444")), /neither has less than the other/);
   await press(view, "users-keep-1111222233334444:aaaa0002");
   assert.ok("disabled" in byKey(accessView({}), "users-merge-1111222233334444").attributes, "seven devices: remove some first");
   await press(accessView({}), "users-keep-1111222233334444:bbbb0003");
   await press(accessView({}), "users-merge-1111222233334444");
-  assert.deepEqual(calls("POST", "/v1/users/merge").at(-1).body, { account: "1111222233334444", keep: "bbbb0003" });
+  assert.deepEqual(calls("POST", "/v1/users/merge").at(-1).body, { account: "1111222233334444", keep: "bbbb0003", revision: "1234123412341234" });
+});
+
+// The users review of 1.9.0 (finding 4): the suggestion says each user's role and offers the user
+// with less access, never the admin over a member; the confirmation says what a device becomes.
+test("an admin and a member of one account: the member's access is offered, and the confirm says so", async () => {
+  const users = homeUsers();
+  users.suggestions = [{ id: "5555666677778888", revision: "abcdabcdabcdabcd", owner: false, keep: "bbbb0003", may_confirm: true, users: [{ id: "aaaa0002", name: "Mum's iPad", role: "admin", owner: false, devices: ["0a1b2c3e"], devices_after: 2 }, { id: "bbbb0003", name: "Kid's phone", role: "member", owner: false, devices: ["0a1b2c3f"], devices_after: 3 }] }];
+  connect({ users });
+  setLanguage("en");
+  const view = await open();
+  assert.ok("checked" in byKey(view, "users-keep-5555666677778888:bbbb0003").attributes, "the member's access, offered");
+  assert.ok(!("checked" in byKey(view, "users-keep-5555666677778888:aaaa0002").attributes), "never the admin's by default");
+  assert.equal(textOf(byKey(view, "users-keep-role-5555666677778888:aaaa0002")), "Admin");
+  assert.equal(textOf(byKey(view, "users-keep-role-5555666677778888:bbbb0003")), "Member");
+  await press(view, "users-merge-5555666677778888");
+  assert.match(confirmed.at(-1), /with the access of Kid's phone \(Member\)/);
+  assert.match(confirmed.at(-1), /Their admin devices then have a member’s access, and the invitations those devices made are revoked\./);
+  // Choosing the admin's: the confirm says the member's devices become an admin's.
+  await press(accessView({}), "users-keep-5555666677778888:aaaa0002");
+  await press(accessView({}), "users-merge-5555666677778888");
+  assert.match(confirmed.at(-1), /The devices of Kid's phone become an admin’s: they can then do everything\./);
+});
+
+// The users review of 1.9.0 (finding 1): what the controller changed since the screen was drawn is
+// not confirmed: it says so, and the screen is read again.
+test("a suggestion that changed since it was shown is not confirmed", async () => {
+  connect();
+  setLanguage("en");
+  const view = await open();
+  controller.users.suggestions[0].revision = "0000111100001111";
+  const before = calls("GET", "/v1/users").length;
+  await press(view, "users-merge-3f9a1c2e7b4d5a60");
+  assert.match(textOf(accessView({})), /These devices or their users changed since you looked, so nothing was moved/);
+  assert.ok(calls("GET", "/v1/users").length > before, "read again");
 });
 
 test("an admin invites the account of a user paired at home: the invitation is for that user", async () => {
@@ -405,6 +448,24 @@ test("a member adds their own other device in Settings → Account, and only tha
   stored.delete("directorlink.remote");
 });
 
+// The users review of 1.9.0 (finding 3): a member's other device joins only with the account this
+// device already uses at the home; another email is refused, in the app's words.
+test("a member's other device with another account is refused in the app's words", async () => {
+  connect({ access: { ...MEMBER } });
+  setLanguage("en");
+  stored.set("directorlink.remote", JSON.stringify({ home: "ab".repeat(16), keyId: "0a1b2c3f" }));
+  state.account = { status: "signed-in", user: { email: "noa@example.com", providers: ["google"] }, notice: null, busy: false };
+  controller.refuse = {
+    method: "POST",
+    path: "/v1/invitations",
+    status: 403,
+    problem: { type: "about:blank", title: "Forbidden", status: 403, code: "ACCOUNT_NOT_OF_DEVICE", detail: "the controller's English" },
+  };
+  await press(settingsView({ page: "account" }), "add-device");
+  assert.match(textOf(settingsView({ page: "account" })), /Your other device can join only with the Google or Apple account this device already uses for this home/);
+  stored.delete("directorlink.remote");
+});
+
 test("with a controller before 1.9.0 the screen stays People and devices, for admins only", async () => {
   connect({ features: { people_permissions: true } });
   setLanguage("en");
@@ -422,9 +483,10 @@ test("every word of users is there in English and Hebrew, and neither says peopl
   for (const key of ["users", "usersMine"]) {
     assert.ok(en.settings.rows[key] && he.settings.rows[key], key);
   }
-  for (const key of ["pairing_code", "users_merged", "users_merged_auto", "merge_suggested"]) {
+  for (const key of ["pairing_code", "users_merged", "merge_suggested"]) {
     assert.ok(en.history.access[key] && he.history.access[key], key);
   }
+  assert.equal(en.history.access.users_merged_auto, undefined, "nothing is merged by itself");
   // What people read: the strings, without their {placeholders}.
   const words = (...blocks) => blocks.flatMap((block) => (typeof block === "string" ? [block] : words(...Object.values(block)))).join(" ").replace(/\{\w+\}/g, "");
   assert.doesNotMatch(words(en.users, en.access, en.perm), /\bpeople\b|\bperson\b/i);

@@ -24,6 +24,7 @@ import { google } from "./google.js";
 import { json, methodNotAllowed, problem, randomHex, randomToken, readCookie, readText, setCookie, sha256Hex } from "./http.js";
 import { forgetInvitations } from "./invitations.js";
 import { SignInError } from "./jwt.js";
+import { accountsChanged } from "./member-keys.js";
 
 const PROVIDERS = { google, apple };
 const SESSION_COOKIE = "__Host-dl_session";
@@ -370,7 +371,7 @@ function accountDeletion(env, user) {
     // Its requests to join homes, and those waiting for it to decide (ADR-041).
     env.DB.prepare("DELETE FROM join_requests WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
     env.DB.prepare("DELETE FROM invitations WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
-    env.DB.prepare("DELETE FROM member_keys WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id, user.id),
+    env.DB.prepare("DELETE FROM member_keys WHERE user_id = ? OR home_id IN (SELECT id FROM homes WHERE owner_id = ?) RETURNING home_id").bind(user.id, user.id),
     env.DB.prepare("DELETE FROM members WHERE home_id IN (SELECT id FROM homes WHERE owner_id = ?)").bind(user.id),
     env.DB.prepare("DELETE FROM homes WHERE owner_id = ?").bind(user.id),
     env.DB.prepare("DELETE FROM members WHERE user_id = ?").bind(user.id),
@@ -380,10 +381,20 @@ function accountDeletion(env, user) {
   ];
 }
 
-// Deletes the account, then tells the homes whose alerts that changed (alerts.js).
+// The controllers of the homes whose keys an account no longer uses (`rows`: the home_id of each
+// member_keys row deleted) hear which keys share an account again (1.9.0, ADR-061).
+async function keysLeft(env, rows) {
+  for (const homeId of new Set(rows.map((row) => row.home_id))) {
+    await accountsChanged(env, homeId);
+  }
+}
+
+// Deletes the account, then tells the homes whose alerts that changed (alerts.js), and those whose
+// keys it used (their controllers stop counting it as an account of those keys).
 async function deleteAccount(env, user) {
-  const [{ results }] = await env.DB.batch(accountDeletion(env, user));
-  await homesChanged(env, results.map((row) => row.home_id));
+  const results = await env.DB.batch(accountDeletion(env, user));
+  await homesChanged(env, results[0].results.map((row) => row.home_id));
+  await keysLeft(env, results[4].results);
 }
 
 // An account left without any way to sign in (ADR-041: Apple's account-deleted, or no sign-in for
@@ -402,16 +413,17 @@ export async function forgetAccountWithoutSignIn(env, userId) {
   }
   const others = "home_id NOT IN (SELECT id FROM homes WHERE owner_id = ?)";
   // Its browsers get no more alerts, at its own homes either: a push address is the person's.
-  const [{ results: alerts }] = await env.DB.batch([
+  const [{ results: alerts }, , , { results: keys }] = await env.DB.batch([
     env.DB.prepare("DELETE FROM push_subscriptions WHERE user_id = ? RETURNING home_id").bind(userId),
     env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
     env.DB.prepare("DELETE FROM join_requests WHERE user_id = ?").bind(userId),
-    env.DB.prepare(`DELETE FROM member_keys WHERE user_id = ? AND ${others}`).bind(userId, userId),
+    env.DB.prepare(`DELETE FROM member_keys WHERE user_id = ? AND ${others} RETURNING home_id`).bind(userId, userId),
     env.DB.prepare(`DELETE FROM members WHERE user_id = ? AND ${others}`).bind(userId, userId),
     ...forgetInvitationsFor(env, user, "accepted_by = ?", userId),
     env.DB.prepare("UPDATE users SET email = '', name = NULL WHERE id = ?").bind(userId),
   ]);
   await homesChanged(env, alerts.map((row) => row.home_id));
+  await keysLeft(env, keys);
   return "account_emptied";
 }
 

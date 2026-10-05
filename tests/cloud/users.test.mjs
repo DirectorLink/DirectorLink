@@ -274,3 +274,44 @@ test("a join refused for a user who has five devices says so", TEST, async () =>
   assert.equal(joined.status, 409, joined.text);
   assert.equal(joined.json.code, "USER_DEVICE_LIMIT");
 });
+
+// The controller registers an invitation over its own connection; the account service's answer.
+async function register(state, fields) {
+  const id = randomHex(8);
+  state.connection.sendJson({ type: "invitation", id, invitation_id: randomHex(4), expires_at: new Date(Date.now() + 600_000).toISOString(), ...fields });
+  return eventually(() => state.seen.find((message) => message.type === "invitation_result" && message.id === id), "the invitation's answer");
+}
+
+// The users review of 1.9.0 (finding 3): a member's invitation for their own other device is bound
+// only to an account that already uses the member's device at the home, never to an email the
+// member names.
+test("a member's invitation for their own device is registered only for an account of that device", TEST, async () => {
+  const { state, owner, cookie } = await claimedHome();
+  const avi = person("avi");
+  const member = await joins(state, cookie, avi);
+  state.announce();
+  await sleep(300);
+  const stranger = await register(state, { email: person("stranger").email, for_key: member.keyId });
+  assert.equal(stranger.ok, false);
+  assert.equal(stranger.code, "ACCOUNT_NOT_OF_DEVICE");
+  assert.equal((await register(state, { email: owner.email, for_key: member.keyId })).code, "ACCOUNT_NOT_OF_DEVICE", "another account of the home");
+  assert.equal((await register(state, { email: avi.email, for_key: "nothex!" })).code, "INVALID_REQUEST");
+  const own = await register(state, { email: avi.email.toUpperCase(), for_key: member.keyId });
+  assert.equal(own.ok, true, JSON.stringify(own));
+  assert.equal(own.for_key, member.keyId, "the answer says the key was checked");
+  // An admin's invitation names its email, as before.
+  const admins = await register(state, { email: person("friend").email });
+  assert.equal(admins.ok, true, JSON.stringify(admins));
+  assert.equal(admins.for_key, undefined);
+});
+
+// The users review of 1.9.0 (finding 10): an account deleted leaves its homes' controllers' list of
+// which keys share an account at once, not at their next change of keys.
+test("a deleted account's keys leave the controller's list of accounts", TEST, async () => {
+  const { state, cookie } = await claimedHome();
+  const avi = await joins(state, cookie, person("avi"));
+  await eventually(() => lastAccounts(state)?.[avi.keyId], "the member's key with its account");
+  const before = state.accounts().length;
+  assert.equal((await call("DELETE", "/v1/me", { cookie: avi.cookie })).status, 204);
+  await eventually(() => state.accounts().length > before && !lastAccounts(state)[avi.keyId], "the deleted account's tag to go");
+});

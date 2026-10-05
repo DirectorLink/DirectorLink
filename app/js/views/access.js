@@ -10,10 +10,11 @@
 // GET /v1/users: each user with their role and access, whether their devices have a Google or Apple
 // account, and under them every device, when it was last used, and Remove where the controller says
 // the caller may. Admins see every user, the suggestions to bring an account's devices together
-// (the controller does it by itself only between users who are alike), and make a pairing code for a
-// user, or a new one, to pair a device at home; a member sees only their own user and removes their
-// other devices. A user has at most five devices: a sixth is refused with the list
-// (views/device-limit.js). The owner can make another admin the owner (ADR-064).
+// (DirectorLink's servers say which devices share an account; nothing is merged until an admin
+// confirms it, the owner for the owner's user), and make a pairing code for a user, or a new one, to
+// pair a device at home; a member sees only their own user and removes their other devices. A user
+// has at most five devices: a sixth is refused with the list (views/device-limit.js). The owner can
+// make another admin the owner (ADR-064).
 
 import { h } from "../dom.js";
 import { formatDateTime, formatRelative, formatTime, formatUntil, t } from "../i18n.js";
@@ -820,36 +821,112 @@ function userRow(user, list) {
   );
 }
 
-// The owner makes another admin the home's owner (1.9.0, ADR-064), asked first with what changes:
-// the controller decides, and the account service moves the home's account on its word.
-function makeOwner(user) {
-  if (ui.access.busy || !window.confirm(t("users.owner.confirm", { name: user.name }))) return;
-  act(
-    () => api("/v1/users/owner", { method: "POST", body: { profile_id: user.id } }),
-    t("users.owner.done", { name: user.name }),
-    (error) => {
-      const name = error?.problem?.user?.name || user.name;
-      if (error?.code === "OWNER_NEEDS_ACCOUNT") return t("users.owner.needsAccount", { name });
-      if (error?.code === "NOT_AN_ADMIN") return t("users.owner.notAdmin", { name });
-      if (error?.code === "OWNER_ONLY") return t("users.owner.ownerOnly");
+// The Google or Apple account the home's account would move to when `user` is made the owner, as
+// this device can tell: the accounts the owner sees (the account service lists them for the owner)
+// that use the user's devices of one account. Its email, or null when it cannot tell or there is
+// more than one (the controller then refuses, naming the devices).
+function ownerAccountEmail(user) {
+  const people = Array.isArray(ui.access.people) ? ui.access.people : null;
+  if (!people) return null;
+  const single = new Set((user.devices || []).filter((device) => device.accounts === 1).map((device) => device.id));
+  const emails = [...new Set(people.filter((person) => person.key_ids.some((id) => single.has(id))).map((person) => person.email).filter(Boolean))];
+  return emails.length === 1 ? emails[0] : null;
+}
+
+// The controller's and the account service's refusals of a hand-over, in the app's words.
+function ownerRefusal(error, user) {
+  const name = error?.problem?.user?.name || user.name;
+  const devices = Array.isArray(error?.problem?.device_names) ? error.problem.device_names.join(", ") : "";
+  switch (error?.code) {
+    case "OWNER_NEEDS_ACCOUNT":
+      return t("users.owner.needsAccount", { name });
+    case "OWNER_ACCOUNT_UNCLEAR":
+      return t("users.owner.accountUnclear", { name, devices });
+    case "OWNER_ACCOUNT_SHARED":
+      return t("users.owner.accountShared", { name, devices });
+    case "NOT_AN_ADMIN":
+      return t("users.owner.notAdmin", { name });
+    case "OWNER_ONLY":
+      return t("users.owner.ownerOnly");
+    case "ALREADY_OWNER":
+      return t("users.owner.already", { name });
+    case "REMOTE_ACCESS_OFF":
+      return t("users.owner.remoteOff");
+    case "REMOTE_OFFLINE":
+      return t("users.owner.offline");
+    case "REMOTE_TIMEOUT":
+      return t("users.owner.noAnswer", { name });
+    case "UNAVAILABLE":
+      return t("users.owner.unavailable");
+    default:
+      // The app gave up waiting (the controller waits 10 s for DirectorLink's servers).
+      if (error?.name === "AbortError" || error?.code === "TIMEOUT") return t("users.owner.noAnswer", { name });
+      if (error?.status >= 500 || error?.status === 409) return t("users.owner.failed", { code: String(error.code || error.status).slice(0, 40) });
       return null;
-    }
+  }
+}
+
+// The owner makes another admin the home's owner (1.9.0, ADR-064), asked first with what changes
+// (and, in a home linked to an account, which account becomes the home's): the controller decides,
+// and the account service moves the home's account on its word. The controller waits up to 10 s for
+// it, so the app waits 15 s.
+function makeOwner(user) {
+  if (ui.access.busy) return;
+  const list = ui.access.users && !ui.access.users.error ? ui.access.users : null;
+  const email = ownerAccountEmail(user);
+  const text =
+    list?.linked === false
+      ? t("users.owner.confirmHome", { name: user.name })
+      : t("users.owner.confirm", { name: user.name, account: email ? t("users.owner.accountEmail", { email }) : t("users.owner.accountTheirs") });
+  if (!window.confirm(text)) return;
+  act(
+    () => api("/v1/users/owner", { method: "POST", body: { profile_id: user.id }, timeoutMs: 15000 }),
+    t("users.owner.done", { name: user.name }),
+    (error) => ownerRefusal(error, user)
   );
 }
 
-// "These devices use the same account: make them one user?", with whose access stays.
+// A user of a suggestion with their role, as the list of users has it when the controller's
+// suggestion does not say (a build before its `role`).
+function suggestionUser(user, users) {
+  const listed = users.find((item) => item.id === user.id);
+  const role = user.role || (listed?.access?.role === "admin" ? "admin" : "member");
+  return { ...user, role, owner: user.owner ?? Boolean(listed?.access?.owner) };
+}
+
+// "DirectorLink's servers say these devices use the same account: make them one user?", with whose
+// access stays: asked first, saying whose access, language, theme and favorites the moved devices
+// then have, and what an admin's device becomes. Sent with the suggestion's revision: when the
+// devices or their users changed since the screen was drawn, the controller moves nothing.
 function confirmMerge(suggestion, keep) {
   const kept = suggestion.users.find((user) => user.id === keep);
   if (!kept || ui.access.busy) return;
-  const others = suggestion.users.filter((user) => user.id !== keep).map((user) => user.name).join(", ");
-  if (!window.confirm(t("users.suggestion.confirm", { name: kept.name, others }))) return;
-  act(() => api("/v1/users/merge", { method: "POST", body: { account: suggestion.id, keep } }), t("users.suggestion.done", { name: kept.name }));
+  const moving = suggestion.users.filter((user) => user.id !== keep);
+  const others = moving.map((user) => user.name).join(", ");
+  const role = roleLabel(kept.role === "admin" ? "admin" : "member");
+  const lines = [t("users.suggestion.confirm", { name: kept.name, others, role })];
+  if (moving.some((user) => user.role === "admin") && kept.role !== "admin") lines.push(t("users.suggestion.confirmLess", { name: kept.name }));
+  if (moving.some((user) => user.role !== "admin") && kept.role === "admin") lines.push(t("users.suggestion.confirmMore", { others }));
+  if (!window.confirm(lines.join(" "))) return;
+  const body = { account: suggestion.id, keep };
+  if (suggestion.revision) body.revision = suggestion.revision;
+  act(
+    () => api("/v1/users/merge", { method: "POST", body }),
+    t("users.suggestion.done", { name: kept.name }),
+    (error) => (error?.code === "SUGGESTION_CHANGED" ? t("users.suggestion.changed") : null)
+  );
 }
 
 function suggestionRow(suggestion, list) {
   const users = Array.isArray(list.items) ? list.items : [];
-  const owner = users.find((user) => user.access?.owner)?.id;
-  const chosen = ui.access.keep?.[suggestion.id] || (suggestion.owner && owner ? owner : suggestion.users[0]?.id);
+  const ownerUser = users.find((user) => user.access?.owner);
+  const owner = ownerUser?.id;
+  const people = suggestion.users.map((user) => suggestionUser(user, users));
+  const shown = { ...suggestion, users: people };
+  // Offered: the controller's choice (the owner's, else the user with less access), never an admin
+  // over a member by default; none when neither is clearly less: the admin chooses.
+  const offered = suggestion.keep !== undefined ? suggestion.keep : suggestion.owner && owner ? owner : null;
+  const chosen = ui.access.keep?.[suggestion.id] || offered || null;
   const busy = Boolean(ui.access.busy);
   const limit = list.device_limit || 5;
   const deviceName = (id) => users.flatMap((user) => user.devices || []).find((device) => device.id === id)?.name || id;
@@ -873,29 +950,45 @@ function suggestionRow(suggestion, list) {
       h(
         "span",
         { class: "toggle-text" },
-        h("span", { class: "toggle-title", dir: "auto" }, t("users.suggestion.keep", { name: user.name })),
+        h(
+          "span",
+          { class: "toggle-title", dir: "auto" },
+          t("users.suggestion.keep", { name: user.name }),
+          h("span", { class: "access-badge", dataset: { key: `users-keep-role-${suggestion.id}:${user.id}` } }, user.owner ? t("access.owner") : roleLabel(user.role === "admin" ? "admin" : "member"))
+        ),
         h("span", { class: "field-help", dir: "auto" }, user.devices.map(deviceName).join(", ")),
         user.devices_after > limit ? h("span", { class: "field-help" }, t("users.suggestion.tooMany", { count: user.devices_after, limit })) : null
       )
     );
   };
-  const tooMany = suggestion.users.find((user) => user.id === chosen)?.devices_after > limit;
+  const tooMany = people.find((user) => user.id === chosen)?.devices_after > limit;
+  // Who may confirm it, when this device may not: the owner, on one of their devices.
+  const ownerDevices = (ownerUser?.devices || []).map((device) => device.name).join(", ");
+  const waitsForOwner = suggestion.owner && ownerUser && !ownerUser.you;
   return h(
     "li",
     { class: "access-item access-suggestion", dataset: { key: `users-suggestion-${suggestion.id}` } },
     h(
       "div",
       { class: "access-main" },
-      h("span", { class: "access-name", dir: "auto" }, t("users.suggestion.title", { names: suggestion.users.map((user) => user.name).join(", ") })),
+      h("span", { class: "access-name", dir: "auto" }, t("users.suggestion.title", { names: people.map((user) => user.name).join(", ") })),
       h("span", { class: "access-sub" }, suggestion.owner ? t("users.suggestion.ownerHelp") : t("users.suggestion.help")),
-      h("fieldset", { class: "perm-roles" }, h("legend", { class: "settings-subtitle" }, t("users.suggestion.whose")), suggestion.users.map(choice)),
-      suggestion.may_confirm ? null : h("p", { class: "field-help" }, t("users.suggestion.ownerConfirms"))
+      h("fieldset", { class: "perm-roles" }, h("legend", { class: "settings-subtitle" }, t("users.suggestion.whose")), people.map(choice)),
+      suggestion.may_confirm
+        ? chosen
+          ? null
+          : h("p", { class: "field-help", dataset: { key: `users-suggestion-choose-${suggestion.id}` } }, t("users.suggestion.choose"))
+        : h(
+            "p",
+            { class: "field-help", dataset: { key: `users-suggestion-who-${suggestion.id}` } },
+            waitsForOwner ? t("users.suggestion.ownerConfirmsOn", { name: ownerUser.name, devices: ownerDevices || ownerUser.name }) : t("users.suggestion.ownerConfirms")
+          )
     ),
     suggestion.may_confirm
       ? h(
           "div",
           { class: "access-actions" },
-          h("button", { type: "button", class: "button button-small button-primary", disabled: busy || tooMany, dataset: { key: `users-merge-${suggestion.id}` }, onclick: () => confirmMerge(suggestion, chosen) }, t("users.suggestion.merge"))
+          h("button", { type: "button", class: "button button-small button-primary", disabled: busy || tooMany || !chosen, dataset: { key: `users-merge-${suggestion.id}` }, onclick: () => confirmMerge(shown, chosen) }, t("users.suggestion.merge"))
         )
       : null
   );

@@ -43,9 +43,9 @@
 -- Since 1.9.0 (ADR-061) a person is a user, with up to five devices (src/auth/users.lua). Settings →
 -- Users shows an admin every user and anyone else their own (Access.seesUser); every user adds and
 -- removes their own devices (Access.mayAddOwnDevice, Access.mayRemoveDevice), never another user's;
--- the devices of one account are brought into one user by DirectorLink only between users who are
--- alike (Access.alike: no device gains anything), otherwise by an admin, the owner's user only by the
--- owner and keeping the owner's (Access.mayMerge).
+-- the devices of one account are brought into one user only when an admin confirms it, the owner's
+-- user only by the owner and keeping the owner's (Access.mayMerge); DirectorLink never does it by
+-- itself. The suggestion offers first the user whose access is within the others' (Access.within).
 --
 -- Since 1.9.0 (ADR-064) the owner can make another admin user the owner (Access.mayMakeOwner): the
 -- people's store then records them as the owner (as a claim does), every rule above follows them,
@@ -450,52 +450,54 @@ function Access.mayRemoveDevice(actor, key)
     return true
 end
 
--- Whether two users are alike: the same role, neither of them the owner, and (members) the same
--- permissions. Bringing the devices of one account together from such users gives no device
--- anything it did not have, so DirectorLink does it by itself (ADR-061); a user without a record
--- (the people's store could not be read) is never alike.
-function Access.alike(left, right)
+-- Whether the access of the user `left` is within that of `right`: a device of `right` that took
+-- `left`'s permissions would gain nothing. An admin's is within an admin's only; a member's within
+-- an admin's, or within another member's who has every room, kind, scene and switch they have. The
+-- owner's is within nobody else's (only the owner does what the owner does). A user without a record
+-- (the people's store could not be read) is within nobody's. The suggestion to bring an account's
+-- devices together offers first the user whose access is within the others' (ADR-061).
+function Access.within(left, right)
     local a, b = People.peek(left), People.peek(right)
     if not a or not b or not People.complete() then
         return false
     end
     local owner, unknown = ownerWith(nil)
-    if unknown or left == owner or right == owner then
+    if unknown or (left == owner and right ~= owner) then
         return false
     end
     local va, vb = People.view(a), People.view(b)
-    if va.role ~= vb.role then
-        return false
-    end
-    if va.role == "admin" then
+    if vb.role == "admin" then
         return true
     end
-    local function sameList(x, y)
+    if va.role == "admin" then
+        return false
+    end
+    local function subset(x, y)
         local seen = {}
-        for _, item in ipairs(x) do
+        for _, item in ipairs(y) do
             seen[item] = true
         end
-        if #x ~= #y then
-            return false
-        end
-        for _, item in ipairs(y) do
+        for _, item in ipairs(x) do
             if not seen[item] then
                 return false
             end
         end
         return true
     end
-    for _, field in ipairs({ "all_rooms", "cameras", "doors", "alarm" }) do
-        if va[field] ~= vb[field] then
+    for _, field in ipairs({ "cameras", "doors", "alarm" }) do
+        if va[field] and not vb[field] then
             return false
         end
     end
     for _, kind in ipairs(People.KINDS) do
-        if va.kinds[kind] ~= vb.kinds[kind] then
+        if va.kinds[kind] and not vb.kinds[kind] then
             return false
         end
     end
-    return sameList(va.rooms, vb.rooms) and sameList(va.scenes, vb.scenes)
+    if not vb.all_rooms and (va.all_rooms or not subset(va.rooms, vb.rooms)) then
+        return false
+    end
+    return subset(va.scenes, vb.scenes)
 end
 
 -- Whether the actor may bring the devices of one account together from the users `profileIds`

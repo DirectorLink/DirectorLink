@@ -107,17 +107,22 @@ own devices (`GET /v1/users`).
   app says "Remove a device first", with Remove where the caller may. A user who had more before
   1.9.0 keeps them and gets none until they have fewer than five. When each device was last used is
   kept across restarts (to the hour).
-- **The devices of one account become one user by themselves.** The account service tells the
-  controller which keys share an account, as an opaque tag per account and home (docs/ACCOUNTS.md).
-  When an account's devices are in two users or more, they move into one by themselves only when no
-  device would gain anything: the users have the same role, neither is the owner, and they have the
-  same permissions, and five devices at most. Otherwise Settings → Users shows "These devices use
-  the same account: make them one user?", and an admin chooses whose access stays; when one of the
-  users is the owner's, only the owner confirms it, and the owner's access stays: the owner's
-  devices never move. There is always an admin. The devices that move get the access of the user
-  who stays; a user left without devices goes, and their favorites are added to the one who stays.
-  Each merge, and each new suggestion, is in History. A device used by several accounts (a shared
-  tablet) stays where it is.
+- **The devices of one account become one user when an admin confirms it.** The account service
+  tells the controller which keys share an account, as an opaque tag per account and home
+  (docs/ACCOUNTS.md). When an account's devices are in two users or more, Settings → Users shows
+  "DirectorLink's servers say these devices use the same account: make them one user?", with each
+  user's role (Admin, Member, Owner) and their devices; nothing moves by itself, not even between
+  users with the same permissions. An admin chooses whose access stays (the user with less access
+  is offered; when neither has less, the admin chooses) and confirms; the confirmation says that
+  the moved devices then have that user's access, language, theme and favorites, and what an
+  admin's device becomes. When the devices or their users changed after the admin looked, nothing
+  moves, and the suggestion is shown again. When one of the users is the owner's, only the owner
+  confirms it, and the owner's access stays: the owner's devices never move (another admin's device
+  says on which of the owner's devices to confirm it). There is always an admin. The devices that
+  move get the access, language, theme and favorites of the user who stays (their old user's
+  favorites are added); a user left without devices goes; a device that is no longer an admin's
+  loses the invitations it made. Each merge, and each new suggestion (a few a day at most), is in
+  History. A device used by several accounts (a shared tablet) stays where it is.
 - **A user goes with their last device**, with their name, permissions and preferences, and so do
   the invitations and the pairing code made for them.
 - **Pairing at home is for a chosen user.** An admin taps **Pair a device** on a user (or **New user
@@ -126,8 +131,10 @@ own devices (`GET /v1/users`).
   the device never chooses. Composer's New Pairing Code still makes a new admin user.
 - **Members add and remove their own devices:** Remove on their other devices, Add my other device in
   Settings → Account (into their own user, with their access), and Join from another device,
-  approved on any device of the same account at the home. A member never moves a device into another
-  user, nor gives a device more than their own access.
+  approved on any device of the same account at the home. A member's own invitation lasts 10
+  minutes, two at most wait, and it works only for the Google or Apple account the member's device
+  already uses at the home (another account is an admin's to invite). A member never moves a device
+  into another user, nor gives a device more than their own access.
 
 ## The app
 

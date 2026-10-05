@@ -390,8 +390,13 @@ export class HomeAlerts {
       }
     }
     const DB = this.env.DB;
+    // The keys whose browser this registration took away (1.9.0, ADR-062): the endpoint's key
+    // before, when it was registered with another; the oldest browsers of the account beyond
+    // MAX_PER_MEMBER, which go.
+    let replaced = [];
     try {
-      await DB.batch([
+      const [selected, , deleted] = await DB.batch([
+        DB.prepare("SELECT key_id FROM push_subscriptions WHERE home_id = ? AND endpoint = ?").bind(homeId, input.endpoint),
         DB.prepare(
           "INSERT INTO push_subscriptions (home_id, endpoint, user_id, p256dh, auth, created_at, key_id, offline) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
             "ON CONFLICT (home_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, key_id = excluded.key_id, offline = excluded.offline, " +
@@ -399,9 +404,10 @@ export class HomeAlerts {
         ).bind(homeId, input.endpoint, input.user, input.p256dh, input.auth, iso(), keyId, input.offline === false ? 0 : 1),
         DB.prepare(
           "DELETE FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 AND endpoint NOT IN " +
-            "(SELECT endpoint FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 ORDER BY created_at DESC, endpoint LIMIT ?3)"
+            "(SELECT endpoint FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 ORDER BY created_at DESC, endpoint LIMIT ?3) RETURNING key_id"
         ).bind(homeId, input.user, MAX_PER_MEMBER),
       ]);
+      replaced = [...(selected?.results ?? []), ...(deleted?.results ?? [])].map((row) => row.key_id).filter((id) => id && id !== keyId);
     } catch (error) {
       // The account left the home since the Worker looked (the subscription's foreign key).
       log("alerts_subscribe_failed", { home: homeId, user: input.user, error: String(error?.message ?? error) });
@@ -413,6 +419,10 @@ export class HomeAlerts {
     }
     log("alerts_subscribed", { home: homeId, user: input.user, key: keyId, offline: input.offline !== false, device_requests: choice, service: serviceOf(input.endpoint) });
     await this.watch(homeId);
+    // A key this took the last browser of is told to its controller, as whenever browsers go.
+    if (replaced.length > 0) {
+      await this.browsersGone(homeId, replaced);
+    }
     return { ok: true };
   }
 

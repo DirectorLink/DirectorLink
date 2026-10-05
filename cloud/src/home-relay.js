@@ -32,7 +32,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { keyAccounts, recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
-import { cancelHomeInvitation, moveHomeOwner, registerHomeInvitation } from "./homes.js";
+import { cancelHomeInvitation, cancelOwnerMove, moveHomeOwner, registerHomeInvitation } from "./homes.js";
 import { receiveBackupChunk } from "./backups.js";
 // Scene links (ADR-051): a phone's automation runs a scene; the controller checks the secret.
 import { LINK_ID, LINK_SECRET, RESULT_MESSAGES, linkNotFound } from "./scene-links.js";
@@ -308,7 +308,7 @@ export class HomeRelay extends DurableObject {
         // work its frames queued before (the admin keys of its last "keys" count).
         const result = await this.queueKeyWork(async () => {
           try {
-            return await moveHomeOwner(this.env, attachment.home, data, await this.ctx.storage.get("alerts_admins"));
+            return await moveHomeOwner(this.env, attachment.home, data, await this.ctx.storage.get("alerts_admins"), this.ctx.storage);
           } catch (error) {
             log("owner_failed", { home: attachment.home, error: String(error?.message ?? error) });
             return { ok: false, code: "INTERNAL" };
@@ -317,6 +317,17 @@ export class HomeRelay extends DurableObject {
         this.reply(ws, { type: "owner_result", id: data.id, ...(result ?? { ok: false, code: "INTERNAL" }) });
         return;
       }
+      case "owner_cancel":
+        // The controller did not follow that "owner" request, or heard no answer in time: the move
+        // it made is undone (homes.js), in order after it. Nothing to answer.
+        await this.queueKeyWork(async () => {
+          try {
+            await cancelOwnerMove(this.env, attachment.home, data, this.ctx.storage);
+          } catch (error) {
+            log("owner_cancel_failed", { home: attachment.home, error: String(error?.message ?? error) });
+          }
+        }, attachment.home);
+        return;
       case "invitation_cancel":
         // It gave up waiting for invitation_result: nothing to answer.
         try {

@@ -613,6 +613,38 @@ test("the controller is told which keys no browser can get alerts for, by key id
   assert.deepEqual(old.state.gone, []);
 });
 
+// The cloud review of 1.9.0 (finding 2): a registration that takes a key's last browser away (the
+// same browser registered again with another key, or an account's oldest browser beyond ten) tells
+// the controller too, as ADR-062 says of every browser removed.
+test("a registration that takes a key's last browser away tells the controller", TEST, async () => {
+  const features = ["scene_links", "alerts_gone"];
+  const { state, dana, keyId: danaKey } = await claimedHome({ features });
+  // Dana's second device, paired at home: another key of her account.
+  const other = randomHex(4);
+  state.keys.set(other, `ak_${randomHex(24)}`);
+  state.admins.add(other);
+  state.announce();
+  assert.equal((await e2e(dana, state, other)).status, 200);
+  const browser = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, browser, danaKey)).status, 201);
+  state.gone.length = 0;
+  // The same browser, now with the other key (the device was paired again): the first key has none.
+  assert.equal((await subscribeWithKey(state, dana, browser, other)).status, 201);
+  const [told] = await eventually(async () => (state.gone.length ? state.gone : null), "the key left without a browser");
+  assert.deepEqual(told.keys, [danaKey]);
+
+  // Ten more browsers of Dana's account with the other key: the oldest goes, and its key with it.
+  const first = push.subscribe();
+  assert.equal((await subscribeWithKey(state, dana, first, danaKey)).status, 201);
+  state.gone.length = 0;
+  for (let index = 0; index < 10; index += 1) {
+    await sleep(5);
+    assert.equal((await subscribeWithKey(state, dana, push.subscribe(), other)).status, 201);
+  }
+  await eventually(async () => state.gone.some((message) => message.keys.includes(danaKey)), "the pruned browser's key");
+  assert.ok(state.gone.every((message) => !message.keys.includes(other)), "the key that still has browsers is not told");
+});
+
 test("offline alerts reach the admin keys' browsers that want them, and the browsers of apps before 1.7.0", TEST, async () => {
   const { state, dana, keyId } = await claimedHome();
   const avi = await joins(state, dana, AVI);

@@ -25,6 +25,19 @@ export function validKeyList(ids) {
   return Array.isArray(ids) && ids.length <= MAX_KEYS && ids.every(validKeyId);
 }
 
+// Which account uses which key changed at `homeId` (a join, a member removed, a new owner, an account
+// deleted or emptied): the home's object tells its controller which keys share an account (1.9.0,
+// ADR-061; home-relay.js sendAccounts). Best effort: the controller hears it again at its next
+// connection or change of keys.
+export async function accountsChanged(env, homeId) {
+  try {
+    const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
+    await stub.fetch("https://home-relay/accounts", { method: "POST", headers: { "X-DirectorLink-Home": homeId } });
+  } catch (error) {
+    log("accounts_not_told", { home: homeId, error: String(error?.message ?? error) });
+  }
+}
+
 // Records that `userId` used `keyId`, unless it is known already. `announced`: the controller's
 // last list of key ids (a Set), or null when it never sent one (drivers before 0.11.0); a key
 // missing from it is not recorded. Returns "added" when the row is new, true when it was known,

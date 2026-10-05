@@ -1,7 +1,7 @@
 # Backup and restore
 
 **Status: built in DirectorLink 1.4.0 (ADR-042); automatic backups to the account and the Sonos
-room choices in 1.6.0 (ADR-048); people's roles and permissions in 1.8.0 (ADR-054).**
+room choices in 1.6.0 (ADR-048); users' roles and permissions in 1.8.0 (ADR-054).**
 
 Updating the driver keeps everything DirectorLink knows. Removing the driver from the project (by
 accident), replacing the controller or rebuilding the project loses it all: Control4 deletes a
@@ -18,7 +18,7 @@ says to update DirectorLink.
 | Kept by the driver | In a backup | When restored |
 | --- | --- | --- |
 | Keys (`directorlink_api_key_hashes`) | Each key as stored: its hash and lock key, name, role, profile, when it was made and when it expires. Never a key itself. | Only in the reinstall case (below): then as they were, so every device keeps working without pairing again. Otherwise every key stays as it is now. |
-| Profiles | Each person's language, theme, palette, favorites and hidden rooms. | As they were, favorites and hidden rooms matched to the project. With the keys kept, only the profiles today's keys use. |
+| Profiles | Each user's language, theme, palette, favorites and hidden rooms. | As they were, favorites and hidden rooms matched to the project. With the keys kept, only the profiles today's keys use. |
 | People (1.8.0) | Each user's role, admin or member, and a member's permissions (rooms, kinds of devices, cameras, doors and gates, the alarm, scenes); the home's owner; the rooms hidden from members. | With the keys: when the backup's keys come back, as they were, rooms matched to the project and only the scenes that come back; otherwise as they are now. A backup made before 1.8.0 has none (below). Since 1.9.0 (ADR-061) a restore gives no user a sixth device: the backup's users come back as they were, and the restoring device takes the place of one of the backup's keys or stays a user of its own. Which keys share an account, and when each key was last used, are not in backups: the account service says the first again at the next connection. |
 | Room names, the room order | Every room's names in every language, and the home's order. | Matched to the project. |
 | Scenes | Every scene with its steps, ids and versions. | Steps matched to the project. |
@@ -115,13 +115,13 @@ that `replaces_key` names passes its links to the restoring device's key). So th
 and Shortcuts keep working after a replaced controller is restored with its identity. The preview
 counts them (`counts.scene_links`).
 
-`people` (1.8.0, ADR-054) holds each person's role and permissions by profile id, the home's owner
+`people` (1.8.0, ADR-054) holds each user's role and permissions by profile id, the home's owner
 and the rooms hidden from members. It follows the keys too: when the backup's keys come back, its
-people come back with them, their rooms matched to the project like scene steps (by id, else by
+users come back with them, their rooms matched to the project like scene steps (by id, else by
 name; a room that matches nothing is left out and listed) and their scenes only those that come
-back. Otherwise the people here stay as they are, so a permission taken away since the backup was
+back. Otherwise the users here stay as they are, so a permission taken away since the backup was
 made never comes back. The rooms hidden from members and the owner go the same way. A backup made
-before 1.8.0 has no `people`: when its keys come back, each person is worked out from their keys'
+before 1.8.0 has no `people`: when its keys come back, each user is worked out from their keys'
 roles after the restore, as at the update to 1.8.0. The preview counts them (`counts.people`).
 DirectorLink 1.7.0 refuses a 1.8.0 backup (`409 BACKUP_TOO_NEW`), as older drivers refuse newer
 ones.
@@ -179,9 +179,9 @@ characters, 10 languages a room) and preferences it would refuse are left out.
   of the right length, a lock key of 64 hex digits or none, a hash no other key has); one that is
   not right stays out and is counted. Keys whose expiry has passed, or with more than 30 days and an
   hour left (made while a clock ran ahead, ADR-040), stay out.
-- **People** (1.8.0) go with the keys: in the reinstall case each person comes back with the role
+- **Users** (1.8.0) go with the keys: in the reinstall case each user comes back with the role
   and permissions the backup has, and the owner too; otherwise everyone keeps the role and
-  permissions they have now. From a backup made before 1.8.0, the people of the keys that come back
+  permissions they have now. From a backup made before 1.8.0, the users of the keys that come back
   are worked out from their roles after the restore (`people` in *The document* above).
 
 ### Rooms and devices
@@ -195,7 +195,7 @@ members' rooms and the rooms hidden from members refer to Control4 ids. For each
    name in the same room: its id (`by_name`). This is how ids that were swapped when the project was
    rebuilt are put right.
 3. Otherwise the same id with another name: kept, and the preview says so (`renamed`).
-4. Otherwise it is left out and listed (`unmatched`), with the scenes and people's favorites that
+4. Otherwise it is left out and listed (`unmatched`), with the scenes and users' favorites that
    used it. A step with no device left, or whose room matches nothing, is left out: a step without
    its room would act on every room of the home. A step's room that is only where its devices were
    picked is dropped quietly when it is gone; the step keeps its devices. The other rooms a music
@@ -233,12 +233,12 @@ another's: tick the box once the old controller is off or reset.
 
 - The backup holds no identity (it was never linked): the controller's own stays as it is.
 - The backup's home is the controller's: the identity in use stays (its secret may be newer than
-  the backup's). The relay connection stays, and learns the key ids: people whose keys are not on
+  the backup's). The relay connection stays, and learns the key ids: accounts whose keys are not on
   the controller leave the home in the account.
 - Otherwise (and for another home's backup only when asked): the backup's identity is used, and the
   one in use now is kept as `previous`. Two seconds after the answer (which goes out on the
   connection there is), the controller connects with the backup's identity. The home in the account
-  comes back with its people, whose keys the backup has; the home the controller used until then
+  comes back with its accounts, whose keys the backup has; the home the controller used until then
   goes offline in the account. If the relay refuses the backup's identity (its secret was replaced
   after the backup was made; it tries the waiting replacements first; or the relay does not take
   it), the controller's own comes back, it connects with that, and the log and Remote Status say so.

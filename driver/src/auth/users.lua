@@ -7,27 +7,31 @@
 --   first (pairing with a code made for them, an invitation and its join, POST /v1/api-keys with
 --   profile_id, moving a key, bringing an account's devices together). A user who had more before
 --   1.9.0 keeps them, and gets none until they have fewer than five.
--- * The devices of one Google or Apple account become one user. The account service says which
+-- * The devices of one Google or Apple account may become one user. The account service says which
 --   keys share an account (src/auth/accounts.lua: an opaque tag per account and home); the
 --   controller decides. A device used by several accounts (a shared tablet) stays where it is.
---   When an account's devices are in two users or more, they are brought into one by DirectorLink
---   itself only when no device would gain anything: the users have the same role, none of them is
---   the owner, and they have the same permissions (Access.alike), and the user they go to stays
---   within five devices. Otherwise it is a suggestion, which an admin confirms in Settings → Users,
---   choosing whose permissions stay; one with the owner's user, only the owner, keeping theirs
---   (Access.mayMerge). So nothing the account service says can raise anyone's access on its own.
---   There is always an admin. Every merge, and every new suggestion, is logged and in the history.
---   A user whose devices all moved goes (as a user goes with their last device), and the
---   favorites they had are added to the user who stays.
+--   When an account's devices are in two users or more, that is a suggestion, never a merge by
+--   itself: an admin confirms it in Settings → Users, choosing whose permissions stay; one with the
+--   owner's user, only the owner, keeping theirs (Access.mayMerge). The confirmation names the
+--   suggestion's revision, a digest of what the admin was shown (its devices, in which users, with
+--   which roles and permissions): when the account service changed the group meanwhile, or anyone
+--   changed those users, it is refused and shown again. So nothing the account service says moves a
+--   device, and nothing an admin did not see is confirmed. There is always an admin. Every merge,
+--   and every new suggestion (a few a day at most), is logged and in the history. A user whose
+--   devices all moved goes (as a user goes with their last device), and the favorites they had are
+--   added to the user who stays; a device that is no longer an admin's loses the invitations it made.
 
 local Access = require("src.auth.access")
 local Accounts = require("src.auth.accounts")
 local Activity = require("src.core.activity")
+local Clock = require("src.core.clock")
+local Invitations = require("src.auth.invitations")
 local Json = require("src.core.json")
 local Keys = require("src.auth.keys")
 local Log = require("src.core.log")
 local People = require("src.auth.people")
 local Profiles = require("src.auth.profiles")
+local Sha512 = require("src.core.sha512")
 
 local Users = {}
 
@@ -49,21 +53,50 @@ function Users.full(profileId, keys)
     return profileId ~= nil and #Users.devices(profileId, keys) >= Users.DEVICE_LIMIT
 end
 
--- The Google or Apple account of the user `profileId` (its tag, src/auth/accounts.lua), as the
--- account service said: that of their most recently used device that has exactly one account (a
--- shared device says nothing about whose it is). Returns the tag and that device, or nil when none
--- of their devices has one. Handing the home to them (ADR-064) moves the home's owner account in
--- the account service to it.
-function Users.accountOf(profileId, keys)
-    local tag, device, at = nil, nil, nil
+-- The Google or Apple account the home's account moves to when the user `profileId` is made the
+-- owner (ADR-064): its tag (src/auth/accounts.lua), only when it is not in doubt. Their devices that
+-- have exactly one account must all have the same one (a shared device says nothing about whose it
+-- is), and no device of the current owner's user (`ownerId`) may use it: the home's account would
+-- then stay the owner's, or become someone else's. Returns the tag; nil when none of their devices
+-- has one; or nil, OWNER_ACCOUNT_UNCLEAR (several accounts) or OWNER_ACCOUNT_SHARED (the owner's
+-- account too), and the names of the devices in question.
+function Users.ownerAccount(profileId, ownerId, keys)
+    keys = keys or Keys.list()
+    local tags, order, byTag = {}, {}, {}
     for _, key in ipairs(Users.devices(profileId, keys)) do
         local single = Accounts.single(key.id)
-        local used = tostring(key.last_used_at or key.created_at or "")
-        if single and (tag == nil or used > at) then
-            tag, device, at = single, key, used
+        if single then
+            if not tags[single] then
+                tags[single] = true
+                order[#order + 1] = single
+                byTag[single] = {}
+            end
+            byTag[single][#byTag[single] + 1] = key.name
         end
     end
-    return tag, device
+    if #order == 0 then
+        return nil
+    end
+    if #order > 1 then
+        local names = {}
+        for _, tag in ipairs(order) do
+            for _, name in ipairs(byTag[tag]) do
+                names[#names + 1] = name
+            end
+        end
+        return nil, "OWNER_ACCOUNT_UNCLEAR", names
+    end
+    local tag = order[1]
+    if ownerId ~= nil and ownerId ~= profileId then
+        for _, key in ipairs(Users.devices(ownerId, keys)) do
+            for _, other in ipairs(Accounts.tagsOf(key.id)) do
+                if other == tag then
+                    return nil, "OWNER_ACCOUNT_SHARED", byTag[tag]
+                end
+            end
+        end
+    end
+    return tag
 end
 
 -- ---- the devices of one account ----------------------------------------------------------------
@@ -156,24 +189,100 @@ local function adminLeft(ids, keepId, keys)
     return false
 end
 
--- Whether DirectorLink brings the group together by itself, and into whom: only when the stores
--- were all read, every user of it is alike (Access.alike: no device gains anything), and the
--- oldest of them stays within the device limit. Returns the user who stays, or nil and why.
-function Users.automatic(group, keys)
-    keys = keys or Keys.list()
-    if not (Keys.complete() and Profiles.complete() and People.complete()) then
-        return nil, "unavailable"
-    end
-    for index = 2, #group.users do
-        if not Access.alike(group.users[1], group.users[index]) then
-            return nil, "different_access"
+-- The user whose access the suggestion offers to keep, or nil when the admin must choose: the
+-- owner's, when the owner's user is one of them (it is the one that stays); otherwise the oldest
+-- whose access is within every other's (Access.within), so that no device gains anything; never
+-- one with more access than another (an admin over a member) by default.
+function Users.offered(group)
+    local owner = Access.owner()
+    for _, id in ipairs(group.users) do
+        if owner ~= nil and id == owner then
+            return owner
         end
     end
-    local keep = group.users[1]
-    if Users.after(group, keep, keys) > Users.DEVICE_LIMIT then
-        return nil, "device_limit"
+    for _, id in ipairs(group.users) do
+        local least = true
+        for _, other in ipairs(group.users) do
+            if other ~= id and not Access.within(id, other) then
+                least = false
+                break
+            end
+        end
+        if least then
+            return id
+        end
     end
-    return keep
+    return nil
+end
+
+-- A digest of `text`, 16 hex digits: SHA-256 where Director has it (as the keys' hashes), else
+-- SHA-1, else SHA-512 in Lua.
+local function digest(text)
+    for _, algorithm in ipairs({ "SHA256", "SHA1" }) do
+        local ok, hash = pcall(function()
+            return C4:Hash(algorithm, text, { return_encoding = "HEX" })
+        end)
+        if ok and type(hash) == "string" and #hash >= 16 and hash:match("^%x+$") then
+            return hash:sub(1, 16):lower()
+        end
+    end
+    return (Sha512.digest(text):sub(1, 8):gsub(".", function(char)
+        return string.format("%02x", char:byte())
+    end))
+end
+
+-- What the admin is shown of a user in a suggestion, as text: their role, whether they are the
+-- owner, and a member's permissions, in a fixed order.
+local function accessText(profileId, owner)
+    local record = People.peek(profileId)
+    if not record then
+        return "?"
+    end
+    local view = People.view(record)
+    local parts = { view.role, profileId == owner and "owner" or "-" }
+    if view.role ~= "admin" then
+        local rooms, scenes, kinds = {}, {}, {}
+        for _, id in ipairs(view.rooms) do
+            rooms[#rooms + 1] = tostring(id)
+        end
+        for _, id in ipairs(view.scenes) do
+            scenes[#scenes + 1] = id
+        end
+        table.sort(rooms)
+        table.sort(scenes)
+        for _, kind in ipairs(People.KINDS) do
+            kinds[#kinds + 1] = view.kinds[kind] and "1" or "0"
+        end
+        parts[#parts + 1] = view.all_rooms and "all" or table.concat(rooms, ",")
+        parts[#parts + 1] = table.concat(kinds)
+        parts[#parts + 1] = (view.cameras and "1" or "0") .. (view.doors and "1" or "0") .. (view.alarm and "1" or "0")
+        parts[#parts + 1] = table.concat(scenes, ",")
+    end
+    return table.concat(parts, ";")
+end
+
+-- The suggestion's revision: a digest of everything the admin is shown and confirms, the account,
+-- its devices in each of its users, and each user's role, ownership and permissions. A confirmation
+-- with another revision is refused (POST /v1/users/merge: 409 SUGGESTION_CHANGED).
+function Users.revision(group, keys)
+    keys = keys or Keys.list()
+    local owner = Access.owner()
+    local profileOf = {}
+    for _, key in ipairs(keys) do
+        profileOf[key.id] = key.profile
+    end
+    local parts = { "v1", group.id }
+    for _, id in ipairs(group.users) do
+        local theirs = {}
+        for _, keyId in ipairs(group.keys) do
+            if profileOf[keyId] == id then
+                theirs[#theirs + 1] = keyId
+            end
+        end
+        table.sort(theirs)
+        parts[#parts + 1] = id .. "=" .. accessText(id, owner) .. "=" .. table.concat(theirs, ",")
+    end
+    return digest(table.concat(parts, "|"))
 end
 
 local function names(ids)
@@ -185,10 +294,10 @@ local function names(ids)
     return table.concat(list, ", ")
 end
 
--- Brings the group's devices into `keepId` (checked by the caller: Users.automatic, or the API
--- with Access.mayMerge). `by`: the key that confirmed it (ctx.apiKey), or nil for DirectorLink
--- itself. Returns the users who went (their devices all moved), or nil and USER_DEVICE_LIMIT,
--- LAST_ADMIN, UNAVAILABLE or PERSIST_FAILED. The caller then tells the driver the keys changed.
+-- Brings the group's devices into `keepId`, as the admin `by` (ctx.apiKey) confirmed it (checked by
+-- the caller: Access.mayMerge, and the revision). Returns the users who went (their devices all
+-- moved), or nil and USER_DEVICE_LIMIT, LAST_ADMIN, UNAVAILABLE or PERSIST_FAILED. The caller then
+-- tells the driver the keys changed.
 function Users.merge(group, keepId, by)
     if not (Keys.complete() and Profiles.complete() and People.complete()) then
         return nil, "UNAVAILABLE"
@@ -229,68 +338,75 @@ function Users.merge(group, keepId, by)
     if not ok then
         return nil, failure
     end
+    -- Only admins make invitations for others: a device that is no longer an admin's keeps none of
+    -- its invitations, as when its user is made a member or it is moved (handlers/profiles.lua, auth.lua).
+    if not Access.isAdminPerson(keepId) then
+        for _, id in ipairs(ids) do
+            Invitations.revokeCreatedBy(id)
+        end
+    end
     Profiles.mergeFavorites(keepId, emptied)
     local kept = Profiles.find(keepId)
-    Log.info("auth", by and "an account's devices were brought into one user" or "an account's devices were brought into one user by themselves", {
-        user = keepId, from = others, devices = #ids, by = by and by.id or nil,
-    })
+    Log.info("auth", "an account's devices were brought into one user", { user = keepId, from = others, devices = #ids, by = by and by.id or nil })
     Activity.record("access", "users_merged", {
         by = by,
-        who = not by and { type = "controller" } or nil,
         what = kept and kept.name or keepId,
         from = from,
         count = #ids,
-        note = not by and "automatic" or nil,
     })
     return emptied
 end
 
--- After the account service said which keys share an account (or the keys changed): the groups
--- that are alike are brought together by DirectorLink, and each new suggestion is recorded once
--- in the history. `changed()`: tells the driver the keys changed (main.lua). Returns how many
--- groups were brought together.
-function Users.reconcile(changed)
+-- At most this many new suggestions a day go into the history and the log: the account service
+-- could otherwise fill both by changing which keys share an account.
+Users.SUGGESTED_A_DAY = 10
+local DAY = 24 * 3600
+local suggestedAt = {}
+local quietSince = nil
+
+-- The devices of a group, as the history remembers a suggestion: the same devices are the same
+-- suggestion, whatever tag the account service gives their account.
+local function devicesText(group)
+    return table.concat(group.keys, ",")
+end
+
+-- After the account service said which keys share an account differently: each new suggestion is
+-- recorded once in the history (again only if it went and came back), at most SUGGESTED_A_DAY.
+-- Nothing moves: an admin confirms each one. Returns how many were recorded.
+function Users.suggest()
     if not (Keys.complete() and Profiles.complete() and People.complete()) or not Accounts.known() then
         return 0
     end
-    local merged = 0
-    -- One at a time: a merge changes the users the next group is in.
-    for _ = 1, 20 do
-        local done = false
-        for _, group in ipairs(Users.groups()) do
-            local keep = Users.automatic(group)
-            if keep then
-                local ok, failure = Users.merge(group, keep, nil)
-                if ok then
-                    merged = merged + 1
-                    done = true
-                    if changed then
-                        changed()
-                    end
-                    break
-                end
-                Log.warn("auth", "an account's devices could not be brought into one user", { reason = failure })
-            end
-        end
-        if not done then
-            break
+    local current, present = {}, {}
+    for _, group in ipairs(Users.groups()) do
+        current[devicesText(group)] = group
+        present[devicesText(group)] = true
+    end
+    local now = Clock.now()
+    local recent = {}
+    for _, at in ipairs(suggestedAt) do
+        if at <= now and now - at < DAY then
+            recent[#recent + 1] = at
         end
     end
-    local current = {}
-    local groups = Users.groups()
-    for _, group in ipairs(groups) do
-        current[group.id] = group
+    suggestedAt = recent
+    local recorded, skipped = 0, 0
+    for _, devices in ipairs(Accounts.newSuggestions(present)) do
+        local group = current[devices]
+        if #suggestedAt < Users.SUGGESTED_A_DAY then
+            suggestedAt[#suggestedAt + 1] = now
+            recorded = recorded + 1
+            Log.info("auth", "DirectorLink's servers say devices of one account are in several users: an admin may make them one user in Settings → Users", { users = group.users, devices = #group.keys })
+            Activity.record("access", "merge_suggested", { who = { type = "controller" }, what = names(group.users), count = #group.keys })
+        else
+            skipped = skipped + 1
+        end
     end
-    local present = {}
-    for tag in pairs(current) do
-        present[tag] = true
+    if skipped > 0 and (quietSince == nil or now < quietSince or now - quietSince >= DAY) then
+        quietSince = now
+        Log.warn("auth", "DirectorLink's servers changed which devices share an account too often: not every suggestion is in the history", { skipped = skipped })
     end
-    for _, tag in ipairs(Accounts.newSuggestions(present)) do
-        local group = current[tag]
-        Log.info("auth", "devices of one account are in several users: an admin may bring them together in Settings → Users", { users = group.users, devices = #group.keys })
-        Activity.record("access", "merge_suggested", { who = { type = "controller" }, what = names(group.users), count = #group.keys })
-    end
-    return merged
+    return recorded
 end
 
 -- ---- what Settings → Users shows (GET /v1/users) ------------------------------------------------
@@ -305,7 +421,9 @@ end
 -- `accessView(profileId, owner)`: a user's role and permissions as GET /v1/profiles/{id}/access
 -- answers (src/api/handlers/profiles.lua). The caller's own user, and for an admin every user;
 -- the devices of each, with when each was last used and whether the caller may remove it; for
--- admins, the suggestions to bring an account's devices together.
+-- admins, the suggestions to bring an account's devices together: each with its users (their role,
+-- whether one is the owner, their devices of that account), the user offered to keep (or none) and
+-- its revision, which the confirmation names.
 function Users.view(actor, accessView)
     local keys = Keys.list()
     local owner = Access.owner()
@@ -359,16 +477,22 @@ function Users.view(actor, accessView)
                     end
                 end
                 local profile = Profiles.find(id)
-                users[#users + 1] = { id = id, name = profile and profile.name or id, devices = theirs, devices_after = Users.after(group, id, keys) }
+                users[#users + 1] = {
+                    id = id,
+                    name = profile and profile.name or id,
+                    role = Access.isAdminPerson(id, keys) and "admin" or "member",
+                    owner = id == owner,
+                    devices = theirs,
+                    devices_after = Users.after(group, id, keys),
+                }
             end
-            local keep = group.users[1]
-            if involvesOwner then
-                keep = owner
-            end
+            local offered = Users.offered(group)
             suggestions[#suggestions + 1] = {
                 id = group.id,
+                revision = Users.revision(group, keys),
                 owner = involvesOwner,
-                may_confirm = (Access.mayMerge(actor, group.users, keep)) == true,
+                keep = nullable(offered),
+                may_confirm = (Access.mayMerge(actor, group.users, involvesOwner and owner or group.users[1])) == true,
                 users = users,
             }
         end

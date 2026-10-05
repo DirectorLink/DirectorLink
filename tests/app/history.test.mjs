@@ -560,27 +560,27 @@ test("remote access refused because DirectorLink must be updated, in both langua
 });
 
 // Users and their devices (1.9.0, ADR-061): a pairing code made in the app, the devices of one
-// account brought into one user (by DirectorLink itself when the users were alike), a suggestion.
+// account brought into one user (always by an admin who confirmed it), a suggestion, which the
+// history says is what DirectorLink's servers say.
 test("users: a pairing code, devices of one account brought together, a suggestion, in both languages", async () => {
   home("admin");
   controller({
     items: [
-      { id: 4, at: iso(NOW - 30 * 1000), kind: "access", action: "users_merged", who: { type: "controller" }, what: "Sam", from: "Chrome on Android", count: 1, note: "automatic" },
       { id: 3, at: iso(NOW - 60 * 1000), kind: "access", action: "users_merged", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Alex", from: "Chrome on iPhone", count: 2 },
       { id: 2, at: iso(NOW - 90 * 1000), kind: "access", action: "merge_suggested", who: { type: "controller" }, what: "Alex, Chrome on iPhone", count: 2 },
       { id: 1, at: iso(NOW - 120 * 1000), kind: "access", action: "pairing_code", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Kitchen tablet", to: "member" },
     ],
   });
   let rows = items(await open());
-  assert.match(line(rows[0]), /^1 device of one account joined Sam from Chrome on Android \(the same access\)/);
-  assert.match(line(rows[1]), /^Brought 2 devices of one account into Alex from Chrome on iPhone/);
-  assert.match(line(rows[2]), /^Alex, Chrome on iPhone use the same account: an admin may make them one user/);
-  assert.match(line(rows[3]), /^Made a pairing code for Kitchen tablet/);
+  assert.match(line(rows[0]), /^Brought 2 devices of one account into Alex from Chrome on iPhone/);
+  assert.match(line(rows[1]), /^DirectorLink’s servers say Alex, Chrome on iPhone use the same account: an admin may make them one user/);
+  assert.match(line(rows[2]), /^Made a pairing code for Kitchen tablet/);
   await setLanguage("he");
   try {
     rows = items(await open());
-    assert.match(line(rows[1]), /^שני מכשירים של חשבון אחד עברו אל Alex מ-Chrome on iPhone/);
-    assert.match(line(rows[3]), /^נוצר קוד צימוד עבור Kitchen tablet/);
+    assert.match(line(rows[0]), /^שני מכשירים של חשבון אחד עברו אל Alex מ-Chrome on iPhone/);
+    assert.match(line(rows[1]), /^לפי השרתים של DirectorLink, Alex, Chrome on iPhone משתמשים באותו חשבון/);
+    assert.match(line(rows[2]), /^נוצר קוד צימוד עבור Kitchen tablet/);
   } finally {
     await setLanguage("en");
   }

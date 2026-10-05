@@ -57,7 +57,8 @@ local IDENTITY_KEY = "directorlink_remote_identity"
 local OLD_IDENTITY_KEY = "DIRECTORLINK_REMOTE_IDENTITY"
 
 local state = {
-    asked = {}, -- id -> function(answer): what the driver asked the relay
+    asked = {}, -- id -> { expects = answer type, done = function(answer) }: what the driver asked the relay
+    later = {}, -- what to tell the relay once connected again (Relay.tellSoon)
     enabled = false,
     socket = nil,
     identity = nil,
@@ -282,11 +283,11 @@ local function onMessage(text, kind)
         return
     end
     -- Answers to what the driver asked (Relay.ask): an invitation registered, a backup's chunk kept,
-    -- the home's owner account moved (1.9.0, ADR-064).
+    -- the home's owner account moved (1.9.0, ADR-064); each only of the type its question takes.
     local waiting = type(message.id) == "string" and state.asked[message.id]
-    if waiting and (message.type == "invitation_result" or message.type == "backup_result" or message.type == "owner_result") then
+    if waiting and message.type == waiting.expects then
         state.asked[message.id] = nil
-        waiting(message)
+        waiting.done(message)
         return
     end
     -- Sealed requests, invitations and claims (remote.lua).
@@ -436,6 +437,12 @@ local function onOpen()
     -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0). A driver that does not list one
     -- is never sent its messages.
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES })
+    -- What could not be told while the connection was down (Relay.tellSoon), in order.
+    local later = state.later
+    state.later = {}
+    for _, message in ipairs(later) do
+        send(message)
+    end
     Relay.announceKeys()
     startKeepalive()
     local drop = state.lastDrop
@@ -568,8 +575,12 @@ connect = function()
     state.socket:connect()
 end
 
+-- The answer each question takes (onMessage): another type with the same id is not its answer.
+local ANSWERS = { invitation = "invitation_result", backup_chunk = "backup_result", owner = "owner_result" }
+
 -- Asks the relay something over this home's connection; done(answer) once, or done(nil, code)
--- after `seconds` or when not connected. Answers carry the same id (onMessage).
+-- after `seconds` or when not connected. Answers carry the same id (onMessage), which `message.id`
+-- holds once it was sent.
 function Relay.ask(message, seconds, done)
     if not state.socket or not state.connectedAt then
         done(nil, "REMOTE_OFFLINE")
@@ -580,7 +591,7 @@ function Relay.ask(message, seconds, done)
     message.id = id
     local finished = false
     local timer
-    state.asked[id] = function(answer)
+    state.asked[id] = { expects = ANSWERS[message.type] or tostring(message.type) .. "_result", done = function(answer)
         if finished then
             return
         end
@@ -591,7 +602,7 @@ function Relay.ask(message, seconds, done)
             end)
         end
         done(answer)
-    end
+    end }
     pcall(function()
         timer = C4:SetTimer((seconds or 10) * 1000, function()
             if not finished then
@@ -610,6 +621,23 @@ function Relay.tell(message)
         return false
     end
     send(message)
+    return true
+end
+
+-- What must reach the relay even if the connection is down now (an `owner_cancel`, ADR-064): told
+-- at once, or kept in memory and told right after the next hello, before anything else is asked
+-- (the newest LATER_MAX). Returns true.
+Relay.LATER_MAX = 20
+
+function Relay.tellSoon(message)
+    if state.socket and state.connectedAt then
+        send(message)
+        return true
+    end
+    if #state.later >= Relay.LATER_MAX then
+        table.remove(state.later, 1)
+    end
+    state.later[#state.later + 1] = message
     return true
 end
 
