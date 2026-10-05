@@ -2907,6 +2907,18 @@ input[type="text"].command-input:focus-visible {
   margin-block-start: 12px;
 }
 
+/* Two or three things said at once (ADR-066): one block each, with its own result or second tap. */
+.command-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-part + .command-part {
+  padding-block-start: 8px;
+  border-block-start: 1px solid var(--line);
+}
+
 /* ---- Dialogs ------------------------------------------------------------------------------- */
 
 .dialog {

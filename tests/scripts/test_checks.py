@@ -369,11 +369,12 @@ class CalendarNames(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
-    """check_app.py: Say or type a command (1.9.0, ADR-063) has a parser of its own without imports,
-    never opens a door or gate from the words, and the app's headers allow the microphone."""
+    """check_app.py: Say or type a command (1.9.0, ADR-063) has a parser of its own without imports
+    but the heaters' rule (1.10.0, ADR-066), which has none, never opens a door or gate from the
+    words, and the app's headers allow the microphone."""
 
     def setUp(self):
-        self.files = {path: (ROOT / "app" / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/commands.js", "js/views/command.js", "_headers")}
+        self.files = {path: (ROOT / "app" / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/heaters.js", "js/commands.js", "js/views/command.js", "_headers")}
 
     def test_the_real_files_pass(self):
         self.assertIsNone(refusal(check_app.check_commands, self.files))
@@ -381,6 +382,14 @@ class Commands(unittest.TestCase):
     def test_a_parser_with_an_import_fails(self):
         self.files["js/command-parser.js"] = 'import { t } from "./i18n.js";\n' + self.files["js/command-parser.js"]
         self.assertIn("must not import", refusal(check_app.check_commands, self.files) or "")
+        self.setUp()
+        self.files["js/command-parser.js"] += '\nconst late = () => import("./i18n.js");\n'
+        self.assertIn("must not import", refusal(check_app.check_commands, self.files) or "")
+
+    def test_the_parser_imports_the_heaters_rule_which_imports_nothing(self):
+        self.assertIn('from "./heaters.js"', self.files["js/command-parser.js"])
+        self.files["js/heaters.js"] = 'import { t } from "./i18n.js";\n' + self.files["js/heaters.js"]
+        self.assertIn("heaters.js must not import", refusal(check_app.check_commands, self.files) or "")
 
     def test_opening_a_door_from_the_words_fails(self):
         self.files["js/commands.js"] += "\nexport const open = (relay) => pressRelay(relay);\n"

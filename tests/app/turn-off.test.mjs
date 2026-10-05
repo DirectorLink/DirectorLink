@@ -491,3 +491,85 @@ test("a driver before 1.3.0 gets each device's own command, all at once", async 
   assert.deepEqual(patches().slice(2).map((call) => `${call.path} ${JSON.stringify(call.body)}`), ['/v1/blinds/50 {"position":0}', '/v1/blinds/52 {"position":0}']);
   assert.equal(shownState(), "Done");
 });
+
+// ---- 1.10.0 (ADR-066): lights named for heating ----------------------------------------------------
+
+// Heaters wired as lights (KNX boilers, floor heating, towel warmers), kept on or off by Composer
+// programming: Turn off all and a room's All off leave them as they are, and say so.
+const heater = (id, name, roomId, on = true) => light(id, name, roomId, on, { dimmable: false, brightness: null });
+const heatersNote = () => byClass(home(), "turn-off-heaters")?.textContent ?? null;
+
+test("Turn off all leaves lights named for heating as they are, and says so with its second tap and its result", async () => {
+  await setLanguage("en");
+  await connect({ lights: [...LIGHTS, heater(24, "Towel warmer", 11), heater(25, "דוד הורים", 12)] });
+  ui.filter = "lights";
+  notify();
+  assert.equal(button(), "Turn off all 3", "the heaters are not counted");
+  assert.equal(heatersNote(), null, "said with the second tap");
+  await click("turn-off");
+  assert.equal(button(), "Tap again to turn off 3");
+  assert.equal(heatersNote(), "Turn off all leaves the heaters ⁨Towel warmer⁩, ⁨דוד הורים⁩ as they are.");
+  await click("turn-off");
+  await advance(100);
+  assert.deepEqual(offRequests().map((call) => call.body), [{ type: "lights", device_ids: [20, 22, 23] }]);
+  assert.equal(lightOn(24), true);
+  assert.equal(lightOn(25), true);
+  assert.equal(shownState(), "Done");
+  assert.equal(heatersNote(), "Turn off all leaves the heaters ⁨Towel warmer⁩, ⁨דוד הורים⁩ as they are.");
+
+  await setLanguage("he");
+  try {
+    await connect({ lights: [...LIGHTS, heater(25, "דוד הורים", 12)] });
+    ui.filter = "lights";
+    notify();
+    await click("turn-off");
+    assert.equal(heatersNote(), "הכיבוי משאיר את גוף החימום „⁨דוד הורים⁩” כמו שהוא.");
+  } finally {
+    await setLanguage("en");
+  }
+
+  // Only a heater on: nothing to turn off, and it says why.
+  await connect({ lights: [light(20, "Kitchen Island", 10, false), heater(24, "Towel warmer", 11)] });
+  ui.filter = "lights";
+  notify();
+  assert.equal(button(), null);
+  assert.equal(heatersNote(), "Turn off all leaves the heater “⁨Towel warmer⁩” as it is.");
+  assert.deepEqual(turnOff.offTargets("lights"), []);
+  assert.deepEqual(turnOff.keptHeaters("lights").map((device) => device.id), [24]);
+  assert.deepEqual(turnOff.keptHeaters("climate"), []);
+});
+
+test("a room's All off leaves lights named for heating as they are, and says so", async () => {
+  await setLanguage("en");
+  const { roomView } = await import("../../app/js/views/room.js");
+  const view = () => roomView(11, { openCamera() {} });
+  await connect({ lights: [...LIGHTS, heater(24, "Towel warmer", 11)] });
+  assert.equal(byClass(view(), "all-off-heaters")?.textContent, "All off leaves the heater “⁨Towel warmer⁩” as it is.");
+  const allOff = byKey(view(), "all-off");
+  assert.equal(allOff.attributes.disabled, undefined);
+  for (const listener of allOff.listeners.click || []) listener({ stopPropagation() {}, preventDefault() {} });
+  await advance(1500);
+  assert.deepEqual(patches().map((call) => [call.path, call.body]), [
+    ["/v1/lights/22", { on: false }],
+    ["/v1/thermostats/30", { mode: "off" }],
+    ["/v1/thermostats/32", { mode: "off" }],
+  ]);
+  assert.equal(lightOn(24), true, "the heater is left on");
+  // Its own switch still turns it off.
+  controls.setLight(state.lights.find((item) => item.id === 24), { on: false });
+  await advance(1500);
+  assert.deepEqual(patches().slice(3).map((call) => [call.path, call.body]), [["/v1/lights/24", { on: false }]]);
+
+  // Only a heater on, and no AC: All off has nothing to do.
+  await connect({ lights: [heater(24, "דוד הורים", 11)], thermostats: [] });
+  assert.equal(byKey(view(), "all-off").attributes.disabled, "");
+  await setLanguage("he");
+  try {
+    assert.equal(byClass(view(), "all-off-heaters")?.textContent, "כיבוי הכול משאיר את גוף החימום „⁨דוד הורים⁩” כמו שהוא.");
+  } finally {
+    await setLanguage("en");
+  }
+  // Without a heater on, nothing is said.
+  await connect();
+  assert.equal(byClass(view(), "all-off-heaters"), null);
+});

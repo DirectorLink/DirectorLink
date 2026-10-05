@@ -182,6 +182,8 @@ function handle(method, path, sent) {
   }
   if (method === "POST" && /^\/v1\/relays\/\d+\/pulse$/.test(path)) return answer(202, { id: Number(path.split("/")[3]) });
   if (method === "POST" && /^\/v1\/scenes\/[0-9a-f]{8}\/run$/.test(path)) return answer(202, { ran: 3, skipped: 0, failed: 0, problems: [] });
+  // A Sonos room's volume (1.10.0: louder, quieter).
+  if (method === "PATCH" && path.startsWith("/v1/music/")) return answer(202, {});
   const one = path.match(/^\/v1\/(lights|thermostats|blinds)\/(\d+)$/);
   if (one && method === "PATCH") {
     const [, list, id] = one;
@@ -688,6 +690,221 @@ test("the microphone where the browser has speech recognition: it listens, then 
     heard[1].onend();
     await settle();
     assert.equal(shown(), "המיקרופון חסום לאפליקציה הזו. אפשרו אותו בהגדרות הדפדפן, או הקלידו.");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+// ---- 1.10.0 (ADR-066): two or three things at once, changes by a step, heaters ---------------------
+
+// Devices added to this home for one test, on the screen and on the controller.
+function add(list, ...devices) {
+  state[list] = [...state[list], ...copies(devices)];
+  controller[list] = [...(controller[list] || []), ...copies(devices)];
+  notify();
+}
+const kitchenBlind = { id: 60, name: "Kitchen Blind", room: room(10), position: 100, position_reported: true, capabilities: { position: true, stop: true }, moving: false, direction: null, target_position: 100 };
+const heater = (id, name, roomId, on = true) => ({ ...light(id, name, roomId, on), dimmable: false, brightness: null });
+
+test("two things in one sentence: each shown as understood, then each done with a tap's request", async () => {
+  await connect();
+  add("blinds", kitchenBlind);
+  controller.rtt = 500;
+  await say("kitchen lights off and close the blinds");
+  assert.equal(shown(), "⁨Kitchen⁩: lights offWorking…⁨Kitchen⁩: blinds closedWorking…", "every part, before it is done");
+  await advance(1500);
+  controller.rtt = 0;
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [
+    ["/v1/lights/20", { on: false }],
+    ["/v1/lights/21", { on: false }],
+    ["/v1/blinds/60", { position: 0 }],
+  ]);
+  assert.equal(shown(), "⁨Kitchen⁩: lights offDone⁨Kitchen⁩: blinds closedDone");
+  assert.equal(byKey(home(), "command-input:home").value, "", "the field empties");
+  await advance(8000);
+  assert.equal(shown(), null, "all done: it goes after a while");
+
+  // In Hebrew, with ו before the second verb.
+  await setLanguage("he");
+  try {
+    await say("כבו את האורות בסלון ותכבו את המזגן");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).slice(3).map((call) => [call.path, call.body]), [
+      ["/v1/lights/23", { on: false }],
+      ["/v1/thermostats/30", { mode: "off" }],
+    ]);
+    assert.equal(shown(), "⁨סלון⁩: כיבוי האורותבוצע⁨סלון⁩: כיבוי המזגןבוצע");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("several things: a part not understood, asked or refused says which, and nothing at all is sent", async () => {
+  await connect();
+  await say("kitchen lights off and close the garage door");
+  assert.equal(shown().split("Try:")[0], "In “⁨close the garage door⁩”: I didn’t understand “⁨garage⁩”. Nothing was done.");
+  await say("turn on the spots and close the porch gate");
+  assert.match(shown(), /^In “⁨turn on the spots⁩”: Which one\? ⁨⁨Spots⁩ · ⁨Kitchen⁩⁩: on, ⁨⁨Spots⁩ · ⁨Living Room⁩⁩: on\. Nothing was done\.$/);
+  await say("kitchen lights off and don't turn off the AC");
+  assert.match(shown(), /^I didn’t understand/);
+  await say("kitchen lights off and turn on the kitchen island");
+  assert.equal(shown(), "Two parts change ⁨Island⁩. Say them one at a time.");
+  await setLanguage("he");
+  try {
+    await say("כבו את האור במטבח ותסגרו את התריסים מחר");
+    assert.equal(shown().split("נסו:")[0], "ב„⁨תסגרו את התריסים מחר⁩”: לא הבנתי. לא בוצע דבר.");
+  } finally {
+    await setLanguage("en");
+  }
+  await advance(1500);
+  assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0, "nothing was done");
+  assert.equal(byKey(home(), "command-input:home").value, "כבו את האור במטבח ותסגרו את התריסים מחר", "the words stay, to correct");
+});
+
+test("several things with a door: the others are done, the door waits for its own second tap", async () => {
+  await connect({ role: "doors" });
+  await say("open the main gate and turn off the kitchen lights");
+  await advance(1500);
+  assert.equal(sent("POST", /pulse$/).length, 0, "the words never open it");
+  assert.deepEqual(sent("PATCH", /^\/v1\/lights\//).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"]);
+  assert.ok(shown().startsWith("⁨Main Gate⁩: open"), shown());
+  assert.ok(shown().includes("⁨Kitchen⁩: lights offDone"), shown());
+  assert.equal(byKey(home(), "relay:50:open").textContent, "Tap again to open");
+  await click("relay:50:open");
+  await advance(100);
+  assert.deepEqual(sent("POST", /pulse$/).map((call) => call.path), ["/v1/relays/50/pulse"]);
+});
+
+test("several things with Turn off all: its confirm is its own; Cancel leaves the other done", async () => {
+  await connect();
+  await say("turn off all the lights and set the living room AC to 22");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [["/v1/thermostats/30", { target_temperature: 22 }]]);
+  assert.equal(sent("POST", /^\/v1\/off$/).length, 0, "Turn off all waits for its tap");
+  assert.equal(shown(), "Turn off all lights3 lights onTurn offCancel⁨Living Room AC⁩: ⁦22°⁩Done");
+  await click("command-confirm:home:0");
+  await advance(2000);
+  assert.deepEqual(sent("POST", /^\/v1\/off$/).map((call) => call.body), [{ type: "lights", device_ids: [20, 21, 23] }]);
+  assert.equal(shown(), "Turn off all lightsDone⁨Living Room AC⁩: ⁦22°⁩Done");
+
+  await connect();
+  await say("turn off all the lights and set the living room AC to 22");
+  await click("command-cancel:home:0");
+  assert.equal(shown(), "Turn off all lightsCancelled.⁨Living Room AC⁩: ⁦22°⁩Working…");
+  await advance(20000);
+  assert.equal(sent("POST", /^\/v1\/off$/).length, 0);
+  assert.equal(shown(), null, "done and cancelled: it goes after a while");
+});
+
+test("brighter and dimmer: a step of 20 from where each light is, from 1 to 100; an off light goes to the step", async () => {
+  await connect();
+  state.lights = state.lights.map((item) => (item.id === 20 ? { ...item, brightness: 50 } : item));
+  await say("kitchen lights brighter");
+  assert.equal(shown(), "⁨Kitchen⁩: lights 20% brighterWorking…");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [
+    ["/v1/lights/20", { brightness: 70 }],
+    ["/v1/lights/21", { brightness: 100 }],
+  ]);
+  // The living room: Spots off (to 20), the desk lamp at 80 (to 100).
+  await say("more light in the living room");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).slice(2).map((call) => [call.path, call.body]), [
+    ["/v1/lights/22", { brightness: 20 }],
+    ["/v1/lights/23", { brightness: 100 }],
+  ]);
+  // Dimmer never turns one off, and leaves an off light off.
+  await connect();
+  state.lights = state.lights.map((item) => (item.id === 23 ? { ...item, brightness: 10 } : item));
+  await say("dim the living room lights by 30%");
+  assert.equal(shown(), "⁨Living Room⁩: lights 30% dimmerWorking…");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [["/v1/lights/23", { brightness: 1 }]]);
+  const { steppedLevel } = await import("../../app/js/commands.js");
+  assert.equal(steppedLevel({ on: true, brightness: 100 }, 20), null, "already at 100: nothing to change");
+  assert.equal(steppedLevel({ on: false, brightness: 0 }, -20), null);
+  assert.equal(steppedLevel({ on: false, brightness: 0 }, 30), 30);
+  assert.equal(steppedLevel({ on: true, brightness: null }, -20), 80, "a level not known counts as full");
+});
+
+test("the AC warmer and cooler: its setpoint a step from where it is, within its range", async () => {
+  await connect();
+  await say("living room AC warmer");
+  assert.equal(shown(), "⁨Living Room AC⁩: ⁦1°⁩ warmerWorking…");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [["/v1/thermostats/30", { target_temperature: 25 }]]);
+  await say("תוריד את המזגן בסלון ב-2 מעלות");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).slice(1).map((call) => call.body), [{ target_temperature: 23 }]);
+  // At the top of its range: says so, sends nothing.
+  state.thermostats = state.thermostats.map((item) => ({ ...item, target_temperature: 30 }));
+  await say("make the living room AC warmer");
+  await advance(1500);
+  assert.equal(sent("PATCH", /./).length, 2);
+  assert.match(shown(), /⁨Living Room AC⁩ is already at its highest, ⁦30°⁩\.$/);
+  const { steppedTemperature } = await import("../../app/js/commands.js");
+  const dual = { name: "VRF", setpoints: "dual", mode: "heat", modes: ["off", "heat", "cool", "auto"], heat_setpoint: 20, cool_setpoint: 24, target_temperature_min: 5, target_temperature_max: 35 };
+  assert.deepEqual(steppedTemperature(dual, { temperatureBy: 1 }), { temperature: 21 }, "heat: the heat setpoint");
+  assert.deepEqual(steppedTemperature({ ...dual, mode: "auto" }, { temperatureBy: -2, setpoint: "cool" }), { setpoint: "cool", temperature: 22 });
+  assert.equal(steppedTemperature({ ...dual, mode: "off" }, { temperatureBy: 1 }), null, "off: nothing to move");
+  assert.deepEqual(steppedTemperature({ ...dual, heat_setpoint: 34.5 }, { temperatureBy: 2 }), { temperature: 35 }, "within its range");
+});
+
+test("louder and quieter: the Sonos room's own volume, 10 from where it is", async () => {
+  await connect();
+  const before = { system: state.system, music: state.music };
+  state.system = { features: { sonos: true } };
+  state.music = { enabled: true, items: [{ id: "RINCON_1", name: "Kitchen", room_id: 10, volume: 30, muted: false, state: "playing", group: { id: "G1", rooms: [{ id: "RINCON_1", name: "Kitchen" }] }, reachable: true }] };
+  notify();
+  try {
+    await say("kitchen louder");
+    await advance(1500);
+    assert.equal(shown(), "⁨Kitchen⁩: volume up 10Done");
+    assert.deepEqual(controller.calls.filter((call) => call.path.startsWith("/v1/music/RINCON_1") && call.method === "PATCH").map((call) => call.body), [{ volume: 40 }]);
+    const { steppedVolume } = await import("../../app/js/commands.js");
+    assert.equal(steppedVolume({ volume: 95 }, 10), 100);
+    assert.equal(steppedVolume({ volume: 0 }, -10), null, "already silent");
+    assert.equal(steppedVolume({ volume: null }, 10), null, "not known");
+  } finally {
+    Object.assign(state, before);
+    notify();
+  }
+});
+
+test("heaters: a room's lights, its All off and Turn off all leave them as they are, and say so; named, one is switched", async () => {
+  await connect();
+  add("lights", heater(24, "Towel warmer", 11), heater(25, "דוד הורים", 10, false));
+  await say("living room lights off");
+  assert.equal(shown(), "⁨Living Room⁩: lights offThe heater “⁨Towel warmer⁩” is left as it is.Working…");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/23"], "the heater is not sent anything");
+  // The room's All off (the room's button, ADR-066).
+  await say("living room off");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).slice(1).map((call) => call.path), ["/v1/thermostats/30"]);
+  assert.ok(shown().includes("The heater “⁨Towel warmer⁩” is left as it is."), shown());
+  // Turn off all the lights: its count and its request leave the heater.
+  await say("turn off all the lights");
+  assert.equal(shown(), "Turn off all lightsThe heater “⁨Towel warmer⁩” is left as it is.2 lights onTurn offCancel");
+  await click("command-confirm:home");
+  await advance(2000);
+  assert.deepEqual(sent("POST", /^\/v1\/off$/).map((call) => call.body), [{ type: "lights", device_ids: [20, 21] }]);
+  // Named, it is switched.
+  await say("turn off the towel warmer");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /^\/v1\/lights\/24$/).map((call) => call.body), [{ on: false }]);
+  // A heater off is not "left" by lights off: nothing to say.
+  await say("kitchen lights on");
+  assert.ok(shown().includes("The heater “⁨דוד הורים⁩” is left as it is."), "turning on: the heater that is off stays off");
+  await setLanguage("he");
+  try {
+    await connect();
+    add("lights", heater(24, "דוד הורים", 11));
+    await say("כבו את האורות בסלון");
+    assert.equal(shown(), "⁨סלון⁩: כיבוי האורותגוף החימום „⁨דוד הורים⁩” נשאר כמו שהוא.מבצע…");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/23"]);
   } finally {
     await setLanguage("en");
   }

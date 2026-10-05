@@ -18,7 +18,9 @@ import { h, name } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { NO_ROOM, climateIsOn, fanIsOn, lightIsOn, roomById, roomGroup, roomName } from "../model.js";
+import { isHeater } from "../heaters.js";
 import { can } from "../state.js";
+import { heaterNames } from "../turn-off.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { musicCards } from "./music.js";
 
@@ -40,7 +42,9 @@ export function roomView(roomId, { openCamera }) {
   }
 
   const group = roomGroup(id);
-  const anythingOn = group.lights.some(lightIsOn) || group.thermostats.some(climateIsOn) || group.fans.some(fanIsOn);
+  // Lights named for heating are left as they are by All off (ADR-066): it says so while one is on.
+  const heaters = group.lights.filter((light) => lightIsOn(light) && isHeater(light));
+  const anythingOn = group.lights.some((light) => lightIsOn(light) && !isHeater(light)) || group.thermostats.some(climateIsOn) || group.fans.some(fanIsOn);
   // With fans (1.2.0), All off turns them off too.
   const allOffHint = group.fans.length ? t("rooms.allOffHintFans") : t("rooms.allOffHint");
   const actions = [];
@@ -121,6 +125,7 @@ export function roomView(roomId, { openCamera }) {
   return [
     pageHeader({ title: roomName(room), back: "#/", titleDir: "auto" }),
     actions.length ? h("div", { class: "toolbar" }, actions) : null,
+    actions.length && heaters.length ? h("p", { class: "muted-note all-off-heaters" }, t("rooms.allOffHeaters", { count: heaters.length, names: heaterNames(heaters) })) : null,
     // View-only keys: the state is shown, the controls are not.
     !can("member") && (group.lights.length || group.thermostats.length || group.fans.length || group.blinds.length || group.refrigerators?.length)
       ? h("p", { class: "view-only-hint" }, icon("info"), h("span", {}, t("roles.viewOnlyHint")))
