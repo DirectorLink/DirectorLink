@@ -396,6 +396,17 @@ test("a scene runs; one that opens doors waits for the tap on its Run button", a
   assert.deepEqual(sent("POST", /aa000002\/run$/).map((call) => call.path), ["/v1/scenes/aa000002/run"]);
 });
 
+test("a thermostat's request: its setpoint with heat and cool setpoints, the other kept apart", async () => {
+  const { thermostatChange } = await import("../../app/js/commands.js");
+  const dual = { id: 31, setpoints: "dual", mode: "auto", modes: ["off", "heat", "cool", "auto"], heat_setpoint: 20, cool_setpoint: 24, setpoint_deadband: 2, target_temperature_min: 10, target_temperature_max: 32 };
+  assert.deepEqual(thermostatChange(dual, { mode: "auto", setpoint: "heat", temperature: 21 }), { mode: "auto", heat_setpoint: 21 });
+  assert.deepEqual(thermostatChange(dual, { setpoint: "heat", temperature: 23 }), { heat_setpoint: 23, cool_setpoint: 25 });
+  assert.deepEqual(thermostatChange({ ...dual, mode: "cool" }, { temperature: 23 }), { cool_setpoint: 23 });
+  assert.deepEqual(thermostatChange({ ...dual, mode: "off" }, { mode: "heat", temperature: 21 }), { mode: "heat", heat_setpoint: 21 });
+  assert.equal(thermostatChange({ ...dual, mode: "off" }, { mode: "off" }), null, "already off");
+  assert.deepEqual(thermostatChange({ id: 30, mode: "cool" }, { temperature: 22.5 }), { target_temperature: 22.5 });
+});
+
 test("the controller refusing shows why", async () => {
   await connect();
   controller.patch = () => ({ status: 403, body: { status: 403, code: "FORBIDDEN", detail: "Not allowed" } });
@@ -436,6 +447,13 @@ test("the microphone where the browser has speech recognition: it listens, then 
   heard[0].say("kitten lights of", "kitchen lights off");
   await advance(1500);
   assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"]);
+  // The likeliest asks which one: a less likely guess never settles it.
+  await click("command-mic:home");
+  heard[1].say("spots on", "kitchen spots on");
+  await settle();
+  assert.match(shown(), /^Which one\?/);
+  assert.equal(sent("PATCH", /./).length, 2, "nothing more was sent");
+  heard.splice(1, 1);
 
   await setLanguage("he");
   try {

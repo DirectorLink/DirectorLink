@@ -190,6 +190,14 @@ function field(where) {
   );
 }
 
+// After a button of the answer is used it goes with the redraw: the field has the focus then.
+function thenField(where, run) {
+  return () => {
+    run();
+    document.querySelector?.(`#command-input-${where}`)?.focus();
+  };
+}
+
 function said(text) {
   return h("p", { class: "command-said", dir: "auto" }, text);
 }
@@ -278,7 +286,7 @@ function body(now, where) {
           now.labels.map((label, index) =>
             h(
               "button",
-              { type: "button", class: "button button-secondary button-small command-option", dataset: { key: `command-option:${where}:${index}` }, onclick: () => chooseOption(index) },
+              { type: "button", class: "button button-secondary button-small command-option", dataset: { key: `command-option:${where}:${index}` }, onclick: thenField(where, () => chooseOption(index)) },
               h("span", { dir: "auto" }, label)
             )
           )
@@ -294,11 +302,11 @@ function body(now, where) {
           { class: "command-actions" },
           h(
             "button",
-            { type: "button", class: "button button-primary button-small", dataset: { key: `command-confirm:${where}` }, onclick: confirmCommand },
+            { type: "button", class: "button button-primary button-small", dataset: { key: `command-confirm:${where}` }, onclick: thenField(where, confirmCommand) },
             icon(blinds ? "blinds" : "power"),
             h("span", {}, t(blinds ? "command.off.close" : "command.off.confirm"))
           ),
-          h("button", { type: "button", class: "button button-quiet button-small", dataset: { key: `command-cancel:${where}` }, onclick: clearCommand }, t("common.cancel"))
+          h("button", { type: "button", class: "button button-quiet button-small", dataset: { key: `command-cancel:${where}` }, onclick: thenField(where, clearCommand) }, t("common.cancel"))
         ),
       ];
     }
@@ -333,7 +341,7 @@ function output(where) {
     "div",
     { class: `command-output is-${now.stage}` },
     h("div", { class: "command-body" }, body(now, where)),
-    now.stage === "running" ? null : iconButton("close", t("command.dismiss"), { class: "command-dismiss", dataset: { key: `command-dismiss:${where}` }, onclick: clearCommand })
+    now.stage === "running" ? null : iconButton("close", t("command.dismiss"), { class: "command-dismiss", dataset: { key: `command-dismiss:${where}` }, onclick: thenField(where, clearCommand) })
   );
 }
 

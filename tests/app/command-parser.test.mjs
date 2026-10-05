@@ -20,6 +20,7 @@ const ROOMS = [
   { id: 8, names: ["Sarah"] },
   { id: 9, names: ["חדר של שני"] },
   { id: 10, names: ["Garden", "גינה"] },
+  { id: 11, names: ["Parents", "חדר הורים"] },
 ];
 
 const light = (id, name, room, fields = {}) => ({ kind: "light", id, name, room, dimmable: true, on: false, ...fields });
@@ -39,9 +40,12 @@ const DEVICES = [
   light(111, "Ceiling", 8),
   light(112, "מנורה", 9),
   light(113, "דוד שמש", 9, { dimmable: false }),
+  light(114, "Reading", 11),
+  light(115, "מנורת שולחן", 11),
   thermostat(200, "Living room AC", 2),
   thermostat(201, "מזגן", 3, { mode: "off", modes: ["off", "cool", "heat"] }),
   thermostat(202, "Bedroom AC", 5, { mode: "auto", dual: true }),
+  thermostat(203, "Parents AC", 11, { mode: "off", dual: true }),
   { kind: "blind", id: 300, name: "Kitchen blind", room: 1, position: true },
   { kind: "blind", id: 301, name: "Window", room: 2, position: false },
   { kind: "blind", id: 302, name: "Shutter", room: 5, position: true },
@@ -372,6 +376,52 @@ test("every sentence in the app's README is understood", async () => {
     // "פתחו את השער" asks which: this home has two gates.
     assert.ok(result.status === "ok" || result.status === "ask", `${sentence}: ${JSON.stringify(result)}`);
   }
+});
+
+test("a name's own letters: a word said is not another name with its first letters taken off", () => {
+  // "בני" (Beni) is not "שני", "מרים" (Miriam) not "הורים", "חן" not "שולחן".
+  unknown("הדלק את האור בחדר של בני", ["בני"]);
+  unknown("כבה את האור בחדר של מרים", ["מרים"]);
+  unknown("כבה את חן", ["חן"]);
+  // A name's article may be left out, and a word said keeps its prefixes off.
+  same("כבה את האור בחדר ההורים", { room: 11, change: { on: false } });
+  same("כבו את מנורת השולחן", { device: { kind: "light", id: 115 }, change: { on: false } });
+  // Two prefixes at most, and a command word of three letters or more under them: "בבוקר" is not
+  // "קר" (cool).
+  unknown("תפעיל את המזגן בסלון בבוקר");
+  unknown("כבה את המזגן בסלון בבוקר");
+});
+
+test("not a command: don't, a question, a time, a typo of two letters in a command word", () => {
+  unknown("אל תכבה את האור במטבח");
+  unknown("אל תפתחו את השער במרפסת");
+  unknown("don't turn off the kitchen lights");
+  unknown("do not open the main gate");
+  problem("is the porch light on", "question");
+  problem("are the lights on in the kitchen", "question");
+  problem("האם האור במטבח דולק", "question");
+  unknown("turn on the kitchen lights at 7 pm");
+  unknown("turn off the living room AC in 10 minutes");
+  unknown("כבה את האור במטבח בעוד 10 דקות");
+  same("deactivate the kitchen lights", { room: 1, change: { on: false } });
+  unknown("deactivate good night");
+  unknown("inactivate the kitchen lights");
+});
+
+test("a minus sign is kept, and out of range", () => {
+  problem("kitchen blinds -40%", "range");
+  problem("living room ac -18", "range");
+  same("מזגן בסלון ל-23", { change: { temperature: 23 } });
+});
+
+test("auto with a temperature on an AC with heat and cool setpoints asks which setpoint; one that is off, heat or cool", () => {
+  const auto = asks("bedroom ac auto 22");
+  assert.equal(auto.question, "setpoint");
+  assert.deepEqual(auto.options.map((option) => option.change), [{ mode: "auto", setpoint: "cool", temperature: 22 }, { mode: "auto", setpoint: "heat", temperature: 22 }]);
+  const off = asks("parents AC to 22");
+  assert.deepEqual(off.options.map((option) => option.change), [{ mode: "cool", temperature: 22 }, { mode: "heat", temperature: 22 }]);
+  const on = asks("parents AC on");
+  assert.deepEqual(on.options.map((option) => option.change.mode), ["cool", "heat", "auto"], "without a temperature, every mode");
 });
 
 test("folding: case, accents, niqqud and Hebrew final letters", () => {

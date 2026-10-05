@@ -54,12 +54,14 @@ function stem(word) {
   return word;
 }
 
-// A Hebrew word with up to three of its prefixes taken off (ו, ה, ב, ל, מ, ש, כ: "ובסלון" is also
-// "בסלון" and "סלון"), the word itself first.
-function bareForms(word) {
+// A Hebrew word said with up to two of its prefixes taken off (ו, ה, ב, ל, מ, ש, כ: "ובסלון" is
+// also "בסלון" and "סלון"), the word itself first. A word of a name keeps its own letters: only its
+// article may be left out ("חדר הילדים" said "חדר ילדים"), so that "בני" is not "שני".
+function bareForms(word, name = false) {
   const forms = [word];
   if (!HEBREW.test(word)) return forms;
-  for (let index = 0; index < 3 && PREFIXES.includes(word[index]) && word.length - index - 1 >= 2; index += 1) {
+  if (name) return word.startsWith("ה") && word.length >= 4 ? [word, word.slice(1)] : forms;
+  for (let index = 0; index < 2 && PREFIXES.includes(word[index]) && word.length - index - 1 >= 2; index += 1) {
     forms.push(word.slice(index + 1));
   }
   return forms;
@@ -73,27 +75,29 @@ function split(text) {
     // "A/C", "a.c." are AC.
     .replace(/\ba[./]c\b\.?/gi, "ac")
     .replace(/(\d)[.,](\d)/g, "$1\u0001$2")
+    // A minus sign before a number ("-18"), not a hyphen after a word ("ל-23").
+    .replace(/(^|\s)[-−‐–](?=\d)/g, "$1\u0002")
     .replace(/[%°]/g, " $& ")
     .replace(/(\p{L})(?=\p{N})|(\p{N})(?=\p{L})/gu, "$1$2 ")
-    .replace(/[^\p{L}\p{M}\p{N}\u0001%°]+/gu, " ")
+    .replace(/[^\p{L}\p{M}\p{N}\u0001\u0002%°]+/gu, " ")
     .trim()
     .split(/\s+/)
     .filter(Boolean)
-    .map((word) => word.replace(/\u0001/g, "."));
+    .map((word) => word.replace(/\u0001/g, ".").replace(/\u0002/g, "-"));
 }
 
-function word(display) {
+function word(display, name = false) {
   const raw = fold(display);
-  const bares = bareForms(raw);
-  return { display, raw, stem: stem(raw), bares, stems: [...new Set(bares.map(stem))], num: /^\d+(\.\d+)?$/.test(raw) ? Number(raw) : null };
+  const bares = bareForms(raw, name);
+  return { display, raw, stem: stem(raw), bares, stems: [...new Set(bares.map(stem))], num: /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : null };
 }
 
 // What words mean: role, and for kinds of devices, which kind and whether the word is plural (or
 // says "all of them": lighting, מיזוג). Hebrew verbs in the forms people say and type: the
 // imperative, the future and the infinitive, for one or more.
 const VOCABULARY = [
-  ["on", "on הדלק הדליקי הדליקו תדליק תדליקי תדליקו להדליק דלוק דלוקה דלוקים הדלקה"],
-  ["off", "off out כבה כבי כבו תכבה תכבי תכבו לכבות כבוי כבויה כבויים כיבוי"],
+  ["on", "on הדלק הדליקי הדליקו תדליק תדליקי תדליקו להדליק דלוק דלוקה דלוקים דולק דולקת דולקים הדלקה"],
+  ["off", "off out deactivate disable כבה כבי כבו תכבה תכבי תכבו לכבות כבוי כבויה כבויים כיבוי"],
   ["open", "open פתח פתחי פתחו תפתח תפתחי תפתחו לפתוח פתוח פתוחה פתוחים פתיחה"],
   ["close", "close shut סגור סגרי סגרו תסגור תסגרי תסגרו לסגור סגורה סגורים סגירה"],
   ["up", "up raise הרם הרימי הרימו תרים תרימי תרימו להרים העלה העלי העלו תעלה תעלי תעלו להעלות"],
@@ -113,10 +117,14 @@ const VOCABULARY = [
   ["degrees", "degree degrees deg ° celsius מעלה מעלות"],
   ["all", "all every each כל"],
   ["everything", "everything הכל הכול כולם כולן"],
+  // Not a command: "don't", a question, a time (DirectorLink does it now or not at all).
+  ["not", "not dont never אל לא אין בלי"],
+  ["question", "is are what whats how which does did why when where who האם מה למה מתי איפה איך מי כמה"],
+  ["time", "am pm oclock minute minutes hour hours seconds tomorrow tonight morning evening afternoon later דקה דקות שעה שעות שנייה שניות מחר בוקר ערב צהריים"],
   [
     "filler",
-    "the a an in at to into of my our your please now hey can could would will you i me want it its is are be for with and set turn switch make put change adjust room house home whole entire also just then thanks thank kindly air " +
-      "את של על אל עם ב ה ל ו מ ש כ בבקשה אנא נא לי עכשיו גם רק עד חדר בית אוויר אויר שים שימי שימו תשים תשימי תשימו כוון כווני כוונו תכוון תכווני תכוונו לכוון קבע קבעי קבעו תקבע תקבעי תקבעו שנה תשנה העבר תעביר עשה עשי עשו תעשה תעשי תעשו הגדר תגדיר אפשר תוכל",
+    "the a an in at to into of my our your please now hey can could would will you i me want it its be for with and set turn switch make put change adjust room house home whole entire also just then thanks thank kindly air " +
+      "את של על עם ב ה ל ו מ ש כ בבקשה אנא נא לי עכשיו גם רק עד חדר בית אוויר אויר שים שימי שימו תשים תשימי תשימו כוון כווני כוונו תכוון תכווני תכוונו לכוון קבע קבעי קבעו תקבע תקבעי תקבעו שנה תשנה העבר תעביר עשה עשי עשו תעשה תעשי תעשו הגדר תגדיר אפשר תוכל",
   ],
 ];
 const KIND_WORDS = [
@@ -230,7 +238,7 @@ function readNumber(tokens, index, names) {
 
 // The sentence as tokens: words and numbers.
 function tokenize(text, names) {
-  const words = split(text).map(word);
+  const words = split(text).map((display) => word(display));
   const tokens = [];
   for (let index = 0; index < words.length; ) {
     const number = readNumber(words, index, names);
@@ -281,14 +289,17 @@ function closeEnough(a, b) {
 
 function roleOf(token, names) {
   if (token.num !== null) return null;
-  for (const form of token.bares) {
+  for (const [index, form] of token.bares.entries()) {
+    // With its prefixes off, a command word of three letters or more ("בבוקר" is not "קר").
+    if (index > 0 && form.length < 3) continue;
     const found = ROLES.get(form) || ROLE_STEMS.get(stem(form));
     if (found) return found;
   }
-  // A typo of a command word ("ligths"), unless the word is in one of the names.
+  // A typo of one letter in a command word ("ligths"), unless the word is in one of the names
+  // ("deactivate" is two from "activate": not a typo of it).
   if (names.has(token.stem) || token.raw.length < 6) return null;
   for (const [key, value] of FUZZY_ROLES) {
-    if (closeEnough(token.raw, key)) return value;
+    if (distance(token.raw, key, 1) <= 1) return value;
   }
   return null;
 }
@@ -315,7 +326,7 @@ const KIND_OF = { light: "light", thermostat: "climate", blind: "blind", fan: "f
 // said word for word, and only with its room.
 function nameParts(name, type) {
   const parts = split(name)
-    .map(word)
+    .map((display) => word(display, true))
     .map((part) => ({ ...part, role: part.num !== null ? null : ROLES.get(part.raw) || ROLE_STEMS.get(part.stem) || null }));
   for (const part of parts) {
     part.optional = part.role ? part.role.role === "filler" || (type !== "scene" && part.role.role === "kind") : false;
@@ -431,8 +442,10 @@ function summarize(tokens, taken) {
       continue;
     }
     const role = token.role;
-    if (!role) return null;
-    if (role.role === "kind") {
+    if (!role || role.role === "not" || role.role === "time") return null;
+    if (role.role === "question") {
+      summary.question = true;
+    } else if (role.role === "kind") {
       summary.kinds.set(role.kind, (summary.kinds.get(role.kind) || false) || role.plural);
     } else if (["cool", "heat", "auto"].includes(role.role)) {
       summary.modes.add(role.role);
@@ -495,9 +508,11 @@ function modesOf(thermostats) {
 
 const isOn = (thermostat) => Boolean(thermostat.mode) && thermostat.mode !== "off";
 
-// Which mode, for thermostats that are off: one option per mode they have.
+// Which mode, for thermostats that are off: one option per mode they have; with a temperature and
+// heat and cool setpoints, heat or cool (the setpoint the temperature is for).
 function askMode(targets, where, ids, change) {
-  const modes = modesOf(targets);
+  const dual = "temperature" in change && targets.some((device) => device.dual);
+  const modes = modesOf(targets).filter((mode) => !dual || mode === "cool" || mode === "heat");
   if (!modes.length) return problem("noMode", { device: where.device, mode: null });
   return { status: "ask", question: "mode", options: modes.map((mode) => action("climate", { ...where, ids, change: { mode, ...change } }).action) };
 }
@@ -549,6 +564,9 @@ function kindIntent(kind, targets, where, summary, act) {
     if (number !== null) {
       const temperature = temperatureFor(number, targets);
       if (typeof temperature !== "number") return temperature;
+      if (mode && mode !== "heat" && mode !== "cool" && targets.some((device) => device.dual)) {
+        return { status: "ask", question: "setpoint", options: ["cool", "heat"].map((setpoint) => action("climate", { ...where, ids, change: { mode, setpoint, temperature } }).action) };
+      }
       if (mode) return action("climate", { ...where, ids, change: { mode, temperature } });
       // Off, the thermostat needs a mode; with heat and cool setpoints in auto, which setpoint.
       if (targets.some((device) => !isOn(device))) return askMode(targets, where, ids, { temperature });
@@ -620,6 +638,7 @@ function kindIntent(kind, targets, where, summary, act) {
 // What one reading of the sentence (a target T and a room R, either may be null) asks; null when
 // it does not make sense.
 function intent(target, room, summary, catalog) {
+  if (summary.question) return problem("question");
   const act = verb(summary);
   if (act === false) return null;
   const roomId = room ? room.entity.room.id : null;

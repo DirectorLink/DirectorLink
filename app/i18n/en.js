@@ -564,6 +564,7 @@ export default {
       alreadyOnRoom: "The AC in {room} is already on.",
       noDoors: "Opening doors and gates needs door access.",
       oneAtATime: "One room and one kind of device at a time, please.",
+      question: "I can only do things, not answer questions. For example: “{example}”.",
       tooMany: "Several match. Say the room too.",
     },
     unknown: "I didn’t understand “{words}”.",

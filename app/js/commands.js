@@ -226,6 +226,8 @@ function problemText(result) {
       return t("command.problem.noDoors");
     case "oneAtATime":
       return t("command.problem.oneAtATime");
+    case "question":
+      return t("command.problem.question", { example: examples[0] });
     default:
       return t("command.problem.tooMany");
   }
@@ -421,7 +423,9 @@ export function submitCommand(text, alternatives = []) {
   if (!can("member")) return show({ stage: "problem", text: t("command.problem.viewOnly") });
   const catalog = commandCatalog();
   const results = said.map((item) => parseCommand(item, catalog));
-  const result = results.find((item) => item.status === "ok") || results.find((item) => item.status === "ask") || results[0];
+  // The likeliest words decide, a question or a problem included; the speech service's other
+  // guesses only when it did not understand them at all.
+  const result = results[0].status !== "unknown" ? results[0] : results.find((item) => item.status === "ok") || results.find((item) => item.status === "ask") || results[0];
   if (result.status === "ok") return act(result.action);
   if (result.status === "ask") {
     const withRoom = result.question === "which" || result.question === "partial";
