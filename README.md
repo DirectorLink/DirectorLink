@@ -14,7 +14,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
+    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the field to say or type a command, the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
     <td><img src="docs/screenshots/room.png" width="260" alt="Living Room: dimmable lights with switches and brightness sliders, and the AC"></td>
     <td><img src="docs/screenshots/climate.png" width="260" alt="Climate: the living room AC cooling to 23 degrees and the bedroom floor heating at 24, by room"></td>
   </tr>
@@ -35,17 +35,27 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
   </tr>
   <tr>
     <td><img src="docs/screenshots/music.png" width="260" alt="Kitchen: the Kitchen and Living Room Sonos rooms playing together, with the group's volume, each room's volume and Leave group"></td>
-    <td><img src="docs/screenshots/people.png" width="260" alt="Users: Sam, a member, may use 5 rooms, lights, climate, fans, blinds and music, the cameras, doors and gates and 3 scenes; the rooms are ticked in the editor"></td>
+    <td><img src="docs/screenshots/users.png" width="260" alt="Settings, Users: Alex, the owner and an admin, with the email of their Google or Apple account, this iPhone and a laptop; Robin, a member with one room, lights, the cameras and one scene, with no Google or Apple account (home network only), an iPad, and Invite their account"></td>
     <td><img src="docs/screenshots/history.png" width="260" alt="History: today a scene run by Alex, the main gate opened in answer to an ask-before-opening question, the front door opened by Sam, and the 07:00 schedule"></td>
   </tr>
   <tr>
     <td align="center">Music in several rooms</td>
-    <td align="center">A member's access</td>
+    <td align="center">Users and their devices</td>
     <td align="center">History</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/command.png" width="260" alt="Home: the command kitchen lights off, understood as Kitchen: lights off, and Done"></td>
+    <td><img src="docs/screenshots/command-which.png" width="260" alt="Home: the command ceiling lights off still in the field, and the question Which one?, with the ceiling lights of five rooms to choose from"></td>
+    <td><img src="docs/screenshots/member-devices.png" width="260" alt="Settings, Users on the phone of Sam, a member: their access, their Google or Apple account, this iPhone, and their laptop with Remove; up to 5 devices"></td>
+  </tr>
+  <tr>
+    <td align="center">Say or type a command</td>
+    <td align="center">Which one?</td>
+    <td align="center">A member's own devices</td>
   </tr>
 </table>
 
-<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side">
+<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, the field to say or type a command, scenes, favorites and room cards side by side">
 
 ## What it does
 
