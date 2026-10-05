@@ -4,6 +4,18 @@ What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.
 
 ## Next
 
+- **Every DirectorLink camera driver on one agreement, and UniFi Protect.** DirectorLink recognizes a camera driver of DirectorLink Drivers by a marker the driver sets, not by its file name, so any such driver works without new code in DirectorLink:
+  - its detections are camera alerts ("Person at Garden at 21:14"), as the Hikvision driver's are today;
+  - a doorbell camera's ring is a doorbell ring, with Home's banner and the ring alert;
+  - its pictures are in the Cameras grid.
+
+  The Hikvision drivers keep working (recognized by their file names too, until they set the marker).
+
+  A new free driver, **DirectorLink · UniFi Protect for Control4**, in its own repository:
+  - it works through Ubiquiti's official Protect API, with an API key from the UniFi console (no username or password);
+  - it offers the console's cameras and doorbells, their pictures and live video, and their detections and rings.
+
+  Tested with a client's UniFi system through their Director logs before release, since the owner has no UniFi hardware.
 - **An assistant (opt-in).** An AI that understands any sentence and proposes the actions to confirm, with the home's own AI key, called from the phone so that DirectorLink's servers never see it; its own privacy note first, because names and requests would reach the AI's company.
 - **Commands that do more:** two things in one sentence, and relative changes ("warmer", "a bit brighter"), still without AI.
 
