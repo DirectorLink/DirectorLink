@@ -66,13 +66,20 @@ all of a user's devices follow one change. Before 1.8.0 each key had a role of i
   like one that does not exist; a door or gate they see but may not open, `403 FORBIDDEN`.
 - `GET /v1/profiles` gives each user's `access`; `GET /v1/profile` and `GET /v1/api-keys/current`
   give the caller's own (an admin's all true), so that the app shows only what they may use.
-- The home's **owner** (the user who last claimed it for an account, else the oldest admin) is
-  always an admin: no other admin can demote them, change their permissions, revoke or move their
+- The home's **owner** (the user who last claimed it for an account, or whom the owner made the
+  owner, else the oldest admin) is always an admin: no other admin can demote them, change their permissions, revoke or move their
   devices, add a key or device to them (a key with `profile_id`, a device moved in, an invitation
   for another device of theirs), or make someone an admin who would then be the owner
   (`403 OWNER_PROTECTED`). There is always an admin (`409 LAST_ADMIN`). While DirectorLink could
   not read the users' (people's) or the profiles' store when it started, admins' devices and permissions
   and claims wait (`503 UNAVAILABLE`), and nothing is written over the store it could not read.
+- **Handing the home to another admin** (1.9.0, ADR-064): the owner, and only the owner, taps **Make
+  Dana the owner** on another admin's row in Settings → Users (a member is made an admin first) and
+  confirms. Dana is then the owner, with everything above, and only Dana can hand the home on; the
+  old owner stays an admin like any other, and nobody is removed. When the home is linked to an
+  account, Dana's Google or Apple account becomes the home's account too (it approves accounts that
+  join with another email and replaces the home's secret), so Dana must have signed in to
+  DirectorLink on one of their devices first. In History.
 - A member's lists and answers name nothing they may not see: their rooms' alarm partitions only
   with the alarm, a Sonos group only through their Sonos rooms, a scene's steps only with their
   rooms and devices (`elsewhere` for the rest), the controller's inventory only what they see.

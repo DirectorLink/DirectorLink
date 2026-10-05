@@ -73,6 +73,7 @@ Since 1.9.0 (ADR-061, `features.users`):
 - `GET /v1/users` (any key): the users the caller sees (an admin every user, anyone else their own), each with `access`, how many Google or Apple accounts their devices use (`accounts`) and their `devices`; for admins, `suggestions` to bring the devices of one account together (`POST /v1/users/merge {"account", "keep"}`).
 - `POST /v1/pairing-code` (admins) `{"profile_id"}` or `{"name", "role", "access"}`: a pairing code whose device joins that user, or a new one; `DELETE /v1/pairing-code` closes it. The device that pairs never chooses its user.
 - Every key may revoke the other keys of its own user (`DELETE /v1/api-keys/{keyId}`) and invite its own other device (`POST /v1/invitations` with `for_me`); an admin may invite another device of a user (`profile_id`).
+- `POST /v1/users/owner` `{"profile_id"}` (ADR-064): the home's owner, and only the owner (`403 OWNER_ONLY`), makes another admin user the owner (`409 NOT_AN_ADMIN` for a member); the old owner stays an admin and nobody is removed. A home linked to an account moves in the account service first: `409 OWNER_NEEDS_ACCOUNT` when the new owner's devices use no account of the home, `503 REMOTE_OFFLINE` when it does not answer; `account_service` in the answer says what it did. History: `access` `owner_changed`.
 
 ## Thermostats
 
