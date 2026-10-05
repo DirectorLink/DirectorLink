@@ -263,8 +263,10 @@ test("a registration with a key waits for the key work still queued before it lo
       return statement;
     },
     async batch(statements) {
-      assert.match(statements[0].sql, /^INSERT INTO push_subscriptions/);
-      return [];
+      // The endpoint's key before (1.9.0: a key whose browser it takes is told), then the row.
+      assert.match(statements[0].sql, /^SELECT key_id FROM push_subscriptions/);
+      assert.match(statements[1].sql, /^INSERT INTO push_subscriptions/);
+      return statements.map(() => ({ results: [] }));
     },
   };
   let finish;

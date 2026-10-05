@@ -395,7 +395,7 @@ export class HomeAlerts {
     // MAX_PER_MEMBER, which go.
     let replaced = [];
     try {
-      const [{ results: before }, , { results: pruned }] = await DB.batch([
+      const [selected, , deleted] = await DB.batch([
         DB.prepare("SELECT key_id FROM push_subscriptions WHERE home_id = ? AND endpoint = ?").bind(homeId, input.endpoint),
         DB.prepare(
           "INSERT INTO push_subscriptions (home_id, endpoint, user_id, p256dh, auth, created_at, key_id, offline) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
@@ -407,7 +407,7 @@ export class HomeAlerts {
             "(SELECT endpoint FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 ORDER BY created_at DESC, endpoint LIMIT ?3) RETURNING key_id"
         ).bind(homeId, input.user, MAX_PER_MEMBER),
       ]);
-      replaced = [...before, ...pruned].map((row) => row.key_id).filter((id) => id && id !== keyId);
+      replaced = [...(selected?.results ?? []), ...(deleted?.results ?? [])].map((row) => row.key_id).filter((id) => id && id !== keyId);
     } catch (error) {
       // The account left the home since the Worker looked (the subscription's foreign key).
       log("alerts_subscribe_failed", { home: homeId, user: input.user, error: String(error?.message ?? error) });
