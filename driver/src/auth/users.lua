@@ -49,6 +49,23 @@ function Users.full(profileId, keys)
     return profileId ~= nil and #Users.devices(profileId, keys) >= Users.DEVICE_LIMIT
 end
 
+-- The Google or Apple account of the user `profileId` (its tag, src/auth/accounts.lua), as the
+-- account service said: that of their most recently used device that has exactly one account (a
+-- shared device says nothing about whose it is). Returns the tag and that device, or nil when none
+-- of their devices has one. Handing the home to them (ADR-064) moves the home's owner account in
+-- the account service to it.
+function Users.accountOf(profileId, keys)
+    local tag, device, at = nil, nil, nil
+    for _, key in ipairs(Users.devices(profileId, keys)) do
+        local single = Accounts.single(key.id)
+        local used = tostring(key.last_used_at or key.created_at or "")
+        if single and (tag == nil or used > at) then
+            tag, device, at = single, key, used
+        end
+    end
+    return tag, device
+end
+
 -- ---- the devices of one account ----------------------------------------------------------------
 
 -- The accounts whose devices are in more than one user: { id = tag, keys = { key ids }, users =

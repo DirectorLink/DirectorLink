@@ -13,7 +13,7 @@
 // (the controller does it by itself only between users who are alike), and make a pairing code for a
 // user, or a new one, to pair a device at home; a member sees only their own user and removes their
 // other devices. A user has at most five devices: a sixth is refused with the list
-// (views/device-limit.js).
+// (views/device-limit.js). The owner can make another admin the owner (ADR-064).
 
 import { h } from "../dom.js";
 import { formatDateTime, formatRelative, formatTime, formatUntil, t } from "../i18n.js";
@@ -142,7 +142,8 @@ function scheduleRefresh() {
   }, REFRESH_MS);
 }
 
-async function act(work, done) {
+// `explain(error)`: the action's own words for a refusal, when it has some.
+async function act(work, done, explain = null) {
   ui.access = { ...(ui.access || {}), busy: true, message: null, limit: null };
   notify();
   let message;
@@ -153,7 +154,7 @@ async function act(work, done) {
   } catch (error) {
     // A user with five devices (1.9.0): the list, with Remove, instead of a sentence.
     limit = deviceLimitOf(error);
-    message = limit ? null : { kind: "error", text: problemText(error) };
+    message = limit ? null : { kind: "error", text: explain?.(error) || problemText(error) };
   }
   // The screen may have been left and opened again meanwhile (resetAccess).
   ui.access = { ...(ui.access || {}), busy: false, message, limit };
@@ -747,6 +748,8 @@ function userRow(user, list) {
   const busy = Boolean(ui.access.busy);
   const full = (user.devices || []).length >= (list.device_limit || 5);
   const linked = Boolean(ui.access.home);
+  // This device is the owner's (1.9.0, ADR-064).
+  const iOwn = (list.items || []).some((item) => item.you && item.access?.owner);
   const actions = admin
     ? [
         access.owner
@@ -771,6 +774,14 @@ function userRow(user, list) {
               t("users.invite.button")
             )
           : null,
+        // Only the owner hands the home over, and only to another admin (ADR-064).
+        iOwn && !user.you && access.role === "admin" && !access.owner
+          ? h(
+              "button",
+              { type: "button", class: "button button-small button-quiet", disabled: busy, dataset: { key: `users-make-owner-${user.id}` }, onclick: () => makeOwner(user) },
+              t("users.owner.make", { name: user.name })
+            )
+          : null,
       ]
     : [];
   const users = Array.isArray(list.items) ? list.items : [];
@@ -786,7 +797,8 @@ function userRow(user, list) {
         const line = accountLine(user, list);
         return line ? h("span", { class: "access-sub", dir: "auto", dataset: { key: `users-account-${user.id}` } }, line) : null;
       })(),
-      full ? h("span", { class: "access-sub", dataset: { key: `users-full-${user.id}` } }, t("users.full", { count: list.device_limit || 5 })) : null
+      full ? h("span", { class: "access-sub", dataset: { key: `users-full-${user.id}` } }, t("users.full", { count: list.device_limit || 5 })) : null,
+      user.you && access.owner && admin && (list.items || []).length > 1 ? h("span", { class: "field-help", dataset: { key: `users-owner-help-${user.id}` } }, t("users.owner.help")) : null
     ),
     actions.some(Boolean) ? h("div", { class: "access-actions" }, ...actions) : null,
     editing
@@ -805,6 +817,23 @@ function userRow(user, list) {
     invitePanel(user),
     h("ul", { class: "access-list access-devices", "aria-label": t("users.devicesOf", { name: user.name }) }, (user.devices || []).map((device) => userDeviceRow(device, user, users))),
     user.you && !admin && !user.accounts && list.accounts_known ? h("p", { class: "field-help" }, t("users.account.askAdmin")) : null
+  );
+}
+
+// The owner makes another admin the home's owner (1.9.0, ADR-064), asked first with what changes:
+// the controller decides, and the account service moves the home's account on its word.
+function makeOwner(user) {
+  if (ui.access.busy || !window.confirm(t("users.owner.confirm", { name: user.name }))) return;
+  act(
+    () => api("/v1/users/owner", { method: "POST", body: { profile_id: user.id } }),
+    t("users.owner.done", { name: user.name }),
+    (error) => {
+      const name = error?.problem?.user?.name || user.name;
+      if (error?.code === "OWNER_NEEDS_ACCOUNT") return t("users.owner.needsAccount", { name });
+      if (error?.code === "NOT_AN_ADMIN") return t("users.owner.notAdmin", { name });
+      if (error?.code === "OWNER_ONLY") return t("users.owner.ownerOnly");
+      return null;
+    }
   );
 }
 

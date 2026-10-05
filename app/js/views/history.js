@@ -272,6 +272,9 @@ function title(entry) {
       return withName(`history.access.${entry.action}`, what);
     case "access.users_merged":
       return withName(entry.note === "automatic" ? "history.access.users_merged_auto" : "history.access.users_merged", what, { from: entry.from || "", count: entry.count ?? 1 });
+    // The owner made another admin the owner (1.9.0, ADR-064).
+    case "access.owner_changed":
+      return withName("history.access.owner_changed", what, { from: isolate(entry.from) });
     case "composer.project": {
       const changes = entry.changes || [];
       const count = changes.length + (entry.more || 0);

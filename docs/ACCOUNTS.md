@@ -13,7 +13,9 @@ member's rooms, devices and scenes (ADR-054). 1.9.0 makes people users (ADR-061)
 permissions a user, up to five devices a user, the devices of one Google or Apple account brought
 into one user (the account service tells the controller which keys share an account, as an opaque
 tag per home), pairing codes made in the app for a chosen user, and members adding and removing
-their own devices, a join from another device approved on any device of the account.** The
+their own devices, a join from another device approved on any device of the account; and the
+owner can hand the home to another admin, the account service following the controller's word
+(ADR-064).** The
 driver's side is `driver/src/cloud/` (`lock.lua`, `remote.lua`) and
 `driver/src/auth/invitations.lua`, the cloud's `cloud/src/accounts.js` and `cloud/src/homes.js`, the
 app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay protocol is
@@ -46,6 +48,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Which key ids are admin keys (1.6.0; since 1.8.0 the keys of admin users) | its own role | yes (ids only) | yes |
 | Which account uses which key (`member_keys`, 0.11.0) | its own; the owner sees each account's devices | yes (ids only) | since 1.9.0 an opaque tag per account and home for each key an account uses (*Users and accounts* below): which of its keys share an account, how many accounts use a key; **never** who, the account's id or email, or anything of another home |
 | Users: their names, permissions and devices (1.9.0; people in 1.8.0) | its own user's; an admin every user's | **never** (key ids only, as before) | yes |
+| The home's owner | its own user's (`access.owner`) and its account's (`owner` in `/v1/homes`) | the owner **account** (`homes.owner_id`): the account that claimed; since 1.9.0 (ADR-064) another account of the home when the controller says so over its connection, never which user | which **user** is the owner; when the owner hands the home over, whether an account owns it in the account service and whether the new owner's account belongs to the home |
 | Whether the controller lets every user add their own devices (1.9.0) | `features.users` | that the home's last `hello` listed `users`; nothing about anyone | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0); since 1.9.0 also when the account service has no browser left for that key (`alerts_gone`, key ids only, ADR-062), which the cloud knew |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
@@ -226,7 +229,8 @@ its own key and skips the claim. A later claim from the home network, which agai
 key there, moves the home to the new account and removes the previous members and invitations:
 whoever controls the controller controls the home (ADR-027). The app asks before doing that. Once
 a person has claimed the home with DirectorLink 1.8.0 or later, only they (the home's owner) claim
-it again (`403 OWNER_ONLY`, ADR-054).
+it again (`403 OWNER_ONLY`, ADR-054). Since 1.9.0 the owner can instead hand the home to another
+admin, without removing anyone (*Handing the home to another admin*, below).
 
 ### 2. Away from home
 
@@ -418,6 +422,38 @@ devices together: devices signed in to the same Google or Apple account belong t
 3. **What the cloud learns.** Nothing new: the tags are its own computation over what it had; the
    controller sends the same `keys` message as before. It sends one more message to each driver.
 
+### Handing the home to another admin (1.9.0, ADR-064)
+
+The home has two owners that must be one: the controller's, a user (ADR-054: only they change their
+own access and devices, claim the home again, confirm bringing the owner's devices together), and
+the account service's, an account (`homes.owner_id`: only it approves accounts that join with
+another email, sees and removes the home's accounts, cannot leave, replaces the home's secret, and
+deleting it deletes the home). A claim sets both, and removes every other account. To hand the home
+over without removing anyone:
+
+1. In Settings → Users the owner taps **Make Dana the owner** on another admin's row (a member is
+   made an admin first) and confirms. Only the owner can (`403 OWNER_ONLY`).
+2. A home the account service never knew changes owner on the controller only. Otherwise (Remote
+   Access on) the controller first asks the account service, over its own relay connection, which
+   only the home's secret opens: `{"type":"owner","account":"<tag>"}`, Dana's Google or Apple
+   account as its opaque tag (*Users and accounts*: the account of Dana's most recently used device
+   that has exactly one). The account service moves its owner to the account of the home with that
+   tag, if it belongs to the home and uses one of the controller's admin keys, and says whose it was.
+3. Only then does the controller record Dana as the owner, after checking again that the owner may
+   (when Dana was made a member meanwhile, or the record cannot be saved, it asks the account
+   service to move its owner back). With no account owning the home there (`NOT_CLAIMED`) it moves
+   alone; when Dana's devices use no account of the home it refuses: "Dana needs to sign in to
+   DirectorLink on one of their devices first", so that the two owners never differ.
+
+No session, app or route moves the account service's owner: only a claim and the controller's
+word. Nothing the account service says makes anyone the owner on the controller: it can only
+refuse. Nobody leaves: every account stays a member, every key works, the requests to join wait for
+Dana, the old owner is an admin like any other (Dana may change their access), and their account may
+now leave the home or be deleted without taking the home with it. Dana's account then also holds the
+25 MB of backups of the homes it owns, and Dana's Sign out everywhere is what protects the secret.
+The account service learns that the home's owner changed and to which of its accounts; the
+controller, whether an account owns the home and whether Dana's belongs to it.
+
 
 
 ### 6. Alerts (1.6.0, ADR-047; 1.7.0, ADR-050)
@@ -563,7 +599,8 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 - `users`: id, the provider and subject it began with, email, name, created (`migrations/0001`).
 - `identities`: provider, subject, account, email (`migrations/0003`).
 - `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
-- `homes`: home id, owner, claimed (`migrations/0002`).
+- `homes`: home id, owner, claimed (`migrations/0002`); since 1.9.0 the owner moves to another
+  account of the home when the controller says so (ADR-064).
 - `members`: home, user, added.
 - `member_keys`: home, key id, the account that uses it (`migrations/0004`).
 - `invitations`: home, invitation id, email, expiry, created by. A used invitation is removed when
@@ -638,7 +675,8 @@ device's key.
   controller. Whoever can read its storage (root access, possibly a project backup) could act as
   those devices, remotely and with sealed requests at home. With the home secret as well, they
   could also connect to the relay as the home itself, read the apps' remote requests and send
-  back false answers (a door's state, a camera picture). The API keys `S` themselves are only
+  back false answers (a door's state, a camera picture), and (1.9.0) give the account service's owner
+  to another account of the home that uses an admin key (`owner`, ADR-064). The API keys `S` themselves are only
   hashes there. After such a copy is lost: Composer's **Revoke All API Keys** (then pair again and
   invite again), and the owner's **Replace the remote secret** in the app (Settings → Account, on
   the home network), which the account service accepts only from the owner (`docs/RELAY.md`). If
@@ -780,3 +818,7 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
     only between users who are alike, and otherwise leaves it to an admin (the owner for the owner's
     user). Any device of an account approves that account's new device, with a driver that lets
     every user add their own.
+18. (1.9.0, ADR-064) The owner hands the home to another admin without removing anyone: the
+    controller decides who its owner is, and the account service moves its owner account to the new
+    owner's only on the controller's word, over its connection; a new owner without an account of
+    the home is refused while an account owns it.

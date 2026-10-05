@@ -1390,6 +1390,7 @@ export default {
       users_merged: { one: "Brought 1 device of one account into {name} from {from}", other: "Brought {count} devices of one account into {name} from {from}" },
       users_merged_auto: { one: "1 device of one account joined {name} from {from} (the same access)", other: "{count} devices of one account joined {name} from {from} (the same access)" },
       merge_suggested: "{name} use the same account: an admin may make them one user",
+      owner_changed: "Made {name} the home’s owner instead of {from}",
     },
     composer: {
       project: { one: "1 change in the project", other: "{count} changes in the project" },
@@ -1622,6 +1623,16 @@ export default {
       done: "Done: the devices of this account are {name}’s now.",
       ownerConfirms: "Only the home’s owner can do this.",
       ownerKeeps: "The home’s owner stays the owner: keep the owner’s access.",
+    },
+    // Handing the home to another admin (1.9.0, ADR-064).
+    owner: {
+      make: "Make {name} the owner",
+      help: "You are the home’s owner. You can make another admin the owner (a member is made an admin first); you then stay an admin.",
+      confirm: "Make {name} the home’s owner? From now on only {name} changes their own access and devices, links the home to an account again, approves accounts that join with another email and replaces the home’s secret, and their Google or Apple account becomes the home’s account. You stay an admin, which {name} can change. Nobody is removed. After this only {name} can make someone else the owner.",
+      done: "{name} is the home’s owner now. You are an admin.",
+      needsAccount: "{name} needs to sign in to DirectorLink on one of their devices first: the home’s Google or Apple account becomes theirs.",
+      notAdmin: "Make {name} an admin first: only an admin can be the owner.",
+      ownerOnly: "Only the home’s owner can make someone else the owner.",
     },
     limit: {
       title: "{name} already has {count} devices. Remove one first:",

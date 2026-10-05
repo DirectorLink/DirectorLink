@@ -586,6 +586,23 @@ test("users: a pairing code, devices of one account brought together, a suggesti
   }
 });
 
+// The owner made another admin the owner (1.9.0, ADR-064).
+test("the home's owner changed, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [{ id: 1, at: iso(NOW - 30 * 1000), kind: "access", action: "owner_changed", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Dana", from: "Alex" }],
+  });
+  let rows = items(await open());
+  assert.match(line(rows[0]), /^Made Dana the home’s owner instead of Alex,/);
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.match(line(rows[0]), /^Dana הפך לבעל הבית במקום Alex/);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

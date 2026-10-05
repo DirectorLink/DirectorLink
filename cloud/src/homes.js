@@ -27,7 +27,7 @@ import { handleHomeAlerts, homesChanged } from "./alerts.js";
 import { DEVICE_REQUEST_ROUTES } from "./device-requests.js";
 import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
-import { validKeyId } from "./member-keys.js";
+import { accountTag, validKeyId } from "./member-keys.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
@@ -304,6 +304,60 @@ export async function registerHomeInvitation(env, homeId, data) {
   }
   log("invitation_registered", { home: homeId, by: "home", invitation: data.invitation_id });
   return { ok: true };
+}
+
+// The controller made another of its admin users the home's owner (1.9.0, ADR-064), over its own
+// connection (home-relay.js: only the home holds it), and names that user's Google or Apple account
+// by its tag (member-keys.js accountTag; a user without one has none): the home's owner account
+// moves to it, so that claims, the secret's replacement, the requests to join with another email,
+// the list of accounts, leaving and deleting the account follow the new owner. Only on the
+// controller's word: no session moves it. The account must belong to the home and, when the
+// controller listed its admin keys (`admins`), use one of them. Nobody joins or leaves, and nothing
+// else changes. { id, account } -> { ok, previous } (the old owner account's tag, so that the
+// controller can move it back) or { ok: false, code }: NOT_CLAIMED (no account owns the home: the
+// controller moves alone), OWNER_NEEDS_ACCOUNT, ACCOUNT_NOT_ADMIN, INVALID_REQUEST.
+const ACCOUNT_TAG = /^[0-9a-f]{16}$/;
+
+export async function moveHomeOwner(env, homeId, data, admins) {
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  if (!home) {
+    return { ok: false, code: "NOT_CLAIMED" };
+  }
+  const tag = data?.account ?? null;
+  if (tag !== null && (typeof tag !== "string" || !ACCOUNT_TAG.test(tag))) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  let account = null;
+  if (tag) {
+    const { results } = await env.DB.prepare("SELECT user_id FROM members WHERE home_id = ?").bind(homeId).all();
+    for (const row of results) {
+      if ((await accountTag(homeId, row.user_id)) === tag) {
+        account = row.user_id;
+        break;
+      }
+    }
+  }
+  if (!account) {
+    log("home_owner_not_moved", { home: homeId, why: tag ? "no member account has that tag" : "the new owner has no account" });
+    return { ok: false, code: "OWNER_NEEDS_ACCOUNT" };
+  }
+  if (Array.isArray(admins)) {
+    const { results: keys } = await env.DB.prepare("SELECT key_id FROM member_keys WHERE home_id = ? AND user_id = ?").bind(homeId, account).all();
+    if (!keys.some((row) => admins.includes(row.key_id))) {
+      log("home_owner_not_moved", { home: homeId, why: "the account uses no admin key" });
+      return { ok: false, code: "ACCOUNT_NOT_ADMIN" };
+    }
+  }
+  const previous = await accountTag(homeId, home.owner_id);
+  if (home.owner_id !== account) {
+    // Only if nobody claimed the home meanwhile.
+    const { meta } = await env.DB.prepare("UPDATE homes SET owner_id = ? WHERE id = ? AND owner_id = ?").bind(account, homeId, home.owner_id).run();
+    if (!meta.changes) {
+      return { ok: false, code: "INTERNAL" };
+    }
+  }
+  log("home_owner_moved", { home: homeId, from: home.owner_id, to: account });
+  return { ok: true, previous };
 }
 
 // The controller gave up on an invitation it asked to register (no answer in time): the row goes,
@@ -667,7 +721,7 @@ async function removeMember(env, user, homeId, userId) {
     return problem(403, "OWNER_ONLY", "Only the home's owner removes others");
   }
   if (self && row.owner_id === user.id) {
-    return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; another account can claim the home at home instead");
+    return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; make another admin the owner first (Settings → Users)");
   }
   // Its browsers' subscriptions go with the membership.
   const [alerts, { meta }] = await env.DB.batch([
