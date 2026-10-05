@@ -339,6 +339,70 @@ test("a signed-in admin at home, not linked yet: the list asks GET /v1/remote, f
   }
 });
 
+test("at home, This home says Update DirectorLink when the account service turned the controller's version away", async () => {
+  const offline = globalThis.fetch;
+  let remote = { enabled: true, connected: false, lock: true, home_id: "0123456789abcdef0123456789abcdef", update_required: true, minimum_version: "1.9.0" };
+  const asked = [];
+  globalThis.fetch = async (url) => {
+    const path = new URL(url).pathname;
+    asked.push(path);
+    const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    if (path === "/v1/sealed") return reply(404, { code: "NOT_FOUND" });
+    if (path === "/v1/remote") return reply(200, remote);
+    return reply(404, { code: "NOT_FOUND" });
+  };
+  const notice = (page) => find(page, (node) => node.attributes.id === "account-home-update");
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+  try {
+    // Not linked yet: the notice in place of Link this home (linking goes through remote access).
+    home("admin");
+    state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+    state.remoteInfo = null;
+    settingsView({ page: "account" });
+    await settle();
+    let page = settingsView({ page: "account" });
+    assert.equal(notice(page)?.textContent, "Update DirectorLink to 1.9.0 or later: the version on your controller can no longer connect to remote access, so your home can’t be reached away from it. Update it in Composer; at home the app works as before.");
+    assert.equal(byKey(page, "link-home"), null);
+
+    // Linked, a member too: the controller is asked, and says so; without a minimum, the plain words.
+    localStorage.setItem("directorlink.remote", JSON.stringify({ home: remote.home_id, keyId: "0123abcd" }));
+    home("member");
+    state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+    state.remoteInfo = null;
+    remote = { ...remote, minimum_version: null };
+    asked.length = 0;
+    settingsView({ page: "account" });
+    await settle();
+    assert.ok(asked.includes("/v1/remote"), asked.join(", "));
+    page = settingsView({ page: "account" });
+    assert.match(notice(page)?.textContent ?? "", /^Update DirectorLink: the version on your controller can no longer connect/);
+    await setLanguage("he");
+    try {
+      assert.match(notice(settingsView({ page: "account" }))?.textContent ?? "", /^עדכנו את DirectorLink:/);
+    } finally {
+      await setLanguage("en");
+    }
+
+    // Updated (or a driver before 1.8.0, which does not say): no notice.
+    remote = { enabled: true, connected: true, lock: true, home_id: remote.home_id };
+    state.remoteInfo = null;
+    settingsView({ page: "account" });
+    await settle();
+    assert.equal(notice(settingsView({ page: "account" })), null);
+    // Through the account the controller is not asked (the account service says it there).
+    state.transport = "remote";
+    state.remoteInfo = null;
+    asked.length = 0;
+    settingsView({ page: "account" });
+    await settle();
+    assert.ok(!asked.includes("/v1/remote"), asked.join(", "));
+  } finally {
+    globalThis.fetch = offline;
+    localStorage.removeItem("directorlink.remote");
+    state.remoteInfo = null;
+  }
+});
+
 // ---- the pages ---------------------------------------------------------------------------------
 
 test("every page opens with its title and Back to Settings' list", () => {

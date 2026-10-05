@@ -209,8 +209,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v32", "directorlink-shell-v39"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v40"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v32", "directorlink-shell-v40"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v41"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -328,6 +328,25 @@ test("without the app's words an alert is in English, and an unreadable push sti
   await push({ kind: "door_opened", home: "x", at: AT });
   assert.deepEqual(shown.slice(1).map((item) => item.options.body), Array(3).fill("Your home – something needs your attention. Open the app to see what happened."));
   assert.deepEqual(shown.slice(1).map((item) => item.options.tag), Array(3).fill("alert-other-"));
+});
+
+// 1.8.0 (ADR-053 as amended by ADR-059): the account service's push when a new device of this
+// account asks to join says only that; tapping it opens the app, where the request is shown.
+test("a new device asking to join shows the app's words and opens the app", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await push({ kind: "device_request", home: HOME, at: AT, request: "ab".repeat(16) });
+  assert.equal(shown[0].title, "DirectorLink");
+  assert.equal(shown[0].options.body, "A new device asks to join your home. Open DirectorLink to approve or decline it.", "English without the app's words");
+  assert.equal(shown[0].options.tag, `device-request-${HOME}`, "one per home: a newer request replaces it");
+  const texts = await storage.open("directorlink-alerts");
+  await texts.put("/alert-texts.json", new Response(JSON.stringify({ lang: "he", dir: "rtl", title: "DirectorLink", device_request: "מכשיר חדש מבקש להצטרף לבית שלכם." })));
+  await push({ kind: "device_request", home: HOME, at: AT, request: "cd".repeat(16) });
+  assert.equal(shown[1].options.body, "מכשיר חדש מבקש להצטרף לבית שלכם.");
+  assert.equal(shown[1].options.dir, "rtl");
+  await notificationClick(shown[1].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/`], "the app, where the request shows under the header");
 });
 
 test("a new version keeps the alerts' words", async () => {
@@ -457,6 +476,57 @@ test("a sealed alert this device cannot open shows the general words", async () 
   assert.deepEqual(shown.map((item) => item.options.data.url), Array(7).fill("/#/settings/history"));
 });
 
+// A camera of the DirectorLink · Hikvision drivers (1.8.0, ADR-056): what it saw, where, and its
+// tap opens that camera's full view.
+test("a camera's alert says what it saw at which camera, in the app's words, and opens that camera", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await keepAlertKey(storage);
+  const at = "2026-10-03T19:14:00Z";
+  for (const [what, body] of [
+    ["person", `Person at Garden at ${sealedClock(at)}.`],
+    ["vehicle", `Vehicle at Garden at ${sealedClock(at)}.`],
+    ["line_crossing", `Line crossed at Garden at ${sealedClock(at)}.`],
+    ["intrusion", `Intrusion at Garden at ${sealedClock(at)}.`],
+    ["region_entrance", `Someone entering at Garden at ${sealedClock(at)}.`],
+    ["tamper", `Tampering at Garden at ${sealedClock(at)}.`],
+    ["other", `Alert at Garden at ${sealedClock(at)}.`],
+    ["something_newer", `Alert at Garden at ${sealedClock(at)}.`],
+    ["constructor", `Alert at Garden at ${sealedClock(at)}.`],
+    [undefined, `Alert at Garden at ${sealedClock(at)}.`],
+  ]) {
+    await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 65, name: "Garden", room: "Living Room", room_id: 11, what })));
+    const last = shown.at(-1);
+    assert.equal(last.title, "Camera alert", String(what));
+    assert.equal(last.options.body, body, String(what));
+    assert.equal(last.options.tag, "camera-65", "one notification a camera");
+    assert.equal(last.options.renotify, true);
+    assert.equal(last.options.data.url, "/#/cameras/65");
+  }
+  await notificationClick(shown[0].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/cameras/65`], "the camera's full view");
+
+  // Without a name it is the general words.
+  await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 65, what: "person" })));
+  assert.equal(shown.at(-1).options.body, GENERAL);
+
+  // In Hebrew, with the app's words.
+  await (await storage.open("directorlink-alerts")).put("/alert-texts.json", new Response(JSON.stringify({
+    lang: "he",
+    dir: "rtl",
+    camera_title: "התראת מצלמה",
+    camera: "{what} ב-{name} ב-{time}.",
+    camera_person: "אדם",
+    camera_other: "התראה",
+  })));
+  await push(sealedPush(sealDetail({ v: 1, kind: "camera", at, id: 66, name: "שער אחורי", what: "person" })));
+  assert.equal(shown.at(-1).title, "התראת מצלמה");
+  assert.equal(shown.at(-1).options.body, `אדם ב-שער אחורי ב-${sealedClock(at, "he")}.`);
+  assert.equal(shown.at(-1).options.dir, "rtl");
+  assert.equal(shown.at(-1).options.tag, "camera-66");
+});
+
 test("a ring the app already shows, or shows on its banner now, is shown again quietly", async () => {
   const shown = [];
   const [ring] = VECTORS.details;
@@ -480,4 +550,37 @@ test("a ring the app already shows, or shows on its banner now, is shown again q
   windows.push({ url: `${ORIGIN}/#/`, focused: true, visibilityState: "visible", focus: async () => {}, postMessage: () => {} });
   await push(sealedPush(sealDetail({ v: 1, kind: "doorbell", at: "2026-10-03T05:05:00Z", id: 93, name: "Front Gate" })));
   assert.equal(shown[2].options.silent, true);
+});
+
+// Ask before opening (1.8.0, ADR-058): the question an ask-to-open link sends its person. Its tap
+// opens the app's question (#/open/<door>/<request>/<until>), lasting as long as the controller said
+// from when it came; only Open there, with the device's own key, opens the door.
+test("an ask-to-open link's question opens the app's question, for as long as it lasts", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await keepAlertKey(storage);
+  const at = "2026-10-03T07:15:00Z";
+  const question = { v: 1, kind: "open_request", at, id: 70, name: "Main gate", room: "Entrance", room_id: 11, request: "0123456789abcdef", seconds: 120, via: "Arriving home" };
+  const before = Date.now();
+  await push(sealedPush(sealDetail(question)));
+  const after = Date.now();
+  const last = shown.at(-1);
+  assert.equal(last.title, "Open Main gate?");
+  assert.equal(last.options.body, `Your link “Arriving home” asked at ${sealedClock(at)}. Tap to answer.`);
+  assert.equal(last.options.tag, "open-70", "a newer question about the door takes its place");
+  const match = /^\/#\/open\/70\/0123456789abcdef\/(\d+)$/.exec(last.options.data.url);
+  assert.ok(match, last.options.data.url);
+  const until = Number(match[1]);
+  assert.ok(until >= before + 120000 && until <= after + 120000, "two minutes from when it came, on this device's clock");
+  await notificationClick(last.options.data);
+  assert.equal(opened.at(-1), `${ORIGIN}${last.options.data.url}`);
+
+  // Without a label; and one without a request, door or name is no question: the general words.
+  await push(sealedPush(sealDetail({ ...question, via: undefined })));
+  assert.equal(shown.at(-1).options.body, `Your link asked at ${sealedClock(at)}. Tap to answer.`);
+  for (const broken of [{ request: undefined }, { request: "not a request" }, { id: undefined }, { name: undefined }]) {
+    await push(sealedPush(sealDetail({ ...question, ...broken })));
+    assert.equal(shown.at(-1).options.body, GENERAL, JSON.stringify(broken));
+  }
 });

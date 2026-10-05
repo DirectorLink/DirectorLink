@@ -1,15 +1,17 @@
--- Scenes (docs/SCENES.md, src/core/scenes.lua): the home's one-tap actions. Everyone sees them,
--- members and above run them, admins make and change them, and try steps before saving
--- (POST /v1/scenes/try). A run sends the same commands as the device routes do; doors and gates
--- get a pulse (their Open button), only for keys with the doors role and while Door Control is on.
--- POST /v1/off (1.3.0, Home's "Turn off all") runs one step of that kind: lights off, AC off or
--- blinds closed, on the devices it names. A music step (1.5.0, ADR-044) pauses or stops the Sonos
--- music in a room or the whole home; it names no devices. A refrigerators step (1.7.0, ADR-049)
+-- Scenes (docs/SCENES.md, src/core/scenes.lua): the home's one-tap actions. Admins make and change
+-- them, and try steps before saving (POST /v1/scenes/try); a member sees and runs only the scenes an
+-- admin chose for them (ADR-054), in full. A run sends the same commands as the device routes do;
+-- doors and gates get a pulse (their Open button), while Door Control is on, never when DirectorLink
+-- runs a scene itself (schedules, scene links). POST /v1/off (1.3.0, Home's "Turn off all") runs one
+-- step of that kind: lights off, AC off or blinds closed, on the devices it names (a member's own).
+-- A music step (1.5.0, ADR-044) pauses or stops the Sonos music in a room or the whole home; it
+-- names no devices. Since 1.8.0 (ADR-057) it also resumes it, sets the volume, or plays a Sonos
+-- favorite in a room, with other rooms grouped with it. A refrigerators step (1.7.0, ADR-049)
 -- switches features of Samsung refrigerators on or off: Sabbath Mode in a Shabbat schedule.
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
-local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Scenes = require("src.core.scenes")
@@ -30,6 +32,10 @@ local MUSIC_SKIPPED = {
     SONOS_OFF = "Sonos is off; turn on the Sonos property of DirectorLink in Composer",
     NO_PLAYERS = "No Sonos players have been found yet",
     NO_SONOS_ROOM = "No Sonos room is shown in this room",
+    -- 1.8.0 (ADR-057): the detail names the rooms or the favorite.
+    FORBIDDEN = "Not allowed for this key",
+    FAVORITE_GONE = "The Sonos favorite is no longer in Sonos favorites",
+    FAVORITE_NOT_PLAYABLE = "This Sonos favorite can only be started in the Sonos app",
 }
 
 local function nullable(value)
@@ -56,23 +62,67 @@ local function contains(list, value)
     return false
 end
 
-local function stepView(step)
-    local set = {}
-    for key, value in pairs(step.set) do
-        set[key] = value
-    end
-    return {
+-- A step as `actor` sees it: an admin (or nil: the controller itself) the whole step; a member
+-- (ADR-054) only the rooms and devices they see, with `elsewhere` when the step also works on others
+-- (a room left out: room_id null; devices left out of device_ids, null when none is left; rooms
+-- left out of a favorite's with_room_ids), and a favorite without what only Sonos reads (its uri
+-- and meta).
+local function stepView(step, actor, registry)
+    local set = Scenes.copySet(step.set)
+    local result = {
         type = step.type,
         room_id = nullable(step.room_id),
         device_ids = step.device_ids and step.device_ids or Json.null,
         set = set,
     }
+    if actor == nil or Access.isAdmin(actor) then
+        return result
+    end
+    local elsewhere = false
+    if step.room_id ~= nil and not Access.seesRoom(actor, step.room_id) then
+        result.room_id = Json.null
+        elsewhere = true
+    end
+    if step.device_ids then
+        local ids = Json.array()
+        for _, id in ipairs(step.device_ids) do
+            local device = registry and registry.getDevice(id)
+            if device and Access.canSee(actor, device) then
+                ids[#ids + 1] = id
+            else
+                elsewhere = true
+            end
+        end
+        -- None of them: the step names no device (and says elsewhere).
+        result.device_ids = #ids > 0 and ids or Json.null
+    end
+    if type(set.with_room_ids) == "table" then
+        local rooms = Json.array()
+        for _, id in ipairs(set.with_room_ids) do
+            if Access.seesRoom(actor, id) then
+                rooms[#rooms + 1] = id
+            else
+                elsewhere = true
+            end
+        end
+        set.with_room_ids = rooms
+    end
+    if type(set.favorite) == "table" then
+        set.favorite.uri, set.favorite.meta = nil, nil
+    end
+    if elsewhere then
+        result.elsewhere = true
+    end
+    return result
 end
 
-local function view(scene)
+-- A scene as `ctx`'s caller sees it (stepView).
+local function view(scene, ctx)
+    local actor = ctx and ctx.apiKey or nil
+    local registry = ctx and ctx.services and ctx.services.registry or nil
     local steps = Json.array()
     for _, step in ipairs(scene.steps) do
-        steps[#steps + 1] = stepView(step)
+        steps[#steps + 1] = stepView(step, actor, registry)
     end
     return {
         id = scene.id,
@@ -86,6 +136,52 @@ local function view(scene)
     }
 end
 
+local MUSIC_TAKES = 'music takes {"action": "pause"}, {"action": "stop"}, {"action": "resume"}, {"action": "volume", "volume": 0-100} or {"action": "play_favorite", "favorite": {"id": "12"}}'
+local FAVORITE_FIELDS = { id = true, title = true, uri = true, meta = true }
+
+-- A music step's setting (1.5.0; resume, volume and play_favorite since 1.8.0, ADR-057).
+local function validateMusic(set, field)
+    local action = set.action
+    if type(action) ~= "string" or not Scenes.MUSIC_ACTIONS[action] then
+        return nil, Problem.invalidField(field .. ".action", MUSIC_TAKES)
+    end
+    local takes = action == "volume" and { volume = true } or action == "play_favorite" and { volume = true, favorite = true, with_room_ids = true } or {}
+    for key in pairs(set) do
+        if key ~= "action" and not takes[key] then
+            return nil, Problem.invalidField(field .. "." .. tostring(key), action .. " does not take " .. tostring(key))
+        end
+    end
+    if (action == "volume" or set.volume ~= nil) and not isWhole(set.volume, 0, 100) then
+        return nil, Problem.invalidField(field .. ".volume", "volume must be a whole number from 0 to 100")
+    end
+    if action == "play_favorite" then
+        local favorite = set.favorite
+        if type(favorite) ~= "table" or favorite == Json.null or Json.isArray(favorite) then
+            return nil, Problem.invalidField(field .. ".favorite", 'play_favorite needs the favorite: {"id": "12"}, as GET /v1/music/{musicId}/favorites lists it')
+        end
+        for key, value in pairs(favorite) do
+            if not FAVORITE_FIELDS[key] then
+                return nil, Problem.invalidField(field .. ".favorite." .. tostring(key), "Unknown field: " .. tostring(key))
+            end
+            if type(value) ~= "string" then
+                return nil, Problem.invalidField(field .. ".favorite." .. tostring(key), key .. " must be text")
+            end
+        end
+        if type(favorite.id) ~= "string" or #favorite.id > 9 or not favorite.id:match("^%d+$") then
+            return nil, Problem.invalidField(field .. ".favorite.id", "id is a favorite's id, as GET /v1/music/{musicId}/favorites lists it")
+        end
+        for name, limit in pairs({ title = Scenes.MAX_FAVORITE_TITLE, uri = Scenes.MAX_FAVORITE_URI, meta = Scenes.MAX_FAVORITE_META }) do
+            if favorite[name] and #favorite[name] > limit then
+                return nil, Problem.invalidField(field .. ".favorite." .. name, name .. " is longer than " .. limit .. " bytes")
+            end
+        end
+        if set.with_room_ids ~= nil and (not isList(set.with_room_ids) or not Scenes.cleanRooms(set.with_room_ids)) then
+            return nil, Problem.invalidField(field .. ".with_room_ids", "with_room_ids must be a list of at most " .. Scenes.MAX_WITH_ROOMS .. " room ids")
+        end
+    end
+    return set
+end
+
 -- What a step sets, checked for its type; returns the stored form or nil and a problem.
 local function validateSet(stepType, set, field)
     if type(set) ~= "table" or set == Json.null or Json.isArray(set) then
@@ -97,7 +193,7 @@ local function validateSet(stepType, set, field)
         fans = { on = true, speed = true },
         blinds = { position = true },
         relays = { action = true },
-        music = { action = true },
+        music = { action = true, volume = true, favorite = true, with_room_ids = true },
         refrigerators = Scenes.REFRIGERATOR_FEATURES,
     })[stepType]
     for key in pairs(set) do
@@ -192,10 +288,7 @@ local function validateSet(stepType, set, field)
         return result
     end
     if stepType == "music" then
-        if not Scenes.MUSIC_ACTIONS[set.action] then
-            return nil, Problem.invalidField(field .. ".action", 'music takes {"action": "pause"} or {"action": "stop"}')
-        end
-        return { action = set.action }
+        return validateMusic(set, field)
     end
     -- A door or gate relay is only pulsed, like its Open button: holding it closed would keep the
     -- door unlocked or the gate's input pressed.
@@ -206,8 +299,8 @@ local function validateSet(stepType, set, field)
 end
 
 -- 1 to `maximum` ids of supported devices of the step type, without repeats; nil and a problem
--- otherwise.
-local function validateDeviceIds(registry, ids, stepType, field, maximum)
+-- otherwise. With `actor`, only devices it may control: another is, for it, one that does not exist.
+local function validateDeviceIds(registry, ids, stepType, field, maximum, actor)
     if not isList(ids) or #ids == 0 or #ids > maximum then
         return nil, Problem.invalidField(field, "device_ids must be a list of 1 to " .. maximum .. " device ids")
     end
@@ -215,7 +308,7 @@ local function validateDeviceIds(registry, ids, stepType, field, maximum)
     local seen = {}
     for _, id in ipairs(ids) do
         local device = isWhole(id, 1, math.huge) and registry.getDevice(id) or nil
-        if not device or device.kind ~= KINDS[stepType] or device.supported ~= true then
+        if not device or device.kind ~= KINDS[stepType] or device.supported ~= true or (actor and not Access.canControl(actor, device)) then
             return nil, Problem.invalidField(field, "Device " .. tostring(id) .. " is not one of this home's " .. stepType)
         end
         if not seen[id] then
@@ -224,6 +317,32 @@ local function validateDeviceIds(registry, ids, stepType, field, maximum)
         end
     end
     return deviceIds
+end
+
+-- A play_favorite step (1.8.0, ADR-057): in a room; the rooms grouped with it are the project's
+-- (others are left out: a room removed in Composer since, sent back by an app that does not know
+-- them); and the favorite as the favorites list read lately has it (its name, address and
+-- description, what starts it again later). A favorite not read lately keeps what was sent: a
+-- step saved again as it was. nil, or a problem.
+local function checkFavorite(registry, roomId, set, field)
+    if not roomId then
+        return Problem.invalidField(field .. ".room_id", "A favorite plays in a room: room_id")
+    end
+    local rooms = Json.array()
+    for _, id in ipairs(set.with_room_ids or {}) do
+        if id ~= roomId and (registry.rooms or {})[id] then
+            rooms[#rooms + 1] = id
+        end
+    end
+    set.with_room_ids = #rooms > 0 and rooms or nil
+    local known = Sonos.knownFavorite(set.favorite.id)
+    if known and not known.playable then
+        return Problem.invalidField(field .. ".set.favorite", "This favorite can only be started in the Sonos app")
+    end
+    if known then
+        set.favorite = Scenes.cleanFavorite({ id = known.id, title = known.title, uri = known.uri, meta = known.meta })
+    end
+    return nil
 end
 
 local function validateStep(registry, item, field)
@@ -265,6 +384,12 @@ local function validateStep(registry, item, field)
     set = Scenes.cleanSet(stepType, set)
     if not set then
         return nil, Problem.invalidField(field .. ".set", "This step is not valid")
+    end
+    if stepType == "music" and set.action == "play_favorite" then
+        problem = checkFavorite(registry, roomId, set, field)
+        if problem then
+            return nil, problem
+        end
     end
     return { type = stepType, room_id = roomId, device_ids = deviceIds, set = set }
 end
@@ -334,7 +459,8 @@ local function findScene(ctx)
         return nil, Problem.invalidParameter("sceneId", "sceneId is 8 hex characters")
     end
     local scene = Scenes.find(id)
-    if not scene then
+    -- A scene a member may not run is, for them, one that does not exist (ADR-054).
+    if not scene or not Access.mayRunScene(ctx.apiKey, scene.id) then
         return nil, Problem.notFound("Scene", id)
     end
     return scene
@@ -504,18 +630,21 @@ local function run(ctx, steps, via)
     for index, step in ipairs(steps) do
         local refusal, why
         if step.type == "music" then
-            -- The Sonos groups with a room in the step's room (or every group): each one handled
-            -- counts as ran (one that does not play is left as it is); what the players answer is
-            -- not waited for (src/sonos/sonos.lua). None: skipped, and why (MUSIC_SKIPPED).
-            local sent, missing = Sonos.sceneStep(step.room_id, step.set.action)
-            if sent then
-                result.ran = result.ran + #sent
-            else
-                note("skipped", index, 0, missing, MUSIC_SKIPPED[missing] or MUSIC_SKIPPED.NO_PLAYERS)
+            -- The Sonos groups (or rooms) the step handles count as ran (a group that does not
+            -- play is left as it is); what the players answer is not waited for
+            -- (src/sonos/sonos.lua). What it leaves out is skipped, and why (MUSIC_SKIPPED). A scene
+            -- runs in full for whoever may run it (ADR-054: an admin chose what it does), so no
+            -- Sonos room is left out for its runner (Sonos.sceneStep without `may`).
+            local handled, skipped = Sonos.sceneStep(step)
+            result.ran = result.ran + handled
+            for _, missing in ipairs(skipped) do
+                note("skipped", index, 0, missing.code, missing.detail or MUSIC_SKIPPED[missing.code] or MUSIC_SKIPPED.NO_PLAYERS)
             end
         elseif step.type == "relays" then
-            if not Roles.allows(ctx.apiKey.role, "doors") then
-                refusal, why = "FORBIDDEN", "Doors and gates run only for keys with door access"
+            -- A scene runs in full for whoever may run it (ADR-054: an admin chose what it does);
+            -- DirectorLink's own runs (schedules, scene links) never open doors or gates.
+            if not Access.scenesOpenDoors(ctx.apiKey) then
+                refusal, why = "FORBIDDEN", "Doors and gates open only when a person runs the scene"
             elseif not services.doorControlEnabled() then
                 refusal, why = "DOOR_CONTROL_DISABLED", "Door control is off; turn on the Door Control property of DirectorLink in Composer"
             end
@@ -568,10 +697,13 @@ local function run(ctx, steps, via)
     return result
 end
 
+-- Admins get every scene; a member the scenes they may run (ADR-054).
 function Handlers.list(ctx)
     local items = Json.array()
     for _, scene in ipairs(Scenes.list()) do
-        items[#items + 1] = view(scene)
+        if Access.mayRunScene(ctx.apiKey, scene.id) then
+            items[#items + 1] = view(scene, ctx)
+        end
     end
     return 200, { items = items }
 end
@@ -581,7 +713,7 @@ function Handlers.get(ctx)
     if not scene then
         return problem
     end
-    return 200, view(scene)
+    return 200, view(scene, ctx)
 end
 
 function Handlers.create(ctx)
@@ -679,6 +811,24 @@ function Handlers.runSaved(services, sceneId, caller)
     return run({ services = services, apiKey = caller }, scene.steps)
 end
 
+-- What a member is told of a scene's run (ADR-054): a device they do not see is not named in its
+-- problems (device_id 0, a general detail), as in the scene's steps (stepView).
+local function forCaller(ctx, result)
+    if Access.isAdmin(ctx.apiKey) then
+        return result
+    end
+    for _, problem in ipairs(result.problems) do
+        if problem.device_id ~= 0 then
+            local device = ctx.services.registry.getDevice(problem.device_id)
+            if not (device and Access.canSee(ctx.apiKey, device)) then
+                problem.device_id = 0
+                problem.detail = "A device elsewhere (" .. tostring(problem.code) .. ")"
+            end
+        end
+    end
+    return result
+end
+
 function Handlers.run(ctx)
     local scene, problem = findScene(ctx)
     if not scene then
@@ -695,7 +845,7 @@ function Handlers.run(ctx)
     ctx.services.log.info("scenes", "scene ran", {
         scene = scene.id, by = ctx.apiKey.id, ran = result.ran, skipped = result.skipped, failed = result.failed,
     })
-    return 202, result
+    return 202, forCaller(ctx, result)
 end
 
 -- POST {"steps": [...]}: runs steps once without saving them, for "Try it now" (admins).
@@ -733,7 +883,8 @@ function Handlers.off(ctx)
         return Problem.invalidField("type", "type must be one of lights, climate, blinds")
     end
     local deviceIds
-    deviceIds, problem = validateDeviceIds(ctx.services.registry, body.device_ids, offType, "device_ids", MAX_OFF_DEVICES)
+    -- Only the devices the caller may control (ADR-054): what a member's Home shows.
+    deviceIds, problem = validateDeviceIds(ctx.services.registry, body.device_ids, offType, "device_ids", MAX_OFF_DEVICES, ctx.apiKey)
     if not deviceIds then
         return problem
     end

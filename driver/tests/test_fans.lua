@@ -362,25 +362,27 @@ function tests.fan_steps_are_kept_across_updates_and_checked_when_loaded()
     })
 end
 
-function tests.viewers_read_fans_and_members_control_them()
+-- A member not given fans neither sees nor controls them (ADR-054); one given fans controls them.
+function tests.members_given_fans_control_them_and_others_do_not_see_them()
     local mock, admin = start()
-    local viewer = createKey(mock, admin, "viewer")
+    local without = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Guest", role = "member", access = { kinds = { fan = false } } } }).json.key
     local member = createKey(mock, admin, "member")
     local before = #mock.commands
-    T.eq(T.http(mock, "GET", "/v1/fans", { key = viewer }).status, 200)
-    T.eq(T.http(mock, "GET", "/v1/fans/41", { key = viewer }).status, 200)
-    local refused = T.http(mock, "PATCH", "/v1/fans/41", { key = viewer, body = { on = false } })
-    T.eq(refused.status, 403)
-    T.eq(refused.json.code, "FORBIDDEN")
-    T.eq(refused.json.required_role, "member")
-    T.eq(#mock.commands, before, "nothing is sent for a viewer")
+    T.eq(#T.http(mock, "GET", "/v1/fans", { key = without }).json.items, 0)
+    T.eq(T.http(mock, "GET", "/v1/fans/41", { key = without }).status, 404)
+    local refused = T.http(mock, "PATCH", "/v1/fans/41", { key = without, body = { on = false } })
+    T.eq(refused.status, 404)
+    T.eq(refused.json.code, "NOT_FOUND")
+    T.eq(#mock.commands, before, "nothing is sent for them")
     T.eq(T.http(mock, "PATCH", "/v1/fans/41", { key = member, body = { on = false } }).status, 202)
     T.eq(#mock.commands, before + 1)
     T.eq(T.http(mock, "GET", "/v1/fans", {}).status, 401)
 
     local scene = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Fans off", steps = { { type = "fans", set = { on = false } } } } }).json
-    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = viewer }).status, 403)
-    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member }).json.ran, 2, "members run fan scenes")
+    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member }).status, 404, "a scene not chosen for them")
+    local profile = T.http(mock, "GET", "/v1/api-keys/current", { key = member }).json.profile_id
+    T.eq(T.http(mock, "PATCH", "/v1/profiles/" .. profile .. "/access", { key = admin, body = { scenes = { scene.id } } }).status, 200)
+    T.eq(T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member }).json.ran, 2, "members run the fan scenes chosen for them")
 end
 
 function tests.a_schedule_runs_a_fan_scene()
@@ -465,8 +467,8 @@ function tests.fans_work_sealed_at_home_and_through_the_account()
     T.same(commandsSince(mock, before), { { device = 41, command = "OFF", params = {} } })
     local viewer, viewerId = createKey(mock, key, "viewer")
     local refused = remote({ method = "PATCH", path = "/v1/fans/41", body = { on = true } }, viewer, viewerId)
-    T.eq(refused.status, 403)
-    T.eq(Json.decode(refused.body).code, "FORBIDDEN")
+    T.eq(refused.status, 404, "a viewer of 1.7.0 has no rooms (ADR-054)")
+    T.eq(Json.decode(refused.body).code, "NOT_FOUND")
     T.eq(remote({ method = "GET", path = "/v1/fans" }, viewer, viewerId).status, 200)
     T.eq(#mock.commands, before + 1)
 end

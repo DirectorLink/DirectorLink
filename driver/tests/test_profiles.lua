@@ -74,8 +74,11 @@ function tests.an_admin_adds_a_device_to_a_person_and_moves_keys_between_profile
     profiles = T.http(mock, "GET", "/v1/profiles", { key = admin }).json.items
     T.eq(#profiles, 1)
     T.eq(#profiles[1].key_ids, 3)
-    T.eq(T.http(mock, "GET", "/v1/profiles", { key = guest.key }).status, 403, "only admins see everyone")
-    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { theme = "light" } } }).status, 200, "a viewer sets their own")
+    -- Moved into the admin's person, it has the admin's access (ADR-054).
+    T.eq(T.http(mock, "GET", "/v1/profiles", { key = guest.key }).status, 200, "now one of the admin's devices")
+    local viewer = createKey(mock, admin, { name = "Wall tablet", role = "viewer" })
+    T.eq(T.http(mock, "GET", "/v1/profiles", { key = viewer.key }).status, 403, "only admins see everyone")
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = viewer.key, body = { prefs = { theme = "light" } } }).status, 200, "a member sets their own")
 
     local renamed = T.http(mock, "PATCH", "/v1/profiles/" .. mine.id, { key = admin, body = { name = "Dana" } })
     T.eq(renamed.json.name, "Dana")
@@ -144,16 +147,144 @@ end
 
 function tests.each_person_hides_rooms_for_themselves_only()
     local mock, admin = start()
-    local guest = createKey(mock, admin, { name = "Guest", role = "viewer" })
+    local guest = createKey(mock, admin, { name = "Guest", role = "member" })
     local hidden = T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { hidden_rooms = { 11, 11, 10 } } } })
     T.eq(hidden.status, 200, hidden.body)
-    T.same(hidden.json.prefs.hidden_rooms, { 11, 10 }, "a viewer hides rooms for themselves")
+    T.same(hidden.json.prefs.hidden_rooms, { 11, 10 }, "a member hides rooms for themselves")
     local mine = T.http(mock, "GET", "/v1/profile", { key = admin }).json
     T.contains(Json.encode(mine.prefs), '"hidden_rooms":[]', "nobody else is affected")
     T.eq(T.http(mock, "PATCH", "/v1/profile", { key = guest.key, body = { prefs = { hidden_rooms = { "kitchen" } } } }).json.code, "INVALID_FIELD")
     T.eq(#T.http(mock, "GET", "/v1/rooms", { key = guest.key }).json.items, #T.http(mock, "GET", "/v1/rooms", { key = admin }).json.items, "the API still lists every room")
     local updated = Mock.updateDriver(mock)
     T.same(T.http(updated, "GET", "/v1/profile", { key = guest.key }).json.prefs.hidden_rooms, { 11, 10 })
+end
+
+-- Favorites of devices removed in Composer (1.8.0, ADR-059, src/core/favorites_gone.lua): marked
+-- gone by the first project read that worked without them, shown to the app as gone, dropped from
+-- every profile after 7 days; never on a read that failed, nor for a device missing for a moment.
+
+local DAY = 24 * 3600
+
+-- The driver's clock at `day` days from now (each start loads its modules afresh).
+local function clockAt(base)
+    local clock = { now = base }
+    local Clock = require("src.core.clock")
+    Clock.now = function()
+        return clock.now
+    end
+    return function(days)
+        clock.now = base + math.floor(days * DAY)
+        return clock.now
+    end
+end
+
+local function refresh()
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+end
+
+local function minute()
+    require("src.core.scheduler").tick()
+end
+
+local function gone(profile)
+    local entries = {}
+    for _, item in ipairs(profile.gone_favorites or {}) do
+        entries[#entries + 1] = item.entry
+    end
+    return entries
+end
+
+function tests.favorites_of_a_removed_device_are_marked_gone_then_dropped_after_seven_days()
+    local mock, key = start()
+    local other = createKey(mock, key, { name = "Dana's phone", role = "member" })
+    local base = os.time()
+    local day = clockAt(base)
+    local favorites = { "camera:60", "light:20", "camera:61", "music:3" }
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = key, body = { prefs = { favorites = favorites } } }).status, 200)
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = other.key, body = { prefs = { favorites = { "camera:60" } } } }).status, 200)
+    local first = T.http(mock, "GET", "/v1/profile", { key = key })
+    T.contains(first.body, '"gone_favorites":[]', "an empty list while every device is there")
+
+    -- The Driveway camera is replaced in Composer: the next project read lacks it.
+    Mock.removeDevice(mock.project, 60)
+    refresh()
+    local profile = T.http(mock, "GET", "/v1/profile", { key = key }).json
+    T.same(gone(profile), { "camera:60" })
+    T.eq(profile.gone_favorites[1].name, "Driveway", "by the name it had")
+    T.eq(profile.gone_favorites[1].since, os.date("!%Y-%m-%dT%H:%M:%SZ", base))
+    T.same(profile.prefs.favorites, favorites, "kept for now")
+    T.same(gone(T.http(mock, "GET", "/v1/profile", { key = other.key }).json), { "camera:60" }, "for everyone who has it")
+
+    -- A read that fails (Director listing nothing while it loads a project) changes nothing; nor
+    -- does a device missing for a moment (the Gate camera, back at the next read).
+    local devices = mock.project.devices
+    mock.project.devices = {}
+    day(3)
+    refresh()
+    mock.project.devices = devices
+    local gate = mock.project.devices[61]
+    mock.project.devices[61] = nil
+    refresh()
+    T.same(gone(T.http(mock, "GET", "/v1/profile", { key = key }).json), { "camera:60", "camera:61" })
+    mock.project.devices[61] = gate
+    refresh()
+    T.same(gone(T.http(mock, "GET", "/v1/profile", { key = key }).json), { "camera:60" }, "back: no longer gone")
+
+    -- Still there after six days, through a driver update (the marks are kept).
+    local updated = Mock.updateDriver(mock, mock.project)
+    day = clockAt(base)
+    day(6.9)
+    minute()
+    T.same(T.http(updated, "GET", "/v1/profile", { key = key }).json.prefs.favorites, favorites)
+
+    -- Seven days after the read that first lacked it: dropped from every profile, at the minute's
+    -- look. The Gate camera, gone for a moment on the third day, stays; an unknown kind is never touched.
+    day(7)
+    minute()
+    local after = T.http(updated, "GET", "/v1/profile", { key = key }).json
+    T.same(after.prefs.favorites, { "light:20", "camera:61", "music:3" })
+    T.same(gone(after), {})
+    T.eq(after.version, profile.version + 1, "a change other devices see")
+    T.eq(#T.http(updated, "GET", "/v1/profile", { key = other.key }).json.prefs.favorites, 0)
+    local logged = false
+    for _, line in ipairs(updated.debugLog) do
+        logged = logged or line:find("a favorite of a device removed in Composer was dropped", 1, true) ~= nil
+    end
+    T.truthy(logged)
+end
+
+-- A restart whose project read did not work has not looked at the marks: nothing is dropped, even
+-- when they are old enough (the device may have come back meanwhile).
+function tests.favorites_are_dropped_only_after_a_project_read_in_this_run()
+    local mock, key = start()
+    local base = os.time()
+    clockAt(base)
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = key, body = { prefs = { favorites = { "camera:60", "light:20" } } } }).status, 200)
+    Mock.removeDevice(mock.project, 60)
+    refresh()
+    -- Ten days later the driver starts while Director lists no devices.
+    local devices = mock.project.devices
+    mock.project.devices = {}
+    local updated = Mock.updateDriver(mock, mock.project)
+    clockAt(base)(10)
+    minute()
+    mock.project.devices = devices
+    T.same(T.http(updated, "GET", "/v1/profile", { key = key }).json.prefs.favorites, { "camera:60", "light:20" }, "not dropped")
+    -- The project read once it loads: the device is still gone, and goes.
+    refresh()
+    T.same(T.http(updated, "GET", "/v1/profile", { key = key }).json.prefs.favorites, { "light:20" })
+end
+
+-- The app removes a gone favorite itself (Remove): the answer no longer lists it.
+function tests.removing_a_gone_favorite_takes_it_off_the_list()
+    local mock, key = start()
+    T.http(mock, "PATCH", "/v1/profile", { key = key, body = { prefs = { favorites = { "camera:60", "light:20" } } } })
+    Mock.removeDevice(mock.project, 60)
+    refresh()
+    local patched = T.http(mock, "PATCH", "/v1/profile", { key = key, body = { prefs = { favorites = { "light:20" } } } })
+    T.eq(patched.status, 200, patched.body)
+    T.same(gone(patched.json), {})
+    T.contains(patched.body, '"gone_favorites":[]')
 end
 
 return tests

@@ -92,20 +92,26 @@ export async function startFakePush() {
       }
       entry.status = entry.error ? 400 : status;
       received.push(entry);
-      response.writeHead(entry.status, browser?.location ? { Location: browser.location } : {});
-      response.end();
+      const reply = () => {
+        response.writeHead(entry.status, browser?.location ? { Location: browser.location } : {});
+        response.end();
+      };
+      // A service that is slow to answer: it has the push, and answers when the test releases it.
+      if (browser?.hold) browser.held.push(reply);
+      else reply();
     });
   });
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
 
   // A new browser's push subscription, as PushSubscription.toJSON() gives it. `status`: what the
   // service answers for it (410: the browser unsubscribed; 307 with `location`: a redirect), after
-  // answering its first `fails` pushes `failStatus`.
-  function subscribe({ status = 201, fails = 0, failStatus = 503, location = null } = {}) {
+  // answering its first `fails` pushes `failStatus`. `hold`: the service answers its pushes only
+  // when release(browser) is called.
+  function subscribe({ status = 201, fails = 0, failStatus = 503, location = null, hold = false } = {}) {
     const ecdh = createECDH("prime256v1");
     ecdh.generateKeys();
     const id = randomBytes(12).toString("hex");
-    const browser = { id, ecdh, publicKey: ecdh.getPublicKey(), auth: randomBytes(16), status, fails, failStatus, location };
+    const browser = { id, ecdh, publicKey: ecdh.getPublicKey(), auth: randomBytes(16), status, fails, failStatus, location, hold, held: [] };
     browsers.set(id, browser);
     browser.subscription = { endpoint: `${url}/push/${id}`, keys: { p256dh: b64(browser.publicKey), auth: b64(browser.auth) } };
     return browser;
@@ -115,5 +121,11 @@ export async function startFakePush() {
   const messagesFor = (browser) => received.filter((entry) => entry.id === browser.id && entry.message && entry.status < 300).map((entry) => entry.message);
   const errors = () => received.filter((entry) => entry.error);
 
-  return { url, received, subscribe, messagesFor, errors, close: () => new Promise((resolve) => server.close(resolve)) };
+  // The held pushes of `browser` are answered, and later ones at once.
+  function release(browser) {
+    browser.hold = false;
+    for (const reply of browser.held.splice(0)) reply();
+  }
+
+  return { url, received, subscribe, release, messagesFor, errors, close: () => new Promise((resolve) => server.close(resolve)) };
 }

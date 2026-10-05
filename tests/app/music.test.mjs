@@ -153,14 +153,14 @@ function controller(answers = {}) {
 const lines = (sent) => sent.map((entry) => entry.line);
 
 // Connected, with this role and Sonos as Composer has it.
-function home({ role = "admin", sonos = true, features = true, hidden = [] } = {}) {
+function home({ role = "admin", sonos = true, features = true, hidden = [], groups = false } = {}) {
   state.host = "192.0.2.10";
   state.apiKey = "ak_test";
   state.transport = "lan";
   state.status = "connected";
   state.loaded = true;
   state.role = role;
-  state.system = features ? { bridge: { version: "1.5.0" }, features: { sonos } } : { bridge: { version: "1.4.0" } };
+  state.system = features ? { bridge: { version: groups ? "1.8.0" : "1.5.0" }, features: groups ? { sonos, sonos_groups: true } : { sonos } } : { bridge: { version: "1.4.0" } };
   state.rooms = [
     { id: 11, name: "Living Room" },
     { id: 10, name: "Kitchen" },
@@ -661,4 +661,131 @@ test("in Hebrew", async () => {
     const value = path.split(".").reduce((node, key) => node?.[key], he);
     assert.equal(typeof value, "string", path);
   }
+});
+
+// ---- groups (1.8.0, ADR-057) ---------------------------------------------------------------
+
+// The fixtures with the groups' volumes a 1.8.0 driver gives: Kitchen 30 and Living Room 20.
+const GROUPED = {
+  ...ON,
+  items: ON.items.map((item) => ({ ...item, group: { ...item.group, volume: item.group.id === KITCHEN ? 25 : item.volume } })),
+};
+
+test("a group of rooms has one card: one now-playing, a slider for the group and one per room, Leave group", async () => {
+  home({ role: "member", groups: true });
+  controller({ list: GROUPED });
+  await music.loadMusic();
+  const cards = views.musicCards([music.findMusic(KITCHEN), music.findMusic(LIVING)]);
+  assert.equal(cards.length, 1, "Kitchen and Living Room in one room's screen: one card");
+  const card = cards[0];
+  assert.ok(card.className.includes("music-group"));
+  const text = card.textContent;
+  assert.ok(text.startsWith("Kitchen + Living RoomMorning LightThe Example Band · First AlbumPlaying"), text);
+  assert.equal(text.split("Morning Light").length, 2, "what plays, once");
+  assert.ok(byKey(card, `music:${KITCHEN}:group-volume`), "a slider for the group");
+  assert.equal(byKey(card, `music:${KITCHEN}:group-volume`).attributes.value, "25");
+  assert.ok(byKey(card, `music:${KITCHEN}:volume`) && byKey(card, `music:${LIVING}:volume`), "one per room");
+  assert.ok(byKey(card, `music:${KITCHEN}:leave`) && byKey(card, `music:${LIVING}:leave`));
+  assert.equal(byKey(card, `music:${LIVING}:leave`).attributes["aria-label"], "Take Living Room out of the group");
+  // Living Room's screen shows the same card.
+  assert.equal(views.musicCards([music.findMusic(LIVING)])[0].textContent, text);
+  // A room on its own keeps its own card.
+  assert.ok(!views.musicCard(music.findMusic(TV)).className.includes("music-group"));
+});
+
+test("a driver before 1.8.0 groups nothing: the cards are as they were", async () => {
+  home({ role: "member" });
+  controller();
+  await music.loadMusic();
+  assert.equal(views.musicCards([music.findMusic(KITCHEN), music.findMusic(LIVING)]).length, 2);
+  const card = views.musicCard(music.findMusic(KITCHEN));
+  assert.ok(!card.className.includes("music-group"));
+  assert.equal(byKey(card, `music:${KITCHEN}:more`), undefined, "no Play in more rooms");
+  assert.equal(byKey(views.musicCard(music.findMusic(TV)), `music:${TV}:here`), undefined, "no Play here too");
+});
+
+test("Leave group, the group's volume, Play in more rooms and Play here too send what the controller takes", async () => {
+  home({ role: "member", groups: true });
+  controller({ list: GROUPED });
+  await music.loadMusic();
+  let sent = controller({ list: GROUPED });
+  const card = views.musicCard(music.findMusic(KITCHEN));
+  byKey(card, `music:${LIVING}:leave`).listeners.click({});
+  await settle();
+  assert.deepEqual(lines(sent), [`DELETE /v1/music/${LIVING}/group`, "GET /v1/music"], "then every room is read again");
+  sent = controller({ list: GROUPED });
+  await music.setGroupVolume(music.findMusic(KITCHEN), 40);
+  assert.deepEqual(sent.map((entry) => [entry.line, entry.body]), [[`PATCH /v1/music/${KITCHEN}/group`, { volume: 40 }], ["GET /v1/music", null]]);
+  // On the playing group: the other rooms, each joins it with a tap.
+  const more = byKey(card, `music:${KITCHEN}:more`);
+  assert.ok(more, "Play in more rooms");
+  assert.ok(more.textContent.startsWith("Play in more rooms"));
+  assert.deepEqual(
+    all(more).filter((element) => element.tagName === "BUTTON").map((button) => button.dataset.key),
+    [`music:${KITCHEN}:more:${BEDROOM}`, `music:${KITCHEN}:more:${TV}`]
+  );
+  sent = controller({ list: GROUPED });
+  byKey(more, `music:${KITCHEN}:more:${TV}`).listeners.click({});
+  await settle();
+  assert.deepEqual(sent.map((entry) => [entry.line, entry.body]), [[`POST /v1/music/${TV}/group`, { with: KITCHEN }], ["GET /v1/music", null]]);
+  // A room that plays nothing: what plays elsewhere, each with a tap plays here too.
+  const here = byKey(views.musicCard(music.findMusic(TV)), `music:${TV}:here`);
+  assert.ok(here.textContent.startsWith("Play here too"), here.textContent);
+  assert.ok(here.textContent.includes("Kitchen + Living Room"));
+  sent = controller({ list: GROUPED });
+  byKey(here, `music:${TV}:here:${BEDROOM}`).listeners.click({});
+  await settle();
+  assert.deepEqual(sent.map((entry) => [entry.line, entry.body]), [[`POST /v1/music/${TV}/group`, { with: BEDROOM }], ["GET /v1/music", null]]);
+  // Refused: said on the room's card, nothing else changes.
+  controller({ list: GROUPED, fail: { status: 403, code: "FORBIDDEN" } });
+  assert.equal(await music.leaveGroup(music.findMusic(LIVING)), false);
+  assert.ok(state.errors[`music:${LIVING}`]);
+});
+
+test("viewers see the group and each room's volume, and nothing to press", async () => {
+  home({ role: "viewer", groups: true });
+  controller({ list: GROUPED });
+  await music.loadMusic();
+  const card = views.musicCard(music.findMusic(LIVING));
+  assert.ok(card.textContent.includes("Kitchen + Living Room"));
+  assert.ok(card.textContent.includes("Volume 25%"), "the group's");
+  assert.ok(card.textContent.includes("Volume 20%"), "Living Room's own");
+  assert.equal(all(card).filter((element) => element.tagName === "BUTTON" || element.tagName === "INPUT").length - all(byClass(card, "music-favorites")[0]).filter((element) => element.tagName === "BUTTON").length, 0);
+  const sent = controller();
+  assert.equal(await music.joinGroup(music.findMusic(TV), music.findMusic(KITCHEN)), false);
+  assert.equal(await music.setGroupVolume(music.findMusic(KITCHEN), 5), false);
+  assert.deepEqual(lines(sent), []);
+});
+
+test("the groups in Hebrew", async () => {
+  home({ role: "member", groups: true });
+  controller({ list: GROUPED });
+  await music.loadMusic();
+  await setLanguage("he");
+  try {
+    const card = views.musicCard(music.findMusic(KITCHEN));
+    assert.ok(card.textContent.includes("עוצמת הקבוצה"));
+    assert.ok(card.textContent.includes("יציאה מהקבוצה"));
+    assert.ok(byKey(card, `music:${KITCHEN}:more`).textContent.startsWith("השמעה בחדרים נוספים"));
+    assert.ok(byKey(views.musicCard(music.findMusic(TV)), `music:${TV}:here`).textContent.startsWith("השמעה גם כאן"));
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("a room grouped with rooms elsewhere is read with all of them, so its card shows each room as it is", async (t) => {
+  home({ groups: true });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const sent = controller({ list: GROUPED });
+  const reads = () => lines(sent).filter((line) => line.startsWith("GET /v1/music"));
+  await music.startMusic({ name: "room", id: 10 });
+  t.mock.timers.tick(0);
+  await settle();
+  assert.equal(reads().at(-1), "GET /v1/music", "the kitchen plays with the living room");
+  // The TV Room's screen (no room: its own), on its own.
+  music.musicRouteChanged({ name: "room", id: 12 });
+  t.mock.timers.tick(0);
+  await settle();
+  assert.equal(reads().at(-1), "GET /v1/music?room_id=12");
+  music.musicRouteChanged({ name: "scenes" });
 });

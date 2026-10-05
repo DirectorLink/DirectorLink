@@ -109,6 +109,11 @@ SECURITY_CONTRACT = {
     ),
     "src/api/handlers/auth.lua": (
         "local paired, failure = ctx.services.pairing.conclude(session.attempt, isk ~= nil)\n    if not paired then\n        return pairingFailure(ctx, failure)\n    end",
+        # The owner's person is only the owner's (ADR-054: Access.mayChangePerson): no key made
+        # into it, no device moved into or out of it, none revoked, by anyone else.
+        "local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)",
+        "problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)",
+        "local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil",
     ),
     "src/cloud/relay.lua": (
         # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.
@@ -133,17 +138,20 @@ SECURITY_CONTRACT = {
         # Replays across a restart: ids of requests dated ahead of the clock are saved and loaded.
         "remember(keyId, requestId, ts, now)",
         "state.seen[item.k][item.i] = state.startedAt",
-        # A claim token dies with its admin key.
-        'return owner ~= nil and owner.role == "admin"',
+        # A claim token dies with its admin key (an admin's: ADR-054), and works only while that
+        # admin may claim the home (only the owner, once the home was claimed with 1.8.0).
+        "return owner ~= nil and Access.isAdmin(owner) and (Access.mayClaim(owner)) == true, owner",
         "state.services.invitations.consume(invitationId)",
+        # An invitation into an existing person joins only while its maker may add a device there.
+        "allowed, refusal = Access.mayChangePerson(inviter, profile.id)",
         # A sealed request never carries another (it would run as one from the home network).
         'if path:gsub("/+$", "") == "/v1/sealed" then',
         "state.services.keys.remote(keyId)",
     ),
-    # Doors and gates in a scene: only a pulse (never held closed), only for keys with door access,
-    # and only with Door Control on.
+    # Doors and gates in a scene: only a pulse (never held closed), never when DirectorLink runs a
+    # scene itself (schedules, links: ADR-054), and only with Door Control on.
     "src/api/handlers/scenes.lua": (
-        'if not Roles.allows(ctx.apiKey.role, "doors") then',
+        "if not Access.scenesOpenDoors(ctx.apiKey) then",
         "elseif not services.doorControlEnabled() then",
         'return { { action = "pulse" } }',
     ),
@@ -171,7 +179,21 @@ SECURITY_CONTRACT = {
     "src/api/handlers/scene_links.lua": (
         'return Problem.new(409, "SCENE_OPENS_DOORS", "A scene that opens doors or gates cannot have a link")',
         '{ id = "link:" .. link.id, role = "member" }',
-        "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then",
+        # The key that made it still there, and still an admin's (ADR-054: mayLink).
+        "if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not mayLink(link.by)) then",
+        "return key ~= nil and Access.isAdmin(key)",
+    ),
+    # Ask to open (ADR-058): only a hash of each secret, compared in constant time; a request lasts
+    # two minutes, and only a pulse from a device it was sent to, by a key that may open the door,
+    # answers it (check_ask_links_open_nothing: the link's own code never opens anything).
+    "src/core/ask_links.lua": (
+        "if SceneLinks.secretMatches(found and found.alg, found and found.hash, secret) and found then",
+        "AskLinks.OPEN_SECONDS = 120",
+    ),
+    "src/api/handlers/ask_links.lua": (
+        "if not Access.canOpen(ctx.apiKey, relay) then",
+        "if not request or request.relay_id ~= tonumber(device.id) or not request.keys[ctx.apiKey.id] then",
+        "if not maker or not relay or link.home ~= linkedHome() or not Access.canOpen(maker, relay) then",
     ),
     "src/api/handlers/remote.lua": (
         "if ctx.apiKey.remote then",
@@ -537,6 +559,27 @@ PARTITION_COMMANDS = re.compile(r"\bPARTITION_(?:ARM|DISARM)\b")
 ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
 
 
+# An ask-to-open link (ADR-058) asks; it never opens. Its modules send no command to a device:
+# only the pulse route does, with the answering device's own key.
+ASK_LINK_MODULES = ("src/core/ask_links.lua", "src/api/handlers/ask_links.lua")
+
+
+def check_ask_links_open_nothing(files):
+    for name in ASK_LINK_MODULES:
+        text = files.get(name)
+        if text is None:
+            fail(f"{name} is missing")
+        code = lua_code(text)
+        for pattern, what in (
+            (r"\badapters\b", "reach the device adapters"),
+            (r"\bexecute\s*\(", "send a command"),
+            (r"\bC4:SendToDevice\b", "send a command to a device"),
+            (r"\brunSaved\b", "run a scene"),
+        ):
+            if re.search(pattern, code):
+                fail(f"{name} must not {what}: an ask-to-open link only asks")
+
+
 def check_alarm_read_only(files):
     adapter = files.get(ALARM_ADAPTER)
     if adapter is None:
@@ -576,11 +619,19 @@ def check_alarm_read_only(files):
 # is allowed only by the module that reads the players' answers and the installer's property; the
 # API names a Sonos room, never an address.
 SONOS_CLIENT = "src/sonos/client.lua"
+# Grouping (1.8.0, ADR-057) is two actions: joining (SetAVTransportURI with the coordinator's
+# x-rincon: address) and leaving (BecomeCoordinatorOfStandaloneGroup). A group's volume is each
+# room's own SetVolume: no GroupRenderingControl, no other grouping action, no alarms or settings.
 SONOS_ACTIONS = {
     "GetTransportInfo", "GetPositionInfo", "GetMediaInfo", "Play", "Pause", "Stop", "Next", "Previous",
-    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "GetVolume", "SetVolume", "GetMute", "SetMute",
-    "GetZoneGroupState", "Browse",
+    "SetAVTransportURI", "RemoveAllTracksFromQueue", "AddURIToQueue", "BecomeCoordinatorOfStandaloneGroup",
+    "GetVolume", "SetVolume", "GetMute", "SetMute", "GetZoneGroupState", "Browse",
 }
+# The x-rincon: address a room joins a group with is made in one place (Protocol.groupUri, which
+# takes only a player's id), and only src/sonos/sonos.lua uses it, for a coordinator it found in the
+# zone group state: the API never names what a room joins.
+SONOS_GROUP_URI = re.compile(r"""["']x-rincon:["']\s*\.\.""")
+SONOS_GROUP_URI_USERS = {"src/sonos/protocol.lua", "src/sonos/sonos.lua"}
 
 
 # main.lua loads the client only to hand it the search's network events (ReceivedFromNetwork,
@@ -625,6 +676,10 @@ def check_sonos(files):
             fail(f"{name} loads {SONOS_CLIENT}: requests go through src/sonos/sonos.lua")
         if name == "src/main.lua":
             check_sonos_client_in_main(code)
+        if SONOS_GROUP_URI.search(code) and name != "src/sonos/protocol.lua":
+            fail(f"{name} makes an x-rincon: address: only Protocol.groupUri in src/sonos/protocol.lua does")
+        if re.search(r"\bgroupUri\b", code) and name not in SONOS_GROUP_URI_USERS:
+            fail(f"{name} uses Protocol.groupUri: only src/sonos/sonos.lua joins a room to a group")
     match = re.search(r"^Protocol\.ACTIONS = \{([^}]*)\}", files.get("src/sonos/protocol.lua", ""), re.M)
     if not match:
         fail("could not read Protocol.ACTIONS in src/sonos/protocol.lua")
@@ -677,6 +732,7 @@ def main():
     check_embedded_spec(files[SPEC_MODULE], version)
     check_security_contract(files)
     check_alarm_read_only(files)
+    check_ask_links_open_nothing(files)
     check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)

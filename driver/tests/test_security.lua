@@ -139,7 +139,8 @@ function tests.a_viewer_key_sealed_at_home_keeps_its_role()
     local admin = sealedPair(mock)
     local viewer = T.http(mock, "POST", "/v1/api-keys", { key = admin.key, body = { name = "Guest", role = "viewer" } }).json
     local answer = sealed(mock, viewer.key, viewer.id, { method = "PATCH", path = "/v1/lights/20", body = { on = true } })
-    T.eq(answer.status, 403)
+    T.eq(answer.status, 404, "a viewer of 1.7.0 has no rooms (ADR-054): the light is not theirs")
+    T.eq(sealed(mock, viewer.key, viewer.id, { method = "GET", path = "/v1/api-keys" }).status, 403)
 end
 
 -- The app seals the room order at home too (PUT /v1/rooms/order, refused as a method since 1.0.0).

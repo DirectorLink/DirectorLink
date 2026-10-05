@@ -173,16 +173,22 @@ function tests.expired_keys_go_within_a_minute()
     T.eq(#Invitations.list(), 0, "its invitation went with it")
 end
 
--- An expired admin not yet removed is no other admin: the last live one cannot step down.
-function tests.an_expired_admin_does_not_count_for_last_admin()
+-- An expired admin not yet removed is no admin (ADR-054): not the home's owner any more, and no
+-- other admin the last live one could leave the home to.
+function tests.an_expired_admin_does_not_count_for_owner_or_last_admin()
     local mock = Mock.startDriver()
-    local phone, response = T.pair(mock, "Owner phone")
     pairWith(mock, { name = "DirectorLink Console", expires_in = 60 })
-    local demoted = later(120, function()
-        return T.http(mock, "PATCH", "/v1/api-keys/" .. response.json.id, { key = phone, body = { role = "member" } })
+    local phone, response = T.pair(mock, "Owner phone")
+    local guest = T.http(mock, "POST", "/v1/api-keys", { key = phone, body = { name = "Guest", role = "member" } }).json
+    T.eq(T.http(mock, "GET", "/v1/api-keys/current", { key = phone }).json.access.owner, false, "the console paired first")
+    local moved = later(120, function()
+        return T.http(mock, "PATCH", "/v1/api-keys/" .. response.json.id, { key = phone, body = { profile_id = guest.profile_id } })
     end)
-    T.eq(demoted.status, 409, demoted.body)
-    T.eq(demoted.json.code, "LAST_ADMIN")
+    T.eq(moved.status, 409, moved.body)
+    T.eq(moved.json.code, "LAST_ADMIN")
+    later(120, function()
+        T.eq(T.http(mock, "GET", "/v1/api-keys/current", { key = phone }).json.access.owner, true, "the oldest admin left")
+    end)
 end
 
 function tests.a_change_to_an_expired_key_finds_no_key()

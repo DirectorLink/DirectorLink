@@ -21,6 +21,7 @@ local Random = require("src.core.random")
 local Version = require("src.core.version")
 local Keys = require("src.auth.keys")
 local Profiles = require("src.auth.profiles")
+local People = require("src.auth.people")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
 local Scenes = require("src.core.scenes")
@@ -63,6 +64,9 @@ local SECTIONS = {
     sonos_rooms = { version = 1, object = "rooms", optional = true },
     -- The scene links (src/core/scene_links.lua), hashes only, from 1.7.0 (ADR-051).
     scene_links = { version = SceneLinks.STORE_VERSION, list = "links", optional = true },
+    -- People's roles and permissions, the owner and the rooms hidden from members
+    -- (src/auth/people.lua), from 1.8.0 (ADR-054).
+    people = { version = People.STORE_VERSION, object = "people", optional = true },
 }
 
 -- Scene step types and favorites ("kind:id") name the kinds of the project's devices so.
@@ -154,6 +158,12 @@ local function eachReference(sections, visit)
                 if tonumber(step.room_id) then
                     visit("room", tonumber(step.room_id))
                 end
+                -- The rooms a music step plays a favorite in besides its own (1.8.0, ADR-057).
+                for _, id in ipairs(items(isObject(step.set) and step.set.with_room_ids or nil)) do
+                    if tonumber(id) then
+                        visit("room", tonumber(id))
+                    end
+                end
                 for _, id in ipairs(items(step.device_ids)) do
                     if tonumber(id) then
                         visit(STEP_KINDS[step.type], tonumber(id))
@@ -191,6 +201,19 @@ local function eachReference(sections, visit)
     for _, choice in pairs(isObject(sonos) and sonos or {}) do
         if isObject(choice) and tonumber(choice.room_id) then
             visit("room", tonumber(choice.room_id))
+        end
+    end
+    local people = sections.people
+    for _, person in pairs(isObject(people) and isObject(people.people) and people.people or {}) do
+        for _, id in ipairs(items(isObject(person) and person.rooms or nil)) do
+            if tonumber(id) then
+                visit("room", tonumber(id))
+            end
+        end
+    end
+    for _, id in ipairs(items(isObject(people) and people.hidden_rooms or nil)) do
+        if tonumber(id) then
+            visit("room", tonumber(id))
         end
     end
 end
@@ -259,6 +282,7 @@ function Backup.export(registry)
         remote_identity = Relay.backupIdentity(),
         sonos_rooms = SonosRooms.backup(),
         scene_links = SceneLinks.backup(),
+        people = People.backup(),
     }
     return {
         format = Backup.FORMAT,
@@ -727,8 +751,22 @@ local function matchScenes(m, scenes, counts)
                     end
                     keep = #ids > 0
                 end
+                local set = step.set
+                if keep and step.type == "music" and set.with_room_ids then
+                    -- The rooms grouped with it: each matched as a step's room; one not found is
+                    -- left out, and the favorite still plays in the others.
+                    set = Scenes.copySet(set)
+                    local rooms = Json.array()
+                    for _, id in ipairs(set.with_room_ids) do
+                        local newId = resolve(m, "room", id, where)
+                        if newId and newId ~= roomId then
+                            rooms[#rooms + 1] = newId
+                        end
+                    end
+                    set.with_room_ids = #rooms > 0 and rooms or nil
+                end
                 if keep then
-                    steps[#steps + 1] = { type = step.type, room_id = roomId, device_ids = ids, set = step.set }
+                    steps[#steps + 1] = { type = step.type, room_id = roomId, device_ids = ids, set = set }
                 else
                     counts.steps = counts.steps + 1
                 end
@@ -870,6 +908,77 @@ local function matchRoomOrder(m, order)
         end
     end
     return result
+end
+
+-- People's roles and permissions, the owner and the rooms hidden from members (ADR-054), as they will
+-- be after the restore. They follow the keys' rule: the backup's when its keys come back
+-- (`restoring`), their rooms matched to the project like scene steps, else the ones here, so that a
+-- permission taken away since the backup was made never comes back. Only the people of `profiles`
+-- (those after the restore), and of a member's scenes only those that come back (`sceneIds`). From
+-- a backup made before 1.8.0 (no `section`), the people its keys come back with have none: they are
+-- worked out from their keys after the restore, as at the update (main.lua). Returns the section and
+-- how many people it keeps.
+local function matchPeople(m, restoring, section, profiles, sceneIds)
+    local here = People.read(People.backup())
+    local matched = restoring and section ~= nil
+    local from = here
+    if matched then
+        from = People.read(section)
+    elseif restoring then
+        from = People.read(nil)
+    end
+    local people, count, present = {}, 0, {}
+    for _, profile in ipairs(profiles) do
+        present[profile.id] = true
+        local fromBackup = matched and from.people[profile.id] ~= nil
+        -- The restoring device's own person, when the backup does not have them, stays as here.
+        local record = from.people[profile.id] or (restoring and here.people[profile.id]) or nil
+        if record then
+            local view = People.view(record)
+            local rooms = Json.array()
+            for _, id in ipairs(view.rooms) do
+                local newId = id
+                if fromBackup then
+                    newId = resolve(m, "room", id, { section = "people", name = profile.name })
+                end
+                if newId then
+                    rooms[#rooms + 1] = newId
+                end
+            end
+            view.rooms = rooms
+            local scenes = Json.array()
+            for _, id in ipairs(view.scenes) do
+                if sceneIds[id] then
+                    scenes[#scenes + 1] = id
+                end
+            end
+            view.scenes = scenes
+            people[profile.id] = view
+            count = count + 1
+        end
+    end
+    local ids = {}
+    for id in pairs(matched and from.hidden or here.hidden) do
+        ids[#ids + 1] = id
+    end
+    table.sort(ids)
+    local hidden = Json.array()
+    for _, id in ipairs(ids) do
+        local newId = id
+        if matched then
+            newId = resolve(m, "room", id, { section = "people" })
+        end
+        if newId then
+            hidden[#hidden + 1] = newId
+        end
+    end
+    local owner = matched and from.owner or here.owner
+    return {
+        version = People.STORE_VERSION,
+        people = people,
+        owner = owner and present[owner] and owner or nil,
+        hidden_rooms = hidden,
+    }, count
 end
 
 -- ---- The keys and the remote identity ----------------------------------------------------------
@@ -1079,11 +1188,15 @@ end
 -- could not be put back if the restore failed.
 local READ_AT_START = {
     { name = "keys", complete = Keys.complete },
+    -- The people (src/auth/people.lua) are kept by profile: profiles left out would take them.
+    { name = "profiles", complete = Profiles.complete },
     { name = "scenes", complete = Scenes.complete },
     { name = "schedules", complete = Schedules.complete },
     { name = "calendar", complete = JewishCalendar.complete },
     -- Only written when the backup has them.
     { name = "sonos_rooms", complete = SonosRooms.complete, optional = true },
+    -- Always written: from a backup without them, the people here that still apply.
+    { name = "people", complete = People.complete },
     -- Always written: from a backup without them, the links here that still apply.
     { name = "scene_links", complete = SceneLinks.complete },
 }
@@ -1214,6 +1327,8 @@ function Backup.plan(document, context)
         end
     end
 
+    local people, peopleCount = matchPeople(m, keyInfo.action == "restore", sections.people, matchedProfiles, sceneIds)
+
     local composer = Json.array()
     local stored = isObject(document.composer) and document.composer or {}
     for _, name in ipairs(Backup.COMPOSER) do
@@ -1247,6 +1362,7 @@ function Backup.plan(document, context)
             room_order = #order,
             sonos_rooms = nullable(sonosCount),
             scene_links = #links,
+            people = peopleCount,
         },
         left_out = counts,
         keys = keyInfo,
@@ -1282,6 +1398,7 @@ function Backup.plan(document, context)
             remote_identity = identity,
             sonos_rooms = sonosRooms and { version = 1, rooms = sonosRooms } or nil,
             scene_links = { version = SceneLinks.STORE_VERSION, links = links },
+            people = people,
         },
     }
 end
@@ -1314,6 +1431,8 @@ local PARTS = {
     -- Only when the backup has them (1.6.0 and later).
     { name = "sonos_rooms", take = SonosRooms.backup, write = SonosRooms.restore, optional = true },
     { name = "scene_links", take = SceneLinks.backup, write = SceneLinks.restore },
+    -- Always written (1.8.0, ADR-054): from a backup without them, the people here that still apply.
+    { name = "people", take = People.backup, write = People.restore },
 }
 
 local function write(part, data, now)

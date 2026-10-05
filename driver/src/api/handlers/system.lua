@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Clock = require("src.core.clock")
 local Version = require("src.core.version")
 local Problem = require("src.api.problem")
+local Access = require("src.auth.access")
 
 local System = {}
 
@@ -18,6 +19,16 @@ local function number(value)
         return Json.null
     end
     return parsed
+end
+
+-- Whether a camera raises alerts (src/adapters/camera.lua).
+local function cameraAlerts(registry)
+    for _, camera in ipairs(registry.cameraList and registry.cameraList() or {}) do
+        if camera.capabilities and camera.capabilities.alerts == true then
+            return true
+        end
+    end
+    return false
 end
 
 function System.health(ctx)
@@ -41,6 +52,52 @@ function System.openapi(_ctx)
     return 200, document
 end
 
+-- What the home has, as GET /v1/system's inventory: everything for admins; for a member only what
+-- they see (ADR-054: the rooms theirs, and there the devices Access.canSee gives them), so that it
+-- says nothing of the rest.
+local INVENTORY = { light = "lights", climate = "thermostats", fan = "fans", blind = "blinds", camera = "cameras", relay = "relays", doorbell = "doorbells", refrigerator = "refrigerators" }
+
+local function inventory(actor, registry, counts)
+    if Access.isAdmin(actor) then
+        return {
+            rooms = counts.rooms,
+            devices = counts.devices,
+            supported_devices = counts.supported,
+            lights = counts.supported_lights,
+            thermostats = counts.supported_climate,
+            fans = counts.supported_fans,
+            blinds = counts.supported_blinds,
+            cameras = counts.supported_cameras,
+            relays = counts.supported_relays,
+            doorbells = counts.supported_doorbells,
+            refrigerators = counts.supported_refrigerators,
+        }
+    end
+    local result = { rooms = 0, devices = 0, supported_devices = 0 }
+    for _, field in pairs(INVENTORY) do
+        result[field] = 0
+    end
+    for id in pairs(registry.rooms or {}) do
+        if Access.seesRoom(actor, id) then
+            result.rooms = result.rooms + 1
+        end
+    end
+    for _, device in pairs(registry.devices or {}) do
+        if Access.canSee(actor, device) then
+            result.devices = result.devices + 1
+            -- Alarm partitions are counted apart, as for admins (Registry.counts).
+            if device.supported and device.kind ~= "alarm" then
+                result.supported_devices = result.supported_devices + 1
+                local field = INVENTORY[device.kind]
+                if field then
+                    result[field] = result[field] + 1
+                end
+            end
+        end
+    end
+    return result
+end
+
 local function rounded(value)
     if type(value) ~= "number" then
         return Json.null
@@ -49,7 +106,7 @@ local function rounded(value)
 end
 
 function System.info(ctx)
-    local admin = ctx.apiKey and ctx.apiKey.role == "admin"
+    local admin = Access.isAdmin(ctx.apiKey)
     local services = ctx.services
     local registry = services.registry
     local metadata = registry.metadata or {}
@@ -80,19 +137,8 @@ function System.info(ctx)
             longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
-        inventory = {
-            rooms = counts.rooms,
-            devices = counts.devices,
-            supported_devices = counts.supported,
-            lights = counts.supported_lights,
-            thermostats = counts.supported_climate,
-            fans = counts.supported_fans,
-            blinds = counts.supported_blinds,
-            cameras = counts.supported_cameras,
-            relays = counts.supported_relays,
-            doorbells = counts.supported_doorbells,
-            refrigerators = counts.supported_refrigerators,
-        },
+        -- A member's: only what they see.
+        inventory = inventory(ctx.apiKey, registry, counts),
         lifecycle = {
             reload_count = tonumber(lifecycle.reload_count) or 0,
             last_init_type = text(lifecycle.last_init_type),
@@ -112,6 +158,15 @@ function System.info(ctx)
         -- scene_links: /v1/scene-links and a scene's link (1.7.0, ADR-051), always there.
         -- refrigerators: /v1/refrigerators and the scene step that switches their features (1.7.0,
         -- ADR-049), always there.
+        -- people_permissions: admins and members set per person, and what each member may see and
+        -- do (1.8.0, ADR-054): /v1/profiles/{id}/access, `access` in /v1/api-keys/current and
+        -- /v1/profile, rooms hidden from members; always there.
+        -- sonos_groups: /v1/music/{id}/group, and music scene steps that resume, set the volume
+        -- and play a favorite (1.8.0, ADR-057), always there.
+        -- ask_links: /v1/ask-links, open requests sealed as alerts, and a pulse that answers one
+        -- (1.8.0, ADR-058), always there.
+        -- camera_alerts: a camera of the project raises alerts DirectorLink passes on (1.8.0,
+        -- ADR-056: the DirectorLink · Hikvision Camera driver), so the app offers their choice.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -121,6 +176,10 @@ function System.info(ctx)
             alert_choices = true,
             scene_links = true,
             refrigerators = true,
+            people_permissions = true,
+            sonos_groups = true,
+            ask_links = true,
+            camera_alerts = cameraAlerts(registry),
         },
     }
 end

@@ -13,7 +13,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
 | Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, refrigerators, the alarm, music (Sonos), scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Every key has a role: `viewer` (read, but not the alarm), `member` (also lights, climate, fans, blinds, music, running scenes, the alarm's status), `doors` (also doors and gates), `admin` (also keys, rooms, the room of a Sonos room, scenes, schedules, invitations, profiles, remote access, backups, log). Each operation states the least role it needs as `x-directorlink-role`; otherwise `403 FORBIDDEN`. `GET /v1/api-keys/current` tells a client its own role. Opening doors also needs **Door Control** = Enabled in Composer. |
+| Roles | Since 1.8.0 every key belongs to a person, `admin` or `member`, and has that person's permissions ([People and permissions](#people-and-permissions)). Each operation states who may call it as `x-directorlink-role`: `member` (every person; the answer holds only what they may see and do) or `admin` (otherwise `403 FORBIDDEN`). `GET /v1/api-keys/current` tells a client its role and `access`. Opening doors also needs **Door Control** = Enabled in Composer. Up to 1.7.0 each key had one of four roles: `viewer`, `member`, `doors`, `admin` (ADR-025). |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -37,7 +37,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 
    The app and the API console never send the code: they pair with CPace (1.3.0), in two requests (`{"name", "cpace": {"nonce"}}`, then `{"cpace": {"session", "share", "confirm"}}`); the exact inputs are in `api/openapi.yaml` (`POST /v1/auth/pair`) and `docs/ACCOUNTS.md`, the test vectors in `tests/vectors/cpace.json`. Each attempt counts as a wrong code until it succeeds. DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose lock failed its self-test answers `503 LOCK_UNAVAILABLE`.
 
-3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys`:
+3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys` (each a person of its own, or with `profile_id` another device of a person: [People and permissions](#people-and-permissions)):
 
    ```bash
    curl http://<controller-ip>:41999/v1/lights -H "Authorization: Bearer ak_..."
@@ -47,6 +47,25 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
    ```
 
 The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. It also keeps each key's lock key, for sealed requests: if a copy of the controller's data is lost, use **Revoke All API Keys** in Composer (which also removes every key if one is lost) and the owner's **Replace the remote secret** in the app (`docs/ACCOUNTS.md`).
+
+## People and permissions
+
+Since 1.8.0 (ADR-054) a key belongs to a person (a profile) and has that person's permissions. An admin may do everything. A member uses only the rooms and kinds of devices an admin gave them (`light`, `climate`, `fan`, `blind`, `music`, `refrigerator`), sees cameras and the alarm's status and opens doors and gates only when given them (they see the doors and gates in their rooms either way), and runs only the scenes chosen for them; they never see schedules, history, keys, invitations, profiles, room settings or backups. A room an admin marked hidden from members (`hidden_from_members` in `GET /v1/rooms`) is gone for every member.
+
+- Give a script a person of its own, with only the rooms and kinds it needs:
+
+  ```bash
+  curl -X POST http://<controller-ip>:41999/v1/api-keys \
+    -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+    -d '{"name": "Garden lights", "role": "member", "access": {"all_rooms": false, "rooms": [12], "kinds": {"climate": false, "fan": false, "blind": false, "music": false, "refrigerator": false}, "cameras": false, "alarm": false}}'
+  ```
+
+  What `access` leaves out is as for a new member: every room and kind, cameras on, doors off, the alarm on, no scenes. With `profile_id` instead, the key joins that person and has their permissions.
+- `GET /v1/api-keys/current` says what the key may do (`access`). Admins read and change a person's with `GET`/`PATCH /v1/profiles/{profileId}/access` (`role`, `all_rooms`, `rooms`, `kinds`, `cameras`, `doors`, `alarm`, `scenes`; `PATCH` takes any of them, the rest stays).
+- A device, room or scene the key may not see answers `404` like one that does not exist; a door or gate it sees but may not open, and an admin-only route, `403 FORBIDDEN`.
+- Every key's `role` in the answers stays a 1.7.0 role (`viewer`, `member`, `doors`, `admin`) worked out from its person. `POST /v1/api-keys` and `POST /v1/invitations` still take those roles, and `PATCH /v1/api-keys/{id}` `{"role"}` turns the key's whole person into what that role became.
+- After the update from 1.7.0, a script whose key had the `viewer` role sees nothing until an admin gives its person rooms and kinds.
+- `GET /v1/system` says `features.people_permissions: true` (missing before 1.8.0).
 
 ## Thermostats
 
@@ -111,7 +130,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/fans/41 \
   speed the fan chooses (its preset speed, or the last one); `{"on": false}` turns it off. There is
   no speed 0: `{"speed": 0}`, like any other value outside `speeds`, is `400 INVALID_FIELD`, and
   `"on": false` with a speed is `400 INVALID_REQUEST`. Nothing is sent when a request is refused.
-- Viewers read fans; members and above change them. In scenes a `fans` step sets
+- Admins, and members given fans in their rooms, read and change them. In scenes a `fans` step sets
   `{"on": true|false}` or `{"speed": 1-4}` on the fans it names, or on all of them in a room or the
   whole home.
 
@@ -138,7 +157,7 @@ Since 1.1.0 a blind says what it can do, and whether it is moving:
 
 ## Turning off several at once
 
-Since 1.3.0 `POST /v1/off` turns off lights, or thermostats (mode `off`), or closes blinds, in one request (members and above; the app's **Turn off all** on Home):
+Since 1.3.0 `POST /v1/off` turns off lights, or thermostats (mode `off`), or closes blinds, in one request (the app's **Turn off all** on Home; a member names only devices they control, and any other is `400` like a device that does not exist):
 
 ```bash
 curl -X POST http://<controller-ip>:41999/v1/off \
@@ -216,7 +235,7 @@ Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/c
 `GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed. It is read-only: nothing in the API arms or disarms, which takes the user's alarm code (ADR-038).
 
 - Off by default. Until an installer sets **Alarm Status** to On in Composer, the answer is `{"enabled": false, "partitions": []}`, and DirectorLink does not watch the alarm. `GET /v1/system` says which in `features.alarm_status`.
-- For `member`, `doors` and `admin` keys; viewers get `403 FORBIDDEN`.
+- For admins and the members given the alarm's status (ADR-054); others get `403 FORBIDDEN`.
 - Only in sealed requests: on the home network through `POST /v1/sealed`, as the app sends every request, and through remote access. With `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`, so whether the home is armed never crosses a network in the clear. Scripts and the API console, which do not seal, cannot read it.
 - Nor does the size of the sealed answer tell it: the JSON is followed by spaces up to the size it would have with every partition at its longest, so that its size depends only on the partitions there are (their names and rooms), never on their state. For that the panel's words are cut, at a character, to 32 bytes (`state`, `armed_type`, `alarm_type`) and 100 (`trouble`), with control characters made spaces, and `open_zones` and the delay's seconds stop at 99999.
 
@@ -249,7 +268,7 @@ Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home 
 
 - Off by default. Until an installer sets **Sonos** to On in Composer, `GET /v1/music` answers `{"enabled": false, "status": "off", "items": []}`, every other music route `409 SONOS_OFF`, and DirectorLink looks for no player. `GET /v1/system` says which in `features.sonos`.
 - Each item is a Sonos room, named by its id (`RINCON_…`), never an address: DirectorLink talks only to the players it found (or the one at **Sonos Address**), on port 1400.
-- Viewers read; members and admins control; admins place a Sonos room in a Control4 room.
+- Admins, and members given music in their rooms, read and control; admins place a Sonos room in a Control4 room.
 
 ```json
 {
@@ -276,7 +295,8 @@ Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home 
 - `GET /v1/music/{id}/art` is the album art of what the group plays, through the controller (`404 NO_ART` when there is none); `now_playing.art_key` changes when the picture does.
 - `PUT /v1/music/{id}/room` with `{"room_id": 12}` (admins) puts a Sonos room in a Control4 room; `null` goes back to its name.
 - A player that does not answer: `502 PLAYER_UNREACHABLE` (and `reachable: false`); too many requests waiting: `503 PLAYER_BUSY`.
-- In scenes a `music` step `{"type": "music", "room_id": 10, "set": {"action": "pause"}}` pauses (or `"stop"`) the groups with a room there, or every group without `room_id`.
+- Groups (1.8.0, ADR-057; `features.sonos_groups`): `POST /v1/music/{id}/group` with `{"with": "<id>"}` puts the room in the group of that room, as the Sonos app's Group does (`404` for a room DirectorLink does not know); `DELETE /v1/music/{id}/group` takes it out, to play on its own; `PATCH /v1/music/{id}/group` with `{"volume": 0-100}` sets the group's volume through each room's own, keeping their balance. `GET /v1/music` adds `groups`: each coordinator, its rooms, what it plays and its volume (the rooms' average, also `group.volume` on each room). A command on a group (play, pause, skip, a favorite, its volume, leaving, joining) needs every room in it to be one the key may control (`403 FORBIDDEN`).
+- In scenes a `music` step `{"type": "music", "room_id": 10, "set": {"action": "pause"}}` pauses (or `"stop"`) the groups with a room there, or every group without `room_id`. Since 1.8.0 also `{"action": "resume"}`, `{"action": "volume", "volume": 20}`, and `{"action": "play_favorite", "favorite": {"id": "10"}, "volume": 25, "with_room_ids": [11]}` in a room: the rooms are grouped, get the volume and play the favorite; a favorite since removed in Sonos is skipped with `FAVORITE_GONE`.
 
 ```bash
 curl -X POST http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400/pause -H "Authorization: Bearer ak_..."
@@ -287,7 +307,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400   -
 
 `GET /v1/backup` (since 1.4.0) gives everything DirectorLink keeps as one document, and `POST /v1/restore` puts it back (ADR-042, [`docs/BACKUP.md`](../docs/BACKUP.md)). For `admin` keys, and only in sealed requests (`POST /v1/sealed` at home, and through remote access): the document holds every key's hash and lock key and the home's remote identity, so with `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`. The app encrypts it with a password before saving it; scripts and the API console, which do not seal, cannot make or restore one. `GET /v1/system` says the driver has backups (`"features": {"backup": true}`; drivers before 1.4.0 do not say it, and the app shows them no Backup).
 
-- The document: `format`, `format_version`, `driver_version`, `created_at`, `home`, `controller_id` (a hash of the controller's MAC address, null when Director does not give it), `composer` (how the Composer properties are set; listed, never restored), `references` (the rooms' and devices' names by id) and `sections`, one per store as it is kept, with its version: `keys`, `profiles`, `room_names`, `room_order`, `scenes`, `schedules`, `calendar`, `remote_identity` (only an identity the relay has accepted, with `linked: true`; otherwise `{"version": 1, "linked": false}`: none is made for a backup).
+- The document: `format`, `format_version`, `driver_version`, `created_at`, `home`, `controller_id` (a hash of the controller's MAC address, null when Director does not give it), `composer` (how the Composer properties are set; listed, never restored), `references` (the rooms' and devices' names by id) and `sections`, one per store as it is kept, with its version: `keys`, `profiles`, `room_names`, `room_order`, `scenes`, `schedules`, `calendar`, `remote_identity` (only an identity the relay has accepted, with `linked: true`; otherwise `{"version": 1, "linked": false}`: none is made for a backup), and since 1.8.0 `people` (each person's role and permissions, the owner, the rooms hidden from members).
 - Back, in parts: `POST /v1/restore/parts` with `{"index": 0, "count": 3, "text": "…"}`, then `{"upload": "<id>", "index": 1, …}` in order (at most 48 KiB of the JSON text each, 2 MiB and 100 parts in all; the upload is the key's, one per key and three in all, dropped 10 minutes after its last use). A sealed request at home is at most 64 KiB.
 - `POST /v1/restore {"upload": "<id>"}` checks it and changes nothing (`dry_run` is true unless sent false); `{"upload": "<id>", "dry_run": false}` replaces every store, or none (`500 RESTORE_FAILED`). A small document can go as `{"document": {...}}` instead of an upload. The answer, `restore`, says whether the backup looks like another home's (`origin`: `another_home` and its `reasons`), what there is after it (`counts`), what is left out (`left_out`), the keys (`keys.action`: `restore`, the backup's come back, listed in `items` by name and role, only when no key but the sender's is paired and the sender's is not in the backup; or `kept`, every key as it is now), the remote identity (`same`; `restore`: the backup's home from two seconds after the answer, unless the relay refuses it; `kept`: another home's, not moved; `none`: the backup has none; and `old_controller`), the rooms and devices found by id, by name (`by_name`), renamed and not found (`unmatched`, with `used_in`, and `now` for a door or gate that is not moved), and `composer` (the backup's value and the current one). With the restore, `replaces_key` makes the sending key take the place of one of the backup's keys (its profile and role; that key is not restored), and `move_remote: true` brings another home's remote identity here.
 - Refused: `422 BACKUP_INVALID` (not a backup, or a section missing or of the wrong shape, with `errors`), `409 BACKUP_TOO_NEW` (made by a newer DirectorLink), `409 UPLOAD_INCOMPLETE`, `409 KEYS_KEPT` (`replaces_key` while the keys are kept), `409 LAST_ADMIN` (it would leave no admin), `404 UPLOAD_NOT_FOUND`, `503 PROJECT_NOT_READY` (the project is not read yet), `503 UNAVAILABLE` (a store could not be read when DirectorLink started, with `store`: a restore would overwrite it; restart the driver).

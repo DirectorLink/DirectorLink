@@ -14,6 +14,10 @@
 //   POST   /v1/homes/{home_id}/device-requests/{id}/collect  the new device takes it; the request goes
 //   DELETE /v1/homes/{home_id}/device-requests/{id}          declined, or withdrawn
 //
+// A new request is pushed at once to the same account's browsers at the home registered with an
+// admin key that want it (1.8.0; alerts.js deviceRequest), so the device that approves need not
+// have the app open; it says only that a device asks (no label), at most 3 an hour an account.
+//
 // Only the account's own sessions see or change its requests. The new device sends a commitment
 // to its public key first and the key itself only once the approving device's key is there, so
 // whoever passes the keys on (this server too) cannot choose keys that give both screens the same
@@ -138,7 +142,7 @@ async function findRequest(env, user, homeId, id) {
   return row;
 }
 
-async function startRequest(request, env, user, homeId) {
+async function startRequest(request, env, user, homeId, ctx) {
   if (!(await isMember(env, homeId, user.id))) return notMember();
   const input = await body(request);
   const label = cleanLabel(input?.label);
@@ -184,7 +188,24 @@ async function startRequest(request, env, user, homeId) {
     return problem(429, "DEVICE_REQUEST_LIMIT_REACHED", `At most ${MAX_OPEN_PER_ACCOUNT} requests may wait at a time; withdraw one, or wait 10 minutes`);
   }
   log("device_request_created", { home: homeId, user: user.id, request: row.id });
+  // The new device is answered at once: the push goes on after the answer (a push service may take
+  // seconds), its failure only logged.
+  const pushed = pushRequest(env, homeId, user.id, row.id);
+  if (ctx?.waitUntil) ctx.waitUntil(pushed);
+  else await pushed;
   return json(view(row), 201);
+}
+
+// The account's devices with an admin key at the home hear of the request at once, with the app
+// closed (1.8.0, ADR-053 as amended by ADR-059): the home's object pushes "A new device asks to
+// join" to the browsers that want it (alerts.js). The request is made whatever happens to the push,
+// and answered without waiting for it (ctx.waitUntil in startRequest); this never throws.
+async function pushRequest(env, homeId, userId, requestId) {
+  try {
+    await homeObject(env, homeId, { op: "device_request", user: userId, request: requestId });
+  } catch (error) {
+    log("device_request_push_failed", { home: homeId, user: userId, request: requestId, error: String(error?.message ?? error) });
+  }
 }
 
 async function listRequests(env, user, homeId) {
@@ -295,7 +316,7 @@ async function deleteRequest(env, user, homeId, id) {
 const ONE = /^\/v1\/homes\/([0-9a-f]{32})\/device-requests\/([0-9a-f]{32})/;
 
 export const DEVICE_REQUEST_ROUTES = [
-  [/^\/v1\/homes\/([0-9a-f]{32})\/device-requests$/, { GET: (r, env, user, m) => listRequests(env, user, m[1]), POST: (r, env, user, m) => startRequest(r, env, user, m[1]) }],
+  [/^\/v1\/homes\/([0-9a-f]{32})\/device-requests$/, { GET: (r, env, user, m) => listRequests(env, user, m[1]), POST: (r, env, user, m, ctx) => startRequest(r, env, user, m[1], ctx) }],
   [new RegExp(`${ONE.source}$`), { GET: (r, env, user, m) => getRequest(env, user, m[1], m[2]), DELETE: (r, env, user, m) => deleteRequest(env, user, m[1], m[2]) }],
   [new RegExp(`${ONE.source}/answer$`), { POST: (r, env, user, m) => answerRequest(r, env, user, m[1], m[2]) }],
   [new RegExp(`${ONE.source}/key$`), { POST: (r, env, user, m) => showKey(r, env, user, m[1], m[2]) }],

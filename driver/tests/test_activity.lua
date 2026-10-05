@@ -336,16 +336,23 @@ function tests.scenes_run_from_the_app_say_who_and_how_it_went()
     T.eq(door.via, "Good night", "opened by the scene")
     T.eq(door.ids.device_id, 70)
 
-    -- A member's run: the door is skipped; a scene of only doors does nothing.
+    -- A member's run of a scene chosen for them: in full (ADR-054), the door too. With Door
+    -- Control off, the door is skipped; a scene of only doors does nothing.
     local member = createKey(mock, admin, "member", "Kids tablet")
+    local gate = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } } } } }).json
+    local memberProfile = T.http(mock, "GET", "/v1/api-keys/current", { key = member }).json.profile_id
+    T.eq(T.http(mock, "PATCH", "/v1/profiles/" .. memberProfile .. "/access", { key = admin, body = { scenes = { scene.id, gate.id } } }).status, 200)
+    T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member })
+    T.same(newest(mock, admin, "scene", "run").counts, { failed = 0, ran = 3, skipped = 0 })
+    T.eq(newest(mock, admin, "scene", "run").who.name, "Kids tablet")
+    T.eq(#all(mock, admin, "door"), 2, "the member's run opened the door")
+    Properties["Door Control"] = "Disabled"
     T.http(mock, "POST", "/v1/scenes/" .. scene.id .. "/run", { key = member })
     T.same(newest(mock, admin, "scene", "run").counts, { failed = 0, ran = 2, skipped = 1 })
-    T.eq(newest(mock, admin, "scene", "run").who.name, "Kids tablet")
-    local gate = T.http(mock, "POST", "/v1/scenes", { key = admin, body = { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } } } } }).json
     T.http(mock, "POST", "/v1/scenes/" .. gate.id .. "/run", { key = member })
     local skipped = newest(mock, admin, "scene", "run")
     T.eq(skipped.outcome, "skipped", "nothing ran")
-    T.eq(#all(mock, admin, "door"), 1, "no door opened")
+    T.eq(#all(mock, admin, "door"), 2, "no door opened")
     -- A device the controller cannot reach: failed, and on how many.
     local send = C4.SendToDevice
     C4.SendToDevice = function(self, deviceId, command, params)
@@ -581,11 +588,15 @@ function tests.keys_paired_created_changed_revoked_and_forgotten()
     T.eq(created.who.name, "Chrome on Windows")
     T.eq(created.ids.key_id, memberId)
 
+    -- Roles are a person's (ADR-054): doors is a member's permission, admin a role.
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "doors" } }).status, 200)
+    T.eq(newest(mock, admin, "access", "permissions_changed").what, "Kitchen tablet", "the person")
+    T.eq(#all(mock, admin, "access", "role_changed"), 0)
+    T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { role = "admin" } }).status, 200)
     local changed = newest(mock, admin, "access", "role_changed")
     T.eq(changed.what, "Kitchen tablet")
     T.eq(changed.from, "member")
-    T.eq(changed.to, "doors")
+    T.eq(changed.to, "admin")
     T.eq(T.http(mock, "PATCH", "/v1/api-keys/" .. memberId, { key = admin, body = { name = "Hall tablet" } }).status, 200)
     T.eq(#all(mock, admin, "access", "role_changed"), 1, "a new name is not a new role")
 

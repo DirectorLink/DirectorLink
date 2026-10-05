@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 local Lights = {}
 
@@ -11,7 +12,8 @@ local function findLight(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "light" or device.supported ~= true then
+    -- A light the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "light" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Light", id)
     end
     return device
@@ -24,7 +26,7 @@ function Lights.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.lightList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.lightList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.light(registry, device)
         end
@@ -44,6 +46,9 @@ function Lights.update(ctx)
     local device, problem = findLight(ctx)
     if not device then
         return problem
+    end
+    if not Access.canControl(ctx.apiKey, device) then
+        return Problem.new(403, "FORBIDDEN", "This person may not change this light")
     end
 
     local body = ctx.body

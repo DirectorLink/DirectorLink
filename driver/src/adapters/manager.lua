@@ -29,6 +29,9 @@ local adapters = {
 }
 
 local attached = {}
+-- The adapter that took each device, whether it could start it or not (a refrigerator whose driver
+-- lacks a variable): what a driver update may set up again (Manager.setUpAgain).
+local matched = {}
 -- Told of each device event an adapter took (alerts: a doorbell's ring, a door opened elsewhere).
 local eventListener = nil
 -- When DirectorLink last sent each device a command that worked (Clock.now()): what the device
@@ -88,6 +91,7 @@ end
 function Manager.initialize(deviceRegistry, previous)
     registry = deviceRegistry
     attached = {}
+    matched = {}
     eventTargets = {}
     initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0, refrigerator = 0 }
     local refreshing = previous ~= nil and next(previous) ~= nil
@@ -111,6 +115,7 @@ function Manager.initialize(deviceRegistry, previous)
         end
         for _, adapter in ipairs(adapters) do
             if adapter.matches(device) then
+                matched[tonumber(id)] = adapter
                 if attach(tonumber(id), device, adapter, before, refreshing) then
                     initialized = initialized + 1
                 end
@@ -141,10 +146,12 @@ function Manager.onPropertyChanged(name)
                         pcall(adapter.release, device)
                     end
                     attached[id] = nil
+                    matched[id] = nil
                     device.supported = false
                     countKind(device, -1)
                     released = released + 1
                 elseif attached[id] == nil and adapter.matches(device) then
+                    matched[id] = adapter
                     if attach(id, device, adapter, nil, false) then
                         started = started + 1
                     end
@@ -153,6 +160,109 @@ function Manager.onPropertyChanged(name)
         end
     end
     return started, released
+end
+
+-- The ids of the drivers behind a device, whose versions src/control4/driver_updates.lua watches:
+-- its protocol drivers (a refrigerator's Samsung driver, a KNX light's driver), else the device.
+function Manager.driverIds(device)
+    local ids = {}
+    for _, protocol in ipairs(type(device) == "table" and device.protocols or {}) do
+        if tonumber(protocol.id) then
+            ids[#ids + 1] = tonumber(protocol.id)
+        end
+    end
+    if #ids == 0 and type(device) == "table" and tonumber(device.id) then
+        ids[1] = tonumber(device.id)
+    end
+    return ids
+end
+
+-- The devices an adapter took, whether it could start them or not: id -> device.
+function Manager.matchedDevices()
+    local devices = {}
+    for id in pairs(matched) do
+        local device = registry and registry.getDevice(id)
+        if device then
+            devices[id] = device
+        end
+    end
+    return devices
+end
+
+-- Stops watching every variable of `sourceId` (its adapter registers again what it watches).
+local function stopWatching(sourceId)
+    local ok, variables = pcall(function()
+        return C4:GetDeviceVariables(sourceId)
+    end)
+    if not ok or type(variables) ~= "table" then
+        return
+    end
+    for variableId in pairs(variables) do
+        if tonumber(variableId) then
+            pcall(function()
+                C4:UnregisterVariableListener(sourceId, tonumber(variableId))
+            end)
+        end
+    end
+end
+
+-- Devices whose driver was updated in Composer (src/control4/driver_updates.lua): each one's adapter
+-- sets it up again as at a project refresh (its variables, listeners and capabilities), keeping what
+-- a refresh keeps (a relay's last state, a doorbell's rings), and no other device is touched. The
+-- variables of the devices, their drivers and where their events come from are let go first, unless
+-- another device is watched there too. Returns id -> true when the device works now, false if not.
+function Manager.setUpAgain(deviceIds)
+    local results = {}
+    if not registry then
+        return results
+    end
+    local chosen = {}
+    for _, rawId in ipairs(deviceIds or {}) do
+        local id = tonumber(rawId)
+        if id and matched[id] and registry.getDevice(id) then
+            chosen[id] = true
+        end
+    end
+    local sources, others = {}, {}
+    for id in pairs(matched) do
+        local device = registry.getDevice(id)
+        if device then
+            local list = Manager.driverIds(device)
+            list[#list + 1] = id
+            list[#list + 1] = tonumber(device.event_source_id)
+            for _, source in ipairs(list) do
+                if chosen[id] then
+                    sources[source] = true
+                else
+                    others[source] = true
+                end
+            end
+        end
+    end
+    for source in pairs(sources) do
+        if not others[source] then
+            stopWatching(source)
+        end
+    end
+    for id in pairs(chosen) do
+        local device = registry.getDevice(id)
+        local before = nil
+        if attached[id] then
+            local state = {}
+            for key, value in pairs(type(device.state) == "table" and device.state or {}) do
+                state[key] = value
+            end
+            before = { kind = device.kind, supported = device.supported, state = state }
+            countKind(device, -1)
+        end
+        attached[id] = nil
+        if device.event_source_id then
+            eventTargets[tonumber(device.event_source_id)] = nil
+        end
+        device.supported = false
+        results[id] = attach(id, device, matched[id], before, false)
+    end
+    return results
 end
 
 function Manager.counts()
@@ -309,6 +419,7 @@ function Manager.shutdown()
     end)
 
     attached = {}
+    matched = {}
     eventTargets = {}
     registry = nil
     initializedCounts = { total = 0, light = 0, climate = 0, fan = 0, blind = 0, camera = 0, relay = 0, doorbell = 0, alarm = 0, refrigerator = 0 }

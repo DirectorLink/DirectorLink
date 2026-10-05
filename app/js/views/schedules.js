@@ -67,6 +67,8 @@ function leave(hash, from) {
 // Entering Schedules or the editor: the scenes to pick from, the weather now and the Shabbat times,
 // and the weather every 5 minutes while it is open.
 export function enterSchedules() {
+  // Members never see schedules (1.8.0, ADR-054): nothing to load.
+  if (membersHaveNoSchedules()) return;
   loadScenes();
   loadSchedules();
   loadWeather();
@@ -88,8 +90,14 @@ export function keepWeatherFresh() {
   if (!weatherTimer) enterSchedules();
 }
 
-// Scenes | Schedules, at the top of both lists.
+// With DirectorLink 1.8.0 schedules are the admins' (ADR-054): a member's app shows none.
+export function membersHaveNoSchedules() {
+  return state.system?.features?.people_permissions === true && !can("admin");
+}
+
+// Scenes | Schedules, at the top of both lists (Scenes alone for a member of a 1.8.0 home).
 export function scenesNav(current) {
+  if (membersHaveNoSchedules()) return null;
   return h(
     "nav",
     { class: "segments sub-nav", "aria-label": t("scenes.title"), style: { "grid-template-columns": "repeat(2, minmax(0, 1fr))" } },
@@ -195,6 +203,7 @@ export function schedulesView() {
   const header = pageHeader({ title: t("schedules.title") });
   const notReady = notReadyState();
   if (notReady) return [header, offlineBanner(), notReady];
+  if (membersHaveNoSchedules()) return [header, emptyState("clock", t("schedules.title"), t("schedules.adminsOnly"))];
   const waiting = notLoaded(header);
   if (waiting) return waiting;
   if (state.schedulesUnsupported) return [header, scenesNav("schedules"), emptyState("clock", t("schedules.title"), t("schedules.updateDriver"))];

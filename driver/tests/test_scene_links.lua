@@ -575,7 +575,8 @@ function tests.revoke_all_api_keys_ends_every_link()
     local _, connection = Harness.connected({ mock = updated })
     s = { mock = updated, key = s.key, connection = connection }
     local other, otherId = adminKey(s, "Other admin")
-    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/" .. T.http(s.mock, "GET", "/v1/api-keys/current", { key = s.key }).json.id, { key = other }).status, 204)
+    -- The home's owner's device goes by itself (another admin may not revoke it: ADR-054).
+    T.eq(T.http(s.mock, "DELETE", "/v1/api-keys/current", { key = s.key }).status, 204)
     T.eq(run(s, link.link_id, link.secret).ok, true, "a link that names no key outlives a revoked key")
     T.eq(T.http(s.mock, "GET", "/v1/scene-links", { key = other }).json.items[1].made_by, Json.null)
 

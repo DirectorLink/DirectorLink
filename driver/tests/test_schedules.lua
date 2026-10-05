@@ -268,8 +268,9 @@ function tests.schedule_input_and_roles_are_checked()
 
     local created = schedule(mock, admin, base({}))
     local viewer = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Guest", role = "viewer" } }).json.key
-    T.eq(T.http(mock, "GET", "/v1/schedules", { key = viewer }).status, 200)
-    T.eq(T.http(mock, "GET", "/v1/weather", { key = viewer }).status, 200)
+    T.eq(T.http(mock, "GET", "/v1/schedules", { key = viewer }).status, 403, "schedules are the admins' (ADR-054)")
+    T.eq(T.http(mock, "GET", "/v1/schedules/" .. created.id, { key = viewer }).status, 403)
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = viewer }).status, 200, "the weather is everyone's")
     T.eq(T.http(mock, "POST", "/v1/schedules", { key = viewer, body = base({}) }).status, 403)
     T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. created.id, { key = viewer, body = { enabled = false } }).status, 403)
     T.eq(T.http(mock, "PATCH", "/v1/schedules/" .. created.id, { key = admin, body = { days = { 1 }, version = 5 } }).json.code, "VERSION_CONFLICT")

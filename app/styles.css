@@ -653,6 +653,71 @@ img {
   font-weight: 600;
 }
 
+/* A person's role and permissions (views/permissions.js, 1.8.0): under their row in People, and in
+   Invite someone. */
+.perm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 100%;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.perm-roles,
+.perm-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.perm-role {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.perm-role.is-active {
+  border-color: var(--primary);
+}
+
+.perm-role input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+.perm-toggle {
+  display: flex;
+  gap: 12px;
+}
+
+/* Settings → Rooms, admins: Hide from members goes after the arrows, and to a line of its own,
+   under the name, when the row is narrow (a phone). */
+.room-order-row:has(.room-members) {
+  flex-wrap: wrap;
+}
+
+.room-order-row:has(.room-members) .room-order-name {
+  flex: 1 1 8em;
+}
+
+.room-members {
+  flex: none;
+  order: 1;
+  margin-inline-start: 20px;
+}
+
 .access-person {
   display: flex;
   flex-wrap: wrap;
@@ -1238,6 +1303,24 @@ select:disabled {
 }
 
 .fav-relay .relay-button {
+  margin-block-start: auto;
+}
+
+/* A favorite whose device was removed in Composer (1.8.0): dashed and quiet, with Remove. */
+.fav-tile.fav-gone {
+  border-style: dashed;
+  background: transparent;
+}
+
+.fav-gone .fav-name {
+  color: var(--muted);
+}
+
+.fav-gone .fav-state {
+  margin-block-start: 0;
+}
+
+.fav-gone .fav-gone-remove {
   margin-block-start: auto;
 }
 
@@ -2475,6 +2558,52 @@ select:disabled {
 
 .music-mute.is-muted {
   color: var(--errText);
+}
+
+/* A group of rooms (1.8.0): the group's slider, then each room with its own. */
+.music-group-volume {
+  margin-block-start: 8px;
+}
+
+.music-group-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.music-group-volume .slider-row {
+  margin: 0;
+}
+
+.music-members {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.music-member {
+  padding-block-start: 6px;
+}
+
+.music-member-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.music-member-name {
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
 }
 
 .music-favorites {
@@ -4071,6 +4200,56 @@ a.scene-name:hover {
   margin-block-start: 16px;
 }
 
+/* Ask before opening (ADR-058, views/ask-links.js): a door's link, the list, and the question. */
+.relay-ask {
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.ask-links {
+  max-width: none;
+}
+
+.ask-links .section-title {
+  margin: 8px 0 0;
+}
+
+.ask-links-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-links-item > .settings-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.ask-links-item > .button {
+  flex: 0 0 auto;
+  margin-inline-end: 8px;
+}
+
+.open-request {
+  max-width: 480px;
+}
+
+.open-request-question {
+  margin: 8px 0 0;
+  font-size: 24px;
+  line-height: 1.3;
+}
+
+.open-request-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.open-request-actions .button {
+  min-height: 56px;
+  font-size: 17px;
+}
+
 /* Add an action: where, what, do. */
 .add-title {
   margin: 0;
@@ -4168,6 +4347,29 @@ a.scene-name:hover {
 }
 
 .pick-item input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  accent-color: var(--primary);
+}
+
+/* A music action's favorite, its volume and the rooms grouped with it (1.8.0). */
+.add-favorites {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-block-start: 12px;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-block-start: 8px;
+}
+
+.check-row input[type="checkbox"] {
   width: 22px;
   height: 22px;
   flex: none;

@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 local Thermostats = {}
 
@@ -24,7 +25,8 @@ local function findThermostat(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "climate" or device.supported ~= true then
+    -- A thermostat the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "climate" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Thermostat", id)
     end
     return device
@@ -37,7 +39,7 @@ function Thermostats.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.climateList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.climateList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.thermostat(registry, device)
         end
@@ -57,6 +59,9 @@ function Thermostats.update(ctx)
     local device, problem = findThermostat(ctx)
     if not device then
         return problem
+    end
+    if not Access.canControl(ctx.apiKey, device) then
+        return Problem.new(403, "FORBIDDEN", "This person may not change this thermostat")
     end
 
     local body = ctx.body

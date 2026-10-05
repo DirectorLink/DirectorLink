@@ -47,6 +47,9 @@ export const state = {
   // This key's role (GET /v1/api-keys/current): viewer < member < doors < admin.
   // Drivers without roles answer 404 there; their keys can do everything, so "admin".
   role: null,
+  // What this person may do (1.8.0, ADR-054: GET /v1/api-keys/current `access`): { role: "admin" |
+  // "member", rooms, kinds, cameras, doors, alarm, scenes, ... }; null with older drivers.
+  access: null,
   lastUpdated: null,
   // Per device ("light:22"): short inline error after a failed command.
   errors: {},
@@ -125,9 +128,21 @@ export const KINDS = {
 export const ROLES = ["viewer", "member", "doors", "admin"];
 
 export function can(role) {
+  // 1.8.0 (ADR-054): admins and members, per person. A member uses what the controller lists for
+  // them (it lists nothing else), opens doors and gates if given them, and is no admin.
+  if (state.access) {
+    if (role === "admin") return state.access.role === "admin";
+    if (role === "doors") return state.access.role === "admin" || state.access.doors === true;
+    return true;
+  }
   const mine = ROLES.indexOf(state.role || "admin");
   // An unknown (newer) role gets the safe, read-only interface; the controller decides anyway.
   return mine >= 0 && mine >= ROLES.indexOf(role);
+}
+
+// The alarm's status: with 1.8.0 admins and the members given it (ADR-054); before, members and up.
+export function canSeeAlarm() {
+  return state.access ? state.access.role === "admin" || state.access.alarm === true : can("member");
 }
 
 export function deviceKey(kind, id) {

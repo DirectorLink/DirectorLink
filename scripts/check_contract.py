@@ -321,6 +321,36 @@ def sonos(client, bridge):
         fail(f"a music step in the Kitchen should stop one group: {ran}")
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "device_ids": [20], "set": {"action": "pause"}}]})
 
+    # Groups and the new scene steps (1.8.0, ADR-057).
+    if client.check("GET", "/v1/system", 200)["features"].get("sonos_groups") is not True:
+        fail("GET /v1/system should say that this driver groups Sonos rooms")
+    groups = {group["id"]: group for group in client.check("GET", "/v1/music", 200)["groups"]}
+    if groups[KITCHEN]["rooms"] != [KITCHEN, LIVING]:
+        fail(f"GET /v1/music should list Kitchen's group with Living Room: {groups}")
+    joined = client.check("POST", f"/v1/music/{TV}/group", 200, body={"with": LIVING})
+    if [room["id"] for room in joined["group"]["rooms"]] != [KITCHEN, LIVING, TV] or joined["group"]["id"] != KITCHEN:
+        fail(f"TV Room should join Kitchen's group: {joined}")
+    client.check("POST", f"/v1/music/{TV}/group", 404, body={"with": "RINCON_0BADF00D01400"})
+    client.check("POST", f"/v1/music/{TV}/group", 400, body={"with": "192.168.50.11"})
+    louder = client.check("PATCH", f"/v1/music/{TV}/group", 200, body={"volume": 40})
+    if louder["group"]["volume"] is None:
+        fail(f"the group's volume should be shown: {louder}")
+    client.check("PATCH", f"/v1/music/{TV}/group", 400, body={"volume": 101})
+    left = client.check("DELETE", f"/v1/music/{TV}/group", 200)
+    if [room["id"] for room in left["group"]["rooms"]] != [TV]:
+        fail(f"TV Room should play on its own again: {left}")
+    favorite = client.check("POST", "/v1/scenes/try", 202, body={"steps": [
+        {"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "10"}, "volume": 20, "with_room_ids": [10]}},
+        {"type": "music", "room_id": 10, "set": {"action": "volume", "volume": 15}},
+        {"type": "music", "room_id": None, "set": {"action": "resume"}},
+    ]})
+    if favorite["skipped"] or favorite["failed"]:
+        fail(f"the music steps should run: {favorite}")
+    gone = client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": 11, "set": {"action": "play_favorite", "favorite": {"id": "77", "title": "Old FM", "uri": "x-sonosapi-stream:gone"}}}]})
+    if [problem["code"] for problem in gone["problems"]] != ["FAVORITE_GONE"]:
+        fail(f"a favorite no longer in Sonos favorites should be reported: {gone}")
+    client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "music", "set": {"action": "play_favorite", "favorite": {"id": "10"}}}]})
+
 
 def scenario(client, bridge):
     client.check("GET", "/v1/health", 200)
@@ -438,6 +468,10 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/relays/70", 400, body={"state": "unlocked"})
     client.check("POST", "/v1/relays/70/pulse", 202)
     client.check("POST", "/v1/relays/99/pulse", 404)
+    # Answering an ask-to-open link's request (ADR-058): one that is not there opens nothing.
+    if client.check("POST", "/v1/relays/70/pulse", 409, body={"request": "0" * 16})["code"] != "OPEN_REQUEST_EXPIRED":
+        fail("a pulse that answers no request should be OPEN_REQUEST_EXPIRED")
+    client.check("POST", "/v1/relays/70/pulse", 400, body={"request": "not a request"})
 
     # A Samsung refrigerator (1.7.0, Mock.withRefrigerator): the driver 140, the refrigerator 141.
     # The dev bridge's refrigerator confirms a feature 4 seconds later, as through Samsung's cloud.
@@ -622,50 +656,75 @@ def scenario(client, bridge):
     client.check("PATCH", f"/v1/api-keys/{created['id']}", 400, body={"role": "owner"})
     client.check("PATCH", "/v1/api-keys/deadbeef", 404, body={"role": "viewer"})
     me = client.check("GET", "/v1/api-keys/current", 200)
+    if me.get("access", {}).get("role") != "admin" or me["access"].get("owner") is not True:
+        fail(f"the first admin is the home's owner (ADR-054): {me}")
     client.check("PATCH", f"/v1/api-keys/{me['id']}", 409, body={"role": "member"})
+    # Admins and members, per person (1.8.0, ADR-054). A viewer of 1.7.0 is a member with no rooms
+    # and cameras only: what they may not see answers as what does not exist.
+    person = created["profile_id"]
+    access = client.check("GET", f"/v1/profiles/{person}/access", 200)
+    if (access["role"], access["all_rooms"], access["rooms"], access["cameras"], access["alarm"]) != ("member", False, [], True, False):
+        fail(f"a viewer of 1.7.0 should be a member with no rooms and cameras only: {access}")
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={"rooms": [999999]})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 400, body={"kinds": {"heater": True}})
+    client.check("PATCH", f"/v1/profiles/{person}/access", 200, body={"scenes": []})
+    client.check("PATCH", f"/v1/profiles/{me['profile_id']}/access", 409, body={"role": "member"})
+    client.check("PATCH", "/v1/profiles/00000000/access", 404, body={"doors": True})
+    if not any(item.get("access", {}).get("owner") for item in client.check("GET", "/v1/profiles", 200)["items"]):
+        fail("GET /v1/profiles should say who the owner is")
+    if client.check("PATCH", "/v1/rooms/10", 200, body={"hidden_from_members": True})["hidden_from_members"] is not True:
+        fail("an admin hides a room from members")
+    client.check("PATCH", "/v1/rooms/10", 200, body={"hidden_from_members": False})
+    if client.check("GET", "/v1/system", 200)["features"].get("people_permissions") is not True:
+        fail("GET /v1/system should say features.people_permissions")
     admin_key, client.key = client.key, created["key"]
-    client.check("GET", "/v1/lights", 200)
-    client.check("PATCH", "/v1/lights/20", 403, body={"on": True})
+    if client.check("GET", "/v1/lights", 200)["items"]:
+        fail("a member with no rooms sees no light")
+    client.check("PATCH", "/v1/lights/20", 404, body={"on": True})
     client.check("GET", "/v1/fans", 200)
-    client.check("PATCH", "/v1/fans/41", 403, body={"on": False})
-    client.check("GET", "/v1/refrigerators/141", 200)
-    client.check("PATCH", "/v1/refrigerators/141", 403, body={"sabbath_mode": False})
-    client.check("POST", "/v1/relays/70/pulse", 403)
+    client.check("PATCH", "/v1/fans/41", 404, body={"on": False})
+    client.check("GET", "/v1/refrigerators/141", 404)
+    client.check("PATCH", "/v1/refrigerators/141", 404, body={"sabbath_mode": False})
+    client.check("POST", "/v1/relays/70/pulse", 404)
     if client.check("GET", "/v1/alarm", 403)["code"] != "FORBIDDEN":
-        fail("a viewer key must not read the alarm")
-    # Viewers read what plays; members control it, admins place it.
+        fail("a member not given the alarm must not read it")
+    # Music, a kind a member is given in their rooms; placing a Sonos room is the admins'.
     client.check("GET", "/v1/music", 200)
-    client.check("GET", f"/v1/music/{KITCHEN}/favorites", 200)
-    client.check("POST", f"/v1/music/{KITCHEN}/pause", 403)
-    client.check("PATCH", f"/v1/music/{KITCHEN}", 403, body={"volume": 5})
-    client.check("POST", f"/v1/music/{KITCHEN}/favorites/10/play", 403)
+    client.check("GET", f"/v1/music/{KITCHEN}/favorites", 404)
+    client.check("POST", f"/v1/music/{KITCHEN}/pause", 404)
+    client.check("PATCH", f"/v1/music/{KITCHEN}", 404, body={"volume": 5})
+    client.check("POST", f"/v1/music/{KITCHEN}/favorites/10/play", 404)
     client.check("PUT", f"/v1/music/{KITCHEN}/room", 403, body={"room_id": 10})
     client.check("GET", "/v1/api-keys", 403)
     client.check("GET", "/v1/profiles", 403)
+    client.check("GET", f"/v1/profiles/{person}/access", 403)
     client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
+    client.check("PATCH", "/v1/rooms/10", 403, body={"hidden_from_members": True})
     client.check("GET", "/v1/profile", 200)
-    client.check("GET", "/v1/scenes", 200)
-    client.check("POST", f"/v1/scenes/{scene['id']}/run", 403)
+    if client.check("GET", "/v1/scenes", 200)["items"]:
+        fail("a member lists only the scenes chosen for them")
+    client.check("POST", f"/v1/scenes/{scene['id']}/run", 404)
     client.check("POST", "/v1/scenes", 403, body={"name": "Mine"})
     client.check("PATCH", f"/v1/scenes/{scene['id']}", 403, body={"name": "Mine"})
     client.check("DELETE", f"/v1/scenes/{scene['id']}", 403)
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
-    client.check("POST", "/v1/off", 403, body={"type": "lights", "device_ids": [20]})
-    client.check("GET", "/v1/schedules", 200)
+    client.check("POST", "/v1/off", 400, body={"type": "lights", "device_ids": [20]})
+    client.check("GET", "/v1/schedules", 403)
     client.check("GET", "/v1/weather", 200)
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
     client.check("GET", "/v1/calendar", 200)
     client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
-    # Each key its own alert choices (1.7.0, ADR-050): a viewer may get doorbells only.
+    # Each key its own alert choices (1.7.0, ADR-050): among what its person may get (ADR-054).
     choices = client.check("GET", "/v1/alerts/choices", 200)
-    if choices != {"on": False, "kinds": {"doorbell": True}}:
-        fail(f"a viewer's alert choices should be off, with the doorbell only: {choices}")
+    if choices != {"on": False, "kinds": {}}:
+        fail(f"a member with no rooms has no alert to choose: {choices}")
     choices = client.check("PUT", "/v1/alerts/choices", 200, body={"on": True, "kinds": {"door_opened": True}})
-    if choices != {"on": True, "kinds": {"doorbell": True}}:
-        fail(f"a viewer cannot choose the doors opened: {choices}")
+    if choices != {"on": True, "kinds": {}}:
+        fail(f"a member cannot choose the doors opened: {choices}")
     client.check("PUT", "/v1/alerts/choices", 400, body={"kinds": {"lights": True}})
     client.check("PUT", "/v1/alerts/choices", 400, body={})
     client.check("DELETE", "/v1/api-keys/current", 204)
@@ -839,8 +898,33 @@ def scenario(client, bridge):
     if client.check("POST", f"/v1/scenes/{gate['id']}/link", 409)["code"] != "SCENE_OPENS_DOORS":
         fail("a scene that opens doors or gates should never get a link")
     client.check("POST", "/v1/scenes/deadbeef/link", 404)
+    # A store that could not be read is not written: changes answer 503 until it can be.
+    if bridge.scene_links_unreadable(True):
+        fail("the dev bridge should have made the scene links' store unreadable")
+    for method in ("POST", "DELETE"):
+        if client.check(method, link_path, 503)["code"] != "UNAVAILABLE":
+            fail(f"{method} {link_path} with the store unreadable should be 503 UNAVAILABLE")
+    if not bridge.scene_links_unreadable(False):
+        fail("the scene links' store should be readable again")
     client.check("DELETE", link_path, 204)
     client.check("GET", "/v1/scene-links", 401, auth=False)
+
+    # Ask to open (ADR-058): a link for a door that asks its person, never opens; the secret once.
+    if client.check("GET", "/v1/system", 200)["features"].get("ask_links") is not True:
+        fail("GET /v1/system should say features.ask_links true: the app shows ask-to-open links only then")
+    asks = client.check("GET", "/v1/ask-links", 200)
+    if asks["items"] or not asks["home_linked"] or not asks["door_control"]:
+        fail(f"GET /v1/ask-links should list none, with the home linked and Door Control on: {asks}")
+    ask = client.check("POST", "/v1/ask-links", 201, body={"relay_id": 70, "label": "Arriving home"})
+    if ask["url"] != f"https://api.directorlink.io/run/{home_id}.{ask['link_id']}#{ask['secret']}" or ask["relay_name"] is None or ask["replaced"]:
+        fail(f"POST /v1/ask-links should give the link's address with the secret after #: {ask}")
+    if ask["secret"] in json.dumps(client.check("GET", "/v1/ask-links", 200)):
+        fail("an ask-to-open link's secret is shown only when it is made")
+    client.check("POST", "/v1/ask-links", 404, body={"relay_id": 20})
+    client.check("POST", "/v1/ask-links", 400, body={"relay_id": 70, "secret": ask["secret"]})
+    client.check("DELETE", f"/v1/ask-links/{ask['link_id']}", 204)
+    client.check("DELETE", f"/v1/ask-links/{ask['link_id']}", 404)
+    client.check("GET", "/v1/ask-links", 401, auth=False)
     bridge.set_property("Remote Access", "Off")
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests

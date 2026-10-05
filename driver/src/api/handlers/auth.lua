@@ -11,6 +11,10 @@ local X25519 = require("src.core.x25519")
 local CpacePairing = require("src.auth.cpace_pairing")
 local Keys = require("src.auth.keys")
 local Activity = require("src.core.activity")
+local Access = require("src.auth.access")
+local People = require("src.auth.people")
+local Scenes = require("src.core.scenes")
+local ProfileHandlers = require("src.api.handlers.profiles")
 
 local Auth = {}
 
@@ -23,18 +27,27 @@ local function roleProblem()
     return Problem.invalidField("role", "role must be one of " .. Roles.list())
 end
 
--- `profileId`: the profile the key joins; without one, it gets a new profile of its own.
--- `expiresAt` (os.time): when the key stops working (ADR-040); nil for never.
-local function createKey(ctx, name, role, profileId, expiresAt)
+-- `profileId`: the profile (person) the key joins, whose permissions it has; without one, it gets
+-- a new person of its own: `person` (src/auth/people.lua), else what the 1.7.0 `role` becomes
+-- (ADR-054). The key keeps its person's 1.7.0 role. `expiresAt` (os.time): when the key stops
+-- working (ADR-040); nil for never.
+local function createKey(ctx, name, role, profileId, expiresAt, person)
     local keys = ctx.services.keys
     local profiles = ctx.services.profiles
     if not profileId and profiles then
         local profile, profileFailure = profiles.create(name)
-        if not profile then
+        if profileFailure == "UNAVAILABLE" then
+            return nil, Problem.new(503, "UNAVAILABLE", "The people's profiles could not be read when DirectorLink started; restart the driver and try again")
+        elseif not profile then
             return nil, Problem.new(409, profileFailure, "This controller has as many profiles as it allows")
         end
         profileId = profile.id
+        person = person or People.fromLegacy(role, Scenes.list())
+    else
+        person = nil
     end
+    local theirs = profileId and People.peek(profileId)
+    role = People.legacyRole(person or theirs) or role
     local record, failure = keys.create(name, role, profileId, expiresAt)
     if not record and profiles then
         profiles.prune(keys.list())
@@ -44,6 +57,18 @@ local function createKey(ctx, name, role, profileId, expiresAt)
             return nil, keyLimitProblem(keys)
         end
         return nil, Problem.internal("The API key could not be created (" .. tostring(failure) .. ")")
+    end
+    -- A member whose person could not be kept would answer as the 1.7.0 role, which may be more
+    -- than they were given (every room): the key goes again. An admin is an admin either way.
+    if person and not People.set(profileId, person) and person.role ~= "admin" then
+        keys.revoke(record.id)
+        if profiles then
+            profiles.prune(keys.list())
+        end
+        if not People.complete() then
+            return nil, Problem.new(503, "UNAVAILABLE", "The people's permissions could not be read when DirectorLink started; restart the driver and try again")
+        end
+        return nil, Problem.internal("The new person's permissions could not be saved, so no key was made")
     end
     return record
 end
@@ -297,9 +322,13 @@ function Auth.list_keys(ctx)
     return 200, { items = items }
 end
 
+-- POST {"name", "role", "access", "profile_id"}: a key for a new person, an admin or a member
+-- (`access`: what a member may see and do, as PATCH /v1/profiles/{id}/access takes it; the roles of
+-- 1.7.0, viewer, member without `access`, and doors, become what they did then: ADR-054), or with
+-- `profile_id` another device of a person, with that person's permissions.
 function Auth.create_key(ctx)
     local body = ctx.body
-    local problem = Validate.body(body, { name = true, role = true, profile_id = true })
+    local problem = Validate.body(body, { name = true, role = true, profile_id = true, access = true })
     if problem then
         return problem
     end
@@ -314,12 +343,33 @@ function Auth.create_key(ctx)
     if not Roles.valid(role) then
         return roleProblem()
     end
-    -- Another device of an existing person: it joins their profile.
-    if body.profile_id ~= nil and not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
-        return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+    -- Another device of an existing person: it joins their profile, and has their permissions; the
+    -- owner's only by the owner (ADR-054), or another admin would hold the owner's key.
+    if body.profile_id ~= nil then
+        if not (type(body.profile_id) == "string" and ctx.services.profiles.find(body.profile_id)) then
+            return Problem.invalidField("profile_id", "profile_id must be the id of an existing profile")
+        end
+        local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)
+        if not allowed then
+            return ProfileHandlers.refused(refusal, "This is the home's owner: only the owner adds a device of theirs")
+        end
+    end
+    local person = nil
+    if body.access ~= nil then
+        if body.profile_id ~= nil then
+            return Problem.invalidField("access", "Another device of a person has that person's permissions: leave out access")
+        end
+        if role ~= "admin" and role ~= "member" then
+            return Problem.invalidField("role", "With access, role is admin or member")
+        end
+        person, problem = ProfileHandlers.readAccess(ctx.services, body.access, People.defaults(role), "access")
+        if not person then
+            return problem
+        end
+        person.role = role
     end
 
-    local record, createProblem = createKey(ctx, name, role, body.profile_id)
+    local record, createProblem = createKey(ctx, name, role, body.profile_id, nil, person)
     if not record then
         return createProblem
     end
@@ -329,12 +379,38 @@ function Auth.create_key(ctx)
     return 201, Views.newApiKey(record, ctx.apiKey.id)
 end
 
+-- With what the caller may do (ADR-054: `access`), so that the app shows only that; `role` is the
+-- 1.7.0 role the key keeps.
 function Auth.current_key(ctx)
     local record = ctx.services.keys.find(ctx.apiKey.id)
     if not record then
         return Problem.unauthorized()
     end
-    return 200, Views.apiKey(record, ctx.apiKey.id)
+    local view = Views.apiKey(record, ctx.apiKey.id)
+    view.access = Access.describe(ctx.apiKey)
+    return 200, view
+end
+
+-- Whether the caller may change the person `profileId` by revoking, moving or adding a device
+-- (Access.mayChangePerson: the owner's devices are only the owner's, or Composer's Revoke All API
+-- Keys); nil, or the problem.
+local function personRefused(ctx, profileId)
+    local allowed, refusal = Access.mayChangePerson(ctx.apiKey, profileId)
+    if allowed then
+        return nil
+    end
+    return ProfileHandlers.refused(refusal, "This is a device of the home's owner: only the owner removes or moves it, or moves a device to them")
+end
+
+-- Whether some key would still be an admin's if the key `keyId` were moved to `profileId`.
+local function adminLeftAfterMove(ctx, keyId, profileId)
+    local keys = ctx.services.keys.list()
+    for _, key in ipairs(keys) do
+        if Access.isAdminPerson(key.id == keyId and profileId or key.profile, keys) then
+            return true
+        end
+    end
+    return false
 end
 
 -- Any key may revoke itself ("forget this device"), whatever its role.
@@ -351,6 +427,11 @@ function Auth.revoke_current_key(ctx)
     return 204, nil
 end
 
+-- PATCH {"name", "role", "profile_id"}: renames a key, moves it to another person (it then has
+-- their permissions), or, as 1.7.0 clients do, gives it a role: since 1.8.0 (ADR-054) a role is its
+-- person's, so that changes the person, all of their devices, into what that 1.7.0 role becomes
+-- (nothing changes when the key has that role already). The owner's devices are only theirs to
+-- move, and the owner stays an admin.
 function Auth.update_key(ctx)
     local body = ctx.body
     local problem = Validate.body(body, { name = true, role = true, profile_id = true }, true)
@@ -365,11 +446,8 @@ function Auth.update_key(ctx)
         end
         changes.name = name
     end
-    if body.role ~= nil then
-        if not Roles.valid(body.role) then
-            return roleProblem()
-        end
-        changes.role = body.role
+    if body.role ~= nil and not Roles.valid(body.role) then
+        return roleProblem()
     end
     -- Moving a key to another person's profile (e.g. two devices of one person paired apart).
     if body.profile_id ~= nil then
@@ -381,14 +459,42 @@ function Auth.update_key(ctx)
 
     local id = ctx.params.keyId
     local before = ctx.services.keys.find(id)
+    if not before then
+        return Problem.notFound("API key", id)
+    end
+    if changes.profile and changes.profile ~= before.profile then
+        problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)
+        if problem then
+            return problem
+        end
+        if not adminLeftAfterMove(ctx, id, changes.profile) then
+            return Problem.new(409, "LAST_ADMIN", "This is the only admin's device; make someone else an admin first")
+        end
+        -- With its new person's 1.7.0 role, saved at once: a key whose role says otherwise would
+        -- make that person be read again from it at the next start (People.reconcile).
+        changes.role = People.legacyRole(People.peek(changes.profile))
+    end
     local record, failure = ctx.services.keys.update(id, changes)
     if not record then
         if failure == "NOT_FOUND" then
             return Problem.notFound("API key", id)
         elseif failure == "LAST_ADMIN" then
-            return Problem.new(409, "LAST_ADMIN", "This is the only admin key; make another key admin first")
+            return Problem.new(409, "LAST_ADMIN", "This is the only admin's device; make someone else an admin first")
         end
         return Problem.internal("The API key could not be changed (" .. tostring(failure) .. ")")
+    end
+    -- The key has its (new) person's permissions, and keeps their 1.7.0 role.
+    People.syncKeys(ctx.services.keys)
+    record = ctx.services.keys.find(id)
+    if body.role ~= nil and body.role ~= record.role and record.profile then
+        local _, personProblem = ProfileHandlers.setAccess(ctx, record.profile, People.fromLegacy(body.role, Scenes.list()))
+        if personProblem then
+            if personProblem.code == "LAST_ADMIN" then
+                return Problem.new(409, "LAST_ADMIN", "This is the only admin key; make another key admin first")
+            end
+            return personProblem
+        end
+        record = ctx.services.keys.find(id)
     end
     -- Only admins make invitations: a key that is no longer admin keeps none (its claim token
     -- stops working too, src/cloud/remote.lua).
@@ -396,16 +502,18 @@ function Auth.update_key(ctx)
         ctx.services.invitations.revokeCreatedBy(id)
     end
     ctx.services.log.info("auth", "API key changed", { key_id = id, name = record.name, role = record.role, by = ctx.apiKey.id })
-    if before and before.role ~= record.role then
-        Activity.record("access", "role_changed", { by = ctx.apiKey, what = record.name, from = before.role, to = record.role, ids = { key_id = id } })
-    end
     ctx.services.onKeysChanged()
     return 200, Views.apiKey(record, ctx.apiKey.id)
 end
 
+-- The owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke (ADR-054).
 function Auth.delete_key(ctx)
     local id = ctx.params.keyId
     local revoked = ctx.services.keys.find(id)
+    local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil
+    if problem then
+        return problem
+    end
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)
     end

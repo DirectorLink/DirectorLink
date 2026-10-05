@@ -962,6 +962,107 @@ function tests.a_swapped_room_follows_its_name_and_doors_stay_in_their_own_room(
     T.eq(kitchen.now, "Living Room")
 end
 
+-- People's roles and permissions, the owner and the rooms hidden from members (ADR-054): with the
+-- keys, matched to the project like scene steps; else the ones here stay.
+local function person(s, name, access)
+    local created = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = name, role = "member", access = access } })
+    T.eq(created.status, 201, created.body)
+    return created.json.key, created.json.profile_id
+end
+
+local function accessOf(mock, key)
+    return T.http(mock, "GET", "/v1/api-keys/current", { key = key }).json.access
+end
+
+function tests.people_come_back_with_their_keys_their_rooms_matched_like_scene_steps()
+    local old = start()
+    local night = T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Night", steps = { { type = "lights", set = { on = false } } } } }).json
+    local kid = person(old, "Kid phone", { all_rooms = false, rooms = { 10, 11 }, kinds = { music = false }, doors = true, scenes = { night.id } })
+    T.eq(T.http(old.mock, "PATCH", "/v1/rooms/11", { key = old.key, body = { hidden_from_members = true } }).status, 200)
+    local document = export(old)
+    T.eq(document.sections.people.version, 1)
+    T.eq(document.sections.people.hidden_rooms[1], 11)
+
+    -- The driver added again, in a project where the kitchen and the living room swapped ids.
+    local s = start(swappedRooms())
+    local done, preview = replace(s, document)
+    T.eq(preview.counts.people, 3, "the owner, the kid, and the restoring device's own person")
+    T.eq(done.keys.action, "restore")
+    local mine = accessOf(s.mock, kid)
+    T.eq(mine.role, "member")
+    T.same(mine.rooms, { 11 }, "the kitchen by its name (once 10); the living room (once 11) is hidden from members")
+    T.eq(mine.kinds.music, false)
+    T.eq(mine.doors, true)
+    T.same(mine.scenes, { night.id })
+    local rooms = T.http(s.mock, "GET", "/v1/rooms", { key = s.key }).json.items
+    for _, room in ipairs(rooms) do
+        T.eq(room.hidden_from_members, room.id == 10, "the living room (once 11) is hidden from members")
+    end
+    T.eq(accessOf(s.mock, old.key).owner, true, "the old owner's phone is the owner again")
+    T.eq(accessOf(s.mock, s.key).role, "admin", "the restoring device stays an admin")
+end
+
+function tests.with_the_keys_kept_the_people_here_stay_as_they_are()
+    local s = start()
+    local kid, profile = person(s, "Kid phone", {})
+    local document = export(s)
+    -- Since the backup: fewer rooms for the kid, and a room hidden from members.
+    T.eq(T.http(s.mock, "PATCH", "/v1/profiles/" .. profile .. "/access", { key = s.key, body = { all_rooms = false, rooms = { 11 } } }).status, 200)
+    T.eq(T.http(s.mock, "PATCH", "/v1/rooms/10", { key = s.key, body = { hidden_from_members = true } }).status, 200)
+    local done = restore(s, { document = document, dry_run = false })
+    T.eq(done.status, 200, done.body)
+    T.eq(done.json.restore.keys.action, "kept")
+    T.same(accessOf(s.mock, kid).rooms, { 11 }, "a permission taken away since never comes back")
+    T.eq(T.http(s.mock, "GET", "/v1/rooms/10", { key = s.key }).json.hidden_from_members, true)
+end
+
+function tests.a_backup_from_1_7_restores_with_the_migration()
+    local old = start()
+    local plain = T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Night", steps = { { type = "lights", set = { on = false } } } } }).json
+    local gate = T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Gate", steps = { { type = "relays", device_ids = { 70 }, set = { action = "pulse" } } } } }).json
+    local member = createKey(old, "Dana phone", "member")
+    local doors = createKey(old, "Gate phone", "doors")
+    local viewer = createKey(old, "Hall tablet", "viewer")
+    local document = export(old)
+    -- As 1.7.0 made it: no people.
+    document.sections.people = nil
+    document.driver_version = "1.7.0"
+    local s = start()
+    local done = replace(s, document)
+    T.eq(done.keys.action, "restore")
+    T.eq(accessOf(s.mock, old.key).role, "admin")
+    T.same(accessOf(s.mock, member).scenes, { plain.id }, "a member: every scene there was but the one that opens a door")
+    local both = { plain.id, gate.id }
+    table.sort(both)
+    T.same(accessOf(s.mock, doors).scenes, both)
+    T.eq(accessOf(s.mock, doors).doors, true)
+    T.eq(accessOf(s.mock, viewer).all_rooms, false)
+    T.eq(#accessOf(s.mock, viewer).rooms, 0)
+    T.eq(T.http(s.mock, "GET", "/v1/api-keys/current", { key = viewer }).json.role, "viewer", "the key keeps its role")
+end
+
+-- A music step that plays a favorite in several rooms (1.8.0, ADR-057): each of its rooms is
+-- matched as a step's room; one gone is left out and the favorite still plays in the others.
+function tests.a_favorites_rooms_follow_their_names()
+    local project = Mock.project()
+    Mock.addRoom(project, 12, "Patio")
+    local old = start(project)
+    local favorite = { id = "10", title = "Example FM 99", uri = "x-sonosapi-stream:s0000?sid=254&flags=8224&sn=0", meta = "" }
+    T.eq(T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Party", steps = {
+        { type = "music", room_id = 10, set = { action = "play_favorite", favorite = favorite, volume = 30, with_room_ids = { 11, 12 } } },
+    } } }).status, 201)
+    local document = export(old)
+    T.same(document.sections.scenes.scenes[1].steps[1].set.with_room_ids, { 11, 12 })
+    -- The kitchen and the living room swapped ids; the patio is gone.
+    local s = start(swappedRooms())
+    replace(s, document)
+    local step = sceneNamed(s, "Party").steps[1]
+    T.eq(step.room_id, 11, "the kitchen by its name")
+    T.same(step.set.with_room_ids, { 10 }, "the living room by its name, the patio left out")
+    T.same(step.set.favorite, favorite)
+    T.eq(step.set.volume, 30)
+end
+
 function tests.a_store_not_read_at_start_is_never_overwritten()
     local old = start()
     furnish(old)

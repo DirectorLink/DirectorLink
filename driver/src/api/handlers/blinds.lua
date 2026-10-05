@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 local Blinds = {}
 
@@ -12,7 +13,8 @@ local function findBlind(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "blind" or device.supported ~= true then
+    -- A blind the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "blind" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Blind", id)
     end
     ctx.services.adapters.refresh(device.id)
@@ -26,7 +28,7 @@ function Blinds.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.blindList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.blindList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             ctx.services.adapters.refresh(device.id)
             items[#items + 1] = Views.blind(registry, device)
@@ -43,8 +45,17 @@ function Blinds.get(ctx)
     return 200, Views.blind(ctx.services.registry, device)
 end
 
-function Blinds.update(ctx)
+-- The blind, when the caller may also move it.
+local function controlled(ctx)
     local device, problem = findBlind(ctx)
+    if device and not Access.canControl(ctx.apiKey, device) then
+        return nil, Problem.new(403, "FORBIDDEN", "This person may not move this blind")
+    end
+    return device, problem
+end
+
+function Blinds.update(ctx)
+    local device, problem = controlled(ctx)
     if not device then
         return problem
     end
@@ -69,7 +80,7 @@ function Blinds.update(ctx)
 end
 
 function Blinds.stop(ctx)
-    local device, problem = findBlind(ctx)
+    local device, problem = controlled(ctx)
     if not device then
         return problem
     end

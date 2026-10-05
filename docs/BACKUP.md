@@ -1,7 +1,7 @@
 # Backup and restore
 
 **Status: built in DirectorLink 1.4.0 (ADR-042); automatic backups to the account and the Sonos
-room choices in 1.6.0 (ADR-048).**
+room choices in 1.6.0 (ADR-048); people's roles and permissions in 1.8.0 (ADR-054).**
 
 Updating the driver keeps everything DirectorLink knows. Removing the driver from the project (by
 accident), replacing the controller or rebuilding the project loses it all: Control4 deletes a
@@ -19,6 +19,7 @@ says to update DirectorLink.
 | --- | --- | --- |
 | Keys (`directorlink_api_key_hashes`) | Each key as stored: its hash and lock key, name, role, profile, when it was made and when it expires. Never a key itself. | Only in the reinstall case (below): then as they were, so every device keeps working without pairing again. Otherwise every key stays as it is now. |
 | Profiles | Each person's language, theme, palette, favorites and hidden rooms. | As they were, favorites and hidden rooms matched to the project. With the keys kept, only the profiles today's keys use. |
+| People (1.8.0) | Each person's role, admin or member, and a member's permissions (rooms, kinds of devices, cameras, doors and gates, the alarm, scenes); the home's owner; the rooms hidden from members. | With the keys: when the backup's keys come back, as they were, rooms matched to the project and only the scenes that come back; otherwise as they are now. A backup made before 1.8.0 has none (below). |
 | Room names, the room order | Every room's names in every language, and the home's order. | Matched to the project. |
 | Scenes | Every scene with its steps, ids and versions. | Steps matched to the project. |
 | Schedules | Every schedule's definition. Not what it ran. | They start as if saved at the restore (below). A schedule whose scene is not in the backup stays out. |
@@ -88,7 +89,8 @@ Composer. A file must never switch a safety setting on.
     "calendar": { "version": 1, "settings": {} },
     "remote_identity": { "version": 1, "linked": true, "home_id": "…", "home_secret": "…" },
     "sonos_rooms": { "version": 1, "rooms": { "RINCON_…": { "room_id": 10, "name": "Kitchen" } } },
-    "scene_links": { "version": 1, "links": [{ "id": "…", "scene_id": "…", "alg": "sha256", "hash": "…", "home": "…", "by": "…" }] }
+    "scene_links": { "version": 1, "links": [{ "id": "…", "scene_id": "…", "alg": "sha256", "hash": "…", "home": "…", "by": "…" }] },
+    "people": { "version": 1, "people": { "…": { "role": "member", "all_rooms": false, "rooms": [10], "...": "..." } }, "owner": "…", "hidden_rooms": [] }
   }
 }
 ```
@@ -112,6 +114,17 @@ backup's, when it moves here; else this controller's), and whose key is among th
 that `replaces_key` names passes its links to the restoring device's key). So the family's NFC tags
 and Shortcuts keep working after a replaced controller is restored with its identity. The preview
 counts them (`counts.scene_links`).
+
+`people` (1.8.0, ADR-054) holds each person's role and permissions by profile id, the home's owner
+and the rooms hidden from members. It follows the keys too: when the backup's keys come back, its
+people come back with them, their rooms matched to the project like scene steps (by id, else by
+name; a room that matches nothing is left out and listed) and their scenes only those that come
+back. Otherwise the people here stay as they are, so a permission taken away since the backup was
+made never comes back. The rooms hidden from members and the owner go the same way. A backup made
+before 1.8.0 has no `people`: when its keys come back, each person is worked out from their keys'
+roles after the restore, as at the update to 1.8.0. The preview counts them (`counts.people`).
+DirectorLink 1.7.0 refuses a 1.8.0 backup (`409 BACKUP_TOO_NEW`), as older drivers refuse newer
+ones.
 
 It holds every key's lock key and the home secret: whoever has the document can reach the home
 through the account, sealed, as any of its devices. That is why it goes only in sealed requests
@@ -166,11 +179,15 @@ characters, 10 languages a room) and preferences it would refuse are left out.
   of the right length, a lock key of 64 hex digits or none, a hash no other key has); one that is
   not right stays out and is counted. Keys whose expiry has passed, or with more than 30 days and an
   hour left (made while a clock ran ahead, ADR-040), stay out.
+- **People** (1.8.0) go with the keys: in the reinstall case each person comes back with the role
+  and permissions the backup has, and the owner too; otherwise everyone keeps the role and
+  permissions they have now. From a backup made before 1.8.0, the people of the keys that come back
+  are worked out from their roles after the restore (`people` in *The document* above).
 
 ### Rooms and devices
 
-Scene steps, favorites, hidden rooms, room names, the room order and the Sonos room choices refer to
-Control4 ids. For each:
+Scene steps, favorites, hidden rooms, room names, the room order, the Sonos room choices, and (1.8.0)
+members' rooms and the rooms hidden from members refer to Control4 ids. For each:
 
 1. The same id, still a room, or a device of the same kind (a lights step needs a light), with the
    same name: kept.
@@ -181,7 +198,9 @@ Control4 ids. For each:
 4. Otherwise it is left out and listed (`unmatched`), with the scenes and people's favorites that
    used it. A step with no device left, or whose room matches nothing, is left out: a step without
    its room would act on every room of the home. A step's room that is only where its devices were
-   picked is dropped quietly when it is gone; the step keeps its devices.
+   picked is dropped quietly when it is gone; the step keeps its devices. The other rooms a music
+   step plays a favorite in (`with_room_ids`, 1.8.0) are matched the same way; one that matches
+   nothing is left out, and the favorite still plays in the step's room and the others.
 
 **Doors and gates are never moved.** A relay or a doorbell (a step that opens doors, a relays step
 for a whole room, a favorite) is kept only on the same id with the same name. Otherwise it is left

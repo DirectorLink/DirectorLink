@@ -36,6 +36,9 @@ import { LINK_ID, LINK_SECRET, RESULT_MESSAGES, linkNotFound } from "./scene-lin
 // Alerts (ADR-047, ADR-050): this object tells alerts.js when the driver connects and disconnects,
 // the admin key ids and the controller's "alert" and "notify" messages, and runs its alarms.
 import { HomeAlerts } from "./alerts.js";
+// The oldest DirectorLink the relay takes (ADR-059): a home whose last driver is older is answered
+// HOME_UPDATE_REQUIRED, not HOME_OFFLINE (the Worker refuses that driver's connections).
+import { updateRequired } from "./min-version.js";
 
 const DRIVER = "driver";
 const OPEN = 1; // WebSocket readyState
@@ -531,13 +534,27 @@ export class HomeRelay extends DurableObject {
     // Offline since the recorded disconnect; when none was recorded after the last connect (the
     // relay restarted under the connection), since the driver was last heard from.
     const since = disconnectedAt && (!connectedAt || disconnectedAt >= connectedAt) ? disconnectedAt : lastSeen;
-    return { connected: false, since, version: stored.get("version") ?? null, last_seen: lastSeen };
+    const status = { connected: false, since, version: stored.get("version") ?? null, last_seen: lastSeen };
+    // Its driver is older than the relay takes now (ADR-059): it cannot come back until updated.
+    const minimum = updateRequired(this.env, status.version);
+    return minimum && status.version ? { ...status, update_required: true, minimum_version: minimum } : status;
+  }
+
+  // The answer to a request for a home whose driver is not connected: offline, or, when its last
+  // driver is below the minimum version (ADR-059), that DirectorLink must be updated.
+  async offline() {
+    const version = (await this.ctx.storage.get("version")) ?? null;
+    const minimum = version ? updateRequired(this.env, version) : null;
+    if (minimum) {
+      return problem(503, "HOME_UPDATE_REQUIRED", `The home runs DirectorLink ${version}, which can no longer connect to remote access: update DirectorLink in Composer to ${minimum} or later`);
+    }
+    return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
   }
 
   async forward(path, homeId) {
     const ws = await this.liveDriver();
     if (!ws) {
-      return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
+      return this.offline();
     }
     const { conn } = ws.deserializeAttachment() ?? {};
     const id = crypto.randomUUID();
@@ -576,7 +593,7 @@ export class HomeRelay extends DurableObject {
     }
     const ws = await this.liveDriver();
     if (!ws) {
-      return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
+      return this.offline();
     }
     const { conn } = ws.deserializeAttachment() ?? {};
     const id = crypto.randomUUID();
@@ -668,9 +685,14 @@ export class HomeRelay extends DurableObject {
       return json({ result: reply.result, message: RESULT_MESSAGES[reply.result] });
     }
     if (reply.code === "RATE_LIMITED") {
-      const retry = Math.min(60, Math.max(1, Math.round(Number(reply.retry_s) || 60)));
-      done(429, { why: "link limit" });
-      return problem(429, "TOO_MANY_RUNS", "This link ran too often; try again in a minute", { "Retry-After": String(retry) });
+      // The real wait: a minute at most for runs in a row (any link), up to an hour for an ask
+      // link that asked (or said why nobody was asked) 10 times in the last hour (ADR-058).
+      const retry = Math.min(3600, Math.max(1, Math.round(Number(reply.retry_s) || 60)));
+      const minutes = Math.ceil(retry / 60);
+      done(429, { why: retry > 60 ? "link hour limit" : "link limit" });
+      const detail =
+        retry > 60 ? `This link asked too often in the last hour; it can ask again in ${minutes} minutes` : "This link ran too often; try again in a minute";
+      return problem(429, "TOO_MANY_RUNS", detail, { "Retry-After": String(retry) });
     }
     if (reply.code === "INTERNAL") {
       done(502, { why: "the home failed" });

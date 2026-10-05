@@ -6,7 +6,7 @@
 
 import { t } from "./i18n.js";
 import { api, keyInUse, whenForgotten } from "./session.js";
-import { can, notify, state } from "./state.js";
+import { can, canSeeAlarm, notify, state } from "./state.js";
 
 export const ALARM_POLL_MS = 10000;
 // The partition's own word for how it is armed, when it only repeats the mode.
@@ -40,7 +40,7 @@ let delaysSeen = {};
 
 // The installer turned it on, and this key may see it.
 export function alarmAvailable() {
-  return state.system?.features?.alarm_status === true && Boolean(state.role) && can("member");
+  return state.system?.features?.alarm_status === true && Boolean(state.role) && can("member") && canSeeAlarm();
 }
 
 // What Home and Settings show: the partitions, or null (nothing at all).

@@ -20,6 +20,8 @@ local Validate = require("src.api.validate")
 local Backup = require("src.core.backup")
 local Activity = require("src.core.activity")
 local AutoBackup = require("src.cloud.auto_backup")
+local Access = require("src.auth.access")
+local ProfileHandlers = require("src.api.handlers.profiles")
 
 local Handlers = {}
 
@@ -133,6 +135,15 @@ function Handlers.restore(ctx)
     })
     if not plan then
         return problemFrom(failure)
+    end
+    -- The backup's keys and people take the place of everyone's only where the restoring key is the
+    -- only one (Backup.plan), whose person is then the home's owner: a change to the owner's person
+    -- (ADR-054), as every one, only by the owner.
+    if plan.preview.keys and plan.preview.keys.action == "restore" then
+        local allowed, refusal = Access.mayChangePerson(ctx.apiKey, (Access.owner()))
+        if not allowed then
+            return ProfileHandlers.refused(refusal)
+        end
     end
     if body.dry_run ~= false then
         return 200, { dry_run = true, restore = plan.preview }

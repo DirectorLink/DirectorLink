@@ -24,6 +24,7 @@ local suites = {
     "test_profiles",
     "test_scenes",
     "test_scene_links",
+    "test_ask_links",
     "test_schedules",
     "test_calendar",
     "test_hebrew_date",
@@ -35,6 +36,8 @@ local suites = {
     "test_cpace",
     "test_cpace_pairing",
     "test_key_expiry",
+    "test_access",
+    "test_people",
     "test_security",
     "test_light_v1",
     "test_thermostat_v2_heat",
@@ -42,12 +45,15 @@ local suites = {
     "test_dual_thermostat",
     "test_fans",
     "test_refrigerators",
+    "test_driver_updates",
     "test_alarm",
     "test_backup",
     "test_auto_backup",
     "test_sonos",
+    "test_sonos_groups",
     "test_activity",
     "test_alerts",
+    "test_cameras",
 }
 
 -- About how many seconds each suite takes (all of them in one run on a PC, 2026-10-03; CI takes
@@ -56,6 +62,8 @@ local suites = {
 -- DEFAULT_SECONDS: add it here once measured (lua5.1 driver/tests/run.lua <suite>).
 local SECONDS = {
     test_json = 1,
+    test_access = 1,
+    test_people = 16,
     test_http = 1,
     test_router = 1,
     test_api = 16,
@@ -65,11 +73,13 @@ local SECONDS = {
     test_activity = 7,
     test_auto_backup = 7,
     test_alerts = 3,
+    test_cameras = 4,
     test_lock = 1,
     test_remote = 18,
     test_profiles = 3,
     test_scenes = 8,
     test_scene_links = 16,
+    test_ask_links = 14,
     test_schedules = 8,
     test_calendar = 16,
     test_hebrew_date = 1,
@@ -88,9 +98,11 @@ local SECONDS = {
     test_dual_thermostat = 6,
     test_fans = 6,
     test_refrigerators = 9,
+    test_driver_updates = 3,
     test_alarm = 41,
     test_backup = 93,
     test_sonos = 14,
+    test_sonos_groups = 8,
 }
 local DEFAULT_SECONDS = 5
 

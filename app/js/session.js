@@ -484,6 +484,9 @@ function remoteErrorText(error) {
     case "HOME_TIMEOUT":
     case "HOME_DISCONNECTED":
       return t("errors.remote.homeOffline");
+    // The controller's DirectorLink is older than the account service takes (1.8.0, ADR-059).
+    case "HOME_UPDATE_REQUIRED":
+      return t("errors.remote.updateRequired");
     case "NOT_A_MEMBER":
       return t("errors.remote.notMember");
     case "UNKNOWN_KEY":
@@ -622,12 +625,17 @@ export function roleLabel(role) {
 }
 
 // Drivers before API key roles have no /v1/api-keys/current: their keys can do everything.
+// With 1.8.0 it also says what this person may do (`access`, ADR-054), kept in state.access.
 async function loadRole() {
   try {
     const key = await api("/v1/api-keys/current");
+    state.access = key?.access && typeof key.access === "object" ? key.access : null;
     return typeof key?.role === "string" ? key.role : "admin";
   } catch (error) {
-    if (error?.status === 404 || error?.status === 405) return "admin";
+    if (error?.status === 404 || error?.status === 405) {
+      state.access = null;
+      return "admin";
+    }
     throw error;
   }
 }

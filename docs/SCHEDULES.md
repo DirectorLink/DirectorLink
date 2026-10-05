@@ -10,13 +10,15 @@ read or changed.
 
 ## Who does what
 
-| Role | Schedules |
+| Role (1.8.0, ADR-054) | Schedules |
 | --- | --- |
-| viewer, member, doors | see them, and the weather |
-| admin | also makes, changes, switches off and deletes them |
+| member | sees the weather, never the schedules (`403 FORBIDDEN`) |
+| admin | sees, makes, changes, switches off and deletes them |
 
-A scheduled scene runs like one from a **member's** key: doors and gates in it are always
-skipped. Opening a door or gate needs a person.
+Up to 1.7.0 every role saw the schedules and only `admin` changed them (ADR-025).
+
+A scheduled scene runs as DirectorLink itself: every device in it, but doors and gates are always
+skipped, as in 1.7.0. Opening a door or gate needs a person.
 
 ## A schedule
 

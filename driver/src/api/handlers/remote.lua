@@ -3,17 +3,26 @@
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
+local Access = require("src.auth.access")
 
 local Remote = {}
 
+-- `update_required` (1.8.0, ADR-059): the account service no longer takes this version, so remote
+-- access stays down until DirectorLink is updated; `minimum_version`, the one it named.
 function Remote.status(ctx)
     local remote = ctx.services.remote
     local enabled = remote.enabled()
+    local updateRequired, minimum = false, nil
+    if enabled then
+        updateRequired, minimum = remote.updateRequired()
+    end
     return 200, {
         enabled = enabled,
         connected = enabled and remote.connected() or false,
         lock = remote.available(),
         home_id = enabled and remote.homeId() or Json.null,
+        update_required = updateRequired == true,
+        minimum_version = updateRequired and minimum or Json.null,
     }
 end
 
@@ -28,6 +37,16 @@ function Remote.claim(ctx)
     end
     if not remote.available() then
         return Problem.new(503, "LOCK_UNAVAILABLE", "This controller cannot seal remote requests (the lock self-test failed; see the log)")
+    end
+    -- Claiming moves the home to the claiming account and removes everyone else from it: once the
+    -- home was claimed with DirectorLink 1.8.0, only the person who claimed it (the owner, while
+    -- they are here) claims it again, so that no other admin can take it from them (ADR-054); and
+    -- nobody while that cannot be known.
+    local allowed, refusal = Access.mayClaim(ctx.apiKey)
+    if refusal == "UNAVAILABLE" then
+        return Problem.new(503, "UNAVAILABLE", "Who the home's owner is could not be read when DirectorLink started; restart the driver and try again")
+    elseif not allowed then
+        return Problem.new(403, "OWNER_ONLY", "Only the home's owner claims this home again")
     end
     local claim = remote.createClaim(ctx.apiKey.id)
     ctx.services.log.info("remote", "claim token created", { key_id = ctx.apiKey.id })

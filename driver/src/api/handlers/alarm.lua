@@ -1,5 +1,5 @@
--- The home's alarm, read-only (ADR-038): GET /v1/alarm lists its partitions for members and admins
--- (the route's role; viewers get 403). Off by default: until an installer sets the Composer property
+-- The home's alarm, read-only (ADR-038): GET /v1/alarm lists its partitions for admins and the
+-- members given the alarm's status (ADR-054; others get 403). Off by default: until an installer sets the Composer property
 -- Alarm Status to On, the answer says only that, and DirectorLink does not watch the partitions.
 -- While it is on, the partitions go only into sealed answers, the app's way at home and through the
 -- account: whether a home is armed never crosses a network in the clear. Nor does the size of the
@@ -9,6 +9,7 @@
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 local Alarm = {}
 
@@ -23,6 +24,10 @@ function Alarm.status(ctx)
     if not services.alarmStatusEnabled() then
         return 200, { enabled = false, partitions = Json.array() }
     end
+    -- Only for those who see the alarm's status (ADR-054: admins, members given it).
+    if not Access.canSeeAlarm(ctx.apiKey) then
+        return Problem.new(403, "FORBIDDEN", "The alarm's status is not among this person's permissions")
+    end
     -- Sealed requests carry their key as principal (src/cloud/remote.lua); a request with an
     -- Authorization header came as plain HTTP.
     if not (ctx.request and ctx.request.principal) then
@@ -33,6 +38,10 @@ function Alarm.status(ctx)
     local partitions, longest = Json.array(), Json.array()
     for _, device in ipairs(registry.alarmList()) do
         local view = Views.alarmPartition(registry, device)
+        -- The alarm is the home's; a partition's room only when the caller sees that room (ADR-054).
+        if not Access.seesRoom(ctx.apiKey, device.room_id) then
+            view.room = Json.null
+        end
         partitions[#partitions + 1] = view
         longest[#longest + 1] = Views.alarmPartitionLongest(view)
     end

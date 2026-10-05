@@ -1,5 +1,5 @@
--- Invitations (docs/ACCOUNTS.md, src/auth/invitations.lua): an admin creates one for a role and an
--- email; the controller registers it with the account service itself, over its own connection, so
+-- Invitations (docs/ACCOUNTS.md, src/auth/invitations.lua): an admin creates one for a person (an
+-- admin, or a member with the permissions the admin chose: ADR-054) and an email; the controller registers it with the account service itself, over its own connection, so
 -- only an admin's request can bind an invitation to an email. The app turns it into a link. The
 -- secret is in this answer only.
 
@@ -8,6 +8,10 @@ local Problem = require("src.api.problem")
 local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Roles = require("src.auth.roles")
+local Access = require("src.auth.access")
+local People = require("src.auth.people")
+local Scenes = require("src.core.scenes")
+local ProfileHandlers = require("src.api.handlers.profiles")
 
 local Invitations = {}
 
@@ -15,12 +19,14 @@ local ID = "^%x%x%x%x%x%x%x%x$"
 
 function Invitations.create(ctx)
     local body = ctx.body or {}
-    local problem = Validate.body(body, { role = true, expires_in = true, for_me = true, email = true })
+    local problem = Validate.body(body, { role = true, expires_in = true, for_me = true, email = true, access = true })
     if problem then
         return problem
     end
+    -- admin or member; the roles of 1.7.0 (viewer, member without access, doors) become what they
+    -- did then (ADR-054), so that a 1.7.0 app invites as before.
     if not Roles.valid(body.role) then
-        return Problem.invalidField("role", "role must be one of " .. Roles.list())
+        return Problem.invalidField("role", "role must be admin or member")
     end
     local invitations = ctx.services.invitations
     local seconds = body.expires_in
@@ -45,13 +51,38 @@ function Invitations.create(ctx)
             return Problem.invalidField("email", "email is the address of the person invited")
         end
     end
-    -- For the admin's own other device: the new key joins the admin's profile.
-    local profile = nil
+    -- For the admin's own other device: the new key joins the admin's profile, with its permissions.
+    -- For anyone else: a new person, as the admin chose (`access`), or as the 1.7.0 role became.
+    local profile, person, role = nil, nil, body.role
     if body.for_me then
+        if body.access ~= nil then
+            return Problem.invalidField("access", "Your own other device has your permissions: leave out access")
+        end
         local me = ctx.services.keys.find(ctx.apiKey.id)
         profile = me and me.profile or nil
+        role = me and me.role or role
+        -- A device put into a person (ADR-054: Access.mayChangePerson), here the caller's own.
+        local allowed, refusal = Access.mayChangePerson(ctx.apiKey, profile)
+        if not allowed then
+            return ProfileHandlers.refused(refusal)
+        end
+    elseif body.access ~= nil then
+        if role ~= "admin" and role ~= "member" then
+            return Problem.invalidField("role", "With access, role is admin or member")
+        end
+        person, problem = ProfileHandlers.readAccess(ctx.services, body.access, People.defaults(role), "access")
+        if not person then
+            return problem
+        end
+        person.role = role
+    else
+        person = People.fromLegacy(role, Scenes.list())
     end
-    local invitation, failure = invitations.create(body.role, seconds, ctx.apiKey.id, profile)
+    if person then
+        role = People.legacyRole(person)
+        person = People.view(person)
+    end
+    local invitation, failure = invitations.create(role, seconds, ctx.apiKey.id, profile, person)
     if not invitation then
         if failure == "INVITATION_LIMIT_REACHED" then
             return Problem.new(409, failure, "There are already " .. invitations.MAX_PENDING .. " pending invitations; revoke one first")

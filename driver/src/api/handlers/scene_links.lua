@@ -17,7 +17,10 @@ local SceneLinks = require("src.core.scene_links")
 local Activity = require("src.core.activity")
 local Relay = require("src.cloud.relay")
 local Keys = require("src.auth.keys")
+local Access = require("src.auth.access")
 local SceneHandlers = require("src.api.handlers.scenes")
+-- Ask-to-open links (ADR-058) come by the same run, and go when keys change, as these do.
+local AskLinkHandlers = require("src.api.handlers.ask_links")
 
 local Handlers = {}
 
@@ -76,15 +79,25 @@ local function unreadable()
     return Problem.new(503, "UNAVAILABLE", "The saved scene links could not be read when DirectorLink started; restart the driver and try again")
 end
 
+-- Whether the key `id` may still have scene links: only admins make them (ADR-051), so a key whose
+-- person is no longer an admin (ADR-054) loses its links, as its invitations.
+local function mayLink(id)
+    local key = Keys.find(id)
+    return key ~= nil and Access.isAdmin(key)
+end
+
 -- Links whose scene is gone or now opens doors or gates, that were made for another home than the
--- one the relay knows, or whose key was revoked or expired, go (at start, after a restore, when
--- keys change, before a list). Nothing while the scenes could not be read: every link would look
--- orphaned; and no key is missing while the keys could not be read.
+-- one the relay knows, whose key was revoked or expired, or whose key's person is no longer an
+-- admin, go (at start, after a restore, when keys or people change, before a list). Nothing while
+-- the scenes could not be read: every link would look orphaned; and no key is missing or changed
+-- while the keys could not be read.
 function Handlers.prune()
+    AskLinkHandlers.prune()
     if not Scenes.complete() then
         return {}
     end
-    return SceneLinks.prune(Scenes.find, linkedHome(), Keys.complete() and Keys.exists or nil)
+    local keysKnown = Keys.complete()
+    return SceneLinks.prune(Scenes.find, linkedHome(), keysKnown and Keys.exists or nil, keysKnown and mayLink or nil)
 end
 
 function Handlers.list(ctx)
@@ -211,8 +224,9 @@ end
 
 -- A run from the account service: {"type":"link","id":…,"link":"<8 hex>","secret":"<40 hex>"},
 -- answered {"type":"link_result","id":…,"ok":true,"result":"ran"|"partly"|"failed"|"nothing"}, or
--- "ok":false with NOT_FOUND (no such link, a wrong secret, a scene that is gone or opens doors, or
--- the key that made it gone: all alike) or RATE_LIMITED (with retry_s). The secret is never logged.
+-- "ok":false with NOT_FOUND (no such link, a wrong secret, a scene that is gone or opens doors, the
+-- key that made it gone or no longer an admin's: all alike) or RATE_LIMITED (with retry_s). The
+-- secret is never logged.
 function Handlers.relayRun(services, message, send)
     local function answer(fields)
         fields.type = "link_result"
@@ -221,6 +235,10 @@ function Handlers.relayRun(services, message, send)
     end
     local linkId = type(message.link) == "string" and message.link:match("^[0-9a-f]+$") and #message.link == SceneLinks.ID_LENGTH and message.link or nil
     local link = linkId and SceneLinks.check(linkId, message.secret) or nil
+    -- Not a scene's: an ask-to-open link answers for itself (it opens nothing).
+    if not link and linkId and AskLinkHandlers.relayRun(services, message, send) then
+        return
+    end
     if not link then
         refused(services, "unknown link or wrong secret", linkId)
         answer({ ok = false, code = "NOT_FOUND" })
@@ -236,9 +254,9 @@ function Handlers.relayRun(services, message, send)
     -- Checked again at every run: the scene may have been changed to open doors (by a driver that
     -- does not know links, before an update), or deleted; the key that made it may have expired a
     -- moment ago (finding it removes it then, and its links with it).
-    if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not Keys.find(link.by)) then
+    if not scene or not SceneLinks.linkable(scene) or link.home ~= linkedHome() or (link.by and Keys.complete() and not mayLink(link.by)) then
         Handlers.prune()
-        refused(services, "the scene is gone or opens doors or gates, or its key is gone", link.id)
+        refused(services, "the scene is gone or opens doors or gates, or its key is gone or no longer an admin's", link.id)
         answer({ ok = false, code = "NOT_FOUND" })
         return
     end

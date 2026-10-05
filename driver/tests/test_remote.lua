@@ -82,11 +82,16 @@ function tests.requests_with_a_body_and_query_work_and_roles_apply()
     local changed = e2e(s, { method = "PATCH", path = "/v1/lights/" .. light.id, body = { on = true } })
     T.truthy(changed.status == 200 or changed.status == 202, "an admin key may switch a light: " .. tostring(changed.status))
 
+    -- A viewer of 1.7.0 is a member with no rooms (ADR-054): through the account too, a light is,
+    -- for them, one that does not exist, and admin routes are refused.
     local viewer, viewerId = createKey(s, "viewer")
     local refused = e2e(s, { method = "PATCH", path = "/v1/lights/" .. light.id, body = { on = false } }, { apiKey = viewer, keyId = viewerId })
-    T.eq(refused.status, 403)
-    T.eq(Json.decode(refused.body).code, "FORBIDDEN")
-    T.eq(e2e(s, { method = "GET", path = "/v1/lights" }, { apiKey = viewer, keyId = viewerId }).status, 200, "but may read")
+    T.eq(refused.status, 404)
+    T.eq(Json.decode(refused.body).code, "NOT_FOUND")
+    local listed = e2e(s, { method = "GET", path = "/v1/lights" }, { apiKey = viewer, keyId = viewerId })
+    T.eq(listed.status, 200)
+    T.eq(#Json.decode(listed.body).items, 0, "none of theirs")
+    T.eq(e2e(s, { method = "GET", path = "/v1/api-keys" }, { apiKey = viewer, keyId = viewerId }).status, 403)
 end
 
 -- The room order is the only PUT; the app seals it like everything else, so from 1.0.0 it failed

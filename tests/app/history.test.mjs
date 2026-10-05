@@ -293,6 +293,14 @@ test("automatic backups to the account: made, or not and why", () => {
   assert.doesNotMatch(history.outcomeText(backUpNow), /again/);
 });
 
+test("a scene link that went by itself says why: its person is no longer an admin, too (1.8.0)", () => {
+  const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "access", action: "link_removed", who: { type: "controller" }, what: "Evening", ...fields });
+  assert.equal(history.outcomeText(entry({ reason: "no_access" })), "Its person is no longer an admin");
+  assert.equal(history.outcomeText(entry({ reason: "key_gone" })), "The key that made it was removed or expired");
+  // An ask link's own no_access keeps its words.
+  assert.equal(history.outcomeText(entry({ action: "ask_link_removed", reason: "no_access" })), "Its person may no longer open the door");
+});
+
 test("days: today, yesterday, then the date, in the home's time zone", () => {
   home("admin");
   const now = new Date("2026-10-03T09:00:00Z"); // 12:00 in Israel
@@ -524,6 +532,28 @@ test("a refrigerator door left open is listed under Doors, in both languages", a
     view = await open();
     row = items(view)[0];
     assert.equal(line(row), "הדלת של Refrigerator (כניסה) נשארה פתוחה, DirectorLink");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+// The account service no longer takes this DirectorLink for remote access (1.8.0, ADR-059): once,
+// with the version it needs when it said.
+test("remote access refused because DirectorLink must be updated, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [
+      { id: 2, at: iso(NOW - 60 * 1000), kind: "system", action: "remote_update_required", who: { type: "controller" }, from: "1.8.0", to: "1.9.0" },
+      { id: 1, at: iso(NOW - 120 * 1000), kind: "system", action: "remote_update_required", who: { type: "controller" }, from: "1.8.0" },
+    ],
+  });
+  let rows = items(await open());
+  assert.equal(line(rows[0]), "Remote access stopped: update DirectorLink to 1.9.0 or later, this version can no longer connect, DirectorLink");
+  assert.equal(line(rows[1]), "Remote access stopped: update DirectorLink, this version can no longer connect, DirectorLink");
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.match(line(rows[0]), /^הגישה מרחוק הופסקה: עדכנו את DirectorLink לגרסה 1\.9\.0 ומעלה/);
   } finally {
     await setLanguage("en");
   }

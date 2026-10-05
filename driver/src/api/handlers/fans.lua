@@ -2,6 +2,7 @@ local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
+local Access = require("src.auth.access")
 
 -- Fans (the Fan proxy, src/adapters/fan.lua): on, off and a speed from 1 (low) to 4 (high).
 local Fans = {}
@@ -12,7 +13,8 @@ local function findFan(ctx)
         return nil, problem
     end
     local device = ctx.services.registry.getDevice(id)
-    if not device or device.kind ~= "fan" or device.supported ~= true then
+    -- A fan the caller may not see is, for them, one that does not exist (ADR-054).
+    if not device or device.kind ~= "fan" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Fan", id)
     end
     return device
@@ -25,7 +27,7 @@ function Fans.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(registry.fanList()) do
+    for _, device in ipairs(Access.filter(ctx.apiKey, registry.fanList())) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.fan(registry, device)
         end
@@ -47,6 +49,9 @@ function Fans.update(ctx)
     local device, problem = findFan(ctx)
     if not device then
         return problem
+    end
+    if not Access.canControl(ctx.apiKey, device) then
+        return Problem.new(403, "FORBIDDEN", "This person may not change this fan")
     end
 
     local body = ctx.body

@@ -2,7 +2,9 @@
 // members run them, admins make and change them (views/scenes.js). A step sets devices of one
 // type: the ones it names, or all of them in a room or the whole home. Doors and gates only get
 // a pulse, what their Open button does. A music step (1.5.0) pauses or stops the Sonos music in a
-// room or the whole home. A refrigerators step (1.7.0) switches refrigerator features on or off.
+// room or the whole home; since 1.8.0 (ADR-057) it also resumes it, sets the volume, or plays a
+// Sonos favorite in a room, with other rooms grouped with it. A refrigerators step (1.7.0) switches
+// refrigerator features on or off.
 
 import { sceneSet } from "./fans.js";
 import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
@@ -74,19 +76,33 @@ export function stepDevices(step) {
   return list.filter((device) => step.room_id == null || deviceRoomId(device) === step.room_id);
 }
 
+// A member's step that also works on rooms or devices they don't see (1.8.0, ADR-054: `elsewhere`;
+// the controller leaves those out of room_id and device_ids): nothing of theirs is named in it.
+function onlyElsewhere(step) {
+  return step.elsewhere === true && !(Array.isArray(step.device_ids) && step.device_ids.length);
+}
+
 export function stepWhat(step) {
+  if (onlyElsewhere(step)) return t(`scenes.elsewhere.${step.type}`);
   if (!Array.isArray(step.device_ids)) return t(`scenes.all.${step.type}`);
+  let what = t(`scenes.count.${step.type}`, { count: step.device_ids.length });
   if (step.device_ids.length === 1) {
     const device = devicesOfType(step.type).find((item) => item.id === step.device_ids[0]);
-    if (device) return device.name;
+    if (device) what = device.name;
   }
-  return t(`scenes.count.${step.type}`, { count: step.device_ids.length });
+  return step.elsewhere ? t("scenes.alsoElsewhere", { what: isolate(what) }) : what;
 }
 
 export function stepWhere(step) {
   if (step.room_id != null) {
     const room = roomById(step.room_id);
     return room ? roomName(room) : t("scenes.roomGone");
+  }
+  if (onlyElsewhere(step)) return t("scenes.otherRooms");
+  if (step.elsewhere) {
+    const rooms = new Set(stepDevices(step).map(deviceRoomId));
+    const room = rooms.size === 1 ? roomById([...rooms][0]) : null;
+    return room ? t("scenes.andOtherRooms", { room: isolate(roomName(room)) }) : t("scenes.severalRooms");
   }
   if (!Array.isArray(step.device_ids)) return t("scenes.wholeHome");
   const rooms = new Set(stepDevices(step).map(deviceRoomId));
@@ -135,13 +151,27 @@ export function stepAction(step) {
     if (set.position <= 0) return t("scenes.do.close");
     return t("scenes.do.position", { percent: set.position });
   }
-  if (step.type === "music") return set.action === "stop" ? t("scenes.do.stopMusic") : t("scenes.do.pauseMusic");
+  if (step.type === "music") return musicAction(set);
   if (step.type === "refrigerators") {
     return FRIDGE_FEATURES.filter((feature) => typeof set[feature] === "boolean")
       .map((feature) => t(set[feature] ? "scenes.do.featureOn" : "scenes.do.featureOff", { feature: t(`refrigerators.features.${feature}`) }))
       .join(", ");
   }
   return t("scenes.do.pulse");
+}
+
+// What a music step does: "Pause", "Volume 20%", "Play “Example FM” at 30% · with Kitchen".
+export function musicAction(set) {
+  if (set.action === "stop") return t("scenes.do.stopMusic");
+  if (set.action === "resume") return t("scenes.do.resumeMusic");
+  if (set.action === "volume") return t("scenes.do.musicVolume", { percent: set.volume });
+  if (set.action === "play_favorite") {
+    const title = isolate(set.favorite?.title || t("scenes.do.aFavorite"));
+    const play = Number.isFinite(set.volume) ? t("scenes.do.playFavoriteAt", { name: title, percent: set.volume }) : t("scenes.do.playFavorite", { name: title });
+    const rooms = (set.with_room_ids || []).map((id) => roomById(id)).map((room) => (room ? roomName(room) : t("scenes.roomGone")));
+    return rooms.length ? `${play} · ${t("scenes.do.withRooms", { rooms: rooms.map(isolate).join(", ") })}` : play;
+  }
+  return t("scenes.do.pauseMusic");
 }
 
 // "All lights: Off · Parents: Cool, 24° · +2 more"
@@ -161,10 +191,18 @@ export function sceneSummary(scene) {
 export function currentSteps(steps) {
   const kept = [];
   let changed = false;
-  for (const step of steps) {
+  for (let step of steps) {
     if (step.room_id != null && !roomById(step.room_id)) {
       changed = true;
       continue;
+    }
+    // The rooms a favorite plays in besides the step's own (1.8.0).
+    const others = step.set?.with_room_ids;
+    if (Array.isArray(others) && others.some((id) => !roomById(id))) {
+      changed = true;
+      const rooms = others.filter((id) => roomById(id));
+      const { with_room_ids: _gone, ...set } = step.set;
+      step = { ...step, set: rooms.length ? { ...set, with_room_ids: rooms } : set };
     }
     if (Array.isArray(step.device_ids)) {
       const known = new Set(devicesOfType(step.type).map((device) => device.id));
@@ -185,8 +223,14 @@ export function resultText(result) {
   const problems = result.problems || [];
   if (result.failed > 0) return t("scenes.result.failed", { count: result.failed });
   if (result.skipped > 0) {
-    const codes = new Set(problems.filter((problem) => problem.outcome !== "partial").map((problem) => problem.code));
+    // A music step's (device_id 0) FORBIDDEN is a Sonos room this person may not control (1.8.0).
+    const codes = new Set(
+      problems.filter((problem) => problem.outcome !== "partial").map((problem) => (problem.code === "FORBIDDEN" && problem.device_id === 0 ? "MUSIC_FORBIDDEN" : problem.code))
+    );
     if (codes.size === 1 && codes.has("FORBIDDEN")) return t("scenes.result.doors");
+    if (codes.size === 1 && codes.has("MUSIC_FORBIDDEN")) return t("scenes.result.musicForbidden");
+    if (codes.size === 1 && codes.has("FAVORITE_GONE")) return t("scenes.result.favoriteGone");
+    if (codes.size === 1 && codes.has("FAVORITE_NOT_PLAYABLE")) return t("scenes.result.favoriteNotPlayable");
     if (codes.size === 1 && codes.has("DOOR_CONTROL_DISABLED")) return t("scenes.result.doorControl");
     // Music steps (1.5.0): the controller says why the music was left as it was.
     if (codes.size === 1 && codes.has("SONOS_OFF")) return t("scenes.result.sonosOff");
@@ -214,11 +258,12 @@ function clearRunLater(id, stamp, delay) {
 }
 
 // Runs a saved scene; the button shows what happened for a few seconds, then the devices' new
-// state is read. A scene that opens doors or gates asks for a second tap, like their Open button.
+// state is read. A scene that opens doors or gates asks for a second tap, like their Open button;
+// with 1.8.0 (ADR-054) for everyone who may run it, since it runs in full.
 export async function runScene(scene) {
   const current = ui.sceneRuns[scene.id];
   if (current?.stage === "running") return;
-  if (sceneOpensDoors(scene) && can("doors") && current?.stage !== "confirm") {
+  if (sceneOpensDoors(scene) && (can("doors") || state.access) && current?.stage !== "confirm") {
     const stamp = Date.now();
     setRun(scene.id, { stage: "confirm", text: t("scenes.confirmDoors"), stamp });
     clearRunLater(scene.id, stamp, CONFIRM_MS);

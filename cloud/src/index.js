@@ -6,7 +6,8 @@
 //
 //   GET /health                        {"status":"ok"}
 //   GET /relay/connect                 the driver's WebSocket
-//                                      (X-DirectorLink-Home, Authorization: Bearer <home_secret>)
+//                                      (X-DirectorLink-Home, Authorization: Bearer <home_secret>);
+//                                      426 below MIN_DRIVER_VERSION (min-version.js)
 //   GET /test/homes/{home_id}/status   the home's connection     } Authorization: Bearer <TEST_TOKEN>
 //   GET /test/homes/{home_id}/v1/...   relayed to the driver     } (version 0 only)
 //   /auth/google/start, /auth/google/callback, /auth/logout, /v1/me   accounts (accounts.js)
@@ -27,6 +28,8 @@ import { handleHomes } from "./homes.js";
 import { handleSceneLink } from "./scene-links.js";
 import { HomeRelay } from "./home-relay.js";
 import { purgeInvitations } from "./invitations.js";
+// The oldest DirectorLink the relay takes (ADR-059): refused here, before the home's object.
+import { refusal, updateRequired } from "./min-version.js";
 import { STATS_CRON, countStats, handleStats } from "./stats.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
 
@@ -50,7 +53,7 @@ export default {
     ctx.waitUntil(purgeDeviceRequests(env));
   },
 
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/health") {
@@ -77,7 +80,7 @@ export default {
       if (account) {
         return account;
       }
-      const home = await handleHomes(request, env);
+      const home = await handleHomes(request, env, ctx);
       if (home) {
         return home;
       }
@@ -94,7 +97,8 @@ function homeRelay(env, homeId) {
 }
 
 // The driver's WebSocket. The home's Durable Object checks the secret (trust on first use) and
-// accepts the socket.
+// accepts the socket. A driver below the minimum version (ADR-059) is refused first, without asking
+// the object: it tries again every minute or hour, and that must cost little.
 async function connect(request, env) {
   if (request.method !== "GET") {
     return methodNotAllowed();
@@ -109,6 +113,12 @@ async function connect(request, env) {
   const secret = bearerToken(request);
   if (!secret || !HOME_SECRET.test(secret)) {
     return problem(400, "INVALID_HOME_SECRET", "Authorization must be Bearer <home_secret>: 64 hex characters");
+  }
+  const version = request.headers.get("X-DirectorLink-Version");
+  const minimum = updateRequired(env, version);
+  if (minimum) {
+    console.log(JSON.stringify({ event: "driver_refused", home: homeId, version: String(version ?? "").slice(0, 32) || null, minimum }));
+    return refusal(version, minimum);
   }
   return homeRelay(env, homeId).fetch(request);
 }

@@ -9,6 +9,7 @@ local Store = require("src.core.store")
 local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
 local Activity = require("src.core.activity")
+local Access = require("src.auth.access")
 
 local Relay = {}
 
@@ -26,6 +27,11 @@ Relay.KEEPALIVE_MS = 10000
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
+-- The account service no longer takes this version (426 DRIVER_UPDATE_REQUIRED, ADR-059): a flaw
+-- was found in the remote protocol, and only an update fixes it. Asked again once an hour, in case
+-- the minimum is lowered again; Remote Status says what to do.
+Relay.UPDATE_RETRY_SECONDS = 3600
+Relay.UPDATE_STATUS = "Update DirectorLink: this version can no longer connect to remote access"
 -- A connection that was up for STABLE_SECONDS and is lost is tried again after QUICK_RETRY_SECONDS,
 -- then with the backoff; one lost sooner goes on with the backoff, so a connection that keeps
 -- failing as soon as it opens is not retried every second.
@@ -71,6 +77,10 @@ local state = {
     -- waiting replacement, tried one after another (newest first) after the relay refused the
     -- current one: the owner may have approved one of them meanwhile.
     trying = nil,
+    -- The account service refused this version (ADR-059) since the last connection: in the history
+    -- once, until a connection opens again; and the minimum it named, if any (GET /v1/remote).
+    updateRequired = false,
+    minimumVersion = nil,
 }
 
 local function log(level, message, data)
@@ -197,7 +207,7 @@ local function scheduleReconnect(reason, seconds, note)
     data.attempt = state.tries + 1
     data.retry_s = seconds
     log(note.level or "info", note.message or "reconnecting to the relay", data)
-    publish("Reconnecting in " .. seconds .. " s (" .. tostring(reason) .. ")")
+    publish(note.status or ("Reconnecting in " .. seconds .. " s (" .. tostring(reason) .. ")"))
     pcall(function()
         state.retry = C4:SetTimer(seconds * 1000, function()
             state.retry = nil
@@ -369,7 +379,8 @@ function Relay.announceKeys()
     for _, key in ipairs(state.services.keys.list()) do
         ids[#ids + 1] = key.id
         -- Which of them are admin keys (1.6.0): only their accounts get the home's alerts (ADR-047).
-        if key.role == "admin" then
+        -- Since 1.8.0 the keys of the people who are admins (ADR-054).
+        if Access.isAdmin(key) then
             admins[#admins + 1] = key.id
         end
     end
@@ -433,6 +444,27 @@ local function onOpen()
     end
     state.tries = 0
     state.downSince = nil
+    state.updateRequired = false
+    state.minimumVersion = nil
+end
+
+-- The relay refused this version of DirectorLink (426 DRIVER_UPDATE_REQUIRED, ADR-059): drivers
+-- older than the account service's minimum may not connect until they are updated in Composer.
+-- Remote Status says so, the next attempt is an hour later, and the history has it once.
+local function updateRequired(problem, status)
+    state.trying = nil
+    local minimum = type(problem) == "table" and type(problem.minimum_version) == "string" and problem.minimum_version:match("^%d+%.%d+%.%d+$") or nil
+    if not state.updateRequired then
+        state.updateRequired = true
+        Activity.record("system", "remote_update_required", { from = Version.BRIDGE_VERSION, to = minimum })
+    end
+    state.minimumVersion = minimum
+    scheduleReconnect("update required", Relay.UPDATE_RETRY_SECONDS, {
+        level = "warn",
+        message = "the relay no longer takes this version of DirectorLink; update it in Composer",
+        data = { status = status, version = Version.BRIDGE_VERSION, minimum = minimum },
+        status = Relay.UPDATE_STATUS,
+    })
 end
 
 -- The wait after the relay closed the connection with `code`: a new secret the owner approved
@@ -453,6 +485,10 @@ local function onClose(reason, status, body)
     if reason == "refused" then
         local problem = Json.decode(body or "")
         local detail = type(problem) == "table" and (problem.code or problem.detail) or ("HTTP " .. tostring(status))
+        if tonumber(status) == 426 or detail == "DRIVER_UPDATE_REQUIRED" then
+            updateRequired(problem, status)
+            return
+        end
         -- The owner may have approved a waiting replacement: try each once, newest first.
         local identity = Relay.identity()
         local nextTry = (state.trying or 0) + 1
@@ -690,6 +726,15 @@ function Relay.connected()
     return state.enabled and state.connectedAt ~= nil
 end
 
+-- Whether the account service turned this version away (426, ADR-059) and no connection has opened
+-- since, while Remote Access is on; and the minimum version it named (nil when it named none).
+function Relay.updateRequired()
+    if not state.enabled or state.connectedAt ~= nil or not state.updateRequired then
+        return false, nil
+    end
+    return true, state.minimumVersion
+end
+
 function Relay.start()
     if state.enabled then
         return
@@ -745,6 +790,8 @@ function Relay.reset()
     state.socket = nil
     state.identity = nil
     state.status = "Off"
+    state.updateRequired = false
+    state.minimumVersion = nil
 end
 
 return Relay

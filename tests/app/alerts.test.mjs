@@ -184,7 +184,7 @@ const { state, notify } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
 const { saveRemote } = await import("../../app/js/remote.js");
 const session = await import("../../app/js/session.js");
-const { alertKey, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
+const { alertKey, alertTexts, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
 const { alertsPanel } = await import("../../app/js/views/alerts.js");
 
 // ---- helpers -----------------------------------------------------------------------------------
@@ -277,7 +277,7 @@ test("on: permission asked once, a subscription with the service's key, register
   assert.equal(browser.asked, 1, "the permission is asked from the switch");
   assert.deepEqual(browser.subscribed, [{ userVisibleOnly: true, key: PUBLIC_KEY }]);
   const [post] = callsTo("POST");
-  assert.deepEqual(post.body, { endpoint: browser.subscription.endpoint, keys: { p256dh: `p256dh-${browser.made}`, auth: `auth-${browser.made}` }, key_id: KEY_ID, offline: true }, "with this device's key");
+  assert.deepEqual(post.body, { endpoint: browser.subscription.endpoint, keys: { p256dh: `p256dh-${browser.made}`, auth: `auth-${browser.made}` }, key_id: KEY_ID, offline: true, device_requests: true }, "with this device's key; a new device of this account asking to join is on by default");
   assert.equal(isOn(), true);
   assert.equal(shown(), "Alerts are on for this device.");
   const texts = savedTexts();
@@ -503,6 +503,34 @@ test("an admin also chooses the servers' offline alert, kept with the browser's 
   await turnAlertsOff();
 });
 
+test("an admin chooses the push of a new device asking to join, kept with the browser's registration (1.8.0)", async () => {
+  await turnAlertsOff();
+  withChoices("admin", { doorbell: true });
+  await press();
+  assert.equal(callsTo("POST").at(-1).body.device_requests, true, "on by default");
+  assert.equal(kindSwitch("device_requests").attributes["aria-checked"], "true");
+  assert.match(byKey(alertsPanel(), "alerts-kinds").textContent, /A new device of mine asks to join/);
+  cloud.calls.length = 0;
+  await pressKind("device_requests");
+  assert.deepEqual(
+    callsTo("POST").map((call) => [call.body.offline, call.body.device_requests]),
+    [[true, false]],
+    "registered again without it, the offline alert as it was"
+  );
+  assert.equal(kindSwitch("device_requests").attributes["aria-checked"], "false");
+  assert.equal(toHome("PUT", "/v1/alerts/choices").length, 1, "the controller has nothing to do with it");
+  // Kept: the next start registers with it off, and the offline choice beside it.
+  await pressKind("offline");
+  assert.deepEqual(callsTo("POST").at(-1).body.device_requests, false);
+  assert.equal(JSON.parse(localStorage.getItem("directorlink.alerts")).deviceRequests, false);
+  // A member has no such switch: only admins approve.
+  state.role = "member";
+  assert.equal(kindSwitch("device_requests"), null);
+  state.role = "admin";
+  assert.equal(savedTexts().device_request, "A new device asks to join your home. Open DirectorLink to approve or decline it.");
+  await turnAlertsOff();
+});
+
 test("a controller that cannot be told leaves alerts off; a change it cannot save says so", async () => {
   await turnAlertsOff();
   withChoices("member");
@@ -572,4 +600,44 @@ test("a controller that does not know this device has alerts on is told: switche
   assert.equal(isOn(), true);
   assert.equal(kindSwitch("schedule_failed").attributes["aria-checked"], "true");
   await turnAlertsOff();
+});
+
+// ---- DirectorLink 1.8.0: camera alerts (ADR-056) ------------------------------------------------
+
+test("camera alerts are offered only with a controller that has them, off until chosen, saying what they are", async () => {
+  await turnAlertsOff();
+  withChoices("viewer", { doorbell: true, camera: false });
+  await press();
+  assert.equal(isOn(), true);
+  assert.equal(kindSwitch("camera"), null, "a controller that does not say it has them (features.camera_alerts)");
+  state.system = { features: { alert_choices: true, camera_alerts: true } };
+  assert.equal(kindSwitch("camera").attributes["aria-checked"], "false", "off until chosen");
+  assert.equal(kindSwitch("camera").attributes["aria-describedby"], "alerts-kind-camera-help");
+  assert.match(alertsPanel().textContent, /A camera sees a person, a vehicle or a line crossed/);
+  assert.match(alertsPanel().textContent, /cameras can be busy/);
+  await pressKind("camera");
+  assert.deepEqual(toHome("PUT", "/v1/alerts/choices").at(-1).body, { kinds: { camera: true } });
+  assert.equal(kindSwitch("camera").attributes["aria-checked"], "true");
+  // The service worker gets the words for every detection the controller may name.
+  const texts = savedTexts();
+  assert.equal(texts.camera_title, "Camera alert");
+  assert.equal(texts.camera, "{what} at {name} at {time}.");
+  assert.equal(texts.camera_line_crossing, "Line crossed");
+  await turnAlertsOff();
+});
+
+test("the app gives the service worker a word for every camera detection the worker knows, in English and Hebrew", async () => {
+  const worker = readFileSync(new URL("../../app/sw.js", import.meta.url), "utf8");
+  const known = [...worker.matchAll(/^\s+(camera(?:_[a-z_]+)?):/gm)].map((match) => match[1]).sort();
+  assert.ok(known.includes("camera_person") && known.includes("camera_other") && known.includes("camera_title"));
+  for (const language of ["en", "he"]) {
+    await setLanguage(language);
+    const texts = alertTexts();
+    const given = Object.keys(texts).filter((name) => name.startsWith("camera")).sort();
+    assert.deepEqual(given, known, language);
+    for (const name of given) assert.ok(texts[name] && !texts[name].startsWith("alerts."), `${language}: ${name}`);
+    assert.match(texts.camera, /\{what\}.*\{name\}.*\{time\}/, language);
+  }
+  assert.equal(alertTexts().camera_person, "אדם");
+  await setLanguage("en");
 });

@@ -223,11 +223,44 @@ class SonosOnly(unittest.TestCase):
         self.assertIsNone(self.refused({**files, "src/main.lua": main + "\n-- SonosClient.call(ip, ...) is not for main.lua\n"}))
 
     def test_no_other_action_reaches_a_player(self):
+        # Grouping is joining and leaving (1.8.0, ADR-057); nothing else new: no other way to
+        # group, no group volume of its own, no alarms or settings.
         files = driver_sources()
         protocol = files["src/sonos/protocol.lua"]
-        grouping = protocol.replace('    Browse = "ContentDirectory",\n', '    Browse = "ContentDirectory",\n    BecomeCoordinatorOfStandaloneGroup = "AVTransport",\n')
-        self.assertNotEqual(grouping, protocol)
-        self.assertIn("the actions sent to Sonos players must be exactly", self.refused({**files, "src/sonos/protocol.lua": grouping}) or "")
+        self.assertIn('    BecomeCoordinatorOfStandaloneGroup = "AVTransport",\n', protocol)
+        for action, service in (
+            ("DelegateGroupCoordinationTo", "AVTransport"),
+            ("AddMember", "AVTransport"),
+            ("RemoveMember", "AVTransport"),
+            ("SetGroupVolume", "GroupRenderingControl"),
+            ("SetRelativeVolume", "RenderingControl"),
+            ("SnapshotGroupVolume", "GroupRenderingControl"),
+            ("CreateAlarm", "AlarmClock"),
+            ("SetZoneAttributes", "DeviceProperties"),
+        ):
+            with self.subTest(action=action):
+                added = protocol.replace('    Browse = "ContentDirectory",\n', f'    Browse = "ContentDirectory",\n    {action} = "{service}",\n')
+                self.assertNotEqual(added, protocol)
+                self.assertIn("the actions sent to Sonos players must be exactly", self.refused({**files, "src/sonos/protocol.lua": added}) or "")
+        # Leaving taken away is a change of the list too.
+        removed = protocol.replace('    BecomeCoordinatorOfStandaloneGroup = "AVTransport",\n', "")
+        self.assertIn("the actions sent to Sonos players must be exactly", self.refused({**files, "src/sonos/protocol.lua": removed}) or "")
+
+    def test_only_the_protocol_makes_a_group_address_and_only_the_sonos_module_uses_it(self):
+        files = driver_sources()
+        self.assertIn('return "x-rincon:" .. coordinatorId', files["src/sonos/protocol.lua"])
+        self.assertIn("Protocol.groupUri(", files["src/sonos/sonos.lua"])
+        for name in ("src/api/handlers/music.lua", "src/sonos/sonos.lua", "src/api/handlers/scenes.lua"):
+            for added in ('local uri = "x-rincon:" .. ctx.body.with', "local uri = 'x-rincon:' ..id"):
+                with self.subTest(name=name, added=added):
+                    self.assertIn("makes an x-rincon: address", self.refused({**files, name: files[name] + "\nlocal function x()\n    " + added + "\nend\n"}) or "")
+        for name in ("src/api/handlers/music.lua", "src/api/handlers/scenes.lua", "src/main.lua"):
+            with self.subTest(name=name):
+                printed = self.refused({**files, name: files[name] + "\nlocal function x() return Protocol.groupUri(ctx.body.with) end\n"}) or ""
+                self.assertIn("uses Protocol.groupUri", printed)
+        # Reading what plays (a room that follows another: x-rincon:...) is not making one.
+        self.assertIn('startsWith(uri, "x-rincon:")', files["src/sonos/protocol.lua"])
+        self.assertIsNone(self.refused(files))
 
 
 def driver_sources():

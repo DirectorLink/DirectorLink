@@ -82,6 +82,27 @@ local function sameText(left, right)
     return same
 end
 
+-- Shared with ask-to-open links (src/core/ask_links.lua, ADR-058), which keep their secrets alike:
+-- a secret's hash and its algorithm's name, or nil; and whether `secret` (40 hex digits, any case)
+-- is the one hashed as `hash` with `alg`. The presented secret is hashed even when there is no hash
+-- to compare with (an unknown link), and the hashes are compared in constant time.
+SceneLinks.hashSecret = hashSecret
+
+function SceneLinks.secretMatches(alg, hash, secret)
+    if type(secret) ~= "string" or #secret ~= SceneLinks.SECRET_LENGTH or not secret:match("^%x+$") then
+        return false
+    end
+    local algorithm = algorithmNamed(alg or "sha256") or ALGORITHMS[1]
+    local presented = digest(algorithm, secret:lower())
+    return hash ~= nil and presented ~= nil and sameText(presented, hash)
+end
+
+-- Whether `value` is a stored hash of the algorithm named `alg`.
+function SceneLinks.validHash(alg, value)
+    local algorithm = algorithmNamed(alg)
+    return algorithm ~= nil and isLowerHex(value, algorithm.length)
+end
+
 -- The step types a linked scene may have: what anyone holding its link may switch, from anywhere.
 -- Doors and gates never (REFUSED). A step type on neither list (one added later) keeps a scene
 -- from having a link until it is put on one (tests/test_scene_links.lua checks Scenes.TYPES).
@@ -349,10 +370,11 @@ local function noteRemoved(link, reason, sceneName, by)
 end
 
 -- The links whose scene is gone or now has a step a link may not run (doors or gates), that were
--- made for another home than `home` (when given), or whose key is gone (`keyExists(id)`, when
--- given: revoked or expired; a link that names no key stays) go. `findScene(id)` gives a scene or
+-- made for another home than `home` (when given), whose key is gone (`keyExists(id)`, when given:
+-- revoked or expired; a link that names no key stays), or whose key's person may no longer make one
+-- (`keyMayLink(id)`, when given: no longer an admin, ADR-054) go. `findScene(id)` gives a scene or
 -- nil. Returns them.
-function SceneLinks.prune(findScene, home, keyExists)
+function SceneLinks.prune(findScene, home, keyExists, keyMayLink)
     if not state.complete or #state.links == 0 then
         return {}
     end
@@ -367,6 +389,8 @@ function SceneLinks.prune(findScene, home, keyExists)
             why[link.id] = { reason = "other_home", name = scene.name }
         elseif keyExists and link.by and not keyExists(link.by) then
             why[link.id] = { reason = "key_gone", name = scene.name }
+        elseif keyMayLink and link.by and not keyMayLink(link.by) then
+            why[link.id] = { reason = "no_access", name = scene.name }
         end
         return why[link.id] ~= nil
     end) or {}
