@@ -4,7 +4,7 @@
 (() => {
   "use strict";
 
-  const ICONS = {"home":"<path d=\"M3 10.5 12 3l9 7.5\"/><path d=\"M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5\"/>","camera":"<path d=\"M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z\"/><circle cx=\"12\" cy=\"13\" r=\"3.5\"/>","climate":"<path d=\"M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0Z\"/><path d=\"M12 11v6\"/>","settings":"<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z\"/>","bulb":"<path d=\"M9 18h6\"/><path d=\"M10 21h4\"/><path d=\"M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3Z\"/>","blinds":"<path d=\"M4 4h16\"/><path d=\"M5 4v16h14V4\"/><path d=\"M5 8h14M5 12h14M5 16h14\"/>","fan":"<circle cx=\"12\" cy=\"12\" r=\"1.5\"/><path d=\"M12 10.5C11 7 11.5 3 14.5 3c2 0 2.5 2 1.5 3.5-1 1.6-2.6 2.6-4 4Z\"/><path d=\"M13.3 12.8c3.4 1 6 4 4.3 6.5-1.1 1.7-3 1-3.8-.5-.9-1.7-.9-3.6-.5-6Z\"/><path d=\"M10.7 12.8C7.4 13.9 4.5 13.4 4 10.4c-.3-2 1.6-2.8 3.2-2.2 1.8.7 3 2.2 3.5 4.6Z\"/>","power":"<path d=\"M12 3v8\"/><path d=\"M6.3 6.3a8 8 0 1 0 11.4 0\"/>","star":"<path d=\"m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9Z\"/>","chevronBack":"<path d=\"m15 18-6-6 6-6\"/>","chevronForward":"<path d=\"m9 18 6-6-6-6\"/>","plus":"<path d=\"M12 5v14M5 12h14\"/>","minus":"<path d=\"M5 12h14\"/>","check":"<path d=\"m5 12.5 4.5 4.5L19 7.5\"/>","door":"<path d=\"M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17\"/><path d=\"M4 21h16\"/><path d=\"M14 12h.01\"/>","music":"<path d=\"M9 18V5l11-2v13\"/><circle cx=\"6.5\" cy=\"18\" r=\"2.5\"/><circle cx=\"17.5\" cy=\"16\" r=\"2.5\"/>","play":"<path d=\"M8 5.5v13l10.5-6.5Z\"/>","pause":"<path d=\"M8 5.5v13M16 5.5v13\"/>","skipNext":"<path d=\"M5.5 5.5v13l9-6.5Z\"/><path d=\"M18.5 5.5v13\"/>","skipPrevious":"<path d=\"M18.5 5.5v13l-9-6.5Z\"/><path d=\"M5.5 5.5v13\"/>","volume":"<path d=\"M4 9.5h3.5L12 5.5v13l-4.5-4H4Z\"/><path d=\"M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11\"/>","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>","moon":"<path d=\"M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z\"/>","scene":"<path d=\"M11 3.5 12.8 8 17.5 9.8 12.8 11.6 11 16.3 9.2 11.6 4.5 9.8 9.2 8Z\"/><path d=\"m18 14 .9 2.1 2.1.9-2.1.9L18 20l-.9-2.1-2.1-.9 2.1-.9Z\"/>","leave":"<path d=\"M10 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4\"/><path d=\"M14 8l4 4-4 4\"/><path d=\"M18 12H9\"/>","movie":"<rect x=\"3\" y=\"7\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M3 11h18\"/><path d=\"m4 7 3-3 3 3M11 7l3-3 3 3\"/>","shield":"<path d=\"M12 3 4.5 6v5.5c0 4.4 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5.1 7.5-9.5V6Z\"/>","bell":"<path d=\"M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z\"/><path d=\"M10 20.5a2 2 0 0 0 4 0\"/><path d=\"M12 3v2\"/>","fridge":"<rect x=\"5.5\" y=\"2.5\" width=\"13\" height=\"19\" rx=\"2\"/><path d=\"M5.5 9.5h13\"/><path d=\"M9 5.5v1.5M9 12.5v3\"/>","users":"<circle cx=\"9\" cy=\"8\" r=\"3.5\"/><path d=\"M2.5 20a6.5 6.5 0 0 1 13 0\"/><path d=\"M15.5 4.7a3.5 3.5 0 0 1 0 6.6\"/><path d=\"M18 14.3a6.5 6.5 0 0 1 3.5 5.7\"/>","close":"<path d=\"M6 6l12 12M18 6 6 18\"/>","clock":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/>","arrowUp":"<path d=\"M12 19V5\"/><path d=\"m6 11 6-6 6 6\"/>","arrowDown":"<path d=\"M12 5v14\"/><path d=\"m6 13 6 6 6-6\"/>","stop":"<rect x=\"6.5\" y=\"6.5\" width=\"11\" height=\"11\" rx=\"1.5\"/>"};
+  const ICONS = {"phone":"<rect x=\"7\" y=\"2.5\" width=\"10\" height=\"19\" rx=\"2.2\"/><path d=\"M11 18.5h2\"/>","home":"<path d=\"M3 10.5 12 3l9 7.5\"/><path d=\"M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5\"/>","camera":"<path d=\"M3 8a2 2 0 0 1 2-2h2.5l1.5-2h6l1.5 2H19a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z\"/><circle cx=\"12\" cy=\"13\" r=\"3.5\"/>","climate":"<path d=\"M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0Z\"/><path d=\"M12 11v6\"/>","settings":"<circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z\"/>","bulb":"<path d=\"M9 18h6\"/><path d=\"M10 21h4\"/><path d=\"M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.2h5c0-.9.4-1.6 1.1-2.2A6 6 0 0 0 12 3Z\"/>","blinds":"<path d=\"M4 4h16\"/><path d=\"M5 4v16h14V4\"/><path d=\"M5 8h14M5 12h14M5 16h14\"/>","fan":"<circle cx=\"12\" cy=\"12\" r=\"1.5\"/><path d=\"M12 10.5C11 7 11.5 3 14.5 3c2 0 2.5 2 1.5 3.5-1 1.6-2.6 2.6-4 4Z\"/><path d=\"M13.3 12.8c3.4 1 6 4 4.3 6.5-1.1 1.7-3 1-3.8-.5-.9-1.7-.9-3.6-.5-6Z\"/><path d=\"M10.7 12.8C7.4 13.9 4.5 13.4 4 10.4c-.3-2 1.6-2.8 3.2-2.2 1.8.7 3 2.2 3.5 4.6Z\"/>","power":"<path d=\"M12 3v8\"/><path d=\"M6.3 6.3a8 8 0 1 0 11.4 0\"/>","star":"<path d=\"m12 3 2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3l-5.5 2.9 1-6.2L3 9.6l6.2-.9Z\"/>","chevronBack":"<path d=\"m15 18-6-6 6-6\"/>","chevronForward":"<path d=\"m9 18 6-6-6-6\"/>","plus":"<path d=\"M12 5v14M5 12h14\"/>","minus":"<path d=\"M5 12h14\"/>","check":"<path d=\"m5 12.5 4.5 4.5L19 7.5\"/>","door":"<path d=\"M6 21V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17\"/><path d=\"M4 21h16\"/><path d=\"M14 12h.01\"/>","music":"<path d=\"M9 18V5l11-2v13\"/><circle cx=\"6.5\" cy=\"18\" r=\"2.5\"/><circle cx=\"17.5\" cy=\"16\" r=\"2.5\"/>","play":"<path d=\"M8 5.5v13l10.5-6.5Z\"/>","pause":"<path d=\"M8 5.5v13M16 5.5v13\"/>","skipNext":"<path d=\"M5.5 5.5v13l9-6.5Z\"/><path d=\"M18.5 5.5v13\"/>","skipPrevious":"<path d=\"M18.5 5.5v13l-9-6.5Z\"/><path d=\"M5.5 5.5v13\"/>","volume":"<path d=\"M4 9.5h3.5L12 5.5v13l-4.5-4H4Z\"/><path d=\"M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11\"/>","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4\"/>","moon":"<path d=\"M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z\"/>","scene":"<path d=\"M11 3.5 12.8 8 17.5 9.8 12.8 11.6 11 16.3 9.2 11.6 4.5 9.8 9.2 8Z\"/><path d=\"m18 14 .9 2.1 2.1.9-2.1.9L18 20l-.9-2.1-2.1-.9 2.1-.9Z\"/>","leave":"<path d=\"M10 4H6a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4\"/><path d=\"M14 8l4 4-4 4\"/><path d=\"M18 12H9\"/>","movie":"<rect x=\"3\" y=\"7\" width=\"18\" height=\"13\" rx=\"2\"/><path d=\"M3 11h18\"/><path d=\"m4 7 3-3 3 3M11 7l3-3 3 3\"/>","shield":"<path d=\"M12 3 4.5 6v5.5c0 4.4 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5.1 7.5-9.5V6Z\"/>","bell":"<path d=\"M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15Z\"/><path d=\"M10 20.5a2 2 0 0 0 4 0\"/><path d=\"M12 3v2\"/>","fridge":"<rect x=\"5.5\" y=\"2.5\" width=\"13\" height=\"19\" rx=\"2\"/><path d=\"M5.5 9.5h13\"/><path d=\"M9 5.5v1.5M9 12.5v3\"/>","users":"<circle cx=\"9\" cy=\"8\" r=\"3.5\"/><path d=\"M2.5 20a6.5 6.5 0 0 1 13 0\"/><path d=\"M15.5 4.7a3.5 3.5 0 0 1 0 6.6\"/><path d=\"M18 14.3a6.5 6.5 0 0 1 3.5 5.7\"/>","close":"<path d=\"M6 6l12 12M18 6 6 18\"/>","clock":"<circle cx=\"12\" cy=\"12\" r=\"9\"/><path d=\"M12 7v5l3 2\"/>","arrowUp":"<path d=\"M12 19V5\"/><path d=\"m6 11 6-6 6 6\"/>","arrowDown":"<path d=\"M12 5v14\"/><path d=\"m6 13 6 6 6-6\"/>","stop":"<rect x=\"6.5\" y=\"6.5\" width=\"11\" height=\"11\" rx=\"1.5\"/>"};
   const PICTURES = window.DIRECTORLINK_DEMO_PICTURES || {};
   const pictureBase = (document.currentScript && document.currentScript.dataset.pictures) || "/try/pictures/";
   const picture = (name, size) => PICTURES[`${name}-${size}`] || `${pictureBase}${name}-${size}.jpg`;
@@ -64,12 +64,8 @@
     { id: "driveway", name: "Driveway", room: "entrance" },
     { id: "garden", name: "Garden", room: "garden" },
   ];
-  const PEOPLE = [
-    { id: "alex", name: "Alex", role: "Admin", note: "The home’s owner · Alex’s iPhone, Alex’s PC" },
-    { id: "jordan", name: "Jordan", role: "Admin", note: "Jordan’s iPhone" },
-    { id: "sam", name: "Sam", role: "Member", note: "Sam’s iPhone" },
-    { id: "robin", name: "Robin", role: "Member", note: "Robin’s iPad" },
-  ];
+  // Up to this many devices a user (ADR-061).
+  const DEVICE_LIMIT = 5;
 
   function freshHome() {
     return {
@@ -109,6 +105,18 @@
         { id: "master", room: "master", name: "Master Bedroom", volume: 15, follows: "master", playing: false, track: 2 },
       ],
       fridge: { fridge: 4, freezer: -18, powerCool: false, waiting: false },
+      users: [
+        { id: "alex", name: "Alex", role: "Admin", owner: true, account: "Google", devices: [
+          { id: "k1", name: "Alex’s iPhone", last: "Now", self: true }, { id: "k2", name: "Alex’s PC", last: "Today 09:12" }] },
+        { id: "jordan", name: "Jordan", role: "Admin", account: "Apple", devices: [
+          { id: "k3", name: "Jordan’s iPhone", last: "Today 17:20" }, { id: "k4", name: "Jordan’s MacBook", last: "Yesterday" }] },
+        { id: "sam", name: "Sam", role: "Member", account: "Google", devices: [{ id: "k5", name: "Sam’s iPhone", last: "Today 16:02" }],
+          access: { rooms: ["living", "kitchen", "kids", "entrance", "garden"], kinds: ["Lights", "Climate", "Blinds", "Music"], cameras: true, doors: true } },
+        { id: "robin", name: "Robin", role: "Member", account: null, devices: [{ id: "k6", name: "Robin’s iPad", last: "Today 15:40" }],
+          access: { rooms: ["kids"], kinds: ["Lights", "Music"], cameras: false, doors: false } },
+        { id: "kitchen-tablet", name: "Kitchen Tablet", role: "Member", account: null, devices: [{ id: "k7", name: "Kitchen tablet", last: "Now" }],
+          access: { rooms: ["kitchen", "living"], kinds: ["Lights", "Music"], cameras: true, doors: false } },
+      ],
       alerts: { doorbell: true, camera: false, doors: true, fridge: true },
     };
   }
@@ -582,34 +590,74 @@
     const alert = (key, label) => h("div", { class: "kv" }, h("span", {}, label),
       h("button", { class: "switch", role: "switch", "aria-checked": String(home.alerts[key]), "aria-label": label, dataset: { focus: `alert-${key}` }, onclick: () => { home.alerts[key] = !home.alerts[key]; render(); } }));
     return [
-      section("People and devices", "users", h("div", { class: "card list" },
-        PEOPLE.map((person, index) => [
+      section("Users", "users", h("div", { class: "card list" },
+        home.users.map((user, index) => [
           index ? h("div", { class: "divider" }) : null,
-          h("button", { class: "person", dataset: { focus: `person-${person.id}` }, onclick: () => go({ tab: "settings", person: person.id }) },
-            h("span", { class: "avatar" }, person.name[0]),
-            h("span", {}, h("div", { class: "dev-name" }, person.name), h("div", { class: "dev-sub" }, person.note)),
-            h("span", { class: "role" }, person.role)),
+          h("button", { class: "person", dataset: { focus: `user-${user.id}` }, onclick: () => go({ tab: "settings", user: user.id }) },
+            h("span", { class: "avatar" }, user.name[0]),
+            h("span", {}, h("div", { class: "dev-name" }, user.name), h("div", { class: "dev-sub" }, userLine(user))),
+            h("span", { class: "role" }, user.owner ? "Owner" : user.role)),
         ]))),
+      h("p", { class: "small-note" }, `Each user has one set of permissions on all their devices, up to ${DEVICE_LIMIT}. A phone signed in to the same Google or Apple account joins its user by itself.`),
       section("Alerts on this phone", "bell", h("div", { class: "card list" },
         alert("doorbell", "The doorbell rings"), alert("camera", "A camera sees a person"), alert("doors", "A door or gate is opened"), alert("fridge", "The refrigerator door is left open"))),
       h("p", { class: "small-note" }, "Alerts are sealed on the controller for each phone, so DirectorLink’s servers can’t read them."),
     ];
   }
-  const ACCESS = {
-    sam: { rooms: ["living", "kitchen", "kids", "entrance", "garden"], kinds: ["Lights", "Climate", "Blinds", "Music"], cameras: true, doors: true },
-    robin: { rooms: ["kids"], kinds: ["Lights", "Music"], cameras: false, doors: false },
-  };
-  function personScreen(id) {
-    const person = PEOPLE.find((p) => p.id === id);
-    if (person.role === "Admin") {
-      return [h("div", { class: "card list" }, h("div", { class: "dev-name" }, `${person.name} is an admin`),
-        h("p", { class: "small-note" }, "Admins can do everything: people, rooms, scenes, schedules and settings."),
-        id === "alex" ? h("p", { class: "small-note" }, "Alex linked the home to their account, so Alex is the owner. Nobody else can change Alex’s access.") : null)];
+  const devicesWord = (count) => (count === 1 ? "1 device" : `${count} devices`);
+  function userLine(user) {
+    return [user.account ? `Signs in with ${user.account}` : "No account: home network only", devicesWord(user.devices.length)].join(" · ");
+  }
+  function removeDevice(user, device) {
+    user.devices = user.devices.filter((item) => item.id !== device.id);
+    if (user.devices.length) {
+      say(`${device.name} was removed. It can no longer reach the home.`, "close");
+      render();
+      return;
     }
-    const access = ACCESS[id];
+    // A user goes with their last device (ADR-061).
+    home.users = home.users.filter((item) => item.id !== user.id);
+    say(`${user.name} went with their last device.`, "close");
+    go({ tab: "settings" });
+  }
+  function devicesSection(user) {
+    const rows = user.devices.map((device, index) => [
+      index ? h("div", { class: "divider" }) : null,
+      h("div", { class: "dev-row" },
+        h("span", { class: "dev-icon" }, icon("phone")),
+        h("div", {}, h("div", { class: "dev-name" }, device.name), h("div", { class: "dev-sub" }, device.self ? "This device · now" : `Last used: ${device.last}`)),
+        device.self ? h("span") : h("button", { class: "btn", dataset: { focus: `remove-${device.id}` }, onclick: () => removeDevice(user, device) }, "Remove")),
+    ]);
+    const add = h("button", { class: "music-more", dataset: { focus: `add-${user.id}` }, onclick: () => {
+      if (user.devices.length >= DEVICE_LIMIT) say(`Remove a device first: up to ${DEVICE_LIMIT} devices a user.`, "close");
+      else say("In the app, this shows a link and a code for the new device.", "plus");
+      render();
+    } }, icon("plus"), "Add a device");
+    return section(`Devices (${user.devices.length} of ${DEVICE_LIMIT})`, null, h("div", { class: "card list" }, rows, add));
+  }
+  function userScreen(id) {
+    const user = home.users.find((item) => item.id === id);
+    if (!user) return [h("p", { class: "small-note" }, "This user is gone.")];
+    const account = h("div", { class: "card list" },
+      h("div", { class: "dev-name" }, user.account ? `Signs in with ${user.account}` : "No account"),
+      h("p", { class: "small-note" }, user.account
+        ? "Their devices reach the home from anywhere, sealed end to end."
+        : "Their devices work on the home network only. An admin can invite their Google or Apple account for remote access."));
+    if (user.role === "Admin") {
+      return [
+        h("div", { class: "card list" }, h("div", { class: "dev-name" }, `${user.name} is an admin`),
+          h("p", { class: "small-note" }, "Admins can do everything: users, rooms, scenes, schedules and settings."),
+          user.owner ? h("p", { class: "small-note" }, `${user.name} is the home’s owner. Nobody else can change their access or devices.`) : null),
+        account,
+        devicesSection(user),
+      ];
+    }
+    const access = user.access;
     const toggle = (list, value) => { const i = list.indexOf(value); if (i >= 0) list.splice(i, 1); else list.push(value); render(); };
     return [
-      h("p", { class: "small-note" }, `${person.name} is a member: they see and use only what you choose here, on all their devices.`),
+      h("p", { class: "small-note" }, `${user.name} is a member: they see and use only what you choose here, on all their devices.`),
+      account,
+      devicesSection(user),
       section("Rooms", "home", h("div", { class: "card" }, ROOMS.map((room) => h("label", { class: "check-row" },
         h("input", { type: "checkbox", id: `room-${id}-${room.id}`, checked: access.rooms.includes(room.id), onchange: () => toggle(access.rooms, room.id) }), room.name)))),
       section("Devices they use", "bulb", h("div", { class: "card list" }, ["Lights", "Climate", "Blinds", "Music", "Refrigerators"].map((kind) => h("div", { class: "kv" }, h("span", {}, kind),
@@ -628,7 +676,7 @@
     { id: "climate", name: "Climate", icon: "climate" },
     { id: "settings", name: "Settings", icon: "settings" },
   ];
-  const routeKey = (r) => `${r.tab}/${r.room || ""}/${r.person || ""}`;
+  const routeKey = (r) => `${r.tab}/${r.room || ""}/${r.user || ""}`;
   let screenEl;
   let bodyEl;
 
@@ -640,12 +688,12 @@
   }
   function title() {
     if (route.room) return roomName(route.room);
-    if (route.person) return (PEOPLE.find((p) => p.id === route.person) || {}).name;
+    if (route.user) return (home.users.find((user) => user.id === route.user) || { name: "Users" }).name;
     return TABS.find((tab) => tab.id === route.tab).name;
   }
   function content() {
     if (route.room) return roomScreen(route.room);
-    if (route.person) return personScreen(route.person);
+    if (route.user) return userScreen(route.user);
     if (route.tab === "scenes") return scenesScreen();
     if (route.tab === "cameras") return camerasScreen();
     if (route.tab === "climate") return climateScreen();
@@ -663,7 +711,7 @@
     pending = false;
     const focused = document.activeElement && screenEl.contains(document.activeElement) ? document.activeElement.dataset.focus : null;
     const top = moved ? scroll.get(routeKey(route)) || 0 : bodyEl ? bodyEl.scrollTop : 0;
-    const back = route.room || route.person;
+    const back = route.room || route.user;
     const head = h("header", { class: "app-head" },
       back ? h("button", { class: "app-back", "aria-label": "Back", dataset: { focus: "back" }, onclick: () => go({ tab: route.tab }) }, icon("chevronBack")) : null,
       h("h1", {}, title()), h("span", { class: "pill-ok" }, "Connected"));

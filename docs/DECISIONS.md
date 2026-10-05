@@ -309,7 +309,7 @@ Standalone/combo drivers without proxy relationships may appear as unsupported e
 
 **Why:** Trying beats a screenshot, and a demo that cannot reach anything cannot leak or break anything. Its own script rather than the app in a demo mode, because the app's code would then carry a fake controller and a mode that must never be reached on a real home.
 
-**Consequence:** The demo copies the app's look and must be kept close to it by hand when screens change (the icons are copied from `app/js/icons.js`). No new address, cookie or storage on the website; the CSP is unchanged.
+**Consequence:** The demo copies the app's look and must be kept close to it by hand when screens change (the icons are copied from `app/js/icons.js`). With 1.9.0 its Settings shows Users (ADR-061): each with their account, or none and the home network only, and their devices, up to five, with Remove. No new address, cookie or storage on the website; the CSP is unchanged.
 
 ## ADR-059 — Older drivers can be turned away; a device whose driver is updated is set up again; favorites of removed devices
 
