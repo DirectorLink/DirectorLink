@@ -231,16 +231,68 @@ test("the controller's refusals, in the app's words", async () => {
   connect();
   setLanguage("en");
   const refusals = [
-    [409, { code: "OWNER_NEEDS_ACCOUNT", user: { id: "aaaa0002", name: "Avi" } }, /Avi needs to sign in to DirectorLink on one of their devices first/],
+    [409, { code: "OWNER_NEEDS_ACCOUNT", user: { id: "aaaa0002", name: "Avi" } }, /Invite Avi’s Google or Apple account first \(Invite their account, on their row\), and have them accept it/],
+    [409, { code: "OWNER_ACCOUNT_UNCLEAR", user: { id: "aaaa0002", name: "Avi" }, device_names: ["Avi's phone", "Avi's tablet"] }, /Avi’s devices use more than one Google or Apple account \(Avi's phone, Avi's tablet\)/],
+    [409, { code: "OWNER_ACCOUNT_SHARED", user: { id: "aaaa0002", name: "Avi" }, device_names: ["Avi's phone"] }, /Avi’s devices \(Avi's phone\) use your own Google or Apple account/],
     [409, { code: "NOT_AN_ADMIN", user: { id: "aaaa0002", name: "Avi" } }, /Make Avi an admin first: only an admin can be the owner/],
+    [409, { code: "ALREADY_OWNER", user: { id: "aaaa0002", name: "Avi" } }, /Avi is the home’s owner already/],
+    [409, { code: "REMOTE_ACCESS_OFF" }, /Turn on Remote Access in Composer first/],
     [403, { code: "OWNER_ONLY" }, /Only the home’s owner can make someone else the owner/],
-    [503, { code: "REMOTE_OFFLINE", detail: "The controller is not connected to DirectorLink's servers right now, so nothing was changed; try again in a minute" }, /not connected to DirectorLink's servers right now/],
+    [503, { code: "REMOTE_OFFLINE" }, /The controller is not connected to DirectorLink’s servers right now, so nothing was changed/],
+    [503, { code: "REMOTE_TIMEOUT", user: { id: "aaaa0002", name: "Avi" } }, /did not answer in time, so the change may not have finished: Avi is not the owner yet\. Try again/],
+    [503, { code: "UNAVAILABLE" }, /Restart the driver in Composer/],
+    [502, { code: "ACCOUNT_NOT_ADMIN" }, /did not move the home’s account \(ACCOUNT_NOT_ADMIN\), so nothing was changed/],
+    [500, { code: "INTERNAL" }, /did not move the home’s account \(INTERNAL\)/],
   ];
   for (const [status, problem, words] of refusals) {
-    controller.refuse = { method: "POST", path: "/v1/users/owner", status, problem: { type: "about:blank", title: "Refused", status, detail: "refused", ...problem } };
+    controller.refuse = { method: "POST", path: "/v1/users/owner", status, problem: { type: "about:blank", title: "Refused", status, detail: "the controller's English", ...problem } };
     await press(await open(), "users-make-owner-aaaa0002");
     assert.match(textOf(accessView({})), words, problem.code);
   }
+  // In Hebrew, never the controller's English (the owner review, finding 4).
+  await setLanguage("he");
+  try {
+    for (const [status, problem] of refusals) {
+      controller.refuse = { method: "POST", path: "/v1/users/owner", status, problem: { type: "about:blank", title: "Refused", status, detail: "the controller's English", ...problem } };
+      await press(await open(), "users-make-owner-aaaa0002");
+      assert.doesNotMatch(textOf(accessView({})), /the controller's English/, problem.code);
+    }
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+// The controller waits up to 10 s for DirectorLink's servers: the app waits longer (the owner
+// review, finding 5), and in a home never linked to an account the confirm says nothing of one; in
+// one that is, it names the account the owner can see.
+test("the hand-over waits 15 s, and its confirm says which account, if any, moves", async () => {
+  connect();
+  setLanguage("en");
+  const delays = [];
+  const setTimer = window.setTimeout;
+  window.setTimeout = (callback, delay, ...rest) => {
+    delays.push(delay);
+    return setTimer(callback, delay, ...rest);
+  };
+  try {
+    await press(await open(), "users-make-owner-aaaa0002");
+  } finally {
+    window.setTimeout = setTimer;
+  }
+  assert.ok(delays.includes(15000), `waits 15 s: ${delays.join(", ")}`);
+  // The owner sees the home's accounts: Avi's is named.
+  connect();
+  let view = await open();
+  ui.access = { ...ui.access, people: [{ email: "avi@example.com", key_ids: ["0a1b2c3e"] }, { email: "dana@example.com", key_ids: ["0a1b2c3d"] }] };
+  await press(accessView({}), "users-make-owner-aaaa0002");
+  assert.match(confirmed.at(-1), /their Google or Apple account, avi@example\.com, becomes the home’s account/);
+  // A home never linked to an account: no account moves.
+  connect();
+  controller.users.linked = false;
+  view = await open();
+  await press(view, "users-make-owner-aaaa0002");
+  assert.match(confirmed.at(-1), /^Make Avi the home’s owner\? From now on only Avi changes their own access and devices and links the home to an account\./);
+  assert.doesNotMatch(confirmed.at(-1), /Google or Apple/);
 });
 
 test("the words are there in English and Hebrew, about users, never people", async () => {

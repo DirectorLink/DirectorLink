@@ -547,6 +547,14 @@ function describeError(error, pairing = false) {
   if (error?.code === "INVITATION_LIMIT_REACHED") {
     return t("errors.invitationLimit");
   }
+  // A member's other device joins only with an account this device already uses at the home
+  // (1.9.0, ADR-061), which DirectorLink's servers check.
+  if (error?.code === "ACCOUNT_NOT_OF_DEVICE") {
+    return t("users.account.notThisDevice");
+  }
+  if (error?.code === "FOR_KEY_UNSUPPORTED") {
+    return t("users.account.serversOld");
+  }
   // A user has at most five devices (1.9.0, ADR-061); views/device-limit.js lists them where it can.
   if (error?.code === "USER_DEVICE_LIMIT") {
     const name = error.problem?.user?.name;
