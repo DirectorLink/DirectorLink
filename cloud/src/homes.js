@@ -27,7 +27,7 @@ import { handleHomeAlerts, homesChanged } from "./alerts.js";
 import { DEVICE_REQUEST_ROUTES } from "./device-requests.js";
 import { json, problem, randomHex, readText } from "./http.js";
 import { PURGE_GRACE_MS, forgetInvitations } from "./invitations.js";
-import { validKeyId } from "./member-keys.js";
+import { accountTag, accountsChanged, validKeyId } from "./member-keys.js";
 
 const HOME_ID = /^[0-9a-f]{32}$/;
 const SHORT_ID = /^[0-9a-f]{8}$/;
@@ -73,6 +73,8 @@ const CODES = {
   INVITATION_NOT_FOUND: [404, "The invitation was used, revoked or has expired"],
   INVALID_CLAIM: [403, "The claim token is wrong or has expired; get a new one at home"],
   KEY_LIMIT_REACHED: [409, "The home already has as many API keys as it allows"],
+  // 1.9.0 (ADR-061): the user an invitation is for has five devices already.
+  USER_DEVICE_LIMIT: [409, "This user already has 5 devices: remove one of them first, then open the invitation again"],
   INTERNAL: [502, "The home failed to answer"],
 };
 
@@ -196,6 +198,7 @@ async function claim(request, env, user) {
   if (transferred && first.meta?.changes) {
     await homesChanged(env, [homeId]);
   }
+  if (transferred) await accountsChanged(env, homeId);
   log("home_claimed", { home: homeId, user: user.id, transferred });
   return json({ home_id: homeId, owner: true, transferred });
 }
@@ -245,11 +248,20 @@ async function e2e(request, env, user, homeId) {
 }
 
 // An invitation the controller registers itself (driver 1.0.0 and later, over its connection):
-// { id, invitation_id, email, expires_at } -> { ok } or { ok: false, code }.
+// { id, invitation_id, email, expires_at, for_key? } -> { ok, for_key? } or { ok: false, code }.
+// `for_key` (1.9.0, ADR-061): a member's invitation for their own other device, made with that key:
+// registered only when the email is that of an account that uses the key at this home (member_keys;
+// its own email or one of its sign-ins'), so that a member never brings another account into the
+// home (ACCOUNT_NOT_OF_DEVICE otherwise). The answer names the key, so that the controller knows it
+// was checked.
 export async function registerHomeInvitation(env, homeId, data) {
   const email = typeof data?.email === "string" ? data.email.trim().toLowerCase() : "";
   const expires = Date.parse(data?.expires_at ?? "");
+  const forKey = data?.for_key ?? null;
   if (!SHORT_ID.test(data?.invitation_id ?? "") || !EMAIL.test(email) || email.length > 254 || !Number.isFinite(expires)) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  if (forKey !== null && !validKeyId(forKey)) {
     return { ok: false, code: "INVALID_REQUEST" };
   }
   if (expires <= Date.now() || expires > Date.now() + MAX_INVITATION_MS + INVITATION_SKEW_MS) {
@@ -258,6 +270,18 @@ export async function registerHomeInvitation(env, homeId, data) {
   // Invitations belong to a home an account has claimed; nobody could accept one otherwise.
   if (!(await env.DB.prepare("SELECT 1 AS found FROM homes WHERE id = ?").bind(homeId).first())) {
     return { ok: false, code: "NOT_CLAIMED" };
+  }
+  if (forKey !== null) {
+    const owned = await env.DB.prepare(
+      "SELECT 1 AS found FROM member_keys JOIN users ON users.id = member_keys.user_id " +
+        "WHERE member_keys.home_id = ?1 AND member_keys.key_id = ?2 AND (users.email = ?3 OR EXISTS (SELECT 1 FROM identities WHERE identities.user_id = users.id AND identities.email = ?3))"
+    )
+      .bind(homeId, forKey, email)
+      .first();
+    if (!owned) {
+      log("invitation_refused", { home: homeId, by: "home", invitation: data.invitation_id, why: "not an account of that device" });
+      return { ok: false, code: "ACCOUNT_NOT_OF_DEVICE" };
+    }
   }
   const now = iso();
   const statements = [
@@ -286,8 +310,111 @@ export async function registerHomeInvitation(env, homeId, data) {
     const exists = await env.DB.prepare("SELECT 1 AS found FROM invitations WHERE home_id = ? AND id = ?").bind(homeId, data.invitation_id).first();
     return { ok: false, code: exists ? "INVITATION_EXISTS" : "INVITATION_LIMIT_REACHED" };
   }
-  log("invitation_registered", { home: homeId, by: "home", invitation: data.invitation_id });
-  return { ok: true };
+  log("invitation_registered", { home: homeId, by: "home", invitation: data.invitation_id, for_key: forKey !== null });
+  return forKey !== null ? { ok: true, for_key: forKey } : { ok: true };
+}
+
+// The controller made another of its admin users the home's owner (1.9.0, ADR-064), over its own
+// connection (home-relay.js: only the home holds it), and names that user's Google or Apple account
+// by its tag (member-keys.js accountTag; a user without one has none): the home's owner account
+// moves to it, so that claims, the secret's replacement, the requests to join with another email,
+// the list of accounts, leaving and deleting the account follow the new owner. Only on the
+// controller's word: no session moves it. The account must belong to the home and, when the
+// controller listed its admin keys (`admins`), use one of them. Nobody joins or leaves, and nothing
+// else changes. { id, account } -> { ok, previous, moved } (the old owner account's tag; `moved`
+// false when that account owned the home already: a retry of a request that moved it) or { ok:
+// false, code }: NOT_CLAIMED (no account owns the home: the controller moves alone),
+// OWNER_NEEDS_ACCOUNT, ACCOUNT_NOT_ADMIN, INVALID_REQUEST. What each request moved is kept for
+// OWNER_MOVES_MS in the home's object (`storage`), so that the controller can undo exactly that
+// (`owner_cancel`, cancelOwnerMove) when it did not follow or heard no answer.
+const ACCOUNT_TAG = /^[0-9a-f]{16}$/;
+const OWNER_MOVES_MS = 15 * 60 * 1000;
+const OWNER_MOVES_MAX = 20;
+const OWNER_REQUEST_ID = /^[\x21-\x7e]{1,64}$/;
+
+// The moves kept in `storage` that are still recent: { id: { from, to, at } }.
+async function ownerMoves(storage, now = Date.now()) {
+  const moves = (await storage.get("owner_moves")) ?? {};
+  for (const [id, move] of Object.entries(moves)) {
+    if (!(move && now - move.at < OWNER_MOVES_MS && move.at <= now)) delete moves[id];
+  }
+  return moves;
+}
+
+export async function moveHomeOwner(env, homeId, data, admins, storage = null) {
+  const home = await env.DB.prepare("SELECT owner_id FROM homes WHERE id = ?").bind(homeId).first();
+  if (!home) {
+    return { ok: false, code: "NOT_CLAIMED" };
+  }
+  const tag = data?.account ?? null;
+  if (tag !== null && (typeof tag !== "string" || !ACCOUNT_TAG.test(tag))) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  let account = null;
+  if (tag) {
+    const { results } = await env.DB.prepare("SELECT user_id FROM members WHERE home_id = ?").bind(homeId).all();
+    for (const row of results) {
+      if ((await accountTag(homeId, row.user_id)) === tag) {
+        account = row.user_id;
+        break;
+      }
+    }
+  }
+  if (!account) {
+    log("home_owner_not_moved", { home: homeId, why: tag ? "no member account has that tag" : "the new owner has no account" });
+    return { ok: false, code: "OWNER_NEEDS_ACCOUNT" };
+  }
+  if (Array.isArray(admins)) {
+    const { results: keys } = await env.DB.prepare("SELECT key_id FROM member_keys WHERE home_id = ? AND user_id = ?").bind(homeId, account).all();
+    if (!keys.some((row) => admins.includes(row.key_id))) {
+      log("home_owner_not_moved", { home: homeId, why: "the account uses no admin key" });
+      return { ok: false, code: "ACCOUNT_NOT_ADMIN" };
+    }
+  }
+  const previous = await accountTag(homeId, home.owner_id);
+  const moved = home.owner_id !== account;
+  if (moved) {
+    // Only if nobody claimed the home meanwhile.
+    const { meta } = await env.DB.prepare("UPDATE homes SET owner_id = ? WHERE id = ? AND owner_id = ?").bind(account, homeId, home.owner_id).run();
+    if (!meta.changes) {
+      return { ok: false, code: "INTERNAL" };
+    }
+    if (storage && typeof data?.id === "string" && OWNER_REQUEST_ID.test(data.id)) {
+      const moves = await ownerMoves(storage);
+      moves[data.id] = { from: home.owner_id, to: account, at: Date.now() };
+      const ids = Object.keys(moves).sort((a, b) => moves[a].at - moves[b].at);
+      for (const old of ids.slice(0, Math.max(0, ids.length - OWNER_MOVES_MAX))) delete moves[old];
+      await storage.put("owner_moves", moves);
+    }
+  }
+  log("home_owner_moved", { home: homeId, from: home.owner_id, to: account, moved });
+  return { ok: true, previous, moved };
+}
+
+// The controller did not follow a move it asked for (`owner`, with that id), or heard no answer in
+// time (1.9.0, ADR-064): exactly that move is undone, the home's owner account it replaced restored,
+// while the account that request made the owner still is and the old one is still a member of the
+// home. Nothing to undo (the request moved nothing, never arrived, or is older than OWNER_MOVES_MS):
+// nothing changes. No answer is sent. { id } -> { ok, moved }.
+export async function cancelOwnerMove(env, homeId, data, storage) {
+  if (typeof data?.id !== "string" || !OWNER_REQUEST_ID.test(data.id)) {
+    return { ok: false, code: "INVALID_REQUEST" };
+  }
+  const moves = await ownerMoves(storage);
+  const move = moves[data.id];
+  delete moves[data.id];
+  await storage.put("owner_moves", moves);
+  if (!move) {
+    log("home_owner_cancel_nothing", { home: homeId });
+    return { ok: true, moved: false };
+  }
+  const { meta } = await env.DB.prepare(
+    "UPDATE homes SET owner_id = ?1 WHERE id = ?2 AND owner_id = ?3 AND EXISTS (SELECT 1 FROM members WHERE home_id = ?2 AND user_id = ?1)"
+  )
+    .bind(move.from, homeId, move.to)
+    .run();
+  log("home_owner_moved_back", { home: homeId, from: move.to, to: move.from, moved: meta.changes > 0 });
+  return { ok: true, moved: meta.changes > 0 };
 }
 
 // The controller gave up on an invitation it asked to register (no answer in time): the row goes,
@@ -507,6 +634,7 @@ async function join(request, env, user) {
     log("join_key_withheld", { home: homeId, user: user.id, invitation: input.invitation_id, request: decided?.status ?? null, key_id: validKeyId(reply.key_id) ? reply.key_id : null });
     return decided?.status === "refused" ? refusedJoin() : invitationNotFound();
   }
+  if (joined) await accountsChanged(env, homeId);
   log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined, approved: !mine });
   return json({ home_id: homeId, envelope: reply.envelope, member: joined });
 }
@@ -650,7 +778,7 @@ async function removeMember(env, user, homeId, userId) {
     return problem(403, "OWNER_ONLY", "Only the home's owner removes others");
   }
   if (self && row.owner_id === user.id) {
-    return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; another account can claim the home at home instead");
+    return problem(409, "OWNER_CANNOT_LEAVE", "The owner stays; make another admin the owner first (Settings → Users)");
   }
   // Its browsers' subscriptions go with the membership.
   const [alerts, { meta }] = await env.DB.batch([
@@ -664,6 +792,7 @@ async function removeMember(env, user, homeId, userId) {
   if (!meta.changes) {
     return problem(404, "NOT_FOUND", "That account does not belong to the home");
   }
+  await accountsChanged(env, homeId);
   log("member_removed", { home: homeId, user: user.id, removed: userId });
   return new Response(null, { status: 204 });
 }

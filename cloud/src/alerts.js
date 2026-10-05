@@ -56,9 +56,20 @@
 //                    push of a new device asking to join (1.8.0); only browsers whose app said so
 //   device_request_pushes   { <account id>: [times] }: the account's join pushes of the last hour
 //
+// The controller is told which keys no browser can get alerts for any more (1.9.0, ADR-062):
+// {"type":"alerts_gone","id","keys":[<key id>, ...]} (docs/RELAY.md), to a driver whose hello lists
+// alerts_gone. At each "keys" message, and when browsers are removed ({ op: "changed" }), those of
+// its keys with no browser registered by an account that uses them; after a notify, those it named
+// that had none, or whose every browser the push service no longer knew (404, 410); after any other
+// push, those whose last browser went so. The controller then switches their alerts off, so that an
+// ask-to-open link whose devices are all gone answers "nobody" rather than "asked". Key ids only:
+// the cloud knew which keys have browsers.
+//
 // A new device asks to join (ADR-053, amended in 1.8.0 by ADR-059): device-requests.js tells the
 // object, which pushes { kind: "device_request", home, at, request } at once to the browsers of
-// that same account registered at the home with one of its admin keys (only admins approve), whose
+// that same account registered at the home with one of its admin keys (only admins approve; since
+// 1.9.0, ADR-061, with any of its keys when the driver's hello lists `users`: every user adds their
+// own devices there), whose
 // app said it wants it (on by default there), at most DEVICE_REQUEST_PUSHES_PER_HOUR an account an
 // hour. The cloud made the request, so the push tells it nothing new, and it names nothing but the
 // home, the time and the request's id. The choice is kept here, not in D1 (no migration): an app
@@ -96,6 +107,8 @@ const MAX_BODY_BYTES = 4096;
 export const DEVICE_REQUEST_PUSHES_PER_HOUR = 3;
 const DEVICE_REQUEST_TTL_SECONDS = 600;
 const DEVICE_REQUEST_CHOICES_MAX = 200;
+// Key ids one "alerts_gone" message names at most (the controller keeps 20 keys).
+const GONE_MAX_KEYS = 200;
 const KINDS = new Set(["offline", "schedule_failed"]);
 
 function iso(ms = Date.now()) {
@@ -159,7 +172,7 @@ async function recipients(env, homeId, admins, kind) {
     return [];
   }
   const { results } = await env.DB.prepare(
-    "SELECT endpoint, p256dh, auth FROM push_subscriptions AS s WHERE s.home_id = ?1 AND (" +
+    "SELECT endpoint, p256dh, auth, key_id FROM push_subscriptions AS s WHERE s.home_id = ?1 AND (" +
       "(s.key_id IS NULL AND s.user_id IN (SELECT user_id FROM member_keys WHERE home_id = ?1 AND key_id IN (SELECT value FROM json_each(?2)))) " +
       "OR (s.key_id IN (SELECT value FROM json_each(?2)) AND (?3 = 0 OR s.offline = 1) " +
       "AND EXISTS (SELECT 1 FROM member_keys AS m WHERE m.home_id = ?1 AND m.key_id = s.key_id AND m.user_id = s.user_id)))"
@@ -331,8 +344,11 @@ export class HomeAlerts {
       return this.deviceRequest(input, homeId);
     }
     if (input?.op === "admins") {
-      const admins = await this.storage.get("alerts_admins");
-      return { ok: true, admins: Array.isArray(admins) ? admins : null };
+      const stored = await this.storage.get(["alerts_admins", "driver_features"]);
+      const admins = stored.get("alerts_admins");
+      // What the home's driver said it takes (1.9.0: `users`, any device of an account approves).
+      const features = stored.get("driver_features");
+      return { ok: true, admins: Array.isArray(admins) ? admins : null, features: Array.isArray(features) ? features : null };
     }
     if (input?.op === "changed") {
       if (typeof input.endpoint === "string") {
@@ -341,6 +357,10 @@ export class HomeAlerts {
       // Only a home that is watching has anything to stop (and only it asks D1).
       if ((await this.storage.get("alerts_on")) === true) {
         await this.watch(homeId);
+      }
+      // A key may have no browser left now (1.9.0): its controller is told.
+      if (this.takesGone()) {
+        await this.browsersGone(homeId, [...((await this.relay.announcedKeys()) ?? [])]);
       }
       return { ok: true };
     }
@@ -370,8 +390,13 @@ export class HomeAlerts {
       }
     }
     const DB = this.env.DB;
+    // The keys whose browser this registration took away (1.9.0, ADR-062): the endpoint's key
+    // before, when it was registered with another; the oldest browsers of the account beyond
+    // MAX_PER_MEMBER, which go.
+    let replaced = [];
     try {
-      await DB.batch([
+      const [selected, , deleted] = await DB.batch([
+        DB.prepare("SELECT key_id FROM push_subscriptions WHERE home_id = ? AND endpoint = ?").bind(homeId, input.endpoint),
         DB.prepare(
           "INSERT INTO push_subscriptions (home_id, endpoint, user_id, p256dh, auth, created_at, key_id, offline) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
             "ON CONFLICT (home_id, endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, key_id = excluded.key_id, offline = excluded.offline, " +
@@ -379,9 +404,10 @@ export class HomeAlerts {
         ).bind(homeId, input.endpoint, input.user, input.p256dh, input.auth, iso(), keyId, input.offline === false ? 0 : 1),
         DB.prepare(
           "DELETE FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 AND endpoint NOT IN " +
-            "(SELECT endpoint FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 ORDER BY created_at DESC, endpoint LIMIT ?3)"
+            "(SELECT endpoint FROM push_subscriptions WHERE home_id = ?1 AND user_id = ?2 ORDER BY created_at DESC, endpoint LIMIT ?3) RETURNING key_id"
         ).bind(homeId, input.user, MAX_PER_MEMBER),
       ]);
+      replaced = [...(selected?.results ?? []), ...(deleted?.results ?? [])].map((row) => row.key_id).filter((id) => id && id !== keyId);
     } catch (error) {
       // The account left the home since the Worker looked (the subscription's foreign key).
       log("alerts_subscribe_failed", { home: homeId, user: input.user, error: String(error?.message ?? error) });
@@ -393,6 +419,10 @@ export class HomeAlerts {
     }
     log("alerts_subscribed", { home: homeId, user: input.user, key: keyId, offline: input.offline !== false, device_requests: choice, service: serviceOf(input.endpoint) });
     await this.watch(homeId);
+    // A key this took the last browser of is told to its controller, as whenever browsers go.
+    if (replaced.length > 0) {
+      await this.browsersGone(homeId, replaced);
+    }
     return { ok: true };
   }
 
@@ -425,8 +455,12 @@ export class HomeAlerts {
     if (!user || !request) {
       return { ok: false, code: "INVALID_REQUEST" };
     }
-    const admins = await this.storage.get("alerts_admins");
-    if (!Array.isArray(admins) || admins.length === 0) {
+    const stored = await this.storage.get(["alerts_admins", "driver_features"]);
+    const admins = stored.get("alerts_admins");
+    // A driver that lets every user add their own devices (1.9.0, ADR-061: `users` in its hello):
+    // the account's devices at the home with any key approve, so all of them hear of it.
+    const anyKey = Array.isArray(stored.get("driver_features")) && stored.get("driver_features").includes("users");
+    if (!anyKey && (!Array.isArray(admins) || admins.length === 0)) {
       log("device_request_push_not_sent", { home: homeId, user, request, why: "no admin keys known" });
       return { ok: true, devices: 0 };
     }
@@ -441,10 +475,10 @@ export class HomeAlerts {
       return { ok: true, limited: true };
     }
     const { results } = await this.env.DB.prepare(
-      "SELECT endpoint, p256dh, auth FROM push_subscriptions AS s WHERE s.home_id = ?1 AND s.user_id = ?2 AND s.key_id IN (SELECT value FROM json_each(?3)) " +
+      "SELECT endpoint, p256dh, auth, key_id FROM push_subscriptions AS s WHERE s.home_id = ?1 AND s.user_id = ?2 AND s.key_id IS NOT NULL AND (?4 = 1 OR s.key_id IN (SELECT value FROM json_each(?3))) " +
         "AND EXISTS (SELECT 1 FROM member_keys AS m WHERE m.home_id = ?1 AND m.key_id = s.key_id AND m.user_id = s.user_id)"
     )
-      .bind(homeId, user, JSON.stringify(admins))
+      .bind(homeId, user, JSON.stringify(Array.isArray(admins) ? admins : []), anyKey ? 1 : 0)
       .all();
     const choices = (await this.storage.get("device_request_choices")) ?? {};
     const list = [];
@@ -498,6 +532,36 @@ export class HomeAlerts {
     // Admins may have changed: only homes with a subscription ask D1.
     if (stored.get("alerts_on") !== undefined) {
       await this.watch(homeId);
+    }
+    // Which of its keys no browser can get alerts for (1.9.0): browsers that went while it was away
+    // (the offline alert's pushes) or without their device telling it.
+    await this.browsersGone(homeId, ids);
+  }
+
+  // Whether the driver, connected and heard, takes "alerts_gone" (its hello lists it, 1.9.0).
+  takesGone() {
+    return typeof this.relay.driverTakes === "function" && Boolean(this.relay.driverTakes("alerts_gone"));
+  }
+
+  // Tells the controller which of `keyIds` have no browser left (1.9.0, ADR-062): those `left` (the
+  // browsers of these keys still there, when the caller has them all) does not name; without `left`,
+  // D1 says. Only to a driver that takes it, and only key ids.
+  async browsersGone(homeId, keyIds, left = null) {
+    const ids = [...new Set(keyIds)].filter(validKeyId);
+    if (ids.length === 0 || !this.takesGone()) {
+      return;
+    }
+    let still;
+    try {
+      still = new Set((left ?? (await keyRecipients(this.env, homeId, ids))).map((subscription) => subscription.key_id));
+    } catch (error) {
+      // Told at the next "keys", notify or push.
+      log("alerts_gone_failed", { home: homeId, error: String(error?.message ?? error) });
+      return;
+    }
+    const keys = ids.filter((id) => !still.has(id)).sort().slice(0, GONE_MAX_KEYS);
+    if (keys.length > 0 && this.relay.tellDriver({ type: "alerts_gone", keys }, "alerts_gone")) {
+      log("alerts_gone_told", { home: homeId, keys: keys.length });
     }
   }
 
@@ -685,18 +749,22 @@ export class HomeAlerts {
     }
     if (list.length === 0) {
       log("notify_sent", { home: homeId, at: when, keys: parts.size, devices: 0 });
+      await this.browsersGone(homeId, [...parts.keys()], []);
       return;
     }
     const brief = data.brief === true;
     const messageOf = (subscription) => ({ kind: "sealed", home: homeId, key: subscription.key_id, at: when, sealed: parts.get(subscription.key_id) });
-    const outcome = await this.deliver(homeId, list, messageOf, brief ? BRIEF_TTL_SECONDS : ALERT_TTL_SECONDS, "sealed");
+    // `list` has every browser of the keys it names: those with none, or none left, are told.
+    const outcome = await this.deliver(homeId, list, messageOf, brief ? BRIEF_TTL_SECONDS : ALERT_TTL_SECONDS, "sealed", [...parts.keys()]);
     log("notify_sent", { home: homeId, at: when, keys: parts.size, brief, ...(outcome ? outcome.counts : { devices: list.length, delivered: 0 }) });
   }
 
   // Pushes `messageOf(subscription)` to each of `list`, kept `ttl` seconds by the push service, and
-  // forgets the browsers it no longer knows. Returns { counts, again } (the endpoints worth sending
-  // to again), or null when the VAPID settings do not work.
-  async deliver(homeId, list, messageOf, ttl, kind) {
+  // forgets the browsers it no longer knows; the controller is told which keys have none left
+  // (browsersGone). `named`: the key ids of a notify, whose every browser `list` has. Returns
+  // { counts, again } (the endpoints worth sending to again), or null when the VAPID settings do not
+  // work.
+  async deliver(homeId, list, messageOf, ttl, kind, named = null) {
     let statuses;
     try {
       statuses = await Promise.all(list.map((subscription) => sendPush(this.env, subscription, messageOf(subscription), { ttl })));
@@ -704,7 +772,8 @@ export class HomeAlerts {
       log("alert_failed", { home: homeId, kind, error: String(error?.message ?? error) });
       return null;
     }
-    const gone = list.filter((_, index) => statuses[index] === 404 || statuses[index] === 410);
+    const isGone = (index) => statuses[index] === 404 || statuses[index] === 410;
+    const gone = list.filter((_, index) => isGone(index));
     if (gone.length > 0) {
       const DB = this.env.DB;
       try {
@@ -714,6 +783,11 @@ export class HomeAlerts {
         // Forgotten at the next alert; what was delivered is not sent again.
         log("alert_failed", { home: homeId, kind, error: String(error?.message ?? error) });
       }
+    }
+    if (named) {
+      await this.browsersGone(homeId, named, list.filter((_, index) => !isGone(index)));
+    } else if (gone.length > 0) {
+      await this.browsersGone(homeId, gone.map((subscription) => subscription.key_id).filter(Boolean));
     }
     const again = list.filter((_, index) => retryable(statuses[index])).map((subscription) => subscription.endpoint);
     return {

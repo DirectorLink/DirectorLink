@@ -136,10 +136,10 @@ else, from anywhere; every run is in History.
   hex digits, and `url`); the controller keeps only its SHA-256, as it keeps API keys. Lost? Make a
   new link: the old one stops working at once. Composer's action **Remove All Scene Links** removes
   every one; so do **Revoke All API Keys** and Reset Remote Identity (the addresses name the home).
-- **A link goes with the key that made it**: revoking that key (in People and devices, by removing
-  its person, or with Forget access key on that device), or its expiry, removes its links (`made_by`
+- **A link goes with the key that made it**: revoking that key (in Settings → Users, by removing
+  its user, or with Forget access key on that device), or its expiry, removes its links (`made_by`
   in the list; the app says how many before it revokes a key). Only admins make links: since 1.8.0
-  a key whose person is made a member loses them too, at the change and at a start (History
+  a key whose user is made a member loses them too, at the change and at a start (History
   `link_removed`, `reason` `no_access`).
 - **Never doors or gates.** Only scenes whose steps are all lights, climate, fans, blinds, music or
   refrigerators can have a link; a scene with a doors-and-gates step (or a kind of step added later
@@ -168,7 +168,7 @@ secret alone as text; the whole link in place of the secret works too. Answers:
 | --- | --- | --- |
 | 200 | `{"result": "ran", "message": "The scene ran."}` | `ran`: everything ran; `partly`: some devices were skipped or did not respond; `failed`: none ran; `nothing`: there was nothing to run (its devices were removed in Composer) |
 | 400 | `SECRET_REQUIRED` | no secret in the body |
-| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, a link whose key was revoked or whose key's person is no longer an admin (1.8.0), and a DirectorLink before 1.7.0 |
+| 404 | `NOT_FOUND` | an unknown home, link or secret, word for word alike; also a scene gone or with doors, a link whose key was revoked or whose key's user is no longer an admin (1.8.0), and a DirectorLink before 1.7.0 |
 | 429 | `TOO_MANY_RUNS`, `Retry-After` | more than 6 runs a minute of one link, or 30 of one home; or 10 runs answered 404 in 10 minutes from the same address (an IPv6 one by its /64), which then waits until the first of them is 10 minutes old; an ask link's 10 an hour (1.8.0), `Retry-After` up to an hour and the wait in minutes in `detail` |
 | 503 | `HOME_OFFLINE` | the home is not connected (a claimed home's id therefore shows whether it is online: the family needs to know) |
 | 502, 504 | `HOME_DISCONNECTED`, `HOME_FAILED`, `HOME_TIMEOUT` | the home did not answer |
@@ -203,27 +203,30 @@ loses its link at the next start of 1.7.0.
 
 A scene link never opens a door or gate. For arriving at the gate, a door has a link of another
 kind that **asks**: the phone's automation (Arrive, Siri, an Android app) runs it, DirectorLink asks
-the person who made it, by a notification on their own devices, "Open the main gate?", and only
+the user who made it, by a notification on their own devices, "Open the main gate?", and only
 their **Open** there opens it.
 
 - **Who makes one:** a key that may open that door (`Access.canOpen`: an admin, or a member given
   doors and gates whose rooms have that door, ADR-054), with **Door Control** on in Composer, Remote Access on and
   the home linked. One link per door and key: the door's row in its room has **Ask**, which opens its
   screen (`#/door/<id>/ask`); making it again replaces it. The secret is shown once, as a scene
-  link's. A key sees and removes its person's links; admins see everyone's on Scenes → *Links for
-  automations*, and can remove them. In the API: `GET`, `POST /v1/ask-links` (`{"relay_id": 70,
-  "label": "Arriving home"}`) and `DELETE /v1/ask-links/{linkId}`.
+  link's. A key sees and removes its user's links; admins see everyone's on Scenes → *Links for
+  automations*, and can remove them. Since 1.9.0 (ADR-062) the door's screen also lists the links of
+  the user's other devices for that door, each with the device it was made on and **Remove**: the
+  link on a lost phone goes there, whatever the user's role. In the API: `GET`, `POST /v1/ask-links`
+  (`{"relay_id": 70, "label": "Arriving home"}`) and `DELETE /v1/ask-links/{linkId}`; since 1.9.0
+  each link says its `device` and whether it is one of the asking user's (`this_user`).
 - **The run** is a scene link's (the same address, POST with the secret, the same limits), and opens
   nothing. The controller sends one notification, sealed to each device's key like every alert
-  (ADR-050), to the devices of the link's person that may open the door and have **Alerts on this
+  (ADR-050), to the devices of the link's user that may open the door and have **Alerts on this
   device** switched on. It is not one of the alert kinds a device chooses: the link is the choice.
   The phone that ran it is told:
 
   | `result` | When |
   | --- | --- |
-  | `asked` | the person's devices were asked |
-  | `waiting` | a question about this door is still open for this person (two minutes): nothing new is sent |
-  | `nobody` | none of the person's devices that may open the door has alerts on |
+  | `asked` | the user's devices were asked |
+  | `waiting` | a question about this door is still open for this user (two minutes): nothing new is sent |
+  | `nobody` | none of the user's devices that may open the door has alerts on (since 1.9.0 also when their browsers lost their push subscription: the app or DirectorLink's servers tell the controller, ADR-062) |
   | `doors_off` | Door Control is off in Composer |
   | `not_asked` | the notification could not be sent now (try again) |
 
@@ -242,13 +245,13 @@ their **Open** there opens it.
   `{"request": "<id>"}`; `409 OPEN_REQUEST_EXPIRED`, `409 OPEN_REQUEST_ANSWERED`). Cancel sends
   nothing. A question tapped after its two minutes opens nothing; the door's room is one tap away.
 - **History:** "Asked whether to open Main gate", by the link (on how many devices, or why nobody
-  was asked), then "Opened Main gate", by the person and device that answered, "Answering the link
+  was asked), then "Opened Main gate", by the user and device that answered, "Answering the link
   “Arriving home”". Making, replacing and removing a link are Access entries.
-- **It goes** with the key that made it (revoked or expired), when its person may no longer open the
+- **It goes** with the key that made it (revoked or expired), when its user may no longer open the
   door, when the door is removed from the project, and with Composer's Revoke All API Keys, Remove
   All Scene Links and Reset Remote Identity. Not in backups.
 - **What the cloud sees:** a link's run, as for a scene link, with its result word, and a sealed
-  notification for the person's key ids; never which door (docs/ACCOUNTS.md).
+  notification for the user's key ids; never which door (docs/ACCOUNTS.md).
 - **Going back to 1.7.0:** it does not read their store (it stays); their runs get 404.
 
 ## The app

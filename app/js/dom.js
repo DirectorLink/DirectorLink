@@ -59,11 +59,40 @@ export function clear(element) {
   element.replaceChildren();
 }
 
+// `parent`'s children become `nodes`, in that order, like replaceChildren, but a node already in
+// `parent` stays where it is (only the others go and come around it): a field being typed or
+// dictated into keeps its focus, caret and composition, which taking it out of the page would end.
+export function replaceKeeping(parent, list) {
+  const nodes = list.map((node) => (node instanceof Node ? node : document.createTextNode(String(node))));
+  const kept = new Set(nodes.filter((node) => node.parentNode === parent));
+  for (const child of [...parent.childNodes]) {
+    if (!kept.has(child)) parent.removeChild(child);
+  }
+  let next = parent.firstChild;
+  for (const node of nodes) {
+    if (node === next) {
+      next = node.nextSibling;
+    } else {
+      parent.insertBefore(node, next);
+    }
+  }
+}
+
 // Says `text` to screen readers, politely, from a live region outside the screen (#view), which
 // every redraw replaces. The first call makes it: call it with "" before there is anything to say,
 // so that it is in the page when it speaks.
 let liveRegion = null;
+// A modal dialog makes the rest of the page inert, this live region too: while one with a live
+// region of its own is open (views/command.js), things are said from there; null: from the page's.
+let dialogRegion = null;
+export function speakFrom(region) {
+  dialogRegion = region || null;
+}
 export function announce(text) {
+  if (dialogRegion) {
+    dialogRegion.textContent = text;
+    return;
+  }
   if (!liveRegion) {
     liveRegion = h("p", { class: "visually-hidden", role: "status" });
     document.body?.append(liveRegion);

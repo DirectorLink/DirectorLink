@@ -266,6 +266,16 @@ function title(entry) {
       return t(`history.access.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
     case "access.links_removed":
       return entry.outcome === "failed" ? t("history.access.links_not_removed") : t("history.access.links_removed", { count: entry.count ?? 0 });
+    // Users and their devices (1.9.0, ADR-061).
+    case "access.pairing_code":
+    case "access.merge_suggested":
+      return withName(`history.access.${entry.action}`, what);
+    case "access.users_merged":
+      // Always an admin's (or the owner's) confirmation: nothing is merged by itself.
+      return withName("history.access.users_merged", what, { from: entry.from || "", count: entry.count ?? 1 });
+    // The owner made another admin the owner (1.9.0, ADR-064).
+    case "access.owner_changed":
+      return withName("history.access.owner_changed", what, { from: isolate(entry.from) });
     case "composer.project": {
       const changes = entry.changes || [];
       const count = changes.length + (entry.more || 0);

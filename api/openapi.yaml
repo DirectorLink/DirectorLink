@@ -70,7 +70,9 @@ tags:
   - name: Auth
     description: Pairing and API keys.
   - name: Profiles
-    description: Each person's preferences (language, theme, palette, favorites), shared by their devices, and (since 1.8.0) their role and permissions. Every API key belongs to one profile.
+    description: Each user's preferences (language, theme, palette, favorites), shared by their devices, and (since 1.8.0) their role and permissions. Every API key belongs to one profile; a profile is a user (1.9.0, ADR-061).
+  - name: Users
+    description: "Users and their devices (1.9.0, ADR-061: Settings → Users), up to five devices a user, the devices of one account brought into one user, and pairing at home for a chosen user."
   - name: Rooms
     description: Rooms of the Control4 project.
   - name: Schedules
@@ -199,13 +201,19 @@ paths:
       summary: Exchange a pairing code for an admin API key
       description: |
         Codes are created on demand with the Composer action **New Pairing Code** on DirectorLink
-        (and automatically while the driver has no API keys, e.g. right after it is added). Composer
-        shows the code as `1234 5678`; send it with or without the space. A code is valid for
+        (and automatically while the driver has no API keys, e.g. right after it is added), and since
+        1.9.0 by an admin in the app (`POST /v1/pairing-code`) for a user they choose (ADR-061).
+        Composer shows the code as `1234 5678`; send it with or without the space. A code is valid for
         15 minutes and works once; without an active code the answer is `PAIRING_NOT_ACTIVE`.
         Five wrong codes within a minute lock pairing for that device (IP address) for 60 seconds;
         twenty wrong codes in all close the code. Pairing works only on the home network, never as
-        a sealed request (`PAIRING_ONLY_ON_HOME_NETWORK`). The key is always `admin`: running
-        Composer actions already means full control of the project. With `expires_in` (seconds,
+        a sealed request (`PAIRING_ONLY_ON_HOME_NETWORK`). Composer's code gives a new admin user:
+        running Composer actions already means full control of the project. A code made in the app
+        gives the user it was made for, with their permissions, or the new user it was made for; the
+        device never chooses. Such a code works only while its user is there and its maker is an
+        admin who may add a device to them (else `403 PAIRING_NOT_ACTIVE`, and the code closes), and
+        while the user has fewer than five devices (`409 USER_DEVICE_LIMIT`, before anything counts
+        against the code). With `expires_in` (seconds,
         60 to 2592000) the key stops working that long after (`expires_at`); the API console asks
         for a day for its own key.
 
@@ -463,13 +471,15 @@ paths:
     delete:
       tags: [Auth]
       operationId: deleteApiKey
-      x-directorlink-role: admin
-      summary: Revoke an API key
+      x-directorlink-role: member
+      summary: Revoke an API key (remove a device)
       description: |
-        Revoking the key used for this request is allowed; later requests with it get 401. The home's
-        owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke
-        (`403 OWNER_PROTECTED`); an admin's device waits (`503 UNAVAILABLE`) while DirectorLink could
-        not read who the owner is when it started.
+        Revoking the key used for this request is allowed; later requests with it get 401. An admin
+        revokes any key but the home's owner's devices, which are only the owner's (or Composer's
+        Revoke All API Keys) to revoke (`403 OWNER_PROTECTED`); an admin's device waits
+        (`503 UNAVAILABLE`) while DirectorLink could not read who the owner is when it started. Since
+        1.9.0 (ADR-061) a member revokes the other devices of their own user; any other key is, for
+        them, one that does not exist (`404`). A user goes with their last device.
       responses:
         "204":
           description: Revoked.
@@ -581,7 +591,7 @@ paths:
     post:
       tags: [Remote]
       operationId: createInvitation
-      x-directorlink-role: admin
+      x-directorlink-role: member
       summary: Invite someone, or another device of your own
       description: |
         The answer holds the invitation's secret, once. The app puts it after `#` in the link it
@@ -592,6 +602,19 @@ paths:
         owner, ADR-054; else the join is refused as `INVITATION_NOT_FOUND`, and `503 UNAVAILABLE`
         here while DirectorLink could not read who the owner is when it started). The roles of DirectorLink 1.7.0 still work (`viewer`, `member` without `access`,
         `doors`): the person is then what that role became in 1.8.0. Needs Remote Access switched on.
+        Since 1.9.0 (ADR-061) every user, admin or member, invites their own other device
+        (`for_me`, Add my other device, also when a device of their account asks to join), into their
+        own user with their permissions; inviting anyone else stays the admins' (`403 FORBIDDEN`).
+        A member's lasts at most 10 minutes (`expires_in` up to 600, the default), their user keeps
+        at most two waiting (a new one replaces the oldest), and with `email` it is registered only
+        for an account that already uses the member's device at the home, which the account service
+        checks: `403 ACCOUNT_NOT_OF_DEVICE` for another email, `502 FOR_KEY_UNSUPPORTED` from an
+        account service that cannot check it.
+        An admin may invite another device of an existing user (`profile_id`), such as the Google or
+        Apple account of a user paired at home. A user has at most five devices: `409
+        USER_DEVICE_LIMIT` here, and the join is refused with that code while they still have five
+        (the invitation stays). An invitation into a user who is gone is refused as
+        `INVITATION_NOT_FOUND`.
         With `email`, the controller registers the invitation with the account service first; if
         that fails (`REMOTE_OFFLINE`, or the service's own code with 502) the invitation is
         revoked, since its link could not work.
@@ -627,8 +650,11 @@ paths:
     delete:
       tags: [Remote]
       operationId: revokeInvitation
-      x-directorlink-role: admin
+      x-directorlink-role: member
       summary: Revoke a pending invitation
+      description: |
+        Admins revoke any invitation; since 1.9.0 (ADR-061) anyone else those made by a device of
+        their own user (`404` for any other).
       responses:
         "204":
           description: Revoked; the link no longer works.
@@ -824,6 +850,202 @@ paths:
           $ref: "#/components/responses/Conflict"
         "503":
           $ref: "#/components/responses/Unavailable"
+
+  /v1/users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      x-directorlink-role: member
+      summary: Users and their devices (Settings → Users)
+      description: |
+        Since 1.9.0 (ADR-061). Each user with their name, role and permissions (`access`, as
+        `GET /v1/profiles/{profileId}/access` has it), how many Google or Apple accounts their devices
+        use (as the account service says; a user without one uses DirectorLink on the home network
+        only), and every device: when it was last used, whether it is this one, and whether the
+        caller may remove it (`DELETE /v1/api-keys/{keyId}`). Admins see every user and the
+        suggestions to bring an account's devices together (what the account service says: nothing
+        moves until an admin confirms it, `POST /v1/users/merge`); anyone else only their own user.
+      responses:
+        "200":
+          description: The users the caller sees.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/users/merge:
+    post:
+      tags: [Users]
+      operationId: mergeUsers
+      x-directorlink-role: admin
+      summary: Bring the devices of one account into one user
+      description: |
+        Confirms a suggestion of `GET /v1/users` (1.9.0, ADR-061), as it was shown (`revision`): the
+        devices that use that account move to `keep`, whose role and permissions (and language,
+        theme and favorites) they then have; a device that is no longer an admin's loses the
+        invitations it made; a user left without devices goes, and their favorites are added to
+        `keep`'s. DirectorLink never does this by itself. When the account service has changed which
+        devices share that account since, or anyone changed those users' roles or permissions, nothing
+        moves: `409 SUGGESTION_CHANGED` (look again). With the owner's user, only the owner confirms
+        (`403 OWNER_PROTECTED`), and the owner's user is the one that stays (`400 INVALID_FIELD`); at
+        most five devices (`409 USER_DEVICE_LIMIT`, with the devices); there is always an admin
+        (`409 LAST_ADMIN`). `404` when the suggestion is no longer there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserMerge"
+            example:
+              account: "3f9a1c2e7b4d5a60"
+              keep: "a1b2c3d4"
+              revision: "9c41d0e2b7a35f68"
+      responses:
+        "200":
+          description: The user who stays, as `GET /v1/users` lists them.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/users/owner:
+    post:
+      tags: [Users]
+      operationId: makeOwner
+      x-directorlink-role: admin
+      summary: Make another admin the home's owner
+      description: |
+        Since 1.9.0 (ADR-064): the home's owner makes another admin user the owner; only the owner
+        may (`403 OWNER_ONLY`), and only an admin (`409 NOT_AN_ADMIN`: make a member an admin first),
+        not themself (`409 ALREADY_OWNER`). The owner's rules (ADR-054) then follow the new owner:
+        only they change their own access and devices, claim the home again and confirm bringing
+        the owner's devices together. The old owner stays an admin, like any other, and nobody is
+        removed. A home the account service knows (Remote Access, once linked) moves there too: the
+        controller asks it, over its own connection (`owner`, docs/RELAY.md), to move the home's
+        owner account to the new owner's Google or Apple account, and records the new owner only
+        once it has, or when no account owns the home there (`account_service`). The account is the
+        one the new owner's devices of one account all use: `409 OWNER_ACCOUNT_UNCLEAR` when they use
+        several, `409 OWNER_ACCOUNT_SHARED` when it is also used by the owner's own devices (both with
+        `device_names`, the devices in question; nothing is asked). Otherwise nothing moves:
+        `409 OWNER_NEEDS_ACCOUNT` (the new owner's devices use no account of the home: invite their
+        account first, and they accept it), `409 REMOTE_ACCESS_OFF`, `503 REMOTE_OFFLINE` (not
+        connected: nothing was asked), `503 REMOTE_TIMEOUT` (no answer within 10 s: the account
+        service is told to undo whatever it did, `owner_cancel`; try again), `502` with the account
+        service's code. When the controller cannot follow what the account service did (the users
+        changed meanwhile, or the store could not be written), it tells it to undo that move. In
+        History as `access` `owner_changed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerChangeRequest"
+            example:
+              profile_id: "a1b2c3d4"
+      responses:
+        "200":
+          description: The new owner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerChange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The new owner could not be saved; nothing changed (and the account service was told to undo its move).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
+  /v1/pairing-code:
+    post:
+      tags: [Users]
+      operationId: createPairingCode
+      x-directorlink-role: admin
+      summary: A pairing code for a user you choose
+      description: |
+        Since 1.9.0 (ADR-061): a code for pairing at home (`POST /v1/auth/pair`), as Composer's (15
+        minutes, works once), whose device joins the user `profile_id`, with their permissions, or a
+        new user with `name`, `role` and `access`. The device that pairs never chooses its user. One
+        code at a time: it replaces the one shown in Composer, and Composer's New Pairing Code
+        replaces it (Composer's still makes a new admin user). The owner's user only by the owner
+        (`403 OWNER_PROTECTED`); a user with five devices gets none (`409 USER_DEVICE_LIMIT`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairingCodeCreate"
+            examples:
+              existing:
+                value:
+                  profile_id: "a1b2c3d4"
+              new:
+                value:
+                  name: Kitchen tablet
+                  role: member
+                  access:
+                    all_rooms: false
+                    rooms: [10]
+      responses:
+        "201":
+          description: The code, and who it is for.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairingCode"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+    delete:
+      tags: [Users]
+      operationId: deletePairingCode
+      x-directorlink-role: admin
+      summary: Close the pairing code
+      description: The code in use stops working, whoever made it (since 1.9.0).
+      responses:
+        "204":
+          description: Closed.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /v1/rooms:
     get:
@@ -1255,7 +1477,9 @@ paths:
       description: |
         Since 1.8.0 (ADR-058). The links that ask their person to open a door or gate: the ones made
         by this key's person (an admin gets every one), each with its door, its label, the person it
-        asks, when it was made and when it last ran; never a secret. Also what a link needs to work:
+        asks, when it was made and when it last ran; never a secret. Since 1.9.0 (ADR-062) also the
+        device each was made on (`device`) and whether it is one of this user's (`this_user`), so
+        that a user sees and removes the links of all their devices. Also what a link needs to work:
         `remote_access`, `home_linked` and `door_control` (the Composer property). Links made for
         another home connection, whose key (`made_by`) is gone, whose person may no longer open the
         door, or whose door is gone, go before the list is made.
@@ -3485,7 +3709,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`; an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
       content:
         application/problem+json:
           schema:
@@ -3569,6 +3793,30 @@ components:
         store:
           type: string
           description: The store a restore could not save (`RESTORE_FAILED`).
+        limit:
+          type: integer
+          description: The most devices a user has (`USER_DEVICE_LIMIT`, 1.9.0).
+        user:
+          type: object
+          description: The user who has that many (`USER_DEVICE_LIMIT`; not to a caller without a key, such as a device pairing).
+          properties:
+            id:
+              type: string
+              pattern: "^[0-9a-f]{8}$"
+            name:
+              type: string
+        devices:
+          type: array
+          description: |
+            That user's devices, for a caller who sees the user (an admin, or the user themself), so
+            that the app says "Remove a device first" with the list (`USER_DEVICE_LIMIT`).
+          items:
+            $ref: "#/components/schemas/LimitDevice"
+        device_names:
+          type: array
+          description: The names of the devices in question (`OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED`, 1.9.0).
+          items:
+            type: string
         errors:
           type: array
           description: Field-level details for validation errors.
@@ -3750,6 +3998,9 @@ components:
             camera_alerts:
               type: boolean
               description: "A camera of the project is on the DirectorLink · Hikvision Camera driver, whose alerts this DirectorLink passes on: the `camera` alert choice (1.8.0, ADR-056). Missing before 1.8.0."
+            users:
+              type: boolean
+              description: "Always true since 1.9.0: `GET /v1/users` (Settings → Users), up to five devices a user, the devices of one account brought into one user, pairing codes for a chosen user (`/v1/pairing-code`), members adding and removing their own devices (ADR-061). Missing before 1.9.0."
 
     PairRequest:
       oneOf:
@@ -4096,7 +4347,7 @@ components:
         last_used_at:
           type: [string, "null"]
           format: date-time
-          description: Last use since the driver started.
+          description: Last use; since 1.9.0 kept across restarts, to the hour (ADR-061).
         current:
           type: boolean
           description: True for the key that made this request.
@@ -4533,7 +4784,7 @@ components:
     AskLink:
       type: object
       description: A link that asks its person to open a door or gate (1.8.0, ADR-058), without its secret.
-      required: [link_id, relay_id, relay_name, room_id, label, made_by, person, this_device, created_at, last_used_at]
+      required: [link_id, relay_id, relay_name, room_id, label, made_by, device, person, this_device, this_user, created_at, last_used_at]
       properties:
         link_id:
           type: string
@@ -4554,12 +4805,18 @@ components:
           type: string
           pattern: "^[0-9a-f]{8}$"
           description: The API key that made it. Revoking that key, or its expiry, removes the link.
+        device:
+          type: [string, "null"]
+          description: Since 1.9.0 (ADR-062). The device it was made on (the name of the key that made it); null when that key is gone.
         person:
           type: [string, "null"]
           description: The person it asks (the key's profile), by name.
         this_device:
           type: boolean
           description: Made with the key that asks.
+        this_user:
+          type: boolean
+          description: Since 1.9.0 (ADR-062). Made on a device of the asking key's user (this device's own link included), which the app shows on the door's screen with Remove; for a member every link listed is.
         created_at:
           type: string
           format: date-time
@@ -6223,14 +6480,258 @@ components:
           type: string
           format: date-time
 
+    UserList:
+      type: object
+      required: [device_limit, accounts_known, items, suggestions]
+      properties:
+        linked:
+          type: boolean
+          description: The account service knows this home (its relay accepted it once), so that making another admin the owner moves the home's Google or Apple account too (1.9.0, ADR-064).
+        device_limit:
+          type: integer
+          description: The most devices a user has (5).
+        accounts_known:
+          type: boolean
+          description: The account service has said which devices use which account (with remote access on and linked; never with an account service before 1.9.0).
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        suggestions:
+          type: array
+          description: For admins, the accounts whose devices are in more than one user, as the account service says; empty for anyone else.
+          items:
+            $ref: "#/components/schemas/MergeSuggestion"
+
+    User:
+      type: object
+      required: [id, name, created_at, you, access, accounts, devices]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The profile's id (`profile_id`).
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        you:
+          type: boolean
+          description: The caller's own user.
+        access:
+          $ref: "#/components/schemas/PersonAccess"
+        accounts:
+          type: integer
+          description: How many Google or Apple accounts their devices use, as the account service says; 0 is the home network only.
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserDevice"
+
+    UserDevice:
+      type: object
+      required: [id, name, created_at, last_used_at, expires_at, current, accounts, removable]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The device's API key id.
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+        current:
+          type: boolean
+          description: The device that asked.
+        accounts:
+          type: integer
+          description: How many accounts use this device (2 or more is a shared device, which stays where it is).
+        removable:
+          type: boolean
+          description: "Whether the caller may remove it (not this device: that is Forget this device)."
+
+    LimitDevice:
+      type: object
+      required: [id, name, created_at, last_used_at, current, removable]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: [string, "null"]
+          format: date-time
+        current:
+          type: boolean
+        removable:
+          type: boolean
+
+    MergeSuggestion:
+      type: object
+      required: [id, revision, owner, keep, may_confirm, users]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: "The account's tag at this home (opaque: never the account's id or email)."
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: "A digest of what is shown: the devices in each user, and each user's role, ownership and permissions. The confirmation sends it back."
+        owner:
+          type: boolean
+          description: "One of the users is the home's owner's: only the owner confirms, keeping the owner's user."
+        keep:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{8}$"
+          description: "The user offered to keep: the owner's; else the one whose access is within every other's (never an admin over a member); null when the admin must choose."
+        may_confirm:
+          type: boolean
+          description: Whether the caller may confirm it.
+        users:
+          type: array
+          description: Oldest first.
+          items:
+            type: object
+            required: [id, name, role, owner, devices, devices_after]
+            properties:
+              id:
+                type: string
+                pattern: "^[0-9a-f]{8}$"
+              name:
+                type: string
+              role:
+                $ref: "#/components/schemas/PersonRole"
+              owner:
+                type: boolean
+                description: The home's owner's user.
+              devices:
+                type: array
+                description: Their devices that use the account.
+                items:
+                  type: string
+                  pattern: "^[0-9a-f]{8}$"
+              devices_after:
+                type: integer
+                description: How many devices this user would have if their permissions stay.
+
+    UserMerge:
+      type: object
+      required: [account, keep, revision]
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: The suggestion's id.
+        keep:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The user whose role and permissions stay.
+        revision:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          description: The suggestion's revision as it was shown (`409 SUGGESTION_CHANGED` when it is no longer that).
+
+    OwnerChangeRequest:
+      type: object
+      required: [profile_id]
+      additionalProperties: false
+      properties:
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The admin user who becomes the home's owner.
+
+    OwnerChange:
+      type: object
+      required: [owner, previous, account_service]
+      properties:
+        owner:
+          $ref: "#/components/schemas/UserRef"
+        previous:
+          $ref: "#/components/schemas/UserRef"
+        account_service:
+          type: string
+          enum: [moved, not_claimed, not_linked]
+          description: |
+            `moved`: the account service moved the home's owner account to the new owner's;
+            `not_claimed`: no account owns the home there; `not_linked`: the account service never
+            knew this home. In the last two the change is the controller's alone.
+
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+
+    PairingCodeCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: An existing user; alone.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: A new user's name.
+        role:
+          $ref: "#/components/schemas/PersonRole"
+          description: A new user's role (default `member`).
+        access:
+          $ref: "#/components/schemas/PersonAccessUpdate"
+          description: A new member's permissions.
+
+    PairingCode:
+      type: object
+      required: [code, expires_at, user]
+      properties:
+        code:
+          type: string
+          pattern: "^[0-9]{4} [0-9]{4}$"
+          description: Shown to the person pairing; it is also shown in Composer.
+        expires_at:
+          type: string
+          format: date-time
+        user:
+          type: object
+          required: [id, name, role]
+          properties:
+            id:
+              type: [string, "null"]
+              pattern: "^[0-9a-f]{8}$"
+              description: The user it is for; null for a new user, made when the device pairs.
+            name:
+              type: string
+            role:
+              $ref: "#/components/schemas/PersonRole"
+
     InvitationCreate:
       type: object
       additionalProperties: false
-      required: [role]
       properties:
         role:
           $ref: "#/components/schemas/KeyRole"
-          description: "`admin` or `member` (with `access`); the 1.7.0 roles make the person they became (ADR-054)."
+          description: "`admin` or `member` (with `access`); the 1.7.0 roles make the person they became (ADR-054). Required, except with `for_me` (the caller's own user's)."
         access:
           $ref: "#/components/schemas/PersonAccessUpdate"
           description: The invited member's permissions (since 1.8.0); not with `for_me`.
@@ -6238,17 +6739,22 @@ components:
           type: integer
           minimum: 60
           maximum: 604800
-          description: Seconds until the invitation expires (default 7 days).
+          description: Seconds until the invitation expires (default 7 days; a member's own, at most and by default 10 minutes).
         for_me:
           type: boolean
-          description: For the admin's own other device; the new key joins the admin's profile.
+          description: For the caller's own other device (any user since 1.9.0); the new key joins the caller's user. A member's user keeps two waiting at most.
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: For another device of this existing user (admins, since 1.9.0); not with `for_me` or `access`.
         email:
           type: string
           maxLength: 254
           description: |
             The address of the person invited. The controller then registers the invitation with
             the account service itself before answering (`registered: true`); without it, the
-            home's owner registers it from the app.
+            home's owner registers it from the app. A member's (`for_me`) only for an account that
+            already uses the member's device at the home (`403 ACCOUNT_NOT_OF_DEVICE`).
 
     Invitation:
       type: object
@@ -6272,6 +6778,10 @@ components:
         for_me:
           type: boolean
           description: Made with "Add my other device" (the key joins its creator's profile).
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: For another device of this existing user (since 1.9.0).
         access:
           $ref: "#/components/schemas/PersonAccess"
           description: The person it makes (since 1.8.0); missing for `for_me`.
@@ -6443,6 +6953,15 @@ components:
           `access` `ask_link_created`, `ask_link_replaced`, `ask_link_removed` (`what` is the door,
           `note` the label; `reason` `key_gone`, `no_access` when its person may no longer open the
           door, `door_gone`, `other_home`, or none when someone removed it).
+        - Users (1.9.0, ADR-061): `access` `pairing_code` (an admin made a pairing code in the app;
+          `what` the user it is for, `to` the role of a new user), `users_merged` (the devices of
+          one account brought into the user `what`, from the users in `from`, `count` devices moved;
+          `who` the key of the admin who confirmed it: nothing is merged by itself),
+          `merge_suggested` (the account service says the devices of one account are in the users
+          `what`, `count` devices: an admin may bring them together; once per suggestion, at most ten
+          a day).
+        - The owner (1.9.0, ADR-064): `access` `owner_changed` (the owner made the admin user `what`
+          the home's owner instead of `from`).
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -6468,7 +6987,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:

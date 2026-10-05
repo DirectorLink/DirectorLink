@@ -3,8 +3,8 @@
 // iOS gives an app added to the Home Screen its own storage, and opens every link in Safari: the
 // link of Add my other device never reaches it. So a new device signed in to the account (that app,
 // or any phone or computer) asks to join one of the account's homes from the Connect screen, and
-// a device of the same account that already reaches the home, with an admin key (as for Add my
-// other device), sees the request while it is open. The new device shows a check code, which the
+// a device of the same account that already reaches the home (with an admin key; with any key
+// since DirectorLink 1.9.0, as for Add my other device) sees the request while it is open. The new device shows a check code, which the
 // person types there: only the same code (worked out on both from both keys) lets Approve make a
 // for-me invitation at the controller, exactly as Add my other device does, and seal it to the new
 // device (../device-join.js). The new device opens it and joins with it as with a link. The account
@@ -35,6 +35,7 @@ import {
 } from "../remote.js";
 import { api, clientName, errorText, whenConnected } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
+import { deviceLimitOf, deviceLimitPanel } from "./device-limit.js";
 import { useInvitation } from "./join.js";
 
 // The new device's request, so that a reload carries on: { id, home, secret, approverKey,
@@ -61,7 +62,8 @@ const HOMES_RETRY_MS = 30000;
 const joining = { homes: null, homesFor: null, home: null, busy: false, code: null, message: null };
 // The side of a device that reaches the home. `typed`: the code being typed for each request, left
 // out of the screen's signature (what is typed is never redrawn).
-const approving = { home: null, items: [], codes: {}, mismatched: {}, typed: {}, busy: null, message: null, messageAt: 0 };
+// `limit`: this device's user has five devices (1.9.0): the refusal, with their devices to remove one.
+const approving = { home: null, items: [], codes: {}, mismatched: {}, typed: {}, busy: null, message: null, messageAt: 0, limit: null };
 // Paste invitation link: the field, when the clipboard could not give a link. `text` is left out of
 // the screen's signature: what is typed is never redrawn.
 const paste = { open: null, text: "", message: null };
@@ -431,9 +433,10 @@ export function joinFromAnotherDevice() {
 // ---- A device that reaches the home -------------------------------------------------------------
 
 // The same rule as Add my other device: signed in, linked to the home, with an admin key, once the
-// key's role is known (Settings asks the same; before that can() takes it for an admin's).
+// key's role is known (Settings asks the same; before that can() takes it for an admin's). Since
+// 1.9.0 (ADR-061, `features.users`) every user adds their own devices: any key of the account.
 function mayApprove() {
-  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && state.loaded && can("admin");
+  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && state.loaded && (can("admin") || state.system?.features?.users === true);
 }
 
 function answers() {
@@ -457,13 +460,15 @@ function mine(item) {
 // person). The controller registers it itself (1.0.0 and later); for an older one the home's owner
 // does, from here. One the account did not take is revoked at home too. Settings' Add my other
 // device and Invite someone, and Approve here.
-export async function makeInvitation({ forSelf, email, role, access }) {
+export async function makeInvitation({ forSelf, email, role, access, profileId }) {
   // Just under 7 days: the account refuses invitations longer than that.
   // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
   const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
   if (forSelf && state.profile) body.for_me = true;
   // What the invited member may see and do (1.8.0, ADR-054).
   if (access) body.access = access;
+  // Another device of an existing user (1.9.0, ADR-061: an admin invites their account).
+  if (profileId && !forSelf) body.profile_id = profileId;
   let invitation = null;
   try {
     try {
@@ -586,6 +591,7 @@ async function act(item, work) {
   if (approving.busy) return;
   approving.busy = item.id;
   approving.message = null;
+  approving.limit = null;
   notify();
   try {
     await work();
@@ -682,11 +688,33 @@ function approve(item) {
       } else if (arrived === null) {
         // Left as it is: it lasts 10 minutes, and the new device may have it already.
         say("error", t("deviceJoin.request.unsure", { label: item.label }));
+      } else if (deviceLimitOf(error)) {
+        // Five devices already (1.9.0): "Remove a device first", with the list.
+        approving.limit = deviceLimitOf(error);
       } else {
         say("error", error instanceof RemoteError && error.code === "NOT_FOUND" ? t("deviceJoin.request.gone") : errorText(error));
       }
     }
   });
+}
+
+// From the "Remove a device first" list: removed, then Approve again.
+function removeForRoom(device) {
+  if (approving.busy || !window.confirm(t("access.revokeConfirm", { name: device.name }))) return;
+  approving.busy = "limit";
+  notify();
+  api(`/v1/api-keys/${device.id}`, { method: "DELETE" })
+    .then(
+      () => {
+        approving.limit = null;
+        say("success", t("users.limit.removed", { name: device.name }));
+      },
+      (error) => say("error", errorText(error))
+    )
+    .finally(() => {
+      approving.busy = null;
+      notify();
+    });
 }
 
 function decline(item) {
@@ -799,12 +827,21 @@ function codeForm(item, busy, declineButton) {
 // Under every screen's header, on a device that may approve: the requests of the account's new
 // devices for this home.
 export function deviceRequestNotice() {
-  if (!mayApprove() || approving.home !== savedRemote()?.home || (!approving.items.length && !approving.message)) return null;
+  if (!mayApprove() || approving.home !== savedRemote()?.home || (!approving.items.length && !approving.message && !approving.limit)) return null;
   return h(
     "section",
     { class: "card device-request", "aria-labelledby": "device-request-title", dataset: { key: "device-request" } },
     h("h2", { class: "device-request-title", id: "device-request-title" }, icon("users"), t("deviceJoin.request.title")),
     messageLine(approving.message),
+    deviceLimitPanel(approving.limit, {
+      remove: removeForRoom,
+      busy: Boolean(approving.busy),
+      key: "device-request-limit",
+      dismiss: () => {
+        approving.limit = null;
+        notify();
+      },
+    }),
     approving.items.length ? h("ul", { class: "device-request-list" }, ...approving.items.map(requestRow)) : null
   );
 }

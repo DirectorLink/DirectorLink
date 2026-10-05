@@ -2,7 +2,8 @@
 // automations that asks its person before the door opens. Its screen (#/door/<id>/ask, from the
 // door's row in its room, or from Scenes → Links for automations) makes, replaces and removes this
 // device's link for the door and shows a new link's secret once, with Copy buttons and short steps
-// for iPhone Shortcuts (Arrive), Siri, Android and Google Assistant. The question itself
+// for iPhone Shortcuts (Arrive), Siri, Android and Google Assistant; below, the links of the user's
+// other devices for the door, each with Remove (1.9.0, ADR-062: a lost phone's). The question itself
 // (#/open/<door>/<request>/<until>) is what an alert's tap opens: "Open the main gate?", with Open
 // and Cancel. Shown when the controller has them (features.ask_links, 1.8.0), to keys that may
 // open doors; the controller checks every step again.
@@ -77,6 +78,55 @@ function requirements(links) {
 }
 
 // ---- the door's link screen (#/door/<id>/ask) ------------------------------------------------------
+
+// The links of this user's other devices for the door (1.9.0, ADR-062), each with the device it is
+// on and Remove: each device has its own, and the one on a lost phone goes from here. A controller
+// before 1.9.0 does not say which are the user's (`this_user`): for a member, every link it lists is.
+function otherDevices(relay, links) {
+  const items = links.items.filter((item) => item.relay_id === relay.id && !item.this_device && (item.this_user ?? !can("admin")));
+  if (!items.length) return null;
+  return h(
+    "section",
+    { class: "scene-links ask-links", dataset: { key: "ask-link-others" } },
+    h("h2", { class: "section-title" }, t("askLinks.othersTitle")),
+    h("p", { class: "field-help" }, t("askLinks.othersHelp")),
+    h(
+      "ul",
+      { class: "card settings-rows" },
+      items.map((link) => {
+        const device = link.device || t("askLinks.otherDevice");
+        const facts = [
+          link.label ? t("sceneLinks.labelled", { label: isolate(link.label) }) : null,
+          link.last_used_at ? t("sceneLinks.lastRun", { date: date(link.last_used_at) }) : t("sceneLinks.neverRun"),
+        ].filter(Boolean);
+        return h(
+          "li",
+          { class: "ask-links-item" },
+          h(
+            "div",
+            { class: "settings-row", dataset: { key: `ask-link-other:${link.link_id}` } },
+            h("span", { class: "settings-row-icon", "aria-hidden": "true" }, icon("link")),
+            h("span", { class: "settings-row-text" }, name(device, "span", "settings-row-title"), h("span", { class: "settings-row-status" }, facts.join(" · ")))
+          ),
+          h(
+            "button",
+            {
+              type: "button",
+              class: "button button-quiet button-small",
+              disabled: links.busy === link.link_id,
+              dataset: { key: `ask-link-other-remove:${link.link_id}` },
+              onclick: async () => {
+                if (!window.confirm(t("askLinks.removeDeviceConfirm", { device, name: relay.name }))) return;
+                await removeAskLink(link.link_id, relay.id);
+              },
+            },
+            t("sceneLinks.remove")
+          )
+        );
+      })
+    )
+  );
+}
 
 function freshLink(relay, link) {
   const address = askAddress(link);
@@ -227,6 +277,8 @@ export function askLinkView(relayId) {
       )
     );
   }
+  // The user's other devices' links for this door, but not while a new secret is on screen.
+  if (!fresh && links.loaded && !links.error) body.push(otherDevices(relay, links));
   return [header, offlineBanner(), h("div", { class: "scene-editor scene-link" }, body)];
 }
 
@@ -252,6 +304,8 @@ export function askLinksSection() {
         const door = relayOf(link.relay_id)?.name || link.relay_name || t("askLinks.doorGone");
         const facts = [
           link.person ? t("askLinks.forPerson", { person: isolate(link.person) }) : null,
+          // The device it was made on (1.9.0).
+          link.device ? t("askLinks.onDevice", { device: isolate(link.device) }) : null,
           link.label ? t("sceneLinks.labelled", { label: isolate(link.label) }) : null,
           link.last_used_at ? t("sceneLinks.lastRun", { date: date(link.last_used_at) }) : t("sceneLinks.neverRun"),
         ].filter(Boolean);

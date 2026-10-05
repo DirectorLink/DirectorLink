@@ -8,6 +8,7 @@ import { icon } from "../icons.js";
 import { connect } from "../session.js";
 import { state } from "../state.js";
 import { emptyState } from "../components.js";
+import { commandButton } from "./command.js";
 
 export function connectionChip() {
   const status = state.status;
@@ -29,7 +30,8 @@ export function connectionChip() {
 }
 
 // `onBack(event)` runs first when Back is pressed; it may cancel with event.preventDefault().
-export function pageHeader({ title, back, onBack, actions = [], titleDir } = {}) {
+// `command`: the way to Say or type a command (wide screens; Home has its own field).
+export function pageHeader({ title, back, onBack, actions = [], titleDir, command = true } = {}) {
   return h(
     "header",
     { class: "page-header" },
@@ -51,7 +53,7 @@ export function pageHeader({ title, back, onBack, actions = [], titleDir } = {})
       : null,
     // Focused when the screen opens (app.js); the data-key keeps it there over a redraw.
     h("h1", { class: "page-title", tabindex: "-1", dir: titleDir, dataset: { key: "page-title" } }, title),
-    h("div", { class: "page-actions" }, ...actions, connectionChip())
+    h("div", { class: "page-actions" }, ...actions, command ? commandButton() : null, connectionChip())
   );
 }
 

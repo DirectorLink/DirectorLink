@@ -123,6 +123,8 @@ const cloud = {
   revoked: 0, // invitations revoked at the controller
   dropApproveAnswer: false, // Approve reaches the cloud, but its answer is lost on the way back
   joined: [],
+  full: null, // the controller refuses the invitation: this user has five devices (1.9.0), these
+  removed: [], // devices removed at the controller
 };
 const ok = (body, status = 200) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 const problem = (status, code) => ok({ status, code, detail: code }, status);
@@ -139,19 +141,27 @@ async function controller(envelope) {
   const request = JSON.parse(plaintext);
   let status = 200;
   let body = {};
-  if (request.method === "POST" && request.path === "/v1/invitations") {
+  if (request.method === "POST" && request.path === "/v1/invitations" && cloud.full) {
+    status = 409;
+    body = { type: "about:blank", title: "Conflict", status: 409, code: "USER_DEVICE_LIMIT", detail: "Dana already has 5 devices", limit: 5, user: { id: "p1", name: "Dana" }, devices: cloud.full };
+  } else if (request.method === "POST" && request.path === "/v1/invitations") {
     const id = randomBytes(4).toString("hex");
     const secret = randomBytes(32).toString("hex");
     cloud.invitations.set(id, { secret, body: request.body });
     status = 201;
     body = { id, secret, role: request.body.role, home_id: HOME, expires_at: new Date(Date.now() + request.body.expires_in * 1000).toISOString(), registered: true, email: request.body.email };
   }
+  if (request.method === "DELETE" && request.path.startsWith("/v1/api-keys/")) {
+    cloud.removed.push(request.path.split("/").pop());
+    cloud.full = null;
+    status = 204;
+  }
   if (request.method === "DELETE" && request.path.startsWith("/v1/invitations/")) {
     cloud.revoked += 1;
     cloud.invitations.delete(request.path.split("/").pop());
     status = 204;
   }
-  const answer = { id: request.id, ts: Math.floor(Date.now() / 1000), status, content_type: "application/json", body: JSON.stringify(body) };
+  const answer = { id: request.id, ts: Math.floor(Date.now() / 1000), status, content_type: status >= 400 ? "application/problem+json" : "application/json", body: status === 204 ? "" : JSON.stringify(body) };
   return { envelope: await seal(lock, { home: HOME, key: KEY_ID }, "res", JSON.stringify(answer)) };
 }
 
@@ -516,6 +526,30 @@ test("a device whose role is not known yet asks nothing and offers nothing", asy
   await tick(2000);
 });
 
+// 1.9.0 (ADR-061): every user adds their own devices, so a member's device approves its account's
+// new device once the controller says it has users; before that only an admin's does.
+test("a member's device approves its account's new device when the controller has users", async () => {
+  signedIn(true);
+  state.apiKey = "";
+  click(byKey(joinFromAnotherDevice(), "device-join-start"));
+  await until(() => cloud.requests.size === 1, "the request");
+  const [request] = [...cloud.requests.values()];
+  const system = state.system;
+  Object.assign(state, { apiKey: `ak_${"4".repeat(48)}`, role: "member", access: null, loaded: true, status: "connected", transport: "remote", profile: { id: "p2" }, system: { features: { people_permissions: true } } });
+  saveRemote({ home: HOME, keyId: "0d0d0d0d" });
+  for (const listener of windowListeners.focus || []) listener();
+  await tick(60000);
+  assert.equal(deviceRequestNotice(), null, "a member of a 1.8.0 controller approves nothing");
+  state.system = { features: { people_permissions: true, users: true } };
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the member's device");
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "Decline enabled");
+  click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
+  await until(() => cloud.requests.size === 0, "declined");
+  state.system = system;
+  state.apiKey = "";
+  await tick(2000);
+});
+
 test("a device that reaches the home looks every 60 s, every 2 s only while it answers", async () => {
   signedIn(true);
   approverDevice();
@@ -654,4 +688,40 @@ test("Paste invitation link: from the clipboard, else from a field", async () =>
   ui.joinWait = null;
   const page = joinView({ navigate: () => {} });
   assert.ok(byKey(page[1], "join-accept"), "Accept invitation");
+});
+
+// The users review of 1.9.0 (finding 11): approving a device for a user who has five already shows
+// "Remove a device first" with their devices, as every other way of adding one does; once one is
+// removed, Approve works again.
+test("approving for a user with five devices lists them, with Remove", async () => {
+  const { request, code } = await untilCodeAsked();
+  cloud.full = [
+    { id: "0a0a0a01", name: "Old tablet", created_at: "2026-01-01T00:00:00Z", last_used_at: null, current: false, removable: true },
+    { id: "0a0a0a02", name: "This phone", created_at: "2026-01-01T00:00:00Z", last_used_at: "2026-10-05T07:00:00Z", current: true, removable: false },
+  ];
+  await typeCode(request, code);
+  await until(() => byKey(deviceRequestNotice(), "device-request-limit"), "the list of the user's devices");
+  const panel = byKey(deviceRequestNotice(), "device-request-limit");
+  assert.match(panel.textContent, /Dana already has 5 devices\. Remove one first:/);
+  assert.ok(byKey(panel, "device-request-limit-remove-0a0a0a01"), "Remove where the controller allows it");
+  assert.equal(byKey(panel, "device-request-limit-remove-0a0a0a02"), null, "not this device");
+  assert.equal(request.sealed, undefined, "nothing approved");
+  const saved = window.confirm;
+  window.confirm = () => true;
+  try {
+    click(byKey(panel, "device-request-limit-remove-0a0a0a01"));
+    await until(() => cloud.removed.includes("0a0a0a01") && !byKey(deviceRequestNotice(), "device-request-limit"), "the device removed");
+  } finally {
+    window.confirm = saved;
+  }
+  assert.match(deviceRequestNotice().textContent, /“Old tablet” was removed\. Try again now\./);
+  await typeCode(request, code);
+  await until(() => request.sealed, "approved this time");
+  cloud.removed.length = 0;
+  // The new device finishes joining, as in the first test.
+  const joined = cloud.joined.length;
+  state.apiKey = "";
+  await untilTicking(2000, () => cloud.joined.length > joined, "the join");
+  await until(() => state.apiKey === `ak_${"2".repeat(48)}`, "the new key");
+  await until(() => localStorage.getItem("directorlink.deviceJoin") === null && cloud.requests.size === 0, "the request done");
 });

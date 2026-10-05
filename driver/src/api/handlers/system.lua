@@ -167,6 +167,9 @@ function System.info(ctx)
         -- (1.8.0, ADR-058), always there.
         -- camera_alerts: a camera of the project raises alerts DirectorLink passes on (1.8.0,
         -- ADR-056: the DirectorLink · Hikvision Camera driver), so the app offers their choice.
+        -- users: Settings → Users (1.9.0, ADR-061): GET /v1/users, up to five devices a user, an
+        -- account's devices brought into one user, pairing codes for a chosen user, members adding
+        -- and removing their own devices; always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -180,6 +183,7 @@ function System.info(ctx)
             sonos_groups = true,
             ask_links = true,
             camera_alerts = cameraAlerts(registry),
+            users = true,
         },
     }
 end

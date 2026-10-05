@@ -503,6 +503,9 @@ function remoteErrorText(error) {
       return t("errors.invitationLimit");
     case "OWNER_ONLY":
       return t("errors.remote.ownerOnly");
+    // A join into a user who has five devices (1.9.0, ADR-061).
+    case "USER_DEVICE_LIMIT":
+      return t("users.limit.joinRefused");
     default:
       // The cloud's own text is not shown: it is in English only, and not the app's to trust.
       return t("errors.remote.failed", { code: String(error.code || "UNKNOWN").slice(0, 40) });
@@ -543,6 +546,19 @@ function describeError(error, pairing = false) {
   }
   if (error?.code === "INVITATION_LIMIT_REACHED") {
     return t("errors.invitationLimit");
+  }
+  // A member's other device joins only with an account this device already uses at the home
+  // (1.9.0, ADR-061), which DirectorLink's servers check.
+  if (error?.code === "ACCOUNT_NOT_OF_DEVICE") {
+    return t("users.account.notThisDevice");
+  }
+  if (error?.code === "FOR_KEY_UNSUPPORTED") {
+    return t("users.account.serversOld");
+  }
+  // A user has at most five devices (1.9.0, ADR-061); views/device-limit.js lists them where it can.
+  if (error?.code === "USER_DEVICE_LIMIT") {
+    const name = error.problem?.user?.name;
+    return name ? t("users.limit.text", { name, count: Number(error.problem?.limit) || 5 }) : t("users.limit.joinRefused");
   }
   if (error?.name === "AbortError") {
     return t("errors.timeout");

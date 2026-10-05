@@ -13,7 +13,7 @@ A running bridge also serves its own copy at `http://<controller-ip>:41999/v1/op
 | Base URL | `http://<controller-ip>:41999` on the home network. Every path starts with `/v1`. The `Host` must be the controller's IP address or a local name (e.g. `director.local`), otherwise `421 MISDIRECTED_REQUEST`; browsers may call it only from app.directorlink.io and console.directorlink.io. |
 | Names | Logical resources — rooms, devices, lights, thermostats, fans, blinds, cameras, relays, doorbells, refrigerators, the alarm, music (Sonos), scenes, schedules, the weather, the calendar, profiles, invitations. No Control4 command names, proxy IDs or variable numbers. |
 | Authentication | `Authorization: Bearer <api key>` on every route except health, `GET /v1/openapi.json`, pairing (`POST /v1/auth/pair`) and `/v1/sealed`, which carries requests sealed with a key's lock key instead (the app's way, so its key does not cross the network; `docs/ACCOUNTS.md`). |
-| Roles | Since 1.8.0 every key belongs to a person, `admin` or `member`, and has that person's permissions ([People and permissions](#people-and-permissions)). Each operation states who may call it as `x-directorlink-role`: `member` (every person; the answer holds only what they may see and do) or `admin` (otherwise `403 FORBIDDEN`). `GET /v1/api-keys/current` tells a client its role and `access`. Opening doors also needs **Door Control** = Enabled in Composer. Up to 1.7.0 each key had one of four roles: `viewer`, `member`, `doors`, `admin` (ADR-025). |
+| Roles | Since 1.8.0 every key belongs to a user, `admin` or `member`, and has that user's permissions ([Users and permissions](#users-and-permissions)). Each operation states who may call it as `x-directorlink-role`: `member` (every user; the answer holds only what they may see and do) or `admin` (otherwise `403 FORBIDDEN`). `GET /v1/api-keys/current` tells a client its role and `access`. Opening doors also needs **Door Control** = Enabled in Composer. Up to 1.7.0 each key had one of four roles: `viewer`, `member`, `doors`, `admin` (ADR-025). |
 | Reading | `GET` on a collection returns `{ "items": [...] }`; `GET` on an item returns the object. |
 | Changing | `PATCH` with the desired state, e.g. `{"on": true}`. For a device the answer is `202 Accepted` with the last state the controller reported; read the resource again to confirm. Scenes, schedules, rooms, profiles and keys answer `200` with the stored result. |
 | Errors | RFC 9457 Problem Details (`application/problem+json`) with a stable `code`, e.g. `INVALID_FIELD`, `NOT_FOUND`, `UNAUTHORIZED`. |
@@ -37,7 +37,7 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 
    The app and the API console never send the code: they pair with CPace (1.3.0), in two requests (`{"name", "cpace": {"nonce"}}`, then `{"cpace": {"session", "share", "confirm"}}`); the exact inputs are in `api/openapi.yaml` (`POST /v1/auth/pair`) and `docs/ACCOUNTS.md`, the test vectors in `tests/vectors/cpace.json`. Each attempt counts as a wrong code until it succeeds. DirectorLink before 1.3.0 refuses the field `cpace` (`INVALID_FIELD`); a controller whose lock failed its self-test answers `503 LOCK_UNAVAILABLE`.
 
-3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys` (each a person of its own, or with `profile_id` another device of a person: [People and permissions](#people-and-permissions)):
+3. Use the returned `key`, and create more keys for other clients under `/v1/api-keys` (each a user of its own, or with `profile_id` another device of a user: [Users and permissions](#users-and-permissions)):
 
    ```bash
    curl http://<controller-ip>:41999/v1/lights -H "Authorization: Bearer ak_..."
@@ -48,11 +48,11 @@ The first key comes from a **pairing code**: in Composer, run **New Pairing Code
 
 The controller keeps only a hash of each key, so keys survive driver updates and cannot be read back from it. It also keeps each key's lock key, for sealed requests: if a copy of the controller's data is lost, use **Revoke All API Keys** in Composer (which also removes every key if one is lost) and the owner's **Replace the remote secret** in the app (`docs/ACCOUNTS.md`).
 
-## People and permissions
+## Users and permissions
 
-Since 1.8.0 (ADR-054) a key belongs to a person (a profile) and has that person's permissions. An admin may do everything. A member uses only the rooms and kinds of devices an admin gave them (`light`, `climate`, `fan`, `blind`, `music`, `refrigerator`), sees cameras and the alarm's status and opens doors and gates only when given them (they see the doors and gates in their rooms either way), and runs only the scenes chosen for them; they never see schedules, history, keys, invitations, profiles, room settings or backups. A room an admin marked hidden from members (`hidden_from_members` in `GET /v1/rooms`) is gone for every member.
+Since 1.8.0 (ADR-054) a key belongs to a user (a profile) and has that user's permissions. An admin may do everything. A member uses only the rooms and kinds of devices an admin gave them (`light`, `climate`, `fan`, `blind`, `music`, `refrigerator`), sees cameras and the alarm's status and opens doors and gates only when given them (they see the doors and gates in their rooms either way), and runs only the scenes chosen for them; they never see schedules, history, keys, invitations, profiles, room settings or backups. A room an admin marked hidden from members (`hidden_from_members` in `GET /v1/rooms`) is gone for every member.
 
-- Give a script a person of its own, with only the rooms and kinds it needs:
+- Give a script a user of its own, with only the rooms and kinds it needs:
 
   ```bash
   curl -X POST http://<controller-ip>:41999/v1/api-keys \
@@ -60,12 +60,20 @@ Since 1.8.0 (ADR-054) a key belongs to a person (a profile) and has that person'
     -d '{"name": "Garden lights", "role": "member", "access": {"all_rooms": false, "rooms": [12], "kinds": {"climate": false, "fan": false, "blind": false, "music": false, "refrigerator": false}, "cameras": false, "alarm": false}}'
   ```
 
-  What `access` leaves out is as for a new member: every room and kind, cameras on, doors off, the alarm on, no scenes. With `profile_id` instead, the key joins that person and has their permissions.
-- `GET /v1/api-keys/current` says what the key may do (`access`). Admins read and change a person's with `GET`/`PATCH /v1/profiles/{profileId}/access` (`role`, `all_rooms`, `rooms`, `kinds`, `cameras`, `doors`, `alarm`, `scenes`; `PATCH` takes any of them, the rest stays).
+  What `access` leaves out is as for a new member: every room and kind, cameras on, doors off, the alarm on, no scenes. With `profile_id` instead, the key joins that user and has their permissions.
+- `GET /v1/api-keys/current` says what the key may do (`access`). Admins read and change a user's with `GET`/`PATCH /v1/profiles/{profileId}/access` (`role`, `all_rooms`, `rooms`, `kinds`, `cameras`, `doors`, `alarm`, `scenes`; `PATCH` takes any of them, the rest stays).
 - A device, room or scene the key may not see answers `404` like one that does not exist; a door or gate it sees but may not open, and an admin-only route, `403 FORBIDDEN`.
-- Every key's `role` in the answers stays a 1.7.0 role (`viewer`, `member`, `doors`, `admin`) worked out from its person. `POST /v1/api-keys` and `POST /v1/invitations` still take those roles, and `PATCH /v1/api-keys/{id}` `{"role"}` turns the key's whole person into what that role became.
-- After the update from 1.7.0, a script whose key had the `viewer` role sees nothing until an admin gives its person rooms and kinds.
+- Every key's `role` in the answers stays a 1.7.0 role (`viewer`, `member`, `doors`, `admin`) worked out from its user. `POST /v1/api-keys` and `POST /v1/invitations` still take those roles, and `PATCH /v1/api-keys/{id}` `{"role"}` turns the key's whole user into what that role became.
+- After the update from 1.7.0, a script whose key had the `viewer` role sees nothing until an admin gives its user rooms and kinds.
 - `GET /v1/system` says `features.people_permissions: true` (missing before 1.8.0).
+
+Since 1.9.0 (ADR-061, `features.users`):
+
+- A user has at most five devices (keys). A key made with `profile_id`, a key moved into a user, an invitation for a user and its join, and a pairing code for a user are refused with `409 USER_DEVICE_LIMIT` while they have five; the problem lists that user's devices (`devices`, with `last_used_at` and `removable`) for a caller who sees them.
+- `GET /v1/users` (any key): the users the caller sees (an admin every user, anyone else their own), each with `access`, how many Google or Apple accounts their devices use (`accounts`) and their `devices`; for admins, `suggestions` to bring the devices of one account together (`POST /v1/users/merge {"account", "keep"}`).
+- `POST /v1/pairing-code` (admins) `{"profile_id"}` or `{"name", "role", "access"}`: a pairing code whose device joins that user, or a new one; `DELETE /v1/pairing-code` closes it. The device that pairs never chooses its user.
+- Every key may revoke the other keys of its own user (`DELETE /v1/api-keys/{keyId}`) and invite its own other device (`POST /v1/invitations` with `for_me`); an admin may invite another device of a user (`profile_id`).
+- `POST /v1/users/owner` `{"profile_id"}` (ADR-064): the home's owner, and only the owner (`403 OWNER_ONLY`), makes another admin user the owner (`409 NOT_AN_ADMIN` for a member); the old owner stays an admin and nobody is removed. A home linked to an account moves in the account service first: `409 OWNER_NEEDS_ACCOUNT` when the new owner's devices use no account of the home, `503 REMOTE_OFFLINE` when it does not answer; `account_service` in the answer says what it did. History: `access` `owner_changed`.
 
 ## Thermostats
 

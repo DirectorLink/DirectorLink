@@ -100,7 +100,7 @@ SECURITY_CONTRACT = {
         "constantTimeEqual(input, state.code)",
         'close("Used at "',
         # A CPace attempt counts as a wrong code from its start (ADR-039).
-        "client.failed = client.failed + 1\n    state.codeFailures = state.codeFailures + 1\n    return { code = state.code, ip = ip, generation = state.generation }",
+        "client.failed = client.failed + 1\n    state.codeFailures = state.codeFailures + 1\n    return { code = state.code, ip = ip, generation = state.generation, target = state.target }",
     ),
     # CPace (ADR-039): the key is made only after the app's tag is right; low-order shares are refused.
     "src/auth/cpace_pairing.lua": (
@@ -113,9 +113,48 @@ SECURITY_CONTRACT = {
         # into it, no device moved into or out of it, none revoked, by anyone else.
         "local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)",
         "problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)",
-        "local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil",
+        # A member removes only their own user's devices; an admin any but the owner's (ADR-061).
+        "local allowed, refusal = Access.mayRemoveDevice(ctx.apiKey, revoked)",
+        # Every way a key gets into a user stays within five devices (ADR-061).
+        "if profileId and Users.full(profileId) then\n        return nil, UserHandlers.limitProblem(ctx, profileId)",
+        "problem = UserHandlers.refuseWhenFull(ctx, changes.profile)",
+    ),
+    # Users and their devices (ADR-061): another admin never removes the owner's devices; the
+    # owner's user stays when an account's devices are brought together, which only the owner
+    # confirms; DirectorLink never does it by itself, nor offers the owner's access to keep for
+    # another user's devices.
+    "src/auth/access.lua": (
+        "if Access.isAdmin(actor) then\n        return Access.mayChangePerson(actor, key.profile)\n    end",
+        "if keepId ~= owner then\n                return false, \"OWNER_KEEPS\"",
+        "if unknown or (left == owner and right ~= owner) then\n        return false\n    end",
+        # Handing the home over (ADR-064): only the owner, and only to another admin user.
+        "if owner == nil or own ~= owner then\n        return false, \"OWNER_ONLY\"\n    end",
+        "if not Access.isAdminPerson(profileId) then\n        return false, \"NOT_AN_ADMIN\"\n    end",
+    ),
+    # The owner's choice decides who the owner is (ADR-064), asked of Access before and again after
+    # the account service answered, and recorded only once it moved its record (or has none): its
+    # word alone makes nobody the owner.
+    "src/api/handlers/users.lua": (
+        # A suggestion is confirmed only as it was shown (ADR-061): its revision.
+        "if Users.revision(group) ~= body.revision:lower() then",
+        # The home's account is never guessed, and a move the controller did not follow is undone.
+        "local tag, unclear, devices = Users.ownerAccount(target, previous)",
+        "cancelMove(ctx, message.id, \"no_answer\")",
+        "local allowed, refusal = Access.mayMakeOwner(ctx.apiKey, target)",
+        "local still, again = Access.mayMakeOwner(ctx.apiKey, target)",
+        "if answer and answer.ok == true then\n                outcome = \"moved\"\n            elseif answer and answer.code == \"NOT_CLAIMED\" then",
+    ),
+    "src/auth/users.lua": (
+        # The suggestion offers the user whose access is within every other's, never more.
+        "if other ~= id and not Access.within(id, other) then",
+        "if Users.after(group, keepId, keys) > Users.DEVICE_LIMIT then",
+        "if not adminLeft(ids, keepId, keys) then",
+        # A device that is no longer an admin's keeps none of the invitations it made.
+        "if not Access.isAdminPerson(keepId) then\n        for _, id in ipairs(ids) do\n            Invitations.revokeCreatedBy(id)",
     ),
     "src/cloud/relay.lua": (
+        # An answer counts only as the answer of its own question's type.
+        "if waiting and message.type == waiting.expects then",
         # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.
         'code = "RELAY_REQUESTS_RETIRED"',
         "refuseRequest(message)",

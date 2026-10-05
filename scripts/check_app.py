@@ -228,6 +228,22 @@ def check_calendar_names(spec, dictionaries):
             fail(f"app/i18n/{code}.js: calendar.holidays.rosh_chodesh must name the month ({{month}})")
 
 
+def check_commands(files):
+    """Say or type a command (1.9.0, ADR-063), from {path: text}: the parser is the app's own,
+    without imports (no library, tested under Node); the words alone never open a door or gate (only
+    the door's own button, which asks for its second tap, calls pressRelay or pressDoorbell); and
+    the app's headers allow the microphone for its own pages only."""
+    parser = files["js/command-parser.js"]
+    if re.search(r"^\s*import\b|\bimport\(|\brequire\(", parser, re.M):
+        fail("app/js/command-parser.js must not import anything: the parser is the app's own, pure and tested under Node")
+    for path in ("js/commands.js", "js/views/command.js"):
+        if re.search(r"\bpress(Relay|Doorbell)\b", files[path]):
+            fail(f"app/{path} must not open doors or gates itself: the door's own button takes the second tap")
+    policy = re.search(r"^\s*Permissions-Policy:(.*)$", files["_headers"], re.M)
+    if not policy or not re.search(r"(^|[\s,])microphone=\(self\)(,|\s|$)", policy.group(1)):
+        fail("app/_headers must send Permissions-Policy with microphone=(self), for Say or type a command")
+
+
 def main():
     for relative in REQUIRED:
         if not (APP / relative).is_file():
@@ -427,6 +443,8 @@ def main():
     for path in (APP / "js" / "updates.js", APP / "js" / "views" / "updates.js"):
         if re.search(r"\.body\b|innerHTML", path.read_text(encoding="utf-8")):
             fail(f"app/{path.relative_to(APP).as_posix()} must not use a release's body: its text is not the app's to show")
+
+    check_commands({path: (APP / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/commands.js", "js/views/command.js", "_headers")})
 
     service_worker = (APP / "sw.js").read_text(encoding="utf-8")
     require(service_worker, "requestUrl.origin !== self.location.origin",

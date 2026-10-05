@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also shows alerts (push), and opens the app where a notification's tap leads.
 
-const CACHE_NAME = "directorlink-shell-v41";
+const CACHE_NAME = "directorlink-shell-v42";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -36,6 +36,7 @@ const ASSETS = [
   "/js/vendor/qrcodegen.js",
   "/js/views/join.js",
   "/js/views/access.js",
+  "/js/views/device-limit.js",
   "/js/views/permissions.js",
   "/js/views/scenes.js",
   "/js/scenes.js",
@@ -74,6 +75,9 @@ const ASSETS = [
   "/js/views/cameras.js",
   "/js/views/climate.js",
   "/js/views/common.js",
+  "/js/views/command.js",
+  "/js/command-parser.js",
+  "/js/commands.js",
   "/js/views/connect.js",
   "/js/views/find.js",
   "/js/views/history.js",
@@ -444,6 +448,19 @@ async function showAlert(data) {
 
 self.addEventListener("push", (event) => {
   event.waitUntil(showAlert(event.data));
+});
+
+// The browser replaced or dropped this device's push subscription (1.9.0, ADR-062). The worker has
+// no key to tell anyone: an open app registers again, or shows alerts off and tells the controller
+// (js/alerts.js); a closed one does it at its next start.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      for (const client of windows) {
+        if (new URL(client.url).origin === self.location.origin) client.postMessage({ type: "directorlink-push-changed" });
+      }
+    })
+  );
 });
 
 // A notification's tap: bring the app to the front where it says (a doorbell's: Home), or open it

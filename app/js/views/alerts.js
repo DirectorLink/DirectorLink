@@ -80,7 +80,9 @@ function kindRow(kind, on, help = null) {
 // theirs asking to join), then the controller's.
 function kindsList() {
   const rows = [];
-  if (can("admin")) rows.push(kindRow("offline", offlineAlertsOn()), kindRow("device_requests", deviceRequestAlertsOn()));
+  if (can("admin")) rows.push(kindRow("offline", offlineAlertsOn()));
+  // A new device of their own account asking to join: since 1.9.0 every user approves it (ADR-061).
+  if (can("admin") || state.system?.features?.users === true) rows.push(kindRow("device_requests", deviceRequestAlertsOn()));
   const kinds = alertsUi.choices?.kinds || {};
   for (const kind of ALERT_KINDS) {
     // Camera alerts only with a controller that has them (DirectorLink 1.8.0 and a camera on the

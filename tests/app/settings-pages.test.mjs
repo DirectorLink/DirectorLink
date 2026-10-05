@@ -263,7 +263,7 @@ test("each row says in one line how things are", async () => {
   assert.equal(rowStatus("calendar"), "Candles 20 min · havdalah 42 min");
   state.calendar.settings = { ...state.calendar.settings, holidays: "auto", candle_lighting_minutes: 30 };
   assert.equal(rowStatus("calendar"), "Candles 30 min · havdalah 42 min");
-  assert.equal(rowStatus("access"), "Devices, invitations and people");
+  assert.equal(rowStatus("access"), "Devices, invitations and users");
   // A driver of no known version (dev): what it is, without Updates.
   state.system.bridge.version = "dev";
   assert.equal(rowStatus("controller"), "Connected · DirectorLink dev");

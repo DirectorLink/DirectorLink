@@ -14,7 +14,7 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
+    <td><img src="docs/screenshots/home.png" width="260" alt="Home: the field to say or type a command, the alarm, what is on, one-tap scenes, favorites with a camera picture, and the rooms"></td>
     <td><img src="docs/screenshots/room.png" width="260" alt="Living Room: dimmable lights with switches and brightness sliders, and the AC"></td>
     <td><img src="docs/screenshots/climate.png" width="260" alt="Climate: the living room AC cooling to 23 degrees and the bedroom floor heating at 24, by room"></td>
   </tr>
@@ -35,29 +35,40 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
   </tr>
   <tr>
     <td><img src="docs/screenshots/music.png" width="260" alt="Kitchen: the Kitchen and Living Room Sonos rooms playing together, with the group's volume, each room's volume and Leave group"></td>
-    <td><img src="docs/screenshots/people.png" width="260" alt="People and devices: Sam, a member, may use 5 rooms, lights, climate, fans, blinds and music, the cameras, doors and gates and 3 scenes; the rooms are ticked in the editor"></td>
+    <td><img src="docs/screenshots/users.png" width="260" alt="Settings, Users: Alex, the owner and an admin, with the email of their Google or Apple account, this iPhone and a laptop; Robin, a member with one room, lights, the cameras and one scene, with no Google or Apple account (home network only), an iPad, and Invite their account"></td>
     <td><img src="docs/screenshots/history.png" width="260" alt="History: today a scene run by Alex, the main gate opened in answer to an ask-before-opening question, the front door opened by Sam, and the 07:00 schedule"></td>
   </tr>
   <tr>
     <td align="center">Music in several rooms</td>
-    <td align="center">A member's access</td>
+    <td align="center">Users and their devices</td>
     <td align="center">History</td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/command.png" width="260" alt="Home: the command kitchen lights off, understood as Kitchen: lights off, and Done"></td>
+    <td><img src="docs/screenshots/command-which.png" width="260" alt="Home: the command ceiling lights off still in the field, and the question Which one?, with the ceiling lights of five rooms to choose from"></td>
+    <td><img src="docs/screenshots/member-devices.png" width="260" alt="Settings, Users on the phone of Sam, a member: their access, their Google or Apple account, this iPhone, and their laptop with Remove; up to 5 devices"></td>
+  </tr>
+  <tr>
+    <td align="center">Say or type a command</td>
+    <td align="center">Which one?</td>
+    <td align="center">A member's own devices</td>
   </tr>
 </table>
 
-<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, scenes, favorites and room cards side by side">
+<img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, the field to say or type a command, scenes, favorites and room cards side by side">
 
 ## What it does
 
 - **Every device in one app:** lights and dimmers, AC and floor heating, fans, blinds, cameras, doors and gates (anything that opens asks for a second tap), DoorBird doorbells, the alarm's status (read only, off by default), Sonos speakers (off by default, [`docs/SONOS.md`](docs/SONOS.md)), and Samsung refrigerators with the free [DirectorLink · Samsung Refrigerator](https://directorlink.io/drivers/samsung-refrigerator) driver.
 - **At home and away:** at home the app talks to the controller directly, locked with its own key; away, and on iPhone and iPad, it goes through your account (Google or Apple), locked end to end so that DirectorLink's servers cannot read it ([`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)).
 - **Scenes:** one tap for lights, AC, fans, blinds, music, refrigerators and gates; pick single devices or copy the house as it is, and change any action later ([`docs/SCENES.md`](docs/SCENES.md)).
+- **Say or type a command:** *kitchen lights off*, *living room AC to 23*, *run Good night*, in English or Hebrew, by your own names, with the microphone or the keyboard; understood on your phone without AI, only for what you may control, and doors still wait for your second tap ([`app/README.md`](app/README.md#say-or-type-a-command)).
 - **Schedules:** by the clock and weekday, at sunrise or sunset, by the weather (heat, wind and rain), and, with the Jewish calendar on, at Shabbat and holiday times. The controller runs them on its own ([`docs/SCHEDULES.md`](docs/SCHEDULES.md), [`docs/CALENDAR.md`](docs/CALENDAR.md)).
 - **Scene links and geofencing:** a private link per scene for iPhone Shortcuts, Android automation apps, Siri and NFC tags, so your phone runs a scene when you arrive or leave; for doors and gates, a link that asks you first ([below](#geofencing-run-a-scene-when-you-arrive-or-leave)).
-- **Alerts on your phone and computer:** doorbell rings, a person, a vehicle or a line crossed at a camera on the free [DirectorLink · Hikvision](https://directorlink.io/drivers/hikvision) drivers (off until chosen; the tap opens that camera), a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem, a new device of your account asking to join (admins). Each device chooses its own; what an alert says is encrypted for that device on the controller.
+- **Alerts on your phone and computer:** doorbell rings, a person, a vehicle or a line crossed at a camera on the free [DirectorLink · Hikvision](https://directorlink.io/drivers/hikvision) drivers (off until chosen; the tap opens that camera), a door or gate opened and by whom (admins who choose it), a refrigerator door left open, the home offline for 10 minutes, a schedule that had a problem, a new device of your account asking to join (every user, since 1.9). Each device chooses its own; what an alert says is encrypted for that device on the controller.
 - **History:** what ran, what didn't and why, who opened which door, keys and invitations, and what changed in Composer, for the last 30 days, for admins ([`docs/HISTORY.md`](docs/HISTORY.md)).
 - **Backups:** everything DirectorLink keeps, in a file locked with your password, or every night to your account, sealed to a backup password only you know ([`docs/BACKUP.md`](docs/BACKUP.md)).
-- **The family:** admins and members, with the rooms, kinds of devices and scenes each member may use, invitations by email, and each person's own language, theme, favorites and hidden rooms. A new device joins with a code from a device you already use.
+- **The family:** admins and members, with the rooms, kinds of devices and scenes each member may use, invitations by email, and each user's own language, theme, favorites and hidden rooms, with up to five devices a user (Settings → Users). A new device joins with a code from a device you already use.
 - **For the installer:** Composer shows what DirectorLink automates and what it ran last, one switch pauses every schedule, and DirectorLink's settings stay in Composer.
 - **An API:** a REST API described by OpenAPI 3.1, with a key and a role for every app or script, and the API console ([below](#api)).
 - **More drivers:** free, open-source [DirectorLink Drivers](https://directorlink.io/drivers) for other devices.
@@ -84,7 +95,7 @@ Good to know: a scene with a door or gate step can never have a link, and adding
 - A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
 - An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
 - LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; `docs/ACCOUNTS.md`)
-- One owner and invited family members, with a separate named API key per browser, app or script; each person is an admin or a member, with the rooms, devices and scenes an admin chose (1.8.0), and every key of theirs has their permissions
+- One owner and invited family members, with a separate named API key per browser, app or script; each user is an admin or a member, with the rooms, devices and scenes an admin chose (1.8.0), and every key of theirs has their permissions; the devices of one Google or Apple account become one user when an admin confirms it (1.9.0)
 - Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots, several at once; alerts from the DirectorLink · Hikvision Camera driver), KNX relays (doors and gates), DoorBird doorbells, Samsung refrigerators (through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, Power Cool, Power Freeze, Sabbath Mode and the ice maker), the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, docs/SONOS.md)
 - Room names in several languages
 - Unknown devices are exposed as unsupported
@@ -178,7 +189,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/lights/259 \
 
 Resources: system, rooms, devices, lights, thermostats, fans, blinds, cameras, relays (doors and gates), doorbells, refrigerators, the alarm (read-only, sealed requests only), music (Sonos), scenes, schedules and the weather, the calendar (Shabbat and holiday times), profiles, logs, API keys, invitations and remote access. The running bridge serves its own description at `/v1/openapi.json`, so Postman, Swagger UI or Home Assistant can import it, and the app's **API console** lists and tries every endpoint.
 
-A script's key travels in the clear on the home network (plain HTTP); give each script its own key, as a person of its own with only the rooms and kinds of devices it needs (`POST /v1/api-keys` with role `member` and `access`; [`api/README.md`](api/README.md)). The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
+A script's key travels in the clear on the home network (plain HTTP); give each script its own key, as a user of its own with only the rooms and kinds of devices it needs (`POST /v1/api-keys` with role `member` and `access`; [`api/README.md`](api/README.md)). The app does not send its key: it seals each request (`POST /v1/sealed`, [`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)). Requests must name the controller by its IP address or a local name such as `director.local`.
 
 ## Design principle
 

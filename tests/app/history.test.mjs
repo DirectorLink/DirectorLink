@@ -295,10 +295,10 @@ test("automatic backups to the account: made, or not and why", () => {
 
 test("a scene link that went by itself says why: its person is no longer an admin, too (1.8.0)", () => {
   const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "access", action: "link_removed", who: { type: "controller" }, what: "Evening", ...fields });
-  assert.equal(history.outcomeText(entry({ reason: "no_access" })), "Its person is no longer an admin");
+  assert.equal(history.outcomeText(entry({ reason: "no_access" })), "Its user is no longer an admin");
   assert.equal(history.outcomeText(entry({ reason: "key_gone" })), "The key that made it was removed or expired");
   // An ask link's own no_access keeps its words.
-  assert.equal(history.outcomeText(entry({ action: "ask_link_removed", reason: "no_access" })), "Its person may no longer open the door");
+  assert.equal(history.outcomeText(entry({ action: "ask_link_removed", reason: "no_access" })), "Its user may no longer open the door");
 });
 
 test("days: today, yesterday, then the date, in the home's time zone", () => {
@@ -554,6 +554,50 @@ test("remote access refused because DirectorLink must be updated, in both langua
   try {
     rows = items(await open());
     assert.match(line(rows[0]), /^הגישה מרחוק הופסקה: עדכנו את DirectorLink לגרסה 1\.9\.0 ומעלה/);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+// Users and their devices (1.9.0, ADR-061): a pairing code made in the app, the devices of one
+// account brought into one user (always by an admin who confirmed it), a suggestion, which the
+// history says is what DirectorLink's servers say.
+test("users: a pairing code, devices of one account brought together, a suggestion, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [
+      { id: 3, at: iso(NOW - 60 * 1000), kind: "access", action: "users_merged", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Alex", from: "Chrome on iPhone", count: 2 },
+      { id: 2, at: iso(NOW - 90 * 1000), kind: "access", action: "merge_suggested", who: { type: "controller" }, what: "Alex, Chrome on iPhone", count: 2 },
+      { id: 1, at: iso(NOW - 120 * 1000), kind: "access", action: "pairing_code", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Kitchen tablet", to: "member" },
+    ],
+  });
+  let rows = items(await open());
+  assert.match(line(rows[0]), /^Brought 2 devices of one account into Alex from Chrome on iPhone/);
+  assert.match(line(rows[1]), /^DirectorLink’s servers say Alex, Chrome on iPhone use the same account: an admin may make them one user/);
+  assert.match(line(rows[2]), /^Made a pairing code for Kitchen tablet/);
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.match(line(rows[0]), /^שני מכשירים של חשבון אחד עברו אל Alex מ-Chrome on iPhone/);
+    assert.match(line(rows[1]), /^לפי השרתים של DirectorLink, Alex, Chrome on iPhone משתמשים באותו חשבון/);
+    assert.match(line(rows[2]), /^נוצר קוד צימוד עבור Kitchen tablet/);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+// The owner made another admin the owner (1.9.0, ADR-064).
+test("the home's owner changed, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [{ id: 1, at: iso(NOW - 30 * 1000), kind: "access", action: "owner_changed", who: { type: "key", key_id: "0a1b2c3d", name: "Chrome on Windows", profile: "Alex" }, what: "Dana", from: "Alex" }],
+  });
+  let rows = items(await open());
+  assert.match(line(rows[0]), /^Made Dana the home’s owner instead of Alex,/);
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.match(line(rows[0]), /^Dana הפך לבעל הבית במקום Alex/);
   } finally {
     await setLanguage("en");
   }

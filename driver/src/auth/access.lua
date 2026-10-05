@@ -30,8 +30,8 @@
 -- key every room and kind and runs every scene, but the doors and gates in a scene stay shut for
 -- it (1.7.0 skipped them for a member), a doors key opens them too, an admin key is an admin.
 --
--- The home's owner (Access.owner) is the person who claimed the home for an account with 1.8.0,
--- while they are an admin, else the oldest admin. Only the owner changes the owner's person: their
+-- The home's owner (Access.owner) is the person who claimed the home for an account with 1.8.0 (or,
+-- since 1.9.0, whom the owner made the owner), while they are an admin, else the oldest admin. Only the owner changes the owner's person: their
 -- role and permissions, their devices, a key or device put into it (Access.mayChangePerson, which
 -- every such path asks), and only the owner makes a person an admin who would then be the owner. A
 -- key or invitation for a new person never makes an owner: that person is the newest. While the
@@ -39,6 +39,18 @@
 -- the profiles' store could not be, and the claimer is not known: the oldest admin needs the
 -- profiles), nobody changes an admin's person or devices, makes a person an admin, or claims the
 -- home: the handlers answer 503 UNAVAILABLE until a start reads the stores.
+--
+-- Since 1.9.0 (ADR-061) a person is a user, with up to five devices (src/auth/users.lua). Settings →
+-- Users shows an admin every user and anyone else their own (Access.seesUser); every user adds and
+-- removes their own devices (Access.mayAddOwnDevice, Access.mayRemoveDevice), never another user's;
+-- the devices of one account are brought into one user only when an admin confirms it, the owner's
+-- user only by the owner and keeping the owner's (Access.mayMerge); DirectorLink never does it by
+-- itself. The suggestion offers first the user whose access is within the others' (Access.within).
+--
+-- Since 1.9.0 (ADR-064) the owner can make another admin user the owner (Access.mayMakeOwner): the
+-- people's store then records them as the owner (as a claim does), every rule above follows them,
+-- and the old owner is an admin like any other. Nobody else, and nothing the account service says,
+-- changes who the owner is.
 
 local Keys = require("src.auth.keys")
 local People = require("src.auth.people")
@@ -366,6 +378,158 @@ function Access.mayClaim(actor)
         return true
     end
     return false, "OWNER_ONLY"
+end
+
+-- ---- users and their devices (1.9.0, ADR-061) ----------------------------------------------------
+
+-- The user (profile id) the actor's key belongs to, or nil (DirectorLink itself, or no key).
+local function userOf(actor)
+    local rule = resolve(actor)
+    return rule ~= nil and not rule.system and rule.profile or nil
+end
+
+-- Whether the actor may make the user `profileId` the home's owner (1.9.0, ADR-064, POST
+-- /v1/users/owner): only the owner, from one of their own devices, and only another admin user (a
+-- member is made an admin first); the old owner then stays an admin. Never while who the owner is
+-- cannot be known, nor while the profiles could not be read. Returns true, or false and the
+-- problem's code: UNAVAILABLE (503), OWNER_ONLY (403), NOT_FOUND (404), ALREADY_OWNER or
+-- NOT_AN_ADMIN (409).
+function Access.mayMakeOwner(actor, profileId)
+    local owner, unknown = ownerWith(nil)
+    if unknown or not Profiles.complete() then
+        return false, "UNAVAILABLE"
+    end
+    local own = userOf(actor)
+    if owner == nil or own ~= owner then
+        return false, "OWNER_ONLY"
+    end
+    if type(profileId) ~= "string" or not Profiles.find(profileId) then
+        return false, "NOT_FOUND"
+    end
+    if profileId == owner then
+        return false, "ALREADY_OWNER"
+    end
+    if not Access.isAdminPerson(profileId) then
+        return false, "NOT_AN_ADMIN"
+    end
+    return true
+end
+
+-- Whether the actor sees the user `profileId` and their devices in Settings → Users: an admin
+-- every user, anyone else only their own.
+function Access.seesUser(actor, profileId)
+    if Access.isAdmin(actor) then
+        return true
+    end
+    local own = userOf(actor)
+    return own ~= nil and own == profileId
+end
+
+-- Whether the actor adds a device to their own user (Add my other device, a device of their account
+-- that asks to join approved): every user, admin or member, within the device limit, which the
+-- handlers check; the owner's user only by the owner (mayChangePerson, which the handlers ask too).
+function Access.mayAddOwnDevice(actor)
+    return userOf(actor) ~= nil
+end
+
+-- Whether the actor may remove the device `key` (a record of Keys.list(), or { profile }): an admin
+-- any device but the owner's, which only the owner removes (mayChangePerson); a member only the
+-- devices of their own user. Returns true, or false and the problem's code: NOT_FOUND (a member:
+-- another user's device is, for them, one that does not exist), OWNER_PROTECTED or UNAVAILABLE.
+function Access.mayRemoveDevice(actor, key)
+    if type(key) ~= "table" then
+        return false, "NOT_FOUND"
+    end
+    if Access.isAdmin(actor) then
+        return Access.mayChangePerson(actor, key.profile)
+    end
+    local own = userOf(actor)
+    if own == nil or key.profile ~= own then
+        return false, "NOT_FOUND"
+    end
+    return true
+end
+
+-- Whether the access of the user `left` is within that of `right`: a device of `right` that took
+-- `left`'s permissions would gain nothing. An admin's is within an admin's only; a member's within
+-- an admin's, or within another member's who has every room, kind, scene and switch they have. The
+-- owner's is within nobody else's (only the owner does what the owner does). A user without a record
+-- (the people's store could not be read) is within nobody's. The suggestion to bring an account's
+-- devices together offers first the user whose access is within the others' (ADR-061).
+function Access.within(left, right)
+    local a, b = People.peek(left), People.peek(right)
+    if not a or not b or not People.complete() then
+        return false
+    end
+    local owner, unknown = ownerWith(nil)
+    if unknown or (left == owner and right ~= owner) then
+        return false
+    end
+    local va, vb = People.view(a), People.view(b)
+    if vb.role == "admin" then
+        return true
+    end
+    if va.role == "admin" then
+        return false
+    end
+    local function subset(x, y)
+        local seen = {}
+        for _, item in ipairs(y) do
+            seen[item] = true
+        end
+        for _, item in ipairs(x) do
+            if not seen[item] then
+                return false
+            end
+        end
+        return true
+    end
+    for _, field in ipairs({ "cameras", "doors", "alarm" }) do
+        if va[field] and not vb[field] then
+            return false
+        end
+    end
+    for _, kind in ipairs(People.KINDS) do
+        if va.kinds[kind] and not vb.kinds[kind] then
+            return false
+        end
+    end
+    if not vb.all_rooms and (va.all_rooms or not subset(va.rooms, vb.rooms)) then
+        return false
+    end
+    return subset(va.scenes, vb.scenes)
+end
+
+-- Whether the actor may bring the devices of one account together from the users `profileIds`
+-- into `keepId`, whose permissions stay (a suggestion in Settings → Users, ADR-061): an admin who
+-- may change each of those users (mayChangePerson); one of them the owner's: only the owner, and
+-- the owner's user is the one that stays (the owner's devices never move). Returns true, or false
+-- and OWNER_PROTECTED (403), OWNER_KEEPS (the owner's user must stay) or UNAVAILABLE (503).
+function Access.mayMerge(actor, profileIds, keepId)
+    if not Access.isAdmin(actor) then
+        return false, "FORBIDDEN"
+    end
+    local owner, unknown = ownerWith(nil)
+    if unknown then
+        return false, "UNAVAILABLE"
+    end
+    for _, id in ipairs(profileIds) do
+        if owner ~= nil and id == owner then
+            if userOf(actor) ~= owner then
+                return false, "OWNER_PROTECTED"
+            end
+            if keepId ~= owner then
+                return false, "OWNER_KEEPS"
+            end
+        end
+    end
+    for _, id in ipairs(profileIds) do
+        local allowed, refusal = Access.mayChangePerson(actor, id)
+        if not allowed then
+            return false, refusal
+        end
+    end
+    return true
 end
 
 -- What the actor may do, as GET /v1/api-keys/current and /v1/profile say it (ADR-054): an admin

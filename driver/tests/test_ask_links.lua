@@ -256,6 +256,46 @@ function tests.each_person_sees_their_own_links_and_admins_every_one()
     T.eq(T.http(s.mock, "DELETE", "/v1/ask-links/" .. mine.link_id, { key = s.key }).status, 404)
 end
 
+-- 1.9.0 (ADR-062): a user sees the links of all their devices, each with the device it was made on,
+-- and removes one from another of their devices (a phone that was lost).
+function tests.a_user_sees_and_removes_the_links_of_all_their_devices()
+    local s = start()
+    local aviPhone = s.add("Avi's phone", "doors")
+    local aviProfile = T.http(s.mock, "GET", "/v1/profile", { key = aviPhone }).json.id
+    local created = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Avi's tablet", role = "doors", profile_id = aviProfile } })
+    T.eq(created.status, 201, created.body)
+    local aviTablet = created.json.key
+    local onPhone = make(s, aviPhone).json
+    local onTablet = make(s, aviTablet).json
+    local danas = make(s).json
+
+    local seen = {}
+    for _, item in ipairs(T.http(s.mock, "GET", "/v1/ask-links", { key = aviTablet }).json.items) do
+        seen[item.link_id] = item
+    end
+    T.eq(count(seen), 2, "Avi's two links, not Dana's")
+    T.eq(seen[onPhone.link_id].device, "Avi's phone")
+    T.eq(seen[onPhone.link_id].this_device, false)
+    T.eq(seen[onPhone.link_id].this_user, true)
+    T.eq(seen[onTablet.link_id].device, "Avi's tablet")
+    T.eq(seen[onTablet.link_id].this_device, true)
+    T.eq(seen[onTablet.link_id].this_user, true)
+    T.eq(onTablet.device, "Avi's tablet", "and in the answer that makes it")
+    T.eq(onTablet.this_user, true)
+    -- An admin sees every link; only those of Dana's devices are hers.
+    local all = T.http(s.mock, "GET", "/v1/ask-links", { key = s.key }).json.items
+    T.eq(#all, 3)
+    for _, item in ipairs(all) do
+        T.eq(item.this_user, item.link_id == danas.link_id, item.link_id)
+    end
+
+    -- The phone was lost: the tablet removes its link, which stops working at once.
+    T.eq(T.http(s.mock, "DELETE", "/v1/ask-links/" .. onPhone.link_id, { key = aviTablet }).status, 204)
+    T.eq(run(s, onPhone.link_id, onPhone.secret).code, "NOT_FOUND")
+    T.eq(T.http(s.mock, "DELETE", "/v1/ask-links/" .. danas.link_id, { key = aviTablet }).status, 404, "another user's is not there")
+    T.eq(#T.http(s.mock, "GET", "/v1/ask-links", { key = aviTablet }).json.items, 1, "the tablet's is left")
+end
+
 -- ---- the run ------------------------------------------------------------------------------------
 
 function tests.the_run_asks_the_persons_devices_and_opens_nothing()
@@ -388,6 +428,43 @@ function tests.nobody_to_ask_or_door_control_off_says_so()
     T.eq(#notices, 0)
     T.eq(history(s, "door")[1].reason, "doors_off")
     T.eq(relayCommands(s, before), 0)
+end
+
+-- 1.9.0 (ADR-062): a device whose browser lost its push subscription cannot be asked. The account
+-- service says so ("alerts_gone"), and the run counts only the devices that can still be asked:
+-- `nobody` when none can, not `asked`.
+function tests.a_device_whose_browser_is_gone_is_not_asked()
+    local s = start()
+    local _, ipadId = s.add("Dana's iPad", "admin", true)
+    s.alertsOn("phone")
+    s.alertsOn("Dana's iPad")
+    local link = make(s).json
+    local function gone(ids)
+        ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, Json.encode({ type = "alerts_gone", id = "gone-" .. ids[1], keys = ids })))
+        T.eq(#sent(s.connection), 0, "never answered")
+    end
+
+    -- The iPad's browser went: only the phone is asked.
+    gone({ ipadId })
+    local reply, notices = run(s, link.link_id, link.secret)
+    T.eq(reply.result, "asked")
+    T.eq(count(notices[1]["for"]), 1)
+    T.truthy(notices[1]["for"][s.keyId])
+    T.eq(history(s, "door")[1].count, 1, "History: asked on 1 device")
+
+    -- The phone's too: nobody can be asked, and the run and History say so.
+    s.clock.now = s.clock.now + 121
+    gone({ s.keyId })
+    reply, notices = run(s, link.link_id, link.secret)
+    T.eq(reply.result, "nobody")
+    T.eq(#notices, 0)
+    T.eq(history(s, "door")[1].reason, "nobody")
+
+    -- The phone's app has alerts on again (its next start says so): asked again.
+    s.alertsOn("phone")
+    reply, notices = run(s, link.link_id, link.secret)
+    T.eq(reply.result, "asked")
+    T.eq(count(notices[1]["for"]), 1)
 end
 
 function tests.runs_are_limited_a_minute_and_an_hour()
