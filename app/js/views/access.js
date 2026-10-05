@@ -12,8 +12,9 @@
 // the caller may. Admins see every user, the suggestions to bring an account's devices together
 // (DirectorLink's servers say which devices share an account; nothing is merged until an admin
 // confirms it, the owner for the owner's user), and make a pairing code for a user, or a new one, to
-// pair a device at home; a member sees only their own user and removes their other devices. A user has at most five devices: a sixth is refused with the list
-// (views/device-limit.js). The owner can make another admin the owner (ADR-064).
+// pair a device at home; a member sees only their own user and removes their other devices. A user
+// has at most five devices: a sixth is refused with the list (views/device-limit.js). The owner can
+// make another admin the owner (ADR-064).
 
 import { h } from "../dom.js";
 import { formatDateTime, formatRelative, formatTime, formatUntil, t } from "../i18n.js";
