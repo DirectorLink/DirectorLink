@@ -523,6 +523,47 @@ function tests.a_device_signed_in_with_another_users_account()
     T.eq(profileOf(s.mock, other), kitchenKey.profile_id, "alike: brought together by itself")
 end
 
+-- ---- a restore -----------------------------------------------------------------------------------
+
+local sealCounter = 0
+
+-- A request sealed at home, as the app sends a backup's (POST /v1/sealed).
+local function sealed(mock, key, keyId, request)
+    local Lock = require("src.cloud.lock")
+    local info = T.http(mock, "GET", "/v1/sealed").json
+    sealCounter = sealCounter + 1
+    request.id = "users-" .. sealCounter
+    request.ts = info.time
+    local lock = Lock.deviceKey(key)
+    local response = T.http(mock, "POST", "/v1/sealed", { body = Json.encode({ envelope = Lock.seal(lock, info.home, keyId, "req", Json.encode(request)) }) })
+    T.eq(response.status, 200, response.body)
+    local answer = Json.decode(Lock.open(lock, response.json.envelope, "res"))
+    answer.json = answer.body ~= "" and Json.decode(answer.body) or nil
+    return answer
+end
+
+-- The backup's users come back as they were, and the restoring device takes the place of one of
+-- their devices or stays a user of its own: a restore never gives a user a sixth device.
+function tests.a_restore_gives_no_user_a_sixth_device()
+    local old, owner = start()
+    local ownerProfile = profileOf(old, owner)
+    local ownerId = idOf(old, owner)
+    for index = 2, 5 do
+        T.eq(addDevice(old, owner, ownerProfile, "Owner device " .. index).status, 201)
+    end
+    local document = sealed(old, owner, ownerId, { method = "GET", path = "/v1/backup" }).json
+    -- The driver was removed and added again: a device paired anew restores the backup.
+    local fresh, restorer = start()
+    local restorerId = idOf(fresh, restorer)
+    local done = sealed(fresh, restorer, restorerId, { method = "POST", path = "/v1/restore", body = { document = document, dry_run = false, replaces_key = ownerId } })
+    T.eq(done.status, 200, done.body)
+    local list = users(fresh, restorer)
+    local mine = userById(list, ownerProfile)
+    T.eq(#mine.devices, 5, "this device took the old key's place: five, as before")
+    T.eq(mine.you, true)
+    T.eq(addDevice(fresh, restorer, ownerProfile, "A sixth").json.code, "USER_DEVICE_LIMIT")
+end
+
 -- ---- what 1.8.0 left behind ---------------------------------------------------------------------
 
 function tests.when_each_device_was_last_used_survives_a_restart()

@@ -431,9 +431,10 @@ export function joinFromAnotherDevice() {
 // ---- A device that reaches the home -------------------------------------------------------------
 
 // The same rule as Add my other device: signed in, linked to the home, with an admin key, once the
-// key's role is known (Settings asks the same; before that can() takes it for an admin's).
+// key's role is known (Settings asks the same; before that can() takes it for an admin's). Since
+// 1.9.0 (ADR-061, `features.users`) every user adds their own devices: any key of the account.
 function mayApprove() {
-  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && state.loaded && can("admin");
+  return offered() && Boolean(state.apiKey) && Boolean(savedRemote()?.home) && state.loaded && (can("admin") || state.system?.features?.users === true);
 }
 
 function answers() {
@@ -457,13 +458,15 @@ function mine(item) {
 // person). The controller registers it itself (1.0.0 and later); for an older one the home's owner
 // does, from here. One the account did not take is revoked at home too. Settings' Add my other
 // device and Invite someone, and Approve here.
-export async function makeInvitation({ forSelf, email, role, access }) {
+export async function makeInvitation({ forSelf, email, role, access, profileId }) {
   // Just under 7 days: the account refuses invitations longer than that.
   // For my other device, the new key joins my profile (drivers with profiles, 0.12.0 and later).
   const body = { role, expires_in: forSelf ? 600 : 7 * 24 * 3600 - 300 };
   if (forSelf && state.profile) body.for_me = true;
   // What the invited member may see and do (1.8.0, ADR-054).
   if (access) body.access = access;
+  // Another device of an existing user (1.9.0, ADR-061: an admin invites their account).
+  if (profileId && !forSelf) body.profile_id = profileId;
   let invitation = null;
   try {
     try {

@@ -239,6 +239,8 @@ local function restored(restore)
             People.reconcile(Keys.list(), Profiles.list(), Scenes.list(), true)
         end
         People.syncKeys(Keys)
+        -- Which keys share an account is not in backups (ADR-061): the account service says it again.
+        Accounts.prune(Keys.list())
     end
     publishKeyCount()
     if restore.switching then

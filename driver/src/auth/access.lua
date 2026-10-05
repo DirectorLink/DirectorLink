@@ -39,6 +39,13 @@
 -- the profiles' store could not be, and the claimer is not known: the oldest admin needs the
 -- profiles), nobody changes an admin's person or devices, makes a person an admin, or claims the
 -- home: the handlers answer 503 UNAVAILABLE until a start reads the stores.
+--
+-- Since 1.9.0 (ADR-061) a person is a user, with up to five devices (src/auth/users.lua). Settings →
+-- Users shows an admin every user and anyone else their own (Access.seesUser); every user adds and
+-- removes their own devices (Access.mayAddOwnDevice, Access.mayRemoveDevice), never another user's;
+-- the devices of one account are brought into one user by DirectorLink only between users who are
+-- alike (Access.alike: no device gains anything), otherwise by an admin, the owner's user only by the
+-- owner and keeping the owner's (Access.mayMerge).
 
 local Keys = require("src.auth.keys")
 local People = require("src.auth.people")

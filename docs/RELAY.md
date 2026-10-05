@@ -159,8 +159,9 @@ same holds the other way for what the driver asks the relay (`invitation`, `back
 | --- | --- | --- |
 | driver → relay | `ping` (plain text) | Keep-alive, every 10 s (25 s before 1.6.0), and if Director polls the connection. |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"1.7.0","ping_s":10,"features":["scene_links"]}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). `features` (since 1.7.0): what the relay may send this driver besides what every version takes; `scene_links`: `link` runs. A driver that does not list a feature is never sent its messages. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"1.7.0","ping_s":10,"features":["scene_links"]}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). `features` (since 1.7.0): what the relay may send this driver besides what every version takes; `scene_links`: `link` runs; `users` (1.9.0, ADR-061): `accounts`, and any device of an account may approve that account's new device (the controller lets every user add their own; the home's object keeps the last hello's features as `driver_features`). A driver that does not list a feature is never sent its messages. |
 | driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
+| relay → driver | `{"type":"accounts","id":"…","keys":{"<key id>":["<16 hex>", …]}}` | Which of the home's keys share a Google or Apple account (1.9.0, ADR-061, `docs/ACCOUNTS.md` *Users and accounts*): for each key an account uses (`member_keys`), a tag per account, the first 16 hex digits of SHA-256(`DirectorLink account v1\|<home id>\|<account id>`), at most 4 a key, sorted; a key no account uses is left out. Never an account's id or email. Sent only to a driver whose `hello` lists `users`, after each `keys` message it sent (in the order of its frames), after an account's first sealed request with a key, and after a join, a member removed or a new owner. It replaces what the driver knew; no answer. |
 | relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
 | driver → relay | `{"type":"e2e","id":"…","envelope":{…}}` | The sealed answer; or `{"type":"e2e","id":"…","code":"…"}` when the request is refused. |
 | relay → driver | `{"type":"join","id":"…","invitation":"<id>","envelope":{…}}` | Accepting an invitation: a request sealed with the invitation's secret. |
@@ -186,7 +187,7 @@ message`) and never answered: the relay sends new types only to drivers whose `h
 Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CIPHERTEXT`, `BAD_REQUEST`, `STALE`
 (outside the 2-minute window, or sealed before the driver started), `REPLAYED`, `TOO_LARGE`
 (requests over 64 KiB), `LOCK_UNAVAILABLE` (the lock self-test failed at start),
-`INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `INTERNAL`. The cloud turns them into Problem Details
+`INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (1.9.0: the user an invitation is for has five devices; the invitation stays), `INTERNAL`. The cloud turns them into Problem Details
 for the app (`cloud/src/homes.js`).
 
 If the driver hears nothing (not even `pong`) for three pings in a row (about 30 s), it drops the

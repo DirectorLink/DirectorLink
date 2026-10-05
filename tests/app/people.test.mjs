@@ -262,7 +262,7 @@ test("People and devices: each person with their role; a member's access changed
   assert.equal(byKey(view, "access-edit-aaaa0001"), null, "the owner is always an admin: nothing to change");
   assert.match(textOf(byKey(view, "access-profile-role-bbbb0002")), /^Member · 1 room · lights, fans, blinds, music, refrigerators · cameras · no scenes$/);
   assert.equal(byKey(view, "access-role-0a1b2c3e"), null, "a device has no role of its own");
-  assert.match(textOf(view), /Accounts|People/);
+  assert.match(textOf(view), /Users/, "users, never people (1.9.0)");
 
   await press(view, "access-edit-bbbb0002");
   view = accessView({});

@@ -38,7 +38,9 @@ At home, clients talk to DirectorLink directly: the app with sealed requests, sc
 api/        openapi.yaml — the API contract (single source of truth)
 driver/     the DriverWorks driver
   src/api/        HTTP server, router, handlers, views (API ↔ internal model)
-  src/auth/       API keys, roles, pairing, profiles, invitations
+  src/auth/       API keys, roles, pairing, profiles, invitations; who may do what (access.lua),
+                  users and their devices, and which keys share an account (users.lua,
+                  accounts.lua; ADR-061)
   src/adapters/   Control4 proxy adapters (Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4
                   thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, DoorBird, security
                   partitions: read-only, ADR-038; Samsung refrigerators through their DirectorLink

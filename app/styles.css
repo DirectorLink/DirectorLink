@@ -602,7 +602,7 @@ img {
   cursor: grabbing;
 }
 
-/* People and devices (#/access). */
+/* Settings → Users (#/access; People and devices before 1.9.0). */
 .access-list {
   list-style: none;
   margin: 0;
@@ -740,8 +740,51 @@ img {
 
 .access-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
+/* Settings → Users (1.9.0, ADR-061): a user's devices, under them, set in a little. */
+.access-devices {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-inline-start: 12px;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid var(--line);
+}
+
+.access-devices .access-item {
+  padding: 8px 0;
+}
+
+.access-device .access-name {
+  font-weight: 500;
+}
+
+/* A pairing code made in the app: big enough to read across a room. */
+.pairing-code {
+  margin: 4px 0;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  unicode-bidi: isolate;
+}
+
+/* "Remove a device first": the user's devices in the notice. */
+.device-limit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.device-limit-title {
+  margin: 0;
+  font-weight: 600;
+}
+
+.device-limit-list .access-item {
+  border-top-color: currentColor;
 }
 
 /* 16px, or iPhone Safari zooms in when it is tapped. */

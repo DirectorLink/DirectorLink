@@ -413,7 +413,7 @@ test("the history: asked, nobody asked and why, the opening that answered, and t
   assert.equal(plain(outcomeText({ kind: "door", action: "asked", count: 0, reason: "doors_off", outcome: "skipped" })), "Nobody was asked: door control was off in Composer");
   assert.equal(plain(outcomeText({ kind: "door", action: "pulse", note: "Arriving home", ids: { device_id: 70, link_id: "9a8b7c6d" } })), "Answering the link “Arriving home”");
   assert.equal(plain(outcomeText({ kind: "door", action: "pulse", ids: { device_id: 70 } })), "", "an ordinary opening");
-  assert.equal(plain(outcomeText({ kind: "access", action: "ask_link_removed", reason: "no_access", note: "Arriving home" })), "Its person may no longer open the door · Link “Arriving home”");
+  assert.equal(plain(outcomeText({ kind: "access", action: "ask_link_removed", reason: "no_access", note: "Arriving home" })), "Its user may no longer open the door · Link “Arriving home”");
   assert.equal(plain(outcomeText({ kind: "access", action: "ask_link_removed", reason: "key_gone" })), "The key that made it was removed or expired");
   for (const key of ["ask_link_created", "ask_link_replaced", "ask_link_removed"]) assert.ok(en.history.access[key] && he.history.access[key], key);
   assert.ok(en.history.door.asked && he.history.door.asked);
