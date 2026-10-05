@@ -423,7 +423,7 @@ a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose), a 
 opened (admins, if they choose), the refrigerator's door was left open (members and admins; since
 1.8.0 whoever sees that refrigerator), a schedule had a problem (admins), the home has been
 unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join
-(admins). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
+(admins; since 1.9.0 every user, who approves it, ADR-061). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
 
 1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
    switches on **Alerts on this device**. The browser asks for permission and makes a push
