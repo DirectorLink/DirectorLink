@@ -39,7 +39,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Account: email, name, sign-in provider | yes | yes | no |
 | Which homes the account belongs to | yes | yes | — |
 | Which key ids are admin keys (1.6.0; since 1.8.0 the keys of admin people) | its own role | yes (ids only) | yes |
-| Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0) |
+| Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0); since 1.9.0 also when the account service has no browser left for that key (`alerts_gone`, key ids only, ADR-062), which the cloud knew |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
 | Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
@@ -81,7 +81,11 @@ opens it. A leaked link can only make that person's phone ask. Beyond a scene li
 account service learns the result word (that the link is an ask link, and whether anyone was
 asked) and, right after it, a brief `notify` for the person's key ids: so which keys a link asks,
 and, from a sealed request of one of those devices soon after, that the question was likely
-answered. Never which door, nor what the question says.
+answered. Never which door, nor what the question says. Since 1.9.0 (ADR-062) the controller counts
+only devices that can still get the question: a device whose browser lost its push subscription
+tells it so, and the account service tells it which keys have no browser left (key ids only, which
+it already knew), so that such a run answers `nobody` rather than `asked`. The cloud learns nothing
+new by it.
 
 ## Keys
 
@@ -541,7 +545,8 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   account that registered it, when (`migrations/0006`); since 1.7.0 the key id its device uses at
   the home and whether it wants the offline alert (`migrations/0008`). They go with the membership,
   the account, the key, signing out everywhere (also Apple ending the account's only sign-in), or
-  the push service saying the browser is gone. The home's Durable Object keeps the admin key ids
+  the push service saying the browser is gone; since 1.9.0 the controller is told which of its key
+  ids have none left (`alerts_gone`, ADR-062). The home's Durable Object keeps the admin key ids
   the controller last listed, and when it last notified (60 an hour at most).
 - `stats` (1.7.0, ADR-052, `migrations/0010`): three totals and when each was last counted (below).
 - No device data, no keys and no message contents. The hash of each home's connection secret is

@@ -446,6 +446,19 @@ self.addEventListener("push", (event) => {
   event.waitUntil(showAlert(event.data));
 });
 
+// The browser replaced or dropped this device's push subscription (1.9.0, ADR-062). The worker has
+// no key to tell anyone: an open app registers again, or shows alerts off and tells the controller
+// (js/alerts.js); a closed one does it at its next start.
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((windows) => {
+      for (const client of windows) {
+        if (new URL(client.url).origin === self.location.origin) client.postMessage({ type: "directorlink-push-changed" });
+      }
+    })
+  );
+});
+
 // A notification's tap: bring the app to the front where it says (a doorbell's: Home), or open it
 // there when no window is left.
 self.addEventListener("notificationclick", (event) => {

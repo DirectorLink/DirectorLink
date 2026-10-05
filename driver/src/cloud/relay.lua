@@ -46,8 +46,9 @@ Relay.CONNECT_SECONDS = 30
 -- Replacement home secrets waiting for the owner's approval: the newest few, for a day.
 Relay.CANDIDATES = 3
 Relay.CANDIDATE_SECONDS = 24 * 3600
--- What this driver tells the relay it takes, in its hello (1.7.0).
-Relay.FEATURES = Json.array({ "scene_links" })
+-- What this driver tells the relay it takes, in its hello (1.7.0); `alerts_gone` (1.9.0, ADR-062):
+-- the key ids whose browsers the account service no longer has (src/cloud/remote.lua).
+Relay.FEATURES = Json.array({ "scene_links", "alerts_gone" })
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -429,7 +430,8 @@ local function onOpen()
     state.connectedAt = os.time()
     local identity = Relay.identity()
     -- `features` (1.7.0): what the relay may send this driver besides what every version takes;
-    -- `scene_links`: `link` runs (ADR-051). A driver that does not list it is never sent one.
+    -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0). A driver that does not list one
+    -- is never sent its messages.
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES })
     Relay.announceKeys()
     startKeepalive()

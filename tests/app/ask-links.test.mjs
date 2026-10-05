@@ -369,6 +369,68 @@ test("the list of links: an admin sees everyone's, and removes another person's 
   assert.match(textOf(byKey(nodes, "ask-links-message")), /The link was removed/);
 });
 
+// ---- the links of a user's other devices (1.9.0, ADR-062) ---------------------------------------------
+
+test("a member sees the links of all their devices for a door, and removes the one on a lost phone", async () => {
+  await setLanguage("en");
+  const mine = { ...MINE, person: "Avi", device: "Avi's tablet", this_user: true };
+  const lost = { ...MINE, link_id: "2c3d4e5f", made_by: "0c0c0c0c", person: "Avi", device: "Avi's old phone", label: "Arriving home", this_device: false, this_user: true, last_used_at: null };
+  // A member given doors and gates (1.8.0, ADR-054).
+  state.access = { role: "member", doors: true };
+  try {
+    await connect({ role: "member", items: [mine, lost] });
+    let nodes = views.askLinkView(GATE);
+    assert.match(textOf(byKey(nodes, "ask-link-facts")), /Arriving home/, "this device's link, as before");
+    const others = byKey(nodes, "ask-link-others");
+    assert.ok(others, "the other devices' links are on the door's screen");
+    assert.match(textOf(others), /On your other devices.*Each of your devices has its own link for this door.*Avi's old phone.*“Arriving home”.*never ran/s);
+    assert.equal(byKey(others, `ask-link-other:${mine.link_id}`), null, "not this device's again");
+
+    confirmAnswer = false;
+    await press(nodes, `ask-link-other-remove:${lost.link_id}`);
+    assert.equal(confirmed.at(-1), "Remove the link on Avi's old phone for Main gate? It stops working at once.");
+    assert.equal(calls("DELETE", `/v1/ask-links/${lost.link_id}`).length, 0, "Cancel removes nothing");
+    confirmAnswer = true;
+    await press(nodes, `ask-link-other-remove:${lost.link_id}`);
+    assert.equal(calls("DELETE", `/v1/ask-links/${lost.link_id}`).length, 1);
+    nodes = views.askLinkView(GATE);
+    assert.match(textOf(byKey(nodes, "ask-link-message")), /The link was removed/);
+    assert.equal(byKey(nodes, "ask-link-others"), null, "none left");
+    assert.ok(byKey(nodes, "ask-link-facts"), "this device's stays");
+
+    // Without a link on this device, the others still show beside Make.
+    await connect({ role: "member", items: [lost] });
+    nodes = views.askLinkView(GATE);
+    assert.ok(byKey(nodes, "ask-link-make"));
+    assert.ok(byKey(nodes, `ask-link-other-remove:${lost.link_id}`));
+
+    // A 1.8.0 controller says neither the device nor whose: a member's list is all theirs.
+    const { device: _device, this_user: _mine, ...older } = lost;
+    await connect({ role: "member", items: [older] });
+    assert.match(textOf(byKey(views.askLinkView(GATE), "ask-link-others")), /Another device of yours/);
+
+    // In Hebrew.
+    await setLanguage("he");
+    assert.match(textOf(byKey(views.askLinkView(GATE), "ask-link-others")), /במכשירים האחרים שלכם.*מכשיר אחר שלכם/s);
+  } finally {
+    await setLanguage("en");
+    state.access = null;
+  }
+});
+
+test("on a door's screen an admin sees their own devices' other links; the list shows each link's device", async () => {
+  await setLanguage("en");
+  const ipad = { ...MINE, link_id: "3d4e5f6a", made_by: "0d0d0d0d", device: "Dana's iPad", this_device: false, this_user: true };
+  const avis = { ...THEIRS, device: "Avi's phone", this_user: false };
+  await connect({ items: [{ ...MINE, device: "Dana's iPhone", this_user: true }, ipad, avis] });
+  const others = byKey(views.askLinkView(GATE), "ask-link-others");
+  assert.ok(byKey(others, `ask-link-other:${ipad.link_id}`), "her iPad's");
+  assert.equal(byKey(others, `ask-link-other:${avis.link_id}`), null, "not another user's: those are in the list");
+  const section = byKey(sceneViews.sceneLinksView(), "ask-links-section");
+  assert.match(textOf(byKey(section, `ask-links-item:${avis.link_id}`)), /Main gate.*asks Avi.*on Avi's phone.*never ran/s);
+  assert.match(textOf(byKey(section, `ask-links-item:${ipad.link_id}`)), /on Dana's iPad/);
+});
+
 // ---- Siri and Google Assistant on a scene's link ------------------------------------------------------
 
 test("a scene link's screen says how to run it by voice, in English and Hebrew", async () => {

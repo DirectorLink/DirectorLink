@@ -87,10 +87,16 @@ local function view(services, link, keys, caller)
         room_id = relay and tonumber(relay.room_id) or Json.null,
         label = nullable(link.label),
         made_by = link.by,
+        -- The device it was made on (1.9.0): its key's name, so that a user tells their devices'
+        -- links apart (ADR-062).
+        device = maker and maker.name or Json.null,
         -- The person it asks: the key's.
         person = profile and profile.name or Json.null,
         -- Made on the device asking (its key).
         this_device = caller ~= nil and link.by == caller.id,
+        -- Made on a device of the asking key's user (1.9.0): theirs to see and remove on the door's
+        -- screen, whatever their role.
+        this_user = caller ~= nil and samePerson(maker, keys[caller.id] or caller),
         created_at = link.created_at,
         last_used_at = nullable(link.last_used_at),
     }
