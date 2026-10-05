@@ -1,5 +1,5 @@
-// Settings' list and its pages (app/js/views/settings.js, 1.5.0): appearance and language on the
-// list with a row per page, who sees which row, the line each row says, the update badge, the Rooms
+// Settings' list and its pages (app/js/views/settings.js, 1.5.0): a row per page (Appearance and
+// language too since 1.10.0: tests/app/appearance.test.mjs), who sees which row, the line each row says, the update badge, the Rooms
 // page with its admin parts and the Sonos rooms, Back to the list (and the row it focuses),
 // Settings → Controller with Updates and Backup, the Home notice that opens Settings → Controller at
 // the steps, and sign-in coming back to Settings → Account.
@@ -183,7 +183,7 @@ function notConnected() {
 
 // ---- the list ----------------------------------------------------------------------------------
 
-test("Settings' list: appearance and language, then one row per page; admins see two more", () => {
+test("Settings' list: one row per page; admins see two more", () => {
   home("admin");
   const list = settingsView({});
   assert.equal(list[0].tagName, "HEADER");
@@ -194,19 +194,19 @@ test("Settings' list: appearance and language, then one row per page; admins see
     "settings-row:calendar",
     "settings-row:access",
     "settings-row:account",
+    "settings-row:appearance",
     "settings-row:app",
     "settings-row:about",
   ]);
   const keys = keysOf(list);
-  for (const key of ["palette-graphite", "theme-auto", "theme-dark", "language-auto", "language-en", "language-he"]) assert.ok(keys.includes(key), key);
-  // Everything else is on its own page.
-  for (const key of ["room-show:10", "room-move:10", "room-name:10:en", "settings-host", "settings-pair-again", "settings-forget", "update-check-now", "calendar-save", "backup-download", "account-sign-in", "notifications-on"]) {
+  // Everything is on its own page, the language, theme and colours too (1.10.0).
+  for (const key of ["palette-graphite", "theme-auto", "language-he", "room-show:10", "room-move:10", "room-name:10:en", "settings-host", "settings-pair-again", "settings-forget", "update-check-now", "calendar-save", "backup-download", "account-sign-in", "notifications-on"]) {
     assert.ok(!keys.includes(key), `${key} is not on the list`);
   }
-  assert.deepEqual(ids(list).filter((id) => id.startsWith("settings-")), ["settings-appearance", "settings-appearance-title", "settings-language", "settings-language-title"]);
+  assert.deepEqual(ids(list).filter((id) => id.startsWith("settings-")), []);
   // Each row opens its page; People and devices is #/access, as before.
   const hrefs = rows(list).map((key) => byKey(list, key).attributes.href);
-  assert.deepEqual(hrefs, ["#/settings/controller", "#/settings/rooms", "#/settings/calendar", "#/access", "#/settings/account", "#/settings/app", "#/settings/about"]);
+  assert.deepEqual(hrefs, ["#/settings/controller", "#/settings/rooms", "#/settings/calendar", "#/access", "#/settings/account", "#/settings/appearance", "#/settings/app", "#/settings/about"]);
   for (const href of hrefs.filter((value) => value.startsWith("#/settings/"))) assert.ok(SETTINGS_PAGES.includes(href.slice("#/settings/".length)), href);
   // A link with an icon, a title, a line and a chevron.
   const row = byKey(list, "settings-row:rooms");
@@ -221,7 +221,7 @@ test("Settings' list: appearance and language, then one row per page; admins see
 test("members and viewers: no Shabbat and holidays, no People and devices", () => {
   for (const role of ["member", "doors", "viewer"]) {
     home(role);
-    assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:app", "settings-row:about"], role);
+    assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:appearance", "settings-row:app", "settings-row:about"], role);
   }
   // An admin with the calendar off in Composer (or a driver before 1.2.0): no calendar row.
   home("admin");
@@ -230,7 +230,7 @@ test("members and viewers: no Shabbat and holidays, no People and devices", () =
   assert.ok(rows().includes("settings-row:access"));
   // Not paired yet: the pages that work without a controller.
   notConnected();
-  assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:app", "settings-row:about"]);
+  assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:appearance", "settings-row:app", "settings-row:about"]);
 });
 
 test("each row says in one line how things are", async () => {
@@ -407,7 +407,7 @@ test("at home, This home says Update DirectorLink when the account service turne
 
 test("every page opens with its title and Back to Settings' list", () => {
   home("admin");
-  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", account: "Account", app: "App", about: "About" };
+  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", account: "Account", appearance: "Appearance and language", app: "App", about: "About" };
   assert.deepEqual(Object.keys(titles).sort(), [...SETTINGS_PAGES].sort());
   for (const page of SETTINGS_PAGES) {
     const view = settingsView({ page });

@@ -20,6 +20,8 @@ const FILES = {
   "/theme-boot.js": "boot",
   "/i18n/en.js": "en",
   "/i18n/he.js": "he",
+  "/i18n/es.js": "es",
+  "/i18n/it.js": "it",
   "/manifest.webmanifest": "{}",
   "/icons/icon.svg": "<svg/>",
   "/icons/icon-192.png": "png",
@@ -205,7 +207,7 @@ test("install saves every page under each path, without redirects", async () => 
     assert.equal(saved.redirected, false, `${path} is stored without the redirect flag`);
     assert.match(await saved.text(), new RegExp(body));
   }
-  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/js/doorbells.js", "/js/rings.js", "/js/shades.js", "/i18n/he.js", "/icons/icon-512.png"]) {
+  for (const asset of ["/styles.css", "/app.js", "/api-client.js", "/theme-boot.js", "/js/views/home.js", "/js/doorbells.js", "/js/rings.js", "/js/shades.js", "/i18n/he.js", "/i18n/es.js", "/i18n/it.js", "/icons/icon-512.png"]) {
     assert.ok(await cache.match(asset), `${asset} is cached`);
   }
   // The API console moved to its own site (console.directorlink.io).
@@ -458,6 +460,28 @@ test("a sealed alert's words follow the app's language", async () => {
   assert.equal(shown[0].options.dir, "rtl");
   await push(sealedPush(sealDetail({ v: 1, kind: "door_opened", at: AT, id: 70, name: "Main Door", who: { type: "control4" } })));
   assert.equal(shown[1].options.body, `פתיחה של Main Door דרך Control4 ב-${sealedClock(AT, "he")}.`);
+});
+
+test("a sealed alert in Spanish and Italian: the app's words, its time in that language (1.10.0)", async () => {
+  for (const code of ["es", "it"]) {
+    const { default: words } = await import(`../../app/i18n/${code}.js`);
+    const shown = [];
+    const { storage, push } = await startWorker({ shown });
+    await keepAlertKey(storage);
+    await (await storage.open("directorlink-alerts")).put("/alert-texts.json", new Response(JSON.stringify({
+      lang: code,
+      dir: "ltr",
+      title: "DirectorLink",
+      doorbell_title: words.doorbells.notificationTitle,
+      doorbell: words.alerts.doorbell,
+    })));
+    await push(sealedPush(VECTORS.details[0].sealed));
+    assert.equal(shown[0].title, code === "es" ? "Hay alguien en la puerta" : "C’è qualcuno alla porta");
+    const time = sealedClock("2026-10-03T05:00:00Z", code);
+    assert.equal(shown[0].options.body, code === "es" ? `שער הכניסה sonó a las ${time}.` : `שער הכניסה ha suonato alle ${time}.`);
+    assert.equal(shown[0].options.lang, code);
+    assert.equal(shown[0].options.dir, "ltr");
+  }
 });
 
 test("a sealed alert this device cannot open shows the general words", async () => {

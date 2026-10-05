@@ -1,12 +1,19 @@
-// Palette (colour set) and theme (light / dark / auto). The colours themselves are CSS custom
-// properties in styles.css on :root[data-palette=…][data-theme=…]; theme-boot.js applies the
-// saved choice before the first paint and this module keeps it up to date afterwards.
+// Palette (colour set), theme (light / dark / auto) and text size. The colours themselves are CSS
+// custom properties in styles.css on :root[data-palette=…][data-theme=…], the text size scales the
+// root font size (:root[data-text-size=…]); theme-boot.js applies the saved choices before the
+// first paint and this module keeps them up to date afterwards.
+//
+// Palette and theme follow the user (their profile, js/profile.js); the text size stays on this
+// device (ADR-067): a phone and a big screen need different sizes.
 
 export const PALETTES = ["graphite", "ocean", "forest", "plum", "midnight"];
 export const THEMES = ["auto", "light", "dark"];
+// theme-boot.js and styles.css know the same sizes.
+export const TEXT_SIZES = ["small", "default", "large", "larger"];
 
 const PALETTE_KEY = "directorlink.palette";
 const THEME_KEY = "directorlink.theme";
+const TEXT_SIZE_KEY = "directorlink.textSize";
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 
 function read(key) {
@@ -35,6 +42,11 @@ export function themePreference() {
   return THEMES.includes(value) ? value : "auto";
 }
 
+export function textSizePreference() {
+  const value = read(TEXT_SIZE_KEY);
+  return TEXT_SIZES.includes(value) ? value : "default";
+}
+
 export function resolvedTheme(preference = themePreference()) {
   if (preference === "light" || preference === "dark") {
     return preference;
@@ -46,6 +58,7 @@ export function applyTheme() {
   const root = document.documentElement;
   root.dataset.palette = palettePreference();
   root.dataset.theme = resolvedTheme();
+  root.dataset.textSize = textSizePreference();
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) {
     const background = getComputedStyle(root).getPropertyValue("--bg").trim();
@@ -65,6 +78,14 @@ export function setPalette(palette) {
 export function setTheme(theme) {
   if (THEMES.includes(theme)) {
     write(THEME_KEY, theme);
+    applyTheme();
+  }
+}
+
+// This device's text size, at once on every screen (never sent to the controller).
+export function setTextSize(size) {
+  if (TEXT_SIZES.includes(size)) {
+    write(TEXT_SIZE_KEY, size);
     applyTheme();
   }
 }
