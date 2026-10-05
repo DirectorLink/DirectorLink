@@ -598,7 +598,7 @@
             h("span", {}, h("div", { class: "dev-name" }, user.name), h("div", { class: "dev-sub" }, userLine(user))),
             h("span", { class: "role" }, user.owner ? "Owner" : user.role)),
         ]))),
-      h("p", { class: "small-note" }, `Each user has one set of permissions on all their devices, up to ${DEVICE_LIMIT}. A phone signed in to the same Google or Apple account joins its user by itself.`),
+      h("p", { class: "small-note" }, `Each user has one set of permissions on all their devices, up to ${DEVICE_LIMIT}. A new phone joins with a code from one of their devices; devices signed in to the same Google or Apple account become one user when an admin confirms it.`),
       section("Alerts on this phone", "bell", h("div", { class: "card list" },
         alert("doorbell", "The doorbell rings"), alert("camera", "A camera sees a person"), alert("doors", "A door or gate is opened"), alert("fridge", "The refrigerator door is left open"))),
       h("p", { class: "small-note" }, "Alerts are sealed on the controller for each phone, so DirectorLink’s servers can’t read them."),

@@ -11,8 +11,8 @@ pushes such a request to the account's admin devices, lets the account service t
 older than a minimum version (ADR-059), and sets roles per person, admin or member, with each
 member's rooms, devices and scenes (ADR-054). 1.9.0 makes people users (ADR-061): one set of
 permissions a user, up to five devices a user, the devices of one Google or Apple account brought
-into one user (the account service tells the controller which keys share an account, as an opaque
-tag per home), pairing codes made in the app for a chosen user, and members adding and removing
+into one user when an admin confirms it (the account service tells the controller which keys share
+an account, as an opaque tag per home, and the controller only suggests it), pairing codes made in the app for a chosen user, and members adding and removing
 their own devices, a join from another device approved on any device of the account; and the
 owner can hand the home to another admin, the account service following the controller's word
 (ADR-064).** The
@@ -32,8 +32,8 @@ app's `app/js/lock.js`, `app/js/remote.js` and Settings → Account. The relay p
   devices.
 - Roles stay the controller's, enforced by it: since 1.8.0 each user is an admin or a member, and
   every key has its user's permissions (ADR-054; before, each key had `viewer`, `member`, `doors`
-  or `admin`). Nothing the cloud says raises anyone's access (1.9.0: which keys share an account
-  brings devices together by itself only between users who are alike, ADR-061).
+  or `admin`). Nothing the cloud says raises anyone's access or moves anyone's devices (1.9.0:
+  which keys share an account is only a suggestion, which an admin confirms, ADR-061).
 - Using the app on the home network without an account keeps working.
 
 Not part of this design: local HTTPS, native apps, billing. Alerts (1.6.0, ADR-047; sealed to each
@@ -257,9 +257,14 @@ key's role), locks the answer and sends it back.
    expiry, once: an invitation cannot be moved to another email. Since 1.0.0 the controller tells
    it itself, over its relay connection, before answering the admin (`{"type":"invitation"}`,
    `docs/RELAY.md`); if that fails the invitation is revoked. Only the home can therefore bind an
-   invitation to an email: the cloud does not know members' roles, so a member cannot. For drivers
-   before 1.0.0 the home's owner registers it from the app; other members are refused
-   (`OWNER_ONLY`).
+   invitation to an email, and it binds an admin's to the email the admin chose. A member's (since
+   1.9.0, their own other device only) it binds only to an account that already uses the member's
+   device at the home: it names the member's key (`for_key`), and the cloud registers it only when
+   the email is that of an account that uses that key there (`member_keys`), and says so; otherwise
+   the member is refused (`403 ACCOUNT_NOT_OF_DEVICE`). So a member, or whoever copies a member's
+   key, never brings another account into the home: an admin invites it. A member's own invitation
+   lasts 10 minutes, and their user keeps two waiting at most. For drivers before 1.0.0 the home's
+   owner registers it from the app; other members are refused (`OWNER_ONLY`).
 4. The invited person opens the link and signs in. The cloud checks their email against the
    invitation; another email needs the owner's approval (*Another email: the owner approves*,
    below). Then it passes on the person's first envelope, which is locked with keys derived from
@@ -271,7 +276,8 @@ key's role), locks the answer and sends it back.
 A link lasts 7 days and works once (*my other device*: 10 minutes). Whoever intercepts a link
 still has to sign in as the invited email, or be approved by the home's owner, who compares a code
 with the person they invited. Revoking or demoting an admin's key revokes the
-invitations it made, and Composer's **Revoke All API Keys** revokes every invitation and claim token
+invitations it made (also when bringing an account's devices together makes it a member's), and an
+invitation for a new user is joined only while its maker is an admin, and Composer's **Revoke All API Keys** revokes every invitation and claim token
 too. The controller keeps at most 20 invitations waiting (409 `INVITATION_LIMIT_REACHED`); for
 drivers before 1.0.0, which the owner registers, the cloud allows 20 waiting per account and home.
 
@@ -400,25 +406,30 @@ with it joins that user, never one it chooses; Composer's code still makes a new
 ### Users and accounts (1.9.0, ADR-061)
 
 A user is one set of permissions, with up to five devices. The account is what ties a user's
-devices together: devices signed in to the same Google or Apple account belong to one user.
+devices together: devices signed in to the same Google or Apple account become one user, when an
+admin confirms it.
 
 1. **What the controller learns.** The cloud already keeps which account uses which key at a home
    (`member_keys`, *4.* above). To a driver whose `hello` lists `users` it sends, after every `keys`
-   message, after an account's first sealed request with a key and after a join, a member removed or
-   a new owner, `{"type":"accounts","keys":{"<key id>":["<tag>", …]}}` (`docs/RELAY.md`): for each
+   message, after an account's first sealed request with a key and after a join, a member removed,
+   a new owner or an account deleted, `{"type":"accounts","keys":{"<key id>":["<tag>", …]}}`
+   (`docs/RELAY.md`): for each
    key an account uses, a tag per account, the first 16 hex digits of SHA-256(`DirectorLink account
    v1|<home id>|<account id>`). An account's id is 128 random bits that the controller never sees,
    so a tag says only that two keys share an account; the same account at another home has another
    tag, so two controllers cannot tie their families together. The controller keeps the tags
    (`directorlink_accounts`, not in backups: the cloud sends them again).
 2. **What the controller does with it.** When one account's devices are in two users or more, it
-   moves them into one by itself only when no device would gain anything: the users have the same
-   role, neither is the owner, the same permissions, and five devices at most together. Anything
-   else is a suggestion an admin confirms in Settings → Users, choosing whose permissions stay; one
-   with the owner's user only the owner confirms, and the owner's permissions stay. So a cloud that
-   lies (or someone with its database) can at most bring together users who are alike, which changes
-   no device's permissions, or show a suggestion an admin must confirm; it can never give a device
-   an admin's or the owner's access. A device used by several accounts stays where it is.
+   suggests making them one user, and nothing more: every merge asks. An admin confirms it in
+   Settings → Users ("DirectorLink's servers say these devices use the same account: make them one
+   user?"), choosing whose permissions stay; the suggestion shows each user's role and offers the
+   one with less access, and the confirmation names exactly what was shown (a revision of its
+   devices and users), so a group the cloud changed meanwhile is refused (`409 SUGGESTION_CHANGED`).
+   One with the owner's user only the owner confirms, and the owner's permissions stay. So a cloud
+   that lies (or someone with its database) can at most show a suggestion an admin must confirm, and
+   add a few lines a day to History; it can never move a device, give it an admin's or the owner's
+   access, or put it in another user's devices, ask links and their questions. A device used by
+   several accounts stays where it is.
 3. **What the cloud learns.** Nothing new: the tags are its own computation over what it had; the
    controller sends the same `keys` message as before. It sends one more message to each driver.
 
@@ -436,14 +447,23 @@ over without removing anyone:
 2. A home the account service never knew changes owner on the controller only. Otherwise (Remote
    Access on) the controller first asks the account service, over its own relay connection, which
    only the home's secret opens: `{"type":"owner","account":"<tag>"}`, Dana's Google or Apple
-   account as its opaque tag (*Users and accounts*: the account of Dana's most recently used device
-   that has exactly one). The account service moves its owner to the account of the home with that
-   tag, if it belongs to the home and uses one of the controller's admin keys, and says whose it was.
-3. Only then does the controller record Dana as the owner, after checking again that the owner may
-   (when Dana was made a member meanwhile, or the record cannot be saved, it asks the account
-   service to move its owner back). With no account owning the home there (`NOT_CLAIMED`) it moves
-   alone; when Dana's devices use no account of the home it refuses: "Dana needs to sign in to
-   DirectorLink on one of their devices first", so that the two owners never differ.
+   account as its opaque tag (*Users and accounts*: the one account Dana's devices that have exactly
+   one all use). It is never guessed: Dana's devices using several accounts, or one that the
+   owner's own devices use too, are refused before anything is asked (`409 OWNER_ACCOUNT_UNCLEAR`,
+   `OWNER_ACCOUNT_SHARED`, naming the devices), and the owner's app names the account's email in the
+   confirmation. The account service moves its owner to the account of the home with that tag, if
+   it belongs to the home and uses one of the controller's admin keys, and says whose it was.
+3. Only then does the controller record Dana as the owner, after checking again that the owner may.
+   When it cannot follow (Dana was made a member meanwhile, or the record cannot be saved), or hears
+   no answer within 10 seconds, it tells the account service to undo that request's move
+   (`{"type":"owner_cancel","id"}`, at once or right after its next connection), and the account
+   service puts back the owner account that request replaced; the owner is told the hand-over may
+   not have finished, and trying again finishes it. With no account owning the home there
+   (`NOT_CLAIMED`) it moves alone; when Dana's devices use no account of the home it refuses:
+   "Invite Dana's Google or Apple account first, and have them accept it on one of their devices"
+   (an account is the home's only once it joined, by an invitation). The two owners can differ only
+   while an undo is on its way (a connection that dropped at that moment, until it is back; a driver
+   restarted meanwhile loses it, and handing the home over again puts both in step).
 
 No session, app or route moves the account service's owner: only a claim and the controller's
 word. Nothing the account service says makes anyone the owner on the controller: it can only
@@ -811,12 +831,13 @@ and the notification endpoint `https://api.directorlink.io/auth/apple/notificati
     people with an account, driver downloads. Nothing about any one home; the homes send nothing
     for them.
 16. (1.7.0, ADR-053) A new device of the account joins by approval from a device that reaches the
-    home with an admin key, after both show the same code; the new device commits to its key first,
+    home with an admin key (since 1.9.0 any key of the account), after both show the same code; the new device commits to its key first,
     and the invitation reaches it sealed. Paste invitation link brings a link into the Home Screen app.
 17. (1.9.0, ADR-061) The cloud tells the controller which of its keys share an account, as an opaque
-    tag per account and home; the controller brings an account's devices into one user by itself
-    only between users who are alike, and otherwise leaves it to an admin (the owner for the owner's
-    user). Any device of an account approves that account's new device, with a driver that lets
+    tag per account and home; the controller only suggests bringing an account's devices into one
+    user, and an admin confirms exactly what was shown (the owner for the owner's user): the cloud
+    never moves a device. A member's own invitation is registered only for an account that already
+    uses the member's device. Any device of an account approves that account's new device, with a driver that lets
     every user add their own.
 18. (1.9.0, ADR-064) The owner hands the home to another admin without removing anyone: the
     controller decides who its owner is, and the account service moves its owner account to the new
