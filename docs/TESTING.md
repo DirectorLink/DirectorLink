@@ -7,13 +7,13 @@
 ## 190e. Users and their devices (1.9.0)
 
 1. Deploy the 1.9.0 Worker, then update the driver. Settings → Users lists the users of 1.8.0, each with their devices and when each was last used.
-2. Within a minute of the relay connecting, Users shows "These devices use the same account: make them one user?" for the PC and the iPhone, with each user's access. On the iPhone it says only the owner can do it, and names the owner's user. On the PC (the owner) confirm it: the iPhone moves into your user and shows Owner; History has the merge. Nothing merges without a tap.
+2. Within a minute of the relay connecting, Users shows "Chrome on Windows, Chrome on iPhone: the same account, DirectorLink's servers say", with Owner and Admin badges and the owner's access preselected. On the iPhone it says only the home's owner can confirm it, naming the owner's user and devices. On the PC confirm it (the dialog mentions access, language, theme and favorites): the iPhone moves into your user and shows Owner; History has the merge. Nothing merges without a tap: two members with the same access signed in to one account only get a suggestion.
 3. If our servers' list changes between showing the suggestion and the tap (another device added to that account), the tap is refused and the new suggestion shows.
 4. On an Android member's device: Settings → Users shows only their own user and devices; Settings → Account shows Add my other device and no Invite someone. Remove one of their own devices: it works; another user's device can't be removed.
 5. Give a user 5 devices: Add my other device on one of them, a pairing code for them, Join from another device and moving a device into them are each refused with "Remove a device first" and the list. Remove one, then try again: it works.
 6. As an admin, tap Pair a device on Sam. On a new computer at home, enter the code: it joins Sam with Sam's access. Try New user at home "Kitchen tablet" with one room. A code made for a user stops working when that user goes or its admin becomes a member.
 7. Join from another device: a member's new iPhone asks; the member's Android phone gets the push and approves with the code. The new iPhone is under that member.
-8. A member's Add my other device invites only their own account (another email can't join with it).
+8. A member's Add my other device works with their own account; a script posting `for_me` with another email gets `403 ACCOUNT_NOT_OF_DEVICE`. Approve a Join for a user with five devices: the list shows, with Remove.
 9. Invite their account on a user paired at home: after they accept on their phone, that user can use DirectorLink away from home.
 10. Remove a user's last device: the confirmation says the user goes with it.
 11. Hebrew at 320 and 390 px, light and dark: "user" everywhere, no "person".
@@ -26,7 +26,7 @@
 3. A name two devices share: options appear, and only the one you tap changes.
 4. "open the main gate": nothing opens until you tap "Tap again to open" within 5 s. A member without doors gets the door-access message.
 5. "turn off everything": a confirm with the counts; nothing changes until Turn off.
-6. "האור במטבח כבוי?", "lights at 7", "חם לי", "frobnicate": nothing is sent; "I didn't understand" (or "I can only do things") with your own examples.
+6. "האור במטבח כבוי?", "kitchen lights off?", "lights at 7", "תדליק את האור במטבח ב-7", "חם לי בסלון", "frobnicate": nothing is sent; "I didn't understand" (or "I can only do things") with your own examples. "kitchen lights 30" and "מזגן בסלון על קר" work. A room "חניה" is found as "חנייה". In a room with an AC and floor heating, "מזגן ב<room> 23" changes only the AC.
 7. Chrome on the PC: the microphone asks for permission; the line about where speech goes shows; a spoken "kitchen lights off" works. Close the dialog while it listens: nothing runs.
 8. At 320 px and 1000 px: the layout fits; the header button shows only on the wide screen; `/` opens the field.
 9. A member: only their rooms, kinds and scenes can be named.
@@ -34,7 +34,7 @@
 ## 190c. Handing the home to another admin (1.9.0)
 
 1. As owner A in Settings → Users: "Make B the owner" shows on admin B's row only. Cancelling the confirm sends nothing.
-2. On a linked home, if B's account isn't invited to the home: "Invite B's account first". Invite it, then try again: the confirm names B's account.
+2. On a linked home, if B's account isn't invited to the home: "Invite B's Google or Apple account first". Invite it, then try again: the confirm names B's account. An admin whose devices use two accounts is refused, naming the devices.
 3. Confirm. B gets the Owner badge and A shows as Admin. A changing B, or removing B's device: "Only the home's owner…". B can change A. Nobody is removed from the home.
 4. A linking the home to an account again is refused; B can. On B's phone, Users shows the accounts and the requests to join; on A, Replace the remote secret says only the owner can.
 5. History: "Made B the home's owner instead of A".
