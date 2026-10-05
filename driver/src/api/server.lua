@@ -31,6 +31,7 @@ local HANDLERS = {
     remote = require("src.api.handlers.remote"),
     invitations = require("src.api.handlers.invitations"),
     profiles = require("src.api.handlers.profiles"),
+    users = require("src.api.handlers.users"),
     scenes = require("src.api.handlers.scenes"),
     scene_links = require("src.api.handlers.scene_links"),
     ask_links = require("src.api.handlers.ask_links"),

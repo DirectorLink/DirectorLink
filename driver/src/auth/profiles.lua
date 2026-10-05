@@ -201,11 +201,12 @@ function Profiles.updatePrefs(id, changes, expected)
     return copy(profile)
 end
 
--- Deletes the profiles no key belongs to (`keys`: Keys.list()); returns how many went. None while
--- the store could not be read.
+-- Deletes the profiles no key belongs to (`keys`: Keys.list()): a user goes with their last device
+-- (ADR-061). Returns how many went, and which ({ id, name }). None while the store could not be
+-- read.
 function Profiles.prune(keys)
     if not state.complete then
-        return 0
+        return 0, {}
     end
     local used = {}
     for _, key in ipairs(keys) do
@@ -213,18 +214,50 @@ function Profiles.prune(keys)
             used[key.profile] = true
         end
     end
-    local kept = {}
+    local kept, gone = {}, {}
     for _, profile in ipairs(state.profiles) do
         if used[profile.id] then
             kept[#kept + 1] = profile
+        else
+            gone[#gone + 1] = { id = profile.id, name = profile.name }
         end
     end
-    local removed = #state.profiles - #kept
-    if removed > 0 then
+    if #gone > 0 then
         state.profiles = kept
         save()
     end
-    return removed
+    return #gone, gone
+end
+
+-- The favorites of the profiles `fromIds` that `intoId` does not have, added after its own (up to
+-- MAX_FAVORITES): the devices of one account brought into one user keep what the other user had
+-- on Home (1.9.0, ADR-061). The rest of `intoId`'s preferences stay. Returns true when it changed.
+function Profiles.mergeFavorites(intoId, fromIds)
+    local into = findRecord(intoId)
+    if not into or not state.complete then
+        return false
+    end
+    local have, added = {}, 0
+    for _, entry in ipairs(into.prefs.favorites or {}) do
+        have[entry] = true
+    end
+    into.prefs.favorites = into.prefs.favorites or {}
+    for _, id in ipairs(fromIds) do
+        local from = findRecord(id)
+        for _, entry in ipairs(from and from.prefs.favorites or {}) do
+            if not have[entry] and #into.prefs.favorites < Profiles.MAX_FAVORITES then
+                have[entry] = true
+                into.prefs.favorites[#into.prefs.favorites + 1] = entry
+                added = added + 1
+            end
+        end
+    end
+    if added == 0 then
+        return false
+    end
+    into.version = into.version + 1
+    save()
+    return true
 end
 
 return Profiles

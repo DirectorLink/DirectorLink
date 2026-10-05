@@ -25,6 +25,8 @@ local Store = require("src.core.store")
 local Clock = require("src.core.clock")
 local Profiles = require("src.auth.profiles")
 local People = require("src.auth.people")
+local Accounts = require("src.auth.accounts")
+local Users = require("src.auth.users")
 local FavoritesGone = require("src.core.favorites_gone")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
@@ -108,9 +110,21 @@ local function publishKeyCount()
 end
 
 -- A key was created, changed or revoked: profiles nobody uses go, and the scene links a revoked
--- key made (ADR-051), then Composer's count and the cloud's list of key ids.
+-- key made (ADR-051), then Composer's count and the cloud's list of key ids. A user goes with
+-- their last device (1.9.0, ADR-061), and so do the invitations and the pairing code made for
+-- them, which could only make a new user of whoever used them.
 local function keysChanged()
-    Profiles.prune(Keys.list())
+    local _, gone = Profiles.prune(Keys.list())
+    if gone and #gone > 0 then
+        Invitations.revokeForUsers(gone)
+        Pairing.forgetUsers(gone)
+        for _, user in ipairs(gone) do
+            Log.info("auth", "a user went with their last device", { user = user.id, name = user.name })
+        end
+    end
+    if Keys.complete() then
+        Accounts.prune(Keys.list())
+    end
     -- A person keeps their role and permissions while they have a key, and every key the 1.7.0
     -- role of its person (ADR-054). Not while the profiles could not be read: every person would
     -- look gone.
@@ -308,6 +322,19 @@ local services = {
         return { state = STATE.status, detail = STATE.detail }
     end,
     onKeysChanged = keysChanged,
+    -- The account service said which keys share a Google or Apple account (1.9.0, ADR-061;
+    -- src/auth/accounts.lua): users alike are brought together, the others are suggested to admins.
+    onAccounts = function(keys)
+        if not Keys.complete() then
+            return
+        end
+        local taken = Accounts.update(keys, Keys.exists)
+        if taken then
+            Users.reconcile(keysChanged)
+        else
+            Log.warn("auth", "ignored an accounts message that is not a list of key ids and tags")
+        end
+    end,
     -- A restore from a backup replaced every store (ADR-042, src/core/backup.lua).
     onRestored = function(restore)
         restored(restore)
@@ -536,6 +563,8 @@ function OnDriverLateInit(driverInitType)
     -- Admins and members (1.8.0, ADR-054).
     local peopleCount, peopleStoredAs = People.load()
     Log.info("auth", "people loaded", { count = peopleCount, stored_as = peopleStoredAs })
+    -- Which keys share an account, as the account service said last (1.9.0, ADR-061).
+    Log.info("auth", "accounts of the keys loaded", { keys = Accounts.load() })
     FavoritesGone.load()
     SonosRooms.load()
     AutoBackup.load()
@@ -721,6 +750,8 @@ function ExecuteCommand(command, params)
         if ok then
             local invitations = Invitations.revokeAll()
             Remote.clearClaim()
+            -- Account tags are the old home's (ADR-061): the new home's come when it is linked.
+            Accounts.clear()
             -- Scene links name the old home in their addresses: none of them can work any more.
             local links = removeSceneLinks("new_identity")
             Log.warn("relay", "remote identity reset from Composer", { invitations = invitations, scene_links = links })

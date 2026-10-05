@@ -15,7 +15,8 @@
 //   DELETE /v1/homes/{home_id}/device-requests/{id}          declined, or withdrawn
 //
 // A new request is pushed at once to the same account's browsers at the home registered with an
-// admin key that want it (1.8.0; alerts.js deviceRequest), so the device that approves need not
+// admin key that want it (1.8.0; since 1.9.0 with any key, when the driver lets every user add
+// their own devices: ADR-061; alerts.js deviceRequest), so the device that approves need not
 // have the app open; it says only that a device asks (no label), at most 3 an hour an account.
 //
 // Only the account's own sessions see or change its requests. The new device sends a commitment
@@ -109,15 +110,19 @@ async function keysAtHome(env, homeId, userId) {
 }
 
 // Whether one of the account's devices could approve: it holds a key at the home, an admin key
-// when the controller names its admins (only admins make invitations there). A controller before
-// 1.6.0 names none, and a home's object that cannot be asked says nothing: any key passes then.
+// when the controller names its admins (only admins make invitations there before 1.9.0). A
+// controller before 1.6.0 names none, and a home's object that cannot be asked says nothing: any
+// key passes then. A driver whose hello lists `users` (1.9.0, ADR-061) lets every user invite their
+// own other device, admin or member: any key of the account passes (the controller still decides,
+// when the approving device asks it for the invitation).
 async function approverExists(env, homeId, userId) {
   const keys = await keysAtHome(env, homeId, userId);
   if (!keys.length) return false;
   let admins = null;
   try {
     const answer = await homeObject(env, homeId, { op: "admins" });
-    admins = Array.isArray(answer?.admins) ? new Set(answer.admins) : null;
+    const anyKey = Array.isArray(answer?.features) && answer.features.includes("users");
+    admins = !anyKey && Array.isArray(answer?.admins) ? new Set(answer.admins) : null;
   } catch (error) {
     log("device_request_roles_unknown", { home: homeId, error: String(error?.message ?? error) });
   }
@@ -151,7 +156,7 @@ async function startRequest(request, env, user, homeId, ctx) {
   }
   if (!(await approverExists(env, homeId, user.id))) {
     log("device_request_refused", { home: homeId, user: user.id, why: "no_approver" });
-    return problem(409, "NO_APPROVER", "No device of this account holds an admin key at this home, so none could approve: ask an admin of the home for an invitation");
+    return problem(409, "NO_APPROVER", "No device of this account could approve at this home (none holds a key there, or none an admin key with DirectorLink before 1.9.0): ask an admin of the home for an invitation");
   }
   const now = Date.now();
   // The hour's starts, counted before the open requests are: an attempt is a start.
@@ -196,7 +201,7 @@ async function startRequest(request, env, user, homeId, ctx) {
   return json(view(row), 201);
 }
 
-// The account's devices with an admin key at the home hear of the request at once, with the app
+// The account's devices with an admin key at the home (since 1.9.0 any key, ADR-061) hear of the request at once, with the app
 // closed (1.8.0, ADR-053 as amended by ADR-059): the home's object pushes "A new device asks to
 // join" to the browsers that want it (alerts.js). The request is made whatever happens to the push,
 // and answered without waiting for it (ctx.waitUntil in startRequest); this never throws.

@@ -5,9 +5,12 @@
 --   join   a sealed request from someone opening an invitation link; answered with their new key
 --   claim  the cloud checks a claim token, which proves that whoever claims this home holds an
 --          admin key here on the home network
--- And one that is not sealed (1.7.0, ADR-051):
+-- And two that are not sealed: (1.7.0, ADR-051)
 --   link   a scene's link, run from a phone's automation: the link's id and secret, checked against
 --          the hash kept here (src/api/handlers/scene_links.lua); answered with how it went
+-- and (1.9.0, ADR-061)
+--   accounts  which keys share a Google or Apple account, as opaque tags (src/auth/accounts.lua);
+--          not answered
 -- Problems the relay has to know about (unknown key, broken seal, replay) are sent in the clear as
 -- a `code`; they reveal nothing about the home. Remote.handleLocal opens requests sealed the same
 -- way on the home network (POST /v1/sealed, naming the home "lan").
@@ -23,6 +26,7 @@ local SceneLinkHandlers = require("src.api.handlers.scene_links")
 local Access = require("src.auth.access")
 local People = require("src.auth.people")
 local Scenes = require("src.core.scenes")
+local Users = require("src.auth.users")
 
 local Remote = {}
 
@@ -355,12 +359,20 @@ local function handleJoin(message, send)
     -- is a new person, as the invitation says (ADR-054: its access, else what its 1.7.0 role became).
     local profiles = state.services.profiles
     local profile = profiles and invitation.profile and profiles.find(invitation.profile)
+    -- An invitation into a user who is gone (their last device went) makes nobody a new user.
+    if profiles and invitation.profile and not profile and profiles.complete() then
+        log("warn", "refused an invitation into a user who is gone", { invitation = invitationId })
+        state.services.invitations.revoke(invitationId)
+        send({ type = "join_result", id = message.id, ok = false, code = "INVITATION_NOT_FOUND" })
+        return
+    end
     -- Into an existing person only as the admin who made the invitation may put a device there
-    -- (ADR-054: Access.mayChangePerson, the owner's only by the owner), now as when it was made.
+    -- (ADR-054: Access.mayChangePerson, the owner's only by the owner), now as when it was made;
+    -- since 1.9.0 (ADR-061) also a member's own other device, into their own user.
     if profile then
         local inviter = type(invitation.created_by) == "string" and state.services.keys.find(invitation.created_by) or nil
         local allowed, refusal = false, nil
-        if inviter and Access.isAdmin(inviter) then
+        if inviter and (Access.isAdmin(inviter) or (not invitation.for_user and inviter.profile == profile.id and Access.mayAddOwnDevice(inviter))) then
             allowed, refusal = Access.mayChangePerson(inviter, profile.id)
         end
         if not allowed then
@@ -369,6 +381,12 @@ local function handleJoin(message, send)
                 state.services.invitations.revoke(invitationId)
             end
             send({ type = "join_result", id = message.id, ok = false, code = refusal == "UNAVAILABLE" and "UNAVAILABLE" or "INVITATION_NOT_FOUND" })
+            return
+        end
+        -- Up to five devices a user: the invitation stays, so that it works once one is removed.
+        if Users.full(profile.id) then
+            log("info", "refused an invitation into a user who has five devices", { invitation = invitationId })
+            send({ type = "join_result", id = message.id, ok = false, code = "USER_DEVICE_LIMIT" })
             return
         end
     end
@@ -425,6 +443,17 @@ end
 -- True when `message` was one of the account messages (handled, or refused with a code).
 function Remote.handle(message, send)
     local kind = message.type
+    -- Which keys share an account (1.9.0, ADR-061: src/auth/accounts.lua), sent by the relay to a
+    -- driver whose hello lists `users`; it needs no answer.
+    if kind == "accounts" then
+        if state.services and state.services.onAccounts then
+            local ok, err = pcall(state.services.onAccounts, message.keys)
+            if not ok then
+                log("error", "the accounts of the keys could not be taken", { error = tostring(err) })
+            end
+        end
+        return true
+    end
     if kind ~= "e2e" and kind ~= "join" and kind ~= "claim" and kind ~= "link" then
         return false
     end

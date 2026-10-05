@@ -4,6 +4,9 @@
 -- project anyway. Composer shows it as "1234 5678"; clients may send it with or without the space.
 -- The app never sends it: it pairs with CPace (src/auth/cpace_pairing.lua, ADR-039), whose
 -- attempts count against the same limits (Pairing.begin and Pairing.conclude).
+-- Since 1.9.0 (ADR-061) an admin can also make a code in the app, for a user they choose or a new
+-- user with a name and permissions (its `target`): the device that pairs with it joins that user,
+-- never one it chooses. One code at a time, whoever made it: a new one replaces the one before.
 
 local Random = require("src.core.random")
 
@@ -32,6 +35,9 @@ local state = {
     codeFailures = 0,
     -- Changes whenever a code is made or closed: a CPace attempt belongs to the code it began with.
     generation = 0,
+    -- Who the code is for (1.9.0): nil for Composer's (a new admin user), else what the app made it
+    -- for: { profile, name, by } (an existing user) or { name, person, by } (a new user).
+    target = nil,
     expiryTimer = nil,
     onChange = nil,
     log = nil,
@@ -92,6 +98,7 @@ function Pairing.statusText(now)
     now = now or os.time()
     if Pairing.isActive(now) then
         return "Ready until " .. os.date("%H:%M", state.codeExpiresAt) .. " - works once"
+            .. (state.target and " - made in the app for one user" or "")
     end
     return state.closedText
 end
@@ -116,6 +123,7 @@ local function close(text)
     state.generation = state.generation + 1
     state.code = nil
     state.codeExpiresAt = 0
+    state.target = nil
     state.closedText = text or OFF_TEXT
     publish()
 end
@@ -141,8 +149,9 @@ local function clientState(ip, now)
     return client
 end
 
--- Creates a new code, valid for CODE_TTL_SECONDS. Returns true, or false plus a reason.
-function Pairing.open()
+-- Creates a new code, valid for CODE_TTL_SECONDS. `target`: who it is for, when an admin made it
+-- in the app (1.9.0); nil for Composer's. Returns true, or false plus a reason.
+function Pairing.open(target)
     local code, err = generateCode()
     if not code then
         close("Unavailable: " .. tostring(err))
@@ -151,6 +160,7 @@ function Pairing.open()
     cancelTimer()
     resetFailures()
     state.generation = state.generation + 1
+    state.target = type(target) == "table" and target or nil
     state.code = code
     state.codeExpiresAt = os.time() + Pairing.CODE_TTL_SECONDS
     pcall(function()
@@ -300,7 +310,7 @@ function Pairing.begin(ip)
     end
     client.failed = client.failed + 1
     state.codeFailures = state.codeFailures + 1
-    return { code = state.code, ip = ip, generation = state.generation }
+    return { code = state.code, ip = ip, generation = state.generation, target = state.target }
 end
 
 -- The end of an attempt: `matched` says whether the device proved it knew the code. Returns true
@@ -322,6 +332,36 @@ function Pairing.conclude(attempt, matched)
     end
     used()
     return true
+end
+
+-- Who the active code is for (see `target` above), or nil: Composer's, or none active.
+function Pairing.target()
+    return Pairing.isActive() and state.target or nil
+end
+
+-- The active code (8 digits), or nil.
+function Pairing.code()
+    return Pairing.isActive() and state.code or nil
+end
+
+-- The active code stops working (DELETE /v1/pairing-code).
+function Pairing.cancel()
+    close("Closed in the app - run New Pairing Code to pair a device")
+end
+
+-- A code made for a user who is gone (their last device went) stops working.
+function Pairing.forgetUsers(gone)
+    local target = state.target
+    if not (target and target.profile) then
+        return
+    end
+    for _, user in ipairs(gone or {}) do
+        if user.id == target.profile then
+            close("Closed: the user it was made for is gone - run New Pairing Code to pair a device")
+            log("pairing code closed: its user is gone")
+            return
+        end
+    end
 end
 
 function Pairing.status()

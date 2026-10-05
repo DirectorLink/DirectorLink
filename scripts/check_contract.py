@@ -678,7 +678,36 @@ def scenario(client, bridge):
     client.check("PATCH", "/v1/rooms/10", 200, body={"hidden_from_members": False})
     if client.check("GET", "/v1/system", 200)["features"].get("people_permissions") is not True:
         fail("GET /v1/system should say features.people_permissions")
+    # Users and their devices (1.9.0, ADR-061): Settings → Users, five devices a user, a pairing
+    # code for a chosen user, a suggestion that is not there.
+    if client.check("GET", "/v1/system", 200)["features"].get("users") is not True:
+        fail("GET /v1/system should say features.users")
+    users = client.check("GET", "/v1/users", 200)
+    if users["device_limit"] != 5 or not any(item["you"] and item["access"]["owner"] for item in users["items"]):
+        fail(f"GET /v1/users should list the owner's own user, with five devices a user: {users}")
+    extra = [client.check("POST", "/v1/api-keys", 201, body={"name": f"device {index}", "profile_id": person}) for index in range(4)]
+    full = client.check("POST", "/v1/api-keys", 409, body={"name": "a sixth", "profile_id": person})
+    if full["code"] != "USER_DEVICE_LIMIT" or len(full.get("devices", [])) != 5 or full["user"]["id"] != person:
+        fail(f"a user's sixth device is refused with their devices: {full}")
+    client.check("POST", "/v1/pairing-code", 409, body={"profile_id": person})
+    for key in extra:
+        client.check("DELETE", f"/v1/api-keys/{key['id']}", 204)
+    paired_for = client.check("POST", "/v1/pairing-code", 201, body={"profile_id": person})
+    if paired_for["user"]["id"] != person or paired_for["user"]["role"] != "member":
+        fail(f"POST /v1/pairing-code should name the user it is for: {paired_for}")
+    client.check("POST", "/v1/pairing-code", 201, body={"name": "Kitchen tablet", "role": "member", "access": {"all_rooms": False, "rooms": [10]}})
+    client.check("POST", "/v1/pairing-code", 400, body={"profile_id": person, "name": "Two"})
+    client.check("DELETE", "/v1/pairing-code", 204)
+    client.check("DELETE", "/v1/pairing-code", 404)
+    client.check("POST", "/v1/users/merge", 404, body={"account": "0123456789abcdef", "keep": person})
+    client.check("POST", "/v1/users/merge", 400, body={"account": "not a tag", "keep": person})
     admin_key, client.key = client.key, created["key"]
+    mine = client.check("GET", "/v1/users", 200)
+    if [item["id"] for item in mine["items"]] != [person] or mine["suggestions"]:
+        fail(f"a member sees only their own user, and no suggestion: {mine}")
+    client.check("POST", "/v1/pairing-code", 403, body={"profile_id": person})
+    client.check("DELETE", f"/v1/api-keys/{me['id']}", 404)
+    client.check("POST", "/v1/users/merge", 403, body={"account": "0123456789abcdef", "keep": person})
     if client.check("GET", "/v1/lights", 200)["items"]:
         fail("a member with no rooms sees no light")
     client.check("PATCH", "/v1/lights/20", 404, body={"on": True})

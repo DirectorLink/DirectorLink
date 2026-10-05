@@ -100,7 +100,7 @@ SECURITY_CONTRACT = {
         "constantTimeEqual(input, state.code)",
         'close("Used at "',
         # A CPace attempt counts as a wrong code from its start (ADR-039).
-        "client.failed = client.failed + 1\n    state.codeFailures = state.codeFailures + 1\n    return { code = state.code, ip = ip, generation = state.generation }",
+        "client.failed = client.failed + 1\n    state.codeFailures = state.codeFailures + 1\n    return { code = state.code, ip = ip, generation = state.generation, target = state.target }",
     ),
     # CPace (ADR-039): the key is made only after the app's tag is right; low-order shares are refused.
     "src/auth/cpace_pairing.lua": (
@@ -113,7 +113,24 @@ SECURITY_CONTRACT = {
         # into it, no device moved into or out of it, none revoked, by anyone else.
         "local allowed, refusal = Access.mayChangePerson(ctx.apiKey, body.profile_id)",
         "problem = personRefused(ctx, before.profile) or personRefused(ctx, changes.profile)",
-        "local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil",
+        # A member removes only their own user's devices; an admin any but the owner's (ADR-061).
+        "local allowed, refusal = Access.mayRemoveDevice(ctx.apiKey, revoked)",
+        # Every way a key gets into a user stays within five devices (ADR-061).
+        "if profileId and Users.full(profileId) then\n        return nil, UserHandlers.limitProblem(ctx, profileId)",
+        "problem = UserHandlers.refuseWhenFull(ctx, changes.profile)",
+    ),
+    # Users and their devices (ADR-061): another admin never removes the owner's devices; the
+    # owner's user stays when an account's devices are brought together, which only the owner
+    # confirms; DirectorLink does it by itself only between users who are alike.
+    "src/auth/access.lua": (
+        "if Access.isAdmin(actor) then\n        return Access.mayChangePerson(actor, key.profile)\n    end",
+        "if keepId ~= owner then\n                return false, \"OWNER_KEEPS\"",
+        "if unknown or left == owner or right == owner then\n        return false\n    end",
+    ),
+    "src/auth/users.lua": (
+        "if not Access.alike(group.users[1], group.users[index]) then",
+        "if Users.after(group, keep, keys) > Users.DEVICE_LIMIT then",
+        "if not adminLeft(ids, keepId, keys) then",
     ),
     "src/cloud/relay.lua": (
         # Plain relayed requests (version 0) never reach the API: the relay cannot read a home.

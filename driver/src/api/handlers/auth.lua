@@ -15,6 +15,8 @@ local Access = require("src.auth.access")
 local People = require("src.auth.people")
 local Scenes = require("src.core.scenes")
 local ProfileHandlers = require("src.api.handlers.profiles")
+local UserHandlers = require("src.api.handlers.users")
+local Users = require("src.auth.users")
 
 local Auth = {}
 
@@ -27,15 +29,19 @@ local function roleProblem()
     return Problem.invalidField("role", "role must be one of " .. Roles.list())
 end
 
--- `profileId`: the profile (person) the key joins, whose permissions it has; without one, it gets
--- a new person of its own: `person` (src/auth/people.lua), else what the 1.7.0 `role` becomes
--- (ADR-054). The key keeps its person's 1.7.0 role. `expiresAt` (os.time): when the key stops
--- working (ADR-040); nil for never.
-local function createKey(ctx, name, role, profileId, expiresAt, person)
+-- `profileId`: the profile (user) the key joins, whose permissions it has, while they have fewer
+-- than five devices (1.9.0, ADR-061: 409 USER_DEVICE_LIMIT); without one, it gets a new user of its
+-- own, named `userName` or after the key: `person` (src/auth/people.lua), else what the 1.7.0
+-- `role` becomes (ADR-054). The key keeps its person's 1.7.0 role. `expiresAt` (os.time): when the
+-- key stops working (ADR-040); nil for never.
+local function createKey(ctx, name, role, profileId, expiresAt, person, userName)
     local keys = ctx.services.keys
     local profiles = ctx.services.profiles
+    if profileId and Users.full(profileId) then
+        return nil, UserHandlers.limitProblem(ctx, profileId)
+    end
     if not profileId and profiles then
-        local profile, profileFailure = profiles.create(name)
+        local profile, profileFailure = profiles.create(userName or name)
         if profileFailure == "UNAVAILABLE" then
             return nil, Problem.new(503, "UNAVAILABLE", "The people's profiles could not be read when DirectorLink started; restart the driver and try again")
         elseif not profile then
@@ -125,6 +131,46 @@ local function onlyFields(value, field, allowed)
     return nil
 end
 
+-- The user a pairing code is for (1.9.0, ADR-061; src/auth/pairing.lua's target): Composer's makes
+-- a new admin user, as before; one an admin made in the app, the user they chose (still there,
+-- with room for a device, and the admin who made it still one who may add a device to them) or a
+-- new user with the name and permissions they chose. Never one the pairing device asks for.
+-- Returns { profile } or { person, userName } or { composer = true }, or nil, the problem, and
+-- whether the code should close (it can no longer be used).
+local function pairingTarget(ctx, target)
+    if not target then
+        return { composer = true }
+    end
+    local maker = type(target.by) == "string" and ctx.services.keys.find(target.by) or nil
+    if not (maker and Access.isAdmin(maker)) then
+        return nil, Problem.new(403, "PAIRING_NOT_ACTIVE", "This pairing code no longer works: the admin who made it is no longer one. Ask an admin for a new code"), true
+    end
+    if not target.profile then
+        return { person = target.person, userName = target.name }
+    end
+    if not ctx.services.profiles.find(target.profile) then
+        return nil, Problem.new(403, "PAIRING_NOT_ACTIVE", "This pairing code no longer works: the user it was made for is gone. Ask an admin for a new code"), true
+    end
+    if not (Access.mayChangePerson(maker, target.profile)) then
+        return nil, Problem.new(403, "PAIRING_NOT_ACTIVE", "This pairing code no longer works: only the home's owner pairs a device of theirs"), true
+    end
+    if Users.full(target.profile) then
+        return nil, UserHandlers.limitProblem(ctx, target.profile), false
+    end
+    return { profile = target.profile }
+end
+
+-- The key for a device that proved it knew the code, in the user the code was for.
+local function pairedKey(ctx, name, resolved, expiresAt)
+    if resolved.profile then
+        return createKey(ctx, name, "member", resolved.profile, expiresAt)
+    elseif resolved.person then
+        return createKey(ctx, name, resolved.person.role, nil, expiresAt, resolved.person, resolved.userName)
+    end
+    -- The Composer pairing code proves access to the project: the key gets full access.
+    return createKey(ctx, name, "admin", nil, expiresAt)
+end
+
 -- CPace (ADR-039, src/auth/cpace_pairing.lua), first request: the app's nonce, the controller's
 -- share. The code is not sent; the attempt counts as a wrong one until it succeeds.
 local function cpaceStart(ctx, body)
@@ -154,6 +200,11 @@ local function cpaceStart(ctx, body)
     local keys = ctx.services.keys
     if keys.count() >= keys.MAX_KEYS then
         return keyLimitProblem(keys)
+    end
+    -- A code made for a user who has five devices: said before anything counts against the code.
+    local target = ctx.services.pairing.target and ctx.services.pairing.target()
+    if target and target.profile and Users.full(target.profile) then
+        return UserHandlers.limitProblem(ctx, target.profile)
     end
     local ip = ctx.client and ctx.client.ip
     local attempt, failure = ctx.services.pairing.begin(ip)
@@ -200,14 +251,26 @@ local function cpaceFinish(ctx, body)
     if not isk and answerTag == "INVALID_SHARE" then
         return Problem.invalidField("cpace.share", "cpace.share is a point of low order; pair again")
     end
+    -- It knew the code: the user it is for is checked before the code is used (1.9.0, ADR-061).
+    local resolved, targetProblem, closeCode
+    if isk then
+        resolved, targetProblem, closeCode = pairingTarget(ctx, session.attempt.target)
+        if not resolved then
+            -- The code it began with, not one made since.
+            if closeCode and ctx.services.pairing.target() == session.attempt.target then
+                ctx.services.pairing.cancel()
+            end
+            return targetProblem
+        end
+    end
     local paired, failure = ctx.services.pairing.conclude(session.attempt, isk ~= nil)
     if not paired then
         return pairingFailure(ctx, failure)
     end
 
-    -- It proved it knew the code from Composer: the key gets full access.
+    -- It proved it knew the code: Composer's gives full access, one made in the app its user's.
     local name = Validate.name(session.name, "name", "Paired client")
-    local record, createProblem = createKey(ctx, name, "admin", nil, session.expiresIn and os.time() + session.expiresIn)
+    local record, createProblem = pairedKey(ctx, name, resolved, session.expiresIn and os.time() + session.expiresIn)
     if not record then
         return createProblem
     end
@@ -276,14 +339,22 @@ function Auth.pair(ctx)
     if keys.count() >= keys.MAX_KEYS then
         return keyLimitProblem(keys)
     end
+    -- Who the active code is for, before it is used up (1.9.0, ADR-061).
+    local target = ctx.services.pairing.target and ctx.services.pairing.target()
+    if target and target.profile and Users.full(target.profile) then
+        return UserHandlers.limitProblem(ctx, target.profile)
+    end
 
     local paired, failure = ctx.services.pairing.verify(code, ctx.client and ctx.client.ip)
     if not paired then
         return pairingFailure(ctx, failure)
     end
 
-    -- The Composer pairing code proves access to the project: the key gets full access.
-    local record, createProblem = createKey(ctx, name, "admin", nil, expires and os.time() + expires)
+    local resolved, targetProblem = pairingTarget(ctx, target)
+    if not resolved then
+        return targetProblem
+    end
+    local record, createProblem = pairedKey(ctx, name, resolved, expires and os.time() + expires)
     if not record then
         return createProblem
     end
@@ -470,6 +541,11 @@ function Auth.update_key(ctx)
         if not adminLeftAfterMove(ctx, id, changes.profile) then
             return Problem.new(409, "LAST_ADMIN", "This is the only admin's device; make someone else an admin first")
         end
+        -- Up to five devices a user (1.9.0, ADR-061).
+        problem = UserHandlers.refuseWhenFull(ctx, changes.profile)
+        if problem then
+            return problem
+        end
         -- With its new person's 1.7.0 role, saved at once: a key whose role says otherwise would
         -- make that person be read again from it at the next start (People.reconcile).
         changes.role = People.legacyRole(People.peek(changes.profile))
@@ -506,13 +582,22 @@ function Auth.update_key(ctx)
     return 200, Views.apiKey(record, ctx.apiKey.id)
 end
 
--- The owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke (ADR-054).
+-- The owner's devices are only theirs (or Composer's Revoke All API Keys) to revoke (ADR-054). Since
+-- 1.9.0 (ADR-061) a member removes the other devices of their own user too; another user's device
+-- is, for them, one that does not exist.
 function Auth.delete_key(ctx)
     local id = ctx.params.keyId
     local revoked = ctx.services.keys.find(id)
-    local problem = revoked and revoked.id ~= ctx.apiKey.id and personRefused(ctx, revoked.profile) or nil
-    if problem then
-        return problem
+    if revoked and revoked.id ~= ctx.apiKey.id then
+        local allowed, refusal = Access.mayRemoveDevice(ctx.apiKey, revoked)
+        if not allowed then
+            if refusal == "NOT_FOUND" then
+                return Problem.notFound("API key", id)
+            end
+            return ProfileHandlers.refused(refusal, "This is a device of the home's owner: only the owner removes or moves it, or moves a device to them")
+        end
+    elseif not revoked and not Access.isAdmin(ctx.apiKey) then
+        return Problem.notFound("API key", id)
     end
     if not ctx.services.keys.revoke(id) then
         return Problem.notFound("API key", id)
