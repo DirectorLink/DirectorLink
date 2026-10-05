@@ -280,6 +280,12 @@ local services = {
         homeId = function()
             return Relay.identity().home_id
         end,
+        -- The relay accepted this home's identity once: the account service knows it, and handing
+        -- the home to another admin needs its agreement there (ADR-064). Makes no identity.
+        linked = function()
+            local identity = Relay.storedIdentity()
+            return identity ~= nil and identity.linked == true
+        end,
         createClaim = function(keyId)
             return Remote.createClaim(keyId)
         end,

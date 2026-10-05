@@ -913,6 +913,62 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/users/owner:
+    post:
+      tags: [Users]
+      operationId: makeOwner
+      x-directorlink-role: admin
+      summary: Make another admin the home's owner
+      description: |
+        Since 1.9.0 (ADR-064): the home's owner makes another admin user the owner; only the owner
+        may (`403 OWNER_ONLY`), and only an admin (`409 NOT_AN_ADMIN`: make a member an admin first),
+        not themself (`409 ALREADY_OWNER`). The owner's rules (ADR-054) then follow the new owner:
+        only they change their own access and devices, claim the home again and confirm bringing
+        the owner's devices together. The old owner stays an admin, like any other, and nobody is
+        removed. A home the account service knows (Remote Access, once linked) moves there too: the
+        controller asks it, over its own connection (`owner`, docs/RELAY.md), to move the home's
+        owner account to the new owner's Google or Apple account, and records the new owner only
+        once it has, or when no account owns the home there (`account_service`); otherwise nothing
+        moves: `409 OWNER_NEEDS_ACCOUNT` (the new owner's devices use no account, or one that does
+        not belong to the home: they sign in on one of their devices first), `409 REMOTE_ACCESS_OFF`,
+        `503 REMOTE_OFFLINE` (no answer within 10 s, or not connected: try again), `502` with the
+        account service's code. In History as `access` `owner_changed`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OwnerChangeRequest"
+            example:
+              profile_id: "a1b2c3d4"
+      responses:
+        "200":
+          description: The new owner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OwnerChange"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          description: The new owner could not be saved; nothing changed (and the account service was told to move its record back).
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/pairing-code:
     post:
       tags: [Users]
@@ -3638,7 +3694,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT` (making another admin the owner, 1.9.0, ADR-064, with `user`); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off).
       content:
         application/problem+json:
           schema:
@@ -6549,6 +6605,42 @@ components:
           pattern: "^[0-9a-f]{8}$"
           description: The user whose role and permissions stay.
 
+    OwnerChangeRequest:
+      type: object
+      required: [profile_id]
+      additionalProperties: false
+      properties:
+        profile_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+          description: The admin user who becomes the home's owner.
+
+    OwnerChange:
+      type: object
+      required: [owner, previous, account_service]
+      properties:
+        owner:
+          $ref: "#/components/schemas/UserRef"
+        previous:
+          $ref: "#/components/schemas/UserRef"
+        account_service:
+          type: string
+          enum: [moved, not_claimed, not_linked]
+          description: |
+            `moved`: the account service moved the home's owner account to the new owner's;
+            `not_claimed`: no account owns the home there; `not_linked`: the account service never
+            knew this home. In the last two the change is the controller's alone.
+
+    UserRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        name:
+          type: string
+
     PairingCodeCreate:
       type: object
       additionalProperties: false
@@ -6827,6 +6919,8 @@ components:
           `note` `automatic` and `who` DirectorLink when the users were alike, else the key that
           confirmed it), `merge_suggested` (the devices of one account are in the users `what`,
           `count` devices: an admin may bring them together; once per suggestion).
+        - The owner (1.9.0, ADR-064): `access` `owner_changed` (the owner made the admin user `what`
+          the home's owner instead of `from`).
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -6852,7 +6946,7 @@ components:
           enum: [scene, schedule, door, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:

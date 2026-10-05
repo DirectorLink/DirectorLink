@@ -31,7 +31,9 @@ end
 People.KIND = KIND
 
 -- people: profile id -> record; owner: the profile that last claimed the home for an account
--- (remote.lua); hidden: room id -> true. `complete` is false after the store could not be read:
+-- (remote.lua), or since 1.9.0 the one its owner made the owner (ADR-064: src/api/handlers/users.lua;
+-- DirectorLink 1.8.0 reads it as its claimer, so it keeps that owner after a downgrade); hidden:
+-- room id -> true. `complete` is false after the store could not be read:
 -- it is then never written over, and Access answers from the keys' 1.7.0 roles meanwhile.
 -- `revision` goes up with every change (Access keeps what it worked out until then).
 local state = { people = {}, owner = nil, hidden = {}, complete = true, revision = 0 }
@@ -306,17 +308,25 @@ function People.all()
     return result
 end
 
--- The profile that claimed the home last (remote.lua), when it is still one.
+-- The profile that claimed the home last (remote.lua), or that its owner made the owner (1.9.0),
+-- when it is still one.
 function People.claimedBy()
     return state.owner
 end
 
+-- Records `profileId` as the owner (a claim, or the owner's choice). Returns true once saved; when
+-- it could not be saved, the owner stays who it was.
 function People.setOwner(profileId)
     if not state.complete or type(profileId) ~= "string" or state.owner == profileId then
         return state.owner == profileId
     end
+    local before = state.owner
     state.owner = profileId
-    return save()
+    if not save() then
+        state.owner = before
+        return false
+    end
+    return true
 end
 
 -- The home's owner among `profiles` (Profiles.list()): the profile that claimed the home for an

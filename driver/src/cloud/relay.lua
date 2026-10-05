@@ -281,9 +281,10 @@ local function onMessage(text, kind)
         log("debug", "ignored a relay message that is not JSON")
         return
     end
-    -- Answers to what the driver asked (Relay.ask): an invitation registered, a backup's chunk kept.
+    -- Answers to what the driver asked (Relay.ask): an invitation registered, a backup's chunk kept,
+    -- the home's owner account moved (1.9.0, ADR-064).
     local waiting = type(message.id) == "string" and state.asked[message.id]
-    if waiting and (message.type == "invitation_result" or message.type == "backup_result") then
+    if waiting and (message.type == "invitation_result" or message.type == "backup_result" or message.type == "owner_result") then
         state.asked[message.id] = nil
         waiting(message)
         return

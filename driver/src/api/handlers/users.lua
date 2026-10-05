@@ -7,12 +7,14 @@
 --
 --   GET    /v1/users          (members: their own user)
 --   POST   /v1/users/merge    {"account", "keep"}: a suggestion confirmed (admins)
+--   POST   /v1/users/owner    {"profile_id"}: the owner makes another admin the owner (1.9.0, ADR-064)
 --   POST   /v1/pairing-code   {"profile_id"} or {"name", "role", "access"} (admins)
 --   DELETE /v1/pairing-code   (admins)
 
 local Json = require("src.core.json")
 local Clock = require("src.core.clock")
 local Problem = require("src.api.problem")
+local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Access = require("src.auth.access")
 local Activity = require("src.core.activity")
@@ -128,6 +130,132 @@ function Handlers.merge(ctx)
         end
     end
     return Problem.notFound("User", body.keep)
+end
+
+-- ---- handing the home to another admin (1.9.0, ADR-064) -----------------------------------------
+
+-- How long the account service has to answer, as for an invitation it registers.
+local OWNER_ANSWER_SECONDS = 10
+
+local function userRef(services, profileId)
+    local profile = services.profiles.find(profileId)
+    return { id = profileId, name = profile and profile.name or profileId }
+end
+
+-- The problem for a refusal of Access.mayMakeOwner or of the account service; `user`: { id, name }.
+local function ownerRefused(code, user)
+    if code == "UNAVAILABLE" then
+        return Problem.new(503, "UNAVAILABLE", "Who the home's owner is could not be read when DirectorLink started; restart the driver and try again")
+    elseif code == "OWNER_ONLY" then
+        return Problem.new(403, "OWNER_ONLY", "Only the home's owner makes another admin the owner")
+    elseif code == "NOT_FOUND" then
+        return Problem.notFound("User", user.id)
+    elseif code == "ALREADY_OWNER" then
+        return Problem.new(409, "ALREADY_OWNER", user.name .. " is the home's owner already", { user = user })
+    elseif code == "NOT_AN_ADMIN" then
+        return Problem.new(409, "NOT_AN_ADMIN", "Make " .. user.name .. " an admin first: only an admin becomes the home's owner", { user = user })
+    elseif code == "OWNER_NEEDS_ACCOUNT" then
+        return Problem.new(409, "OWNER_NEEDS_ACCOUNT", user.name .. " needs to sign in to DirectorLink with their Google or Apple account on one of their devices first: the home's account moves to theirs", { user = user })
+    elseif code == "REMOTE_OFFLINE" or code == "RELAY_TIMEOUT" then
+        return Problem.new(503, "REMOTE_OFFLINE", "The controller is not connected to DirectorLink's servers right now, so nothing was changed; try again in a minute")
+    end
+    return Problem.new(502, tostring(code), "DirectorLink's servers did not move the home's account (" .. tostring(code) .. "), so nothing was changed")
+end
+
+-- The account service moved the home's owner account but the controller did not follow (the user
+-- changed meanwhile, or the store could not be written): it is told to move it back, to the account
+-- it named (`previous`, a tag). Best effort; it is logged.
+local function moveBack(ctx, previous)
+    local remote = ctx.services.remote
+    if type(previous) == "string" and remote and remote.tell then
+        remote.tell({ type = "owner", id = "owner-back-" .. tostring(os.time()), account = previous })
+    end
+    ctx.services.log.warn("auth", "the home's owner did not change here; DirectorLink's servers were told to move its account back", { told = type(previous) == "string" })
+end
+
+-- Records the new owner on the controller, once the account service has agreed (`outcome` moved), or
+-- has nothing to move (not_claimed, not_linked). Returns the answer, or a problem.
+local function makeOwner(ctx, target, previous, outcome, previousTag)
+    local services = ctx.services
+    if not People.setOwner(target) then
+        if outcome == "moved" then
+            moveBack(ctx, previousTag)
+        end
+        return Problem.internal("The new owner could not be saved, so nothing was changed")
+    end
+    local to, from = userRef(services, target), userRef(services, previous)
+    services.log.info("auth", "the home's owner changed", { from = previous, to = target, by = ctx.apiKey.id, account_service = outcome })
+    Activity.record("access", "owner_changed", { by = ctx.apiKey, what = to.name, from = from.name })
+    -- The old owner is an admin like any other now: users alike with theirs come together (ADR-061).
+    Users.reconcile(services.onKeysChanged)
+    return 200, { owner = to, previous = from, account_service = outcome }
+end
+
+-- POST /v1/users/owner {"profile_id": "…"}: the owner makes another admin user the home's owner.
+-- The owner's rules (ADR-054) follow them: only they change their own access and devices, claim the
+-- home again and confirm bringing the owner's devices together; the old owner stays an admin, and
+-- nobody is removed. A home the account service knows (its relay accepted this home once) moves
+-- there too: the controller asks it, over its own connection, to move the home's owner account to
+-- the new owner's (Users.accountOf), and records the new owner only once it has, or when no account
+-- owns the home there; otherwise nothing moves (docs/ACCOUNTS.md). The account service's word never
+-- makes anyone the owner here: it can only refuse.
+function Handlers.make_owner(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { profile_id = true })
+    if problem then
+        return problem
+    end
+    if not (type(body.profile_id) == "string" and body.profile_id:match("^%x%x%x%x%x%x%x%x$")) then
+        return Problem.invalidField("profile_id", "profile_id is the id of the admin user who becomes the owner")
+    end
+    local services = ctx.services
+    local target = body.profile_id
+    local allowed, refusal = Access.mayMakeOwner(ctx.apiKey, target)
+    if allowed and not services.keys.complete() then
+        allowed, refusal = false, "UNAVAILABLE"
+    end
+    if not allowed then
+        return ownerRefused(refusal, userRef(services, target))
+    end
+    local previous = Access.owner()
+    local remote = services.remote
+    if not (remote and remote.linked and remote.linked()) then
+        -- Never in the account service: nothing to move there.
+        return makeOwner(ctx, target, previous, "not_linked")
+    end
+    if not remote.enabled() then
+        return Problem.new(409, "REMOTE_ACCESS_OFF", "Turn on Remote Access in Composer first: DirectorLink's servers move the home's account to the new owner's too")
+    end
+    local tag = Users.accountOf(target)
+    return Response.later(function(respond)
+        remote.ask({ type = "owner", account = tag or Json.null }, OWNER_ANSWER_SECONDS, function(answer, code)
+            local outcome
+            if answer and answer.ok == true then
+                outcome = "moved"
+            elseif answer and answer.code == "NOT_CLAIMED" then
+                -- No account owns the home there: the controller's alone.
+                outcome = "not_claimed"
+            else
+                local failure = code or (answer and answer.code) or "REFUSED"
+                services.log.warn("auth", "the home's owner did not change: DirectorLink's servers did not move its account", { code = failure, account = tag ~= nil })
+                respond(ownerRefused(failure, userRef(services, target)))
+                return
+            end
+            -- Asked again: other requests ran while the account service answered.
+            local still, again = Access.mayMakeOwner(ctx.apiKey, target)
+            if still and not services.keys.find(ctx.apiKey.id) then
+                still, again = false, "OWNER_ONLY"
+            end
+            if not still then
+                if outcome == "moved" then
+                    moveBack(ctx, answer.previous)
+                end
+                respond(ownerRefused(again, userRef(services, target)))
+                return
+            end
+            respond(makeOwner(ctx, target, previous, outcome, answer.previous))
+        end)
+    end)
 end
 
 -- ---- pairing at home for a chosen user ---------------------------------------------------------

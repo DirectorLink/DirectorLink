@@ -126,6 +126,17 @@ SECURITY_CONTRACT = {
         "if Access.isAdmin(actor) then\n        return Access.mayChangePerson(actor, key.profile)\n    end",
         "if keepId ~= owner then\n                return false, \"OWNER_KEEPS\"",
         "if unknown or left == owner or right == owner then\n        return false\n    end",
+        # Handing the home over (ADR-064): only the owner, and only to another admin user.
+        "if owner == nil or own ~= owner then\n        return false, \"OWNER_ONLY\"\n    end",
+        "if not Access.isAdminPerson(profileId) then\n        return false, \"NOT_AN_ADMIN\"\n    end",
+    ),
+    # The owner's choice decides who the owner is (ADR-064), asked of Access before and again after
+    # the account service answered, and recorded only once it moved its record (or has none): its
+    # word alone makes nobody the owner.
+    "src/api/handlers/users.lua": (
+        "local allowed, refusal = Access.mayMakeOwner(ctx.apiKey, target)",
+        "local still, again = Access.mayMakeOwner(ctx.apiKey, target)",
+        "if answer and answer.ok == true then\n                outcome = \"moved\"\n            elseif answer and answer.code == \"NOT_CLAIMED\" then",
     ),
     "src/auth/users.lua": (
         "if not Access.alike(group.users[1], group.users[index]) then",

@@ -30,8 +30,8 @@
 -- key every room and kind and runs every scene, but the doors and gates in a scene stay shut for
 -- it (1.7.0 skipped them for a member), a doors key opens them too, an admin key is an admin.
 --
--- The home's owner (Access.owner) is the person who claimed the home for an account with 1.8.0,
--- while they are an admin, else the oldest admin. Only the owner changes the owner's person: their
+-- The home's owner (Access.owner) is the person who claimed the home for an account with 1.8.0 (or,
+-- since 1.9.0, whom the owner made the owner), while they are an admin, else the oldest admin. Only the owner changes the owner's person: their
 -- role and permissions, their devices, a key or device put into it (Access.mayChangePerson, which
 -- every such path asks), and only the owner makes a person an admin who would then be the owner. A
 -- key or invitation for a new person never makes an owner: that person is the newest. While the
@@ -46,6 +46,11 @@
 -- the devices of one account are brought into one user by DirectorLink only between users who are
 -- alike (Access.alike: no device gains anything), otherwise by an admin, the owner's user only by the
 -- owner and keeping the owner's (Access.mayMerge).
+--
+-- Since 1.9.0 (ADR-064) the owner can make another admin user the owner (Access.mayMakeOwner): the
+-- people's store then records them as the owner (as a claim does), every rule above follows them,
+-- and the old owner is an admin like any other. Nobody else, and nothing the account service says,
+-- changes who the owner is.
 
 local Keys = require("src.auth.keys")
 local People = require("src.auth.people")
@@ -381,6 +386,33 @@ end
 local function userOf(actor)
     local rule = resolve(actor)
     return rule ~= nil and not rule.system and rule.profile or nil
+end
+
+-- Whether the actor may make the user `profileId` the home's owner (1.9.0, ADR-064, POST
+-- /v1/users/owner): only the owner, from one of their own devices, and only another admin user (a
+-- member is made an admin first); the old owner then stays an admin. Never while who the owner is
+-- cannot be known, nor while the profiles could not be read. Returns true, or false and the
+-- problem's code: UNAVAILABLE (503), OWNER_ONLY (403), NOT_FOUND (404), ALREADY_OWNER or
+-- NOT_AN_ADMIN (409).
+function Access.mayMakeOwner(actor, profileId)
+    local owner, unknown = ownerWith(nil)
+    if unknown or not Profiles.complete() then
+        return false, "UNAVAILABLE"
+    end
+    local own = userOf(actor)
+    if owner == nil or own ~= owner then
+        return false, "OWNER_ONLY"
+    end
+    if type(profileId) ~= "string" or not Profiles.find(profileId) then
+        return false, "NOT_FOUND"
+    end
+    if profileId == owner then
+        return false, "ALREADY_OWNER"
+    end
+    if not Access.isAdminPerson(profileId) then
+        return false, "NOT_AN_ADMIN"
+    end
+    return true
 end
 
 -- Whether the actor sees the user `profileId` and their devices in Settings → Users: an admin

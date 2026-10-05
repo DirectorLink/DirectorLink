@@ -31,6 +31,8 @@ return {
     -- an account's devices brought into one user, and a pairing code made for a chosen user.
     { method = "GET", path = "/v1/users", handler = "users.list", role = "member" },
     { method = "POST", path = "/v1/users/merge", handler = "users.merge", role = "admin" },
+    -- The owner makes another admin the home's owner (1.9.0, ADR-064; only the owner: Access).
+    { method = "POST", path = "/v1/users/owner", handler = "users.make_owner", role = "admin" },
     { method = "POST", path = "/v1/pairing-code", handler = "users.create_code", role = "admin" },
     { method = "DELETE", path = "/v1/pairing-code", handler = "users.delete_code", role = "admin" },
 

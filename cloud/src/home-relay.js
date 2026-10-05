@@ -32,7 +32,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
 import { keyAccounts, recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
-import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
+import { cancelHomeInvitation, moveHomeOwner, registerHomeInvitation } from "./homes.js";
 import { receiveBackupChunk } from "./backups.js";
 // Scene links (ADR-051): a phone's automation runs a scene; the controller checks the secret.
 import { LINK_ID, LINK_SECRET, RESULT_MESSAGES, linkNotFound } from "./scene-links.js";
@@ -300,6 +300,21 @@ export class HomeRelay extends DurableObject {
           result = { ok: false, code: "INTERNAL" };
         }
         this.reply(ws, { type: "backup_result", id: data.id, ...result });
+        return;
+      }
+      case "owner": {
+        // The controller made another of its admins the home's owner (1.9.0, ADR-064): the home's
+        // owner account follows, only on its word over this connection (homes.js), after the key
+        // work its frames queued before (the admin keys of its last "keys" count).
+        const result = await this.queueKeyWork(async () => {
+          try {
+            return await moveHomeOwner(this.env, attachment.home, data, await this.ctx.storage.get("alerts_admins"));
+          } catch (error) {
+            log("owner_failed", { home: attachment.home, error: String(error?.message ?? error) });
+            return { ok: false, code: "INTERNAL" };
+          }
+        }, attachment.home);
+        this.reply(ws, { type: "owner_result", id: data.id, ...(result ?? { ok: false, code: "INTERNAL" }) });
         return;
       }
       case "invitation_cancel":
