@@ -523,9 +523,15 @@ test("an admin chooses the push of a new device asking to join, kept with the br
   await pressKind("offline");
   assert.deepEqual(callsTo("POST").at(-1).body.device_requests, false);
   assert.equal(JSON.parse(localStorage.getItem("directorlink.alerts")).deviceRequests, false);
-  // A member has no such switch: only admins approve.
+  // A member has no such switch with a 1.8.0 controller: only admins approve there; since 1.9.0
+  // (`features.users`, ADR-061) every user approves their own account's new device, and has it.
   state.role = "member";
   assert.equal(kindSwitch("device_requests"), null);
+  const system = state.system;
+  state.system = { ...(system || {}), features: { ...(system?.features || {}), users: true } };
+  assert.ok(kindSwitch("device_requests"), "a member's switch with users");
+  assert.equal(kindSwitch("offline"), null, "the home offline stays the admins'");
+  state.system = system;
   state.role = "admin";
   assert.equal(savedTexts().device_request, "A new device asks to join your home. Open DirectorLink to approve or decline it.");
   await turnAlertsOff();

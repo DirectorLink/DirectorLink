@@ -40,10 +40,18 @@ Keys.LONGEST_LIFE = 30 * 24 * 60 * 60
 local CLOCK_MARGIN = 60 * 60
 local STORE_VERSION = 4
 Keys.STORE_VERSION = STORE_VERSION
+-- When each key was last used (1.9.0, ADR-061: Settings → Users shows it, and the refusal of a
+-- user's sixth device lists it): kept in memory at every use, and written at most once an hour a
+-- key, in a store of its own that DirectorLink 1.8.0 never reads, so that a restart does not make
+-- every device look unused.
+local USED_KEY = "directorlink_keys_last_used"
+Keys.USED_WRITE_SECONDS = 3600
 
 local state = {
     keys = {},
     lastUsed = {},
+    -- id -> os.time() when its last use was written (USED_KEY)
+    usedWritten = {},
     onExpired = nil,
 }
 
@@ -213,9 +221,55 @@ local function migrate()
     return form
 end
 
+-- Writes when the keys were last used (USED_KEY), the keys there are only.
+local function saveUsed()
+    local items = Json.array()
+    for _, key in ipairs(state.keys) do
+        local at = state.lastUsed[key.id]
+        if at then
+            items[#items + 1] = { id = key.id, at = at, t = state.usedWritten[key.id] or os.time() }
+        end
+    end
+    Store.write(USED_KEY, { version = 1, items = items }, false)
+end
+
+-- A key was used now: in memory at once, in the store when its last use there is an hour old.
+local function markUsed(id)
+    state.lastUsed[id] = Clock.iso()
+    local now = os.time()
+    local written = state.usedWritten[id]
+    if not written or now - written >= Keys.USED_WRITE_SECONDS or now < written then
+        state.usedWritten[id] = now
+        saveUsed()
+    end
+end
+
+local function loadUsed()
+    state.usedWritten = {}
+    local stored = Store.read(USED_KEY, false)
+    local known = {}
+    for _, key in ipairs(state.keys) do
+        known[key.id] = true
+    end
+    for _, item in ipairs(Store.items(type(stored) == "table" and stored.items or nil)) do
+        if type(item) == "table" and type(item.id) == "string" and known[item.id] and type(item.at) == "string" then
+            state.lastUsed[item.id] = item.at
+            state.usedWritten[item.id] = tonumber(item.t)
+        end
+    end
+end
+
+local loadStore
+
 -- Returns the number of keys, how the store came back ("json", "table", "missing",
 -- "unreadable") and, when it was missing, how the old encrypted store came back.
 function Keys.load()
+    local count, form, oldForm = loadStore()
+    loadUsed()
+    return count, form, oldForm
+end
+
+function loadStore()
     state.keys = {}
     state.lastUsed = {}
 
@@ -361,7 +415,7 @@ function Keys.verify(presented)
         return nil, "KEY_EXPIRED"
     end
     if match then
-        state.lastUsed[match.id] = Clock.iso()
+        markUsed(match.id)
         -- A key from before remote access gets its lock key the first time it is used here.
         if not match.lock then
             match.lock = lockFor(presented)
@@ -433,7 +487,7 @@ end
 function Keys.touch(id)
     for _, key in ipairs(state.keys) do
         if key.id == id then
-            state.lastUsed[id] = Clock.iso()
+            markUsed(id)
         end
     end
 end
@@ -568,6 +622,33 @@ function Keys.update(id, changes)
         end
     end
     return nil, "NOT_FOUND"
+end
+
+-- Moves the keys `ids` to the profile `profile`, each with the 1.7.0 role `role` (its new person's,
+-- ADR-054), in one write (1.9.0, ADR-061: the devices of one account brought into one user).
+-- Returns true, or nil and PERSIST_FAILED (nothing changed).
+function Keys.move(ids, profile, role)
+    expire()
+    local wanted, before = {}, {}
+    for _, id in ipairs(ids) do
+        wanted[id] = true
+    end
+    for _, key in ipairs(state.keys) do
+        if wanted[key.id] then
+            before[#before + 1] = { key = key, profile = key.profile, role = key.role }
+            key.profile = profile
+            if Roles.valid(role) then
+                key.role = role
+            end
+        end
+    end
+    if #before > 0 and not save() then
+        for _, item in ipairs(before) do
+            item.key.profile, item.key.role = item.profile, item.role
+        end
+        return nil, "PERSIST_FAILED"
+    end
+    return true
 end
 
 function Keys.revoke(id)

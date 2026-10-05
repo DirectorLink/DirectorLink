@@ -17,7 +17,8 @@ return {
     { method = "GET", path = "/v1/api-keys/current", handler = "auth.current_key", role = "member" },
     { method = "DELETE", path = "/v1/api-keys/current", handler = "auth.revoke_current_key", role = "member" },
     { method = "PATCH", path = "/v1/api-keys/{keyId}", handler = "auth.update_key", role = "admin" },
-    { method = "DELETE", path = "/v1/api-keys/{keyId}", handler = "auth.delete_key", role = "admin" },
+    -- Since 1.9.0 (ADR-061) a member removes their own user's other devices (Access.mayRemoveDevice).
+    { method = "DELETE", path = "/v1/api-keys/{keyId}", handler = "auth.delete_key", role = "member" },
 
     { method = "GET", path = "/v1/profile", handler = "profiles.current", role = "member" },
     { method = "PATCH", path = "/v1/profile", handler = "profiles.update", role = "member" },
@@ -26,13 +27,21 @@ return {
     -- A person's role and, for a member, what they may see and do (ADR-054).
     { method = "GET", path = "/v1/profiles/{profileId}/access", handler = "profiles.get_access", role = "admin" },
     { method = "PATCH", path = "/v1/profiles/{profileId}/access", handler = "profiles.update_access", role = "admin" },
+    -- Users and their devices (1.9.0, ADR-061): Settings → Users (a member sees their own user),
+    -- an account's devices brought into one user, and a pairing code made for a chosen user.
+    { method = "GET", path = "/v1/users", handler = "users.list", role = "member" },
+    { method = "POST", path = "/v1/users/merge", handler = "users.merge", role = "admin" },
+    { method = "POST", path = "/v1/pairing-code", handler = "users.create_code", role = "admin" },
+    { method = "DELETE", path = "/v1/pairing-code", handler = "users.delete_code", role = "admin" },
 
     { method = "GET", path = "/v1/remote", handler = "remote.status", role = "member" },
     { method = "POST", path = "/v1/remote/claim", handler = "remote.claim", role = "admin" },
     { method = "POST", path = "/v1/remote/secret", handler = "remote.secret", role = "admin" },
     { method = "GET", path = "/v1/invitations", handler = "invitations.list", role = "admin" },
-    { method = "POST", path = "/v1/invitations", handler = "invitations.create", role = "admin" },
-    { method = "DELETE", path = "/v1/invitations/{invitationId}", handler = "invitations.delete", role = "admin" },
+    -- Since 1.9.0 (ADR-061) every user invites their own other device (for_me) and revokes what
+    -- their devices invited; inviting anyone else stays the admins' (the handler checks).
+    { method = "POST", path = "/v1/invitations", handler = "invitations.create", role = "member" },
+    { method = "DELETE", path = "/v1/invitations/{invitationId}", handler = "invitations.delete", role = "member" },
 
     { method = "GET", path = "/v1/rooms", handler = "rooms.list", role = "member" },
     { method = "PUT", path = "/v1/rooms/order", handler = "rooms.order", role = "admin" },

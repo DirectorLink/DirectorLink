@@ -396,8 +396,9 @@ function tests.the_hello_says_the_driver_takes_link_runs()
     local _, _, _, frames = Harness.connected({ mock = mock })
     local hello = Json.decode(frames[1].payload)
     T.eq(hello.type, "hello")
-    -- And since 1.9.0 the key ids whose browsers the account service dropped (ADR-062).
-    T.same(hello.features, { "scene_links", "alerts_gone" })
+    -- And since 1.9.0 the key ids whose browsers the account service dropped (ADR-062), and `users`
+    -- (ADR-061): which keys share an account, members approving joins.
+    T.same(hello.features, { "scene_links", "alerts_gone", "users" })
 end
 
 -- ---- Backups --------------------------------------------------------------------------------

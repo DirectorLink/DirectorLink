@@ -5,17 +5,29 @@
 // controller; people and requests from the account service, which never sees the keys, only their
 // ids. With DirectorLink 1.8.0 (ADR-054) a role is a person's, admin or member, with what a member
 // may see and do (views/permissions.js); with an older controller, one of four per device.
+//
+// With DirectorLink 1.9.0 (ADR-061, `features.users`) the screen is Settings → Users, from
+// GET /v1/users: each user with their role and access, whether their devices have a Google or Apple
+// account, and under them every device, when it was last used, and Remove where the controller says
+// the caller may. Admins see every user, the suggestions to bring an account's devices together
+// (the controller does it by itself only between users who are alike), and make a pairing code for a
+// user, or a new one, to pair a device at home; a member sees only their own user and removes their
+// other devices. A user has at most five devices: a sixth is refused with the list
+// (views/device-limit.js).
 
 import { h } from "../dom.js";
-import { formatDateTime, formatRelative, formatUntil, t } from "../i18n.js";
+import { formatDateTime, formatRelative, formatTime, formatUntil, t } from "../i18n.js";
 import { icon } from "../icons.js";
-import { decideJoinRequest, joinCodeText, listJoinRequests, listMembers, removeMember, savedRemote } from "../remote.js";
+import { qrCanvas } from "../qr.js";
+import { decideJoinRequest, invitationLink, joinCodeText, listJoinRequests, listMembers, removeMember, savedRemote } from "../remote.js";
 import { linksMadeBy, linksSupported } from "../scene-links.js";
 import { api, errorText, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 import { loadScenes } from "../scenes.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
-import { accessBody, accessSummary, copyAccess, peopleSupported, permissionsEditor } from "./permissions.js";
+import { deviceLimitOf, deviceLimitPanel } from "./device-limit.js";
+import { makeInvitation } from "./device-join.js";
+import { accessBody, accessSummary, copyAccess, newMemberAccess, peopleSupported, permissionsEditor } from "./permissions.js";
 
 const ROLES = ["viewer", "member", "doors", "admin"];
 const REFRESH_MS = 30000;
@@ -27,9 +39,49 @@ function failure(error) {
   return { error: errorText(error) };
 }
 
+// The controller has users (1.9.0, ADR-061): GET /v1/users, members adding their own devices.
+export function usersSupported() {
+  return state.system?.features?.users === true;
+}
+
+// Every device of the users listed, with the user it belongs to (for an invitation's maker).
+function devicesOf(users) {
+  return (Array.isArray(users?.items) ? users.items : []).flatMap((user) => (user.devices || []).map((device) => ({ ...device, profile_id: user.id })));
+}
+
+// Settings → Users (1.9.0): the users the caller sees; for admins also the invitations waiting, and
+// for the home's owner the accounts that belong to the home and those asking to join.
+async function fetchUsers(home, accountStatus) {
+  const admin = can("admin");
+  const signedIn = Boolean(home) && accountStatus === "signed-in";
+  const [users, invitations, people, requests, links] = await Promise.all([
+    api("/v1/users").then((answer) => answer, failure),
+    admin ? api("/v1/invitations").then((answer) => answer?.items || [], failure) : Promise.resolve([]),
+    admin && signedIn
+      ? listMembers(home).then(
+          (answer) => (answer?.items || []).map((person) => ({ ...person, key_ids: Array.isArray(person.key_ids) ? person.key_ids : [] })),
+          (error) => (error?.code === "OWNER_ONLY" || error?.code === "NOT_A_MEMBER" ? null : failure(error))
+        )
+      : Promise.resolve(null),
+    admin && signedIn
+      ? listJoinRequests(home).then(
+          (answer) => answer?.items || [],
+          (error) => (["OWNER_ONLY", "NOT_A_MEMBER", "NOT_FOUND"].includes(error?.code) ? null : failure(error))
+        )
+      : Promise.resolve(null),
+    admin && linksSupported() ? api("/v1/scene-links").then((answer) => answer?.items || [], () => null) : Promise.resolve(null),
+  ]);
+  ui.access = { ...(ui.access || {}), at: Date.now(), home, accountStatus, users, devices: users?.error ? users : devicesOf(users), invitations, people, requests, links, profiles: null };
+  notify();
+}
+
 async function fetchAccess() {
   const home = savedRemote()?.home || state.remoteInfo?.home_id || null;
   const accountStatus = state.account.status;
+  if (usersSupported()) {
+    await fetchUsers(home, accountStatus);
+    return;
+  }
   const [devices, invitations, people, profiles, requests, links] = await Promise.all([
     api("/v1/api-keys").then((answer) => answer?.items || [], failure),
     // Drivers before 0.10.0 have no invitations.
@@ -91,17 +143,20 @@ function scheduleRefresh() {
 }
 
 async function act(work, done) {
-  ui.access = { ...(ui.access || {}), busy: true, message: null };
+  ui.access = { ...(ui.access || {}), busy: true, message: null, limit: null };
   notify();
   let message;
+  let limit = null;
   try {
     await work();
-    message = { kind: "success", text: done };
+    message = done ? { kind: "success", text: done } : null;
   } catch (error) {
-    message = { kind: "error", text: problemText(error) };
+    // A user with five devices (1.9.0): the list, with Remove, instead of a sentence.
+    limit = deviceLimitOf(error);
+    message = limit ? null : { kind: "error", text: problemText(error) };
   }
   // The screen may have been left and opened again meanwhile (resetAccess).
-  ui.access = { ...(ui.access || {}), busy: false, message };
+  ui.access = { ...(ui.access || {}), busy: false, message, limit };
   await loadAccess();
 }
 
@@ -114,6 +169,9 @@ function problemText(error) {
       return t("access.ownerProtected");
     case "OWNER_STAYS_ADMIN":
       return t("access.ownerStaysAdmin");
+    case "INVALID_FIELD":
+      // Bringing the owner's devices together keeps the owner's user (1.9.0).
+      return error.problem?.errors?.[0]?.field === "keep" ? t("users.suggestion.ownerKeeps") : errorText(error);
     default:
       return errorText(error);
   }
@@ -488,10 +546,405 @@ function invitationRow(invitation, devices) {
   );
 }
 
+// ---- users (1.9.0, ADR-061) ---------------------------------------------------------------------
+
+// Removing a device: at home and away at once; the user goes with their last one.
+function removeDevice(device, user) {
+  if (ui.access.busy) return;
+  const last = user && (user.devices || []).length === 1;
+  const question = (last ? t("users.removeLastConfirm", { name: device.name, user: user.name }) : t("access.revokeConfirm", { name: device.name })) + linksNote("access.revokeLinks", [device.id]);
+  if (!window.confirm(question)) return;
+  act(() => api(`/v1/api-keys/${device.id}`, { method: "DELETE" }), t("access.revoked", { name: device.name }));
+}
+
+// From the "Remove a device first" list: removed, then the person tries again.
+function removeFromLimit(device) {
+  if (ui.access.busy || !window.confirm(t("access.revokeConfirm", { name: device.name }))) return;
+  act(() => api(`/v1/api-keys/${device.id}`, { method: "DELETE" }), t("users.limit.removed", { name: device.name }));
+}
+
+// A pairing code for a user (or a new user): the device that pairs with it at home joins them.
+function makePairingCode(body, forName) {
+  if (ui.access.busy) return;
+  act(async () => {
+    const code = await api("/v1/pairing-code", { method: "POST", body });
+    ui.access = { ...ui.access, pairing: { ...code, forName, at: Date.now() }, newUser: null };
+  }, null);
+}
+
+function closePairingCode() {
+  act(async () => {
+    await api("/v1/pairing-code", { method: "DELETE" }).catch((error) => {
+      if (error?.status !== 404) throw error;
+    });
+    ui.access = { ...ui.access, pairing: null };
+  }, t("users.pairing.closed"));
+}
+
+function pairingPanel() {
+  const pairing = ui.access.pairing;
+  if (!pairing) return null;
+  const until = pairing.expires_at ? formatTime(new Date(pairing.expires_at)) : "";
+  return h(
+    "div",
+    { class: "card settings-card pairing-panel", dataset: { key: "users-pairing" } },
+    h("h2", { class: "settings-title" }, icon("key"), t("users.pairing.title", { name: pairing.user?.name || pairing.forName || "" })),
+    h("p", { class: "pairing-code", dir: "ltr", dataset: { key: "users-pairing-code" } }, pairing.code),
+    h("p", { class: "field-help" }, t("users.pairing.help", { time: until })),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "button", class: "button button-secondary", dataset: { key: "users-pairing-close" }, disabled: Boolean(ui.access.busy), onclick: closePairingCode }, t("users.pairing.close")),
+      h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.access = { ...ui.access, pairing: null }; notify(); } }, t("common.done"))
+    )
+  );
+}
+
+// A new user, paired at home: a name and what they may do, then a code.
+function newUserPanel() {
+  const draft = ui.access.newUser;
+  if (!draft) return null;
+  const input = h("input", { id: "users-new-name", type: "text", maxlength: "64", value: draft.name || "", autocomplete: "off", dir: "auto", dataset: { key: "users-new-name" } });
+  input.addEventListener("input", () => {
+    draft.name = input.value;
+  });
+  const make = (event) => {
+    event?.preventDefault?.();
+    const name = (draft.name || "").trim();
+    if (!name) {
+      ui.access = { ...ui.access, message: { kind: "error", text: t("users.newUser.nameNeeded") } };
+      notify();
+      return;
+    }
+    const body = { name: name.slice(0, 64), ...accessBody(draft.access) };
+    makePairingCode(body, name);
+  };
+  return h(
+    "form",
+    { class: "card settings-card invite-form", novalidate: true, dataset: { key: "users-new" }, onsubmit: make },
+    h("h2", { class: "settings-title" }, icon("plus"), t("users.newUser.title")),
+    h("label", { class: "field-label", for: "users-new-name" }, t("users.newUser.name")),
+    input,
+    h("div", { class: "perm-editor" }, permissionsEditor(draft.access, { prefix: "users-new", changed: notify })),
+    h("p", { class: "field-help" }, t("users.newUser.help")),
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "submit", class: "button button-primary", disabled: Boolean(ui.access.busy), dataset: { key: "users-new-code" } }, t("users.newUser.code")),
+      h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.access = { ...ui.access, newUser: null }; notify(); } }, t("common.cancel"))
+    )
+  );
+}
+
+// An admin invites another device of a user by email (their Google or Apple account): a link.
+function inviteToUser(user) {
+  const email = (ui.access.inviting?.email || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    ui.access = { ...ui.access, message: { kind: "error", text: t("settings.account.home.badEmail") } };
+    notify();
+    return;
+  }
+  act(async () => {
+    const invitation = await makeInvitation({ forSelf: false, email, role: user.access?.role === "admin" ? "admin" : "member", profileId: user.id });
+    ui.access = { ...ui.access, inviting: { user: user.id, email, link: invitationLink(invitation.home_id, invitation), expiresAt: invitation.expires_at } };
+  }, null);
+}
+
+function invitePanel(user) {
+  const inviting = ui.access.inviting;
+  if (!inviting || inviting.user !== user.id) return null;
+  if (inviting.link) {
+    return h(
+      "div",
+      { class: "invitation", dataset: { key: `users-invitation-${user.id}` } },
+      h("p", {}, t("users.invite.send", { email: inviting.email, name: user.name })),
+      qrCanvas(inviting.link, { label: t("settings.account.home.qrLabel") }),
+      h("input", { class: "invitation-link", type: "text", readonly: true, dir: "ltr", value: inviting.link, "aria-label": t("settings.account.home.linkLabel"), onfocus: (event) => event.target.select() }),
+      h("p", { class: "field-help" }, t("settings.account.home.expires", { time: formatDateTime(new Date(inviting.expiresAt)) })),
+      h("div", { class: "button-row" }, h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.access = { ...ui.access, inviting: null }; notify(); } }, t("common.done")))
+    );
+  }
+  const input = h("input", { type: "email", autocomplete: "off", dir: "ltr", placeholder: "name@example.com", value: inviting.email || "", "aria-label": t("settings.account.home.email"), dataset: { key: `users-invite-email-${user.id}` } });
+  input.addEventListener("input", () => {
+    inviting.email = input.value;
+  });
+  return h(
+    "form",
+    { class: "invite-form", novalidate: true, onsubmit: (event) => { event.preventDefault(); inviteToUser(user); } },
+    h("p", { class: "field-help" }, t("users.invite.help", { name: user.name })),
+    input,
+    h(
+      "div",
+      { class: "button-row" },
+      h("button", { type: "submit", class: "button button-primary", disabled: Boolean(ui.access.busy), dataset: { key: `users-invite-send-${user.id}` } }, t("settings.account.home.create")),
+      h("button", { type: "button", class: "button button-quiet", onclick: () => { ui.access = { ...ui.access, inviting: null }; notify(); } }, t("common.cancel"))
+    )
+  );
+}
+
+// The accounts of a user, as the app may show them: the owner sees the accounts' emails (the
+// account service lists them for the owner only); this device's own account; else how many.
+function accountLine(user, list) {
+  if (!list?.accounts_known) return null;
+  if (!user.accounts) return t("users.account.none");
+  const people = Array.isArray(ui.access.people) ? ui.access.people : null;
+  const ids = new Set((user.devices || []).map((device) => device.id));
+  if (people) {
+    const names = people.filter((person) => person.key_ids.some((id) => ids.has(id))).map((person) => person.email || person.name).filter(Boolean);
+    if (names.length) return names.join(", ");
+  }
+  const current = (user.devices || []).find((device) => device.current);
+  if (current?.accounts === 1 && user.accounts === 1 && state.account.status === "signed-in" && state.account.user?.email) return state.account.user.email;
+  return t("users.account.some", { count: user.accounts });
+}
+
+// A device, under its user: when it was last used, and Remove where the controller says the
+// caller may; for admins, the user it belongs to (moving it gives it that user's access).
+function userDeviceRow(device, user, users) {
+  const busy = Boolean(ui.access.busy);
+  let picker = null;
+  if (can("admin") && users.length > 1 && !user.access?.owner) {
+    const select = h(
+      "select",
+      { class: "access-role", "aria-label": t("access.personFor", { name: device.name }), dataset: { key: `access-person-${device.id}` } },
+      ...users.map((other) => h("option", { value: other.id, selected: other.id === user.id }, other.name))
+    );
+    select.addEventListener("change", () => {
+      const target = users.find((other) => other.id === select.value);
+      if (target) movePerson({ ...device, profile_id: user.id }, target, select);
+    });
+    picker = h("span", { class: "access-person" }, h("span", { class: "access-sub" }, t("access.person")), select);
+  }
+  return h(
+    "li",
+    { class: "access-item access-device", dataset: { key: `access-device-${device.id}` } },
+    h(
+      "div",
+      { class: "access-main" },
+      h("span", { class: "access-name", dir: "auto" }, device.name, device.current ? h("span", { class: "access-badge" }, t("access.thisDevice")) : null),
+      h("span", { class: "access-sub", dir: "auto" }, [lastUsed(device), expiry(device), device.accounts > 1 ? t("users.account.shared", { count: device.accounts }) : null].filter(Boolean).join(" · ")),
+      picker
+    ),
+    device.removable
+      ? h(
+          "div",
+          { class: "access-actions" },
+          h(
+            "button",
+            { type: "button", class: "button button-small button-danger", disabled: busy, "aria-label": t("users.removeDeviceFor", { name: device.name }), dataset: { key: `access-revoke-${device.id}` }, onclick: () => removeDevice(device, user) },
+            t("users.removeDevice")
+          )
+        )
+      : null
+  );
+}
+
+// One user: their role and access, their account, and their devices.
+function userRow(user, list) {
+  const access = user.access || {};
+  const admin = can("admin");
+  const editing = ui.access.editing?.id === user.id ? ui.access.editing : null;
+  const busy = Boolean(ui.access.busy);
+  const full = (user.devices || []).length >= (list.device_limit || 5);
+  const linked = Boolean(ui.access.home);
+  const actions = admin
+    ? [
+        access.owner
+          ? null
+          : h(
+              "button",
+              { type: "button", class: "button button-small button-secondary", disabled: busy, "aria-expanded": String(Boolean(editing)), "aria-label": t("access.editFor", { name: user.name }), dataset: { key: `access-edit-${user.id}` }, onclick: () => (editing ? stopEditing() : editPerson(user)) },
+              editing ? t("common.cancel") : t("access.edit")
+            ),
+        h("button", { type: "button", class: "button button-small button-quiet", "aria-label": t("access.renameFor", { name: user.name }), dataset: { key: `access-rename-profile-${user.id}` }, onclick: () => renamePerson(user) }, t("access.rename")),
+        access.owner && !user.you
+          ? null
+          : h(
+              "button",
+              { type: "button", class: "button button-small button-quiet", disabled: busy || full, "aria-label": t("users.pairFor", { name: user.name }), dataset: { key: `users-pair-${user.id}` }, onclick: () => makePairingCode({ profile_id: user.id }, user.name) },
+              t("users.pair")
+            ),
+        linked && !user.accounts && !(access.owner && !user.you)
+          ? h(
+              "button",
+              { type: "button", class: "button button-small button-quiet", disabled: busy || full, "aria-label": t("users.invite.for", { name: user.name }), dataset: { key: `users-invite-${user.id}` }, onclick: () => { ui.access = { ...ui.access, inviting: { user: user.id, email: "" } }; notify(); } },
+              t("users.invite.button")
+            )
+          : null,
+      ]
+    : [];
+  const users = Array.isArray(list.items) ? list.items : [];
+  return h(
+    "li",
+    { class: "access-item access-person-item", dataset: { key: `access-profile-${user.id}` } },
+    h(
+      "div",
+      { class: "access-main" },
+      h("span", { class: "access-name", dir: "auto" }, user.name, access.owner ? h("span", { class: "access-badge" }, t("access.owner")) : null, user.you ? h("span", { class: "access-badge" }, t("access.you")) : null),
+      h("span", { class: "access-sub", dataset: { key: `access-profile-role-${user.id}` } }, access.role === "admin" ? roleLabel("admin") : `${roleLabel("member")} · ${accessSummary(access)}`),
+      (() => {
+        const line = accountLine(user, list);
+        return line ? h("span", { class: "access-sub", dir: "auto", dataset: { key: `users-account-${user.id}` } }, line) : null;
+      })(),
+      full ? h("span", { class: "access-sub", dataset: { key: `users-full-${user.id}` } }, t("users.full", { count: list.device_limit || 5 })) : null
+    ),
+    actions.some(Boolean) ? h("div", { class: "access-actions" }, ...actions) : null,
+    editing
+      ? h(
+          "div",
+          { class: "perm-editor", dataset: { key: `access-editor-${user.id}` } },
+          permissionsEditor(editing.draft, { prefix: `perm-${user.id}`, changed: notify }),
+          h(
+            "div",
+            { class: "button-row" },
+            h("button", { type: "button", class: "button button-primary", disabled: busy, dataset: { key: `access-save-${user.id}` }, onclick: () => savePerson(user) }, t("access.save")),
+            h("button", { type: "button", class: "button button-quiet", onclick: stopEditing }, t("common.cancel"))
+          )
+        )
+      : null,
+    invitePanel(user),
+    h("ul", { class: "access-list access-devices", "aria-label": t("users.devicesOf", { name: user.name }) }, (user.devices || []).map((device) => userDeviceRow(device, user, users))),
+    user.you && !admin && !user.accounts && list.accounts_known ? h("p", { class: "field-help" }, t("users.account.askAdmin")) : null
+  );
+}
+
+// "These devices use the same account: make them one user?", with whose access stays.
+function confirmMerge(suggestion, keep) {
+  const kept = suggestion.users.find((user) => user.id === keep);
+  if (!kept || ui.access.busy) return;
+  const others = suggestion.users.filter((user) => user.id !== keep).map((user) => user.name).join(", ");
+  if (!window.confirm(t("users.suggestion.confirm", { name: kept.name, others }))) return;
+  act(() => api("/v1/users/merge", { method: "POST", body: { account: suggestion.id, keep } }), t("users.suggestion.done", { name: kept.name }));
+}
+
+function suggestionRow(suggestion, list) {
+  const users = Array.isArray(list.items) ? list.items : [];
+  const owner = users.find((user) => user.access?.owner)?.id;
+  const chosen = ui.access.keep?.[suggestion.id] || (suggestion.owner && owner ? owner : suggestion.users[0]?.id);
+  const busy = Boolean(ui.access.busy);
+  const limit = list.device_limit || 5;
+  const deviceName = (id) => users.flatMap((user) => user.devices || []).find((device) => device.id === id)?.name || id;
+  const choice = (user) => {
+    const ownersOnly = suggestion.owner && owner && user.id !== owner;
+    return h(
+      "label",
+      { class: `perm-role ${chosen === user.id ? "is-active" : ""}`.trim() },
+      h("input", {
+        type: "radio",
+        name: `users-keep-${suggestion.id}`,
+        value: user.id,
+        checked: chosen === user.id,
+        disabled: ownersOnly || !suggestion.may_confirm,
+        dataset: { key: `users-keep-${suggestion.id}:${user.id}` },
+        onchange: () => {
+          ui.access = { ...ui.access, keep: { ...(ui.access.keep || {}), [suggestion.id]: user.id } };
+          notify();
+        },
+      }),
+      h(
+        "span",
+        { class: "toggle-text" },
+        h("span", { class: "toggle-title", dir: "auto" }, t("users.suggestion.keep", { name: user.name })),
+        h("span", { class: "field-help", dir: "auto" }, user.devices.map(deviceName).join(", ")),
+        user.devices_after > limit ? h("span", { class: "field-help" }, t("users.suggestion.tooMany", { count: user.devices_after, limit })) : null
+      )
+    );
+  };
+  const tooMany = suggestion.users.find((user) => user.id === chosen)?.devices_after > limit;
+  return h(
+    "li",
+    { class: "access-item access-suggestion", dataset: { key: `users-suggestion-${suggestion.id}` } },
+    h(
+      "div",
+      { class: "access-main" },
+      h("span", { class: "access-name", dir: "auto" }, t("users.suggestion.title", { names: suggestion.users.map((user) => user.name).join(", ") })),
+      h("span", { class: "access-sub" }, suggestion.owner ? t("users.suggestion.ownerHelp") : t("users.suggestion.help")),
+      h("fieldset", { class: "perm-roles" }, h("legend", { class: "settings-subtitle" }, t("users.suggestion.whose")), suggestion.users.map(choice)),
+      suggestion.may_confirm ? null : h("p", { class: "field-help" }, t("users.suggestion.ownerConfirms"))
+    ),
+    suggestion.may_confirm
+      ? h(
+          "div",
+          { class: "access-actions" },
+          h("button", { type: "button", class: "button button-small button-primary", disabled: busy || tooMany, dataset: { key: `users-merge-${suggestion.id}` }, onclick: () => confirmMerge(suggestion, chosen) }, t("users.suggestion.merge"))
+        )
+      : null
+  );
+}
+
+function usersView(header) {
+  const access = ui.access;
+  // First visit, 30 s old, or the account changed (it may finish loading after the controller).
+  if (!running && (!access?.at || Date.now() - access.at > REFRESH_MS || access.accountStatus !== state.account.status)) {
+    loadAccess();
+  }
+  scheduleRefresh();
+  if (!access?.at) {
+    return [header, h("div", { class: "settings" }, h("p", { class: "field-help", role: "status" }, t("common.loading")))];
+  }
+  const admin = can("admin");
+  const list = access.users && !access.users.error ? access.users : null;
+  const devices = Array.isArray(access.devices) ? access.devices : [];
+  const invitations = Array.isArray(access.invitations) ? access.invitations : [];
+  const requests = Array.isArray(access.requests) ? access.requests : [];
+  const people = Array.isArray(access.people) ? access.people : null;
+  const suggestions = list?.suggestions || [];
+  return [
+    header,
+    offlineBanner(),
+    h(
+      "div",
+      { class: "settings" },
+      access.message ? h("p", { class: `notice notice-${access.message.kind}`, role: access.message.kind === "error" ? "alert" : "status" }, access.message.text) : null,
+      deviceLimitPanel(access.limit, { remove: removeFromLimit, busy: Boolean(access.busy), key: "users-limit", dismiss: () => { ui.access = { ...ui.access, limit: null }; notify(); } }),
+      pairingPanel(),
+      requests.length
+        ? section("requests", t("access.requests"), t("access.requestsHelp"), h("ul", { class: "access-list" }, requests.map((request) => requestRow(request, invitations, devices))))
+        : problemNote(access.requests),
+      suggestions.length
+        ? section("suggestions", t("users.suggestion.section"), t("users.suggestion.sectionHelp"), h("ul", { class: "access-list" }, suggestions.map((suggestion) => suggestionRow(suggestion, list))))
+        : null,
+      admin ? newUserPanel() : null,
+      section(
+        "persons",
+        admin ? t("users.section") : t("users.sectionMine"),
+        admin ? t("users.help", { count: list?.device_limit || 5 }) : t("users.helpMember", { count: list?.device_limit || 5 }),
+        problemNote(access.users) ||
+          h(
+            "div",
+            {},
+            h("ul", { class: "access-list" }, (list?.items || []).map((user) => userRow(user, list))),
+            admin && !access.newUser
+              ? h(
+                  "div",
+                  { class: "button-row" },
+                  h("button", { type: "button", class: "button button-secondary", dataset: { key: "users-new-open" }, disabled: Boolean(access.busy), onclick: () => { ui.access = { ...ui.access, newUser: { name: "", access: newMemberAccess() } }; if (state.scenes === null) loadScenes(); notify(); } }, icon("plus"), t("users.newUser.open"))
+                )
+              : null,
+            admin ? null : h("p", { class: "field-help" }, t("users.addOwnHelp"))
+          )
+      ),
+      admin
+        ? section(
+            "invitations",
+            t("access.invitations"),
+            invitations.length ? null : t("access.noInvitations"),
+            problemNote(access.invitations) || (invitations.length ? h("ul", { class: "access-list" }, invitations.map((invitation) => invitationRow(invitation, devices))) : null)
+          )
+        : null,
+      people ? section("people", t("access.accounts"), t("access.peopleHelp"), h("ul", { class: "access-list" }, people.map((person) => accountRow(person, devices)))) : null
+    ),
+  ];
+}
+
 export function accessView() {
-  const header = pageHeader({ title: t("access.title"), back: "#/settings" });
+  const header = pageHeader({ title: usersSupported() ? t("users.title") : t("access.title"), back: "#/settings" });
   if (!state.loaded) {
     return [header, notReadyState()];
+  }
+  // Settings → Users (1.9.0): every user sees their own; admins every user.
+  if (usersSupported()) {
+    return usersView(header);
   }
   if (!can("admin")) {
     return [header, h("div", { class: "settings" }, h("p", { class: "notice notice-info" }, t("access.adminOnly", { role: roleLabel(state.role) })))];

@@ -15,6 +15,9 @@
 //   storage     secret_sha256                                         SHA-256 hex of the home_secret,
 //                                                                     trusted on first use
 //               connected_at, disconnected_at, last_seen, version     for the status (ISO times)
+//               driver_features                                       the last hello's features
+//                                                                     (1.9.0: alerts.js and
+//                                                                     device-requests.js ask)
 //
 // A driver whose connection is lost connects again within seconds (1.5.0). A request that arrives
 // meanwhile, up to 30 s after the disconnect or after a restart under the connection, waits up to
@@ -28,7 +31,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
-import { recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
+import { keyAccounts, recordUsedKey, syncKeys, validKeyList } from "./member-keys.js";
 import { cancelHomeInvitation, registerHomeInvitation } from "./homes.js";
 import { receiveBackupChunk } from "./backups.js";
 // Scene links (ADR-051): a phone's automation runs a scene; the controller checks the secret.
@@ -134,6 +137,10 @@ export class HomeRelay extends DurableObject {
         return json(await this.alerts.request(await request.json(), homeId));
       case "/link":
         return this.link(await request.json(), homeId, request.headers.get("X-DirectorLink-Client"));
+      case "/accounts":
+        // Which account uses which key changed in D1 (a join, a member removed: homes.js).
+        await this.queueKeyWork(() => this.sendAccounts(), homeId);
+        return json({ ok: true });
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
@@ -215,7 +222,7 @@ export class HomeRelay extends DurableObject {
 
     switch (type) {
       case "hello":
-        await this.ctx.storage.put({ version: attachment.version, last_seen: iso(attachment.lastSeen) });
+        await this.ctx.storage.put({ version: attachment.version, last_seen: iso(attachment.lastSeen), driver_features: attachment.features });
         if (data.home !== attachment.home) {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
         }
@@ -242,6 +249,8 @@ export class HomeRelay extends DurableObject {
             // The admin list counts even when D1 failed above (alerts and backups read it).
             await this.alerts.keys(attachment.home, ids, data.admins);
           }
+          // Which of the keys left share an account (1.9.0, ADR-061).
+          await this.sendAccounts(ws);
         }, attachment.home);
         return;
       }
@@ -249,7 +258,12 @@ export class HomeRelay extends DurableObject {
         // The home accepted a request sealed with this key: the account that sent it holds it.
         const record = data.envelope && typeof data.id === "string" ? this.pending.get(data.id)?.record : null;
         const work = record
-          ? this.queueKeyWork(async () => recordUsedKey(this.env, attachment.home, record.user, record.key, await this.announcedKeys()), attachment.home)
+          ? this.queueKeyWork(async () => {
+              // A key newly seen with an account: the controller hears which keys share one.
+              if ((await recordUsedKey(this.env, attachment.home, record.user, record.key, await this.announcedKeys())) === "added") {
+                await this.sendAccounts(ws);
+              }
+            }, attachment.home)
           : null;
         if (typeof data.id !== "string" || !this.settle(data.id, { message: data })) {
           log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
@@ -318,6 +332,20 @@ export class HomeRelay extends DurableObject {
           message: typeof message === "string" ? message.slice(0, 100) : `${message.byteLength} binary bytes`,
         });
     }
+  }
+
+  // Tells a driver whose hello lists `users` (1.9.0, ADR-061) which of its keys share an account:
+  // { "type": "accounts", "id", "keys": { "<key id>": ["<tag>", …] } }, an opaque tag per account
+  // and home (member-keys.js), never an account's id or email. Run as key work (in the order of the
+  // driver's frames); `ws`: the socket, else the driver's live one. No answer is waited for.
+  async sendAccounts(ws = null) {
+    const socket = ws ?? this.heardDriverSocket();
+    if (!socket || socket.readyState !== OPEN) return;
+    const { home, features } = socket.deserializeAttachment() ?? {};
+    if (!home || !Array.isArray(features) || !features.includes("users")) return;
+    const keys = await keyAccounts(this.env, home);
+    this.reply(socket, { type: "accounts", id: crypto.randomUUID(), keys });
+    log("accounts_sent", { home, keys: Object.keys(keys).length });
   }
 
   reply(ws, message) {

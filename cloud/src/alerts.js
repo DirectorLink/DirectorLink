@@ -67,7 +67,9 @@
 //
 // A new device asks to join (ADR-053, amended in 1.8.0 by ADR-059): device-requests.js tells the
 // object, which pushes { kind: "device_request", home, at, request } at once to the browsers of
-// that same account registered at the home with one of its admin keys (only admins approve), whose
+// that same account registered at the home with one of its admin keys (only admins approve; since
+// 1.9.0, ADR-061, with any of its keys when the driver's hello lists `users`: every user adds their
+// own devices there), whose
 // app said it wants it (on by default there), at most DEVICE_REQUEST_PUSHES_PER_HOUR an account an
 // hour. The cloud made the request, so the push tells it nothing new, and it names nothing but the
 // home, the time and the request's id. The choice is kept here, not in D1 (no migration): an app
@@ -342,8 +344,11 @@ export class HomeAlerts {
       return this.deviceRequest(input, homeId);
     }
     if (input?.op === "admins") {
-      const admins = await this.storage.get("alerts_admins");
-      return { ok: true, admins: Array.isArray(admins) ? admins : null };
+      const stored = await this.storage.get(["alerts_admins", "driver_features"]);
+      const admins = stored.get("alerts_admins");
+      // What the home's driver said it takes (1.9.0: `users`, any device of an account approves).
+      const features = stored.get("driver_features");
+      return { ok: true, admins: Array.isArray(admins) ? admins : null, features: Array.isArray(features) ? features : null };
     }
     if (input?.op === "changed") {
       if (typeof input.endpoint === "string") {
@@ -440,8 +445,12 @@ export class HomeAlerts {
     if (!user || !request) {
       return { ok: false, code: "INVALID_REQUEST" };
     }
-    const admins = await this.storage.get("alerts_admins");
-    if (!Array.isArray(admins) || admins.length === 0) {
+    const stored = await this.storage.get(["alerts_admins", "driver_features"]);
+    const admins = stored.get("alerts_admins");
+    // A driver that lets every user add their own devices (1.9.0, ADR-061: `users` in its hello):
+    // the account's devices at the home with any key approve, so all of them hear of it.
+    const anyKey = Array.isArray(stored.get("driver_features")) && stored.get("driver_features").includes("users");
+    if (!anyKey && (!Array.isArray(admins) || admins.length === 0)) {
       log("device_request_push_not_sent", { home: homeId, user, request, why: "no admin keys known" });
       return { ok: true, devices: 0 };
     }
@@ -456,10 +465,10 @@ export class HomeAlerts {
       return { ok: true, limited: true };
     }
     const { results } = await this.env.DB.prepare(
-      "SELECT endpoint, p256dh, auth, key_id FROM push_subscriptions AS s WHERE s.home_id = ?1 AND s.user_id = ?2 AND s.key_id IN (SELECT value FROM json_each(?3)) " +
+      "SELECT endpoint, p256dh, auth, key_id FROM push_subscriptions AS s WHERE s.home_id = ?1 AND s.user_id = ?2 AND s.key_id IS NOT NULL AND (?4 = 1 OR s.key_id IN (SELECT value FROM json_each(?3))) " +
         "AND EXISTS (SELECT 1 FROM member_keys AS m WHERE m.home_id = ?1 AND m.key_id = s.key_id AND m.user_id = s.user_id)"
     )
-      .bind(homeId, user, JSON.stringify(admins))
+      .bind(homeId, user, JSON.stringify(Array.isArray(admins) ? admins : []), anyKey ? 1 : 0)
       .all();
     const choices = (await this.storage.get("device_request_choices")) ?? {};
     const list = [];

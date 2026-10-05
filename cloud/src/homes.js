@@ -73,6 +73,8 @@ const CODES = {
   INVITATION_NOT_FOUND: [404, "The invitation was used, revoked or has expired"],
   INVALID_CLAIM: [403, "The claim token is wrong or has expired; get a new one at home"],
   KEY_LIMIT_REACHED: [409, "The home already has as many API keys as it allows"],
+  // 1.9.0 (ADR-061): the user an invitation is for has five devices already.
+  USER_DEVICE_LIMIT: [409, "This user already has 5 devices: remove one of them first, then open the invitation again"],
   INTERNAL: [502, "The home failed to answer"],
 };
 
@@ -146,6 +148,19 @@ async function relay(env, homeId, message, userId) {
   return { reply: await response.json() };
 }
 
+// Which account uses which key changed here (a join, a member removed, a new owner): the home's
+// object tells its controller which keys share an account (1.9.0, ADR-061; home-relay.js
+// sendAccounts). Best effort: the controller hears it again at its next connection or change of
+// keys.
+async function accountsChanged(env, homeId) {
+  try {
+    const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
+    await stub.fetch("https://home-relay/accounts", { method: "POST", headers: { "X-DirectorLink-Home": homeId } });
+  } catch (error) {
+    log("accounts_not_told", { home: homeId, error: String(error?.message ?? error) });
+  }
+}
+
 async function homeStatus(env, homeId) {
   const stub = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(homeId));
   const response = await stub.fetch("https://home-relay/status", { headers: { "X-DirectorLink-Home": homeId } });
@@ -196,6 +211,7 @@ async function claim(request, env, user) {
   if (transferred && first.meta?.changes) {
     await homesChanged(env, [homeId]);
   }
+  if (transferred) await accountsChanged(env, homeId);
   log("home_claimed", { home: homeId, user: user.id, transferred });
   return json({ home_id: homeId, owner: true, transferred });
 }
@@ -507,6 +523,7 @@ async function join(request, env, user) {
     log("join_key_withheld", { home: homeId, user: user.id, invitation: input.invitation_id, request: decided?.status ?? null, key_id: validKeyId(reply.key_id) ? reply.key_id : null });
     return decided?.status === "refused" ? refusedJoin() : invitationNotFound();
   }
+  if (joined) await accountsChanged(env, homeId);
   log("invitation_accepted", { home: homeId, user: user.id, invitation: input.invitation_id, member: joined, approved: !mine });
   return json({ home_id: homeId, envelope: reply.envelope, member: joined });
 }
@@ -664,6 +681,7 @@ async function removeMember(env, user, homeId, userId) {
   if (!meta.changes) {
     return problem(404, "NOT_FOUND", "That account does not belong to the home");
   }
+  await accountsChanged(env, homeId);
   log("member_removed", { home: homeId, user: user.id, removed: userId });
   return new Response(null, { status: 204 });
 }

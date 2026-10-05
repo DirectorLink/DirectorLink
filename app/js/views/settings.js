@@ -24,6 +24,7 @@ import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { alertsPanel } from "./alerts.js";
 import { makeInvitation, pasteInvitationPanel } from "./device-join.js";
+import { deviceLimitOf, deviceLimitPanel } from "./device-limit.js";
 import { accessBody, newMemberAccess, peopleSupported, permissionsEditor } from "./permissions.js";
 import { loadScenes } from "../scenes.js";
 import { backupPanel } from "./backup.js";
@@ -140,16 +141,22 @@ function calendarRow() {
   return pageRow({ page: "calendar", iconName: "candles", title: t("calendar.settings.title"), status });
 }
 
-// Admins manage who has access: devices, invitations and, for the owner, people.
+// Admins manage who has access: devices, invitations and, for the owner, accounts. Since 1.9.0
+// (ADR-061, `features.users`) Settings → Users is everyone's: a member sees their own devices.
+function usersSupported() {
+  return state.system?.features?.users === true;
+}
+
 function accessRow() {
-  if (!state.loaded || !can("admin")) return null;
+  if (!state.loaded || !(can("admin") || usersSupported())) return null;
   // While this device is not linked, People and devices finds the home in GET /v1/remote's answer,
   // which This home (Settings → Account) asks for a signed-in admin at home: asked here too, as it
   // was when Settings was one page.
   if (state.account.status === "signed-in" && !savedRemote() && !IS_IOS && state.status === "connected" && state.transport === "lan" && !state.remoteInfo) {
     loadRemoteInfo();
   }
-  return pageRow({ page: "access", href: "#/access", iconName: "users", title: t("access.open"), status: t("settings.rows.access") });
+  const status = usersSupported() ? (can("admin") ? t("settings.rows.users") : t("settings.rows.usersMine")) : t("settings.rows.access");
+  return pageRow({ page: "access", href: "#/access", iconName: "users", title: usersSupported() ? t("users.title") : t("access.open"), status });
 }
 
 function accountRow() {
@@ -1247,6 +1254,7 @@ async function createInvitation({ forSelf }) {
   ui.homeBusy = true;
   ui.homeMessage = null;
   notify();
+  ui.homeLimit = null;
   try {
     // The same invitation as a device approving another of this account makes (ADR-053).
     const invitation = await makeInvitation({ forSelf, email, role, access });
@@ -1254,7 +1262,9 @@ async function createInvitation({ forSelf }) {
     ui.inviteForm = false;
     ui.inviteAccess = null;
   } catch (error) {
-    ui.homeMessage = { kind: "error", text: errorText(error) };
+    // Five devices already (1.9.0): which to remove first.
+    ui.homeLimit = deviceLimitOf(error);
+    ui.homeMessage = ui.homeLimit ? null : { kind: "error", text: errorText(error) };
   } finally {
     ui.homeBusy = false;
     notify();
@@ -1298,9 +1308,29 @@ function invitationResult(invitation) {
   );
 }
 
+// A device removed from the "Remove a device first" list; then Add my other device again.
+async function removeForRoom(device) {
+  if (ui.homeBusy || !window.confirm(t("access.revokeConfirm", { name: device.name }))) return;
+  ui.homeBusy = true;
+  notify();
+  try {
+    await api(`/v1/api-keys/${device.id}`, { method: "DELETE" });
+    ui.homeLimit = null;
+    ui.homeMessage = { kind: "success", text: t("users.limit.removed", { name: device.name }) };
+  } catch (error) {
+    ui.homeMessage = { kind: "error", text: errorText(error) };
+  } finally {
+    ui.homeBusy = false;
+    notify();
+  }
+}
+
 function invitePanel() {
   if (ui.homeInvitation) {
     return invitationResult(ui.homeInvitation);
+  }
+  if (ui.homeLimit) {
+    return deviceLimitPanel(ui.homeLimit, { remove: removeForRoom, busy: Boolean(ui.homeBusy), key: "home-limit", dismiss: () => { ui.homeLimit = null; notify(); } });
   }
   if (ui.inviteForm) {
     // 1.8.0: an admin, or a member and what they may do (views/permissions.js); older controllers
@@ -1333,13 +1363,17 @@ function invitePanel() {
       )
     );
   }
+  // A member (1.9.0) adds their own other device; only admins invite others.
+  const admin = can("admin");
   return [
-    h("p", { class: "field-help" }, t("settings.account.home.addHelp")),
+    h("p", { class: "field-help" }, admin ? t("settings.account.home.addHelp") : t("settings.account.home.addOwnHelp")),
     h(
       "div",
       { class: "button-row" },
       h("button", { type: "button", class: "button button-secondary", dataset: { key: "add-device" }, disabled: Boolean(ui.homeBusy), onclick: () => createInvitation({ forSelf: true }) }, icon("plus"), t("settings.account.home.addDevice")),
-      h("button", { type: "button", class: "button button-secondary", dataset: { key: "invite" }, disabled: Boolean(ui.homeBusy), onclick: () => { ui.inviteForm = true; notify(); } }, icon("user"), t("settings.account.home.invite"))
+      admin
+        ? h("button", { type: "button", class: "button button-secondary", dataset: { key: "invite" }, disabled: Boolean(ui.homeBusy), onclick: () => { ui.inviteForm = true; notify(); } }, icon("user"), t("settings.account.home.invite"))
+        : null
     ),
   ];
 }
@@ -1365,7 +1399,7 @@ function homeSection() {
       if (!state.remoteInfo || Date.now() - remoteInfoAt > 60000) loadRemoteInfo();
       content.push(updateRequiredNotice(state.remoteInfo));
     }
-    if (can("admin")) content.push(invitePanel());
+    if (can("admin") || usersSupported()) content.push(invitePanel());
     // On the home network only: the controller refuses it through the account.
     if (can("admin") && !ui.homeInvitation && !ui.inviteForm && state.status === "connected" && state.transport === "lan") content.push(...secretPanel());
   } else if (IS_IOS) {

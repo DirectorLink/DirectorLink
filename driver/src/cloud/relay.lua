@@ -47,8 +47,10 @@ Relay.CONNECT_SECONDS = 30
 Relay.CANDIDATES = 3
 Relay.CANDIDATE_SECONDS = 24 * 3600
 -- What this driver tells the relay it takes, in its hello (1.7.0); `alerts_gone` (1.9.0, ADR-062):
--- the key ids whose browsers the account service no longer has (src/cloud/remote.lua).
-Relay.FEATURES = Json.array({ "scene_links", "alerts_gone" })
+-- the key ids whose browsers the account service no longer has (src/cloud/remote.lua); `users`
+-- (1.9.0, ADR-061): the relay sends which keys share an account (`accounts`), and any device of an
+-- account may approve that account's new device, as the controller lets every user add their own.
+Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users" })
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.

@@ -516,6 +516,30 @@ test("a device whose role is not known yet asks nothing and offers nothing", asy
   await tick(2000);
 });
 
+// 1.9.0 (ADR-061): every user adds their own devices, so a member's device approves its account's
+// new device once the controller says it has users; before that only an admin's does.
+test("a member's device approves its account's new device when the controller has users", async () => {
+  signedIn(true);
+  state.apiKey = "";
+  click(byKey(joinFromAnotherDevice(), "device-join-start"));
+  await until(() => cloud.requests.size === 1, "the request");
+  const [request] = [...cloud.requests.values()];
+  const system = state.system;
+  Object.assign(state, { apiKey: `ak_${"4".repeat(48)}`, role: "member", access: null, loaded: true, status: "connected", transport: "remote", profile: { id: "p2" }, system: { features: { people_permissions: true } } });
+  saveRemote({ home: HOME, keyId: "0d0d0d0d" });
+  for (const listener of windowListeners.focus || []) listener();
+  await tick(60000);
+  assert.equal(deviceRequestNotice(), null, "a member of a 1.8.0 controller approves nothing");
+  state.system = { features: { people_permissions: true, users: true } };
+  await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the member's device");
+  await until(() => enabled(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`)), "Decline enabled");
+  click(byKey(deviceRequestNotice(), `device-request-decline-${request.id}`));
+  await until(() => cloud.requests.size === 0, "declined");
+  state.system = system;
+  state.apiKey = "";
+  await tick(2000);
+});
+
 test("a device that reaches the home looks every 60 s, every 2 s only while it answers", async () => {
   signedIn(true);
   approverDevice();

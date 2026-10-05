@@ -265,7 +265,7 @@ test("the screen is filled in from the action: kind, place, devices and setting"
   assert.ok(checked(nodes, 501) && !checked(nodes, 502));
   assert.match(textOf(nodes), /short press/);
   // 1.8.0 (ADR-054): a person's run opens them, DirectorLink's own runs never.
-  assert.match(textOf(nodes), /It opens them when a person runs the scene .*never from a schedule or a link/);
+  assert.match(textOf(nodes), /It opens them when a user runs the scene .*never from a schedule or a link/);
 
   nodes = edit(6);
   assert.ok(pressed(nodes, "add-room:home") && pressed(nodes, "add-kind:music") && pressed(nodes, "add-music:stop"));
