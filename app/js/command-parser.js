@@ -186,6 +186,7 @@ function numberWord(token) {
 }
 
 const isHalf = (token) => token && (token.raw === "half" || token.bares.includes("חצי"));
+const isUnit = (token) => Boolean(token?.bares.some((form) => ["percent", "degrees"].includes(ROLES.get(form)?.role)));
 
 // The number that starts at tokens[index] (digits, or words: "twenty three", "עשרים ושלוש",
 // "שלוש עשרה", "23 and a half", "23 וחצי"), and where it ends; null when none starts there.
@@ -211,6 +212,10 @@ function readNumber(tokens, index, names) {
     } else if (found.type === "unit" && next?.type === "hundred") {
       value *= 100;
       end += 1;
+    } else if (found.type === "unit" && !isUnit(tokens[end])) {
+      // "One of the lights", "שתי מנורות": a word from one to nine is a number only with its
+      // unit ("five percent"); digits always are.
+      return null;
     }
   }
   // "and a half", "וחצי"
@@ -234,7 +239,9 @@ function tokenize(text, names) {
       tokens.push({ ...word(display), raw: `#${number.value}`, stem: "", bares: [], stems: [], num: number.value, digits: words[index].num !== null && number.end === index + 1 });
       index = number.end;
     } else {
-      tokens.push(words[index]);
+      // A number word kept as a word still matches a number in a name ("Bedroom two").
+      const found = numberWord(words[index]);
+      tokens.push(found && found.type !== "half" ? { ...words[index], wordNum: found.value } : words[index]);
       index += 1;
     }
   }
@@ -290,6 +297,7 @@ function roleOf(token, names) {
 // with a Hebrew prefix, 0.75 a small typo (never against a command word), 0 not at all.
 function quality(part, token, exactOnly) {
   if (token.num !== null) return part.num !== null && part.num === token.num ? 1 : 0;
+  if (part.num !== null) return token.wordNum === part.num ? 1 : 0;
   if (part.raw === token.raw) return 1;
   if (exactOnly) return part.bares.some((form) => token.bares.includes(form)) ? 0.9 : 0;
   if (part.stem === token.stem) return 0.95;
@@ -342,36 +350,55 @@ function prepare(catalog) {
 }
 
 // The best way the entity's name lies in the sentence: which tokens, how well, whether all of it.
+// Only the words that must be said are placed (a name's kind and fillers may be left over: they
+// mean the same there), each at one of its four best places, so a long name stays quick.
 function matchEntity(entity, tokens) {
-  const candidates = entity.parts.map((part) => tokens.map((token, position) => [position, quality(part, token, entity.exactOnly)]).filter(([, q]) => q > 0));
-  if (!candidates.some((list, index) => list.length && !entity.parts[index].optional)) return null;
+  const parts = entity.parts.filter((part) => !part.optional);
+  const candidates = parts.map((part) =>
+    tokens
+      .map((token, position) => [position, quality(part, token, entity.exactOnly)])
+      .filter(([, q]) => q > 0)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+  );
+  if (!candidates.some((list) => list.length)) return null;
   let best = null;
   const used = [];
-  const walk = (index, score, count, sure) => {
-    if (index === entity.parts.length) {
-      if (!count) return;
-      const full = count === entity.required;
+  // A name of many words that each appear often stops looking after this many steps.
+  let steps = 0;
+  const walk = (index, score, sure) => {
+    steps += 1;
+    if (steps > 5000) return;
+    if (index === parts.length) {
+      if (!used.length) return;
+      const full = used.length === parts.length;
       const rank = (full ? 100 : 0) + score;
-      if (!best || rank > best.rank) best = { rank, full, score, count, sure, positions: used.map(([position]) => position) };
+      if (!best || rank > best.rank) best = { rank, full, score, sure, positions: used.map(([position]) => position) };
       return;
     }
-    const part = entity.parts[index];
     for (const [position, q] of candidates[index]) {
       if (used.some(([taken]) => taken === position)) continue;
       used.push([position, q]);
-      walk(index + 1, part.optional ? score : score + q, part.optional ? count : count + 1, sure || (!part.optional && q >= 0.9));
+      walk(index + 1, score + q, sure || (q >= 0.9 && parts[index].num === null));
       used.pop();
     }
-    walk(index + 1, score, count, sure);
+    walk(index + 1, score, sure);
   };
-  walk(0, 0, 0, false);
+  walk(0, 0, false);
   if (!best) return null;
   if (!best.full) {
-    // Part of a name: never by a typo alone, never only by command words, never a name said word
-    // for word.
+    // Part of a name: never by a typo or a number alone, never only by command words, never a name
+    // said word for word.
     if (entity.exactOnly || !best.sure || !best.positions.some((position) => !tokens[position].role && tokens[position].num === null)) return null;
   }
-  return { entity, full: best.full, score: best.score, positions: new Set(best.positions) };
+  // A word of the name that need not be said, said with a typo ("porch ligth"), is the name's too.
+  const positions = new Set(best.positions);
+  for (const part of entity.parts) {
+    if (!part.optional) continue;
+    const position = tokens.findIndex((token, index) => !positions.has(index) && !token.role && token.num === null && quality(part, token, false) > 0);
+    if (position >= 0) positions.add(position);
+  }
+  return { entity, full: best.full, score: best.score, positions };
 }
 
 // ---- what the sentence asks ------------------------------------------------------------------

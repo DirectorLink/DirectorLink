@@ -110,6 +110,12 @@ test("a room's lights to a level: digits, a percent sign or word, number words",
   same("living room lights twenty-five percent", { change: { brightness: 25 } });
   same("living room lights to one hundred percent", { change: { brightness: 100 } });
   same("kitchen lights to half", { change: { brightness: 50 } });
+  // A word from one to nine is a number only with its unit; digits always are.
+  same("kitchen lights five percent", { change: { brightness: 5 } });
+  same("kitchen lights 5", { change: { brightness: 5 } });
+  same("אורות במטבח חמישה אחוזים", { change: { brightness: 5 } });
+  unknown("turn on one of the kitchen lights", ["one"]);
+  unknown("תדליק שתי מנורות במטבח", ["שתי"]);
   same("kitchen lights 0%", { ids: [100, 101], change: { on: false } });
   problem("kitchen lights 150%", "range");
   problem("dim the kitchen lights", "needLevel");
@@ -388,7 +394,11 @@ test("fast enough for a phone in a home with 111 lights", () => {
     parseCommand("מזגן בחדר 7 לעשרים ושלוש", big);
     parseCommand("open the shades in room 3", big);
   }
-  const each = (performance.now() - started) / 60;
+  // A long name of words said many times does not slow it down.
+  const long = { ...big, scenes: [...big.scenes, { id: "s98", name: "the night of the day of the week of the month of the year" }, { id: "s99", name: "the of the of the of the of the of the of" }] };
+  parseCommand("run the night of the day of the week of the month of the year of the the the of of of", long);
+  parseCommand(Array.from({ length: 28 }, (_value, index) => (index % 2 ? "of" : "the")).join(" "), long);
+  const each = (performance.now() - started) / 62;
   assert.ok(each < 50, `${each.toFixed(1)} ms a command`);
   same("turn off the lights in room 12", { room: 12, change: { on: false } }, big);
 });
