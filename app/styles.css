@@ -63,8 +63,14 @@
   --font-body: "IBM Plex Sans", "IBM Plex Sans Hebrew", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --font-head: "Sora", "IBM Plex Sans Hebrew", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
   --tabbar-height: 64px;
+  --text-scale: 1;
   color-scheme: light;
 }
+/* Text size (Settings → Appearance and language, this device only; ADR-067): every font size is in
+   rem, so the root's size scales every screen. theme-boot.js sets it before the first paint. */
+:root[data-text-size="small"] { --text-scale: 0.9375; }
+:root[data-text-size="large"] { --text-scale: 1.125; }
+:root[data-text-size="larger"] { --text-scale: 1.25; }
 :root[data-theme="dark"] {
   --errBg: #3b1113; --errText: #fca5a5; --errDot: #f87171;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3);
@@ -96,6 +102,7 @@
 
 html {
   background: var(--bg);
+  font-size: calc(100% * var(--text-scale));
   -webkit-text-size-adjust: 100%;
 }
 
@@ -106,7 +113,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-body);
-  font-size: 16px;
+  font-size: 1rem;
   line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
@@ -260,7 +267,8 @@ img {
   gap: 2px;
   border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: 12px;
+  /* Grows with the text size up to 13px: five tabs share a 320px screen in every language. */
+  font-size: min(0.75rem, 13px);
   font-weight: 500;
   text-decoration: none;
 }
@@ -348,8 +356,9 @@ img {
 
 .page-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px 8px;
   min-height: 64px;
   padding-block-start: 12px;
 }
@@ -357,14 +366,26 @@ img {
 .page-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 26px;
+  font-size: 1.625rem;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The app's own titles are never cut (ADR-067: Spanish and Italian words, the larger text sizes):
+   they wrap between words, and when a word does not fit beside the actions, the actions go to a
+   line of their own. A name from Control4 (dir="auto": a room) keeps its ellipsis. */
+.page-title:not([dir="auto"]) {
+  flex: 1 1 0;
+  min-width: min-content;
+  overflow: visible;
+  white-space: normal;
+  text-wrap: balance;
+}
+
 .page-actions {
+  margin-inline-start: auto;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -385,7 +406,7 @@ img {
   background: var(--card);
   border: 1px solid var(--line);
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   text-decoration: none;
   white-space: nowrap;
@@ -433,7 +454,7 @@ img {
   align-items: center;
   gap: 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .view-only-hint .icon {
@@ -464,9 +485,11 @@ img {
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-weight: 600;
-  font-size: 15px;
+  font-size: 0.9375rem;
+  text-align: center;
   text-decoration: none;
-  white-space: nowrap;
+  /* A long label (Spanish, Italian, a larger text size) wraps rather than widening the page. */
+  white-space: normal;
   transition: background-color 0.15s, opacity 0.15s;
 }
 
@@ -554,7 +577,7 @@ img {
 
 .room-order-hidden {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .room-order-moves {
@@ -792,7 +815,7 @@ select.access-role {
   width: auto;
   min-height: 40px;
   padding: 6px 10px;
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 select:disabled {
@@ -856,7 +879,7 @@ select:disabled {
 
 .button-small {
   min-height: 40px;
-  font-size: 14px;
+  font-size: 0.875rem;
   padding-inline: 12px;
 }
 
@@ -939,7 +962,7 @@ select:disabled {
   gap: 10px;
   padding: 10px 14px;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .banner > span {
@@ -964,7 +987,7 @@ select:disabled {
 .notice {
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .notice-error {
@@ -1025,20 +1048,20 @@ select:disabled {
   gap: 6px;
   margin: 0;
   padding-inline-start: 1.4em;
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
 .inline-error {
   margin-block-start: 8px;
   color: var(--errText);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .muted-note,
 .field-help {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .about-slogan {
@@ -1068,7 +1091,7 @@ select:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 18px;
+  font-size: 1.125rem;
 }
 
 .section-title .icon {
@@ -1111,7 +1134,7 @@ select:disabled {
   gap: 6px;
   min-height: 40px;
   padding-inline: 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -1166,7 +1189,7 @@ select:disabled {
   border-radius: 999px;
   background: var(--card);
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
@@ -1262,7 +1285,7 @@ select:disabled {
 
 .fav-name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 0.9375rem;
   line-height: 1.25;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1273,7 +1296,7 @@ select:disabled {
 
 .fav-room,
 .fav-state {
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--muted);
   max-width: 100%;
   overflow: hidden;
@@ -1368,7 +1391,7 @@ select:disabled {
 }
 
 .fav-error {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--errText);
 }
 
@@ -1411,7 +1434,7 @@ select:disabled {
   border: 1px dashed var(--line);
   border-radius: var(--radius);
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .favorites-empty > p {
@@ -1525,12 +1548,12 @@ select:disabled {
 .room-name {
   font-family: var(--font-head);
   font-weight: 600;
-  font-size: 18px;
+  font-size: 1.125rem;
 }
 
 .room-status {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* ---- Room screen and device rows ----------------------------------------------------------- */
@@ -1630,7 +1653,7 @@ select:disabled {
 .fridge-note {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .fridge-zones {
@@ -1650,19 +1673,19 @@ select:disabled {
 }
 
 .fridge-zone-name {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
 .fridge-zone-temperature {
   font-family: var(--font-head);
-  font-size: 26px;
+  font-size: 1.625rem;
   font-weight: 600;
   line-height: 1.2;
 }
 
 .fridge-zone-setpoint {
-  font-size: 13px;
+  font-size: 0.8125rem;
   opacity: 0.85;
 }
 
@@ -1672,7 +1695,7 @@ select:disabled {
   gap: 6px;
   margin: 10px 0 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .fridge-filter .icon {
@@ -1730,7 +1753,7 @@ select:disabled {
 
 .fridge-feature-state {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .fridge-feature-state.is-waiting {
@@ -1760,7 +1783,7 @@ select:disabled {
 
 .device-meta {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* On/off switch (role="switch" button). */
@@ -1877,7 +1900,7 @@ select:disabled {
   min-width: 4.5em;
   text-align: end;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1909,7 +1932,7 @@ select:disabled {
 
 .stepper-number {
   font-family: var(--font-head);
-  font-size: 30px;
+  font-size: 1.875rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
@@ -1917,7 +1940,7 @@ select:disabled {
 
 .stepper-label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 /* Heat and cool setpoints: side by side when the card has room for two steppers of about 220 px
@@ -1954,7 +1977,7 @@ select:disabled {
   gap: 4px;
   margin-inline-end: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .chip-row-label .icon {
@@ -1970,7 +1993,7 @@ select:disabled {
   border-radius: 999px;
   background: var(--card);
   color: var(--ink);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
@@ -2017,7 +2040,7 @@ select:disabled {
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--ink);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
@@ -2071,7 +2094,7 @@ select:disabled {
   width: 100%;
   min-height: 44px;
   padding-inline: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .others {
@@ -2124,7 +2147,7 @@ select:disabled {
   justify-content: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   text-align: center;
 }
 
@@ -2182,17 +2205,21 @@ select:disabled {
   min-width: 0;
 }
 
+/* Up to two lines (a narrow tile, a larger text size), cut only beyond. */
 .camera-name {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   font-weight: 600;
-  font-size: 15px;
+  font-size: 0.9375rem;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .camera-room {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .camera-tile .star {
@@ -2217,7 +2244,7 @@ select:disabled {
 }
 
 .camera-tile-large .camera-name {
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 @media (min-width: 1100px) {
@@ -2273,13 +2300,13 @@ select:disabled {
 }
 
 .ring-title {
-  font-size: 19px;
+  font-size: 1.1875rem;
   overflow-wrap: anywhere;
 }
 
 .ring-meta,
 .ring-note {
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .ring-banner .doorbell-picture .cam {
@@ -2299,7 +2326,7 @@ select:disabled {
 
 .relay-button-large {
   min-height: 52px;
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 @media (min-width: 760px) {
@@ -2369,7 +2396,7 @@ select:disabled {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .doorbell-event {
@@ -2424,7 +2451,7 @@ select:disabled {
 
 .alarm-read-only {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 /* The state goes under the name when the row is too narrow for both. */
@@ -2438,7 +2465,7 @@ select:disabled {
   padding: 4px 12px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--ink) 6%, transparent);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -2477,7 +2504,7 @@ select:disabled {
   margin: 6px 0 0;
   padding-inline-start: 50px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
@@ -2533,7 +2560,7 @@ select:disabled {
 
 .music-card .device-name {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
 }
 
@@ -2543,7 +2570,7 @@ select:disabled {
 }
 
 .music-detail {
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
@@ -2613,7 +2640,7 @@ select:disabled {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 
@@ -2793,6 +2820,11 @@ input[type="text"].command-input {
   text-overflow: ellipsis;
 }
 
+/* The hint stays small, so that it fits beside the microphone on a phone at any text size. */
+input[type="text"].command-input::placeholder {
+  font-size: min(1em, 15px);
+}
+
 input[type="text"].command-input:focus-visible {
   outline: none;
 }
@@ -2847,7 +2879,7 @@ input[type="text"].command-input:focus-visible {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
@@ -2885,7 +2917,7 @@ input[type="text"].command-input:focus-visible {
 .command-note,
 .command-hint {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .command-dismiss {
@@ -2949,7 +2981,7 @@ input[type="text"].command-input:focus-visible {
 }
 
 .dialog-title {
-  font-size: 18px;
+  font-size: 1.125rem;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2968,7 +3000,7 @@ input[type="text"].command-input:focus-visible {
 .dialog-status {
   margin-block-start: 8px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .dialog-foot {
@@ -2991,7 +3023,7 @@ input[type="text"].command-input:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: 0.9375rem;
   color: var(--muted);
 }
 
@@ -3055,7 +3087,7 @@ input[type="text"].command-input:focus-visible {
 }
 
 .connect-title {
-  font-size: 22px;
+  font-size: 1.375rem;
 }
 
 .connect-text,
@@ -3064,7 +3096,7 @@ input[type="text"].command-input:focus-visible {
 }
 
 .connect-footnote {
-  font-size: 13px;
+  font-size: 0.8125rem;
   padding-inline: 4px;
 }
 
@@ -3073,7 +3105,7 @@ input[type="text"].command-input:focus-visible {
   margin: 20px auto 0;
   max-width: 60ch;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   text-align: center;
 }
 
@@ -3126,7 +3158,7 @@ input[type="text"].command-input:focus-visible {
   align-items: center;
   gap: 8px;
   margin: 0;
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 .device-request-list {
@@ -3161,7 +3193,7 @@ input[type="text"].command-input:focus-visible {
   gap: 12px;
   margin-block-start: 6px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .connect-or::before,
@@ -3183,7 +3215,7 @@ input[type="text"].command-input:focus-visible {
 
 .settings-subtitle {
   margin: 0;
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 
 .invitation,
@@ -3204,7 +3236,7 @@ input[type="text"].command-input:focus-visible {
 .invitation-link {
   width: 100%;
   font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--muted);
   background: transparent;
   border: 1px solid var(--line);
@@ -3268,12 +3300,12 @@ input[type="text"].command-input:focus-visible {
 
 .connect-find-version {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* The pairing code, shown as "1234 5678". */
 input[type="text"].code-input {
-  font-size: 22px;
+  font-size: 1.375rem;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.12em;
 }
@@ -3300,7 +3332,7 @@ input[type="text"].code-input {
 .field-label {
   display: block;
   font-weight: 600;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 input[type="text"],
@@ -3314,7 +3346,7 @@ select {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink);
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 input[type="text"]:focus-visible,
@@ -3358,13 +3390,13 @@ input::placeholder {
 
 .backup input[type="file"] {
   max-width: 100%;
-  font-size: 15px;
+  font-size: 0.9375rem;
   color: var(--ink);
 }
 
 .backup-heading {
   margin: 0;
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 600;
 }
 
@@ -3375,7 +3407,7 @@ input::placeholder {
   gap: 6px;
   margin: 0;
   padding-inline-start: 20px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .backup-references,
@@ -3451,7 +3483,7 @@ input::placeholder {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 .settings-title .icon {
@@ -3465,7 +3497,7 @@ input::placeholder {
 }
 
 /* Settings' list: a row for each of its pages, with a line of how things are (views/settings.js).
-   On wide screens the two groups sit side by side, under Appearance and Language. */
+   On wide screens the two groups sit side by side. */
 .settings-pages {
   display: grid;
   gap: 16px;
@@ -3550,7 +3582,7 @@ input::placeholder {
 
 .settings-row-status {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
@@ -3560,7 +3592,7 @@ input::placeholder {
   border-radius: 999px;
   background: var(--primary);
   color: var(--primaryText);
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -3596,7 +3628,7 @@ input::placeholder {
 .history-day-title {
   margin: 8px 4px 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -3672,7 +3704,7 @@ input::placeholder {
   align-items: flex-start;
   gap: 4px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .history-outcome .icon {
@@ -3694,14 +3726,14 @@ input::placeholder {
   margin: 2px 0 0;
   padding-inline-start: 18px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
 .history-time {
   padding-block-start: 1px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3754,7 +3786,7 @@ input::placeholder {
   border-radius: var(--radius-sm);
   background: var(--card);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
@@ -3840,7 +3872,7 @@ input::placeholder {
   gap: 16px;
   padding-block: 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .fact:last-child {
@@ -3889,7 +3921,7 @@ input::placeholder {
 
 .room-editor-original {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .room-editor-form {
@@ -3928,7 +3960,7 @@ input::placeholder {
 }
 
 .empty-title {
-  font-size: 19px;
+  font-size: 1.1875rem;
 }
 
 .empty-text {
@@ -4044,7 +4076,7 @@ input::placeholder {
 .scene-name {
   color: var(--ink);
   font-weight: 600;
-  font-size: 16px;
+  font-size: 1rem;
   text-decoration: none;
   overflow-wrap: anywhere;
 }
@@ -4055,12 +4087,12 @@ a.scene-name:hover {
 
 .scene-summary {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   overflow-wrap: anywhere;
 }
 
 .scene-result {
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 500;
   color: var(--okText);
 }
@@ -4139,7 +4171,7 @@ a.scene-name:hover {
 
 .scene-chip-name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 0.9375rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4147,7 +4179,7 @@ a.scene-name:hover {
 
 .scene-chip-state {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4245,14 +4277,14 @@ a.scene-name:hover {
 
 .step-where {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .step-action {
   grid-column: 2;
   grid-row: 2;
   font-weight: 500;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 /* Tapping an action's text changes it, as its Edit button does. */
@@ -4359,7 +4391,7 @@ a.scene-name:hover {
   align-items: center;
   gap: 10px;
   margin: 0;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 .scene-link-fresh {
@@ -4398,7 +4430,7 @@ a.scene-name:hover {
 .scene-link-address {
   margin: 0;
   font-family: ui-monospace, "Cascadia Mono", Menlo, monospace;
-  font-size: 12px;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
   text-align: start;
 }
@@ -4450,7 +4482,7 @@ a.scene-name:hover {
 
 .open-request-question {
   margin: 8px 0 0;
-  font-size: 24px;
+  font-size: 1.5rem;
   line-height: 1.3;
 }
 
@@ -4461,14 +4493,14 @@ a.scene-name:hover {
 
 .open-request-actions .button {
   min-height: 56px;
-  font-size: 17px;
+  font-size: 1.0625rem;
 }
 
 /* Add an action: where, what, do. */
 .add-title {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -4511,7 +4543,7 @@ a.scene-name:hover {
 
 .kind-count {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4521,7 +4553,7 @@ a.scene-name:hover {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .which-label {
@@ -4639,18 +4671,18 @@ a.scene-name:hover {
 
 .weather-now {
   font-family: var(--font-head);
-  font-size: 18px;
+  font-size: 1.125rem;
   font-weight: 600;
 }
 
 .weather-more {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 
 .weather-credit {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 
 .schedule-card.is-off {
@@ -4699,7 +4731,7 @@ a.scene-name:hover {
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--ink);
-  font-size: 18px;
+  font-size: 1.125rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4743,7 +4775,7 @@ a.scene-name:hover {
 }
 
 .schedule-summary .add-summary {
-  font-size: 15px;
+  font-size: 0.9375rem;
 }
 
 /* ---- Shabbat and holidays (the Jewish calendar) ------------------------------------------- */
@@ -4755,7 +4787,7 @@ a.scene-name:hover {
   gap: 8px;
   margin: 0;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .calendar-line .icon {
@@ -4830,8 +4862,32 @@ a.scene-name:hover {
 
 .radio-help {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
   font-weight: 400;
+}
+
+/* Settings → Appearance and language (ADR-067): what follows the user, and the text sizes, each
+   written at the size it gives (in px: the same whatever size is chosen now). */
+.settings-note {
+  grid-column: 1 / -1;
+  padding-inline: 4px;
+}
+
+.text-size-sample {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.text-size-sample[data-size="small"] {
+  font-size: 15px;
+}
+
+.text-size-sample[data-size="large"] {
+  font-size: 18px;
+}
+
+.text-size-sample[data-size="larger"] {
+  font-size: 20px;
 }
 
 .calendar-minutes .stepper {

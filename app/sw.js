@@ -86,9 +86,12 @@ const ASSETS = [
   "/js/views/room.js",
   "/js/views/settings.js",
   "/js/views/updates.js",
-  // Languages. One added later is saved on first use even if it is not listed here.
+  // Languages (all of them: an update replaces this cache, and the app must still open offline in
+  // the language it shows; check_app.py requires every language here).
   "/i18n/en.js",
   "/i18n/he.js",
+  "/i18n/es.js",
+  "/i18n/it.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",

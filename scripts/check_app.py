@@ -228,6 +228,93 @@ def check_calendar_names(spec, dictionaries):
             fail(f"app/i18n/{code}.js: calendar.holidays.rosh_chodesh must name the month ({{month}})")
 
 
+# The owner's disclaimer, word for word in English and in each translation that has one written
+# down (1.10.0: Spanish and Italian); any other language must at least name all three.
+DISCLAIMERS = {
+    "en": "DirectorLink is an independent project, not affiliated with Control4 or Snap One.",
+    "es": "DirectorLink es un proyecto independiente, sin afiliación con Control4 ni Snap One.",
+    "it": "DirectorLink è un progetto indipendente, non affiliato a Control4 né a Snap One.",
+}
+
+PLURAL_FORMS = {"zero", "one", "two", "few", "many", "other"}
+
+# Placeholders the app passes in two forms, so that a language can pick the one its grammar needs:
+# key -> {English placeholder: the other one} (commands.js gives a room as {room} and {inRoom}).
+PLACEHOLDER_CHOICES = {
+    "command.example.lights": {"{room}": "{inRoom}"},
+    "command.example.climate": {"{room}": "{inRoom}"},
+}
+
+
+def is_plural(value):
+    return isinstance(value, dict) and bool(value) and set(value) <= PLURAL_FORMS
+
+
+def dictionary_strings(dictionary, prefix=""):
+    """key -> a string, or a plural object ({one: ..., other: ...}), with nested keys dotted."""
+    result = {}
+    for key, value in dictionary.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict) and not is_plural(value):
+            result.update(dictionary_strings(value, path))
+        else:
+            result[path] = value
+    return result
+
+
+def placeholders(value):
+    texts = value.values() if is_plural(value) else [value]
+    return {name for text in texts for name in re.findall(r"\{\w+\}", str(text))}
+
+
+def check_translations(dictionaries):
+    """Every language (1.10.0): exactly en.js's keys, no more and no fewer, each with the same
+    {placeholders} (a plural's forms together), plurals where English has them (with "other", and
+    "zero" where English has one), and the disclaimer in its words."""
+    english = dictionary_strings(dictionaries["en"])
+    for code, dictionary in dictionaries.items():
+        strings = dictionary_strings(dictionary)
+        if code != "en":
+            missing = [key for key in english if key not in strings]
+            extra = [key for key in strings if key not in english]
+            if missing:
+                fail(f"app/i18n/{code}.js is missing {len(missing)} key(s) of en.js: {', '.join(missing[:20])}")
+            if extra:
+                fail(f"app/i18n/{code}.js has {len(extra)} key(s) en.js does not: {', '.join(extra[:20])}")
+            for key, source in english.items():
+                value = strings[key]
+                if is_plural(source) != is_plural(value):
+                    fail(f"app/i18n/{code}.js: {key} must {'be' if is_plural(source) else 'not be'} plural forms, as in en.js")
+                if is_plural(value):
+                    if "other" not in value:
+                        fail(f'app/i18n/{code}.js: {key} needs an "other" form')
+                    if "zero" in source and "zero" not in value:
+                        fail(f'app/i18n/{code}.js: {key} needs a "zero" form, as in en.js')
+                elif not isinstance(value, str) and isinstance(source, str):
+                    fail(f"app/i18n/{code}.js: {key} must be text")
+                wanted = placeholders(source)
+                found = placeholders(value)
+                choices = PLACEHOLDER_CHOICES.get(key, {})
+                if found != wanted and found != {choices.get(name, name) for name in wanted}:
+                    fail(f"app/i18n/{code}.js: {key} has the placeholders {' '.join(sorted(found)) or 'none'}, en.js {' '.join(sorted(wanted)) or 'none'}")
+        independent = strings.get("settings.about.independent")
+        if code in DISCLAIMERS:
+            if independent != DISCLAIMERS[code]:
+                fail(f"app/i18n/{code}.js settings.about.independent must be the disclaimer word for word: {DISCLAIMERS[code]}")
+        elif not isinstance(independent, str) or not all(name in independent for name in ("DirectorLink", "Control4", "Snap One")):
+            fail(f"app/i18n/{code}.js settings.about.independent must say the disclaimer (DirectorLink, Control4, Snap One)")
+
+
+def check_language_files(codes, boot, service_worker):
+    """Every language listed in js/i18n.js is known before the first paint (theme-boot.js sets its
+    direction) and saved for offline use by the service worker (an update replaces the cache)."""
+    listed = re.search(r"var languages = \[([^\]]*)\]", boot)
+    if not listed or set(re.findall(r'"([a-zA-Z-]+)"', listed.group(1))) != set(codes):
+        fail("app/theme-boot.js must list the same languages as js/i18n.js (var languages)")
+    for code in codes:
+        require(service_worker, f'"/i18n/{code}.js"', f"the service worker must cache /i18n/{code}.js")
+
+
 def check_commands(files):
     """Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066), from {path: text}: the parser is the
     app's own, without imports (no library, tested under Node) but the one rule for lights named
@@ -418,6 +505,8 @@ def main():
         except ValueError as error:
             fail(f"app/i18n/{code}.js could not be read as a dictionary: {error}")
     check_calendar_names(yaml.safe_load(SPEC.read_text(encoding="utf-8")), dictionaries)
+    check_translations(dictionaries)
+    check_language_files(list(dictionaries), (APP / "theme-boot.js").read_text(encoding="utf-8"), (APP / "sw.js").read_text(encoding="utf-8"))
 
     for path in APP.rglob("*"):
         if path.is_file() and path.suffix in (".html", ".js", ".md") and "DirectorLink Access" in path.read_text(encoding="utf-8"):
@@ -495,8 +584,9 @@ def main():
         fail("tests must not live in app/ (Cloudflare publishes everything there); use tests/app/")
 
     # The owner's disclaimer, word for word: on Connect (before anyone pairs or signs in), at the foot
-    # of Settings and on About, in both languages.
-    disclaimer = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
+    # of Settings and on About, in every language (check_translations: English, Spanish and Italian
+    # word for word, and Hebrew in its words).
+    disclaimer = DISCLAIMERS["en"]
     require((APP / "i18n" / "en.js").read_text(encoding="utf-8"), f'independent: "{disclaimer}"', "en.js settings.about.independent must be the disclaimer word for word")
     require((APP / "i18n" / "he.js").read_text(encoding="utf-8"), "independent: \"DirectorLink ", "he.js settings.about.independent must say the disclaimer in Hebrew")
     connect_view = (APP / "js" / "views" / "connect.js").read_text(encoding="utf-8")
