@@ -656,6 +656,141 @@ test("doors and gates open only the ones picked, unless all of them is the choic
   assert.deepEqual(draft().steps[5], { type: "relays", room_id: 12, device_ids: null, set: { action: "pulse" } });
 });
 
+// ---- the AC: On, as it was, and Keep (1.10.0, ADR-070) ------------------------------------------
+
+// With a driver that remembers each thermostat's last mode (features.climate_last_mode).
+function homeWithLastModes(steps = STEPS) {
+  const nodes = home(steps);
+  state.system = { ...state.system, features: { ...state.system.features, climate_last_mode: true } };
+  return nodes;
+}
+const modeKeys = (nodes) => keysOf(nodes).filter((key) => key.startsWith("add-mode:"));
+
+test("the AC's modes: Off, On as it was, then the ones the ACs have; On as it was alone, its temperature and fan kept", () => {
+  homeWithLastModes();
+  let nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  assert.deepEqual(modeKeys(nodes), ["add-mode:off", "add-mode:on", "add-mode:cool", "add-mode:heat", "add-mode:auto"]);
+  assert.equal(plain(byKey(nodes, "add-mode:on").textContent), "On, as it was");
+  press(nodes, "add-mode:on");
+  nodes = add();
+  for (const key of ["add-temp:keep", "add-temp:set", "add-temp-up", "add-heat-up", "add-fan:keep"]) assert.equal(byKey(nodes, key), null, `${key} is hidden`);
+  assert.match(textOf(nodes), /Each AC that is off comes back on in the mode it was last in, with its own temperature and fan/);
+  assert.equal(summary(nodes), "Adds: All AC (Whole home): On, as it was");
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1), { type: "climate", room_id: null, device_ids: null, set: { mode: "on" } });
+
+  // Floor heating that only heats, and an AC: the same.
+  homeWithLastModes();
+  state.thermostats.push({ id: 203, name: "Bathroom floor", room: at(13), setpoints: "single", mode: "heat", modes: ["off", "heat"], target_temperature: 22, target_temperature_min: 5, target_temperature_max: 30, fan_speeds: [] });
+  nodes = add();
+  press(nodes, "add-room:13");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  press(nodes, "add-choose");
+  nodes = add();
+  tick(nodes, 203);
+  nodes = add();
+  assert.deepEqual(modeKeys(nodes), ["add-mode:off", "add-mode:on", "add-mode:heat"]);
+  press(nodes, "add-mode:on");
+  nodes = add();
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1), { type: "climate", room_id: 13, device_ids: [203], set: { mode: "on" } });
+});
+
+test("a driver before 1.10.0 is offered no On, as it was", () => {
+  home();
+  let nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  assert.deepEqual(modeKeys(nodes), ["add-mode:off", "add-mode:cool", "add-mode:heat", "add-mode:auto"]);
+  assert.ok(byKey(nodes, "add-temp:keep"), "Keep the temperature works with any driver: the step sets the mode alone");
+});
+
+test("the temperature: Keep or a value; the fan: Keep or a speed; Keep sends neither", () => {
+  homeWithLastModes();
+  let nodes = add();
+  press(nodes, "add-room:13");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  assert.ok(pressed(nodes, "add-mode:cool") && pressed(nodes, "add-temp:set") && pressed(nodes, "add-fan:keep"), "a new action: cool, 24°, its fan kept");
+  assert.equal(plain(byKey(nodes, "add-temp:set").textContent), "24°");
+  assert.ok(byKey(nodes, "add-temp-up"), "the stepper");
+  press(nodes, "add-temp:keep");
+  nodes = add();
+  assert.equal(byKey(nodes, "add-temp-up"), null, "no stepper with Keep");
+  assert.equal(summary(nodes), "Adds: All AC (Bedroom): Cool");
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1), { type: "climate", room_id: 13, device_ids: null, set: { mode: "cool" } }, "the mode alone");
+
+  nodes = add();
+  press(nodes, "add-room:13");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  press(nodes, "add-mode:heat");
+  press(nodes, "add-temp:keep");
+  press(nodes, "add-fan:medium");
+  nodes = add();
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1).set, { mode: "heat", fan_speed: "medium" });
+
+  // Heat and cool setpoints in auto: Keep keeps both.
+  nodes = add();
+  press(nodes, "add-room:11");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  press(nodes, "add-mode:auto");
+  nodes = add();
+  assert.equal(plain(byKey(nodes, "add-temp:set").textContent), "20°–24°");
+  assert.ok(byKey(nodes, "add-heat-up") && byKey(nodes, "add-cool-up"));
+  press(nodes, "add-temp:keep");
+  nodes = add();
+  assert.equal(byKey(nodes, "add-heat-up"), null);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1).set, { mode: "auto" });
+  // Set again: the value shown.
+  nodes = add();
+  press(nodes, "add-room:13");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  press(nodes, "add-temp-down");
+  nodes = add();
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps.at(-1).set, { mode: "cool", target_temperature: 23 });
+});
+
+test("an action with a mode alone opens with Keep; one that turns each AC on as it was, with On, as it was, saved back unchanged", () => {
+  const steps = [
+    { type: "climate", room_id: 13, device_ids: null, set: { mode: "heat" } },
+    { type: "climate", room_id: null, device_ids: null, set: { mode: "on" } },
+    { type: "climate", room_id: 13, device_ids: null, set: { mode: "cool", target_temperature: 20, fan_speed: "medium" } },
+  ];
+  homeWithLastModes(steps);
+  const rows = allByClass(editor(), "step-row");
+  assert.match(textOf(rows[1]), /On, as it was/, "the scene's action, in words");
+  let nodes = edit(0);
+  assert.ok(pressed(nodes, "add-mode:heat") && pressed(nodes, "add-temp:keep") && pressed(nodes, "add-fan:keep"));
+  nodes = edit(1);
+  assert.ok(pressed(nodes, "add-mode:on"));
+  assert.equal(summary(nodes), "Changes it to: All AC (Whole home): On, as it was");
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps, steps, "unchanged");
+  assert.equal(draft().dirty, false);
+  // The owner's Shabbat scene, changed to bring each AC back as the family left it.
+  nodes = edit(2);
+  assert.ok(pressed(nodes, "add-temp:set") && pressed(nodes, "add-fan:medium"));
+  press(nodes, "add-mode:on");
+  nodes = edit(2);
+  press(nodes, "add-confirm");
+  assert.deepEqual(draft().steps[2], { type: "climate", room_id: 13, device_ids: null, set: { mode: "on" } });
+});
+
 // ---- Hebrew ------------------------------------------------------------------------------------
 
 test("in Hebrew", async () => {

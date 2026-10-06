@@ -1709,4 +1709,19 @@ function tests.a_restore_waits_for_the_project()
     T.eq(answer.json.code, "PROJECT_NOT_READY")
 end
 
+-- A climate step that turns each AC on as it was (1.10.0, ADR-070) is kept as it is.
+function tests.a_step_that_turns_each_ac_on_as_it_was_comes_back()
+    local old = start()
+    local made = T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Shabbat AC", steps = {
+        { type = "climate", device_ids = { 30 }, set = { mode = "on" } },
+        { type = "climate", room_id = 11, set = { mode = "on" } },
+    } } })
+    T.eq(made.status, 201, made.body)
+    local document = export(old)
+    T.same(document.sections.scenes.scenes[1].steps[2].set, { mode = "on" })
+    local s = start()
+    replace(s, document)
+    T.same(list(s.mock, s.key, "/v1/scenes").items[1].steps, made.json.steps)
+end
+
 return tests

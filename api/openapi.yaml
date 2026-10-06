@@ -4020,6 +4020,9 @@ components:
             users:
               type: boolean
               description: "Always true since 1.9.0: `GET /v1/users` (Settings → Users), up to five devices a user, the devices of one account brought into one user, pairing codes for a chosen user (`/v1/pairing-code`), members adding and removing their own devices (ADR-061). Missing before 1.9.0."
+            climate_last_mode:
+              type: boolean
+              description: "Always true since 1.10.0: each thermostat's `last_mode` in `/v1/thermostats`, and the climate scene step `mode` `on` that turns each AC on as it was (ADR-070). Missing before 1.10.0, whose scenes refuse `on`."
 
     PairRequest:
       oneOf:
@@ -4513,7 +4516,14 @@ components:
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
             each thermostat's range) and `fan_speed` (low, medium, high, auto, on, circulate; left
-            out where a unit does not have it), and with `mode: off` nothing else; fans (1.2.0)
+            out where a unit does not have it), and with `mode: off` nothing else; what is left out
+            stays as it is (a step with a mode alone keeps the temperature and fan); since 1.10.0
+            (ADR-070) `mode: on`, alone: each thermostat that is off goes back to its last mode that
+            was not off (`last_mode` in `GET /v1/thermostats`), with nothing else sent, so its
+            temperature and fan stay as they were; one that is on is left as it is (it counts as
+            ran); one whose last mode is not known yet is skipped with `NO_LAST_MODE`, and one whose
+            last mode DirectorLink cannot set with `MODE_NOT_SUPPORTED` (never a guessed mode);
+            fans (1.2.0)
             `{"on": true|false}` or `{"speed": 1-4}` (1 low to 4 high); blinds
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
             door or gate relay is never held closed by a scene); music `{"action": "pause"}` or
@@ -4548,7 +4558,8 @@ components:
               maximum: 4
             mode:
               type: string
-              enum: ["off", heat, cool, auto]
+              enum: ["off", "on", heat, cool, auto]
+              description: '`on` (1.10.0): each AC on as it was, in its last mode; drivers before 1.10.0 refuse it.'
             target_temperature:
               type: number
               minimum: 5
@@ -4915,7 +4926,7 @@ components:
           description: Devices whose commands were handed to the controller (and Sonos groups told to pause or stop).
         skipped:
           type: integer
-          description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project).
+          description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project; since 1.10.0 an AC a step turns on as it was whose last mode is not known yet, `NO_LAST_MODE`).
         failed:
           type: integer
           description: Devices whose commands the controller refused.
@@ -6237,6 +6248,7 @@ components:
         - heat_setpoint
         - cool_setpoint
         - setpoint_deadband
+        - last_mode
       properties:
         id:
           type: integer
@@ -6293,6 +6305,9 @@ components:
         setpoint_deadband:
           type: [number, "null"]
           description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats. When not reported, cool must still be above heat (by 1 °F in a Fahrenheit project, 0.1 °C otherwise).
+        last_mode:
+          type: [string, "null"]
+          description: The last mode the thermostat was in that was not off (its current one while it is on), as `mode` names it, wherever it was set (Control4's apps, a keypad, Composer programming, DirectorLink); null until DirectorLink has seen it in one. What a scene's `mode` `on` and a command that turns the AC on bring it back to. Since 1.10.0 (ADR-070); missing before.
 
     ThermostatUpdate:
       type: object
@@ -7091,6 +7106,9 @@ components:
               type: integer
             failed:
               type: integer
+            no_last_mode:
+              type: integer
+              description: Of the skipped, the ACs a scene left off because their last mode is not known yet (`NO_LAST_MODE`); only when there are some. Since 1.10.0 (ADR-070).
         ids:
           type: object
           properties:

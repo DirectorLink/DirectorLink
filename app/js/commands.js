@@ -15,7 +15,7 @@ import { announce } from "./dom.js";
 import { allOff, setBlind, setFan, setLight, setStage, setThermostat, stopBlind } from "./controls.js";
 import { currentLanguage, formatTemperature, t } from "./i18n.js";
 import { isHeater } from "./heaters.js";
-import { climateIsOn, fanIsOn, lightIsOn, modeLabel, roomById, roomGroup, roomName } from "./model.js";
+import { climateIsOn, fanIsOn, lastMode, lightIsOn, modeLabel, roomById, roomGroup, roomName } from "./model.js";
 import { findMusic, musicAvailable, musicCommand, musicKey, musicRooms, setMusicLevels } from "./music.js";
 import { findScene, isolate, runScene, sceneOpensDoors } from "./scenes.js";
 import { activeSetpoint, isDual, setpointGap, withSetpoint } from "./setpoints.js";
@@ -99,6 +99,8 @@ export function commandCatalog() {
     add("thermostat", state.thermostats, (thermostat) => ({
       modes: thermostat.modes || [],
       mode: thermostat.mode || null,
+      // Its last mode, to turn it on as it was (1.10.0, ADR-070); null when not known.
+      last: lastMode(thermostat),
       dual: isDual(thermostat),
       min: thermostat.target_temperature_min,
       max: thermostat.target_temperature_max,
@@ -160,6 +162,7 @@ function doing(action) {
       return t(`command.do.${key}.${change.setpoint ? `${change.setpoint}${way}` : way.toLowerCase()}`, { degrees });
     }
     if (change.mode === "off") return t(`command.do.${key}.off`);
+    if (change.asItWas) return temperature ? t(`command.do.${key}.asItWasTemperature`, { temperature }) : t(`command.do.${key}.asItWas`);
     if (change.setpoint) return t(`command.do.${key}.${change.setpoint}Setpoint`, { temperature });
     if (change.mode && temperature) return t(`command.do.${key}.modeTemperature`, { mode: modeLabel(change.mode), temperature });
     if (change.mode) return t(`command.do.${key}.mode`, { mode: modeLabel(change.mode) });
@@ -308,16 +311,22 @@ function outcome(keys, started) {
 const NOTHING = () => ({ stage: "done", text: t("command.result.nothing") });
 
 // A thermostat's PATCH for a change the parser made: a target temperature, or with heat and cool
-// setpoints the one of its mode (or the one named), the other kept apart (setpoints.js). null when
-// there is nothing to send; { refused } (why, in words) when the setpoints cannot be set so.
+// setpoints the one of its mode (or the one named), the other kept apart (setpoints.js). On as it
+// was (1.10.0, ADR-070): one that is off goes back to its last mode, one that is on keeps its own.
+// null when there is nothing to send; { refused } (why, in words) when it cannot be done so.
 export function thermostatPlan(thermostat, change) {
   if (change.mode === "off" && !climateIsOn(thermostat)) return null;
+  let mode = change.mode || null;
+  if (change.asItWas && !climateIsOn(thermostat)) {
+    mode = lastMode(thermostat);
+    if (!mode) return { refused: t("command.problem.noLastMode", { name: isolate(thermostat.name || "") }) };
+  }
   const patch = {};
-  if (change.mode) patch.mode = change.mode;
+  if (mode) patch.mode = mode;
   if (Number.isFinite(change.temperature)) {
     if (isDual(thermostat)) {
-      const mode = change.mode || thermostat.mode;
-      const field = change.setpoint ? `${change.setpoint}_setpoint` : mode === "heat" ? "heat_setpoint" : mode === "cool" ? "cool_setpoint" : null;
+      const current = mode || thermostat.mode;
+      const field = change.setpoint ? `${change.setpoint}_setpoint` : current === "heat" ? "heat_setpoint" : current === "cool" ? "cool_setpoint" : null;
       const name = isolate(thermostat.name || "");
       // In auto (it changed since the words were understood): which setpoint is not said.
       if (!field) return { refused: t("command.problem.setpointWhich", { name }) };

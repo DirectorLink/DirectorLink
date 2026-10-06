@@ -241,7 +241,10 @@ local function stepText(step, registry)
         action = (set.on == false or set.brightness == 0) and "off" or set.brightness and (set.brightness .. "%") or "on"
     elseif step.type == "climate" then
         local parts = {}
-        if set.mode then
+        if set.mode == "on" then
+            -- 1.10.0 (ADR-070): each AC in its last mode, nothing else sent.
+            parts[#parts + 1] = "on, as it was"
+        elseif set.mode then
             parts[#parts + 1] = set.mode
         end
         if set.target_temperature then

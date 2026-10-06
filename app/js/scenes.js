@@ -61,6 +61,10 @@ export function findScene(id) {
   return (state.scenes || []).find((scene) => scene.id === id) || null;
 }
 
+// The controller remembers each thermostat's last mode, and a climate step turns each AC on as it
+// was (`mode: "on"`, 1.10.0, ADR-070).
+export const lastModeSupported = () => state.system?.features?.climate_last_mode === true;
+
 export function sceneOpensDoors(scene) {
   return (scene.steps || []).some((step) => step.type === "relays");
 }
@@ -133,6 +137,8 @@ export function stepAction(step) {
   }
   if (step.type === "climate") {
     if (set.mode === "off") return t("scenes.do.off");
+    // Each AC in its last mode, its temperature and fan as they were (1.10.0).
+    if (set.mode === "on") return t("scenes.do.onAsItWas");
     return [
       set.mode ? modeLabel(set.mode) : null,
       Number.isFinite(set.target_temperature) ? formatTemperature(set.target_temperature) : setpointsText(set),
@@ -236,6 +242,8 @@ export function resultText(result) {
     if (codes.size === 1 && codes.has("SONOS_OFF")) return t("scenes.result.sonosOff");
     if (codes.size === 1 && codes.has("NO_PLAYERS")) return t("scenes.result.noPlayers");
     if (codes.size === 1 && codes.has("NO_SONOS_ROOM")) return t("scenes.result.noSonosRoom");
+    // ACs left off: their last mode is not known yet (1.10.0).
+    if (codes.size === 1 && codes.has("NO_LAST_MODE")) return t("scenes.result.noLastMode", { count: result.skipped });
     return t("scenes.result.skipped", { count: result.skipped });
   }
   if (problems.length) return t("scenes.result.partial");

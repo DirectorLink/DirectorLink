@@ -220,6 +220,29 @@ test("an AC that is off asks which mode; one with two setpoints in auto, which s
   problem("turn on the AC", "needRoom");
 });
 
+// 1.10.0 (ADR-070): the controller says each thermostat's last mode (`last` in the catalog).
+const withLast = (last) => ({ ...HOME, devices: HOME.devices.map((device) => (device.id in last ? { ...device, last: last[device.id] } : device)) });
+
+test("an AC that is off turns on as it was when its last mode is known: no question", () => {
+  const known = withLast({ 201: "heat", 203: "auto" });
+  same("AC on in the kids room", { type: "climate", ids: [201], change: { asItWas: true } }, known);
+  same("turn on the AC in the kids room", { ids: [201], change: { asItWas: true } }, known);
+  same("הדלק את המזגן בחדר ילדים", { ids: [201], change: { asItWas: true } }, known);
+  same("תדליקו את המזגן בחדר הילדים", { ids: [201], change: { asItWas: true } }, known);
+  same("kids room AC to 24", { ids: [201], change: { asItWas: true, temperature: 24 } }, known);
+  // A mode said is that mode; off is off.
+  same("kids room AC cool", { ids: [201], change: { mode: "cool" } }, known);
+  same("AC off in the kids' room", { ids: [201], change: { mode: "off" } }, known);
+  // Heat and cool setpoints, last in auto: on as it was; with a temperature, which one is asked.
+  same("turn on the parents AC", { ids: [203], change: { asItWas: true } }, known);
+  assert.equal(asks("parents AC to 22", known).question, "mode");
+  same("parents AC to 22", { ids: [203], change: { asItWas: true, temperature: 22 } }, withLast({ 203: "cool" }));
+  problem("living room AC on", "alreadyOn", known);
+  // Not known: asked, as before.
+  assert.equal(asks("AC on in the kids room").question, "mode");
+  assert.equal(asks("הדלק את המזגן בחדר ילדים").question, "mode");
+});
+
 // ---- blinds and fans ---------------------------------------------------------------------------
 
 test("blinds open, close, to a position, stop", () => {
