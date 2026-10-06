@@ -2,7 +2,42 @@
 
 ## Current release
 
-`v1.9.0` — Users and their devices (190e), say or type a command (190d), handing the home to another admin (190c), ask before opening counts only devices that can be asked (190b), the website demo's Users (190a). No D1 migration; deploy the Worker before or with the driver.
+`v1.10.0` — Relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). No D1 migration and no Worker change.
+
+## 1100e. Spanish, Italian, and Appearance and language (1.10.0)
+
+1. Settings shows **Appearance and language** as a row; open it: Language, Theme, Colors and Text size. Language, theme and colors change on your other devices too; Text size only on this one.
+2. Text size Larger at 320 px, in each language: Home, a room, Climate, Scenes, Users and a dialog fit, nothing cut or overlapping. Small on an iPhone: tapping a text field doesn't zoom the page.
+3. Español, then Italiano: every screen in that language; a doorbell ring and a camera alert arrive in it; dates and numbers in its format. Spanish says "emparejar" for pairing with a code and "vincular" for linking the home to an account.
+4. Back to English and Hebrew: all as before; right to left in Hebrew.
+
+## 1100d. Commands that do more, in four languages (1.10.0)
+
+1. Hebrew, iPhone Home Screen app: dictate "כבו את האור במטבח ותסגרו את התריסים": two parts shown, both done. "Kitchen lights off. Close the blinds." (two sentences): two parts.
+2. "תעלה את המזגן בסלון": +1°. "kitchen lights brighter": +20. "תגביר את המוזיקה בסלון": volume +10. "alza il volume in cucina di 10" and "sube el volumen un 10" (no unit): nothing.
+3. These do nothing: "האור בחדר הורים דלוק", "שער חניה פתוח" (questions without "?"), "יותר חם לי", "apaga la luz de la cocina a las siete", "no apagues la luz", "spegni la luce alle sette", "turn off the lights in the room" (asks which room).
+4. "תכבה את רחצה ספוטים כניסה ואת המזגן": asks which room (never the Entrance AC).
+5. Español: "enciende la luz de la cocina y apaga la del salón": the kitchen on, only the salón's lights off. Italiano: "spegni le luci della cucina e metti il condizionatore a 23".
+6. "open the main gate and turn on the porch light": the light goes on; the gate waits for its own second tap.
+7. Change the app's language with words in the command field: back on Home, the field and its answer are empty.
+
+## 1100c. Heaters left as they are (1.10.0)
+
+1. "כבו את האורות בחדר הורים": דוד הורים stays on, and the answer says it was left. "תכבו את דוד הורים": it goes off.
+2. Home's Turn off all: the count leaves the heaters out; the second tap and the result name them; they stay on.
+3. A room with a heater on: All off leaves it on, and a note under the button says so.
+4. A scene that turns off a room's lights still turns off its heaters (scenes are unchanged).
+
+## 1100b. One agreement for every DirectorLink camera driver (1.10.0)
+
+1. Log Level Info: each Hikvision camera logs "a camera of DirectorLink's camera agreement" with `events_by`. Note which: "by DIRECTORLINK_CAMERA_EVENTS" (Hikvision 1.1 with the variable), "by name from Director", or "Hikvision event 1". At Debug, after Refresh Project, "what Director gives of a camera driver's events" shows whether Control4 lists a driver's events.
+2. Walk past a camera with camera alerts on: one alert, in the app's language.
+3. With the DirectorLink · DoorBird (or UniFi) driver set to the agreement as a doorbell: it shows with the doorbells; a press shows Home's banner with its live picture and a ring alert with the app closed; a second press within 30 s gives no second alert; its room shows its last rings. Updating DirectorLink with the app open shows no banner.
+4. `GET /v1/devices?type=doorbell` lists the doorbell camera; `POST /v1/doorbells/<id>/open` on it answers 409 NOT_SUPPORTED.
+
+## 1100a. The website (1.10.0)
+
+1. directorlink.io says "In English, Hebrew, Spanish and Italian", and the alerts line mentions DirectorLink Drivers.
 
 ## 190e. Users and their devices (1.9.0)
 
