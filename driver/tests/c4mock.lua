@@ -586,11 +586,12 @@ end
 -- Cameras whose drivers follow DirectorLink's camera agreement (1.10.0, ADR-065; made up: no such
 -- driver is in this repository): one camera proxy each, a basic login, and the driver's variables
 -- ONLINE, then (with `marker`, "1" by default; false: not yet) DIRECTORLINK_CAMERA and
--- DIRECTORLINK_CAMERA_KIND (`kind`, "camera" or "doorbell"), then LAST_ALERT and LAST_RING. Its
--- events, as Director gives its driver.xml: Mock.AGREEMENT_EVENTS (Alert is 7, Ring 8), or `events`
--- ({ { id, name } }). `list`: { { id, protocol, name, room (10 or 11), address, kind, marker, events,
--- file } }; by default 67 "Porch" (a camera, Living Room, driver 157) and 68 "Entrance" (a doorbell,
--- Kitchen, driver 158).
+-- DIRECTORLINK_CAMERA_KIND (`kind`, "camera" or "doorbell"), then LAST_ALERT and LAST_RING, then
+-- (with `events_variable`) DIRECTORLINK_CAMERA_EVENTS. Its events, as Director gives its driver.xml:
+-- Mock.AGREEMENT_EVENTS (Alert is 7, Ring 8), or `events` ({ { id, name } }). `list`: { { id,
+-- protocol, name, room (10 or 11), address, kind, marker, events, events_variable, file } }; by
+-- default 67 "Porch" (a camera, Living Room, driver 157) and 68 "Entrance" (a doorbell, Kitchen,
+-- driver 158).
 Mock.AGREEMENT_EVENTS = { { 1, "Camera Online" }, { 2, "Camera Offline" }, { 3, "Motion" }, { 7, "Alert" }, { 8, "Ring" } }
 Mock.AGREEMENT_FILE = "DirectorLink-Example-Camera.c4z"
 
@@ -626,6 +627,10 @@ function Mock.withAgreementCameras(project, list)
         end
         names[#names + 1] = "LAST_ALERT"
         names[#names + 1] = "LAST_RING"
+        if camera.events_variable then
+            names[#names + 1] = "DIRECTORLINK_CAMERA_EVENTS"
+            values.DIRECTORLINK_CAMERA_EVENTS = camera.events_variable
+        end
         project.variables[camera.protocol] = {}
         project.variableNames[camera.protocol] = {}
         for index, name in ipairs(names) do

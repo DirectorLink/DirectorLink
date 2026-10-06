@@ -59,6 +59,14 @@ function Doorbells.open(ctx)
     if not device then
         return problem
     end
+    -- One that opens nothing (a doorbell camera, a DoorBird without its button) says so first,
+    -- whatever Door Control and the caller's doors: no setting would let it open.
+    if not (device.capabilities and device.capabilities.open == true) then
+        return Problem.fromAdapter({
+            code = "ACTION_NOT_SUPPORTED",
+            message = device.camera_doorbell and "This doorbell has nothing to open" or "This DoorBird has no button to open with",
+        })
+    end
     if not Access.canOpen(ctx.apiKey, device) then
         return Problem.new(403, "FORBIDDEN", "Opening doors and gates is not among this person's permissions")
     end

@@ -30,7 +30,7 @@ Object.defineProperty(globalThis, "navigator", {
   configurable: true,
 });
 
-const { notifyRings } = await import("../../app/js/doorbells.js");
+const { notifyRings, ringIsActive, trackRings } = await import("../../app/js/doorbells.js");
 
 const RING = "2026-10-03T05:00:00Z";
 
@@ -47,4 +47,19 @@ test("a ring is shown once, with its time, under the tag the controller's alert 
   // The next ring is.
   await notifyRings([{ id: 93, name: "Front Gate", last_ring_at: "2026-10-03T05:03:00Z" }]);
   assert.equal(shown.length, 2);
+});
+
+// Only a later last_ring_at is a ring. After DirectorLink restarts it may say an older time (the one
+// the doorbell's driver kept): no banner and no notification for it, and the next real ring counts.
+test("a last_ring_at that goes back is not a ring", () => {
+  const LATER = "2026-10-03T05:10:00Z";
+  assert.deepEqual(trackRings([{ id: 94, name: "Entrance", last_ring_at: RING }]), [], "the value there when the page loaded");
+  const rang = trackRings([{ id: 94, name: "Entrance", last_ring_at: LATER }]);
+  assert.deepEqual(rang.map((doorbell) => doorbell.id), [94]);
+
+  const restarted = { id: 94, name: "Entrance", last_ring_at: "2026-10-03T05:05:00Z" };
+  assert.deepEqual(trackRings([restarted]), [], "an older time: not a ring");
+  assert.equal(ringIsActive(restarted), false, "no banner");
+  assert.deepEqual(trackRings([{ id: 94, name: "Entrance", last_ring_at: LATER }]), [], "back to the ring it knows: not a new one");
+  assert.deepEqual(trackRings([{ id: 94, name: "Entrance", last_ring_at: "2026-10-03T05:20:00Z" }]).length, 1, "the next ring");
 });
