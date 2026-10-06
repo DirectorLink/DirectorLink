@@ -1207,7 +1207,9 @@ function Mock.install(project)
             if not mock.weather then
                 return nil, "Couldn't resolve host"
             end
-            return { code = 200, headers = { ["Content-Type"] = "application/json" }, body = Json.encode(mock.weather) }
+            -- A function answers at the moment it is asked (driver/tests/weather_fake.lua).
+            local answer = type(mock.weather) == "function" and mock.weather(url) or mock.weather
+            return { code = 200, headers = { ["Content-Type"] = "application/json" }, body = Json.encode(answer) }
         end
         if mock.camerasOffline then
             return nil, "Couldn't connect to server"

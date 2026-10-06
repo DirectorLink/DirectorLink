@@ -1758,14 +1758,16 @@ paths:
       x-directorlink-role: member
       summary: The weather at home
       description: |
-        Open-Meteo's current conditions and today's forecast for the project's location (Composer
-        project properties), as the controller last read them, and today's sunrise and sunset,
-        worked out on the controller. The controller reads the weather every 15 minutes while a
-        schedule needs it, and for an hour after this is asked. Weather data by Open-Meteo.com
-        (CC BY 4.0).
+        The weather now and today's forecast for the project's location (Composer project
+        properties), and today's sunrise and sunset, worked out on the controller. Since 1.10.0
+        (ADR-071) the weather now is the hour for now of Open-Meteo's hourly forecast, which the
+        controller reads every 6 hours while a schedule needs the weather, and for an hour after this
+        is asked, and keeps for 5 days: with or without the internet, schedules and this answer use
+        the same forecast (`source: forecast`). Up to 1.9.0 it was the current conditions, read every
+        15 minutes, and there was no `source`. Weather data by Open-Meteo.com (CC BY 4.0).
       responses:
         "200":
-          description: The latest reading; `status` says why there is none.
+          description: The weather now; `status` says why there is none.
           content:
             application/json:
               schema:
@@ -5164,14 +5166,15 @@ components:
 
     Weather:
       type: object
-      required: [status, location, fetched_at, current, today, attribution]
+      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, attribution]
       properties:
         status:
           type: string
           enum: [ok, waiting, unreachable, no_location]
-          description: "`no_location`: set the latitude and longitude in Composer's project properties."
+          description: "`no_location`: set the latitude and longitude in Composer's project properties. `unreachable`: Open-Meteo could not be reached and no saved forecast holds now (none was read, or it ran out 5 days after it was read)."
         detail:
           type: [string, "null"]
+          description: Why the last read of the forecast failed, also while the saved forecast is used (`ok`).
         location:
           type: [object, "null"]
           description: For admin keys only (rounded); null for other roles.
@@ -5183,8 +5186,22 @@ components:
         fetched_at:
           type: [string, "null"]
           format: date-time
+          description: When the controller read the forecast in use from Open-Meteo (1.10.0); up to 1.9.0, the current conditions.
+        source:
+          type: [string, "null"]
+          enum: [forecast, null]
+          description: "1.10.0 (ADR-071): `forecast`, the saved forecast's hour for now, always when there is weather; null without. A 1.9.0 driver gives no `source`: its weather was measured."
+        forecast_for:
+          type: [string, "null"]
+          format: date-time
+          description: The moment `current` is for (1.10.0); null without weather.
+        forecast_until:
+          type: [string, "null"]
+          format: date-time
+          description: When the saved forecast runs out, 5 days after it was read (1.10.0); then the weather is unknown until a new one is read.
         current:
           type: [object, "null"]
+          description: "The weather now. From the forecast (1.10.0): the temperature and the wind between the two hours around now, the precipitation of the hour now, `raining` when it is more than 0, and no gusts."
           properties:
             temperature:
               type: number
@@ -5194,9 +5211,10 @@ components:
               description: km/h
             wind_gusts:
               type: [number, "null"]
+              description: Null since 1.10.0.
             precipitation:
               type: number
-              description: mm
+              description: mm (in the hour now, from the forecast)
             raining:
               type: boolean
             weather_code:

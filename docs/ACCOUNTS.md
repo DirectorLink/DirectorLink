@@ -99,6 +99,13 @@ tells it so, and the account service tells it which keys have no browser left (k
 it already knew), so that such a run answers `nobody` rather than `asked`. The cloud learns nothing
 new by it.
 
+**The weather** does not involve DirectorLink's servers at all: the controller asks Open-Meteo
+(a free weather service) itself, sending only the project's location rounded to two decimals
+(about a kilometre), and Open-Meteo sees the home's internet address, as with any request. Since
+1.10.0 (ADR-071) it asks for a 5-day forecast every 6 hours at most (4 times a day; every 15 minutes
+before), and only while a schedule uses the weather or for an hour after an app showed it; the
+forecast stays on the controller.
+
 ## Keys
 
 Every device already has its own API key `S` (`ak_…`), from pairing or from an invitation. The

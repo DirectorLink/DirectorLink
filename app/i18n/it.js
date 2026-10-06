@@ -1047,6 +1047,7 @@ export default {
       waiting: "Caricamento del meteo…",
       unreachable: "Al momento il servizio meteo non è raggiungibile; le programmazioni legate al meteo restano in attesa.",
       no_location: "Imposta la posizione della casa in Composer (proprietà del progetto: latitudine e longitudine) per usare il meteo.",
+      forecast: "Previsione per le {time}, aggiornata {when}",
       credit: "Meteo fornito da Open-Meteo",
     },
     editor: {

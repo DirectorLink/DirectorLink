@@ -1,6 +1,7 @@
 # Schedules and the weather
 
-**Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0.**
+**Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0; the weather from a saved
+forecast in 1.10.0 (ADR-071).**
 
 A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, when the
 weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
@@ -35,7 +36,8 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
     "12:00", "to": "20:00", "once_a_day": true}`:
     - heat: hotter than `above` °C (15–45); it runs again only after it has cooled 2° below;
     - wind: stronger than `above` km/h (10–150); again only after it has dropped 10 km/h below;
-    - rain: when it starts to rain; again only after an hour without rain;
+    - rain: when it starts to rain; again only after an hour without rain (in the forecast, like
+      everything about the weather: [The weather](#the-weather));
     - `from`/`to` (optional) limit it to those hours (they may cross midnight); `once_a_day`
       (default on) at most once per day. With hours, the rule is ready again each day when its
       hours begin (1.10.0), whatever the weather did overnight: "08:00 to 23:00, hotter than 23°"
@@ -45,9 +47,10 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
     minutes before (negative) or after, up to six hours (see [Shabbat and holidays](#shabbat-and-holidays)).
 - `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C), `wind_below` (km/h),
   `rain_expected` (today's forecast: a 50% chance or more). They are checked when the schedule is
-  due, with the latest weather.
-- `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no internet,
-  no location): `run` (the default) or `skip`.
+  due, with the weather then (the forecast's).
+- `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no forecast
+  read yet, or the saved one ran out after 5 days without the internet; no location): `run` (the
+  default) or `skip`.
 - `during_shabbat` (1.2.0; time, sun and weather schedules): `run` (the default: as on any day),
   `skip` (not on Shabbat and holidays) or `only` (only then).
 - Read back with `next_run` (time, sun and Shabbat) and `last_run` (`ran`, `skipped`, `failed`, and
@@ -68,21 +71,40 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
 - What the scheduler remembers (last run, whether a weather schedule may run again) is saved, so a
   restart does not run anything twice. A save that fails is logged; if what it remembers cannot be
   read at a start, nothing is caught up then (below), and the log says so.
-- Each run is logged (`GET /v1/logs?category=schedules`).
+- Each run is logged (`GET /v1/logs?category=schedules`), since 1.10.0 with `forecast_from`: when
+  the forecast that decided it was read, for a run the weather decided.
 
 ## The weather
 
-- From **Open-Meteo** (open-meteo.com, free, no account): the current temperature, wind,
-  precipitation and weather code, and today's high, low and chance of rain. Weather data by
-  Open-Meteo.com, CC BY 4.0.
-- The **controller** asks `api.open-meteo.com` itself, every 15 minutes while an enabled schedule
-  needs the weather, and for an hour after an app shows it. Nothing goes through DirectorLink's
-  servers. It sends the project's location rounded to two decimals (about a kilometre).
+- From **Open-Meteo** (open-meteo.com, free, no account): since 1.10.0 (ADR-071) its **hourly
+  forecast** for the next 5 days (temperature, precipitation, wind and weather code) and each day's
+  high, low and chance of rain. Weather data by Open-Meteo.com, CC BY 4.0.
+- **The weather is always the forecast.** Weather schedules, "only if", `GET /v1/weather` and the
+  app all read the saved forecast's hour for now: the temperature and the wind between the two hours
+  around now (20° at 08:00 and 26° at 09:00 make 23° at 08:30), and rain when the forecast has any
+  precipitation in the hour now (Open-Meteo gives each hour's sum at its end). The hour without rain
+  that a rain rule waits for is the forecast's too.
+- **Every 6 hours** the **controller** asks `api.open-meteo.com` itself for a new forecast, while an
+  enabled schedule needs the weather, and for an hour after an app shows it: 4 requests a day. It
+  replaces the saved one. Nothing goes through DirectorLink's servers. It sends the project's
+  location rounded to two decimals (about a kilometre), as before.
+- **Without the internet** nothing changes for 5 days: the saved forecast (kept across restarts,
+  about 3 KB) is used until 5 days after it was read. A failed read is tried again every 30 minutes
+  (and logged once); once one succeeds, its forecast is used at once. After 5 days without a new
+  one there is no weather (`unreachable`): weather rules wait, and "only if" does what
+  `if_no_weather` says. At a start, a saved forecast older than 6 hours is read anew.
+- **Why a forecast:** a fraction of the requests (4 a day instead of 96), and the same weather with
+  or without the internet, which matters on Shabbat, when nobody fixes anything: "hotter than 23°,
+  08:30–23:00, only on Shabbat and holidays" still turns the AC on when the internet fails on
+  Friday. The trade-off: a forecast can differ from what happens, usually by a degree or two, and
+  the timing of rain more (a shower may come an hour early or late, or not at all).
 - The location is the project's latitude and longitude in Composer (project properties). Without
-  them, `GET /v1/weather` says `no_location` and weather schedules do not run.
-- A reading older than 45 minutes counts as none. After a failed read the controller tries again
-  every 5 minutes (and logs the failure once). The last reading is kept across restarts; a
-  schedule with "only if" due right after a restart waits a few minutes for a first reading.
+  them, `GET /v1/weather` says `no_location` and weather schedules do not run. A forecast read for
+  another location is not used.
+- `GET /v1/weather` says `source: "forecast"`, `fetched_at` (when it was read), `forecast_for` (the
+  moment `current` is for), `forecast_until` (when it runs out) and, while reads fail, `detail` (why).
+  A 1.9.0 driver's answer has no `source`: its weather was measured, every 15 minutes, and counted
+  as none after 45 minutes.
 - Open-Meteo's free service is for non-commercial use, which a household's own schedules are. An
   installer offering this commercially should check Open-Meteo's terms (they have paid plans).
 - `GET /v1/weather` also gives today's sunrise and sunset. Its `location` is given to admin keys
@@ -165,10 +187,13 @@ in Composer, on the DirectorLink device (0.15.0):
   anything — e.g. while troubleshooting. Nothing runs, and nothing is caught up afterwards (except a
   time due in the last 5 minutes), not even by a restart. The app says the schedules are paused by
   the installer.
-- **Schedule Status** (read-only): e.g. `3 on · next tomorrow 06:45 Good morning · 1 weather rule`,
-  or `Paused in Composer - 3 schedules are not running`, or `None`.
+- **Schedule Status** (read-only): e.g. `3 on · next tomorrow 06:45 Good morning · 1 weather rule ·
+  weather forecast from today 08:00`, or `Paused in Composer - 3 schedules are not running`, or
+  `None`. When schedules use the weather it ends with the forecast's time, or `no weather forecast
+  yet`, `no weather forecast (Open-Meteo unreachable)` (none holds now) or `(no location)` (1.10.0).
 - **Last Automation** (read-only): the last scene DirectorLink ran, when, why and what happened,
-  e.g. `28 Sep 13:10 Cool the house · heat rule, 31C outside · 22 devices`, or
+  e.g. `28 Sep 13:10 Cool the house · heat rule, 31C forecast · 22 devices` (`31C outside` before
+  1.10.0), or
   `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
 - **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
   and last run) and every scene with its steps and device names and ids to the Lua output.
@@ -193,9 +218,10 @@ device will both run; these properties are how to find the DirectorLink side.
 
 ## The app
 
-- **Scenes → Schedules**: the weather at home (with the Open-Meteo credit) and every schedule in a
-  sentence — "Sun–Thu at 06:45 · Runs Good morning · Only if it isn’t raining · Next: tomorrow
-  06:45" — with an on/off switch for admins.
+- **Scenes → Schedules**: the weather at home (with the Open-Meteo credit; since 1.10.0 "Forecast
+  for 14:20, updated today 08:00") and every schedule in a sentence — "Sun–Thu at 06:45 · Runs
+  Good morning · Only if it isn’t raining · Next: tomorrow 06:45" — with an on/off switch for
+  admins.
 - The editor: 1 · the scene; 2 · when — At a time, Sun (sunrise or sunset, an hour or half an
   hour before or after), or Weather (heat, rain, wind, with the reading now, the threshold, the
   hours and at most once a day); 3 · the days (with Every day, Sun–Thu and Fri–Sat); 4 · only if;

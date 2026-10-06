@@ -1038,6 +1038,8 @@ export default {
       waiting: "Reading the weather…",
       unreachable: "Can’t reach the weather service now; weather schedules wait for it.",
       no_location: "Set the home’s location in Composer (project properties: latitude and longitude) to use the weather.",
+      // 1.10.0 (ADR-071): the weather is the forecast's hour for now; {when} is "today 08:00".
+      forecast: "Forecast for {time}, updated {when}",
       credit: "Weather by Open-Meteo",
     },
     editor: {

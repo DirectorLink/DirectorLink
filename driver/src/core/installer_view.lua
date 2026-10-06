@@ -6,6 +6,7 @@
 local Scenes = require("src.core.scenes")
 local Scheduler = require("src.core.scheduler")
 local Schedules = require("src.core.schedules")
+local Weather = require("src.core.weather")
 
 local View = {}
 
@@ -141,10 +142,22 @@ end
 
 local CALENDAR_MISSING = { off = "Jewish Calendar is Off", no_location = "no location" }
 
+-- What schedules that use the weather have now (ADR-071): "weather forecast from today 08:00", or
+-- "no weather forecast (Open-Meteo unreachable)".
+local function forecastText(now)
+    local reading, savedAt, reason = Weather.current(now)
+    if reading then
+        return "weather forecast from " .. when(savedAt, now)
+    end
+    return "no weather forecast" .. (reason == "NO_LOCATION" and " (no location)" or reason == "UNREACHABLE" and " (Open-Meteo unreachable)" or " yet")
+end
+
 -- The Schedule Status property: "3 on · next tomorrow 06:45 Good morning · 1 weather rule ·
--- 2 Shabbat schedules". `calendar`: the Jewish calendar (src/core/jewish_calendar.lua), or nil.
+-- 2 Shabbat schedules · weather forecast from today 08:00". `calendar`: the Jewish calendar
+-- (src/core/jewish_calendar.lua), or nil.
 function View.scheduleStatus(now, paused, calendar)
     local total, on, weather, shabbat = 0, 0, 0, 0
+    local usesWeather = false
     local nextAt, nextScene
     for _, schedule in ipairs(Schedules.records()) do
         total = total + 1
@@ -153,6 +166,7 @@ function View.scheduleStatus(now, paused, calendar)
             if schedule.trigger.type == "weather" then
                 weather = weather + 1
             end
+            usesWeather = usesWeather or Schedules.usesWeather(schedule)
             if shabbatAutomation(schedule) then
                 shabbat = shabbat + 1
             end
@@ -182,6 +196,9 @@ function View.scheduleStatus(now, paused, calendar)
         local missing = CALENDAR_MISSING[calendar and calendar.status() or "off"]
         parts[#parts + 1] = shabbat .. " Shabbat schedule" .. (shabbat == 1 and "" or "s") .. (missing and (" not running (" .. missing .. ")") or "")
     end
+    if usesWeather then
+        parts[#parts + 1] = forecastText(now)
+    end
     return table.concat(parts, " · ")
 end
 
@@ -193,12 +210,13 @@ function View.lastAutomation(event)
     if event.schedule then
         local trigger = event.schedule.trigger
         if trigger.type == "weather" and event.weather then
+            -- The weather is the forecast's (ADR-071).
             if trigger.kind == "heat" then
-                why = "heat rule, " .. number(event.weather.temperature) .. "C outside"
+                why = "heat rule, " .. number(event.weather.temperature) .. "C forecast"
             elseif trigger.kind == "wind" then
-                why = "wind rule, " .. number(event.weather.wind_speed or 0) .. " km/h"
+                why = "wind rule, " .. number(event.weather.wind_speed or 0) .. " km/h forecast"
             else
-                why = "rain rule, rain started"
+                why = "rain rule, rain forecast"
             end
         else
             why = "schedule " .. View.whenText(event.schedule) .. (event.note == "late" and ", late after a restart" or "")

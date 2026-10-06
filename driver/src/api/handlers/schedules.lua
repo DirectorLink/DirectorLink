@@ -240,8 +240,10 @@ local function rounded(value)
     return value and math.floor(value * 100 + 0.5) / 100 or Json.null
 end
 
--- GET /v1/weather: the latest reading and today's sunrise and sunset (worked out on the controller,
--- so they are there without the internet too). Reading it keeps the weather fresh for an hour.
+-- GET /v1/weather: the weather now and today's sunrise and sunset (worked out on the controller,
+-- so they are there without the internet too). Since 1.10.0 (ADR-071) the weather now is the saved
+-- forecast's hour for now (`source`), read at `fetched_at`; `detail` says why the last read failed,
+-- also while the saved forecast is used. Reading it keeps the forecast fresh for an hour.
 function Handlers.weather(ctx)
     local now = Clock.now()
     Weather.wanted(now)
@@ -254,6 +256,9 @@ function Handlers.weather(ctx)
         -- Where the home is: for admins only (rounded).
         location = latitude and Access.isAdmin(ctx.apiKey) and { latitude = rounded(latitude), longitude = rounded(longitude) } or Json.null,
         fetched_at = fetchedAt and Clock.iso(fetchedAt) or Json.null,
+        source = data and data.source or Json.null,
+        forecast_for = data and Clock.iso(now) or Json.null,
+        forecast_until = data and data.forecast_until and Clock.iso(data.forecast_until) or Json.null,
         current = data and {
             temperature = data.temperature,
             wind_speed = nullable(data.wind_speed),

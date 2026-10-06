@@ -7,6 +7,7 @@ local T = require("helpers")
 local Json = require("src.core.json")
 local Harness = require("relay_harness")
 local Helpers = require("calendar_helpers")
+local WeatherFake = require("weather_fake")
 
 local tests = {}
 
@@ -410,11 +411,9 @@ end
 local CANDLES = Helpers.epoch("2026-10-02T15:04:00Z")
 local HAVDALAH = Helpers.epoch("2026-10-03T16:05:00Z")
 
+-- The fake Open-Meteo's forecast, the same every hour (driver/tests/weather_fake.lua).
 local function weather(temperature, rain)
-    return {
-        current = { temperature_2m = temperature, precipitation = rain or 0, weather_code = 0, wind_speed_10m = 5, wind_gusts_10m = 8 },
-        daily = { temperature_2m_max = Json.array({ temperature + 2 }), temperature_2m_min = Json.array({ temperature - 8 }), precipitation_probability_max = Json.array({ 10 }) },
-    }
+    return WeatherFake.steady(temperature, { rain = rain })
 end
 
 -- The driver with the Jewish calendar on and the clock at `now`; `previous`: started again with
