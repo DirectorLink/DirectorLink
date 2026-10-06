@@ -1244,6 +1244,17 @@ function modesOf(thermostats) {
 
 const isOn = (thermostat) => Boolean(thermostat.mode) && thermostat.mode !== "off";
 
+// On as it was (1.10.0, ADR-070): every thermostat that is off has a last mode to go back to
+// (`last`, from the controller); with a temperature, one with heat and cool setpoints only to heat
+// or cool (which setpoint), and none of them on in auto. Otherwise the mode is asked, as before.
+function asItWas(targets, withTemperature = false) {
+  const off = targets.filter((device) => !isOn(device));
+  if (!off.length || !off.every((device) => typeof device.last === "string" && device.last !== "" && device.last !== "off")) return false;
+  if (!withTemperature) return true;
+  const settable = (mode) => mode === "heat" || mode === "cool";
+  return off.every((device) => !device.dual || settable(device.last)) && targets.filter(isOn).every((device) => !device.dual || settable(device.mode));
+}
+
 // Which mode, for thermostats that are off: one option per mode they have; with a temperature and
 // heat and cool setpoints, heat or cool (the setpoint the temperature is for).
 function askMode(targets, where, ids, change) {
@@ -1365,8 +1376,12 @@ function kindIntent(kind, targets, where, summary, act) {
         return { status: "ask", question: "setpoint", options: ["cool", "heat"].map((setpoint) => action("climate", { ...where, ids, change: { mode, setpoint, temperature } }).action) };
       }
       if (mode) return action("climate", { ...where, ids, change: { mode, temperature } });
-      // Off, the thermostat needs a mode; with heat and cool setpoints in auto, which setpoint.
-      if (targets.some((device) => !isOn(device))) return askMode(targets, where, ids, { temperature });
+      // Off, the thermostat needs a mode: its last one, else asked; with heat and cool setpoints
+      // in auto, which setpoint.
+      if (targets.some((device) => !isOn(device))) {
+        if (asItWas(targets, true)) return action("climate", { ...where, ids, change: { asItWas: true, temperature } });
+        return askMode(targets, where, ids, { temperature });
+      }
       if (targets.some((device) => device.dual && device.mode !== "heat" && device.mode !== "cool")) {
         return { status: "ask", question: "setpoint", options: ["cool", "heat"].map((setpoint) => action("climate", { ...where, ids, change: { setpoint, temperature } }).action) };
       }
@@ -1375,6 +1390,8 @@ function kindIntent(kind, targets, where, summary, act) {
     if (mode) return action("climate", { ...where, ids, change: { mode } });
     if (act === "on" || act === "start") {
       if (targets.every(isOn)) return problem("alreadyOn", { device: named, room: where.room, kind });
+      // Each in its last mode, as it was; asked when one's is not known.
+      if (asItWas(targets)) return action("climate", { ...where, ids, change: { asItWas: true } });
       return askMode(targets, where, ids, {});
     }
     return problem("needWhat", { kind, room: where.room, device: named });

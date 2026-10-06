@@ -155,6 +155,16 @@ local function build(kind, action, fields)
         for _, field in ipairs(COUNTS) do
             entry.counts[field] = number(fields.counts[field]) or 0
         end
+        -- A scene's ACs left off, their last mode not known yet (1.10.0, ADR-070): from its problems.
+        local unknown = 0
+        for _, problem in ipairs(type(fields.counts.problems) == "table" and fields.counts.problems or {}) do
+            if type(problem) == "table" and problem.code == "NO_LAST_MODE" then
+                unknown = unknown + 1
+            end
+        end
+        if unknown > 0 then
+            entry.counts.no_last_mode = unknown
+        end
         -- Failed on a device, nothing sent (all skipped), or ran.
         if not entry.outcome then
             local counts = entry.counts

@@ -19,6 +19,7 @@ local Schedules = require("src.core.schedules")
 local Sonos = require("src.sonos.sonos")
 local Activity = require("src.core.activity")
 local SceneLinks = require("src.core.scene_links")
+local LastModes = require("src.core.last_modes")
 
 local Handlers = {}
 
@@ -219,7 +220,7 @@ local function validateSet(stepType, set, field)
         local result = {}
         if set.mode ~= nil then
             if not Scenes.MODES[set.mode] then
-                return nil, Problem.invalidField(field .. ".mode", "mode must be one of off, heat, cool, auto")
+                return nil, Problem.invalidField(field .. ".mode", "mode must be one of off, on, heat, cool, auto")
             end
             result.mode = set.mode
         end
@@ -250,6 +251,9 @@ local function validateSet(stepType, set, field)
         end
         if result.mode == "off" and (result.fan_speed or result.target_temperature or heat or cool) then
             return nil, Problem.invalidField(field, 'mode "off" turns the AC off; leave out the temperature, setpoints and fan speed')
+        end
+        if result.mode == "on" and (result.fan_speed or result.target_temperature or heat or cool) then
+            return nil, Problem.invalidField(field, 'mode "on" turns each AC on as it was, in its last mode with its own temperature and fan; leave out the temperature, setpoints and fan speed')
         end
         return result
     elseif stepType == "fans" then
@@ -525,8 +529,28 @@ local function temperatureCommand(set, device, options)
     return { action = "set_temperature", params = { value = clamp(value) } }
 end
 
+-- A climate step's "on" (1.10.0, ADR-070): a thermostat that is off goes back to its last mode that
+-- was not off, and nothing else is sent, so its temperature and fan stay as they were. One that is
+-- on is left as it is (no commands: it ran). One whose last mode is not known yet is skipped and
+-- told so: DirectorLink never guesses heat or cool.
+local function onAsItWas(device, options)
+    local current = string.lower(tostring((device.state or {}).hvac_mode or ""))
+    if current ~= "" and current ~= "off" then
+        return {}
+    end
+    local mode = LastModes.get(device.id)
+    if not mode then
+        return nil, "NO_LAST_MODE", "No last mode known yet; set it once (turn it on in a mode) and DirectorLink remembers it"
+    end
+    if not contains(options.modes, mode) then
+        return nil, "MODE_NOT_SUPPORTED", "Its last mode, " .. mode .. ", is not one DirectorLink can set"
+    end
+    return { { action = "set_hvac_mode", params = { value = mode } } }
+end
+
 -- The adapter commands for one device, or nil and why it is skipped; then what is left out, if
--- anything (a fan speed the unit does not have, a setpoint it cannot take).
+-- anything (a fan speed the unit does not have, a setpoint it cannot take). No commands: the device
+-- is already as the step sets it (an AC on, for "on as it was").
 local function deviceCommands(step, device)
     local set = step.set
     if step.type == "lights" then
@@ -542,6 +566,9 @@ local function deviceCommands(step, device)
         return nil, "INVALID_STEP", "This step does not say what to do"
     elseif step.type == "climate" then
         local options = Views.thermostatOptions(device)
+        if set.mode == "on" then
+            return onAsItWas(device, options)
+        end
         local commands, leftOut = {}, nil
         if set.mode then
             if not contains(options.modes, set.mode) then
@@ -657,13 +684,17 @@ local function run(ctx, steps, via)
             else
                 local commands, code, detail = deviceCommands(step, device)
                 local leftOut = commands and code or nil
-                if commands then
+                local already = commands ~= nil and #commands == 0
+                if commands and not already then
                     commands, leftOut = withoutRefused(services, device, commands, leftOut)
                     if #commands == 0 then
                         commands, code, detail = nil, "NOT_SUPPORTED", leftOut
                     end
                 end
-                if not commands then
+                if already then
+                    -- As the step sets it already: nothing to send (ADR-070).
+                    result.ran = result.ran + 1
+                elseif not commands then
                     note("skipped", index, device.id, code, detail)
                 else
                     local failure

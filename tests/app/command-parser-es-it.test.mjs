@@ -144,6 +144,10 @@ test("Spanish: the AC to a temperature, off, to a mode; one that is off asks the
   assert.equal(es.asks("enciende el clima del dormitorio principal").question, "mode");
   assert.equal(es.asks("aire de los niños a 22").question, "setpoint");
   es.problem("enciende el aire de los niños", "alreadyOn");
+  // Its last mode known (1.10.0, ADR-070): on as it was, no question.
+  const known = { ...ES, devices: ES.devices.map((device) => (device.id === 201 ? { ...device, last: "cool" } : device)) };
+  es.same("enciende el clima del dormitorio principal", { ids: [201], change: { asItWas: true } }, known);
+  es.same("clima del dormitorio principal a 23", { ids: [201], change: { asItWas: true, temperature: 23 } }, known);
 });
 
 test("Spanish: the AC warmer and cooler, with the AC or the temperature said", () => {
@@ -379,6 +383,9 @@ test("Italian: the AC to a temperature, off, to a mode; one that is off asks the
   it.same("metti il condizionatore del soggiorno sul caldo a 22", { ids: [200], change: { mode: "heat", temperature: 22 } });
   assert.equal(it.asks("accendi il climatizzatore della camera da letto").question, "mode");
   assert.equal(it.asks("clima della cameretta a 22").question, "setpoint");
+  // Its last mode known (1.10.0, ADR-070): on as it was, no question.
+  const known = { ...IT, devices: IT.devices.map((device) => (device.id === 201 ? { ...device, last: "heat" } : device)) };
+  it.same("accendi il climatizzatore della camera da letto", { ids: [201], change: { asItWas: true } }, known);
 });
 
 test("Italian: the AC warmer and cooler, with the AC or the temperature said", () => {

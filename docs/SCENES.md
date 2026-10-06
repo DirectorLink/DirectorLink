@@ -36,7 +36,15 @@ them in full (ADR-025); ADR-054 says what each became.
     (`low`, `medium`, `high`, `auto`, `on`, `circulate`), and since 1.1.0 `heat_setpoint` and
     `cool_setpoint` instead of `target_temperature` (5–40, cool above heat). With `mode: off`,
     nothing else. The temperature is kept within each thermostat's range; a fan speed a unit does
-    not have is left out.
+    not have is left out. What a step leaves out stays as it is: `{"mode": "cool"}` sends the mode
+    alone, and each AC keeps its temperature and fan (the app's **Keep**).
+  - climate, since 1.10.0 (ADR-070): `{"mode": "on"}`, alone, turns each AC on **as it was**: one
+    that is off goes back to its last mode that was not off, and nothing else is sent, so its
+    temperature and fan are the ones it had; one that is on is left as it is (it counts as ran,
+    nothing is sent). One whose last mode is not known yet is skipped with `NO_LAST_MODE` ("No last
+    mode known yet; set it once"): DirectorLink never guesses heat or cool. A last mode DirectorLink
+    cannot set (an AC last in Dry from its own remote) is skipped with `MODE_NOT_SUPPORTED`. See
+    *On, as it was* below.
   - Thermostats with heat and cool setpoints (1.1.0) take `heat_setpoint` and `cool_setpoint` as
     their setpoints, and `target_temperature` as the setpoint of the step's mode (or of the current
     mode); in auto and off a target is left out. Setpoints that come closer than the thermostat's
@@ -85,7 +93,8 @@ the device routes, and answers `202` with what happened to each device:
   the scene itself, from a schedule or a link (`FORBIDDEN`), or with Door Control off in Composer
   (`DOOR_CONTROL_DISABLED`), a mode a
   unit does not have (`MODE_NOT_SUPPORTED`), a device no longer in the project (`NOT_FOUND`), a
-  thermostat left with nothing to do once its refused setpoints are left out;
+  thermostat left with nothing to do once its refused setpoints are left out, an AC turned on as it
+  was whose last mode is not known yet (`NO_LAST_MODE`, 1.10.0);
 - `failed`: refused by the controller.
 
 A thermostat's temperature command is checked before the thermostat gets any command: a refused
@@ -112,7 +121,14 @@ turn knows only the music steps that pause and stop: 1.8.0 keeps the others (res
 favorite) apart under `directorlink_scene_steps_2`, which 1.7.0 neither reads nor rewrites, and
 marks the scenes record `music_steps_kept`, which 1.7.0 drops when it saves; back on 1.8.0 they go
 back in their places the same way (ADR-057). A 1.7.0 app shows such a step as "Pause" and keeps
-it when it saves the scene. If the stored scenes cannot be read at start, changes are refused (503) until a
+it when it saves the scene. DirectorLink 1.9.0 knows the climate modes off, heat, cool and auto:
+1.10.0 keeps the steps that turn each AC on as it was (`mode: on`) apart under
+`directorlink_scene_steps_3`, which 1.9.0 neither reads nor rewrites, and marks the scenes record
+`climate_steps_kept`, which 1.9.0 and older drop when they save; back on 1.10.0 they go back in
+their places the same way (ADR-070). 1.9.0 itself runs the rest of such a scene (and logs the step
+it left out). A 1.9.0 app shows such a step as "On" and sends it back unchanged when it saves the
+scene; its Edit screen shows Cool picked but keeps the step as it was unless one of its choices is
+changed (then it becomes that mode and temperature). If the stored scenes cannot be read at start, changes are refused (503) until a
 restart reads them, so they are never overwritten by an empty list.
 
 `POST /v1/scenes/try` with `steps` runs them once without saving (admins): "Try it now".
@@ -120,6 +136,34 @@ restart reads them, so they are never overwritten by an empty list.
 `POST /v1/off` with `type` (lights, climate, blinds) and `device_ids` runs one step on those devices
 (members, 1.3.0; since 1.8.0 a member names only devices they control, any other is `400`): lights
 off, AC off or blinds closed, and answers the same way. It is Home's "Turn off all" in the app.
+
+## On, as it was (1.10.0, ADR-070)
+
+"Shabbat and holidays: the AC on" used to set every AC to one mode, temperature and fan. With
+`{"mode": "on"}` each AC comes back as the family last left it: the living room in cool at 20°
+with its fan on medium, the bedroom in heat at 23°.
+
+- **Each thermostat's last mode.** DirectorLink remembers the last mode each thermostat was in
+  that was not off, whoever set it: Control4's apps, a keypad, Composer programming, DirectorLink.
+  It looks when the driver starts, at a project refresh or a driver update, and at every change of
+  the thermostat's variables (`src/core/last_modes.lua`, from `src/adapters/manager.lua`). It is
+  kept in a small store of its own, `directorlink_last_modes` (`{"version": 1, "modes": {"30":
+  "cool"}}`, persistent data that survives updates and restarts), written only when a
+  thermostat's last mode changes, up to 200 thermostats. It is not in backups: after a restore on
+  a new controller each thermostat's last mode is seen again. `GET /v1/thermostats` shows it as
+  `last_mode` (null until seen).
+- **What a run does.** An AC that is off gets its last mode and nothing else, so its temperature
+  and fan are the ones the AC kept. One that is on is left alone (counted as ran). One never seen
+  on since DirectorLink 1.10.0 started watching (a new AC, or one off since the update) is left
+  off and the run says so, in the app ("1 AC was left off: its last mode isn't known yet") and in
+  History ("1 AC left off: no last mode known yet; set it once"; `counts.no_last_mode`): turn it on
+  once, in its mode, and from then on it comes back. Floor heating and thermostats with heat and
+  cool setpoints work the same (both setpoints kept). Composer's printout shows `on, as it was`.
+- **Commands.** "Turn on the AC in the living room", "הדלק את המזגן בסלון", "enciende el aire del
+  salón", "accendi il condizionatore del soggiorno" turn an AC that is off on in its last mode
+  (`PATCH` with that mode alone), instead of asking which mode; "living room AC to 23" sets 23° in
+  it. One whose last mode is not known (or a driver before 1.10.0) is asked about, as before; a mode
+  said ("on cool") is that mode.
 
 ## Links for automations (1.7.0, ADR-051)
 
@@ -270,6 +314,13 @@ their **Open** there opens it.
   the actions from the current state of every light, AC, fan and blind (doors and gates, and
   refrigerators, are never copied); **Show on Home**; **Try it now**; **Save scene**. The ideas All off and Leaving home
   turn fans off too (1.2.0).
+- The AC (1.10.0, ADR-070): **Mode** Off, **On, as it was** (with a 1.10.0 driver:
+  `features.climate_last_mode`), then Cool, Heat and Auto as the chosen ACs have them;
+  **Temperature** Keep or a value (the stepper, or Heat and Cool in auto); **Fan** Keep or a
+  speed. On, as it was hides the temperature and the fan: each AC keeps its own. Keep sends
+  nothing for it, so a step can turn the ACs to cool and leave each one's temperature as it is. An
+  action saved with a mode alone opens with Keep. Floor heating that only heats offers Off, On, as
+  it was and Heat.
 - Auto for thermostats with heat and cool setpoints (1.1.0) offers a Heat and a Cool stepper, kept
   at least the largest deadband of the chosen thermostats apart; copying the house keeps both
   setpoints of such a thermostat in auto. Copied temperatures stay within what an action takes

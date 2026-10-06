@@ -363,6 +363,8 @@ export function outcomeText(entry) {
     if (counts.failed) parts.push(t("history.counts.failed", { count: counts.failed, total }));
     else if (counts.ran) parts.push(t("history.counts.ran", { count: counts.ran }));
     if (counts.skipped) parts.push(t("history.counts.skipped", { count: counts.skipped }));
+    // ACs a scene left off, their last mode not known yet (1.10.0, ADR-070).
+    if (counts.no_last_mode) parts.push(t("history.counts.noLastMode", { count: counts.no_last_mode }));
     if (!total) parts.push(t("history.counts.none"));
   }
   if (entry.kind === "schedule" && entry.note === "late") parts.push(t("history.note.late"));

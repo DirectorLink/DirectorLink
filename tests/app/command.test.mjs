@@ -633,6 +633,50 @@ test("a thermostat's request: its setpoint with heat and cool setpoints, the oth
   assert.deepEqual(thermostatChange({ id: 30, mode: "cool" }, { temperature: 22.5 }), { target_temperature: 22.5 });
 });
 
+test("an AC that is off turns on as it was: its last mode only, nothing else sent; asked when not known (1.10.0)", async () => {
+  await setLanguage("en");
+  const off = (fields) => ({ ...THERMOSTATS[0], mode: "off", ...fields });
+  const home = async (fields) => {
+    await connect();
+    state.thermostats = [off(fields)];
+    controller.thermostats = [off(fields)];
+    notify();
+  };
+  await home({ last_mode: "heat" });
+  await say("turn on the AC in the living room");
+  assert.equal(shown(), "⁨Living Room AC⁩: on as it wasWorking…");
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /^\/v1\/thermostats\//).map((call) => [call.path, call.body]), [["/v1/thermostats/30", { mode: "heat" }]], "the mode alone: its temperature and fan as they were");
+  assert.equal(shown(), "⁨Living Room AC⁩: on as it wasDone");
+
+  await setLanguage("he");
+  try {
+    await home({ last_mode: "cool" });
+    await say("הדלק את המזגן בסלון");
+    assert.equal(shown(), "⁨סלון⁩: הדלקת המזגן כפי שהיהמבצע…");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /^\/v1\/thermostats\//).map((call) => call.body), [{ mode: "cool" }]);
+  } finally {
+    await setLanguage("en");
+  }
+
+  // Not known yet (or a driver before 1.10.0): which mode, as before.
+  await home({ last_mode: null });
+  await say("turn on the AC in the living room");
+  assert.match(shown(), /^Which mode\?/);
+  assert.equal(sent("PATCH", /./).length, 0);
+
+  const { thermostatPlan } = await import("../../app/js/commands.js");
+  assert.deepEqual(thermostatPlan(off({ last_mode: "cool" }), { asItWas: true }), { patch: { mode: "cool" } });
+  assert.deepEqual(thermostatPlan(off({ last_mode: "cool" }), { asItWas: true, temperature: 22 }), { patch: { mode: "cool", target_temperature: 22 } });
+  assert.equal(thermostatPlan({ ...THERMOSTATS[0], last_mode: "heat" }, { asItWas: true }), null, "on: left as it is");
+  assert.deepEqual(thermostatPlan({ ...THERMOSTATS[0], last_mode: "heat" }, { asItWas: true, temperature: 22 }), { patch: { target_temperature: 22 } }, "on: in its own mode");
+  assert.match(thermostatPlan(off({ last_mode: null }), { asItWas: true }).refused, /last mode isn’t known yet/);
+  assert.ok(thermostatPlan(off({ last_mode: "dry" }), { asItWas: true }).refused, "a mode it cannot be set to is never sent");
+  const dual = { id: 31, name: "Office AC", setpoints: "dual", mode: "off", last_mode: "heat", modes: ["off", "heat", "cool", "auto"], heat_setpoint: 20, cool_setpoint: 24, setpoint_deadband: 2, target_temperature_min: 10, target_temperature_max: 32 };
+  assert.deepEqual(thermostatPlan(dual, { asItWas: true, temperature: 21 }), { patch: { mode: "heat", heat_setpoint: 21 } }, "the setpoint of its last mode");
+});
+
 test("the controller refusing shows why", async () => {
   await connect();
   controller.patch = () => ({ status: 403, body: { status: 403, code: "FORBIDDEN", detail: "Not allowed" } });

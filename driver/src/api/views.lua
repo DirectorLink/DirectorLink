@@ -3,6 +3,7 @@
 
 local Json = require("src.core.json")
 local RoomNames = require("src.core.room_names")
+local LastModes = require("src.core.last_modes")
 
 local Views = {}
 
@@ -405,6 +406,8 @@ function Views.thermostat(registry, device)
         heat_setpoint = nullable(heat),
         cool_setpoint = nullable(cool),
         setpoint_deadband = nullable(capabilities.deadband_c),
+        -- Its last mode that was not off (1.10.0, ADR-070): what "on as it was" turns it on in.
+        last_mode = nullable(LastModes.get(device.id)),
     }
 end
 

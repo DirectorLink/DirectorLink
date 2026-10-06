@@ -97,3 +97,23 @@ test("a member's scene names only their rooms and devices: the rest is elsewhere
   assert.equal(stepWhere(kitchen), "חדרים אחרים");
   await setLanguage("en");
 });
+
+// On, as it was (1.10.0, ADR-070): the action in words, and the run's result when ACs were left
+// off (their last mode not known yet; History in history.test.mjs).
+test("an action that turns each AC on as it was, and ACs left off without a last mode, in words", async () => {
+  const { resultText, sceneSummary, stepAction } = await import("../../app/js/scenes.js");
+  const { setLanguage } = await import("../../app/js/i18n.js");
+  await setLanguage("en");
+  state.rooms = [{ id: 11, name: "Living room", names: {} }];
+  const step = { type: "climate", room_id: 11, device_ids: null, set: { mode: "on" } };
+  assert.equal(stepAction(step), "On, as it was");
+  assert.equal(sceneSummary({ steps: [step] }), "⁨⁨Living room⁩ AC⁩: On, as it was");
+  assert.equal(stepAction({ type: "climate", set: { mode: "cool", fan_speed: "medium" } }), "Cool, fan Medium", "the temperature kept");
+  const left = (count, ran = 1) => ({ ran, skipped: count, failed: 0, problems: Array.from({ length: count }, (_, index) => ({ step: 1, device_id: 30 + index, outcome: "skipped", code: "NO_LAST_MODE", detail: "No last mode known yet; set it once" })) });
+  assert.equal(resultText(left(1)), "Done — 1 AC was left off: its last mode isn’t known yet. Turn it on once, in its mode.");
+  assert.equal(resultText(left(2)), "Done — 2 AC were left off: their last mode isn’t known yet. Turn each on once, in its mode.");
+  await setLanguage("he");
+  assert.equal(stepAction(step), "הדלקה, כפי שהיה");
+  assert.equal(resultText(left(2)), "בוצע — 2 מזגנים נשארו כבויים: המצב האחרון שלהם עדיין לא ידוע. הפעילו כל אחד פעם אחת במצב שלו.");
+  await setLanguage("en");
+});

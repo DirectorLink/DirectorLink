@@ -177,6 +177,8 @@ function System.info(ctx)
         -- users: Settings → Users (1.9.0, ADR-061): GET /v1/users, up to five devices a user, an
         -- account's devices brought into one user, pairing codes for a chosen user, members adding
         -- and removing their own devices; always there.
+        -- climate_last_mode: each thermostat's last mode (`last_mode` in /v1/thermostats), and the
+        -- climate scene step that turns each AC on as it was (mode "on") (1.10.0, ADR-070); always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -191,6 +193,7 @@ function System.info(ctx)
             ask_links = true,
             camera_alerts = cameraAlerts(registry),
             users = true,
+            climate_last_mode = true,
         },
     }
 end

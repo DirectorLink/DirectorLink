@@ -11,6 +11,7 @@ local KnxRelay = require("src.adapters.knx_relay")
 local DoorBird = require("src.adapters.doorbird")
 local Alarm = require("src.adapters.alarm")
 local Refrigerator = require("src.adapters.refrigerator")
+local LastModes = require("src.core.last_modes")
 
 local Manager = {}
 
@@ -81,6 +82,10 @@ local function attach(id, device, adapter, before, quietly)
         eventTargets[tonumber(device.event_source_id)] = id
     end
     countKind(device, 1)
+    -- A thermostat's mode, when it is not off: the one a scene turns it back on in (ADR-070).
+    if device.kind == "climate" then
+        pcall(LastModes.saw, device, registry)
+    end
     return true
 end
 
@@ -321,6 +326,10 @@ function Manager.onVariableChanged(deviceId, variableId, value)
     if not ok then
         log("state update failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
+    end
+    -- Whoever changed a thermostat's mode (ADR-070).
+    if changed == true and device.kind == "climate" then
+        pcall(LastModes.saw, device, registry)
     end
 
     return changed == true

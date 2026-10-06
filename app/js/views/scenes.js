@@ -10,7 +10,7 @@
 
 import { emptyState, skeletonCards, slider } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
-import { formatNumber, formatTemperature, t } from "../i18n.js";
+import { formatNumber, formatTemperature, formatTemperatureRange, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { fanSpeeds } from "../fans.js";
 import { FEATURE_ICONS, featuresOf, stepFeature, stepSet } from "../refrigerators.js";
@@ -26,6 +26,7 @@ import {
   devicesOfType,
   findScene,
   isolate,
+  lastModeSupported,
   loadScenes,
   resultText,
   runScene,
@@ -46,7 +47,8 @@ import { linksSupported, loadLinks } from "../scene-links.js";
 
 const MAX_SCENES = 50;
 const MESSAGE_MS = 6000;
-const MODE_ORDER = ["off", "cool", "heat", "auto"];
+// "on": each AC on as it was, in its last mode (1.10.0, ADR-070), with a driver that has it.
+const MODE_ORDER = ["off", "on", "cool", "heat", "auto"];
 
 function notice(message) {
   return message ? h("p", { class: `notice notice-${message.kind}`, role: message.kind === "error" ? "alert" : "status" }, message.text) : null;
@@ -607,7 +609,8 @@ async function deleteDraft(draft) {
 // ---- adding an action ----------------------------------------------------------------------
 
 function newAdding() {
-  // `fan`: the AC's fan speed; `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
+  // `fan`: the AC's fan speed (null: Keep); `keepTemperature`: the AC's temperature is kept (1.10.0);
+  // `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
   // `screen`: the screen these choices belong to ("add", or "edit:<index>"). `fridgeFeature` and
   // `fridgeOn`: which refrigerator feature, on or off.
   // Music (1.8.0): `music` the action, `musicVolume` its volume, `favorite` ({ id, title }) and
@@ -622,6 +625,7 @@ function newAdding() {
     light: "off",
     brightness: 50,
     mode: null,
+    keepTemperature: false,
     temperature: 24,
     heat: 20,
     cool: 24,
@@ -643,7 +647,7 @@ function newAdding() {
 // The choices that make the setting of each kind of action; the others say where and which devices.
 const SETTING_CHOICES = {
   lights: ["light", "brightness"],
-  climate: ["mode", "temperature", "heat", "cool", "fan"],
+  climate: ["mode", "keepTemperature", "temperature", "heat", "cool", "fan"],
   fans: ["fanDo", "fanSpeed"],
   blinds: ["blind", "position"],
   relays: [],
@@ -701,6 +705,8 @@ function editAdding(steps, index) {
   } else if (step.type === "climate") {
     const target = Number.isFinite(set.target_temperature) ? set.target_temperature : set.mode === "heat" ? set.heat_setpoint : set.mode === "cool" ? set.cool_setpoint : null;
     adding.mode = set.mode ?? null;
+    // No temperature in a step that sets a mode: Keep (1.10.0).
+    if (set.mode !== "off" && set.mode !== "on") adding.keepTemperature = !Number.isFinite(target) && !Number.isFinite(set.heat_setpoint) && !Number.isFinite(set.cool_setpoint);
     if (Number.isFinite(target)) adding.temperature = target;
     if (Number.isFinite(set.heat_setpoint)) adding.heat = set.heat_setpoint;
     if (Number.isFinite(set.cool_setpoint)) adding.cool = set.cool_setpoint;
@@ -799,12 +805,14 @@ function unique(values) {
 
 // What the AC choices offer for these thermostats: their modes, temperature range and fan speeds.
 // `dual`: some have heat and cool setpoints, which Auto then sets, kept at least `gap` apart (the
-// largest gap any of them needs).
+// largest gap any of them needs). On, as it was, for thermostats with a mode besides off, with a
+// driver that remembers their last mode.
 function climateChoices(devices) {
   const offered = unique(devices.flatMap((device) => device.modes || []));
   const duals = devices.filter(isDual);
+  const asItWas = lastModeSupported() && offered.some((mode) => mode !== "off");
   return {
-    modes: MODE_ORDER.filter((mode) => mode === "off" || offered.includes(mode)),
+    modes: MODE_ORDER.filter((mode) => mode === "off" || (mode === "on" ? asItWas : offered.includes(mode))),
     min: Math.min(...devices.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : 16))),
     max: Math.max(...devices.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : 32))),
     fans: unique(devices.flatMap((device) => device.fan_speeds || [])),
@@ -852,11 +860,13 @@ function settle(adding, devices) {
 function chosenSet(adding, targets) {
   if (adding.type === "lights") return adding.light === "off" ? { on: false } : adding.light === "on" ? { on: true } : { brightness: adding.brightness };
   if (adding.type === "climate") {
+    // Off, and on as it was (each AC in its last mode, its temperature and fan kept), alone.
+    if (adding.mode === "off" || adding.mode === "on") return { mode: adding.mode };
     let set;
-    if (adding.mode === "off") set = { mode: "off" };
+    if (adding.keepTemperature) set = { mode: adding.mode };
     else if (adding.mode === "auto" && targets.some(isDual)) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
     else set = { mode: adding.mode, target_temperature: adding.temperature };
-    if (adding.mode !== "off" && adding.fan) set.fan_speed = adding.fan;
+    if (adding.fan) set.fan_speed = adding.fan;
     return set;
   }
   if (adding.type === "fans") return adding.fanDo === "off" ? { on: false } : adding.fanDo === "on" ? { on: true } : { speed: adding.fanSpeed };
@@ -1073,10 +1083,30 @@ function doControls(adding, devices) {
   if (adding.type === "climate") {
     const choices = climateChoices(devices);
     const { modes, min, max, fans } = choices;
-    const parts = [segments(modes.map((mode) => [mode, modeLabel(mode)]), adding.mode, "add-mode", (value) => { adding.mode = value; })];
-    if (adding.mode === "auto" && choices.dual) {
+    const labels = modes.map((mode) => [mode, mode === "on" ? t("scenes.do.onAsItWas") : modeLabel(mode)]);
+    // With On, as it was (1.10.0) five choices, one of them long: a row that wraps on a phone, as
+    // Temperature and Fan below.
+    const modeRow = modes.includes("on")
+      ? h(
+          "div",
+          { class: "chip-row", role: "group", "aria-label": t("climate.mode") },
+          h("span", { class: "chip-row-label" }, icon("power"), t("climate.mode")),
+          labels.map(([mode, label]) =>
+            choiceChip(label, adding.mode === mode, `add-mode:${mode}`, () => {
+              adding.mode = mode;
+              notify();
+            })
+          )
+        )
+      : segments(labels, adding.mode, "add-mode", (value) => { adding.mode = value; });
+    const parts = [modeRow];
+    // On, as it was: nothing else to choose, the temperature and fan are each AC's own (1.10.0).
+    if (adding.mode === "on") return [...parts, h("p", { class: "field-help" }, t("scenes.add.onAsItWasHelp"))];
+    if (adding.mode !== "off") parts.push(temperatureChoice(adding, choices));
+    const setting = adding.mode !== "off" && !adding.keepTemperature;
+    if (setting && adding.mode === "auto" && choices.dual) {
       parts.push(setpointSteppers(adding, choices), h("p", { class: "field-help" }, t("scenes.add.gap", { gap: formatTemperature(choices.gap) })));
-    } else if (adding.mode !== "off") {
+    } else if (setting) {
       const nudge = (delta) => {
         adding.temperature = Math.min(max, Math.max(min, adding.temperature + delta));
         notify();
@@ -1317,6 +1347,23 @@ function withRoomChoices(adding) {
     h("span", { class: "chip-row-label" }, icon("music"), t("scenes.add.alsoIn")),
     rooms.map((room) => choiceChip(roomName(room), adding.withRooms.includes(room.id), `add-with-room:${room.id}`, toggle(room.id))),
     gone.map((id) => choiceChip(t("scenes.roomGone"), true, `add-with-room:${id}`, toggle(id)))
+  );
+}
+
+// The temperature: Keep (each AC keeps its own; with heat and cool setpoints, both) or the one
+// shown, set with the stepper below it (1.10.0).
+function temperatureChoice(adding, choices) {
+  const value = adding.mode === "auto" && choices.dual ? formatTemperatureRange(adding.heat, adding.cool) : formatTemperature(adding.temperature);
+  const pick = (keep) => () => {
+    adding.keepTemperature = keep;
+    notify();
+  };
+  return h(
+    "div",
+    { class: "chip-row", role: "group", "aria-label": t("scenes.add.temperature") },
+    h("span", { class: "chip-row-label" }, icon("climate"), t("scenes.add.temperature")),
+    choiceChip(t("scenes.add.temperatureKeep"), adding.keepTemperature, "add-temp:keep", pick(true)),
+    choiceChip(value, !adding.keepTemperature, "add-temp:set", pick(false))
   );
 }
 
