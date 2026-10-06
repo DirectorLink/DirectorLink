@@ -504,6 +504,8 @@ def scenario(client, bridge):
         fail(f"GET /v1/doorbells/68 should be the doorbell camera, its picture its own, rung: {entrance}")
     if 68 not in [item["id"] for item in client.check("GET", "/v1/doorbells", 200)["items"]]:
         fail("GET /v1/doorbells should list the doorbell camera")
+    if {"id": 68, "type": "doorbell"} not in [{"id": item["id"], "type": item["type"]} for item in client.check("GET", "/v1/devices?type=doorbell", 200)["items"]]:
+        fail("GET /v1/devices?type=doorbell should list the doorbell camera as a doorbell")
     client.check("POST", "/v1/doorbells/68/open", 409)
     if bridge.camera_alert(157, "Animal") != 1:
         fail("an agreement camera's Alert should be watched by its name")

@@ -1850,7 +1850,7 @@ paths:
         - $ref: "#/components/parameters/RoomIdQuery"
         - name: type
           in: query
-          description: Only devices of this type.
+          description: Only devices of this type. A camera that is a doorbell (1.10.0, ADR-065) is a `camera` in this list, and with `type=doorbell` a `doorbell` too (its `href` the doorbell's), as `/v1/doorbells` and `inventory.doorbells` count it.
           schema:
             $ref: "#/components/schemas/DeviceType"
         - name: supported
@@ -2502,7 +2502,7 @@ paths:
         Composer, and a person who opens doors and gates (ADR-054: else 403 `FORBIDDEN`). Every
         request is written to the log with the API key used. A doorbell that cannot open anything
         (`can_open` false: a DoorBird without its button, a doorbell camera, ADR-065) answers 409
-        `NOT_SUPPORTED`.
+        `NOT_SUPPORTED`, before Door Control and the caller's permissions are looked at.
       responses:
         "202":
           description: Button pressed. The body is the doorbell as last reported.
@@ -5815,7 +5815,7 @@ components:
         last_ring_at:
           type: [string, "null"]
           format: date-time
-          description: The last ring. A doorbell camera's (ADR-065) is its driver's `LAST_RING` when that is within two minutes of the controller's clock, else when the ring reached the controller; after a restart, its driver's `LAST_RING`.
+          description: The last ring. A doorbell camera's (ADR-065) is its driver's `LAST_RING` when that is new (later than the ring before) and from two minutes behind the controller's clock to five seconds ahead of it, else when the ring reached the controller (always after the ring before); after a restart, its driver's `LAST_RING` unless that is ahead of the controller's clock.
         last_motion_at:
           type: [string, "null"]
           format: date-time

@@ -37,8 +37,17 @@ function dismissedRings() {
   }
 }
 
+// Whether last_ring_at `value` is a ring after `known` (the one this page knows): a later time. One
+// that goes back (DirectorLink restarted and took an older time from the doorbell's driver) is not.
+function rangSince(value, known) {
+  if (!value || value === known) return false;
+  const before = Date.parse(known);
+  if (!Number.isFinite(before)) return true;
+  return Date.parse(value) > before;
+}
+
 // Called with every fresh /v1/doorbells list. Returns the doorbells that rang since the last
-// look (a new last_ring_at), which is what a notification is for.
+// look (a later last_ring_at), which is what a notification is for.
 export function trackRings(doorbells) {
   const now = Date.now();
   const rang = [];
@@ -46,7 +55,7 @@ export function trackRings(doorbells) {
     const known = seen.get(doorbell.id);
     if (!known) {
       seen.set(doorbell.id, { value: doorbell.last_ring_at, noticedAt: null });
-    } else if (doorbell.last_ring_at && doorbell.last_ring_at !== known.value) {
+    } else if (rangSince(doorbell.last_ring_at, known.value)) {
       seen.set(doorbell.id, { value: doorbell.last_ring_at, noticedAt: now });
       rang.push(doorbell);
     }

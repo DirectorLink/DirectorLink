@@ -34,12 +34,19 @@ function Devices.list(ctx)
 
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(Access.filter(ctx.apiKey, registry.deviceList())) do
-        local view = Views.device(registry, device)
-        if (roomId == nil or tonumber(device.room_id) == roomId)
-            and (query.type == nil or view.type == query.type)
-            and (supported == nil or view.supported == supported) then
-            items[#items + 1] = view
+    for _, device in ipairs(registry.deviceList()) do
+        -- A camera that is a doorbell (ADR-065) is a camera, and with type=doorbell the doorbell it
+        -- is too, as /v1/doorbells lists it (seen as a doorbell is: ADR-054).
+        if query.type == "doorbell" and device.kind ~= "doorbell" then
+            device = registry.getDoorbell(device.id) or device
+        end
+        if Access.canSee(ctx.apiKey, device) then
+            local view = Views.device(registry, device)
+            if (roomId == nil or tonumber(device.room_id) == roomId)
+                and (query.type == nil or view.type == query.type)
+                and (supported == nil or view.supported == supported) then
+                items[#items + 1] = view
+            end
         end
     end
     return 200, { items = items }

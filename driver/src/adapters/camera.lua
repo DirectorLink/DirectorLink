@@ -21,33 +21,36 @@ local Camera = {}
 -- The Hikvision camera driver's Alert and LAST_ALERT when Director names neither (ADR-056).
 Camera.ALERT_EVENT = CameraDrivers.HIKVISION_ALERT_EVENT
 Camera.LAST_ALERT_ID = CameraDrivers.HIKVISION_LAST_ALERT
--- What an alert saw, by the drivers' labels (case, spaces, "_" and "-" aside); anything else is
--- "other". The agreement's labels and the Hikvision driver's.
+-- What an alert saw, by the drivers' labels in lower case without spaces, "_" and "-" (so "License
+-- Plate", "license_plate" and "LicensePlate" are one); anything else is "other". The agreement's
+-- labels and the Hikvision driver's.
 Camera.DETECTIONS = {
     ["motion"] = "motion",
     ["person"] = "person",
     ["vehicle"] = "vehicle",
     ["animal"] = "animal",
     ["package"] = "package",
-    ["license plate"] = "license_plate",
-    ["licence plate"] = "license_plate",
-    ["line crossing"] = "line_crossing",
+    ["licenseplate"] = "license_plate",
+    ["licenceplate"] = "license_plate",
+    ["linecrossing"] = "line_crossing",
     ["intrusion"] = "intrusion",
-    ["region entrance"] = "region_entrance",
-    ["region exiting"] = "region_exiting",
+    ["regionentrance"] = "region_entrance",
+    ["regionexiting"] = "region_exiting",
     ["tamper"] = "tamper",
-    ["scene change"] = "scene_change",
+    ["scenechange"] = "scene_change",
     ["face"] = "face",
-    ["object left"] = "object_left",
-    ["object removed"] = "object_removed",
-    ["alarm input"] = "alarm_input",
+    ["objectleft"] = "object_left",
+    ["objectremoved"] = "object_removed",
+    ["alarminput"] = "alarm_input",
     ["pir"] = "pir",
 }
 -- A doorbell camera's last rings, newest first (as a DoorBird's).
 Camera.MAX_EVENTS = 20
--- LAST_RING is the ring's time when it is within this many seconds of the controller's clock; else
--- the ring is at the moment its event came.
+-- LAST_RING is the ring's time when it is at most RING_CLOCK_SECONDS behind the controller's clock
+-- and at most RING_AHEAD_SECONDS ahead of it, and later than the ring before; else the ring is at the
+-- moment its event came (always after the ring before).
 Camera.RING_CLOCK_SECONDS = 120
+Camera.RING_AHEAD_SECONDS = 5
 -- Cameras whose marker is read again each minute (Camera.lookAgain).
 Camera.LOOK_PER_TICK = 5
 
@@ -84,13 +87,21 @@ local function read(info, field, name)
     return ok and value or nil
 end
 
--- The ring's time from LAST_RING (ISO 8601) when within RING_CLOCK_SECONDS of `now`, else `now`.
-local function ringTime(info, now)
+-- The ring's time: LAST_RING (ISO 8601) when it is new (later than `previous`, the ring before, an
+-- ISO time or nil) and from RING_CLOCK_SECONDS before `now` to RING_AHEAD_SECONDS after it; else
+-- `now`, the moment the event came (a Ring without a new LAST_RING is a new ring all the same). Never
+-- at or before the ring before: a second after it then.
+local function ringTime(info, now, previous)
+    local before = Clock.parseIso(previous)
     local at = Clock.parseIso(read(info, "last_ring", CameraDrivers.LAST_RING))
-    if at and math.abs(at - now) <= Camera.RING_CLOCK_SECONDS then
-        return Clock.iso(at)
+    if not at or at < now - Camera.RING_CLOCK_SECONDS or at > now + Camera.RING_AHEAD_SECONDS
+        or (before and at <= before) then
+        at = now
     end
-    return Clock.iso(now)
+    if before and at <= before then
+        at = before + 1
+    end
+    return Clock.iso(at)
 end
 
 -- before: this camera as it was before a project refresh or its driver's update (its rings).
@@ -107,9 +118,33 @@ function Camera.initialize(device, registry, before)
     device.state = { last = type(kept.last) == "table" and kept.last or {}, events = type(kept.events) == "table" and kept.events or {}, alert = kept.alert }
 
     local info = CameraDrivers.find(device, registry)
-    seen[device.id] = { version = info and info.version or nil, kind = info and info.version and info.kind or "camera" }
+    seen[device.id] = {
+        version = info and info.version or nil,
+        kind = info and info.version and info.kind or "camera",
+        events = info and info.events_key or nil,
+    }
     if not info then
         return true
+    end
+    if info.events_problem then
+        Log.warn("camera", "a camera driver's DIRECTORLINK_CAMERA_EVENTS is not Alert=<id>,Ring=<id> (a camera: Alert=<id>): ignored, its events looked for by name", {
+            device_id = device.id,
+            driver_id = info.driver,
+            kind = info.kind,
+            value = info.events_value,
+            problem = info.events_problem,
+        })
+    end
+    if info.director then
+        -- What Director gave of its driver.xml (C4:GetDeviceData), so a Director log shows it.
+        Log.debug("camera", "what Director gives of a camera driver's events", {
+            device_id = device.id,
+            driver_id = info.driver,
+            events_tag = info.director.events_tag,
+            devicedata = info.director.devicedata,
+            named = info.director.named,
+            names = info.director.names,
+        })
     end
     if info.proxies > 1 then
         Log.warn("camera", "a camera driver of DirectorLink's camera agreement with several cameras: its alerts and rings are not watched (one camera a driver)", { device_id = device.id, driver_id = info.driver, cameras = info.proxies })
@@ -123,10 +158,11 @@ function Camera.initialize(device, registry, before)
     if info.kind == "doorbell" then
         local rings = info.ring ~= nil and watch(device, info.driver, info.ring, "rings")
         watched = watched or rings
-        -- The last ring its driver knows, when DirectorLink has none (it started since).
+        -- The last ring its driver knows, when DirectorLink has none (it started since); not one
+        -- ahead of the controller's clock (a ring's time never is, ringTime).
         if device.state.last.doorbell == nil then
             local last = Clock.parseIso(read(info, "last_ring", CameraDrivers.LAST_RING))
-            if last and last <= os.time() + Camera.RING_CLOCK_SECONDS then
+            if last and last <= os.time() + Camera.RING_AHEAD_SECONDS then
                 device.state.last.doorbell = Clock.iso(last)
             end
         end
@@ -147,9 +183,15 @@ function Camera.initialize(device, registry, before)
             state = device.state,
         }
     end
-    for _, missing in ipairs({ { info.alert, "Alert" }, { info.kind ~= "doorbell" or info.ring, "Ring" } }) do
+    -- Each event the camera's kind has that was not found, by its name.
+    for _, missing in ipairs({ { info.alert, CameraDrivers.ALERT_EVENT, "alerts" }, { info.kind ~= "doorbell" or info.ring, CameraDrivers.RING_EVENT, "rings" } }) do
         if not missing[1] then
-            Log.warn("camera", "a camera driver of DirectorLink's camera agreement whose " .. missing[2] .. " event Director does not name: not watched", { device_id = device.id, driver_id = info.driver })
+            Log.warn("camera", "a camera driver of DirectorLink's camera agreement without an event named " .. missing[2] .. ": its " .. missing[3] .. " are not watched", {
+                device_id = device.id,
+                driver_id = info.driver,
+                missing = missing[2],
+                events_named = info.director and info.director.named or nil,
+            })
         end
     end
     if watched then
@@ -157,12 +199,15 @@ function Camera.initialize(device, registry, before)
         -- Its alerts and rings come from its driver; the manager routes them here.
         device.event_source_id = info.driver
     end
-    Log.debug("camera", "a camera of DirectorLink's camera agreement", {
+    -- Once each time the camera is set up (at debug level when a refresh sets every device up again,
+    -- Manager.initialize): how its events were found.
+    Log.info("camera", "a camera of DirectorLink's camera agreement", {
         device_id = device.id,
         driver_id = info.driver,
         version = info.version,
         kind = info.kind,
         by = info.version and "marker" or "file name",
+        events_by = info.events_by,
         alert_event = info.alert,
         ring_event = info.ring,
     })
@@ -172,7 +217,7 @@ end
 -- What the alert saw, from LAST_ALERT ("Line Crossing", "License Plate" -> "line_crossing",
 -- "license_plate"), or "other".
 function Camera.detection(label)
-    local text = string.lower(tostring(label or "")):gsub("[_%-]", " "):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+    local text = string.lower(tostring(label or "")):gsub("[%s_%-]", "")
     return Camera.DETECTIONS[text] or "other"
 end
 
@@ -203,7 +248,7 @@ function Camera.onDeviceEvent(device, eventId)
         return false
     end
     if event == "ring" then
-        local at = ringTime(info, os.time())
+        local at = ringTime(info, os.time(), device.state.last.doorbell)
         device.state.last.doorbell = at
         table.insert(device.state.events, 1, { type = "doorbell", at = at })
         while #device.state.events > Camera.MAX_EVENTS do
@@ -232,11 +277,22 @@ function Camera.execute(device, action)
     }
 end
 
+-- Whether `now` takes something away from what the camera was set up with (`was`): its marker went,
+-- it is no longer a doorbell, or its DIRECTORLINK_CAMERA_EVENTS went.
+local function takesAway(was, now)
+    return (was.version ~= nil and now.version == nil)
+        or (was.kind == "doorbell" and now.kind ~= "doorbell")
+        or (was.events ~= nil and now.events == nil)
+end
+
 -- Cameras whose driver now says something else of the agreement than when they were set up: its
 -- marker came after the driver started (some drivers add it once they reach their camera), it went,
--- or its kind changed. LOOK_PER_TICK cameras looked at a minute, one after another (the
--- scheduler's tick, through Manager.lookAgain), one Director call each. Returns their ids, for the
--- manager to set them up again.
+-- its kind changed, or its DIRECTORLINK_CAMERA_EVENTS. LOOK_PER_TICK cameras looked at a minute, one
+-- after another (the scheduler's tick, through Manager.lookAgain), one Director call each. What adds
+-- counts at once; what takes away (a doorbell camera back to a plain camera, the marker gone) only
+-- when the next look at that camera says the same, so one read of a driver Composer is reloading
+-- (its variables not added again yet) drops nothing. Returns their ids, for the manager to set them
+-- up again.
 function Camera.lookAgain(registry)
     local ids = {}
     for id in pairs(seen) do
@@ -252,9 +308,21 @@ function Camera.lookAgain(registry)
         nextLook = nextLook + 1
         local device = registry and registry.getDevice(id)
         local was = seen[id]
+        local version, kind, known, events
         if device then
-            local version, kind, known = CameraDrivers.state(device)
-            if known and (version ~= was.version or kind ~= was.kind) then
+            version, kind, known, events = CameraDrivers.state(device)
+        end
+        if known then
+            local now = { version = version, kind = kind, events = events }
+            local differs = version ~= was.version or kind ~= was.kind or events ~= was.events
+            local pending = was.pending
+            was.pending = nil
+            if differs and takesAway(was, now)
+                and not (pending and pending.version == version and pending.kind == kind and pending.events == events) then
+                -- The first look that says so: the next one decides.
+                was.pending = now
+                Log.debug("camera", "a camera's driver says less of DirectorLink's camera agreement; looked at again before it is set up again", { device_id = id, version_to = version, kind_to = kind })
+            elseif differs then
                 changed[#changed + 1] = id
                 Log.info("camera", "a camera's driver says something else of DirectorLink's camera agreement; set up again", {
                     device_id = id,
@@ -262,6 +330,8 @@ function Camera.lookAgain(registry)
                     version_to = version,
                     kind_from = was.kind,
                     kind_to = kind,
+                    events_from = was.events,
+                    events_to = events,
                 })
             end
         end
