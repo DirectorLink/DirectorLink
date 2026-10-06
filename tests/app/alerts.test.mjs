@@ -1,5 +1,6 @@
 // Alerts on this device (app/js/alerts.js, app/js/views/alerts.js, ADR-047, ADR-050): who sees the
-// switch in Settings → Controller, what it says on each device, and what turning it on and off does:
+// switch in Settings → Alerts (1.10.0; Settings → Controller before) and what its row on Settings'
+// list says, what it says on each device, and what turning it on and off does:
 // the permission (asked only here), the browser's push subscription with the account service's key,
 // its registration with this device's key id, the controller told (DirectorLink 1.7.0) and each
 // kind chosen there, the words and the alert key kept for the service worker, and the clean-up when
@@ -49,7 +50,7 @@ class FakeElement extends FakeNode {
 const stored = new Map();
 globalThis.Node = FakeNode;
 globalThis.window = globalThis;
-window.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io", href: "https://app.directorlink.io/#/settings/controller", pathname: "/", search: "", hash: "#/settings/controller" };
+window.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io", href: "https://app.directorlink.io/#/settings/alerts", pathname: "/", search: "", hash: "#/settings/alerts" };
 window.addEventListener = () => {};
 window.removeEventListener = () => {};
 window.matchMedia = () => ({ matches: false, addEventListener() {} });
@@ -185,7 +186,7 @@ const { setLanguage } = await import("../../app/js/i18n.js");
 const { saveRemote } = await import("../../app/js/remote.js");
 const session = await import("../../app/js/session.js");
 const { alertKey, alertTexts, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
-const { alertsPanel } = await import("../../app/js/views/alerts.js");
+const { alertsPage, alertsPanel, alertsStatus } = await import("../../app/js/views/alerts.js");
 
 // ---- helpers -----------------------------------------------------------------------------------
 
@@ -535,6 +536,64 @@ test("an admin chooses the push of a new device asking to join, kept with the br
   state.role = "admin";
   assert.equal(savedTexts().device_request, "A new device asks to join your home. Open DirectorLink to approve or decline it.");
   await turnAlertsOff();
+});
+
+test("Settings' Alerts row says how alerts are on this device, and its page holds the switch (1.10.0)", async () => {
+  await turnAlertsOff();
+  const status = () => alertsStatus();
+  // Signed in, linked, allowed by the browser: off until switched on.
+  withChoices("admin", { doorbell: true, door_opened: false, schedule_failed: true });
+  assert.equal(status(), "Off");
+  assert.ok(byKey(alertsPage(), "alerts-switch"), "the page holds the switch");
+  // What it still needs, as the card's hint says it.
+  browser.permission = "denied";
+  assert.equal(status(), "Notifications are blocked");
+  browser.permission = "granted";
+  const push = window.PushManager;
+  delete window.PushManager;
+  try {
+    assert.equal(status(), "This browser can’t show alerts");
+  } finally {
+    window.PushManager = push;
+  }
+  const remote = localStorage.getItem("directorlink.remote");
+  localStorage.removeItem("directorlink.remote");
+  assert.equal(status(), "Link this device to your account first");
+  localStorage.setItem("directorlink.remote", remote);
+  // On: how many of the kinds this key may choose are on (the servers' two for an admin, then the
+  // controller's), once the controller has said which.
+  await press();
+  assert.equal(isOn(), true);
+  assert.equal(status(), "On · 4 of 5 kinds");
+  await pressKind("door_opened");
+  assert.equal(status(), "On · 5 of 5 kinds");
+  await setLanguage("he");
+  try {
+    assert.equal(status(), "פעילות · 5 מתוך 5 סוגים");
+  } finally {
+    await setLanguage("en");
+  }
+  // Not known yet (a start, before the controller is read): on, without a count.
+  const choices = alertsUi.choices;
+  alertsUi.choices = null;
+  assert.equal(status(), "On");
+  alertsUi.choices = choices;
+  // A controller before 1.7.0: an admin's alerts, without kinds.
+  const system = state.system;
+  state.system = { features: {} };
+  assert.equal(status(), "On");
+  state.role = "member";
+  assert.equal(status(), null, "a member of such a controller: no row");
+  state.system = system;
+  state.role = "admin";
+  // Signed out (signing out ends this device's alerts too: settings.js).
+  state.account = { status: "signed-out", user: null, notice: null, busy: false };
+  assert.equal(status(), "Sign in to get alerts");
+  assert.equal(byKey(alertsPage(), "alerts-switch"), null);
+  assert.ok(byKey(alertsPage(), "alerts-sign-in-choose"), "it offers to sign in (Sign in, until the account service has said how)");
+  admin();
+  await turnAlertsOff();
+  assert.equal(status(), "Off");
 });
 
 test("a controller that cannot be told leaves alerts off; a change it cannot save says so", async () => {

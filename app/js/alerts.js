@@ -1,6 +1,6 @@
 // Alerts on this device (ADR-047, ADR-050): notifications from DirectorLink's servers (Web Push), also
-// when the app is closed. Switched on and off only from Settings → Controller, which is also the only
-// place that asks for permission.
+// when the app is closed. Switched on and off only from Settings → Alerts (on Settings → Controller
+// before 1.10.0), which is also the only place that asks for permission.
 //
 // With DirectorLink 1.7.0 on the controller (features.alert_choices), every role may have them: the
 // controller decides who gets what (a doorbell rang, a camera saw someone (1.8.0), a door or gate
@@ -139,9 +139,15 @@ export function controllerChooses() {
   return state.system?.features?.alert_choices === true;
 }
 
+// Whose key may have alerts, once signed in to an account: anyone's, when the controller chooses;
+// else admins'. Settings shows its Alerts row to them (1.10.0).
+export function alertsForKey() {
+  return Boolean(state.role) && (controllerChooses() || can("admin"));
+}
+
 // Who may switch alerts on: anyone signed in with a key, when the controller chooses; else admins.
 export function alertsAllowed() {
-  return Boolean(state.role) && state.account.status === "signed-in" && (controllerChooses() || can("admin"));
+  return alertsForKey() && state.account.status === "signed-in";
 }
 
 // Whether this browser gets the alerts of the home this device is linked to.
@@ -161,7 +167,7 @@ export function deviceRequestAlertsOn() {
   return remembered()?.deviceRequests !== false;
 }
 
-// What Settings → Controller shows of it, for app.js's redraws.
+// What Settings → Alerts and its row show of it, for app.js's redraws.
 export function alertsSignature() {
   return [alertsOn(), alertsSupport(), alertsUi.busy, alertsUi.message, alertsUi.choices, alertsUi.saving, offlineAlertsOn(), deviceRequestAlertsOn()];
 }

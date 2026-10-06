@@ -61,7 +61,7 @@ globalThis.fetch = async () => {
 
 const { state } = await import("../../app/js/state.js");
 const { saveRemote } = await import("../../app/js/remote.js");
-const { alertsPanel } = await import("../../app/js/views/alerts.js");
+const { alertsPanel, alertsStatus } = await import("../../app/js/views/alerts.js");
 
 function byKey(node, key) {
   if (!node) return null;
@@ -80,10 +80,13 @@ test("on iPhone and iPad the card says to add the app to the Home Screen, or whi
   const tab = alertsPanel();
   assert.equal(byKey(tab, "alerts-switch").attributes["aria-disabled"], "true", "the switch cannot be used in a Safari tab");
   assert.equal(byKey(tab, "alerts-hint").textContent, "On iPhone and iPad, alerts work only in the app on the Home Screen (iOS 16.4 or later): tap Share, then Add to Home Screen, open DirectorLink from there and switch them on.");
+  // Settings' Alerts row says it in a line (1.10.0).
+  assert.equal(alertsStatus(), "Add to Home Screen to get alerts");
 
   standalone = true;
   const added = alertsPanel();
   assert.equal(byKey(added, "alerts-hint").textContent, "Alerts need iOS 16.4 or later on this device.");
+  assert.equal(alertsStatus(), "Needs iOS 16.4 or later");
 
   // iOS 16.4 and later, from the Home Screen: push is there, and so is the switch.
   window.PushManager = function PushManager() {};
@@ -91,4 +94,5 @@ test("on iPhone and iPad the card says to add the app to the Home Screen, or whi
   const ready = alertsPanel();
   assert.equal(byKey(ready, "alerts-hint"), null);
   assert.equal(byKey(ready, "alerts-switch").attributes["aria-disabled"], undefined);
+  assert.equal(alertsStatus(), "Off");
 });

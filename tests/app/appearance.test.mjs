@@ -133,6 +133,7 @@ test("Settings' list has a row for Appearance and language, and no longer the ch
     "settings-row:rooms",
     "settings-row:access",
     "settings-row:account",
+    "settings-row:alerts",
     "settings-row:appearance",
     "settings-row:app",
     "settings-row:about",

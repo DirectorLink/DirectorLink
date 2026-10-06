@@ -10,6 +10,7 @@
 2. Text size Larger at 320 px, in each language: Home, a room, Climate, Scenes, Users and a dialog fit, nothing cut or overlapping. Small on an iPhone: tapping a text field doesn't zoom the page.
 3. Español, then Italiano: every screen in that language; a doorbell ring and a camera alert arrive in it; dates and numbers in its format. Spanish says "emparejar" for pairing with a code and "vincular" for linking the home to an account.
 4. Back to English and Hebrew: all as before; right to left in Hebrew.
+5. **Alerts on a page of their own:** Settings shows **Alerts** (התראות) between Account and Appearance and language, with a line: "Off", "On · 4 of 7 kinds", "Sign in to get alerts", or on iPhone in Safari "Add to Home Screen to get alerts". Settings → Controller no longer has the alerts card. Open Alerts: the switch and its kinds as before; Back returns to Settings with the Alerts row focused. Signed out, the page offers Sign in and comes back to it. A door's Ask screen with alerts off links to it. Check at 320 px in Hebrew and Larger text.
 
 ## 1100d. Commands that do more, in four languages (1.10.0)
 
@@ -79,7 +80,7 @@
 
 ## 190b. Ask before opening counts only devices that can be asked (1.9.0)
 
-1. iPhone Home Screen app: alerts on, make an ask link. In iOS Settings turn off Notifications for DirectorLink, then open the app: Settings → Controller shows alerts off. Run the link: "nobody", and History says "Nobody was asked". Turn alerts on again: the next run is "asked".
+1. iPhone Home Screen app: alerts on, make an ask link. In iOS Settings turn off Notifications for DirectorLink, then open the app: Settings → Alerts shows alerts off. Run the link: "nobody", and History says "Nobody was asked". Turn alerts on again: the next run is "asked".
 2. In Chrome with alerts on, remove the site's notification permission without opening the app. Run the ask link: "asked" once (the push fails), then "nobody". The Worker log has `alerts_gone_told`.
 3. A member with doors makes a link on phone A; on their device B, the door's Ask screen lists phone A's link under "On your other devices"; Remove asks first, and A's link then gets 404.
 
@@ -140,7 +141,7 @@
 1. Log Level Debug. Open Cameras through the account (mobile data): every tile gets its picture within a few seconds, and the browser's console says "DirectorLink: 11 camera pictures in … ms, 4 at once (remote)". Note it, and the same at home.
 2. The driver log's `snapshot` lines: after the first round, `requests` is 1 a picture (2 means that camera or NVR took only one kept login at a time: note which), and `in_flight` is never above 8.
 3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`. At home, a camera's full view (and the doorbell's banner when it rings) shows a new picture about every second, not every two.
-4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Controller → Alerts on this device shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
+4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Alerts shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
 5. Walk past again within a minute: no second alert. A member without cameras, or without that camera's room, gets none. In Hebrew the words are Hebrew.
 6. This checks that the Hikvision driver's Alert reaches DirectorLink and that `LAST_ALERT` is read at it (Person, Vehicle, Line Crossing…).
 
@@ -235,7 +236,7 @@
 
 ## 0zo. Alerts (1.6.0)
 
-1. On a computer (Chrome, Edge or Firefox), signed in as an admin on a linked device: Settings → Controller → Alerts on this device → allow. It says "Alerts are on for this device". In Hebrew, the card is in Hebrew.
+1. On a computer (Chrome, Edge or Firefox), signed in as an admin on a linked device: Settings → Alerts → Alerts on this device → allow. It says "Alerts are on for this device". In Hebrew, the card is in Hebrew.
 2. Turn Remote Access Off in Composer for 2 minutes, then On: no notification.
 3. Turn it Off for 11 minutes: one notification, "Your home – DirectorLink has not reached it since HH:MM…", and no second one for the same absence. Tapping it opens History.
 4. Unplug the controller's network for 11 minutes (a connection that dies silently): one notification. Plug it back in; it reconnects.
