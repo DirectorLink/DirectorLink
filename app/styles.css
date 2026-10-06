@@ -815,7 +815,7 @@ select.access-role {
   width: auto;
   min-height: 40px;
   padding: 6px 10px;
-  font-size: 1rem;
+  font-size: max(1rem, 16px);
 }
 
 select:disabled {
@@ -2817,6 +2817,7 @@ input[type="text"].command-input {
   padding: 8px 6px;
   border: 0;
   background: transparent;
+  font-size: max(1rem, 16px);
   text-overflow: ellipsis;
 }
 
@@ -2986,6 +2987,13 @@ input[type="text"].command-input:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* The command dialog's title is the app's own words, not a camera's name: it wraps rather than
+   being cut (Spanish and Italian at 320 px, every language at the Larger text size). */
+.command-dialog .dialog-title {
+  overflow: visible;
+  white-space: normal;
 }
 
 .cam-full {
@@ -3346,7 +3354,9 @@ select {
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--ink);
-  font-size: 1rem;
+  /* Never under 16 px: iOS zooms the page into a smaller field it focuses (the Small text size is
+     15 px). Larger sizes still grow. */
+  font-size: max(1rem, 16px);
 }
 
 input[type="text"]:focus-visible,
