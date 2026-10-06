@@ -2,7 +2,35 @@
 
 ## Current release
 
-`v1.10.0` — Relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). No D1 migration and no Worker change.
+`v1.10.0` — Weather from a saved forecast (1100h), On, as it was (1100g), relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). No D1 migration and no Worker change.
+
+## 1100h. Weather from a saved forecast (1.10.0)
+
+1. Scenes → Schedules: the weather card shows "Forecast for HH:MM, updated today HH:MM", and the values match open-meteo.com for that hour.
+2. With a weather rule, Composer's Schedule Status ends with "weather forecast from today HH:MM". After 6 hours the time moves on (`/v1/logs?category=weather&level=debug`: "weather forecast read", 4 a day).
+3. Block the controller's internet: "updated" keeps the old time, the log says "could not read the weather forecast" once, and the weather rules still run. Restart the driver while offline: still the forecast. Internet back: within 30 minutes "updated" changes.
+4. "Hotter than 23°, 08:30–23:00, only on Shabbat and holidays": it runs at candle lighting if the forecast says 23° or more, and again on Saturday once the forecast passes 23° after 08:30. Its "schedule ran" log line has `forecast_from`.
+
+## 1100g. On, as it was, and Keep (1.10.0)
+
+1. After the update, turn a few ACs on in different modes, temperatures and fan speeds (Control4 app, keypad), then off. `GET /v1/thermostats` shows each `last_mode`.
+2. Shabbat/Holiday Main AC → Edit each AC action → Mode **On, as it was** → Save. The step reads "On, as it was"; Composer's Print Schedules and Scenes shows `-> on, as it was`.
+3. Run it with those ACs off: each comes back in its own mode, temperature and fan; the log shows only SET_MODE_HVAC per AC. An AC already on gets no command.
+4. An AC not turned on since the update: the run says "1 AC was left off: its last mode isn't known yet", and History says so. Turn it on and off, run again: it comes back.
+5. Keep: an AC action Cool, Temperature Keep, Fan Keep, Try it now on an AC set to heat 26: it switches to cool, its setpoint and fan stay.
+6. Commands, with the AC off: "הדלק את המזגן בסלון" turns it on in its last mode; for an AC with no known last mode it asks which mode; a mode said ("…על קר") uses that mode.
+7. Restart the driver: the last modes are kept.
+
+## 1100f. Relay door and gate controllers (1.10.0)
+
+On the owner's controller the gate at the DoorBird is a Relay Gate Controller (530, its button 531).
+
+1. After the update, DirectorLink's log says the controller is set up as a gate: its relays, its contacts and `relay_configuration` (Pulse, Hold, or "not given by Director").
+2. The app lists the gate in its room ("Gate", with Open or Closed if a contact is bound). Open with its two taps opens it once: the log shows one OPEN to 530, and nothing else is sent to it.
+3. Open it from the Control4 app: History says it was opened in Control4, and admins who chose door alerts get one alert.
+4. A favorite, a scene's door step, an ask-to-open link and "open the gate" by its name all open it once. A member without doors sees it and its state, without Open.
+5. A controller set to Relay Configuration Hold (a test controller): Open answers that holding isn't allowed unless Relay Hold is Allowed in Composer.
+6. A KNX door relay bound to a controller stays one door under its own name; History and favorites keep working.
 
 ## 1100e. Spanish, Italian, and Appearance and language (1.10.0)
 
