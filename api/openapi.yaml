@@ -98,7 +98,7 @@ tags:
   - name: Cameras
     description: Camera snapshots, fetched on the controller so camera logins never leave it.
   - name: Relays
-    description: Relays that open doors and gates (KNX Contact/Relay).
+    description: Doors and gates DirectorLink opens with a short press, a pulse. KNX Contact/Relay devices, and since 1.10.0 Control4's Relay Door, Gate and Garage Door Controllers, whatever relay they drive (ADR-069); `kind` says which.
   - name: Doorbells
     description: Video doorbells — rings, motion, access, and opening the gate or door wired to them. A DoorBird, and since 1.10.0 a camera whose driver follows DirectorLink's camera agreement and says it is a doorbell (ADR-065, docs/CAMERA_DRIVERS.md); such a doorbell has the camera's id, its picture is that camera's, and it rings.
   - name: Refrigerators
@@ -2325,6 +2325,13 @@ paths:
       operationId: listRelays
       x-directorlink-role: member
       summary: List relays
+      description: |
+        The doors and gates, sorted by name. Since 1.10.0 (ADR-069) also Control4's Relay Door, Gate
+        and Garage Door Controllers, each under its button's id, in its room, with `kind` and, when
+        the controller has a contact, `door_state`. A controller whose Open relay is a KNX
+        Contact/Relay DirectorLink lists is that relay's door (its id, name and room, the
+        controller's kind and state), not a second one. A controller with nothing bound to its Open
+        relay is not listed.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
@@ -2371,7 +2378,10 @@ paths:
         door or gate open until the relay is opened. Since 1.1.1 that is refused with 409
         `HOLD_NOT_ALLOWED`, and nothing is sent, unless the **Relay Hold** property of DirectorLink
         in Composer is set to Allowed (the default is Not allowed). Like a pulse, only for those who
-        open doors and gates (admins, members given them: else 403 `FORBIDDEN`, ADR-054).
+        open doors and gates (admins, members given them: else 403 `FORBIDDEN`, ADR-054). A Relay
+        Door, Gate or Garage Door Controller's door (1.10.0, ADR-069) has no relay of DirectorLink's
+        to hold or release: 409 `NOT_SUPPORTED`, nothing sent (one shown as a KNX relay holds and
+        releases that relay, as before).
       requestBody:
         required: true
         content:
@@ -2410,7 +2420,12 @@ paths:
       summary: Pulse the relay (open a door or gate)
       description: |
         Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
-        Garage Door Controllers trigger it. Every pulse is written to the log with the API key used.
+        Garage Door Controllers trigger it. A controller's door (`kind` door, gate or garage_door,
+        1.10.0, ADR-069) is sent the controller's own Open, once: one pulse of its Open relay for its
+        own pulse time, with its own settings (one relay: the gate's button, not sent while a
+        contact says it is open). A controller set to hold its relay (Relay Configuration Hold, where
+        Director gives that property) would hold the door open: 409 `HOLD_NOT_ALLOWED` unless Relay
+        Hold is Allowed, and never in a scene. Every pulse is written to the log with the API key used.
         For admins and the members given doors and gates (ADR-054); a member who sees the relay but
         may not open it gets 403 `FORBIDDEN`. Needs **Door Control** = Enabled in Composer.
 
@@ -5745,7 +5760,7 @@ components:
 
     Relay:
       type: object
-      required: [id, name, room, state, state_reported]
+      required: [id, name, room, state, state_reported, kind, door_state]
       properties:
         id:
           type: integer
@@ -5764,6 +5779,23 @@ components:
         state_reported:
           type: boolean
           description: False when DirectorLink cannot watch this relay's state.
+        kind:
+          type: string
+          enum: [relay, door, gate, garage_door]
+          description: |
+            Since 1.10.0 (ADR-069): `door`, `gate` or `garage_door` for a Control4 Relay Door, Gate
+            or Garage Door Controller's (also a KNX relay one drives); `relay` for a relay
+            DirectorLink pulses itself, a door or a gate. A driver before 1.10.0 sends neither field:
+            read that as `relay` and a null `door_state`.
+        door_state:
+          oneOf:
+            - type: string
+              enum: [open, closed, partly_open]
+            - type: "null"
+          description: |
+            Since 1.10.0 (ADR-069): whether the door or gate is open, as its controller's Closed or
+            Opened Contact says (`partly_open`: neither closed nor fully open). Null when not known:
+            no contact, both contacts at once, or a relay without a controller.
 
     RelayUpdate:
       type: object

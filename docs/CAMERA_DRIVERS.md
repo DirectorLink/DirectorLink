@@ -144,9 +144,10 @@ Italian); any other label is said as "Alert".
   false; `POST /v1/doorbells/{id}/open` answers `409 NOT_SUPPORTED`). If the doorbell has a relay of
   its own (a door strike, a gate), give the driver a Control4 relay connection and have the installer
   bind it in Composer to a Relay Door or Gate Controller, so that Control4's apps and programming
-  open it. DirectorLink 1.10.0 does not show those controllers: it opens a door or gate only through
-  a KNX Contact/Relay device (`knx_contact_relay.c4z`) and a DoorBird's own driver. Opening at a
-  doorbell camera is for a later version of the agreement.
+  open it. DirectorLink 1.10.0 shows that controller as a door or gate of its own, in its room, and
+  opens it with the controller's Open (ADR-069): a relay connection must take the controller's
+  `CLOSE` (and `TRIGGER`, `TOGGLE`) as one pulse, never a hold, as the DirectorLink · DoorBird driver
+  does. Opening from a doorbell camera's banner is for a later version of the agreement.
 - **Privacy.** Names, rooms and what a camera saw stay on the controller: an alert is sealed on the
   controller for each phone, and DirectorLink's servers only pass it on (see
   [`ACCOUNTS.md`](ACCOUNTS.md)). Pictures go from the camera to the controller and, sealed, to the app.

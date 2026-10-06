@@ -123,6 +123,7 @@ export default {
     notConfirmed: "נשלח — ממתין לאישור מהמכשיר.",
     forbidden: "רמת הגישה שלכם ({role}) לא מאפשרת את זה.",
     doorsDisabled: "שליטה בדלתות כבויה. הפעילו את Door Control ב-Composer (מאפייני DirectorLink).",
+    holdNotAllowed: "הבקר שלו היה מחזיק את הממסר, וכך הוא נשאר פתוח. ב-Composer הגדירו את Relay Configuration של הבקר ל-Pulse, או את Relay Hold של DirectorLink ל-Allowed.",
     calendarOff: "הלוח העברי כבוי ב-Composer (המאפיין Jewish Calendar של DirectorLink).",
     misdirected: "השתמשו בכתובת ה-IP של הבקר או בשם מקומי (כמו director.local) ככתובת: DirectorLink לא עונה לשמות אחרים.",
     sealing: "הבקר בכתובת הזו לא ענה למכשיר הזה בצורה מאובטחת. אם DirectorLink הותקן מחדש או הוחזר לגרסה קודמת, צמדו שוב (הגדרות ← בקר).",
@@ -335,6 +336,12 @@ export default {
     hint: "דלת או שער",
     confirmHint: "הקישו שוב תוך 5 שניות",
     noAccess: "פתיחה דורשת הרשאת דלתות",
+    kinds: { door: "דלת", gate: "שער", garage_door: "דלת מוסך" },
+    states: {
+      door: { open: "פתוחה", closed: "סגורה", partly_open: "פתוחה חלקית" },
+      gate: { open: "פתוח", closed: "סגור", partly_open: "פתוח חלקית" },
+      garage_door: { open: "פתוחה", closed: "סגורה", partly_open: "פתוחה חלקית" },
+    },
   },
   doorbells: {
     atTheDoor: "מישהו בדלת",

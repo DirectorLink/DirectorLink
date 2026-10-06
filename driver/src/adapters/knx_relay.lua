@@ -13,6 +13,9 @@ KnxRelay.PULSE_MS = 500
 
 local OPENED_EVENT = 1 + 2 * KnxRelay.RELAY
 local CLOSED_EVENT = 2 + 2 * KnxRelay.RELAY
+-- Also for a relay shown as a Relay Door or Gate Controller's door (src/adapters/relay_controller.lua).
+KnxRelay.OPENED_EVENT = OPENED_EVENT
+KnxRelay.CLOSED_EVENT = CLOSED_EVENT
 
 -- Whether `eventId` is the relay closing: a door or gate opening (a pulse closes it for a moment).
 function KnxRelay.closedEvent(eventId)
@@ -76,7 +79,8 @@ function KnxRelay.onVariableChanged()
     return false
 end
 
-local function send(deviceId, command)
+-- "Open Relay" or "Close Relay" to the device's relay: true, or false and why.
+function KnxRelay.send(deviceId, command)
     local ok, err = pcall(function()
         C4:SendToDevice(deviceId, command, { Relay = tostring(KnxRelay.RELAY) })
     end)
@@ -85,6 +89,7 @@ local function send(deviceId, command)
     end
     return true
 end
+local send = KnxRelay.send
 
 function KnxRelay.execute(device, action)
     if not tracked[device.id] or not device.supported then

@@ -44,7 +44,8 @@ src/
   api/        HTTP server, router, handlers, generated openapi_spec.lua
   auth/       API keys, roles, pairing, profiles, invitations
   adapters/   Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4 thermostat proxy,
-              blinds, cameras, KNX Contact/Relay, DoorBird
+              blinds, cameras, KNX Contact/Relay, Relay Door, Gate and Garage Door Controllers,
+              DoorBird
   cloud/      relay connection, WebSocket, the end-to-end lock, sealed requests
   control4/   discovery and normalization
   core/       json, log, store, random, x25519, registry, version, scenes, schedules, sun, weather, …

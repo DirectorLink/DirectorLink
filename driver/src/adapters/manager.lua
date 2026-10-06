@@ -8,6 +8,7 @@ local Fan = require("src.adapters.fan")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
+local RelayController = require("src.adapters.relay_controller")
 local DoorBird = require("src.adapters.doorbird")
 local Alarm = require("src.adapters.alarm")
 local Refrigerator = require("src.adapters.refrigerator")
@@ -22,6 +23,9 @@ local adapters = {
     Fan,
     Blind,
     Camera,
+    -- Before KnxRelay: a KNX Contact/Relay that is a Relay Door or Gate Controller's door is the
+    -- controller's (ADR-069).
+    RelayController,
     KnxRelay,
     DoorBird,
     Alarm,
@@ -35,7 +39,8 @@ local matched = {}
 -- Told of each device event an adapter took (alerts: a doorbell's ring, a door opened elsewhere).
 local eventListener = nil
 -- When DirectorLink last sent each device a command that worked (Clock.now()): what the device
--- reports soon after is that command's doing.
+-- reports soon after is that command's doing. A command to a device counts for its partners too (a
+-- gate's controller and the DoorBird doorbell whose relay it drives, ADR-069).
 local commanded = {}
 -- Device whose events (and variables) belong to another device: a DoorBird driver's events -> its
 -- doorbell, a Samsung Refrigerator driver's variables and events -> its refrigerator.
@@ -103,6 +108,16 @@ function Manager.initialize(deviceRegistry, previous)
     for _, adapter in ipairs(adapters) do
         if adapter.reset then
             adapter.reset()
+        end
+    end
+    -- What adapters must know of the whole project before any device starts (which KNX relay is a
+    -- door controller's, ADR-069).
+    for _, adapter in ipairs(adapters) do
+        if adapter.survey then
+            local ok, err = pcall(adapter.survey, registry)
+            if not ok then
+                log("survey failed: " .. tostring(err))
+            end
         end
     end
 
@@ -327,8 +342,10 @@ function Manager.onVariableChanged(deviceId, variableId, value)
 end
 
 function Manager.onDeviceEvent(deviceId, eventId)
-    deviceId = tonumber(deviceId)
-    deviceId = eventTargets[deviceId] or deviceId
+    -- The device that fired it, which the adapter and the listener are told too (a door controller's
+    -- door hears its controller and its own KNX relay, whose event ids differ in meaning).
+    local sourceId = tonumber(deviceId)
+    deviceId = eventTargets[sourceId] or sourceId
     local adapter = attached[deviceId]
     if not adapter or not adapter.onDeviceEvent or not registry then
         return false
@@ -342,13 +359,13 @@ function Manager.onDeviceEvent(deviceId, eventId)
     for key, value in pairs(type(device.state) == "table" and device.state or {}) do
         before[key] = value
     end
-    local ok, changed = pcall(adapter.onDeviceEvent, device, eventId)
+    local ok, changed = pcall(adapter.onDeviceEvent, device, eventId, sourceId)
     if not ok then
         log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
     if changed == true and eventListener then
-        local told, err = pcall(eventListener, device, eventId, before)
+        local told, err = pcall(eventListener, device, eventId, before, sourceId)
         if not told then
             log("event listener failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
         end
@@ -356,8 +373,8 @@ function Manager.onDeviceEvent(deviceId, eventId)
     return changed == true
 end
 
--- `listener(device, eventId, before)` is told of each event an adapter took, after it did (`before`:
--- a copy of the device's state before).
+-- `listener(device, eventId, before, sourceId)` is told of each event an adapter took, after it did
+-- (`before`: a copy of the device's state before; `sourceId`: the device that fired it).
 function Manager.onEvent(listener)
     eventListener = listener
 end
@@ -404,7 +421,13 @@ function Manager.execute(deviceId, action, params)
         return false, result
     end
 
-    commanded[deviceId] = Clock.now()
+    local now = Clock.now()
+    commanded[deviceId] = now
+    for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+        if tonumber(partner) then
+            commanded[tonumber(partner)] = now
+        end
+    end
     return true, result
 end
 

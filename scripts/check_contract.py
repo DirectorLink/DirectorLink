@@ -472,6 +472,18 @@ def scenario(client, bridge):
     if client.check("POST", "/v1/relays/70/pulse", 409, body={"request": "0" * 16})["code"] != "OPEN_REQUEST_EXPIRED":
         fail("a pulse that answers no request should be OPEN_REQUEST_EXPIRED")
     client.check("POST", "/v1/relays/70/pulse", 400, body={"request": "not a request"})
+    # Control4's Relay Door, Gate and Garage Door Controllers (1.10.0, ADR-069, dev bridge "doors"):
+    # a gate with a contact, a garage door without, the KNX relay 75 as a door controller's door.
+    doors = {item["id"]: item for item in client.check("GET", "/v1/relays", 200)["items"]}
+    if doors.get(70, {}).get("kind") != "relay" or doors.get(71, {}).get("kind") != "gate" or doors.get(72, {}).get("kind") != "garage_door":
+        fail(f"the relays' kinds are wrong: {doors}")
+    if doors[71]["door_state"] != "closed" or doors[72]["door_state"] is not None or doors.get(75, {}).get("kind") != "door" or 73 in doors or 74 in doors:
+        fail(f"the door controllers are not listed as they should be: {doors}")
+    client.check("GET", "/v1/relays/71", 200)
+    client.check("GET", "/v1/relays/73", 404)
+    client.check("POST", "/v1/relays/71/pulse", 202)
+    if client.check("PATCH", "/v1/relays/71", 409, body={"state": "open"})["code"] != "NOT_SUPPORTED":
+        fail("a door controller's relay is the controller's: PATCH should be NOT_SUPPORTED")
 
     # A Samsung refrigerator (1.7.0, Mock.withRefrigerator): the driver 140, the refrigerator 141.
     # The dev bridge's refrigerator confirms a feature 4 seconds later, as through Samsung's cloud.
@@ -1053,7 +1065,7 @@ def main():
         players.terminate()
         fail(f"the fake Sonos players did not start: {started!r}")
     spec_json = ROOT / "dist" / "openapi.json"
-    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True)
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True, doors=True)
     server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

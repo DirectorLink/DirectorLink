@@ -1372,6 +1372,11 @@ select:disabled {
   margin-block-start: auto;
 }
 
+/* A door controller's kind and state (1.10.0) sit under the room; the Open button stays at the bottom. */
+.fav-relay .fav-state {
+  margin-block-start: 0;
+}
+
 /* A favorite whose device was removed in Composer (1.8.0): dashed and quiet, with Remove. */
 .fav-tile.fav-gone {
   border-style: dashed;
