@@ -3,9 +3,10 @@ check_app.py): the relay's CA file holds exactly the pinned roots however its bl
 nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
 what is staged, the door switches, the Jewish calendar, the alarm's status and Sonos in driver.xml
 ship off, the alarm stays read-only, one file talks to the Sonos players, the app names every
-month, holiday and weekly reading the calendar API can send, Say or type a command has a parser
-without imports and opens no door from the words, and the website's one script asks only for
-DirectorLink in numbers (check_sites.py).
+month, holiday and weekly reading the calendar API can send, every language has exactly English's
+strings, placeholders and the disclaimer (1.10.0), Say or type a command has a parser without
+imports and opens no door from the words, and the website's one script asks only for DirectorLink
+in numbers (check_sites.py).
 
     python -m unittest discover -s tests/scripts
 """
@@ -366,6 +367,79 @@ class CalendarNames(unittest.TestCase):
         self.setUp()
         self.dictionaries["he"]["calendar"]["holidays"]["rosh_chodesh"] = "ראש חודש"
         self.assertIn("rosh_chodesh must name the month", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
+
+
+class Translations(unittest.TestCase):
+    """check_app.py (1.10.0, ADR-067): every language file has exactly en.js's keys, each with the
+    same placeholders and plural forms, and the disclaimer; theme-boot.js and the service worker
+    know every language."""
+
+    CODES = ("en", "he", "es", "it")
+
+    def setUp(self):
+        self.dictionaries = {code: check_app.read_dictionary((ROOT / "app" / "i18n" / f"{code}.js").read_text(encoding="utf-8")) for code in self.CODES}
+
+    def refused(self):
+        return refusal(check_app.check_translations, self.dictionaries) or ""
+
+    def test_the_real_dictionaries_pass(self):
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        boot = (ROOT / "app" / "theme-boot.js").read_text(encoding="utf-8")
+        worker = (ROOT / "app" / "sw.js").read_text(encoding="utf-8")
+        self.assertIsNone(refusal(check_app.check_language_files, list(self.CODES), boot, worker))
+
+    def test_a_missing_or_extra_key_fails(self):
+        for code in ("es", "it", "he"):
+            with self.subTest(code=code):
+                del self.dictionaries[code]["settings"]["appearance"]["textSizeHelp"]
+                self.assertIn(f"app/i18n/{code}.js is missing 1 key(s) of en.js: settings.appearance.textSizeHelp", self.refused())
+                self.setUp()
+                self.dictionaries[code]["home"]["extra"] = "?"
+                self.assertIn(f"app/i18n/{code}.js has 1 key(s) en.js does not: home.extra", self.refused())
+                self.setUp()
+
+    def test_placeholders_must_match_english(self):
+        self.dictionaries["es"]["settings"]["rows"]["about"] = "Versión {versión} · código abierto"
+        self.assertIn("app/i18n/es.js: settings.rows.about has the placeholders {versión}, en.js {version}", self.refused())
+        self.setUp()
+        # A plural's forms count together: "one" may leave {count} out when "other" has it.
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "Una luce accesa", "other": "{count} luci accese"}
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "Una luce accesa", "other": "Luci accese"}
+        self.assertIn("home.lightsOn has the placeholders none, en.js {count}", self.refused())
+        self.setUp()
+        # The command examples may give the room as {inRoom} (Hebrew), and only those.
+        self.dictionaries["es"]["command"]["example"]["lights"] = "Apaga las luces {inRoom}"
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        self.dictionaries["es"]["command"]["example"]["scene"] = "Ejecuta {inRoom}"
+        self.assertIn("command.example.scene has the placeholders {inRoom}, en.js {name}", self.refused())
+
+    def test_plural_forms_as_in_english(self):
+        self.dictionaries["es"]["home"]["lightsOn"] = "{count} luces encendidas"
+        self.assertIn("app/i18n/es.js: home.lightsOn must be plural forms, as in en.js", self.refused())
+        self.setUp()
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "{count} luce accesa"}
+        self.assertIn('app/i18n/it.js: home.lightsOn needs an "other" form', self.refused())
+        self.setUp()
+        del self.dictionaries["es"]["perm"]["roomCount"]["zero"]
+        self.assertIn('app/i18n/es.js: perm.roomCount needs a "zero" form, as in en.js', self.refused())
+
+    def test_the_disclaimer_word_for_word(self):
+        for code, words in (("en", "DirectorLink is an independent project."), ("es", "DirectorLink es un proyecto independiente."), ("it", "DirectorLink è indipendente.")):
+            with self.subTest(code=code):
+                self.dictionaries[code]["settings"]["about"]["independent"] = words
+                self.assertIn(f"app/i18n/{code}.js settings.about.independent must be the disclaimer word for word", self.refused())
+                self.setUp()
+        # A language without its words written down must still name all three.
+        self.assertIsNone(refusal(check_app.check_translations, {"en": self.dictionaries["en"], "fr": {**self.dictionaries["it"], "settings": {**self.dictionaries["it"]["settings"], "about": {**self.dictionaries["it"]["settings"]["about"], "independent": "DirectorLink est un projet indépendant, sans lien avec Control4 ni Snap One."}}}}))
+        self.dictionaries["he"]["settings"]["about"]["independent"] = "פרויקט עצמאי."
+        self.assertIn("app/i18n/he.js settings.about.independent must say the disclaimer (DirectorLink, Control4, Snap One)", self.refused())
+
+    def test_every_language_before_the_first_paint_and_offline(self):
+        boot = (ROOT / "app" / "theme-boot.js").read_text(encoding="utf-8")
+        worker = (ROOT / "app" / "sw.js").read_text(encoding="utf-8")
+        self.assertIn("theme-boot.js must list the same languages", refusal(check_app.check_language_files, [*self.CODES, "fr"], boot, worker) or "")
+        self.assertIn("must cache /i18n/it.js", refusal(check_app.check_language_files, list(self.CODES), boot, worker.replace('"/i18n/it.js",', "")) or "")
 
 
 class Commands(unittest.TestCase):

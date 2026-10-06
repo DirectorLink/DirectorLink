@@ -27,7 +27,7 @@ import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { loadScenes } from "./js/scenes.js";
 import { loadSchedules } from "./js/schedules.js";
 import { findDevice, state, subscribe, ui } from "./js/state.js";
-import { applyTheme, palettePreference, setPalette, setTheme, themePreference, watchSystemTheme } from "./js/theme.js";
+import { applyTheme, palettePreference, setPalette, setTextSize, setTheme, textSizePreference, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
 import { commandRouteChanged, commandSignature } from "./js/views/command.js";
 import { climateView } from "./js/views/climate.js";
@@ -248,6 +248,7 @@ function signature() {
     currentLanguage(),
     palettePreference(),
     themePreference(),
+    textSizePreference(),
     state.status,
     state.notice,
     // The pairing screen's warning (Cancel only clears it).
@@ -400,6 +401,11 @@ function screen() {
           await setLanguage(language);
           saveProfilePrefs({ language });
           applyLanguage();
+        },
+        // This device only (ADR-067): not in the profile.
+        onTextSize: (size) => {
+          setTextSize(size);
+          render(true);
         },
       });
     default:

@@ -2063,18 +2063,28 @@ export default {
       accountUnavailable: "Can’t reach the account service",
       canInstall: "Can be installed",
       about: "Version {version} · open source",
+      // Appearance and language: the text size, when it is not the default.
+      textSize: { small: "Small text", large: "Large text", larger: "Larger text" },
     },
+    // Settings → Appearance and language (1.10.0, ADR-067).
     appearance: {
-      title: "Appearance",
+      title: "Appearance and language",
+      follows: "Your language, theme and colours follow you to all your devices. The text size is for this device only.",
+      followsLocal: "Kept on this device. Once you’re connected to your home, your language, theme and colours follow you to all your devices.",
+      themeTitle: "Theme and colours",
       palette: "Colours",
       theme: "Theme",
       themes: { auto: "Auto", light: "Light", dark: "Dark" },
       autoHelp: "Auto follows your device’s light or dark setting.",
+      textSize: "Text size",
+      textSizes: { small: "Small", default: "Default", large: "Large", larger: "Larger" },
+      textSizeHelp: "For this device only: a phone and a big screen often need different sizes.",
     },
     language: {
       title: "Language",
       label: "Interface language",
       auto: "Auto",
+      autoHelp: "Auto uses your browser’s language when DirectorLink has it, and English otherwise.",
     },
     rooms: {
       orderHelp: "Untick the rooms you don’t need: they disappear from your lists, only for you. The order is the same for everyone in the home.",

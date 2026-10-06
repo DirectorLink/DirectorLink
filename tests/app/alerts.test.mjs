@@ -632,13 +632,14 @@ test("camera alerts are offered only with a controller that has them, off until 
   await turnAlertsOff();
 });
 
-test("the app gives the service worker a word for every camera detection the worker knows, in English and Hebrew", async () => {
+test("the app gives the service worker a word for every camera detection the worker knows, in every language", async () => {
   const worker = readFileSync(new URL("../../app/sw.js", import.meta.url), "utf8");
   const known = [...worker.matchAll(/^\s+(camera(?:_[a-z_]+)?):/gm)].map((match) => match[1]).sort();
   assert.ok(known.includes("camera_person") && known.includes("camera_other") && known.includes("camera_title"));
-  for (const language of ["en", "he"]) {
+  for (const language of ["en", "es", "it", "he"]) {
     await setLanguage(language);
     const texts = alertTexts();
+    assert.equal(texts.lang, language);
     const given = Object.keys(texts).filter((name) => name.startsWith("camera")).sort();
     assert.deepEqual(given, known, language);
     for (const name of given) assert.ok(texts[name] && !texts[name].startsWith("alerts."), `${language}: ${name}`);

@@ -1,7 +1,7 @@
-// Settings (#/settings): appearance and language, then one row per page, each at #/settings/<page>
-// with Back to the list: Controller (its facts, updates, backup, pairing), Rooms (shown, order,
-// names and the Sonos rooms), Shabbat and holidays, People and devices (#/access, views/access.js),
-// Account, App and About.
+// Settings (#/settings): one row per page, each at #/settings/<page> with Back to the list:
+// Controller (its facts, updates, backup, pairing), Rooms (shown, order, names and the Sonos rooms),
+// Shabbat and holidays, Users (#/access, views/access.js), Account, Appearance and language
+// (language, theme, colours and text size, 1.10.0), App and About.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { turnAlertsOff } from "../alerts.js";
@@ -11,7 +11,7 @@ import { qrCanvas } from "../qr.js";
 import { approveHomeSecret, claimHome, homeStatus, invitationLink, saveRemote, savedRemote } from "../remote.js";
 import { disableNotifications, enableNotifications, notificationSupport, notificationsOn } from "../doorbells.js";
 import { h, iconButton, name } from "../dom.js";
-import { LANGUAGES, formatDateTime, formatNumber, formatTime, languagePreference, t } from "../i18n.js";
+import { LANGUAGES, formatDateTime, formatNumber, formatTime, languageInfo, languagePreference, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { hiddenRoomIds, roomName } from "../model.js";
 import { setRoomHidden } from "../profile.js";
@@ -19,7 +19,7 @@ import { installApp } from "../pwa.js";
 import { dropIndex, edgeScroll, keyTarget, moveItem, sameOrder, shiftOf, slotOffset } from "../reorder.js";
 import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAndForget, roleLabel, saveRoomNames, useHost } from "../session.js";
 import { linksMadeBy, linksSupported } from "../scene-links.js";
-import { PALETTES, THEMES, palettePreference, themePreference } from "../theme.js";
+import { PALETTES, TEXT_SIZES, THEMES, palettePreference, textSizePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { alertsPanel } from "./alerts.js";
@@ -36,10 +36,10 @@ import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./upd
 import { APP_VERSION } from "../version.js";
 
 // The pages under Settings (#/settings/<page>); app.js routes them.
-export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "app", "about"];
+export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "appearance", "app", "about"];
 
 // `page`: one of SETTINGS_PAGES, or null for the main list.
-export function settingsView({ page = null, onPalette, onTheme, onLanguage, navigate }) {
+export function settingsView({ page = null, onPalette, onTheme, onLanguage, onTextSize, navigate }) {
   switch (page) {
     case "controller":
       return subpage(t("settings.controller.title"), controllerSection(navigate), historyRow(), alertsPanel(), updatesSection(), backupPanel());
@@ -49,6 +49,8 @@ export function settingsView({ page = null, onPalette, onTheme, onLanguage, navi
       return subpage(t("calendar.settings.title"), calendarSection() || calendarUnavailable());
     case "account":
       return subpage(t("settings.account.title"), accountSection());
+    case "appearance":
+      return subpage(t("settings.appearance.title"), followsNote(), languageSection(onLanguage), appearanceSection(onPalette, onTheme), textSizeSection(onTextSize));
     case "app":
       return subpage(t("settings.app.title"), appSection());
     case "about":
@@ -57,7 +59,7 @@ export function settingsView({ page = null, onPalette, onTheme, onLanguage, navi
       return [
         pageHeader({ title: t("settings.title") }),
         offlineBanner(),
-        h("div", { class: "settings" }, appearanceSection(onPalette, onTheme), languageSection(onLanguage), pageRows()),
+        h("div", { class: "settings" }, pageRows()),
         h("p", { class: "independent-note", dataset: { key: "settings-independent" } }, t("settings.about.independent")),
       ];
   }
@@ -107,7 +109,7 @@ function pageRows() {
     "nav",
     { class: "settings-pages", "aria-label": t("settings.rows.label") },
     h("ul", { class: "card settings-rows" }, controllerRow(), roomsRow(), calendarRow(), accessRow()),
-    h("ul", { class: "card settings-rows" }, accountRow(), appRow(), aboutRow())
+    h("ul", { class: "card settings-rows" }, accountRow(), appearanceRow(), appRow(), aboutRow())
   );
 }
 
@@ -172,6 +174,21 @@ function accountRow() {
   return pageRow({ page: "account", iconName: "user", title: t("settings.account.title"), status });
 }
 
+// The language shown (Auto: the one it found), the theme and the colours, and the text size when it
+// is not the default.
+function appearanceRow() {
+  const size = textSizePreference();
+  const status = [
+    languageInfo().label,
+    t(`settings.appearance.themes.${themePreference()}`),
+    t(`palettes.${palettePreference()}`),
+    size === "default" ? null : t(`settings.rows.textSize.${size}`),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return pageRow({ page: "appearance", iconName: "palette", title: t("settings.appearance.title"), status });
+}
+
 // Whether it can be installed, else whether it opens without internet.
 function appRow() {
   const status = state.canInstall ? t("settings.rows.canInstall") : t(`settings.app.offline.${state.offlineCopy}`);
@@ -191,12 +208,13 @@ function card(id, iconName, title, ...content) {
   );
 }
 
-// A group of real radio buttons, drawn as segments or swatches.
-function radioGroup({ legend, groupName, options, value, onChange, className = "segmented" }) {
+// A group of real radio buttons, drawn as segments or swatches. `legendHidden`: the card's title
+// says it already (the legend is still read out).
+function radioGroup({ legend, groupName, options, value, onChange, className = "segmented", legendHidden = false }) {
   return h(
     "fieldset",
     { class: `radio-group ${className}` },
-    h("legend", { class: "field-label" }, legend),
+    h("legend", { class: legendHidden ? "field-label visually-hidden" : "field-label" }, legend),
     h(
       "div",
       { class: "radio-options" },
@@ -216,9 +234,10 @@ function radioGroup({ legend, groupName, options, value, onChange, className = "
           }),
           h(
             "label",
-            { for: id, lang: option.lang, dir: option.dir },
+            { for: id },
             option.visual || null,
-            h("span", { class: "radio-label" }, option.label),
+            // A language's own name, in its own direction (the choice still lines up with the others).
+            h("span", { class: "radio-label", lang: option.lang, dir: option.dir }, option.label),
             option.help ? h("span", { class: "radio-help" }, option.help) : null
           )
         );
@@ -227,11 +246,56 @@ function radioGroup({ legend, groupName, options, value, onChange, className = "
   );
 }
 
+// ---- appearance and language (1.10.0, ADR-067) -----------------------------------------------
+
+// What follows this user to their other devices (their profile on the controller: js/profile.js)
+// and what stays here.
+function followsNote() {
+  return h(
+    "p",
+    { class: "field-help settings-note", dataset: { key: "appearance-follows" } },
+    state.profile ? t("settings.appearance.follows") : t("settings.appearance.followsLocal")
+  );
+}
+
+function languageSection(onLanguage) {
+  return card(
+    "language",
+    "globe",
+    t("settings.language.title"),
+    radioGroup({
+      legend: t("settings.language.label"),
+      groupName: "language",
+      className: "radio-stack",
+      value: languagePreference(),
+      onChange: onLanguage,
+      options: [
+        // Auto says which language it found.
+        { value: "auto", label: t("settings.language.auto"), help: languagePreference() === "auto" ? languageInfo().label : null },
+        ...LANGUAGES.map((language) => ({ value: language.code, label: language.label, lang: language.code, dir: language.dir })),
+      ],
+    }),
+    h("p", { class: "field-help" }, t("settings.language.autoHelp"))
+  );
+}
+
 function appearanceSection(onPalette, onTheme) {
   return card(
     "appearance",
     "palette",
-    t("settings.appearance.title"),
+    t("settings.appearance.themeTitle"),
+    radioGroup({
+      legend: t("settings.appearance.theme"),
+      groupName: "theme",
+      value: themePreference(),
+      onChange: onTheme,
+      options: THEMES.map((theme) => ({
+        value: theme,
+        label: t(`settings.appearance.themes.${theme}`),
+        visual: icon(theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"),
+      })),
+    }),
+    h("p", { class: "field-help" }, t("settings.appearance.autoHelp")),
     radioGroup({
       legend: t("settings.appearance.palette"),
       groupName: "palette",
@@ -249,37 +313,29 @@ function appearanceSection(onPalette, onTheme) {
           h("span", { class: "swatch-c" })
         ),
       })),
-    }),
-    radioGroup({
-      legend: t("settings.appearance.theme"),
-      groupName: "theme",
-      value: themePreference(),
-      onChange: onTheme,
-      options: THEMES.map((theme) => ({
-        value: theme,
-        label: t(`settings.appearance.themes.${theme}`),
-        visual: icon(theme === "light" ? "sun" : theme === "dark" ? "moon" : "auto"),
-      })),
-    }),
-    h("p", { class: "field-help" }, t("settings.appearance.autoHelp"))
+    })
   );
 }
 
-function languageSection(onLanguage) {
+// This device's text size: each choice is written at the size it gives.
+function textSizeSection(onTextSize) {
   return card(
-    "language",
-    "globe",
-    t("settings.language.title"),
+    "text-size",
+    "textSize",
+    t("settings.appearance.textSize"),
     radioGroup({
-      legend: t("settings.language.label"),
-      groupName: "language",
-      value: languagePreference(),
-      onChange: onLanguage,
-      options: [
-        { value: "auto", label: t("settings.language.auto") },
-        ...LANGUAGES.map((language) => ({ value: language.code, label: language.label, lang: language.code, dir: language.dir })),
-      ],
-    })
+      legend: t("settings.appearance.textSize"),
+      legendHidden: true,
+      groupName: "text-size",
+      className: "radio-stack text-sizes",
+      value: textSizePreference(),
+      onChange: onTextSize,
+      options: TEXT_SIZES.map((size) => ({
+        value: size,
+        label: h("span", { class: "text-size-sample", dataset: { size } }, t(`settings.appearance.textSizes.${size}`)),
+      })),
+    }),
+    h("p", { class: "field-help" }, t("settings.appearance.textSizeHelp"))
   );
 }
 

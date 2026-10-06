@@ -1,14 +1,20 @@
 // Interface text. Every string on screen goes through t(key, params).
 //
-// Adding a language: create app/i18n/<code>.js (copy en.js, translate the values) and add one
-// line to LANGUAGES below. Keys missing from a translation fall back to English.
+// Adding a language: create app/i18n/<code>.js (copy en.js, translate the values), add one
+// line to LANGUAGES below and the code to theme-boot.js's list and sw.js's precache.
+// scripts/check_app.py requires every file to have exactly en.js's keys and placeholders; at run
+// time a key missing from a translation still falls back to English.
+//
+// `speech`: the language the microphone of Say or type a command listens in (views/command.js).
 
 import en from "../i18n/en.js";
 import { relativeParts } from "./rings.js";
 
 export const LANGUAGES = [
-  { code: "en", label: "English", dir: "ltr" },
-  { code: "he", label: "עברית", dir: "rtl" },
+  { code: "en", label: "English", dir: "ltr", speech: "en-US" },
+  { code: "he", label: "עברית", dir: "rtl", speech: "he-IL" },
+  { code: "es", label: "Español", dir: "ltr", speech: "es-ES" },
+  { code: "it", label: "Italiano", dir: "ltr", speech: "it-IT" },
 ];
 
 const LANGUAGE_KEY = "directorlink.lang";

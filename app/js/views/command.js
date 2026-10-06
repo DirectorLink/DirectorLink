@@ -13,7 +13,7 @@ import { MAX_LENGTH } from "../command-parser.js";
 import { cancelCommandPart, chooseOption, clearCommand, commandMessage, commandState, confirmCommand, submitCommand } from "../commands.js";
 import { doorbellButton, relayButton } from "../components.js";
 import { announce, h, iconButton, speakFrom } from "../dom.js";
-import { currentLanguage, t } from "../i18n.js";
+import { currentLanguage, languageInfo, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { IS_IOS } from "../platform.js";
 import { findScene, isolate, runScene } from "../scenes.js";
@@ -89,7 +89,8 @@ function startListening(where) {
     commandMessage(t("command.speech.unavailable"), "error");
     return;
   }
-  recognition.lang = currentLanguage() === "he" ? "he-IL" : "en-US";
+  // The app's language (js/i18n.js LANGUAGES: he-IL, es-ES, it-IT, en-US).
+  recognition.lang = languageInfo().speech;
   recognition.interimResults = true;
   recognition.maxAlternatives = 3;
   recognition.continuous = false;

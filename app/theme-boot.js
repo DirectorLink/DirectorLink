@@ -1,9 +1,14 @@
 // Runs before the first paint (a blocking script in <head>; the site's CSP forbids inline
-// scripts) so the saved palette, theme and text direction apply without a flash.
-// js/theme.js takes over once the app has loaded.
+// scripts) so the saved palette, theme, text size and text direction apply without a flash.
+// js/theme.js and js/i18n.js take over once the app has loaded.
 (function () {
   var root = document.documentElement;
   var palettes = ["graphite", "ocean", "forest", "plum", "midnight"];
+  // As js/theme.js TEXT_SIZES; styles.css scales the root font size for each (ADR-067).
+  var textSizes = ["small", "default", "large", "larger"];
+  // As js/i18n.js LANGUAGES: the codes, and those written right to left.
+  var languages = ["en", "he", "es", "it"];
+  var rtl = ["he"];
   // Page background per palette: the browser's toolbar colour (meta theme-color).
   var backgrounds = {
     graphite: ["#f5f5f4", "#0f1012"],
@@ -25,25 +30,29 @@
   if (theme !== "light" && theme !== "dark") {
     theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
+  var textSize = read("directorlink.textSize");
+  if (textSizes.indexOf(textSize) < 0) textSize = "default";
   root.setAttribute("data-palette", palette);
   root.setAttribute("data-theme", theme);
+  root.setAttribute("data-text-size", textSize);
 
+  // The saved language, or the browser's first one DirectorLink has ("iw" is Hebrew's old code).
   var lang = read("directorlink.lang");
-  if (!lang || lang === "auto") {
+  if (languages.indexOf(lang) < 0) {
     var tags = navigator.languages || [navigator.language || "en"];
     lang = "en";
     for (var i = 0; i < tags.length; i++) {
       var base = String(tags[i]).toLowerCase().split("-")[0];
-      if (base === "he" || base === "iw") {
-        lang = "he";
+      if (base === "iw") base = "he";
+      if (languages.indexOf(base) >= 0) {
+        lang = base;
         break;
       }
-      if (base === "en") break;
     }
   }
-  if (lang === "he") {
-    root.setAttribute("lang", "he");
-    root.setAttribute("dir", "rtl");
+  if (lang !== "en") {
+    root.setAttribute("lang", lang);
+    root.setAttribute("dir", rtl.indexOf(lang) >= 0 ? "rtl" : "ltr");
   }
 
   var meta = document.querySelector('meta[name="theme-color"]');
