@@ -1,12 +1,19 @@
-// Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066): a sentence in English or Hebrew, by
-// this user's own names of rooms, devices, scenes and Sonos rooms, becomes one action of the app (or
-// two or three: "kitchen lights off and close the blinds"), a question (which one, which mode), a
-// problem to say, or "I didn't understand". No AI and nothing sent anywhere: words, numbers and the
-// names the app already has for this user (js/commands.js builds the catalog from what the
-// controller lists for them). Its only import is heaters.js (the one rule for lights named for
-// heating), so the rules can be tested under Node (tests/app/command-parser.test.mjs).
+// Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066, ADR-068): a sentence in English, Hebrew,
+// Spanish or Italian, by this user's own names of rooms, devices, scenes and Sonos rooms, becomes
+// one action of the app (or two or three: "kitchen lights off and close the blinds"), a question
+// (which one, which mode), a problem to say, or "I didn't understand". No AI and nothing sent
+// anywhere: words, numbers and the names the app already has for this user (js/commands.js builds
+// the catalog from what the controller lists for them). Its only import is heaters.js (the one rule
+// for lights named for heating), so the rules can be tested under Node
+// (tests/app/command-parser.test.mjs).
 //
-// parseCommand(text, catalog) answers one of:
+// The languages (ADR-068): English and Hebrew are read together, as in 1.9.0 (their letters never
+// mix up). Spanish and Italian each have their own words, read only when the app is in that
+// language, and first: then English and Hebrew only when the app's language understood nothing in
+// the sentence (a refusal in it stands), so a Spanish or Italian sentence is never read as English
+// words, nor the other way. The user's names count in every language.
+//
+// parseCommand(text, catalog, { language }) answers one of:
 //   { status: "ok", action }                     do it (doors, Turn off all and scenes that open
 //                                                doors still get their second tap: commands.js)
 //   { status: "ok", actions }                    two or three things, each understood; all of them
@@ -74,10 +81,28 @@ const hebrewPlural = (word) => (HEBREW.test(word) && word.length >= 4 ? (word.en
 // Two forms of one word: the same without their endings, unless one is a masculine plural and the
 // other a feminine one (בנים, boys, is not בנות, girls).
 function sameForm(a, b) {
-  if (stem(a) !== stem(b)) return false;
+  if (stem(a) !== stem(b)) return spanishPlural(a, b) || spanishPlural(b, a);
   const one = hebrewPlural(a);
   const other = hebrewPlural(b);
   return !one || !other || one === other;
+}
+
+// The Spanish plural of a word that ends in a consonant: salón, salones; luz, luces.
+function spanishPlural(one, other) {
+  if (!/^[a-z]+$/.test(one) || other.length !== one.length + 2 || !other.endsWith("es")) return false;
+  if (one.endsWith("z")) return other === `${one.slice(0, -1)}ces`;
+  return /[lnrdjy]$/.test(one) && other === `${one}es`;
+}
+
+// Two Spanish or Italian words that differ only in the vowel of gender or number at their end
+// (niños, niñas; bambini, bambine; nonno, nonna): often two names, so said for one it is asked,
+// as the other Hebrew plural is.
+function otherEnding(a, b) {
+  if (!a || !b || a.length !== b.length || a.length < 4 || !/^[a-z]+$/.test(a) || !/^[a-z]+$/.test(b)) return false;
+  const end = a.endsWith("s") && b.endsWith("s") ? a.length - 2 : a.length - 1;
+  if (a.slice(0, end) !== b.slice(0, end) || a.slice(end + 1) !== b.slice(end + 1)) return false;
+  const pair = [a[end], b[end]].sort().join("");
+  return pair === "ao" || pair === "ei";
 }
 
 // Hebrew spelled with one vowel letter (י, ו) more or less, or doubled, not first or last: חניה,
@@ -109,7 +134,11 @@ function bareForms(word, name = false) {
 function split(text) {
   return String(text ?? "")
     .normalize("NFC")
+    // Italian elisions are two words: "l'aria", "dell'ingresso", "all'una", "mezz'ora".
+    .replace(/\b(l|dell|all|nell|sull|dall|coll|un|quest|quell|c|d|tutt|mezz)['’‘`](?=\p{L})/giu, "$1 ")
     .replace(/['’‘`׳״"“”]/g, "")
+    // Percent in words: "por ciento", "per cento", "cien por cien", "per cent".
+    .replace(/\b(?:por|per)\s+(?:ciento|cien|cento|cent)\b/giu, " % ")
     // "A/C", "a.c." are AC.
     .replace(/\ba[./]c\b\.?/gi, "ac")
     // Degrees Celsius: "23°C", "23 °C", "23C", "23º", "23℃".
