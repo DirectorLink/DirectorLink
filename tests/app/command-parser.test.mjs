@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { fold, parseCommand } from "../../app/js/command-parser.js";
+import { ES, IT } from "./command-homes.mjs";
 
 const ROOMS = [
   { id: 1, names: ["Kitchen", "מטבח"] },
@@ -396,12 +397,16 @@ test("every sentence in the app's README is understood", async () => {
   const readme = await readFile(new URL("../../app/README.md", import.meta.url), "utf-8");
   const section = readme.slice(readme.indexOf("## Say or type a command"), readme.indexOf("## Turn off all"));
   const rows = section.split("\n").filter((line) => line.startsWith("| *"));
-  const sentences = rows.flatMap((row) => [...row.split("|")[1].matchAll(/\*([^*]+)\*/g)].map((match) => match[1]));
-  assert.ok(sentences.length >= 25, `${sentences.length} sentences`);
-  for (const sentence of sentences) {
-    const result = parse(sentence);
-    // "פתחו את השער" asks which: this home has two gates.
-    assert.ok(result.status === "ok" || result.status === "ask", `${sentence}: ${JSON.stringify(result)}`);
+  // The columns: English and Hebrew, Spanish (1.10.0, ADR-068), Italian; each in its language and
+  // its home.
+  for (const [column, language, catalog] of [[1, "en", HOME], [2, "es", ES], [3, "it", IT]]) {
+    const sentences = rows.flatMap((row) => [...row.split("|")[column].matchAll(/\*([^*]+)\*/g)].map((match) => match[1]));
+    assert.ok(sentences.length >= 25, `${language}: ${sentences.length} sentences`);
+    for (const sentence of sentences) {
+      const result = parseCommand(sentence, catalog, { language });
+      // "פתחו את השער" asks which: this home has two gates.
+      assert.ok(result.status === "ok" || result.status === "ask", `${language}: ${sentence}: ${JSON.stringify(result)}`);
+    }
   }
 });
 

@@ -1,5 +1,6 @@
-// Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066): what the app does with what
-// js/command-parser.js understood. The parser gets only what the controller lists for this user
+// Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066, ADR-068): what the app does with what
+// js/command-parser.js understood, in the app's language (Spanish and Italian in their own words,
+// English and Hebrew in any). The parser gets only what the controller lists for this user
 // (state.js): their rooms, the devices they control, the scenes they may run, their Sonos rooms, and
 // the doors and gates in their rooms (to open only with door access). Every action is the same call
 // a tap makes (controls.js, music.js, scenes.js, turn-off.js), so the controller decides as for any
@@ -81,10 +82,11 @@ export function commandMessage(text, kind = "info") {
 
 // ---- what the parser may name ---------------------------------------------------------------
 
-// The user's own names, from what the controller lists for them.
+// The user's own names, from what the controller lists for them: a room by its Control4 name and
+// its name in every language of Settings → Rooms.
 export function commandCatalog() {
   const control = can("member");
-  const rooms = state.rooms.map((room) => ({ id: room.id, names: [room.name, room.names?.en, room.names?.he].filter(Boolean) }));
+  const rooms = state.rooms.map((room) => ({ id: room.id, names: [room.name, ...Object.values(room.names && typeof room.names === "object" ? room.names : {})].filter((name) => typeof name === "string" && name) }));
   const devices = [];
   const add = (kind, list, fields) => {
     for (const device of list || []) devices.push({ kind, id: device.id, name: device.name, room: device.room?.id ?? null, ...fields(device) });
@@ -667,7 +669,8 @@ export function submitCommand(text, alternatives = []) {
   if (!said.length) return show(null);
   if (!can("member")) return show({ stage: "problem", text: t("command.problem.viewOnly") });
   const catalog = commandCatalog();
-  const results = said.map((item) => parseCommand(item, catalog));
+  const language = currentLanguage();
+  const results = said.map((item) => parseCommand(item, catalog, { language }));
   // The likeliest words decide, a question, a problem or a refusal included ("don't", a time: the
   // service's next guess may have left that word out); its other guesses only when it did not
   // understand them at all, and then the likeliest of them that says anything.

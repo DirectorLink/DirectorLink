@@ -23,7 +23,22 @@ test("heaters by their usual names, in English and Hebrew, singular or plural, w
   }
 });
 
+test("heaters by their Spanish and Italian names, singular or plural, accents or not (1.10.0, ADR-068)", () => {
+  for (const name of [
+    "Calentador", "Calentadores", "Termo", "Termo niños", "Termos", "Calefacción", "Calefaccion baño", "Suelo radiante", "Panel radiante", "Toallero", "Toallero eléctrico", "Calientatoallas",
+    "Estufa", "Estufas", "Radiador", "Radiadores", "Caldera", "Calefactor", "Termoventilador", "Convector", "Agua caliente", "Lámpara de calor",
+    "Scaldabagno", "Scaldabagni", "Boiler", "Riscaldamento", "Riscaldamento bagno", "Pavimento radiante", "Scaldasalviette", "Stufa", "Stufette", "Stufetta bagno",
+    "Termosifone", "Termosifoni", "Radiatore", "Caldaia", "Termoconvettore", "Termoventilatore", "Acqua calda", "Infrarossi", "Scaldacqua",
+  ]) {
+    assert.equal(isHeater({ name }), true, name);
+  }
+});
+
 test("lights that only sound warm are lights", () => {
+  // Warm colours, and words that only go with heating ("caliente", "calda", "agua", "acqua").
+  for (const name of ["Luz cálida", "Luz calida", "Blanco cálido", "Luce calda", "Bianco caldo", "Luces del techo", "Lámpara de pie", "Luci del soffitto", "Lampada da terra", "Agua", "Acqua", "Caliente", "Calda", "Termostato", "Terraza", "Terrazzo"]) {
+    assert.equal(isHeater({ name }), false, name);
+  }
   for (const name of ["Warm white", "אור חם", "תאורת חומה", "Hotel sign", "Water feature", "מים", "Kitchen Island", "ספוטים", "אי תלוי", "Spots", "Hot", "Dodi", "דודה", "", null]) {
     assert.equal(isHeater({ name }), false, String(name));
   }

@@ -1,5 +1,6 @@
-// Lights named for heating (1.10.0, ADR-066): heaters, boilers, heat lamps and floor heating wired
-// as lights, such as KNX boilers kept on or off by Composer programming ("דוד הורים"). One rule for
+// Lights named for heating (1.10.0, ADR-066; Spanish and Italian names, ADR-068): heaters, boilers,
+// heat lamps and floor heating wired as lights, such as KNX boilers kept on or off by Composer
+// programming ("דוד הורים", "Termo niños", "Scaldabagno"). One rule for
 // the whole app: a room's All off, Home's Turn off all and a command's "the lights" (on, off, a
 // level, brighter or dimmer) leave them as they are; only their own switch, or a command that names
 // them, changes them. Scenes and schedules keep their steps. No imports, so the rule can be tested
@@ -17,17 +18,23 @@ function fold(word) {
     .replace(/[ךםןףץ]/g, (letter) => FINAL_FORMS[letter]);
 }
 
-// Each a whole word, in the singular or plural ("חומה", a wall, is not "חום"; "Warm white" and
-// "אור חם" are lights), and two-word names whose words alone are not ("Hot water", "מים חמים").
+// Each a whole word, in the singular or plural ("חומה", a wall, is not "חום"; "Warm white",
+// "אור חם", "Luz cálida" and "Luce calda" are lights), and two-word names whose words alone are not
+// ("Hot water", "מים חמים", "Agua caliente", "Acqua calda"). Spanish and Italian plurals are listed
+// (1.10.0, ADR-068).
 const HEATER_WORDS = new Set(
   (
     "heater heating heat heated radiator radiant boiler geyser immersion underfloor towel infrared convector sauna warmer " +
-    "חימום חום מחמם מחממת מחממי תנור מפזר רדיאטור דוד בוילר הסקה מקרן אינפרא אינפרה קומקום סאונה"
+    "חימום חום מחמם מחממת מחממי תנור מפזר רדיאטור דוד בוילר הסקה מקרן אינפרא אינפרה קומקום סאונה " +
+    "calentador calentadores termo termos calefacción calefacciones calefactor calefactores radiante radiantes toallero toalleros calientatoallas " +
+    "estufa estufas radiador radiadores caldera calderas termoventilador termoventiladores convector convectores termosifón termosifones infrarrojo infrarrojos calor " +
+    "scaldabagno scaldabagni scaldacqua riscaldamento riscaldamenti scaldasalviette stufa stufe stufetta stufette termosifone termosifoni " +
+    "radiatore radiatori caldaia caldaie termoconvettore termoconvettori convettore convettori termoventilatore termoventilatori infrarossi infrarosso termostufa calore"
   )
     .split(" ")
     .map(fold)
 );
-const HEATER_PAIRS = [["hot", "water"], ["hot", "tub"], ["מים", "חמים"]].map((pair) => pair.map(fold));
+const HEATER_PAIRS = [["hot", "water"], ["hot", "tub"], ["מים", "חמים"], ["agua", "caliente"], ["acqua", "calda"]].map((pair) => pair.map(fold));
 
 // A word without a plural ending (heaters, דודים, מחממות).
 function singular(word) {

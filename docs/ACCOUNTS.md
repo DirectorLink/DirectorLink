@@ -56,7 +56,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
-| Say or type a command (1.9.0, ADR-063; several things and steps, 1.10.0, ADR-066): the words | yes: understood on the device; when spoken, the browser's own speech service hears the sound (Chrome's at Google, Edge's at Microsoft, Safari's at Apple), not DirectorLink | **never** | only the requests it makes, as a tap makes them |
+| Say or type a command (1.9.0, ADR-063; several things and steps, 1.10.0, ADR-066; Spanish and Italian, ADR-068): the words | yes: understood on the device; when spoken, the browser's own speech service hears the sound (Chrome's at Google, Edge's at Microsoft, Safari's at Apple), not DirectorLink | **never** | only the requests it makes, as a tap makes them |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
 | The backup password | while typed | **never** | **never** (only its public key) |
 | DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |

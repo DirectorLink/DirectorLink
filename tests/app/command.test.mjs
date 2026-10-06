@@ -909,3 +909,165 @@ test("heaters: a room's lights, its All off and Turn off all leave them as they 
     await setLanguage("en");
   }
 });
+
+// ---- 1.10.0 (ADR-068): Spanish and Italian -------------------------------------------------------
+
+// The rooms with their names in Spanish and Italian too (Settings → Rooms).
+const NAMED = [
+  { id: 10, name: "Kitchen", names: { he: "מטבח", es: "Cocina", it: "Cucina" } },
+  { id: 11, name: "Living Room", names: { he: "סלון", es: "Salón", it: "Soggiorno" } },
+  { id: 12, name: "Porch", names: { es: "Porche", it: "Portico" } },
+];
+const { commandCatalog, commandExamples } = await import("../../app/js/commands.js");
+const { parseCommand } = await import("../../app/js/command-parser.js");
+const { t } = await import("../../app/js/i18n.js");
+
+async function connectNamed(language) {
+  await setLanguage(language);
+  await connect();
+  state.rooms = NAMED;
+  notify();
+}
+
+test("the parser gets every room's names, in every language of Settings → Rooms", async () => {
+  await connectNamed("en");
+  assert.deepEqual(commandCatalog().rooms.map((item) => item.names), [
+    ["Kitchen", "מטבח", "Cocina", "Cucina"],
+    ["Living Room", "סלון", "Salón", "Soggiorno"],
+    ["Porch", "Porche", "Portico"],
+  ]);
+});
+
+test("in Spanish: Spanish sentences, and English ones; what it understood and did, in Spanish", async () => {
+  await connectNamed("es");
+  try {
+    add("lights", heater(24, "Termo", 10, true));
+    await say("apaga las luces de la cocina");
+    assert.equal(shown(), "⁨Cocina⁩: apagar las lucesEl calentador “⁨Termo⁩” se queda como está.Ejecutando…");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [
+      ["/v1/lights/20", { on: false }],
+      ["/v1/lights/21", { on: false }],
+    ]);
+    assert.equal(shown(), "⁨Cocina⁩: apagar las lucesEl calentador “⁨Termo⁩” se queda como está.Listo");
+    // Two things, the room said in each; a temperature, a step.
+    await say("pon el aire del salón a 22 y sube la luz del salón");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).slice(2).map((call) => [call.path, call.body]), [
+      ["/v1/thermostats/30", { target_temperature: 22 }],
+      // A step brighter: from off to the step, from 80 to 100.
+      ["/v1/lights/22", { brightness: 20 }],
+      ["/v1/lights/23", { brightness: 100 }],
+    ]);
+    // English is understood in every language.
+    await say("kitchen lights on");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).slice(5).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"]);
+    // Italian is not Spanish: not understood, nothing sent, the words kept.
+    await say("spegni le luci della cucina");
+    assert.equal(shown(), "No entendí “⁨spegni luci della⁩”.Prueba:Apaga las luces de CocinaAire acondicionado de Salón a 23Ejecuta Good night");
+    // A time, a "don't": nothing.
+    await say("apaga las luces de la cocina a las siete");
+    await say("no apagues las luces de la cocina");
+    await say("¿están encendidas las luces de la cocina?");
+    assert.match(shown(), /^Solo puedo hacer cosas, no responder preguntas/);
+    await advance(1500);
+    assert.equal(sent("PATCH", /./).length, 7, "nothing more was sent");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("in Italian: Italian sentences, and English ones; Spanish is not Italian", async () => {
+  await connectNamed("it");
+  try {
+    await say("spegni le luci della cucina e metti il condizionatore del soggiorno a 22");
+    assert.equal(shown(), "⁨Cucina⁩: luci spenteIn corso…⁨Soggiorno⁩: clima a ⁦22°⁩In corso…");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [
+      ["/v1/lights/20", { on: false }],
+      ["/v1/lights/21", { on: false }],
+      ["/v1/thermostats/30", { target_temperature: 22 }],
+    ]);
+    await say("living room lights off");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).slice(3).map((call) => call.path), ["/v1/lights/23"]);
+    await say("apaga las luces de la cocina");
+    assert.match(shown(), /^Non ho capito “/);
+    await say("non spegnere le luci della cucina");
+    await say("accendi le luci della cucina alle sette");
+    await advance(1500);
+    assert.equal(sent("PATCH", /./).length, 4, "nothing more was sent");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("Spanish in the English app is not understood; nothing is sent", async () => {
+  await connectNamed("en");
+  await say("apaga las luces de la cocina");
+  assert.match(shown(), /^I didn’t understand “⁨apaga las luces de la⁩”/);
+  await advance(1500);
+  assert.equal(sent("PATCH", /./).length, 0);
+});
+
+test("the microphone in Spanish and Italian: what it heard is understood in that language, a refusal first", async () => {
+  for (const [language, speech, sentence, refusal] of [
+    ["es", "es-ES", "apaga las luces de la cocina", "no apagues las luces de la cocina"],
+    ["it", "it-IT", "spegni le luci della cucina", "non spegnere le luci della cucina"],
+  ]) {
+    await connectNamed(language);
+    try {
+      heard.length = 0;
+      await click("command-mic:home");
+      assert.equal(heard[0].lang, speech);
+      // The likeliest says not to: a less likely guess never does it.
+      heard[0].say(refusal, sentence);
+      await click("command-mic:home");
+      heard[1].say(sentence);
+      await advance(1500);
+      assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"], language);
+    } finally {
+      await setLanguage("en");
+    }
+  }
+});
+
+test("the examples it gives, and the ones in its answers, are understood in every language", async () => {
+  // A home with the default examples' rooms and scenes in each language.
+  const defaults = {
+    rooms: [
+      { id: 10, names: ["Kitchen", "מטבח", "Cocina", "Cucina"] },
+      { id: 11, names: ["Living room", "סלון", "Salón", "Soggiorno"] },
+    ],
+    devices: [
+      { kind: "light", id: 20, name: "Island", room: 10, dimmable: true, on: true },
+      { kind: "thermostat", id: 30, name: "AC", room: 11, modes: ["off", "cool", "heat"], mode: "cool", min: 16, max: 30 },
+      { kind: "music", id: "RINCON_1", name: "Kitchen", room: 10 },
+    ],
+    scenes: ["Good night", "לילה טוב", "Buenas noches", "Buonanotte"].map((name, index) => ({ id: `d${index}`, name })),
+  };
+  // "Kitchen lights 40%", "„אור במטבח 40%”": the example inside a sentence.
+  const quoted = (text) => [...text.matchAll(/[“„]([^”]+)”/g)].map((match) => match[1]);
+  for (const language of ["en", "he", "es", "it"]) {
+    await connectNamed(language);
+    try {
+      const sentences = [
+        ...commandExamples(),
+        t("command.example.lightsDefault"),
+        t("command.example.climateDefault"),
+        t("command.example.sceneDefault"),
+        ...quoted(t("command.problem.needLevel.light")),
+        ...quoted(t("command.problem.needLevel.music")),
+      ];
+      assert.equal(sentences.length, 8, `${language}: ${sentences}`);
+      for (const [index, sentence] of sentences.entries()) {
+        const catalog = index < 3 ? commandCatalog() : defaults;
+        const result = parseCommand(sentence, catalog, { language });
+        assert.equal(result.status, "ok", `${language}: “${sentence}”: ${JSON.stringify(result)}`);
+      }
+    } finally {
+      await setLanguage("en");
+    }
+  }
+});
