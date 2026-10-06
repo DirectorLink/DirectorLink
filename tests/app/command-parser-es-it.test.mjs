@@ -642,3 +642,116 @@ test("fast enough in Spanish and Italian for a phone in a home with 111 lights",
   assert.ok(each < 50, `${each.toFixed(1)} ms a command`);
   assert.equal(parseCommand("apaga las luces de la habitación 12", big, { language: "es" }).action.room, 12);
 });
+
+// ---- 1.10.0 review -------------------------------------------------------------------------------
+
+test("Spanish and Italian: \"la del salón\", \"quella del soggiorno\" is the kind said before, in that room; never its All off", () => {
+  es.several("enciende la luz de la cocina y apaga la del salón", [
+    { type: "lights", room: 2, change: { on: true } },
+    { type: "lights", room: 1, ids: [100, 101, 102], change: { on: false } },
+  ]);
+  es.several("apaga las luces de la cocina y apaga las del salón", [{ type: "lights", room: 2 }, { type: "lights", room: 1, change: { on: false } }]);
+  // "El del dormitorio": the AC, not the bedroom's lights too.
+  const bedroom = { ...ES, rooms: ES.rooms.map((room) => (room.id === 3 ? { id: 3, names: ["Dormitorio"] } : room)) };
+  es.several("apaga el aire del salón y apaga el del dormitorio", [{ type: "climate", ids: [200], change: { mode: "off" } }, { type: "climate", ids: [201], change: { mode: "off" } }], bedroom);
+  // With nothing said before it: not understood, never the room's All off.
+  es.unknown("apaga la del salón");
+  es.unknown("apaga las de la cocina");
+  // "La de pie" names the floor lamp by its own words.
+  es.same("apaga la de pie", { device: { kind: "light", id: 101 }, change: { on: false } });
+  it.several("accendi la luce della cucina e spegni quella del soggiorno", [{ type: "lights", room: 2, change: { on: true } }, { type: "lights", room: 1, change: { on: false } }]);
+  it.several("spegni le luci della cucina e spegni quelle del soggiorno", [{ type: "lights", room: 2 }, { type: "lights", room: 1, change: { on: false } }]);
+  it.unknown("spegni quella del soggiorno", ["quella"]);
+  // "Quella luce": that light, its kind said.
+  it.same("spegni quella luce del soggiorno", { type: "lights", room: 1, change: { on: false } });
+});
+
+test("Spanish and Italian: a change by N without its unit is refused, never a level of N; with its unit, the step", () => {
+  for (const text of ["alza il volume in cucina di 10", "abbassa il volume in cucina di 10", "alza la luce in cucina di 20", "abbassa le luci in cucina del 30"]) it.refused(text, "time");
+  for (const text of ["sube el volumen de la cocina un 10", "baja la luz de la cocina un 20"]) es.refused(text, "time");
+  // A number after up or down without "a" or "al" is not a level either.
+  es.unknown("sube el volumen de la cocina 10");
+  it.unknown("alza la luce in cucina 20");
+  // With its unit, after up or down: the step, as "baja el aire dos grados".
+  es.same("sube la luz de la cocina 20%", { type: "lights", room: 2, change: { brightnessBy: 20 } });
+  it.same("alza la luce in cucina 20%", { type: "lights", room: 2, change: { brightnessBy: 20 } });
+  es.same("baja el volumen de la cocina 20%", { type: "music", change: { volumeBy: -20 } });
+  // With "a", "al", "hasta el": the level.
+  es.same("sube la luz del salón al 80%", { change: { brightness: 80 } });
+  es.same("sube el volumen de la cocina a 30", { type: "music", change: { volume: 30 } });
+  es.same("sube la persiana del salón hasta el 60%", { change: { position: 60 } });
+  it.same("alza il volume in cucina a 30", { type: "music", change: { volume: 30 } });
+});
+
+test("Spanish: \"a la una\" keeps its time with an amount after it", () => {
+  for (const text of [
+    "sube la luz de la cocina a la una 20%", "baja el aire del salón a la una dos grados", "sube la temperatura del salón a la una 2 grados",
+    "sube la luz de la cocina hasta la una 20%", "baja la música de la cocina a la una 10%",
+  ]) {
+    es.refused(text, "time");
+  }
+  it.refused("abbassa la temperatura del soggiorno all'una 2 gradi", "time");
+  // "En un 25%" is by 25%.
+  es.same("sube la luz del salón en un 25%", { change: { brightnessBy: 25 } });
+});
+
+test("Spanish and Italian: a numbered room said with its room word is the room, not a light of that number elsewhere", () => {
+  const light = (id, name, room) => ({ kind: "light", id, name, room, dimmable: true, on: false });
+  const numbered = (room, ceiling, lamp, kitchen, living) => ({
+    rooms: [{ id: 1, names: [living] }, { id: 2, names: [`${room} 1`] }, { id: 3, names: [`${room} 2`] }, { id: 4, names: [kitchen] }],
+    devices: [light(1, ceiling, 1), light(2, `${lamp} 2`, 4), light(3, ceiling, 2), light(4, ceiling, 3)],
+    scenes: [],
+  });
+  const spanish = numbered("Habitación", "Techo", "Foco", "Cocina", "Salón");
+  const italian = numbered("Camera", "Soffitto", "Lampada", "Cucina", "Soggiorno");
+  es.same("enciende la luz de la habitación 2", { type: "lights", room: 3, ids: [4], change: { on: true } }, spanish);
+  es.same("pon la luz de la habitación 2 al 30", { room: 3, ids: [4], change: { brightness: 30 } }, spanish);
+  it.same("accendi la luce della camera 2", { type: "lights", room: 3, ids: [4], change: { on: true } }, italian);
+  es.same("enciende el foco 2", { device: { kind: "light", id: 2 } }, spanish);
+  it.same("accendi la lampada 2", { device: { kind: "light", id: 2 } }, italian);
+});
+
+test("Spanish and Italian: a room word alone asks which room, never the whole home's Turn off all", () => {
+  for (const text of ["spegni la luce in camera", "spegni tutto in camera", "chiudi la tapparella in camera"]) it.problem(text, "needRoom");
+  // Also with a scene named like the command.
+  it.problem("spegni tutto in camera", "needRoom", { ...IT, scenes: [...IT.scenes, { id: "it000010", name: "Spegni tutto" }] });
+  for (const text of ["apaga las luces del cuarto", "apaga todo en la habitación"]) es.problem(text, "needRoom");
+  es.same("apaga las luces de todas las habitaciones", { type: "offAll", filters: ["lights"] });
+  it.same("spegni le luci in tutte le stanze", { type: "offAll", filters: ["lights"] });
+});
+
+test("Spanish and Italian: night is a time; a scene or a light with a time word is that only said whole", () => {
+  const scenes = { ...ES, scenes: [...ES.scenes, { id: "es000010", name: "Mañana" }, { id: "es000011", name: "Noche" }] };
+  es.refused("apaga la isla mañana", "time", scenes);
+  es.refused("apaga las luces del salón por la noche", "time", scenes);
+  es.same("activa mañana", { type: "scene", id: "es000010" }, scenes);
+  es.same("noche", { type: "scene", id: "es000011" }, scenes);
+  es.same("buenas noches", { type: "scene", id: "es000001" });
+  // "Lámpara de noche" said whole is the lamp; "noche" alone in a sentence is a time.
+  es.same("enciende la lámpara de noche", { device: { kind: "light", id: 105 }, change: { on: true } });
+  es.refused("apaga las luces del dormitorio principal por la noche", "time");
+  const domani = { ...IT, scenes: [...IT.scenes, { id: "it000010", name: "Domani" }] };
+  it.refused("spegni l'isola domani", "time", domani);
+  it.same("attiva domani", { type: "scene", id: "it000010" }, domani);
+  it.refused("spegni le luci del soggiorno di notte", "time");
+  it.same("buonanotte", { type: "scene", id: "it000001" });
+});
+
+test("Spanish and Italian: è asks and parts nothing; a room and a light of one name ask; dictation's periods part", () => {
+  it.problem("spegni l'isola è chiudi la tapparella del soggiorno", "question");
+  it.several("spegni l'isola e chiudi la tapparella del soggiorno", [{ device: { kind: "light", id: 103 } }, { type: "blinds", ids: [300] }]);
+  // A room "Termo" and the heater "Termo" in the bathroom: which one.
+  const termo = {
+    ...ES,
+    rooms: [...ES.rooms, { id: 10, names: ["Termo"] }],
+    devices: [...ES.devices, { kind: "light", id: 120, name: "Termo", room: 7, dimmable: false, on: true }, { kind: "light", id: 121, name: "Lámpara", room: 10, dimmable: true, on: true }],
+  };
+  const which = es.asks("apaga el termo", termo);
+  assert.deepEqual(which.options.map((option) => option.type).sort(), ["lights", "roomOff"]);
+  // "The lights in Termo" are the room's.
+  es.same("apaga las luces en termo", { type: "lights", room: 10, ids: [121] }, termo);
+  es.several("Apaga la luz de la cocina. Cierra la persiana.", [{ type: "lights", room: 2 }, { type: "blinds", ids: [301], change: { position: 0 } }]);
+  it.several("Spegni la luce della cucina. Chiudi la tapparella.", [{ type: "lights", room: 2 }, { type: "blinds", ids: [301] }]);
+  es.refused("Apaga la luz de la cocina. No cierres la persiana.", "not");
+  es.problem("apaga la calefacción", "needRoom");
+});

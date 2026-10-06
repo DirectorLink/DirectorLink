@@ -37,6 +37,9 @@ let current = null;
 let stamps = 0;
 
 export function commandState() {
+  // Said and answered before the app's language changed: its words and examples are in the other
+  // language, which this one's commands do not understand. Gone (1.10.0).
+  if (current && current.language !== currentLanguage()) current = null;
   return current;
 }
 
@@ -50,7 +53,7 @@ function spoken(shown) {
 
 function show(next) {
   stamps += 1;
-  current = next ? { ...next, stamp: stamps } : null;
+  current = next ? { ...next, language: currentLanguage(), stamp: stamps } : null;
   if (current && current.stage !== "message") announce(spoken(current));
   notify();
   return current;
@@ -272,8 +275,9 @@ function problemText(result) {
 }
 
 // Lights named for heating that a command leaves as they are where it would have changed them
-// (ADR-066): "The heater “דוד הורים” is left as it is.", or "".
-function heaterNote(action) {
+// (ADR-066): "The heater “דוד הורים” is left as it is.", or "". `named`: the lights another part
+// of the sentence changes ("…ואת דוד הורים"), never said to be left.
+function heaterNote(action, named = new Set()) {
   let heaters = [];
   if (action.type === "lights" && action.kept?.length) {
     const change = action.change || {};
@@ -284,6 +288,7 @@ function heaterNote(action) {
   } else if (action.type === "offAll" && action.filters.includes("lights")) {
     heaters = keptHeaters("lights");
   }
+  heaters = heaters.filter((light) => !named.has(light.id));
   return heaters.length ? t("command.heatersLeft", { count: heaters.length, names: heaterNames(heaters) }) : "";
 }
 
@@ -579,8 +584,10 @@ function settlePart(stamp, index, outcome) {
 // not held back by them).
 export function actAll(actions) {
   const runs = [];
+  // The lights each part changes, so that another part's note never says one is left as it is.
+  const others = (index) => new Set(actions.flatMap((other, at) => (at !== index && other.type === "lights" ? other.ids : [])));
   const parts = actions.map((action, index) => {
-    const part = { said: describe(action), note: heaterNote(action), action, stage: "running", text: "" };
+    const part = { said: describe(action), note: heaterNote(action, others(index)), action, stage: "running", text: "" };
     if (action.type === "door") {
       firstTap(action.device);
       return { ...part, stage: "door" };

@@ -288,7 +288,8 @@ test("doors and gates: only open, only where the user may, one at a time", () =>
 // ---- Hebrew ------------------------------------------------------------------------------------
 
 test("Hebrew: prefixes, plural and singular, imperatives for one or many", () => {
-  for (const text of ["כבה את האורות במטבח", "כבו את האור במטבח", "תכבה אורות במטבח", "כיבוי אורות מטבח", "האורות במטבח כבויים"]) {
+  // (1.10.0: "האורות במטבח כבויים" says how they are: a question.)
+  for (const text of ["כבה את האורות במטבח", "כבו את האור במטבח", "תכבה אורות במטבח", "כיבוי אורות מטבח"]) {
     same(text, { type: "lights", room: 1, ids: [100, 101], change: { on: false } });
   }
   same("אור בסלון 40%", { room: 2, ids: [102, 105], change: { brightness: 40 } });
@@ -389,7 +390,7 @@ test("words it does not know, names that are not there, two things at once", () 
 test("a viewer's catalog has nothing to control", () => {
   const viewer = { rooms: ROOMS, devices: [], scenes: [] };
   problem("kitchen lights off", "none", viewer);
-  unknown("run good night", ["good", "night"], viewer);
+  unknown("run party", ["party"], viewer);
 });
 
 test("every sentence in the app's README is understood", async () => {
@@ -921,4 +922,123 @@ test("the Hebrew home: sentences of 1.9.0 keep their meaning", () => {
   same("הפעילו לילה טוב", { type: "scene", id: "s1" }, IL);
   unknown("אל תפתחו את שער החניה", undefined, IL);
   problem("האור בסלון דולק?", "question", IL);
+});
+
+// ---- 1.10.0 review: rooms said in a name, a room word alone, states, night, sentences ------------
+
+// The owner's parents' room: a light named with the Entrance's name ("רחצה ספוטים כניסה"), a bed
+// light, and an AC in the Entrance.
+const OWNER = {
+  ...IL,
+  devices: [...IL.devices, light(1020, "רחצה ספוטים כניסה", 4, { on: true }), light(1021, "מיטה ימין", 4), thermostat(2004, "מזגן כניסה", 10)],
+};
+
+// Not done: refused as "not", "time" or "feel", whatever else was said.
+function refused(text, refusal, catalog = HOME) {
+  const result = parse(text, catalog);
+  assert.equal(result.status, "unknown", `${text}: ${JSON.stringify(result)}`);
+  assert.equal(result.refusal, refusal, `${text}: ${JSON.stringify(result)}`);
+  return result;
+}
+
+test("a room's name inside a device's name in another room is not the room said, and never carried to the next part", () => {
+  same("תכבה את רחצה ספוטים כניסה", { device: { kind: "light", id: 1020 }, change: { on: false } }, OWNER);
+  // Never the Entrance's AC or lights: which room?
+  for (const [text, words] of [
+    ["תכבה את רחצה ספוטים כניסה ואת המזגן", "המזגן"],
+    ["תכבה את רחצה ספוטים כניסה ותדליק את האור", "תדליק את האור"],
+  ]) {
+    assert.equal(problem(text, "needRoom", OWNER).part, words, text);
+  }
+  // Nor the Entrance's door: which one.
+  const door = parse("תכבה את רחצה ספוטים כניסה ותפתח את הדלת", OWNER);
+  assert.deepEqual([door.status, door.problem, door.question], ["problem", "partAsks", "which"], JSON.stringify(door));
+  // As for a light whose name has no room's.
+  problem("תכבה את מיטה ימין ותדליק את האור", "needRoom", OWNER);
+  // A device in the room its name says still says it ("the kitchen island").
+  several("turn on the kitchen island and close the blinds", [{ device: { kind: "light", id: 100 } }, { type: "blinds", ids: [300] }]);
+});
+
+test("Hebrew: a state without its \"?\" is a question, as in Spanish and Italian; the imperative acts", () => {
+  for (const text of ["האור בחדר הורים דלוק", "שער חניה פתוח", "התריסים סגורים", "המזגן בסלון כבוי", "האורות במטבח כבויים", "התריס בסלון פתוח", "המנורות בסלון דולקות"]) {
+    problem(text, "question", OWNER);
+  }
+  same("תפתח את שער החניה", { type: "door", device: { kind: "relay", id: 4000 } }, OWNER);
+  same("כבו את האור", { type: "offAll", filters: ["lights"] }, OWNER);
+  same("כבו את האור בסלון", { type: "lights", room: 1, change: { on: false } }, OWNER);
+  // "סגור" is also the imperative ("סגור את התריס"): it acts.
+  same("סגור את התריס בסלון", { type: "blinds", ids: [3000], change: { position: 0 } }, OWNER);
+});
+
+test("a room word alone (\"the room\", \"בחדר\") asks which room; never the whole home's Turn off all", () => {
+  for (const text of ["turn off the lights in the room", "turn off everything in the room", "close the blinds in the room", "תכבו את האור בחדר", "תכבו הכל בחדר"]) {
+    problem(text, "needRoom");
+  }
+  // In every room: the whole home, after its confirm.
+  same("turn off the lights in every room", { type: "offAll", filters: ["lights"] });
+  same("כבו את האורות בכל החדרים", { type: "offAll", filters: ["lights"] });
+  // A room said with it is that room; a name with the word is that name.
+  same("turn off the lights in the living room", { room: 2 });
+  const quiet = { ...HOME, scenes: [...SCENES, { id: "aa000013", name: "Quiet room" }, { id: "aa000014", name: "חדר שקט" }] };
+  same("run quiet room", { type: "scene", id: "aa000013" }, quiet);
+  same("הפעילו חדר שקט", { type: "scene", id: "aa000014" }, quiet);
+  same("kids room fan on", { type: "fans", ids: [400] });
+});
+
+test("a numbered room said with its room word is the room, not a light of that number elsewhere", () => {
+  const rooms = (words) => ({
+    rooms: [{ id: 1, names: [words.living] }, { id: 2, names: [`${words.room} 1`] }, { id: 3, names: [`${words.room} 2`] }, { id: 4, names: [words.kitchen] }],
+    devices: [light(1, words.ceiling, 1), light(2, `${words.lamp} 2`, 4), light(3, words.ceiling, 2), light(4, words.ceiling, 3)],
+    scenes: [],
+  });
+  const en = rooms({ living: "Living room", room: "Room", kitchen: "Kitchen", ceiling: "Ceiling", lamp: "Lamp" });
+  const he = rooms({ living: "סלון", room: "חדר", kitchen: "מטבח", ceiling: "תקרה", lamp: "מנורה" });
+  same("turn on the light in room 2", { type: "lights", room: 3, ids: [4], change: { on: true } }, en);
+  same("turn on the lamp in room 2", { room: 3, ids: [4] }, en);
+  same("תדליק את האור בחדר 2", { type: "lights", room: 3, ids: [4], change: { on: true } }, he);
+  // The light said by its own name, or its number alone, is that light.
+  same("turn on lamp 2", { device: { kind: "light", id: 2 } }, en);
+  same("תדליק את מנורה 2", { device: { kind: "light", id: 2 } }, he);
+});
+
+test("night is a time; a name with a time word is that name only said whole", () => {
+  for (const text of ["turn off the kitchen lights at night", "כבו את האור במטבח בלילה", "תכבו את האור בסלון הלילה"]) refused(text, "time");
+  same("good night", { type: "scene", id: "aa000001" });
+  same("לילה טוב", { type: "scene", id: "s1" }, OWNER);
+  same("תדליקו את מנורת הלילה", { device: { kind: "light", id: 1011 }, change: { on: true } }, OWNER);
+  // A scene named "Morning": its name alone is the scene; inside another command, a time.
+  const morning = { ...HOME, scenes: [...SCENES, { id: "aa000011", name: "Morning" }] };
+  same("run morning", { type: "scene", id: "aa000011" }, morning);
+  refused("turn off the kitchen lights in the morning", "time", morning);
+  // "Don't" in a scene's name: only said whole.
+  const disturb = { ...HOME, scenes: [...SCENES, { id: "aa000012", name: "Do not disturb" }] };
+  same("run do not disturb", { type: "scene", id: "aa000012" }, disturb);
+  refused("do not turn off the kitchen lights", "not", disturb);
+});
+
+test("a change by an amount without its unit is refused in English and Hebrew too, never a level", () => {
+  for (const text of ["turn up the kitchen music by 10", "kitchen lights brighter by 30", "תגבירו את המוזיקה במטבח ב-10", "תגביר את האור בסלון ב-20"]) refused(text, "time");
+});
+
+test("\"the heating\" alone asks which room: the AC, floor heating or a heater wired as a light", () => {
+  problem("תכבה את החימום", "needRoom", OWNER);
+  problem("turn off the heating", "needRoom");
+  // With "all": the whole home's Turn off all, after its confirm (heaters wired as lights stay).
+  same("כבו את כל החימום", { type: "offAll", filters: ["climate"] }, OWNER);
+  same("turn off all the heating", { type: "offAll", filters: ["climate"] });
+});
+
+test("dictation's periods: one at the end parts nothing; one between sentences parts two things, all or nothing", () => {
+  same("Kitchen lights off.", { room: 1, change: { on: false } });
+  same("Kitchen lights off!", { room: 1, change: { on: false } });
+  several("Kitchen lights off. Close the blinds.", [{ type: "lights", room: 1 }, { type: "blinds", ids: [300], change: { position: 0 } }]);
+  several("כבו את האור במטבח. תסגרו את התריסים.", [{ type: "lights", room: 1 }, { type: "blinds", ids: [300] }]);
+  refused("Kitchen lights off. Don't close the blinds.", "not");
+  // A part is named without its period.
+  assert.equal(parse("Kitchen lights off. Close the garage door.").part, "Close the garage door");
+  // A room alone before it is where, as with a comma.
+  same("Kitchen. Lights off.", { room: 1, change: { on: false } });
+  // "p.m." is a time, a decimal point a number.
+  refused("turn on the kitchen lights at 7 p.m.", "time");
+  same("set the living room AC to 23.5.", { change: { temperature: 23.5 } });
 });
