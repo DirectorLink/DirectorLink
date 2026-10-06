@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · DoorBird for Control4: a free, open-source driver for DoorBird video door stations. Rings with a picture, live video, the gate from a tap, keypad codes, RFID and motion. Local network, no cloud."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · DoorBird for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · DoorBird <span>for Control4</span></h1>
+        <p class="lead">
+          A free, open-source Control4 driver for DoorBird video door stations. Rings with the picture,
+          live video, the gate from a tap on the tile, keypad codes, RFID tags and motion, all from
+          DoorBird's own LAN API. It works on your local network: no cloud, no extra hardware and no
+          subscription.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/doorbird/download">Download the driver</a>
+          <a class="button button-secondary" href="/drivers/doorbird/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/doorbird/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">Control4 app</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Doorbell rings</th>
+                <td>The tile shows the ring; notifications with the picture taken at the ring</td>
+                <td>Ring (and Ring for each button on a DoorBird with several), last ring and button variables</td>
+              </tr>
+              <tr>
+                <th scope="row">The gate</th>
+                <td>A tap on the tile opens the gate; Control4 Relay Door, Gate and Garage Controllers</td>
+                <td>One relay connection per relay (always a pulse, never held), Door Opened, Open Door</td>
+              </tr>
+              <tr>
+                <th scope="row">Live video and pictures</th>
+                <td>The DoorBird Camera: H.264 over RTSP, with MJPEG as the fallback</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Motion</th>
+                <td>The tile shows it; optional alerts with a picture, once per visit</td>
+                <td>Motion Detected and Alert events, last motion and alert variables, Set Alert On Motion</td>
+              </tr>
+              <tr>
+                <th scope="row">Keypad codes and RFID</th>
+                <td>–</td>
+                <td>Keypad Code Entered with the code, RFID Read</td>
+              </tr>
+              <tr>
+                <th scope="row">IR light</th>
+                <td>–</td>
+                <td>Light On</td>
+              </tr>
+              <tr>
+                <th scope="row">Health</th>
+                <td>The tile shows the DoorBird offline</td>
+                <td>DoorBird Online and Offline events</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Rings, keypad codes, motion alerts and doors opened are also written to the Control4 History.
+          Control4 Intercom and audio calls are not part of this driver: keep the official DoorBird driver
+          for those. Both run side by side on the same DoorBird, each with its own DoorBird user.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="two-title">
+        <h2 id="two-title">One driver, two devices</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Device in the room</th>
+                <th scope="col">What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">DoorBird</th>
+                <td>The tile people see in the Control4 apps. Its icon shows a ring, motion, the gate opening or the DoorBird offline, and a tap opens the gate.</td>
+              </tr>
+              <tr>
+                <th scope="row">DoorBird Camera</th>
+                <td>Pictures and live video in the Control4 apps, and the picture in notifications.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Composer lists the driver as <strong>DirectorLink · DoorBird</strong>; the file is <code>DirectorLink-DoorBird.c4z</code>.</p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Control4 controller on OS 3.3 or newer, and Composer Pro. Tested on OS 4.2.4 with a DoorBird D2101KV.</li>
+          <li>A DoorBird video door station (D10x, D11x, D21x) or BirdGuard. Events need firmware 000110 or newer; older firmware gets pictures, video and the relays.</li>
+          <li>A DoorBird user for Control4 with the permissions API-Operator, Watch Always, History and Motion.</li>
+          <li>The DoorBird and the controller on the same network, reaching each other: the controller reaches the DoorBird on port 80 (and 554 or 8557 for video), and the DoorBird reaches the controller on the driver's event port, from 47300.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in three steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Make a DoorBird user</h3>
+            <p>In the DoorBird app: Settings → Administration, then User → Add. Turn on API-Operator, Watch Always, History and Motion. Give the DoorBird a fixed IP address in the router.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Add the driver and the login</h3>
+            <p>In Composer Pro, add <strong>DirectorLink · DoorBird</strong> to the room of the door, and enter the DoorBird's Address, Username and Password. Within half a minute Status says <em>Online - events live</em>.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Choose the gate</h3>
+            <p>Gate Relay is the relay a tap on the tile opens. For a Control4 Relay Gate, Door or Garage Controller, bind it under Connections → Control to the DoorBird's relay.</p>
+          </li>
+        </ol>
+        <p class="note">
+          If Status names something to fix, such as a missing permission, fix it in the DoorBird app and run
+          Reconnect. Events, keypad codes, the camera page and every setting are on the driver's Documentation
+          tab in Composer and in the <a href="/drivers/doorbird/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="dl-title">
+        <h2 id="dl-title">With DirectorLink</h2>
+        <p>
+          <a href="/">DirectorLink</a> 1.10 and newer shows the DoorBird as a doorbell as soon as both are
+          installed, with nothing to set up: rings with the live picture on the family's phones, motion
+          alerts when Alert On Motion is on, and the gate opened with two taps through its Relay Gate
+          Controller. The DoorBird login never leaves the controller.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Someone at the door</h3>
+            <p>On Ring, announce it, show the DoorBird Camera on the touchscreens and send a notification with the picture of the ring.</p>
+          </li>
+          <li>
+            <h3>A chime for each button</h3>
+            <p>On a DoorBird with several buttons, ring a different chime for each one.</p>
+          </li>
+          <li>
+            <h3>Alerts follow the alarm</h3>
+            <p>Turn Alert On Motion on when the security system arms, and off when it disarms.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to the DoorBird on your home network. It sends nothing to DirectorLink and collects no usage data. The login stays in your Control4 project, and passwords and keypad codes never appear in logs, Status or diagnostics.</li>
+          <li>Keep the exact file name: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. Before deleting the driver, run Remove From DoorBird so it takes its HTTP calls off the DoorBird.</li>
+          <li>Community-supported, best effort. <a href="/drivers/doorbird/issues" rel="noreferrer">Report a problem</a> with the DoorBird model and firmware, your Control4 OS version and the driver's Print Diagnostics.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by DoorBird. DoorBird is a trademark of its owner.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>
