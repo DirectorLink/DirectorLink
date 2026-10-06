@@ -344,7 +344,7 @@ uses to let it in, without a link:
    service also pushes "A new device asks to join your home" at once to that account's browsers
    registered at the home with an admin key (since 1.9.0, with a driver that lists `users`, with any
    of its keys; *6. Alerts*) whose device wants it (Settings →
-   Controller → Alerts on this device, on by default), at most 3 an hour; tapping it opens the app,
+   Alerts, on by default), at most 3 an hour; tapping it opens the app,
    which then shows the request. The push says nothing the cloud did not already have. **Show code** sends that device's own
    public key. Only then does the new device send its public key, which the cloud and the other
    device check against the commitment.
@@ -494,8 +494,8 @@ opened (admins, if they choose), the refrigerator's door was left open (members 
 unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join
 (admins; since 1.9.0 every user, who approves it, ADR-061). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
 
-1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
-   switches on **Alerts on this device**. The browser asks for permission and makes a push
+1. On Settings → Alerts (Settings → Controller before 1.10.0), someone signed in to an account, on
+   a device linked to the home, switches on **Alerts on this device**. The browser asks for permission and makes a push
    subscription with the cloud's public key (VAPID); the app registers it with its device's key id
    (`POST /v1/homes/{home_id}/alerts`) and tells the controller (`PUT /v1/alerts/choices`, sealed).
    A switch per kind follows; the controller keeps them, per key. On iPhone and iPad only the app

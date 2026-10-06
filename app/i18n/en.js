@@ -1330,6 +1330,9 @@ export default {
     settings: {
       title: "Alerts",
       label: "Alerts on this device",
+      // Settings → Alerts (1.10.0): the card holds this device's alerts; signed out, it offers to sign in.
+      cardTitle: "On this device",
+      signInHelp: "Alerts come through your DirectorLink account: sign in, then switch them on for this device.",
       help: "A notification on this device, also when the app is closed. What it says is sealed for this device: DirectorLink’s servers can’t read it.",
       helpAdmins: "A notification when the home has been offline for 10 minutes, or when a schedule had a problem. For admins; an alert never names a room, device or schedule.",
       kindsTitle: "What to alert about",
@@ -2085,6 +2088,18 @@ export default {
       about: "Version {version} · open source",
       // Appearance and language: the text size, when it is not the default.
       textSize: { small: "Small text", large: "Large text", larger: "Larger text" },
+      // Alerts (1.10.0): how they are on this device.
+      alerts: {
+        on: "On",
+        onKinds: { one: "On · {on} of {count} kind", other: "On · {on} of {count} kinds" },
+        off: "Off",
+        signIn: "Sign in to get alerts",
+        notLinked: "Link this device to your account first",
+        homeScreen: "Add to Home Screen to get alerts",
+        iosVersion: "Needs iOS 16.4 or later",
+        blocked: "Notifications are blocked",
+        unsupported: "This browser can’t show alerts",
+      },
     },
     // Settings → Appearance and language (1.10.0, ADR-067).
     appearance: {

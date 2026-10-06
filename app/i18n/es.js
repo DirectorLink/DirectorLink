@@ -1337,6 +1337,9 @@ export default {
     settings: {
       title: "Alertas",
       label: "Alertas en este dispositivo",
+      // Settings → Alerts (1.10.0): the card holds this device's alerts; signed out, it offers to sign in.
+      cardTitle: "En este dispositivo",
+      signInHelp: "Las alertas llegan a través de tu cuenta de DirectorLink: inicia sesión y luego actívalas en este dispositivo.",
       help: "Una notificación en este dispositivo, también con la app cerrada. Su contenido está cifrado para este dispositivo: los servidores de DirectorLink no pueden leerlo.",
       helpAdmins: "Una notificación cuando la casa lleva 10 minutos sin conexión o cuando una programación tuvo un problema. Para administradores; una alerta nunca nombra una habitación, un dispositivo ni una programación.",
       kindsTitle: "Sobre qué alertar",
@@ -2092,6 +2095,18 @@ export default {
       about: "Versión {version} · código abierto",
       // Appearance and language: the text size, when it is not the default.
       textSize: { small: "Texto pequeño", large: "Texto grande", larger: "Texto más grande" },
+      // Alerts (1.10.0): how they are on this device.
+      alerts: {
+        on: "Activadas",
+        onKinds: { one: "Activadas · {on} de {count} tipo", other: "Activadas · {on} de {count} tipos" },
+        off: "Desactivadas",
+        signIn: "Inicia sesión para recibir alertas",
+        notLinked: "Primero vincula este dispositivo a tu cuenta",
+        homeScreen: "Añádela a la pantalla de inicio para recibir alertas",
+        iosVersion: "Requiere iOS 16.4 o posterior",
+        blocked: "Las notificaciones están bloqueadas",
+        unsupported: "Este navegador no puede mostrar alertas",
+      },
     },
     // Settings → Appearance and language (1.10.0, ADR-067).
     appearance: {

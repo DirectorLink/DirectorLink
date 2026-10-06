@@ -148,7 +148,7 @@ own devices (`GET /v1/users`).
 ## Appearance and language (1.10.0, ADR-067)
 
 **Settings → Appearance and language** (`#/settings/appearance`, a row on Settings' list between
-Account and App, saying the language, theme and colours, and the text size when it is not the
+Alerts and App, saying the language, theme and colours, and the text size when it is not the
 default) has three cards:
 
 - **Language:** Auto (the browser's first language DirectorLink has, else English; it says which),

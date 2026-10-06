@@ -1,7 +1,8 @@
 // Settings (#/settings): one row per page, each at #/settings/<page> with Back to the list:
 // Controller (its facts, updates, backup, pairing), Rooms (shown, order, names and the Sonos rooms),
-// Shabbat and holidays, Users (#/access, views/access.js), Account, Appearance and language
-// (language, theme, colours and text size, 1.10.0), App and About.
+// Shabbat and holidays, Users (#/access, views/access.js), Account, Alerts (this device's, 1.10.0:
+// views/alerts.js), Appearance and language (language, theme, colours and text size, 1.10.0), App
+// and About.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { turnAlertsOff } from "../alerts.js";
@@ -22,7 +23,7 @@ import { linksMadeBy, linksSupported } from "../scene-links.js";
 import { PALETTES, TEXT_SIZES, THEMES, palettePreference, textSizePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
-import { alertsPanel } from "./alerts.js";
+import { alertsPage, alertsStatus } from "./alerts.js";
 import { makeInvitation, pasteInvitationPanel } from "./device-join.js";
 import { deviceLimitOf, deviceLimitPanel } from "./device-limit.js";
 import { accessBody, newMemberAccess, peopleSupported, permissionsEditor } from "./permissions.js";
@@ -36,19 +37,21 @@ import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./upd
 import { APP_VERSION } from "../version.js";
 
 // The pages under Settings (#/settings/<page>); app.js routes them.
-export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "appearance", "app", "about"];
+export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "alerts", "appearance", "app", "about"];
 
 // `page`: one of SETTINGS_PAGES, or null for the main list.
 export function settingsView({ page = null, onPalette, onTheme, onLanguage, onTextSize, navigate }) {
   switch (page) {
     case "controller":
-      return subpage(t("settings.controller.title"), controllerSection(navigate), historyRow(), alertsPanel(), updatesSection(), backupPanel());
+      return subpage(t("settings.controller.title"), controllerSection(navigate), historyRow(), updatesSection(), backupPanel());
     case "rooms":
       return subpage(t("settings.rooms.title"), roomsSection(), roomNamesSection(), musicSection());
     case "calendar":
       return subpage(t("calendar.settings.title"), calendarSection() || calendarUnavailable());
     case "account":
       return subpage(t("settings.account.title"), accountSection());
+    case "alerts":
+      return subpage(t("alerts.settings.title"), alertsPage());
     case "appearance":
       return subpage(t("settings.appearance.title"), followsNote(), languageSection(onLanguage), appearanceSection(onPalette, onTheme), textSizeSection(onTextSize));
     case "app":
@@ -109,7 +112,7 @@ function pageRows() {
     "nav",
     { class: "settings-pages", "aria-label": t("settings.rows.label") },
     h("ul", { class: "card settings-rows" }, controllerRow(), roomsRow(), calendarRow(), accessRow()),
-    h("ul", { class: "card settings-rows" }, accountRow(), appearanceRow(), appRow(), aboutRow())
+    h("ul", { class: "card settings-rows" }, accountRow(), alertsRow(), appearanceRow(), appRow(), aboutRow())
   );
 }
 
@@ -172,6 +175,13 @@ function accountRow() {
           ? t("settings.rows.accountUnavailable")
           : t("settings.rows.signedOut");
   return pageRow({ page: "account", iconName: "user", title: t("settings.account.title"), status });
+}
+
+// Alerts on this device (1.10.0; a card on Controller before): for whoever may have them, whether
+// they are on, or what they still need (signing in, the Home Screen on iPhone, …).
+function alertsRow() {
+  const status = alertsStatus();
+  return status === null ? null : pageRow({ page: "alerts", iconName: "bell", title: t("alerts.settings.title"), status });
 }
 
 // The language shown (Auto: the one it found), the theme and the colours, and the text size when it
