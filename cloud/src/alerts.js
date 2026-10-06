@@ -13,7 +13,7 @@
 // - offline: the home has been away from the relay for OFFLINE_ALERT_MINUTES (10), once per absence.
 //   Away is no driver connection, or a stale one, away since the driver was last heard on it: a
 //   connection can die without the relay noticing. Stale is the relay's own rule (home-relay.js
-//   stale(), 1.6.0: nothing heard for 2.5 of the driver's ping intervals, 25 s at 10 s pings); where
+//   stale(), 1.6.0: nothing heard for 2.5 of the driver's ping intervals, 12.5 s at 5 s pings); where
 //   the relay has none, nothing heard for ALERT_SILENCE_SECONDS (60). A drop of seconds never alerts.
 // - schedule_failed: the controller says a scheduled scene failed ({"type":"alert"}, docs/RELAY.md),
 //   at most SCHEDULE_ALERTS_PER_HOUR (3) an hour.

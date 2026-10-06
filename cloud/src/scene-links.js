@@ -38,7 +38,7 @@ export const RESULT_MESSAGES = {
   nothing: "Nothing ran: the scene has no devices left to switch.",
   asked: "Asked: answer the notification on your phone to open.",
   waiting: "Already asked: answer the notification on your phone.",
-  nobody: "Nobody was asked: turn on alerts in DirectorLink on your phone (Settings → Controller).",
+  nobody: "Nobody was asked: turn on alerts in DirectorLink on your phone (Settings → Alerts).",
   doors_off: "Nobody was asked: door control is off in Composer.",
   not_asked: "Nobody was asked: the home could not send the notification. Try again.",
 };

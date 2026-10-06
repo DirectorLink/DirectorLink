@@ -162,6 +162,14 @@ SECURITY_CONTRACT = {
         # Key ids only: never names, roles or secrets; and never a list that may be short.
         "ids[#ids + 1] = key.id",
         "if state.services.keys.complete and not state.services.keys.complete() then",
+        # Relayed requests go through the answer memory, so one sent again runs once (ADR-072).
+        "local handled, what = Answers.handle(message, send, state.remote)",
+    ),
+    # A request the relay sends again after a lost connection never runs twice: a known id is
+    # answered from memory, and one that may have been forgotten is not run (ADR-072).
+    "src/cloud/answers.lua": (
+        "local entry = state.byId[id]\n    if entry then",
+        "if resent and state.forgotYoung and at - state.forgotYoung < Answers.SECONDS then",
     ),
     # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
     # requests are fresh and used once, claims come only from the home network, and invitation

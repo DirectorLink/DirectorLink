@@ -9,9 +9,10 @@
 // survive hibernation lives in the socket's attachment or in storage:
 //
 //   attachment  { conn, home, connectedAt, version, lastSeen,         per socket (milliseconds)
-//                 pingS, stale, features }                            ping interval from the hello;
+//                 pingS, stale, features, instance }                  ping interval from the hello;
 //                                                                     when it was found quiet; what
-//                                                                     the hello says it takes (1.7.0)
+//                                                                     the hello says it takes (1.7.0);
+//                                                                     which start of the driver (1.10.0)
 //   storage     secret_sha256                                         SHA-256 hex of the home_secret,
 //                                                                     trusted on first use
 //               connected_at, disconnected_at, last_seen, version     for the status (ISO times)
@@ -24,10 +25,14 @@
 // 8 s for its hello instead of failing with HOME_OFFLINE (liveDriver).
 //
 // A connection can also die without the relay seeing a close: the socket stays open here while
-// nothing reaches the driver. The driver pings every 10 s (1.6.0; its hello says so in ping_s,
-// older drivers ping every 25 s), so a socket whose pings stopped for 2.5 intervals is taken as
-// gone (stale): requests wait for the driver's next connection as after a disconnect, and the
-// status says offline.
+// nothing reaches the driver. The driver pings every 5 s (1.10.0; every 10 s from 1.6.0, and its
+// hello says so in ping_s; older drivers ping every 25 s), so a socket whose pings stopped for 2.5
+// intervals is taken as gone (stale): requests wait for the driver's next connection as after a
+// disconnect, and the status says offline.
+//
+// A request already sent when the connection ends (1.10.0, ADR-072) is sent again, the same frame
+// with the same id, on the driver's next connection once its hello lists `resend` and names the same
+// driver `instance` (resendLost): that driver runs each id once and gives a repeat its first answer.
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
@@ -57,6 +62,21 @@ const DEFAULT_RECONNECT_WAIT_MS = 8000;
 // STALE_PINGS of its ping intervals is stale. Drivers before 1.6.0 announce no interval: 25 s.
 const STALE_PINGS = 2.5;
 const DEFAULT_PING_S = 25;
+// A request already sent when the driver's connection ended (closed, failed, or replaced by a new
+// one: 1.10.0, ADR-072) waits for the driver's next hello, at most RECONNECT_WAIT_MS, and goes again
+// on that connection when the hello lists `resend` and comes from the same driver instance (one that
+// has not restarted: its memory of what it ran is whole). At most MAX_RESENDS times, and only within
+// RESEND_WITHIN_MS of reaching the relay; each resend waits RESEND_TIMEOUT_MS for its answer. So a
+// resent request is answered within 18 s of reaching the relay, under the app's 20 s (app/js/
+// remote.js). Otherwise it fails as before (502 HOME_DISCONNECTED).
+const RESEND_FEATURE = "resend";
+const MAX_RESENDS = 2;
+const RESEND_WITHIN_MS = 10000;
+const RESEND_TIMEOUT_MS = 8000;
+// The driver ran a request sent again but no longer has its answer (too large to keep, such as a
+// picture): the caller gets 502 HOME_DISCONNECTED, as before 1.10.0 when the connection ended.
+const ANSWER_NOT_KEPT = "ANSWER_NOT_KEPT";
+const ANSWER_TYPES = new Set(["e2e", "join_result", "claim_result", "link_result"]);
 // Scene links (ADR-051): at most this many runs a minute reach the home, whatever their link.
 const LINK_RUNS_PER_MINUTE = 30;
 // A client (an address; an IPv6 one by its /64) whose runs were refused as unknown this many times
@@ -85,9 +105,11 @@ export class HomeRelay extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    // Relayed requests waiting for the driver: id -> { resolve, timer, conn }. Memory is enough:
-    // while a request waits, its caller's fetch keeps the object awake, so hibernation never
-    // drops this map with anything in it.
+    // Relayed requests waiting for the driver: id -> { resolve, timer, conn, record, resend }.
+    // `resend` (1.10.0): { frame, instance, receivedAt, sent, lostAt, why } for one the driver may be
+    // sent again; `lostAt` while its connection has ended and it waits for the next hello. Memory is
+    // enough: while a request waits, its caller's fetch keeps the object awake, so hibernation
+    // never drops this map with anything in it.
     this.pending = new Map();
     // Requests waiting for the driver to connect again (liveDriver): each is called with the new
     // socket at its hello. Kept in memory for the same reason as `pending`.
@@ -165,16 +187,13 @@ export class HomeRelay extends DurableObject {
     }
 
     // One driver connection per home: a new one replaces the previous. Requests sent over the
-    // previous one fail now rather than at their timeout: a driver that connects again has lost
-    // that connection, often without the relay noticing (the old socket never answers the close).
+    // previous one end their wait there now rather than at their timeout: a driver that connects
+    // again has lost that connection, often without the relay noticing (the old socket never
+    // answers the close). They fail, or (1.10.0) wait for this connection's hello to go again.
     let replaced = 0;
     for (const old of this.ctx.getWebSockets(DRIVER)) {
       const { conn } = old.deserializeAttachment() ?? {};
-      for (const [id, entry] of this.pending) {
-        if (entry.conn === conn) {
-          this.settle(id, { failed: "The home connected again before it answered" });
-        }
-      }
+      this.connectionLost(conn, "The home connected again before it answered");
       try {
         old.close(4000, "replaced");
         replaced += 1;
@@ -217,8 +236,19 @@ export class HomeRelay extends DurableObject {
       attachment.pingS = pingSeconds(data.ping_s);
       // What the driver takes besides what every version does (1.7.0: scene_links).
       attachment.features = Array.isArray(data.features) ? data.features.filter((item) => typeof item === "string" && item.length <= 32).slice(0, 16) : [];
+      // Which start of the driver this is (1.10.0): a random id it makes at each start.
+      attachment.instance = typeof data.instance === "string" && /^[0-9a-f]{16,64}$/.test(data.instance) ? data.instance : null;
     }
     ws.serializeAttachment(attachment);
+
+    // A request sent again whose answer the driver no longer has (1.10.0): it ran, but its answer
+    // was lost with the connection, as before 1.10.0.
+    if (ANSWER_TYPES.has(type) && data.code === ANSWER_NOT_KEPT && !data.envelope) {
+      if (typeof data.id !== "string" || !this.settle(data.id, { failed: "The home carried it out, but its answer was lost with the connection" })) {
+        log("response_ignored", { home: attachment.home, type, id: data.id ?? null, why: "no request is waiting for this id" });
+      }
+      return;
+    }
 
     switch (type) {
       case "hello":
@@ -227,7 +257,8 @@ export class HomeRelay extends DurableObject {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
         }
         log("driver_hello", { home: attachment.home, version: attachment.version, interval_s: attachment.pingS, waiting: this.waiting.size });
-        // The driver is ready: requests that waited for it go now.
+        // Requests whose connection ended go again first (1.10.0), then those that waited for it.
+        this.resendLost(ws, attachment);
         for (const resume of [...this.waiting]) {
           resume(ws);
         }
@@ -418,11 +449,7 @@ export class HomeRelay extends DurableObject {
 
   async disconnected(ws, why) {
     const attachment = ws.deserializeAttachment() ?? {};
-    for (const [id, entry] of this.pending) {
-      if (entry.conn === attachment.conn) {
-        this.settle(id, { failed: `The home disconnected before it answered (${why})` });
-      }
-    }
+    this.connectionLost(attachment.conn, `The home disconnected before it answered (${why})`);
     if (this.driverSocket({ except: attachment.conn })) {
       log("driver_replaced", { home: attachment.home, why }); // a newer connection took over
       return;
@@ -440,6 +467,93 @@ export class HomeRelay extends DurableObject {
       up_s: seconds(now, attachment.connectedAt),
       ping_s: seconds(now, ping),
       message_s: seconds(now, attachment.lastSeen),
+    });
+  }
+
+  // The connection `conn` ended (closed, failed or replaced) with requests sent over it still
+  // unanswered: each fails now with `why`, or (1.10.0, ADR-072) one the driver may be sent again
+  // waits for its next hello, at most RECONNECT_WAIT_MS and only while it may still go again
+  // (RESEND_WITHIN_MS after it reached the relay, MAX_RESENDS times), then fails with `why`.
+  connectionLost(conn, why) {
+    for (const [id, entry] of this.pending) {
+      if (conn !== undefined && entry.conn === conn) {
+        this.lost(id, entry, why);
+      }
+    }
+  }
+
+  // One request whose connection ended (connectionLost).
+  lost(id, entry, why) {
+    const again = entry.resend;
+    const left = again ? Math.min(reconnectWaitMs(this.env), again.receivedAt + RESEND_WITHIN_MS - Date.now()) : 0;
+    if (!again || again.sent >= MAX_RESENDS || left <= 0) {
+      this.settle(id, { failed: why });
+      return;
+    }
+    clearTimeout(entry.timer);
+    entry.conn = null;
+    again.lostAt = Date.now();
+    again.why = why;
+    entry.timer = setTimeout(() => this.settle(id, { failed: `${why}; it did not come back in time` }), left);
+  }
+
+  // The driver said hello on `ws` (its `attachment`): the requests whose connection ended go again
+  // on it, the same frame with the same id and `resent` counting the sends again, when its hello
+  // lists `resend` and comes from the instance they were sent to; otherwise they fail now (a driver
+  // that restarted cannot tell whether it ran them). Logged once (`request_resent`): how many, and
+  // how long after their connection was found gone. Never a body.
+  resendLost(ws, attachment) {
+    const takes = Array.isArray(attachment.features) && attachment.features.includes(RESEND_FEATURE) && attachment.instance;
+    const now = Date.now();
+    let count = 0;
+    let afterMs = 0;
+    let most = 0;
+    for (const [id, entry] of this.pending) {
+      const again = entry.resend;
+      if (!again || !again.lostAt) {
+        continue;
+      }
+      if (!takes || again.instance !== attachment.instance) {
+        this.settle(id, { failed: takes ? `${again.why}; DirectorLink restarted meanwhile` : again.why });
+        continue;
+      }
+      clearTimeout(entry.timer);
+      again.sent += 1;
+      afterMs = Math.max(afterMs, now - again.lostAt);
+      most = Math.max(most, again.sent);
+      again.lostAt = null;
+      entry.conn = attachment.conn;
+      entry.timer = setTimeout(() => this.settle(id, { timeout: true }), Math.min(RESEND_TIMEOUT_MS, requestTimeoutMs(this.env)));
+      count += 1;
+      try {
+        ws.send(JSON.stringify({ ...again.frame, resent: again.sent }));
+      } catch (error) {
+        this.lost(id, entry, `The home's connection could not be written (${error?.message ?? error})`);
+      }
+    }
+    if (count) {
+      log("request_resent", { home: attachment.home, count, after_ms: afterMs, resent: most });
+    }
+  }
+
+  // Sends `frame` ({ type, id, … }) to the driver over `ws` and waits for the answer with its id:
+  // { message }, { timeout: true } or { failed: why }. `record`: the account and key of an e2e
+  // request (webSocketMessage). `resend` (1.10.0): the frame may go again on the driver's next
+  // connection if this one ends before the answer, when this connection's hello listed `resend`;
+  // `receivedAt`, when the request reached the relay (the resends stop RESEND_WITHIN_MS after it).
+  exchange(ws, frame, { record = null, resend = false, receivedAt = Date.now() } = {}) {
+    const { conn, features, instance } = ws.deserializeAttachment() ?? {};
+    const takes = resend && Array.isArray(features) && features.includes(RESEND_FEATURE) && instance;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => this.settle(frame.id, { timeout: true }), requestTimeoutMs(this.env));
+      const again = takes ? { frame, instance, receivedAt, sent: 0, lostAt: null, why: null } : null;
+      const entry = { resolve, timer, conn, record, resend: again };
+      this.pending.set(frame.id, entry);
+      try {
+        ws.send(JSON.stringify(frame));
+      } catch (error) {
+        this.lost(frame.id, entry, `The home's connection could not be written (${error?.message ?? error})`);
+      }
     });
   }
 
@@ -633,19 +747,11 @@ export class HomeRelay extends DurableObject {
     if (!ws) {
       return this.offline();
     }
-    const { conn } = ws.deserializeAttachment() ?? {};
     const id = crypto.randomUUID();
     const timeoutMs = requestTimeoutMs(this.env);
     const started = Date.now();
-    const outcome = await new Promise((resolve) => {
-      const timer = setTimeout(() => this.settle(id, { timeout: true }), timeoutMs);
-      this.pending.set(id, { resolve, timer, conn });
-      try {
-        ws.send(JSON.stringify({ type: "request", id, method: "GET", path, body: null }));
-      } catch (error) {
-        this.settle(id, { failed: `The home's connection could not be written (${error?.message ?? error})` });
-      }
-    });
+    // Version 0's test requests are never sent again: the driver refuses them anyway.
+    const outcome = await this.exchange(ws, { type: "request", id, method: "GET", path, body: null });
     const ms = Date.now() - started;
     if (outcome.timeout) {
       log("request_timeout", { home: homeId, id, path, ms });
@@ -668,24 +774,17 @@ export class HomeRelay extends DurableObject {
     if (!message || !["e2e", "join", "claim"].includes(message.type)) {
       return problem(400, "INVALID_MESSAGE", "Only e2e, join and claim messages are relayed");
     }
+    const receivedAt = Date.now();
     const ws = await this.liveDriver();
     if (!ws) {
       return this.offline();
     }
-    const { conn } = ws.deserializeAttachment() ?? {};
     const id = crypto.randomUUID();
     const timeoutMs = requestTimeoutMs(this.env);
     const started = Date.now();
-    const outcome = await new Promise((resolve) => {
-      const timer = setTimeout(() => this.settle(id, { timeout: true }), timeoutMs);
-      const record = message.type === "e2e" && typeof userId === "string" && userId ? { user: userId, key: message.envelope?.key } : null;
-      this.pending.set(id, { resolve, timer, conn, record });
-      try {
-        ws.send(JSON.stringify({ ...message, id }));
-      } catch (error) {
-        this.settle(id, { failed: `The home's connection could not be written (${error?.message ?? error})` });
-      }
-    });
+    const record = message.type === "e2e" && typeof userId === "string" && userId ? { user: userId, key: message.envelope?.key } : null;
+    // Sent again if the connection ends first (1.10.0): the driver runs each id once.
+    const outcome = await this.exchange(ws, { ...message, id }, { record, resend: true, receivedAt });
     const ms = Date.now() - started;
     if (outcome.timeout) {
       log("message_timeout", { home: homeId, type: message.type, ms });
@@ -732,22 +831,15 @@ export class HomeRelay extends DurableObject {
       done(503);
       return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
     }
-    const { conn, features } = ws.deserializeAttachment() ?? {};
+    const { features } = ws.deserializeAttachment() ?? {};
     if (!Array.isArray(features) || !features.includes("scene_links")) {
       done(404, { why: "driver without links" });
       return linkNotFound();
     }
     const id = crypto.randomUUID();
     const timeoutMs = requestTimeoutMs(this.env);
-    const outcome = await new Promise((resolve) => {
-      const timer = setTimeout(() => this.settle(id, { timeout: true }), timeoutMs);
-      this.pending.set(id, { resolve, timer, conn });
-      try {
-        ws.send(JSON.stringify({ type: "link", id, link: linkId, secret }));
-      } catch (error) {
-        this.settle(id, { failed: `The home's connection could not be written (${error?.message ?? error})` });
-      }
-    });
+    // Sent again if the connection ends first (1.10.0): the driver runs each id once.
+    const outcome = await this.exchange(ws, { type: "link", id, link: linkId, secret }, { resend: true, receivedAt: started });
     if (outcome.timeout) {
       done(504);
       return problem(504, "HOME_TIMEOUT", `The home did not answer within ${timeoutMs / 1000} s`);
