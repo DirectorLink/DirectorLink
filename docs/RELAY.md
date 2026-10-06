@@ -157,9 +157,9 @@ same holds the other way for what the driver asks the relay (`invitation`, `back
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| driver → relay | `ping` (plain text) | Keep-alive, every 10 s (25 s before 1.6.0), and if Director polls the connection. |
+| driver → relay | `ping` (plain text) | Keep-alive, every 5 s (10 s from 1.6.0, 25 s before), and if Director polls the connection. |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
-| driver → relay | `{"type":"hello","home":"<home_id>","version":"1.7.0","ping_s":10,"features":["scene_links"]}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). `features` (since 1.7.0): what the relay may send this driver besides what every version takes; `scene_links`: `link` runs; `users` (1.9.0, ADR-061): `accounts`, and any device of an account may approve that account's new device (the controller lets every user add their own; the home's object keeps the last hello's features as `driver_features`). `alerts_gone` (since 1.9.0): `alerts_gone`. A driver that does not list a feature is never sent its messages. |
+| driver → relay | `{"type":"hello","home":"<home_id>","version":"1.10.0","ping_s":5,"features":["scene_links","alerts_gone","users","resend"],"instance":"<32 hex>"}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). `features` (since 1.7.0): what the relay may send this driver besides what every version takes; `scene_links`: `link` runs; `users` (1.9.0, ADR-061): `accounts`, and any device of an account may approve that account's new device (the controller lets every user add their own; the home's object keeps the last hello's features as `driver_features`). `alerts_gone` (since 1.9.0): `alerts_gone`. `resend` (1.10.0, ADR-072): a request already sent when a connection ended may come again on the next one (*While the driver reconnects*, below). A driver that does not list a feature is never sent its messages. `instance` (1.10.0): a random id the driver makes at each start, so that the relay sends a request again only to the start of the driver it went to. |
 | driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
 | relay → driver | `{"type":"accounts","id":"…","keys":{"<key id>":["<16 hex>", …]}}` | Which of the home's keys share a Google or Apple account (1.9.0, ADR-061, `docs/ACCOUNTS.md` *Users and accounts*): for each key an account uses (`member_keys`), a tag per account, the first 16 hex digits of SHA-256(`DirectorLink account v1\|<home id>\|<account id>`), at most 4 a key, sorted; a key no account uses is left out. Never an account's id or email. Sent only to a driver whose `hello` lists `users`, after each `keys` message it sent (in the order of its frames), after an account's first sealed request with a key, and after a join, a member removed, a new owner, or an account deleted or left without a sign-in. It replaces what the driver knew; no answer. The driver suggests bringing an account's devices into one user, which an admin confirms; it never moves a device on this message. |
 | relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
@@ -182,7 +182,9 @@ same holds the other way for what the driver asks the relay (`invitation`, `back
 | relay → driver | `{"type":"link","id":"…","link":"<8 hex>","secret":"<40 hex>"}` | A scene's link, run from a phone's automation (1.7.0, ADR-051, docs/SCENES.md): not sealed. Sent only to a driver whose `hello` lists `scene_links`, for a home an account has claimed, at most 30 a minute a home, and none from an address whose runs were answered 404 ten times in 10 minutes. The driver checks the secret against the hash it keeps, in constant time, and runs the scene as DirectorLink itself, which opens no door or gate (until 1.8.0: as a member's key would). |
 | driver → relay | `{"type":"link_result","id":"…","ok":true,"result":"ran"}` | How it went: `ran`, `partly` (some devices skipped or failed), `failed` (none ran) or `nothing` (there was nothing to run: its devices were removed in Composer); or `"ok":false` with `NOT_FOUND` (an unknown link, a wrong secret, a scene gone or with doors or gates, the key that made the link gone: all alike), `RATE_LIMITED` (6 runs a minute a link; `retry_s`) or `INTERNAL`. Never names the scene. Since 1.7.0. Since 1.8.0 the link may be a door's ask-to-open link (ADR-058), which opens nothing: `asked` (a `notify` went to its person's devices just before), `waiting`, `nobody`, `doors_off` or `not_asked`; `RATE_LIMITED` also after 10 runs an hour that asked or said why nobody was asked (`retry_s` then up to 3600, which the account service passes on as `Retry-After`). Never names the door. |
 | relay → driver | `{"type":"alerts_gone","id":"…","keys":["<key id>", …]}` | The key ids that no browser registered at the home can get alerts for any more (1.9.0, ADR-062), sent to a driver whose `hello` lists `alerts_gone`: after each `keys`, and when browsers are removed (also by a registration: the same browser registered again with another key, or an account's oldest beyond ten), those of its keys with none registered by an account that uses them; after a `notify`, those it named that had none, or whose every browser the push service no longer knew (404, 410); after any other push, those whose last browser went so. Key ids only, at most 200: the cloud knew which keys have browsers. The driver switches those keys' alerts off (as their app would: `on` false, their kinds kept), so that it seals nothing more to them and an ask-to-open link whose devices are all gone answers `nobody`; their app switches alerts on again at its next start if it still has them. No answer. Drivers before 1.9.0 are never sent it (and would ignore it). |
-| relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. |
+| relay → driver | the same `e2e`, `join`, `claim` or `link` message again, with `"resent":1` (or `2`) | A request already sent when the driver's connection ended, unanswered (1.10.0, ADR-072): the same id and the same body, on the next connection, right after its `hello`, only to a driver whose `hello` lists `resend` and names the same `instance`. The driver runs each id once: a repeat gets the first answer again, byte for byte; one still running gets nothing then (its answer goes on the connection there is when it is done); one it never got runs. |
+| driver → relay | `{"type":"e2e","id":"…","ok":false,"code":"ANSWER_NOT_KEPT"}` (or `join_result`, `claim_result`, `link_result`) | That request ran, but its answer is no longer kept (too large to keep, such as a picture, or let go to stay within the driver's budget): the relay answers `502 HOME_DISCONNECTED`, as when a connection ended before 1.10.0. Also for a request sent again that the driver may have run and forgotten (more than 512 requests in 2 minutes). Since 1.10.0. |
+| relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. Never sent again. |
 
 A message of a type the driver does not know is ignored (logged at debug level as `ignored relay
 message`) and never answered: the relay sends new types only to drivers whose `hello` lists them
@@ -192,28 +194,29 @@ Refusal codes from the driver: `UNKNOWN_KEY`, `BAD_ENVELOPE`, `BAD_MAC`, `BAD_CI
 (outside the 2-minute window, or sealed before the driver started), `REPLAYED`, `TOO_LARGE`
 (requests over 64 KiB), `LOCK_UNAVAILABLE` (the lock self-test failed at start),
 `INVITATION_NOT_FOUND`, `KEY_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (1.9.0: the user an invitation is for has five devices; the invitation stays), `INTERNAL`. The cloud turns them into Problem Details
-for the app (`cloud/src/homes.js`).
+for the app (`cloud/src/homes.js`). `ANSWER_NOT_KEPT` (1.10.0) is the relay's own: `502 HOME_DISCONNECTED`.
 
-If the driver hears nothing (not even `pong`) for three pings in a row (about 30 s), it drops the
-connection and reconnects.
-The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s.
+If the driver hears nothing (not even `pong`) for three pings in a row (about 15 s; 30 s before
+1.10.0), it drops the connection and reconnects.
+The relay answers `504 HOME_TIMEOUT` to its caller when a reply takes longer than 15 s (8 s after a
+request was sent again).
 
 ## Keeping the connection
 
-**What keeps it open.** The driver sends `ping` every 10 s (25 s up to 1.5.0) and the relay's
-runtime answers `pong` without waking the home's object. Data then crosses Cloudflare in both
-directions every 10 s, well inside any idle limit (Cloudflare closes a WebSocket that carries
-nothing in either direction for a while, without a documented figure). A connection that hears
-nothing for three pings in a row (about 30 s; counted in pings, not by the clock, so a clock set
-back cannot stretch it) is dropped and made again. TCP keep-alive is on as well.
+**What keeps it open.** The driver sends `ping` every 5 s (10 s from 1.6.0, 25 s up to 1.5.0) and
+the relay's runtime answers `pong` without waking the home's object. Data then crosses Cloudflare
+in both directions every 5 s, well inside any idle limit (Cloudflare closes a WebSocket that
+carries nothing in either direction for a while, without a documented figure). A connection that
+hears nothing for three pings in a row (about 15 s; counted in pings, not by the clock, so a clock
+set back cannot stretch it) is dropped and made again. TCP keep-alive is on as well.
 
 **What a ping costs.** Nothing. The relay sets the answer with `setWebSocketAutoResponse`, and
 Cloudflare documents that such an answer is sent "without waking WebSockets in hibernation and
 incurring billable duration charges" ([Durable Object State](https://developers.cloudflare.com/durable-objects/api/state/))
 and that auto-response messages "will not incur additional wall-clock time, and so they will not
 be charged" ([Durable Objects pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/)).
-So pinging every 10 s rather than 25 s costs the relay nothing, and the controller one small
-timer.
+So pinging every 5 s (1.10.0) rather than 10 s or 25 s costs the relay nothing, and the controller
+one small timer that sends a 10-byte frame.
 
 **Director's own monitoring is off** (1.5.0, ADR-045). Up to 1.4.0 the driver opened the
 connection with `MONITOR_CONNECTION = true`. Control4 documents that Director then polls the
@@ -231,7 +234,7 @@ once.
 | What happens | Remote Status and log reason | Next attempt |
 | --- | --- | --- |
 | Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute |
-| Nothing heard for three pings, about 30 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
+| Nothing heard for three pings, about 15 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
 | The relay closes it: `4000 replaced` (another controller with this identity) | `closed by the relay (4000 replaced)` | 30 s |
 | The relay closes it: `4001 secret replaced` (the owner approved a new secret) | `closed by the relay (4001 secret replaced)` | 1 s; refused, then the new secret 1 s later |
 | The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |
@@ -257,14 +260,25 @@ arrives after that attempt started. A connection given up on that comes up late 
 and gets no upgrade request. Data that arrives while no connection is being made is dropped.
 
 **A connection that dies without a close** (1.6.0). On the owner's network the connection also
-died silently every 20 to 60 minutes at busy times: Cloudflare saw no close, so the relay kept the
-socket and went on sending requests into it, and the driver found out only at its next ping, which
-Director refused at once (`connection lost` with `heard_s` about one interval and `ping_s` 0). Its
-new connection then replaced the old one, and what had been sent meanwhile failed. With a ping
-every 10 s that window is at most 10 s. And the relay no longer trusts a socket on which the
-driver has gone quiet: once nothing has been heard on it (no ping answered, no message) for 2.5 of
-the intervals the `hello` announced (25 s; about 62 s for drivers before 1.6.0, which announce
-none and ping every 25 s), the socket is *stale*. Nothing is sent into it, requests wait for the
+died silently every 20 to 60 minutes, all day and at night too: Cloudflare saw no close, so the
+relay kept the socket and went on sending requests into it, and the driver found out only at its
+next ping, which Director refused at once (`connection lost` with `heard_s` about one interval and
+`ping_s` 0). Its new connection then replaced the old one, and what had been sent meanwhile failed.
+
+The cause, measured on 2026-10-06 (1.10.0, ADR-072): the home's internet provider (Bezeq
+International, AS6810) routes the home's traffic to Cloudflare through changing data centers (Tel
+Aviv, Geneva, Zurich, Marseille, Munich; a probe saw the data center flip between Tel Aviv and
+Geneva every few seconds). When the route moves, an open TCP connection reaches a data center that
+has no state for it and is reset there, while the one that held it never hears a close. Nothing
+on the controller or in Composer causes it (driver updates do not), and DirectorLink cannot
+prevent it: it can only notice it soon and lose nothing. So since 1.10.0 the driver pings every
+5 s, which finds a cut within 5 s, and a request already sent into the dead connection is sent
+again on the next one (*While the driver reconnects*, below).
+
+And the relay no longer trusts a socket on which the driver has gone quiet: once nothing has been
+heard on it (no ping answered, no message) for 2.5 of the intervals the `hello` announced (12.5 s at
+5 s pings, 25 s at 10 s; about 62 s for drivers before 1.6.0, which announce none and ping every
+25 s), the socket is *stale*. Nothing is sent into it, requests wait for the
 driver's next connection as below, and the status says offline since the driver was last heard.
 The relay logs `driver_stale` once for the socket. If the pings come through again, the socket is
 used again; normally the driver's silence rule replaces it a few seconds later.
@@ -274,10 +288,48 @@ used again; normally the driver's silence rule replaces it a few seconds later.
 up to 8 s for the driver's `hello` and then goes through.
 So does the first request after the relay restarted under the connection (a deploy), which
 records no disconnect. Before 1.5.0 it failed at once with `503 HOME_OFFLINE`. A home away for
-longer, or that did not come back within the 8 s after a restart, answers `503` at once. A request already sent when the connection ends fails with `502 HOME_DISCONNECTED`
-as before, and so does one sent over a connection the driver has since replaced, at once rather
-than at its 15 s timeout (the relay may not have noticed that connection die). It is never sent
-again, because the controller may have carried it out.
+longer, or that did not come back within the 8 s after a restart, answers `503` at once.
+
+A request **already sent** when the connection ends (1.10.0, ADR-072): the connection closed or
+failed, or the driver connected again and so replaced it (the relay may not have noticed that
+connection die). Before 1.10.0 it failed with `502 HOME_DISCONNECTED`, at once rather than at its
+15 s timeout, and was never sent again, because the controller may have carried it out: a press in
+the seconds between a cut and the driver noticing it was lost. Since 1.10.0:
+
+- **The relay keeps it** and waits for the driver's next `hello`, up to 8 s (`RECONNECT_WAIT_MS`).
+  If that `hello` lists `resend` and names the same `instance` as the connection the request went
+  on, the relay sends the exact same frame again (the same id, the same sealed body, with
+  `"resent":1`), and waits 8 s for its answer. A request is sent again at most twice (three sends
+  in all: a second blink right after the first is covered; more would not fit the app's wait), and
+  only within 10 s of reaching the relay, so it is answered within 18 s, under the 20 s the app
+  waits for a request through the account (`app/js/remote.js`).
+- **The driver runs each id once** (`driver/src/cloud/answers.lua`). It remembers, by the relay's
+  id, every `e2e`, `join`, `claim` and `link` it got, for 2 minutes (at most 512), and, once
+  answered, its answer (at most 64 answers and 512 KB together; one over 64 KB, such as a camera
+  picture, is not kept). The same id again gets the saved answer, byte for byte, and nothing runs;
+  one still running gets nothing then, and its answer goes on whatever connection is open when it
+  is done; one whose answer is not kept gets `ANSWER_NOT_KEPT`, and the app `502 HOME_DISCONNECTED`
+  as before; one it never got runs. This is checked before a sealed request is opened, so a repeat
+  never meets the replay check (`REPLAYED`), and the replay check still refuses the same sealed
+  request under another id. Its clock counts the controller clock's steps, never backwards and at
+  most 30 s each, so a clock set forward cannot make it forget early; if it had to forget requests
+  younger than 2 minutes (more than 512), a request sent again that it does not know gets
+  `ANSWER_NOT_KEPT` rather than run.
+- **A driver that restarted** (a Composer update, a reboot) remembers nothing, and its `hello` names
+  a new `instance`: the relay does not send it what went to the one before, and answers `502
+  HOME_DISCONNECTED`. Were a sealed request sent all the same, the driver would refuse it: it was
+  sealed before the driver started (`STALE`), or, sealed by a device whose clock is ahead, its id
+  is in the driver's saved list (`REPLAYED`). A door never opens twice.
+- **Only these are sent again:** `e2e` (a sealed request: a door's pulse, a scene, Turn off all),
+  `join` (accepting an invitation: the same new key, sealed as before), `claim` and `link` (a scene
+  link's run or an ask-to-open question). Each is safe by the driver's memory, not by what it
+  does. Version 0's `request` is not (the driver refuses it anyway). `accounts` and `alerts_gone`
+  need no answer and are sent again after the next `keys` as before. `invitation_result`,
+  `backup_result` and `owner_result` answer the driver's own questions: a lost one ends the
+  driver's wait as before (the invitation is revoked, the nightly backup is tried again later that
+  night, the owner move is undone by `owner_cancel`).
+- **Without the feature** (DirectorLink before 1.10.0), or with no `hello` in time: `502
+  HOME_DISCONNECTED`, as before.
 
 **Logs.** On the controller, `GET /v1/logs?category=relay` gives one line per event:
 - `relay connection closed` (info): an open connection was lost. It carries the `reason`, the
@@ -289,21 +341,29 @@ again, because the controller may have carried it out.
   `attempt` and `retry_s`.
 - `connected to the relay` (info) says how many attempts it took (`attempts`) and how long the
   home was away (`down_s`).
+- `a request the relay sent again` (info, 1.10.0): its `type`, how often it was sent again
+  (`resent`) and the `outcome`: `answered again`, `still running`, `answer not kept`, `new` (never
+  got before: it ran) or `forgotten`.
 
 Remote Status keeps the last loss after it reconnects: `Connected since 14:23 - home 3f9a1c2e -
 last drop 14:22 (connection lost)`. In the relay's own log (Workers Observability) the same loss
 is `driver_disconnected`, with `why` (the close code), `up_s`, `ping_s` (seconds since the runtime
 last answered the driver's ping) and `message_s`. The next `driver_connected` has `down_ms`, how
 long the home was away. A socket the driver went quiet on is `driver_stale`, with `interval_s` (from
-the `hello`), `up_s`, `ping_s` and `message_s`.
+the `hello`), `up_s`, `ping_s` and `message_s`. Requests sent again after a `hello` (1.10.0) are one
+`request_resent` line: how many (`count`), the most times one of them was sent again (`resent`),
+and how long after their connection was found gone (`after_ms`); never a body.
 
 **What this does not fix.** A cut connection still takes the driver about a second to replace,
-plus its TLS handshake. A request already on its way then fails. The app asks again 2 s later, and
-that request waits for the driver. A request sent into a connection that died without a close
-fails too, in the seconds until the driver's next ping finds it dead (at most 10 s). If drops go
-on, the logs above show which side ended the connection. If `heard_s` was under 10 s (25 s before
-1.6.0) and the relay saw 1006, the connection was cut between the two: by the home's network, the
-internet provider or Cloudflare's edge.
+plus its TLS handshake, and a request sent into a connection that died without a close waits until
+the driver's next ping finds it dead (at most 5 s). Since 1.10.0 neither loses the request: it is
+answered a few seconds late. It still fails (`502 HOME_DISCONNECTED`, as before) when the driver
+does not come back within 8 s, when it restarted meanwhile, when the connection blinks a third
+time, and when its answer was too large to keep (a camera picture, which the app asks for again
+anyway). If drops go on, the logs above show which side ended the connection. If `heard_s` was
+under one ping interval (5 s; 10 s before 1.10.0, 25 s before 1.6.0) and the relay saw 1006, the
+connection was cut between the two: by the home's network, the internet provider or Cloudflare's
+edge.
 
 ## What a relayed request may do
 

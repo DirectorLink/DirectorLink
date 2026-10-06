@@ -10,6 +10,7 @@ local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
 local Activity = require("src.core.activity")
 local Access = require("src.auth.access")
+local Answers = require("src.cloud.answers")
 
 local Relay = {}
 
@@ -17,12 +18,13 @@ Relay.HOST = "api.directorlink.io"
 Relay.PORT = 443
 Relay.PATH = "/relay/connect"
 Relay.BINDING = 6001
--- A ping every 10 s (25 s up to 1.5.0): a connection that died without a word is found within
--- seconds, at the next ping. The hello says how often (ping_s), so the relay holds requests for a
--- driver whose pings have stopped instead of sending them into a dead connection (ADR-045).
-Relay.KEEPALIVE_MS = 10000
+-- A ping every 5 s (10 s from 1.6.0, 25 s up to 1.5.0): a connection that died without a word is
+-- found within seconds, at the next ping, which Director then refuses. The hello says how often
+-- (ping_s), so the relay holds requests for a driver whose pings have stopped instead of sending
+-- them into a dead connection (ADR-045, ADR-072).
+Relay.KEEPALIVE_MS = 5000
 -- A connection that hears nothing (not even a pong) for this many keep-alive ticks in a row is
--- dropped: about 30 s. Ticks, not the clock, so setting the controller's clock back cannot
+-- dropped: about 15 s. Ticks, not the clock, so setting the controller's clock back cannot
 -- delay it.
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
@@ -49,8 +51,10 @@ Relay.CANDIDATE_SECONDS = 24 * 3600
 -- What this driver tells the relay it takes, in its hello (1.7.0); `alerts_gone` (1.9.0, ADR-062):
 -- the key ids whose browsers the account service no longer has (src/cloud/remote.lua); `users`
 -- (1.9.0, ADR-061): the relay sends which keys share an account (`accounts`), and any device of an
--- account may approve that account's new device, as the controller lets every user add their own.
-Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users" })
+-- account may approve that account's new device, as the controller lets every user add their own;
+-- `resend` (1.10.0, ADR-072): a request already sent when the connection ended may come again on
+-- the next one, with the same id, and runs once (src/cloud/answers.lua).
+Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users", "resend" })
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -85,6 +89,9 @@ local state = {
     -- once, until a connection opens again; and the minimum it named, if any (GET /v1/remote).
     updateRequired = false,
     minimumVersion = nil,
+    -- A random id made at this start of the driver (1.10.0), in the hello: the relay sends a request
+    -- again only to the instance it went to, which remembers what it ran (src/cloud/answers.lua).
+    instance = nil,
 }
 
 local function log(level, message, data)
@@ -290,9 +297,16 @@ local function onMessage(text, kind)
         waiting.done(message)
         return
     end
-    -- Sealed requests, invitations and claims (remote.lua).
-    if state.remote and state.remote(message, send) then
-        return
+    -- Sealed requests, invitations, claims and links (remote.lua). Each runs once: one the relay
+    -- sends again after a lost connection gets its first answer (answers.lua, ADR-072).
+    if state.remote then
+        local handled, what = Answers.handle(message, send, state.remote)
+        if what then
+            log("info", "a request the relay sent again", { type = tostring(message.type), resent = tonumber(message.resent), outcome = what })
+        end
+        if handled then
+            return
+        end
     end
     if message.type == "request" then
         refuseRequest(message)
@@ -338,6 +352,7 @@ local function startKeepalive()
     cancel(state.keepalive)
     pcall(function()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
+            Answers.tick()
             state.quietTicks = state.quietTicks + 1
             if state.quietTicks >= Relay.SILENCE_TICKS then
                 local facts = connectionFacts()
@@ -434,9 +449,10 @@ local function onOpen()
     state.connectedAt = os.time()
     local identity = Relay.identity()
     -- `features` (1.7.0): what the relay may send this driver besides what every version takes;
-    -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0). A driver that does not list one
-    -- is never sent its messages.
-    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES })
+    -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0); `resend` (1.10.0). A driver that
+    -- does not list one is never sent its messages. `instance` (1.10.0): this start of the driver.
+    state.instance = state.instance or Random.hex(32)
+    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES, instance = state.instance })
     -- What could not be told while the connection was down (Relay.tellSoon), in order.
     local later = state.later
     state.later = {}
@@ -825,6 +841,8 @@ function Relay.reset()
     state.status = "Off"
     state.updateRequired = false
     state.minimumVersion = nil
+    state.instance = nil
+    Answers.reset()
 end
 
 return Relay

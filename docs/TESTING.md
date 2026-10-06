@@ -2,7 +2,20 @@
 
 ## Current release
 
-`v1.10.0` — Relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). No D1 migration and no Worker change.
+`v1.10.0` — A press during a connection blink (1100i), relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). The Worker changes (deploy it before updating DirectorLink; it works with 1.9.0 as before); no D1 migration.
+
+## 1100i. A press during a connection blink (1.10.0)
+
+1. Deploy the Worker, then update DirectorLink in Composer. Remote Status reads *Connected since …*. In Workers Observability the home's `driver_hello` has `interval_s: 5`.
+2. **A blink on purpose.** Away from home (the phone on mobile data), open a room through the account, with a light someone at home can see. On the router, reconnect the internet connection (for PPPoE: Disconnect, then Connect; the home gets a new public address, which ends the controller's open connection as a route change does; not a router reboot). While it reconnects, tap the light once. Within a few seconds of the internet coming back the light changes, once, and the app shows it done, not "home offline".
+   - The driver's relay log (`GET /v1/logs?category=relay`): `relay connection closed` (`connection lost`, `heard_s` 5 or less), then `connected to the relay` with `attempts: 1`; and `a request the relay sent again` with `outcome` `new` (the tap never reached the controller before the cut) or `answered again` (it had, and its answer was lost).
+   - Workers Observability: `request_resent` for the home with `count: 1`, then `message_relayed` for the tap.
+   - If the relay log says `no answer` instead, the router dropped the old connection silently and the driver noticed it only after about 15 s: a tap more than 10 s before it was back says the home is offline, as before. Try again with a quicker reconnect.
+3. **A door opens once.** Repeat 2 with a gate's Open (its second tap while the internet reconnects): it opens once, and History has one opening.
+4. **Turn off all AC** (the case that was lost): repeat 2 with Home's Turn off all for the ACs. Every AC goes off, once, and the result names them.
+5. **A day of use.** The relay log still shows `relay connection closed` every 20–60 minutes (the provider moving its route), each with `retry_s` 1. In Workers Observability, the home's `message_failed` lines (the app's "home offline") say in `why` what kept a tap from going again: the home "did not come back in time", DirectorLink "restarted meanwhile", its "answer was lost" (a camera picture), or the connection ended a third time. A tap that fell in a blink shows as `request_resent` instead.
+6. **Older controllers as before.** A 1.9.0 controller on the deployed Worker works as before: its `driver_hello` has `interval_s: 10`, and it never gets `request_resent`.
+7. **An update during a tap.** Tap a light through the account while DirectorLink updates in Composer: the light changes or the app says the home is offline, never twice (History).
 
 ## 1100e. Spanish, Italian, and Appearance and language (1.10.0)
 

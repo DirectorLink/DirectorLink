@@ -397,8 +397,9 @@ function tests.the_hello_says_the_driver_takes_link_runs()
     local hello = Json.decode(frames[1].payload)
     T.eq(hello.type, "hello")
     -- And since 1.9.0 the key ids whose browsers the account service dropped (ADR-062), and `users`
-    -- (ADR-061): which keys share an account, members approving joins.
-    T.same(hello.features, { "scene_links", "alerts_gone", "users" })
+    -- (ADR-061): which keys share an account, members approving joins; since 1.10.0 `resend`
+    -- (ADR-072): a request sent again after a lost connection runs once.
+    T.same(hello.features, { "scene_links", "alerts_gone", "users", "resend" })
 end
 
 -- ---- Backups --------------------------------------------------------------------------------
