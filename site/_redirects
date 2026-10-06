@@ -9,3 +9,7 @@
 /drivers/hikvision/releases https://github.com/DirectorLink/DirectorLink-Hikvision/releases 302
 /drivers/hikvision/issues https://github.com/DirectorLink/DirectorLink-Hikvision/issues 302
 /drivers/hikvision/source https://github.com/DirectorLink/DirectorLink-Hikvision 302
+/drivers/doorbird/download https://github.com/DirectorLink/DirectorLink-DoorBird/releases/latest/download/DirectorLink-DoorBird.c4z 302
+/drivers/doorbird/releases https://github.com/DirectorLink/DirectorLink-DoorBird/releases 302
+/drivers/doorbird/issues https://github.com/DirectorLink/DirectorLink-DoorBird/issues 302
+/drivers/doorbird/source https://github.com/DirectorLink/DirectorLink-DoorBird 302
