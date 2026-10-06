@@ -32,6 +32,8 @@ let abandoned = null;
 let typedBefore = "";
 // The browser refused its speech service (no Siri, a policy): the keyboard's microphone then.
 let speechOff = false;
+// The app's language the fields were last drawn in.
+let fieldLanguage = null;
 
 // ---- the microphone --------------------------------------------------------------------------
 
@@ -270,6 +272,15 @@ function bar(where) {
     bars.set(where, parts);
   }
   const { input, label, go, output: below } = parts;
+  // The app's language changed: the words in the field (and what it heard) were for the other
+  // one, whose commands this language does not understand; the answer goes too (commands.js).
+  if (fieldLanguage !== currentLanguage()) {
+    if (fieldLanguage !== null) {
+      abortListening();
+      clearWords();
+    }
+    fieldLanguage = currentLanguage();
+  }
   label.textContent = t("command.label");
   input.setAttribute("placeholder", !speechAvailable() && IS_IOS ? t("command.placeholderDictation") : t("command.placeholder"));
   go.setAttribute("aria-label", t("command.go"));

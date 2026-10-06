@@ -139,8 +139,9 @@ function split(text) {
     .replace(/['’‘`׳״"“”]/g, "")
     // Percent in words: "por ciento", "per cento", "cien por cien", "per cent".
     .replace(/\b(?:por|per)\s+(?:ciento|cien|cento|cent)\b/giu, " % ")
-    // "A/C", "a.c." are AC, as is Spanish "A/A" (aire acondicionado).
+    // "A/C", "a.c." are AC, as is Spanish "A/A" (aire acondicionado); "a.m.", "p. m." a time.
     .replace(/\ba[./][ca]\b\.?/gi, "ac")
+    .replace(/\b([ap])\.\s?m\b\.?/gi, "$1m")
     // Degrees Celsius: "23°C", "23 °C", "23C", "23º", "23℃".
     .replace(/[º˚℃]/g, "°")
     .replace(/(\d)\s*°?\s*c(?![\p{L}\p{N}])/giu, "$1°")
@@ -148,8 +149,10 @@ function split(text) {
     // A minus sign before a number ("-18"), not a hyphen after a word ("ל-23").
     .replace(/(^|\s)[-−‐–](?=\d)/g, "$1\u0002")
     .replace(/[%°]/g, " $& ")
-    // A comma or a semicolon may part two things said ("kitchen lights off, AC to 23").
-    .replace(/[,;،]/g, " \u0003 ")
+    // A comma or a semicolon may part two things said ("kitchen lights off, AC to 23"), and so may
+    // the end of a sentence, as dictation writes it ("Kitchen lights off. Close the blinds."): one
+    // at the end parts nothing.
+    .replace(/[,;،]|[.!…]+/g, " \u0003 ")
     .replace(/(\p{L})(?=\p{N})|(\p{N})(?=\p{L})/gu, "$1$2 ")
     .replace(/[^\p{L}\p{M}\p{N}\u0001\u0002\u0003%°]+/gu, " ")
     .trim()
@@ -176,10 +179,10 @@ function word(display, name = false) {
 // English and Hebrew, read together as in 1.9.0.
 const ENGLISH_HEBREW = {
   vocabulary: [
-    ["on", "on הדלק הדליקי הדליקו תדליק תדליקי תדליקו להדליק דלוק דלוקה דלוקים דולק דולקת דולקים הדלקה"],
-    ["off", "off out deactivate disable כבה כבי כבו תכבה תכבי תכבו לכבות כבוי כבויה כבויים כיבוי"],
-    ["open", "open פתח פתחי פתחו תפתח תפתחי תפתחו לפתוח פתוח פתוחה פתוחים פתיחה"],
-    ["close", "close shut סגור סגרי סגרו תסגור תסגרי תסגרו לסגור סגורה סגורים סגירה"],
+    ["on", "on הדלק הדליקי הדליקו תדליק תדליקי תדליקו להדליק הדלקה"],
+    ["off", "off out deactivate disable כבה כבי כבו תכבה תכבי תכבו לכבות כיבוי"],
+    ["open", "open פתח פתחי פתחו תפתח תפתחי תפתחו לפתוח פתיחה"],
+    ["close", "close shut סגור סגרי סגרו תסגור תסגרי תסגרו לסגור סגירה"],
     ["up", "up raise הרם הרימי הרימו תרים תרימי תרימו להרים העלה העלי העלו תעלה תעלי תעלו להעלות"],
     ["down", "down lower הורד הורידי הורידו תוריד תורידי תורידו להוריד"],
     ["stop", "stop halt עצור עצרי עצרו תעצור תעצרי תעצרו לעצור עצירה הפסק הפסיקי הפסיקו תפסיק תפסיקי תפסיקו להפסיק"],
@@ -200,8 +203,12 @@ const ENGLISH_HEBREW = {
     // Not a command: "don't", a question, a time or a change by an amount (DirectorLink does it now,
     // as said, or not at all).
     ["not", "not dont never אל לא אין בלי ואל ולא שלא ושלא"],
-    ["question", "is are what whats how which does did why when where who האם מה למה מתי איפה איך מי כמה"],
-    ["time", "am pm oclock minute minutes hour hours seconds tomorrow tonight morning evening afternoon later until till after before within דקה דקות שעה שעות שנייה שניות מחר בוקר ערב צהריים עוד אחרי לפני"],
+    // How it is (דלוק, כבוי, פתוח, סגורים) says a state, not what to do: answered as a question, as
+    // in Spanish and Italian, since dictation and typing often drop the "?" (1.10.0). Not "סגור":
+    // the same letters are the imperative ("סגור את התריס").
+    ["question", "is are what whats how which does did why when where who האם מה למה מתי איפה איך מי כמה " +
+      "דלוק דלוקה דלוקים דלוקות דולק דולקת דולקים דולקות כבוי כבויה כבויים כבויות פתוח פתוחה פתוחים פתוחות סגורה סגורים סגורות"],
+    ["time", "am pm oclock minute minutes hour hours seconds tomorrow tonight morning evening afternoon night later until till after before within דקה דקות שעה שעות שנייה שניות מחר בוקר ערב צהריים לילה עוד אחרי לפני"],
     [
       "filler",
       "the a an in at to into of my our your please now hey can could would will you i me want it its be for with and set turn switch make put change adjust room house home whole entire also just then thanks thank kindly air mode , " +
@@ -267,6 +274,9 @@ const ENGLISH_HEBREW = {
   separators: "and then ו וגם ואז ואת ,",
   leads: "the a an my our also then please את גם אז בבקשה",
   verbs: "set turn switch make put change adjust שים שימי שימו תשים תשימי תשימו כוון כווני כוונו תכוון תכווני תכוונו לכוון קבע קבעי קבעו תקבע תקבעי תקבעו שנה תשנה העבר תעביר עשה עשי עשו תעשה תעשי תעשו הגדר תגדיר",
+  // "Room" said alone, no room's name with it ("the lights in the room", "האור בחדר"): which room?
+  // Never the whole home (1.10.0). Not after "all" or "every" ("in every room").
+  room: "room חדר",
   numbers: [
     ["zero אפס", 0, "unit"],
     ["one אחת אחד", 1, "unit"],
@@ -327,7 +337,7 @@ const SPANISH = {
     // ("está encendida la luz de la cocina", without its "?").
     ["question", "qué cuál cuáles cuándo dónde adónde cómo quién quiénes cuánto cuánta cuántos cuántas está están estás es son hay será " +
       "encendido encendida encendidos encendidas prendido prendida prendidos prendidas apagado apagada apagados apagadas abierto abierta abiertos abiertas cerrado cerrada cerrados cerradas"],
-    ["time", "am pm minuto minutos hora horas segundos mañana tarde temprano pronto rato momento mediodía medianoche madrugada después antes tras luego semana lunes martes miércoles jueves viernes sábado domingo"],
+    ["time", "am pm minuto minutos hora horas segundos mañana tarde noche noches temprano pronto rato momento mediodía medianoche madrugada después antes tras luego semana lunes martes miércoles jueves viernes sábado domingo"],
     [
       "filler",
       "el la los las lo le les un una unos unas de del al a en con por favor porfa porfavor me mi mis te tu tus su sus nos nuestro nuestra nuestros nuestras y e ya ahora mismo enseguida también solo además entonces " +
@@ -387,6 +397,12 @@ const SPANISH = {
   // "Y luego", "y después": then (alone, "luego" and "después" are later).
   then: "luego después",
   verbs: "pon ponga poned pongan poner haz haga haced hagan hacer cambia cambie cambiad cambien cambiar ajusta ajuste ajustad ajusten ajustar configura configure configurad configuren configurar",
+  room: "habitación cuarto",
+  // "La del salón", "el del dormitorio", "las de la cocina": the one of a room, for the kind said in
+  // the part before ("enciende la luz de la cocina y apaga la del salón"), one or many; an article
+  // only right before "de" or "del".
+  pronouns: [["la el", false], ["las los", true]],
+  pronounOf: "de del",
   clitics: "los las les lo la le nos me",
   numbers: [
     ["cero", 0, "unit"],
@@ -443,7 +459,7 @@ const ITALIAN = {
     ["question", "che cosa quale quali quanto quanta quanti quante quando dove come chi perché sono " +
       "acceso accesa accesi accese spento spenta spenti spente aperto aperta aperti aperte chiuso chiusa chiusi chiuse"],
     // "Ora" is the hour ("tra un'ora", "per un'ora"): to say now, "adesso" or "subito".
-    ["time", "am pm minuto minuti ora ore secondi momento attimo domani stasera stanotte stamattina mattina pomeriggio sera dopo prima tardi presto tra fra entro verso mezzogiorno mezzanotte settimana lunedì martedì mercoledì giovedì venerdì sabato domenica"],
+    ["time", "am pm minuto minuti ora ore secondi momento attimo domani stasera stanotte stamattina mattina pomeriggio sera notte dopo prima tardi presto tra fra entro verso mezzogiorno mezzanotte settimana lunedì martedì mercoledì giovedì venerdì sabato domenica"],
     [
       "filler",
       "il lo la i gli le l un uno una del dello della dei degli delle dell al allo alla ai agli alle all dal dallo dalla dai dagli dalle dall nel nello nella nei negli nelle nell sul sullo sulla sui sugli sulle sull col coi " +
@@ -500,6 +516,10 @@ const ITALIAN = {
   leads: "il lo la i gli le l un uno una anche poi pure inoltre",
   then: "dopo",
   verbs: "metti metta mettete mettano mettere imposta imposti impostate impostino impostare regola regoli regolate regolino regolare cambia cambi cambiate cambiare fai faccia fate fare rendi renda rendete rendere",
+  room: "stanza camera",
+  // "Quella del soggiorno", "quelle in cucina": the one of a room ("that light", with its kind said,
+  // is that one).
+  pronouns: [["quella quello quel quell", false], ["quelle quelli quei quegli", true]],
   clitics: "glie gli le li lo la ne mi ci me ce",
   // "Spegnerla": the infinitive drops its last e before a pronoun.
   cliticE: true,
@@ -584,6 +604,9 @@ function lexicon(spec) {
     leads: foldedSet(spec.leads),
     then: foldedSet(spec.then),
     verbs: foldedSet(spec.verbs),
+    room: foldedSet(spec.room),
+    pronouns: new Map((spec.pronouns || []).flatMap(([words, plural]) => list(words).map((entry) => [fold(entry), plural]))),
+    pronounOf: foldedSet(spec.pronounOf),
     // Longest first: "las" before "la".
     clitics: list(spec.clitics).map(fold).sort((a, b) => b.length - a.length),
     cliticE: Boolean(spec.cliticE),
@@ -705,7 +728,9 @@ function tokenize(text, names, lex) {
       // מ in front ("בשבע"), or after a word for a time ("a las siete", "alle sette"), it is a
       // time, unless it is in a name ("בשני").
       const found = numberWord(words[index], lex);
-      const atWord = Boolean(found && (AT_PREFIX.test(found.prefix) || atBefore(words, index, lex)));
+      // "En un 25%": before a number, "un" is "a", not one (o'clock is "la una": "a la una 20%").
+      const article = words[index].raw === "un" && words[index + 1]?.num != null && lex.at.has(words[index - 1]?.raw);
+      const atWord = Boolean(found && !article && (AT_PREFIX.test(found.prefix) || atBefore(words, index, lex)));
       tokens.push(found && found.type !== "half" ? { ...words[index], wordNum: found.value, atWord } : found ? { ...words[index], atWord } : words[index]);
       index += 1;
     }
@@ -909,7 +934,41 @@ function matchEntity(entity, tokens) {
     const position = tokens.findIndex((token, index) => !positions.has(index) && !token.role && token.num === null && quality(part, token, false) > 0);
     if (position >= 0) positions.add(position);
   }
-  return { entity, full: best.full, unsure, score: best.score, positions };
+  return { entity, full: best.full, unsure, score: best.score, positions, required: new Set(best.positions) };
+}
+
+// Where a room's name is said: its words matched, and those that need not be said when said right
+// before them ("room 12", "habitación 2", "בחדר 2").
+function withWordsBefore(match, tokens) {
+  const positions = new Set(match.positions);
+  for (const position of [...positions].sort((a, b) => b - a)) {
+    for (let before = position - 1; before >= 0 && !positions.has(before); before -= 1) {
+      if (!match.entity.parts.some((part) => part.optional && quality(part, tokens[before], false) >= 0.9)) break;
+      positions.add(before);
+    }
+  }
+  return positions;
+}
+
+// A name with a word for "don't", a time or a feeling in it ("Mañana", "Buenas noches", "Lámpara
+// de noche", "אור חם") is that name only said whole: each of its words but fillers, in its order,
+// with only fillers between. Otherwise the word says what it says ("apaga las luces por la noche").
+function saidWhole(match, tokens) {
+  const refusing = [...match.positions].filter((position) => tokens[position].num === null && refusalOf(tokens, position));
+  if (!refusing.length) return true;
+  const words = match.entity.parts.filter((part) => part.role?.role !== "filler");
+  for (let start = 0; start < tokens.length; start += 1) {
+    const run = [];
+    let position = start;
+    for (const part of words) {
+      if (run.length) while (position < tokens.length && tokens[position].role?.role === "filler" && !quality(part, tokens[position], match.entity.exactOnly)) position += 1;
+      if (position >= tokens.length || !quality(part, tokens[position], match.entity.exactOnly)) break;
+      run.push(position);
+      position += 1;
+    }
+    if (run.length === words.length && refusing.every((position) => run.includes(position))) return true;
+  }
+  return false;
 }
 
 // ---- what the sentence asks ------------------------------------------------------------------
@@ -936,6 +995,15 @@ function timeNumber(tokens, position) {
   if (token.at === "by") return true;
   if (token.at !== "at" || token.half) return false;
   return !["percent", "degrees"].includes(tokens[position + 1]?.role?.role);
+}
+
+// A number said after "to" ("a 23", "al 30%", "hasta el 60%", "ל-30"): a level, a position or a
+// temperature, never a step's amount.
+function afterTarget(tokens, position, lex) {
+  const before = tokens[position - 1];
+  if (!before) return false;
+  if (lex.target.has(before.raw)) return true;
+  return before.role?.role === "filler" && lex.target.has(tokens[position - 2]?.raw);
 }
 
 // What makes a sentence not a command to do now, at that word: "not" (don't, אל), "time" (a time,
@@ -1002,12 +1070,22 @@ function relativeRoles(tokens, lex) {
     const comparative = tokens.some((token) => token.role?.role === "rel" && token.role.comparative);
     const upDown = lex.upDownClimate && tokens.some((token) => token.role?.role === "up" || token.role?.role === "down");
     for (const [position, token] of tokens.entries()) {
+      if (token.num === null || token.carried) continue;
       const unit = tokens[position + 1]?.role?.role;
-      if (token.num === null || token.carried || (unit !== "percent" && unit !== "degrees")) continue;
       const before = tokens[position - 1];
-      const byWord = before?.role?.modifier === "by" || Boolean(before && lex.byWords.has(before.raw));
+      // "By", "un", "del", "di": never a word of a time ("a la una 20%" keeps its time).
+      const byWord = before?.role?.modifier === "by" || Boolean(before && lex.byWords.has(before.raw) && !before.atWord && before.role?.role !== "time");
+      if (unit !== "percent" && unit !== "degrees") {
+        // An amount needs its unit ("alza il volume di 10", "sube la luz un 20", "brighter by 30"):
+        // refused as a change by an amount, never a level of 10 (1.10.0).
+        if (byWord && token.at === null) token.at = "by";
+        continue;
+      }
       const byPrefix = token.at === "by" && token.byPrefix === "ב";
-      const near = token.at === null && !lex.target.has(before?.raw) && (comparative || (upDown && unit === "degrees"));
+      // In Spanish and Italian a number with its unit right after up or down, with no "a" or "al"
+      // before it, is the step: "baja el aire dos grados", "sube la luz de la cocina 20%" (a level
+      // is said with "a": "sube la luz al 80%", "hasta el 60%").
+      const near = token.at === null && !afterTarget(tokens, position, lex) && (comparative || (upDown && (unit === "degrees" || lex.upDownLight)));
       if (!byWord && !byPrefix && !near) continue;
       token.amount = unit;
       tokens[position + 1].amountUnit = true;
@@ -1062,7 +1140,7 @@ function bitKind(tokens) {
 // The words left over once the names are taken out: what they ask, or null when they contradict
 // each other or say nothing this understands.
 function summarize(tokens, taken, lex) {
-  const summary = { lex, actions: new Set(), kinds: new Map(), modes: new Set(), units: new Set(), all: false, everything: false, numbers: [], ac: false, temperature: false, feel: false, rel: null, amount: null, make: false, put: false, hebrewUpDown: false };
+  const summary = { lex, actions: new Set(), kinds: new Map(), modes: new Set(), units: new Set(), all: false, everything: false, numbers: [], ac: false, temperature: false, feel: false, rel: null, amount: null, make: false, put: false, hebrewUpDown: false, numberTo: false, roomWord: false, pronoun: null };
   for (const [position, token] of tokens.entries()) {
     if (taken.has(position)) continue;
     // A room carried from another part of the sentence need not be used.
@@ -1075,6 +1153,8 @@ function summarize(tokens, taken, lex) {
     if (refusalOf(tokens, position)) return null;
     if (token.num !== null) {
       summary.numbers.push(token.num);
+      // Said with "to" ("al 30%"), not only after a verb ("sube la luz 30").
+      summary.numberTo = token.at === "at" || afterTarget(tokens, position, lex);
       continue;
     }
     const role = token.role;
@@ -1096,6 +1176,9 @@ function summarize(tokens, taken, lex) {
       summary.all = true;
     } else if (role.role === "everything") {
       summary.everything = true;
+    } else if (role.role === "pronoun") {
+      // "La del salón": the kind it stands for, from the part before (readSeveral), or none.
+      summary.pronoun = { refers: token.refers || null, plural: role.plural };
     } else if (role.role === "rel") {
       // Brighter and dimmer at once, or the lights and the AC: not one change.
       const before = summary.rel;
@@ -1121,6 +1204,8 @@ function summarize(tokens, taken, lex) {
   }
   if (summary.actions.has("level")) summary.actions.delete("on");
   if (summary.numbers.length > 1 || summary.modes.size > 1 || summary.units.size > 1) return null;
+  // "Quella luce": with its kind said, "that" is only a word.
+  if (summary.kinds.size) summary.pronoun = null;
   return summary;
 }
 
@@ -1218,6 +1303,9 @@ function kindIntent(kind, targets, where, summary, act) {
     }
     if (number !== null) {
       if (!["on", "start", "up", "down", null].includes(act)) return null;
+      // "Sube la luz 30": up is a step in Spanish and Italian, so a number after it is not a
+      // level unless said with "a" or "al" ("sube la luz al 30%"); nor a step without its unit.
+      if (summary.lex.upDownLight && (act === "up" || act === "down") && !summary.numberTo) return null;
       const level = percent(number);
       if (typeof level !== "number") return level;
       if (!lights.length) return none();
@@ -1334,6 +1422,8 @@ function kindIntent(kind, targets, where, summary, act) {
     }
     if (number !== null) {
       if (act && !["up", "down", "on", "start"].includes(act)) return null;
+      // "Sube el volumen 10": not a volume of 10 (as the lights).
+      if (summary.lex.upDownLight && (act === "up" || act === "down") && !summary.numberTo) return null;
       const volume = percent(number);
       if (typeof volume !== "number") return volume;
       return action("music", { ...where, ids, change: { volume } });
@@ -1380,11 +1470,24 @@ function intent(target, room, summary, catalog) {
   const act = verb(summary);
   if (act === false) return null;
   const roomId = room ? room.entity.room.id : null;
+  // "La del salón", "quella del soggiorno" (1.10.0): the kind said in the part before, in the room
+  // said; or a device by its own words ("la de pie"). Never the room's All off, nor a scene.
+  const pronoun = summary.pronoun;
+  if (pronoun) {
+    if (target?.entity.type === "scene") return null;
+    if (target && (pronoun.refers ? pronoun.refers.kind !== target.entity.kind : !summary.named)) return null;
+    if (!target) {
+      if (!pronoun.refers) return null;
+      summary.kinds.set(pronoun.refers.kind, pronoun.plural);
+      if (pronoun.refers.ac) summary.ac = true;
+      if (pronoun.refers.temperature) summary.temperature = true;
+    }
+  }
   // "Cold", "חם" are a mode only for the AC said ("מזגן על קר").
   if (summary.feel && !summary.kinds.has("climate") && target?.entity.kind !== "climate") return null;
 
   if (target?.entity.type === "scene") {
-    if (summary.kinds.size || summary.modes.size || summary.numbers.length || summary.all || summary.everything || summary.rel || summary.amount || room) return null;
+    if (summary.kinds.size || summary.modes.size || summary.numbers.length || summary.all || summary.everything || summary.rel || summary.amount || room || summary.roomWord) return null;
     if (act && !["run", "start", "on", "play"].includes(act)) return null;
     return action("scene", { id: target.entity.scene.id });
   }
@@ -1399,9 +1502,15 @@ function intent(target, room, summary, catalog) {
     return kindIntent(target.entity.kind, [device], { room: null, device: { kind: device.kind, id: device.id } }, summary, act);
   }
 
+  // "In the room", "in camera", "בחדר", no room's name with it: which room? Never the whole home
+  // (1.10.0).
+  if (!room && summary.roomWord) return problem("needRoom", { kind: kinds[0] || null });
+
   // No device named: the kind said, or what the words imply.
   let kind = kinds[0] || null;
   if (!kind && summary.rel?.kind) kind = summary.rel.kind;
+  // "The heating", "החימום": thermostats, by their mode.
+  const byMode = !kind && summary.modes.size > 0;
   if (!kind && summary.modes.size) kind = "climate";
   if (!kind && summary.units.has("degrees")) kind = "climate";
   if (!kind && (summary.actions.has("volume") || ["play", "pause", "next"].includes(act))) kind = "music";
@@ -1449,7 +1558,12 @@ function intent(target, room, summary, catalog) {
     return kindIntent(kind, targets, { room: null, device: { kind: device.kind, id: device.id } }, summary, act);
   }
   const off = kind === "light" || kind === "climate" ? act === "off" : kind === "blind" ? act === "close" || act === "down" : false;
-  if (off && !summary.numbers.length && !summary.rel && !summary.amount) return action("offAll", { filters: [{ light: "lights", climate: "climate", blind: "blinds" }[kind]] });
+  if (off && !summary.numbers.length && !summary.rel && !summary.amount) {
+    // "Turn off the heating", "תכבה את החימום": the AC, floor heating, or a heater wired as a light?
+    // Which room; Turn off all for every thermostat only with "all" (1.10.0).
+    if (byMode && !summary.all) return problem("needRoom", { kind });
+    return action("offAll", { filters: [{ light: "lights", climate: "climate", blind: "blinds" }[kind]] });
+  }
   // All of them at once is only Turn off all (above).
   if (summary.all) return problem("needRoom", { kind });
   if (kind === "door") return kindIntent(kind, targets, { room: null, device: null }, summary, act);
@@ -1485,17 +1599,37 @@ function readPart(input, prepared) {
   }
   relativeRoles(tokens, lex);
 
-  const matches = entities.map((entity) => matchEntity(entity, tokens)).filter(Boolean);
+  const matches = entities.map((entity) => matchEntity(entity, tokens)).filter((match) => match && saidWhole(match, tokens));
   const rooms = [null, ...matches.filter((match) => match.entity.type === "room")];
   const targets = [null, ...matches.filter((match) => match.entity.type !== "room")];
   const kindWords = tokens.filter((token) => token.role?.role === "kind");
   const plural = kindWords.some((token) => token.role.plural) || tokens.some((token) => token.role?.role === "all");
   const carriedRoom = matches.find((match) => match.entity.type === "room" && match.full && [...match.positions].every((position) => tokens[position].carried));
+  // Rooms said whole, with the words of their name that need not be said when said right before
+  // ("habitación 2", "room 2", "בחדר 2").
+  const saidRooms = matches.filter((match) => match.entity.type === "room" && match.full && !match.unsure).map((match) => ({ match, positions: withWordsBefore(match, tokens) }));
+  // A device in another room named only by words of a room said with more than them ("Foco 2" in
+  // the kitchen, for "la luz de la habitación 2"; "Kids lamp" for "the light in the kids room") is
+  // not what is meant: the room is (1.10.0).
+  const elsewhere = (target) =>
+    target?.entity.type === "device" &&
+    saidRooms.some(
+      ({ match, positions }) =>
+        match.entity.room.id !== target.entity.device.room &&
+        [...target.required].every((position) => positions.has(position)) &&
+        [...positions].some((position) => !target.positions.has(position) && tokens[position].num === null)
+    );
+  // A room's words that name, as well, a whole device of another room (a room "Termo" and the
+  // heater "Termo" in the bathroom): said alone, neither is more likely, so it asks.
+  const alsoDevice = (room) =>
+    [...room.positions].some((position) => tokens[position].num === null) &&
+    matches.some((match) => match.entity.type === "device" && match.full && !match.unsure && match.entity.device.room !== room.entity.room.id && match.positions.size === room.positions.size && [...room.positions].every((position) => match.positions.has(position)));
 
   const readings = [];
   for (const room of rooms) {
     for (const target of targets) {
       if (room && target && [...room.positions].some((position) => target.positions.has(position))) continue;
+      if (elsewhere(target)) continue;
       // A device named only by its kind ("Light", "מזגן") is that device only in its room.
       if (target?.entity.exactOnly && target.entity.type === "device" && !room) continue;
       // A room carried from another part is that room: a device's name may take its words only
@@ -1506,6 +1640,9 @@ function readPart(input, prepared) {
       const taken = new Set([...(room?.positions || []), ...(target?.positions || [])]);
       const summary = summarize(tokens, taken, lex);
       if (!summary) continue;
+      // "The room" said, and not as a word of the names read ("Quiet room", "חדר שקט"): which room?
+      // (intent)
+      summary.roomWord = tokens.some((token, position) => token.roomWord && !taken.has(position) && !token.carried && ![room, target].some((match) => match?.entity.parts.some((part) => part.optional && quality(part, token, false) >= 0.9)));
       // A device named by more than its room's words ("the living room AC", not "warmer in the
       // living room" for a thermostat called "Living room AC").
       summary.named = Boolean(target && !matches.some((match) => match.entity.type === "room" && match.full && [...target.positions].every((position) => match.positions.has(position))));
@@ -1514,7 +1651,7 @@ function readPart(input, prepared) {
       let score = 0;
       for (const match of [room, target]) if (match) score += match.score + (match.full ? 0.5 : 0);
       // "Kitchen lights" is the room's lights, "the kitchen light" a light of that name.
-      if (room && !target && (plural || !kindWords.length)) score += 0.3;
+      if (room && !target && (plural || (!kindWords.length && !alsoDevice(room)))) score += 0.3;
       if (target?.entity.type === "device" && kindWords.some((token) => token.role.kind === target.entity.kind && !token.role.plural)) score += 0.3;
       readings.push({ result, score, partial: Boolean((room && (!room.full || room.unsure)) || (target && (!target.full || target.unsure))) });
     }
@@ -1522,10 +1659,15 @@ function readPart(input, prepared) {
 
   if (!readings.length) {
     const covered = new Set(matches.flatMap((match) => [...match.positions]));
-    // Don't, a time, how warm one feels: refused, whatever else was said.
-    const refusal = tokens.map((_token, position) => (covered.has(position) ? null : refusalOf(tokens, position))).find(Boolean);
+    // Don't, a time, how warm one feels: refused, whatever else was said; also when a name has the
+    // word ("apaga la isla mañana" with a scene "Mañana"): no reading used it (1.10.0).
+    const refusal = tokens.map((_token, position) => refusalOf(tokens, position)).find(Boolean);
     if (refusal) return { status: "unknown", words: [], refusal };
-    const words = tokens.filter((token, position) => !token.role && token.num === null && !token.carried && !covered.has(position)).map((token) => token.display);
+    // "La del salón" with no kind before it: those words are not understood.
+    const lone = (token) => token?.role?.role === "pronoun" && !token.refers && !kindWords.length;
+    const words = tokens
+      .filter((token, position) => (!token.role || lone(token) || (token.pronounOf && lone(tokens[position - 1]))) && token.num === null && !token.carried && !covered.has(position))
+      .map((token) => token.display);
     // Two rooms said at once.
     const fullRooms = matches.filter((match) => match.entity.type === "room" && match.full);
     if (!words.length && fullRooms.some((one) => fullRooms.some((other) => other.entity.room.id !== one.entity.room.id && ![...one.positions].some((position) => other.positions.has(position))))) {
@@ -1596,6 +1738,12 @@ function startsSomething(tokens, from, end, rest, { entities, lex }) {
   return false;
 }
 
+// A word that parts a sentence ("and", "y", "e", a comma): not one known by its accent (Italian "è",
+// is, asks; "e" is "and").
+function isSeparator(token, lex) {
+  return lex.separators.has(token.raw) && !lex.exact.has(token.display.toLowerCase());
+}
+
 // A thing of its own: more than a verb ("and off"), and more than a room's name without one
 // ("Kitchen," before "lights off"; "kitchen off" is one), even when a device's name has the word.
 function hasContent(tokens, from, end, rest, { entities, lex }) {
@@ -1604,7 +1752,7 @@ function hasContent(tokens, from, end, rest, { entities, lex }) {
   for (let index = from; index < end; index += 1) {
     const token = index === from && rest ? rest : tokens[index];
     const role = token.role?.role;
-    if (role === "filler" || lex.separators.has(token.raw) || lex.leads.has(token.raw)) continue;
+    if (role === "filler" || isSeparator(token, lex) || lex.leads.has(token.raw)) continue;
     if (DOING.has(role)) {
       doing = true;
       continue;
@@ -1637,7 +1785,7 @@ function insideName(tokens, index, entities) {
 // and off" is one thing, as is "the lights in the kitchen and the living room").
 function splitParts(tokens, prepared) {
   const { entities, names, lex } = prepared;
-  const candidates = tokens.map((token, index) => (index === 0 ? null : lex.separators.has(token.raw) ? { index, drop: true } : andRest(token, names, lex) ? { index, drop: false } : null)).filter(Boolean);
+  const candidates = tokens.map((token, index) => (index === 0 ? null : isSeparator(token, lex) ? { index, drop: true } : andRest(token, names, lex) ? { index, drop: false } : null)).filter(Boolean);
   if (!candidates.length) return [{ tokens, text: tokens.map((token) => token.display).join(" ") }];
   const cuts = [];
   let start = 0;
@@ -1670,9 +1818,13 @@ function splitParts(tokens, prepared) {
 }
 
 // The room a part says itself: the tokens of the best room said whole (in a device's name too:
-// "the kitchen island"), or null.
+// "the kitchen island"), or null; and `inName`, a room's words said only in the name of a device
+// of another room ("רחצה ספוטים כניסה", a light of the parents' room, has the Entrance's name): not
+// the room said, so never carried to another part (1.10.0).
 function roomSaid(tokens, prepared) {
   let best = null;
+  let inName = false;
+  let devices = null;
   for (const entity of prepared.entities) {
     if (entity.type !== "room") continue;
     const match = matchEntity(entity, tokens);
@@ -1684,9 +1836,15 @@ function roomSaid(tokens, prepared) {
       if (before && !positions.has(position - 1) && entity.parts.some((part) => part.optional && part.raw === before.raw)) positions.add(position - 1);
     }
     // Said by a word, not by a number alone ("set the AC to 23" names no room "23").
-    if ([...positions].some((position) => tokens[position].num === null) && (!best || match.score > best.match.score)) best = { match, positions };
+    if (![...positions].some((position) => tokens[position].num === null)) continue;
+    devices ||= prepared.entities.filter((other) => other.type === "device").map((other) => matchEntity(other, tokens)).filter((other) => other?.full && !other.unsure);
+    if (devices.some((device) => device.entity.device.room !== entity.room.id && [...positions].every((position) => device.positions.has(position)))) {
+      inName = true;
+      continue;
+    }
+    if (!best || match.score > best.match.score) best = { match, positions };
   }
-  return best ? [...best.positions].sort((a, b) => a - b).map((position) => tokens[position]) : null;
+  return { tokens: best ? [...best.positions].sort((a, b) => a - b).map((position) => tokens[position]) : null, inName };
 }
 
 // A part that says only what (a device, a kind, a scene), with no verb, number or mode of its own:
@@ -1699,12 +1857,16 @@ function needsVerb(tokens) {
 // none (forward, and back to the part before when they share one verb: "turn off the lights and
 // the AC in the living room"), and the verb of another part when it has none. All or nothing.
 function readSeveral(parts, prepared) {
-  const info = parts.map((part) => ({
-    room: roomSaid(part.tokens, prepared),
-    verb: part.tokens.filter((token) => DOING.has(token.role?.role)),
-    needsVerb: needsVerb(part.tokens),
-    all: part.tokens.some((token) => ["all", "everything"].includes(token.role?.role)),
-  }));
+  const info = parts.map((part) => {
+    const said = roomSaid(part.tokens, prepared);
+    return {
+      room: said.tokens,
+      inName: said.inName,
+      verb: part.tokens.filter((token) => DOING.has(token.role?.role)),
+      needsVerb: needsVerb(part.tokens),
+      all: part.tokens.some((token) => ["all", "everything"].includes(token.role?.role)),
+    };
+  });
   const verbFrom = info.map((item, index) => {
     if (!item.needsVerb) return null;
     for (let other = index - 1; other >= 0; other -= 1) if (info[other].verb.length) return other;
@@ -1718,16 +1880,26 @@ function readSeveral(parts, prepared) {
     if (info[next]?.room && (verbFrom[index] === next || verbFrom[next] === index)) return next;
     return null;
   });
-  const results = parts.map((part, index) => {
+  const results = [];
+  // Each part's kind of device, for "la del salón" in the part after it.
+  const kinds = [];
+  for (const [index, part] of parts.entries()) {
+    const refers = index > 0 ? kinds[index - 1] : null;
+    const tokens = part.tokens.map((token) => (token.role?.role === "pronoun" ? { ...token, refers } : token));
     const room = roomFrom[index] === null ? [] : info[roomFrom[index]].room.map((token) => ({ ...token, carried: true }));
     const verb = verbFrom[index] === null ? [] : info[verbFrom[index]].verb;
-    if (!verb.length) return readPart([...part.tokens, ...room], prepared);
-    // "And the AC": with the verb before it; a scene's name ("and good night") as it is.
-    const withVerb = readPart([...verb, ...part.tokens, ...room], prepared);
-    if (withVerb.status === "ok") return withVerb;
-    const alone = readPart([...part.tokens, ...room], prepared);
-    return alone.status === "ok" ? alone : withVerb;
-  });
+    let result;
+    if (!verb.length) {
+      result = readPart([...tokens, ...room], prepared);
+    } else {
+      // "And the AC": with the verb before it; a scene's name ("and good night") as it is.
+      const withVerb = readPart([...verb, ...tokens, ...room], prepared);
+      const alone = withVerb.status === "ok" ? null : readPart([...tokens, ...room], prepared);
+      result = withVerb.status === "ok" || alone.status !== "ok" ? withVerb : alone;
+    }
+    results.push(result);
+    kinds.push(kindSaid(tokens, result));
+  }
 
   // A refusal anywhere ("don't", a time, how warm one feels) decides; then the first part that is
   // not understood, asks or cannot be done. Nothing is done.
@@ -1741,14 +1913,26 @@ function readSeveral(parts, prepared) {
     return { ...result, part };
   }
   // The whole home without "all" while another part names a room ("turn off the lights and close
-  // the kitchen blinds"): which room? never a guess.
-  const anyRoom = info.some((item) => item.room);
+  // the kitchen blinds"), also inside a device's name: which room? never a guess.
+  const anyRoom = info.some((item) => item.room || item.inName);
   for (const [index, result] of results.entries()) {
     if (result.action.type === "offAll" && !info[index].all && anyRoom) {
       return problem("needRoom", { kind: { lights: "light", climate: "climate", blinds: "blind" }[result.action.filters[0]] || null, part: parts[index].text });
     }
   }
   return combine(results.map((result) => result.action), parts, prepared.catalog);
+}
+
+// The kind of device a part speaks of (a kind role), for a pronoun in the next: its word for it
+// ("la luz", "el aire": the AC itself), the one its own pronoun stood for, or what it does.
+function kindSaid(tokens, result) {
+  const word = tokens.find((token) => token.role?.role === "kind");
+  if (word) return word.role;
+  const pronoun = tokens.find((token) => token.role?.role === "pronoun" && token.refers);
+  if (pronoun) return pronoun.refers;
+  const item = result.status === "ok" ? result.action : null;
+  const kind = item?.device ? KIND_OF[item.device.kind] : { lights: "light", climate: "climate", blinds: "blind", fans: "fan", music: "music" }[item?.type];
+  return kind ? { role: "kind", kind, plural: false } : null;
 }
 
 // The devices an action changes, as "kind:id" (a room's All off and Turn off all: all they may).
@@ -1847,15 +2031,24 @@ export function parseCommand(text, catalog = {}, { language = "en" } = {}) {
 function readSentence(sentence, prepared) {
   const { lex } = prepared;
   const tokens = tokenize(sentence, prepared.names, lex);
+  // A period or a comma at the end ("Kitchen lights off.") says nothing.
+  while (tokens.length && tokens[tokens.length - 1].raw === ",") tokens.pop();
   if (!tokens.length || tokens.length > 30) return { status: "unknown", words: [] };
   // A question mark makes it a question ("האור במטבח כבוי?", "kitchen lights off?", "¿está
   // encendida la luz?"): Hebrew, Spanish and Italian ask yes or no without a question word, and
   // dictation writes "?" for a rising voice.
   if (/[?？؟¿]/u.test(sentence)) return problem("question");
   for (const token of tokens) token.role = roleOf(token, prepared.names, lex);
-  // "Y luego", "y después", "e dopo": then (alone, later: a time).
   for (const [index, token] of tokens.entries()) {
-    if (index > 0 && lex.then.has(token.raw) && lex.separators.has(tokens[index - 1].raw)) token.role = FILLER;
+    // "Y luego", "y después", "e dopo": then (alone, later: a time).
+    if (index > 0 && lex.then.has(token.raw) && isSeparator(tokens[index - 1], lex)) token.role = FILLER;
+    // "La del salón", "quella del soggiorno": the one of a room (1.10.0; readSeveral).
+    if (lex.pronouns.has(token.raw) && (!lex.pronounOf.size || lex.pronounOf.has(tokens[index + 1]?.raw))) {
+      token.role = { role: "pronoun", plural: lex.pronouns.get(token.raw) };
+      if (lex.pronounOf.size) tokens[index + 1].pronounOf = true;
+    }
+    // "Room" alone, not after "every" ("in every room", "בכל חדר"): which room? (intent)
+    token.roomWord = token.bares.some((form) => lex.room.has(form)) && tokens[index - 1]?.role?.role !== "all";
   }
   const parts = splitParts(tokens, prepared);
   if (parts.length === 1) return readPart(parts[0].tokens, prepared);

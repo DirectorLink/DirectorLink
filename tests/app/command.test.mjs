@@ -754,12 +754,13 @@ test("several things: a part not understood, asked or refused says which, and no
   try {
     await say("כבו את האור במטבח ותסגרו את התריסים מחר");
     assert.equal(shown().split("נסו:")[0], "ב„⁨תסגרו את התריסים מחר⁩”: לא הבנתי. לא בוצע דבר.");
+    await advance(1500);
+    assert.equal(byKey(home(), "command-input:home").value, "כבו את האור במטבח ותסגרו את התריסים מחר", "the words stay, to correct");
   } finally {
     await setLanguage("en");
   }
   await advance(1500);
   assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0, "nothing was done");
-  assert.equal(byKey(home(), "command-input:home").value, "כבו את האור במטבח ותסגרו את התריסים מחר", "the words stay, to correct");
 });
 
 test("several things with a door: the others are done, the door waits for its own second tap", async () => {
@@ -1069,5 +1070,69 @@ test("the examples it gives, and the ones in its answers, are understood in ever
     } finally {
       await setLanguage("en");
     }
+  }
+});
+
+// ---- 1.10.0 review -------------------------------------------------------------------------------
+
+test("several things: a heater one part names is never \"left as it is\" in another part's note", async () => {
+  await setLanguage("he");
+  try {
+    await connect();
+    add("lights", heater(24, "דוד הורים", 10));
+    await say("תכבו את האורות במטבח ואת דוד הורים");
+    assert.ok(!shown().includes("נשאר כמו שהוא"), shown());
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [
+      ["/v1/lights/20", { on: false }],
+      ["/v1/lights/21", { on: false }],
+      ["/v1/lights/24", { on: false }],
+    ]);
+  } finally {
+    await setLanguage("en");
+  }
+  // Turn off all's note too.
+  await connect();
+  add("lights", heater(24, "Towel warmer", 11));
+  await say("turn off all the lights and turn off the towel warmer");
+  assert.ok(!shown().includes("left as it is"), shown());
+  await advance(1500);
+  assert.deepEqual(sent("PATCH", /./).map((call) => [call.path, call.body]), [["/v1/lights/24", { on: false }]]);
+});
+
+test("the microphone: a time word in a scene's name never lets a less likely guess act", async () => {
+  await connectNamed("es");
+  try {
+    state.scenes = [...SCENES, { id: "aa000005", name: "Mañana", icon: "sun", steps: [] }];
+    notify();
+    heard.length = 0;
+    await click("command-mic:home");
+    heard[0].say("apaga las luces de la cocina mañana", "apaga las luces de la cocina");
+    await advance(1500);
+    assert.equal(sent("PATCH", /./).length + sent("POST", /./).length, 0);
+    // Said whole, the scene's name is the scene.
+    await say("activa mañana");
+    await advance(1500);
+    assert.deepEqual(sent("POST", /./).map((call) => call.path), ["/v1/scenes/aa000005/run"]);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
+test("after the app's language changes, the last answer, its examples and the field's words are gone", async () => {
+  await connectNamed("es");
+  try {
+    await say("apaga las luces de la bodega");
+    assert.match(shown(), /^No entendí/);
+    assert.equal(byKey(home(), "command-input:home").value, "apaga las luces de la bodega");
+    await setLanguage("it");
+    assert.equal(shown(), null, "the Spanish answer and its examples are gone");
+    assert.equal(byKey(home(), "command-input:home").value, "", "the Spanish words are gone");
+    // The Italian field works as usual.
+    await say("spegni le luci della cucina");
+    await advance(1500);
+    assert.deepEqual(sent("PATCH", /./).map((call) => call.path), ["/v1/lights/20", "/v1/lights/21"]);
+  } finally {
+    await setLanguage("en");
   }
 });
