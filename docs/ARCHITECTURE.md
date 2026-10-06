@@ -42,7 +42,8 @@ driver/     the DriverWorks driver
                   users and their devices, and which keys share an account (users.lua,
                   accounts.lua; ADR-061)
   src/adapters/   Control4 proxy adapters (Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4
-                  thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, DoorBird, security
+                  thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, Relay Door, Gate and Garage Door
+                  Controllers (ADR-069), DoorBird, security
                   partitions: read-only, ADR-038; Samsung refrigerators through their DirectorLink
                   driver's variables, ADR-049)
   src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end

@@ -60,6 +60,23 @@ export function fridgeTemperatures(fridge) {
     .join(" · ");
 }
 
+// A door or gate in a line (1.10.0, ADR-069): what it is, a Relay Door, Gate or Garage Door
+// Controller's kind ("Gate"), else "Door or gate", and open or closed when the controller's contact
+// says ("Gate · Closed"). A driver before 1.10.0 sends neither.
+const RELAY_KINDS = ["door", "gate", "garage_door"];
+const DOOR_STATES = ["open", "closed", "partly_open"];
+
+export function relayLabel(relay) {
+  const kind = RELAY_KINDS.includes(relay?.kind) ? relay.kind : null;
+  if (!kind) return t("relays.hint");
+  const door = DOOR_STATES.includes(relay.door_state) ? t(`relays.states.${kind}.${relay.door_state}`) : "";
+  return door ? `${t(`relays.kinds.${kind}`)} · ${door}` : t(`relays.kinds.${kind}`);
+}
+
+export function relayIsOpen(relay) {
+  return relay?.door_state === "open" || relay?.door_state === "partly_open";
+}
+
 // A refrigerator in a line: offline, its door open, or its temperatures (and the door closed).
 export function fridgeStateLabel(fridge) {
   if (!fridge.online) return t("refrigerators.offline");

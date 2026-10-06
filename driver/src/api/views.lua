@@ -88,6 +88,10 @@ function Views.room(registry, room, deviceCounts)
 end
 
 function Views.deviceType(device)
+    -- A door controller's button shown as the KNX relay it drives (ADR-069) is that relay's door.
+    if device.shown_as ~= nil then
+        return "other"
+    end
     return TYPE_BY_KIND[device.kind] or "other"
 end
 
@@ -167,6 +171,10 @@ function Views.camera(registry, device)
     }
 end
 
+-- A door or gate. `kind` (1.10.0, ADR-069): "door", "gate" or "garage_door" for a Relay Door, Gate
+-- or Garage Door Controller's, "relay" for a relay DirectorLink pulses itself. `door_state`: "open",
+-- "closed" or "partly_open" when the controller has a contact that says, else null; `state` is the
+-- relay's contact, null for a controller's door unless it is a KNX relay's.
 function Views.relay(registry, device)
     local capabilities = device.capabilities or {}
     local state = device.state or {}
@@ -176,6 +184,8 @@ function Views.relay(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         state = state.relay or Json.null,
         state_reported = capabilities.state_reported == true,
+        kind = device.door_kind or "relay",
+        door_state = capabilities.door_state == true and state.door or Json.null,
     }
 end
 

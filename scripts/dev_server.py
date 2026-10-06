@@ -43,6 +43,11 @@ agreement join the project: 67 "Porch" (a camera, driver 157) and 68 "Entrance" 
 158, listed with the doorbells). "alert 157 Animal" raises an alert by the event named Alert, and
 "ring 158" rings the doorbell camera (LAST_RING, then the event named Ring). --latency MS delays every request and
 answer by half of MS each way, as the account's relay does (its round trip).
+With --door-controllers (1.10.0, ADR-069), Control4's Relay Door, Gate and Garage Door Controllers
+join the project: 71 "Main Gate" (a gate whose controller, driver 161, drives the DoorBird's relay
+and has a contact), 72 "Garage Door" (driver 162, two relays, no contact), the KNX relay 75 "Back Door
+Relay" as the door of controller 163, and 74 "Side Gate" (nothing bound, not listed). "event 161 1"
+is the gate's controller saying Opened, "event 161 2" Closed, "event 161 3" Partial.
 """
 
 import argparse
@@ -156,7 +161,7 @@ class FakeCameras:
 class Bridge:
     """One Lua process running the driver; requests are serialized because the driver is single-threaded."""
 
-    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150, agreement=False):
+    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150, agreement=False, doors=False):
         # Fake Sonos players on this port (tests/sonos/fake-sonos.mjs): the driver's requests to
         # players reach them through _fetch.
         self.sonos_port = sonos_port
@@ -171,6 +176,8 @@ class Bridge:
             arguments.append(f"cameras={int(cameras)}")
         if agreement:
             arguments.append("agreement")
+        if doors:
+            arguments.append("doors")
         self.process = subprocess.Popen(
             arguments,
             cwd=ROOT,
@@ -411,6 +418,7 @@ def main():
     parser.add_argument("--remote-linked", action="store_true", help="start with Remote Access On and the home as the relay accepted it (scene links can be made)")
     parser.add_argument("--cameras", type=int, default=0, metavar="N", help="N fake cameras on the DirectorLink · Hikvision Camera driver instead of the two plain ones")
     parser.add_argument("--agreement-cameras", action="store_true", help="two cameras of DirectorLink's camera agreement: 67 Porch (a camera, driver 157) and 68 Entrance (a doorbell, driver 158)")
+    parser.add_argument("--door-controllers", action="store_true", help="Relay Door, Gate and Garage Door Controllers: 71 Main Gate (driver 161), 72 Garage Door (162), the KNX relay 75 as door controller 163's door")
     parser.add_argument("--camera-ms", type=int, default=150, metavar="MS", help="how long a fake camera takes for a picture (default 150)")
     parser.add_argument("--latency", type=int, default=0, metavar="MS", help="a round trip added to every request, as the account's relay adds")
     args = parser.parse_args()
@@ -418,7 +426,7 @@ def main():
         sys.exit("Lua 5.1 not found; install it or pass --lua")
 
     spec = ROOT / "dist" / "openapi.json"
-    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms, args.agreement_cameras)
+    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms, args.agreement_cameras, args.door_controllers)
     if args.jewish_calendar:
         bridge.set_property("Jewish Calendar", "On")
     if args.sonos:
@@ -436,6 +444,8 @@ def main():
             print(f"Cameras: {args.cameras} fake DirectorLink · Hikvision cameras (ids 601-{600 + args.cameras}), {args.camera_ms} ms a picture")
         if args.agreement_cameras:
             print('Agreement cameras: 67 Porch (driver 157) and the doorbell 68 Entrance (driver 158); "ring 158" rings it')
+        if args.door_controllers:
+            print('Door controllers: 71 Main Gate (driver 161), 72 Garage Door (162), 75 Back Door Relay (163); "event 161 1" opens the gate in Control4')
         if args.latency:
             print(f"Latency: {args.latency} ms a round trip")
         if not spec.is_file():

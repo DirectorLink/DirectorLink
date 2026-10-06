@@ -69,6 +69,8 @@ local ADAPTER_ERRORS = {
     INVALID_HVAC_MODE = { 400, "INVALID_FIELD" },
     INVALID_FAN_MODE = { 400, "INVALID_FIELD" },
     INVALID_TEMPERATURE = { 400, "INVALID_FIELD" },
+    -- A Relay Door or Gate Controller set to hold its relay, while Relay Hold is Not allowed (ADR-069).
+    HOLD_NOT_ALLOWED = { 409, "HOLD_NOT_ALLOWED" },
     CONTROL4_COMMAND_FAILED = { 502, "CONTROLLER_COMMAND_FAILED" },
     COMMAND_FAILED = { 502, "CONTROLLER_COMMAND_FAILED" },
 }

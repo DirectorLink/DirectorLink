@@ -151,6 +151,21 @@ local function refrigeratorPart(raw, id, refrigerators)
     return nil
 end
 
+-- The kind of door a proxy opens when its protocol driver is a Relay Door, Gate or Garage Door
+-- Controller (ADR-069): the controller's button, a door or gate in its room; else nil.
+local function controllerDoor(raw)
+    if type(raw.protocol) ~= "table" then
+        return nil
+    end
+    for _, link in pairs(raw.protocol) do
+        local kind = type(link) == "table" and Classifier.relayController(link.driverFileName) or nil
+        if kind then
+            return kind
+        end
+    end
+    return nil
+end
+
 function Normalize.devices(rawDevices, bridgeDeviceId)
     local entities = {}
     local protocols = {}
@@ -184,10 +199,16 @@ function Normalize.devices(rawDevices, bridgeDeviceId)
 
             local refrigerator = refrigeratorPart(raw, id, refrigerators)
             if (hasProtocol or not isBackingProtocol) and refrigerator ~= false then
-                local classification = refrigerator and { kind = "refrigerator", recognized = true } or Classifier.classify(raw.driverFileName)
+                local doorKind = controllerDoor(raw)
+                local classification = refrigerator and { kind = "refrigerator", recognized = true }
+                    or doorKind and { kind = "relay", recognized = true }
+                    or Classifier.classify(raw.driverFileName)
                 local protocolLinks = hasProtocol and normalizeLinkTable(raw.protocol) or {}
 
                 entities[id] = {
+                    -- A Relay Door, Gate or Garage Door Controller's button: "door", "gate" or
+                    -- "garage_door" (ADR-069).
+                    door_kind = doorKind,
                     id = id,
                     name = tostring(raw.deviceName or ("Device " .. tostring(id))),
                     room_id = toId(raw.roomId or raw.roomID),

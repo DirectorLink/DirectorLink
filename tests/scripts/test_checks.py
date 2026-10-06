@@ -271,6 +271,47 @@ def driver_sources():
     return {path.relative_to(base).as_posix(): path.read_text(encoding="utf-8") for path in (base / "src").rglob("*.lua")}
 
 
+class DoorControllersOpenOnly(unittest.TestCase):
+    """A Relay Door, Gate or Garage Door Controller (ADR-069) is sent its own Open and nothing else."""
+
+    ADAPTER = "src/adapters/relay_controller.lua"
+    OPEN = 'C4:SendToDevice(info.controller, "OPEN", {})'
+
+    def refused(self, files):
+        return refusal(check_package.check_door_controllers_open_only, files)
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(driver_sources()))
+
+    def test_close_stop_select_or_another_command_is_refused(self):
+        files = driver_sources()
+        adapter = files[self.ADAPTER]
+        self.assertIn(self.OPEN, adapter)
+        for added in (
+            'C4:SendToDevice(info.controller, "CLOSE", {})',
+            'C4:SendToDevice(info.controller, "STOP", {})',
+            'C4:SendToProxy(5001, "SELECT", {})',
+            'C4:SendToDevice(info.controller, "LUA_ACTION", { ACTION = "CLOSE" })',
+            'C4:SendToDevice(info.relays[1], "CLOSE", {})',
+            'local command = "TOGGLE"',
+        ):
+            with self.subTest(added=added):
+                changed = adapter.replace(self.OPEN, self.OPEN + "\n            " + added, 1)
+                self.assertNotEqual(changed, adapter)
+                self.assertIsNotNone(self.refused({**files, self.ADAPTER: changed}))
+        # Its comments may name what it never sends.
+        self.assertIsNone(self.refused({**files, self.ADAPTER: adapter + '\n-- never "CLOSE" or C4:SendToDevice(id, "STOP", {})\n'}))
+
+    def test_the_hold_refusal_must_stay(self):
+        files = driver_sources()
+        guard = "if info.hold and not (type(params) == \"table\" and params.hold_allowed == true) then"
+        self.assertIn(guard, files[self.ADAPTER])
+        self.assertIn(guard, check_package.SECURITY_CONTRACT[self.ADAPTER])
+        self.assertIsNone(refusal(check_package.check_security_contract, files))
+        loosened = {**files, self.ADAPTER: files[self.ADAPTER].replace(guard, "if false then")}
+        self.assertIn("missing security contract", refusal(check_package.check_security_contract, loosened) or "")
+
+
 class AlarmReadOnly(unittest.TestCase):
     ADAPTER = "src/adapters/alarm.lua"
 

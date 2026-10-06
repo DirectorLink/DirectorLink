@@ -123,6 +123,8 @@ export default {
     notConfirmed: "Sent — waiting for the device to confirm.",
     forbidden: "Your access level ({role}) can’t do this.",
     doorsDisabled: "Door control is off. Turn on Door Control in Composer (DirectorLink properties).",
+    // A Relay Door or Gate Controller set to hold its relay (1.10.0, ADR-069).
+    holdNotAllowed: "Its controller would hold the relay, which keeps it open. In Composer, set the controller’s Relay Configuration to Pulse, or set DirectorLink’s Relay Hold to Allowed.",
     calendarOff: "The Jewish calendar is off in Composer (DirectorLink’s Jewish Calendar property).",
     misdirected: "Use the controller’s IP address or a local name (such as director.local) as its address: DirectorLink does not answer other names.",
     sealing: "The controller at this address did not answer this device securely. If DirectorLink was reinstalled or went back to an older version, pair again (Settings → Controller).",
@@ -338,6 +340,13 @@ export default {
     hint: "Door or gate",
     confirmHint: "Tap again within 5 seconds",
     noAccess: "Opening needs door access",
+    // A Relay Door, Gate or Garage Door Controller's kind, and its state when a contact tells it (1.10.0).
+    kinds: { door: "Door", gate: "Gate", garage_door: "Garage door" },
+    states: {
+      door: { open: "Open", closed: "Closed", partly_open: "Partly open" },
+      gate: { open: "Open", closed: "Closed", partly_open: "Partly open" },
+      garage_door: { open: "Open", closed: "Closed", partly_open: "Partly open" },
+    },
   },
   doorbells: {
     atTheDoor: "Someone is at the door",

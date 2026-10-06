@@ -42,7 +42,9 @@ local function run(ctx, device, action, answering)
         return Problem.new(409, "HOLD_NOT_ALLOWED",
             "Holding a relay closed is off: use pulse. An installer can allow it in Composer (Relay Hold).")
     end
-    local ok, failure = ctx.services.adapters.execute(device.id, action)
+    -- A Relay Door or Gate Controller set to hold its relay holds its door open with Open: that too
+    -- only where an installer allowed holds (ADR-069); its adapter refuses it otherwise.
+    local ok, failure = ctx.services.adapters.execute(device.id, action, { hold_allowed = ctx.services.relayHoldAllowed() })
     if not ok then
         return Problem.fromAdapter(failure)
     end

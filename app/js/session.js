@@ -528,6 +528,10 @@ function describeError(error, pairing = false) {
   if (error?.code === "DOOR_CONTROL_DISABLED") {
     return t("errors.doorsDisabled");
   }
+  // 409 HOLD_NOT_ALLOWED: a Relay Door or Gate Controller set to hold its relay (1.10.0, ADR-069).
+  if (error?.code === "HOLD_NOT_ALLOWED") {
+    return t("errors.holdNotAllowed");
+  }
   // 409 JEWISH_CALENDAR_OFF: the installer turned the Jewish calendar off in Composer (calendar.js).
   if (error?.code === "JEWISH_CALENDAR_OFF") {
     return t("errors.calendarOff");

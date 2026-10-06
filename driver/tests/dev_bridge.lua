@@ -29,6 +29,11 @@
 -- With an argument "agreement" (scripts/dev_server.py --agreement-cameras), two cameras whose
 -- drivers follow DirectorLink's camera agreement (1.10.0, ADR-065) join the project: 67 "Porch" (a
 -- camera, driver 157) and 68 "Entrance" (a doorbell, driver 158), Mock.withAgreementCameras.
+-- With an argument "doors" (scripts/dev_server.py --door-controllers), Control4's Relay Door, Gate and
+-- Garage Door Controllers (1.10.0, ADR-069) join the project, Mock.withRelayControllers: 71 "Main
+-- Gate" (driver 161, the DoorBird's relay, a contact), 72 "Garage Door" (driver 162, two relays, no
+-- contact), the KNX relay 75 "Back Door Relay" that door controller 163 drives, and 74 "Side Gate"
+-- (nothing bound); "event 161 1" is the gate's controller saying Opened, "event 161 2" Closed.
 -- With an argument "sonos" (scripts/dev_server.py --sonos), the driver's requests to Sonos
 -- players go out through the dev server to the fake players (tests/sonos/fake-sonos.mjs):
 --   out: "FETCH <hex JSON { method, url, headers, body_hex }>\n"
@@ -59,12 +64,14 @@ if specPath and specPath ~= "" then
 end
 local sonosForwarding = false
 local agreementCameras = false
+local doorControllers = false
 local fakeCameras = 0
 for index = 2, #(arg or {}) do
     if arg[index] == "sonos" then
         sonosForwarding = true
     end
     agreementCameras = agreementCameras or arg[index] == "agreement"
+    doorControllers = doorControllers or arg[index] == "doors"
     fakeCameras = tonumber((arg[index] or ""):match("^cameras=(%d+)$")) or fakeCameras
 end
 
@@ -97,6 +104,9 @@ if fakeCameras > 0 then
 end
 if agreementCameras then
     Mock.withAgreementCameras(project)
+end
+if doorControllers then
+    Mock.withRelayControllers(project)
 end
 local mock = Mock.startDriver(project, specText, nil, function()
     Properties["Alarm Status"] = "On"

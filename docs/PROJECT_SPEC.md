@@ -78,7 +78,7 @@ Supported device families (1.2.0):
 2. HVAC / thermostat / climate (Thermostat V2, Control4 thermostat proxy)
 3. Shades / blinds / motorized covers/windows
 4. Cameras (snapshots)
-5. Doors and gates on KNX Contact/Relay devices
+5. Doors and gates on KNX Contact/Relay devices, and since 1.10.0 on Control4's Relay Door, Gate and Garage Door Controllers, whatever relay they drive (ADR-069)
 6. DoorBird doorbells (rings, and opening their door)
 7. Fans (the Control4 fan proxy: on, off and four speeds; 1.2.0)
 8. The alarm's status (security partitions), read-only and off by default (1.2.0, ADR-038)

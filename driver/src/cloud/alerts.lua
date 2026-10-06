@@ -28,6 +28,7 @@ local Clock = require("src.core.clock")
 local CameraAdapter = require("src.adapters.camera")
 local DoorBird = require("src.adapters.doorbird")
 local KnxRelay = require("src.adapters.knx_relay")
+local RelayController = require("src.adapters.relay_controller")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 local Random = require("src.core.random")
@@ -57,8 +58,11 @@ Alerts.CAMERA_PER_HOUR = 30
 Alerts.SCHEDULE_PER_HOUR = 3
 Alerts.PER_HOUR = 60
 -- A door or doorbell reporting an opening this soon after DirectorLink's own command to it was
--- opened by that command (already in the history, with who did it).
+-- opened by that command (already in the history, with who did it). A Relay Door, Gate or Garage
+-- Door Controller with only its Opened Contact says Opened once the gate is fully open: for its
+-- door, CONTROLLER_OWN_SECONDS (ADR-069).
 Alerts.OWN_SECONDS = 15
+Alerts.CONTROLLER_OWN_SECONDS = 90
 -- Names in a detail are cut to this many bytes (whole characters). Every detail is padded with
 -- spaces to DETAIL_BYTES before it is sealed, so that every part's ciphertext has the same size
 -- (512 bytes, 684 in base64) whatever its kind and names; one larger has its names shortened. Every
@@ -294,6 +298,13 @@ function Alerts.start(deps)
         end,
         cameraEvent = CameraAdapter.eventOf,
         relayClosed = KnxRelay.closedEvent,
+        -- A door of a Relay Door, Gate or Garage Door Controller (ADR-069): its adapter says.
+        relayOpening = function(device, eventId, before, sourceId)
+            if RelayController.handles(device) then
+                return RelayController.opening(device, eventId, before, sourceId), true
+            end
+            return nil, false
+        end,
         commandedAt = deps.adapters.commandedAt,
         record = deps.activity.record,
     })
@@ -697,10 +708,14 @@ end
 -- DoorBird's own app), which goes into the history, at most once a door in DOOR_SECONDS, and from
 -- there to the admins. A relay counts only when it closes from open as last reported: a relay that
 -- reports "closed" again (a status read after a restart, a cyclic report) or whose state is not
--- known yet opened nothing. options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" |
--- ...; cameraEvent(device, eventId) -> "alert" | "ring" | nil; relayClosed(eventId);
--- commandedAt(deviceId) (DirectorLink's last command to it); record(kind, action, fields).
-function Alerts.deviceEvent(device, eventId, before)
+-- known yet opened nothing. A door of a Relay Door, Gate or Garage Door Controller (ADR-069) counts
+-- when the controller goes from Closed to Opened or Partial, or its KNX relay closes from open; one
+-- opening of a gate that a DoorBird doorbell also opens (partners) is noted once.
+-- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; cameraEvent(device,
+-- eventId) -> "alert" | "ring" | nil; relayClosed(eventId); relayOpening(device, eventId, before,
+-- sourceId) -> "pulse" | nil, and whether it knew the device; commandedAt(deviceId) (DirectorLink's
+-- last command to it); record(kind, action, fields).
+function Alerts.deviceEvent(device, eventId, before, sourceId)
     local options = state.options
     if not options or type(device) ~= "table" then
         return
@@ -723,17 +738,31 @@ function Alerts.deviceEvent(device, eventId, before)
             return
         end
         opened = event == "opened" and "doorbell" or nil
-    elseif device.kind == "relay" and options.relayClosed and options.relayClosed(eventId) then
-        opened = type(before) == "table" and before.relay == "open" and "pulse" or nil
+    elseif device.kind == "relay" then
+        local known = false
+        if options.relayOpening then
+            opened, known = options.relayOpening(device, eventId, before, sourceId)
+        end
+        if not known and options.relayClosed and options.relayClosed(eventId) then
+            opened = type(before) == "table" and before.relay == "open" and "pulse" or nil
+        end
     end
     if not opened then
         return
     end
     local commanded = options.commandedAt and options.commandedAt(device.id)
-    if commanded and now - commanded <= Alerts.OWN_SECONDS and now >= commanded then
+    local own = device.controller_id ~= nil and Alerts.CONTROLLER_OWN_SECONDS or Alerts.OWN_SECONDS
+    if commanded and now - commanded <= own and now >= commanded then
         return -- DirectorLink's own command: the history has it already, with who
     end
-    if tooSoon("control4:" .. tostring(device.id), Alerts.DOOR_SECONDS, now) then
+    -- A gate and the doorbell that opens it too: one opening, one entry.
+    local group = tonumber(device.id)
+    for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+        if tonumber(partner) and tonumber(partner) < group then
+            group = tonumber(partner)
+        end
+    end
+    if tooSoon("control4:" .. tostring(group), Alerts.DOOR_SECONDS, now) then
         return
     end
     if options.record then

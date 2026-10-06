@@ -125,6 +125,7 @@ export default {
     notConfirmed: "Enviado — esperando a que el dispositivo lo confirme.",
     forbidden: "Tu nivel de acceso ({role}) no permite hacer esto.",
     doorsDisabled: "El control de puertas está desactivado. Activa Door Control en Composer (propiedades de DirectorLink).",
+    holdNotAllowed: "Su controlador mantendría el relé, y así quedaría abierto. En Composer, pon la Relay Configuration del controlador en Pulse, o el Relay Hold de DirectorLink en Allowed.",
     calendarOff: "El calendario judío está desactivado en Composer (propiedad Jewish Calendar de DirectorLink).",
     misdirected: "Como dirección del controlador, usa su dirección IP o un nombre local (como director.local): DirectorLink no responde a otros nombres.",
     sealing: "El controlador de esta dirección no respondió a este dispositivo de forma segura. Si DirectorLink se reinstaló o volvió a una versión anterior, vuelve a emparejar este dispositivo (Ajustes → Controlador).",
@@ -345,6 +346,12 @@ export default {
     hint: "Puerta o portón",
     confirmHint: "Toca de nuevo en menos de 5 segundos",
     noAccess: "Para abrir se necesita acceso a las puertas",
+    kinds: { door: "Puerta", gate: "Portón", garage_door: "Puerta de garaje" },
+    states: {
+      door: { open: "Abierta", closed: "Cerrada", partly_open: "Abierta en parte" },
+      gate: { open: "Abierto", closed: "Cerrado", partly_open: "Abierto en parte" },
+      garage_door: { open: "Abierta", closed: "Cerrada", partly_open: "Abierta en parte" },
+    },
   },
   doorbells: {
     atTheDoor: "Hay alguien en la puerta",

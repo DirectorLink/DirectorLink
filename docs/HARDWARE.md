@@ -95,7 +95,7 @@ Found on the I²C and SPI buses:
 | Clock | `rtc0` (PCF85363) | system time |
 | Watchdog | `watchdog0` | system |
 
-CORE-1 has **no relay or contact ports**. Door, gate and garage relays in a CORE-1 project come from other devices (in the test home, KNX relay actuators).
+CORE-1 has **no relay or contact ports**. Door, gate and garage relays in a CORE-1 project come from other devices (in the test home, KNX relay actuators and a DoorBird's relay). DirectorLink opens a KNX Contact/Relay device itself, with a pulse, and since 1.10.0 a door or gate on any other relay through Control4's Relay Door, Gate and Garage Door Controller bound to it, with the controller's own Open (ADR-069).
 
 ## Sensors
 

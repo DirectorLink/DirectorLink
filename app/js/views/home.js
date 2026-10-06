@@ -20,6 +20,8 @@ import {
   lightIsOn,
   matchesFilter,
   modeLabel,
+  relayIsOpen,
+  relayLabel,
   roomName,
   shownBrightness,
   summaryCounts,
@@ -314,8 +316,10 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     content = [cameraPicture(device, 320), h("span", { class: "fav-caption" }, name(device.name, "span", "fav-name"))];
     stateClass = "fav-camera";
   } else if (kind === "relay") {
-    content = [h("span", { class: "fav-icon" }, icon("door")), name(device.name, "span", "fav-name"), room];
-    stateClass = "fav-relay";
+    // A controller's door says what it is, and open or closed with a contact (1.10.0).
+    const what = device.kind && device.kind !== "relay" ? h("span", { class: "fav-state" }, relayLabel(device)) : null;
+    content = [h("span", { class: "fav-icon" }, icon("door")), name(device.name, "span", "fav-name"), room, what];
+    stateClass = `fav-relay ${relayIsOpen(device) ? "is-open" : ""}`.trim();
   } else if (kind === "doorbell") {
     stateClass = ringIsActive(device) ? "is-ringing" : "";
     content = [

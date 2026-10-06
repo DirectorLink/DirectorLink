@@ -689,6 +689,64 @@ function Mock.hikvisionAlert(mock, protocol, label)
     return Mock.fireDeviceEvent(mock, protocol, Mock.HIKVISION_ALERT)
 end
 
+-- Control4's Relay Door, Gate and Garage Door Controllers (ADR-069): each a driver with one uibutton
+-- proxy, its variable STATE (1001) and its connections, as C4:GetBoundProviderDevice gives them
+-- (project.bindings[controller][connection] = the device bound there: 1 Open/Toggle relay, 2 Close,
+-- 3 Stop, 4 Closed Contact, 5 Opened Contact). `list`: { { id (the proxy), controller, name, room,
+-- file, kind ("door", "gate", "garage_door"), state ("Opened", "Closed", "Partial", "Unknown"),
+-- bindings } }; by default:
+--   71 "Main Gate" (Living Room; driver 161, gate_relay_control.c4z): its relay is the DoorBird's
+--      (driver 110, whose doorstation is 93 "Front Gate"), a Closed Contact bound; Closed.
+--   72 "Garage Door" (Kitchen; driver 162, a second download "garagedoor_relay_control (1).c4z"):
+--      Open and Close relays on a relay module (173, 174), no contact; Unknown.
+--   73 "Back Door" (Kitchen; driver 163, door_relay_control.c4z): its relay is a KNX Contact/Relay
+--      DirectorLink shows, 75 "Back Door Relay" (Kitchen), an Opened Contact bound; Closed.
+--   74 "Side Gate" (Living Room; driver 164): nothing bound to its Open/Toggle relay.
+Mock.CONTROLLER_FILES = { door = "door_relay_control.c4z", gate = "gate_relay_control.c4z", garage_door = "garagedoor_relay_control.c4z" }
+
+function Mock.withRelayControllers(project, list)
+    list = list or {
+        { id = 71, controller = 161, name = "Main Gate", room = 11, kind = "gate", state = "Closed", bindings = { [1] = 110, [4] = 175 } },
+        { id = 72, controller = 162, name = "Garage Door", room = 10, kind = "garage_door", file = "garagedoor_relay_control (1).c4z", state = "Unknown", bindings = { [1] = 173, [2] = 174 } },
+        { id = 73, controller = 163, name = "Back Door", room = 10, kind = "door", state = "Closed", bindings = { [1] = 75, [5] = 176 }, relay = { id = 75, name = "Back Door Relay" } },
+        { id = 74, controller = 164, name = "Side Gate", room = 11, kind = "gate", state = "Unknown", bindings = {} },
+    }
+    project.bindings = project.bindings or {}
+    project.variableNames = project.variableNames or {}
+    for _, door in ipairs(list) do
+        local room = door.room or 11
+        local roomName = door.roomName or (room == 10 and "Kitchen" or "Living Room")
+        local file = door.file or Mock.CONTROLLER_FILES[door.kind or "gate"]
+        local driverName = door.kind == "door" and "Relay Door Controller (OS2.9+)" or door.kind == "garage_door" and "Relay Garage Door Controller (OS2.9+)" or "Relay Gate Controller (OS2.9+)"
+        project.devices[door.controller] = {
+            deviceName = driverName, driverFileName = file, roomId = room, roomName = roomName,
+            proxies = { [door.id] = { deviceName = door.name, driverFileName = "uibutton.c4i" } },
+        }
+        project.devices[door.id] = {
+            deviceName = door.name, driverFileName = "uibutton.c4i", roomId = room, roomName = roomName,
+            protocol = { [door.controller] = { deviceName = driverName, driverFileName = file } },
+        }
+        if door.relay then
+            project.devices[door.relay.id] = {
+                deviceName = door.relay.name, driverFileName = "knx_contact_relay.c4z", roomId = door.relay.room or room, roomName = door.relay.roomName or roomName,
+            }
+        end
+        project.bindings[door.controller] = door.bindings or {}
+        project.variables[door.controller] = { [1001] = door.state or "Unknown" }
+        project.variableNames[door.controller] = { [1001] = "STATE" }
+    end
+    return project
+end
+
+-- A door controller's state changes as its driver does it: STATE, then the event of that state
+-- (Opened 1, Closed 2, Partial 3, Unknown 4). Returns how many registrations heard the event.
+Mock.CONTROLLER_EVENTS = { Opened = 1, Closed = 2, Partial = 3, Unknown = 4 }
+
+function Mock.controllerState(mock, controller, value)
+    Mock.changeVariable(mock, controller, 1001, value)
+    return Mock.fireDeviceEvent(mock, controller, Mock.CONTROLLER_EVENTS[value])
+end
+
 -- The refrigerator's driver reports: variables by name, e.g. { DOOR_OPEN = "1" }.
 function Mock.setRefrigerator(mock, protocol, values)
     for variableId, name in pairs(mock.project.variableNames[protocol] or {}) do
@@ -929,6 +987,16 @@ function Mock.install(project)
 
     function C4:RegisterDeviceEvent(deviceId, eventId)
         mock.deviceEvents[#mock.deviceEvents + 1] = { deviceId, eventId }
+    end
+
+    -- The device bound to a connection of another device (project.bindings), 0 when none; an error
+    -- while project.bindingsUnreadable is set, as a Director without the call.
+    function C4:GetBoundProviderDevice(deviceId, bindingId)
+        if project.bindingsUnreadable then
+            error("GetBoundProviderDevice is not available")
+        end
+        local bindings = (project.bindings or {})[deviceId]
+        return bindings and bindings[bindingId] or 0
     end
 
     function C4:RegisterSystemEvent(eventId, deviceId)

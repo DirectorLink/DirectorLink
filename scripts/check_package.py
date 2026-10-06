@@ -201,6 +201,12 @@ SECURITY_CONTRACT = {
     "src/api/handlers/relays.lua": (
         'if action == "close" and not ctx.services.relayHoldAllowed() then',
     ),
+    # A Relay Door, Gate or Garage Door Controller (ADR-069) is told only its own Open, and one that
+    # holds its relay opens only where Relay Hold is allowed (check_door_controllers_open_only).
+    "src/adapters/relay_controller.lua": (
+        'C4:SendToDevice(info.controller, "OPEN", {})',
+        "if info.hold and not (type(params) == \"table\" and params.hold_allowed == true) then",
+    ),
     # A schedule runs its scene like a member's key: never doors or gates.
     "src/core/scheduler.lua": (
         '{ id = "schedule:" .. schedule.id, role = "member" }',
@@ -603,6 +609,32 @@ ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
 ASK_LINK_MODULES = ("src/core/ask_links.lua", "src/api/handlers/ask_links.lua")
 
 
+# A door controller (ADR-069) gets its own Open and nothing else: never CLOSE or STOP (a gate
+# closing or stopping on someone), never SELECT (its button in the Control4 app, which closes what is
+# not Closed), never a relay of its own. The only other commands are a KNX relay's own (the relay a
+# controller drives, released and held as before, through KnxRelay.send).
+DOOR_CONTROLLER = "src/adapters/relay_controller.lua"
+DOOR_CONTROLLER_COMMANDS = re.compile(r'"(?:CLOSE|STOP|SELECT|TOGGLE|TRIGGER|LUA_ACTION|DO_CLICK)"')
+DOOR_CONTROLLER_SENDS = ("SendToProxy", "SendToDevice", "SendUIRequest", "SendDirectorCommand", "FireEvent", "ExecuteCommand")
+DOOR_CONTROLLER_OPEN = 'C4:SendToDevice(info.controller, "OPEN", {})'
+
+
+def check_door_controllers_open_only(files):
+    text = files.get(DOOR_CONTROLLER)
+    if text is None:
+        fail(f"{DOOR_CONTROLLER} is missing")
+    code = lua_code(text)
+    for match in re.finditer(r"\bC4\s*[:.]\s*(\w+)", code):
+        if match.group(1) not in DOOR_CONTROLLER_SENDS:
+            continue
+        line = code[match.start():].split("\n", 1)[0].strip()
+        if line != DOOR_CONTROLLER_OPEN:
+            fail(f"{DOOR_CONTROLLER} may only send a controller its own Open ({DOOR_CONTROLLER_OPEN}); found {line!r}")
+    found = DOOR_CONTROLLER_COMMANDS.search(code)
+    if found:
+        fail(f"{DOOR_CONTROLLER} must never send a door controller {found.group(0)}: only its Open")
+
+
 def check_ask_links_open_nothing(files):
     for name in ASK_LINK_MODULES:
         text = files.get(name)
@@ -772,6 +804,7 @@ def main():
     check_security_contract(files)
     check_alarm_read_only(files)
     check_ask_links_open_nothing(files)
+    check_door_controllers_open_only(files)
     check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)
