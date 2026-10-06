@@ -161,6 +161,45 @@ function tests.a_heat_rule_runs_once_until_it_has_cooled()
     T.eq(reading(30.5), 1, "hot again")
 end
 
+-- The owner's Shabbat AC (1.10.0): "08:00 to 23:00, hotter than 23°" runs on Friday evening, an
+-- evening scene turns the AC off at 23:20, and on Saturday it runs again from 08:00 once it is that
+-- hot, even after a night that never cooled 2° below.
+function tests.a_rule_with_hours_is_ready_again_when_its_hours_begin_each_day()
+    local evening = at(1, 18, 0)
+    local mock, admin, clock, Scheduler = start(evening)
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "08:00", to = "23:00", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    local function reading(time, temperature)
+        mock.weather = weather(temperature)
+        clock.set(time)
+        return Scheduler.tick()
+    end
+    T.eq(reading(evening, 26), 1, "hotter than 23 in the evening")
+    T.eq(reading(evening + 3600, 26), 0, "still hot: not again")
+    T.eq(reading(at(1, 23, 30), 25), 0, "after 23:00: outside its hours")
+    T.eq(reading(at(2, 3, 0), 24), 0, "a warm night, never below 21")
+    T.eq(reading(at(2, 7, 59), 25), 0, "before 08:00")
+    T.eq(reading(at(2, 8, 1), 25), 1, "08:01 the next day: ready again, and hot")
+    T.eq(reading(at(2, 9, 0), 26), 0, "then not again while it stays hot")
+    T.eq(reading(at(3, 8, 1), 22), 0, "the day after, not hot at 08:00")
+    T.eq(reading(at(3, 11, 0), 24), 1, "it runs once it gets hot")
+end
+
+-- A rule that ran today under 1.9.0 (no window day kept) is not made ready again the same day.
+function tests.a_rule_that_ran_today_before_the_update_does_not_run_again_today()
+    local evening = at(1, 18, 0)
+    local mock, admin, clock, Scheduler = start(evening)
+    local sceneId = scene(mock, admin)
+    local created = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "08:00", to = "23:00", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    mock.weather = weather(26)
+    clock.set(evening)
+    T.eq(Scheduler.tick(), 1)
+    -- As 1.9.0 left it: ran today, disarmed, no window day.
+    require("src.core.schedules").runtime(created.id).window_day = nil
+    clock.set(evening + 3600)
+    T.eq(Scheduler.tick(), 0, "not again the same day")
+end
+
 function tests.weather_rules_keep_to_their_days_hours_and_once_a_day()
     local morning = at(1, 9, 0)
     local mock, admin, clock, Scheduler = start(morning)

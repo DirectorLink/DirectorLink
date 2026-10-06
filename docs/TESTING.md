@@ -27,6 +27,7 @@
 2. Home's Turn off all: the count leaves the heaters out; the second tap and the result name them; they stay on.
 3. A room with a heater on: All off leaves it on, and a note under the button says so.
 4. A scene that turns off a room's lights still turns off its heaters (scenes are unchanged).
+5. A weather schedule "hotter than 23°, 08:00–23:00, only on Shabbat and holidays": on a hot Friday it runs at candle lighting; a 23:20 scene turns the AC off; on Saturday it runs again soon after 08:00 if it's above 23°, even after a warm night (the log's "schedule ran"), and not again that day while it stays hot.
 
 ## 1100b. One agreement for every DirectorLink camera driver (1.10.0)
 

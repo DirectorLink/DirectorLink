@@ -37,7 +37,9 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
     - wind: stronger than `above` km/h (10–150); again only after it has dropped 10 km/h below;
     - rain: when it starts to rain; again only after an hour without rain;
     - `from`/`to` (optional) limit it to those hours (they may cross midnight); `once_a_day`
-      (default on) at most once per day.
+      (default on) at most once per day. With hours, the rule is ready again each day when its
+      hours begin (1.10.0), whatever the weather did overnight: "08:00 to 23:00, hotter than 23°"
+      runs every day from 08:00 once it is that hot, even after a night that never cooled 2° below.
   - **shabbat** (1.2.0, with the Jewish calendar on): `{"type": "shabbat", "event":
     "candle_lighting"|"havdalah", "offset": -30}` — when Shabbat or a holiday begins or ends, plus
     minutes before (negative) or after, up to six hours (see [Shabbat and holidays](#shabbat-and-holidays)).

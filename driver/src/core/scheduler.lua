@@ -472,7 +472,7 @@ function Scheduler.tick(now)
             -- Nothing.
         elseif trigger.type == "weather" then
             if weather then
-                local armedBefore, drySince = runtime.armed, runtime.dry_since
+                local armedBefore, drySince, windowBefore = runtime.armed, runtime.dry_since, runtime.window_day
                 if runtime.armed == nil then
                     runtime.armed = true
                 end
@@ -481,6 +481,16 @@ function Scheduler.tick(now)
                 local day = info
                 if trigger.from and Schedules.minutes(trigger.from) > Schedules.minutes(trigger.to) and info.minute < Schedules.minutes(trigger.to) then
                     day = dayBefore(info)
+                end
+                -- A rule with hours is ready again when its hours begin each day (1.10.0): "08:00 to
+                -- 23:00, hotter than 23°" runs each day from 08:00 once it is that hot, whatever the
+                -- night was like. A rule that already ran today before 1.10.0 kept no such day: it
+                -- is not made ready again the same day.
+                if trigger.from and inHours(trigger, info.minute) and runtime.window_day ~= day.date then
+                    if not (runtime.window_day == nil and runtime.fired_day == day.date) then
+                        runtime.armed = true
+                    end
+                    runtime.window_day = day.date
                 end
                 local onceDone = trigger.once_a_day ~= false and runtime.fired_day == day.date
                 -- Held back in holy time ("skip"), a rule stays armed: it runs after havdalah if
@@ -492,7 +502,7 @@ function Scheduler.tick(now)
                     run(schedule, now, trigger.kind, weather)
                     ran = ran + 1
                 end
-                changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince
+                changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince or runtime.window_day ~= windowBefore
             end
         else
             local key, at, late
