@@ -9,6 +9,7 @@ local Mock = require("c4mock")
 local T = require("helpers")
 local Json = require("src.core.json")
 local Helpers = require("calendar_helpers")
+local WeatherFake = require("weather_fake")
 
 local tests = {}
 
@@ -606,10 +607,7 @@ function tests.a_heat_rule_that_skips_holy_time_waits_for_havdalah()
     local sceneId = scene(mock, admin, "Cool", 20)
     local skip = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, during_shabbat = "skip" })
     local only = schedule(mock, admin, { scene_id = scene(mock, admin, "Shabbat cool", 21), trigger = { type = "weather", kind = "heat", above = 30 }, during_shabbat = "only" })
-    mock.weather = {
-        current = { temperature_2m = 33, precipitation = 0, weather_code = 0, wind_speed_10m = 5, wind_gusts_10m = 8 },
-        daily = { temperature_2m_max = Json.array({ 34 }), temperature_2m_min = Json.array({ 24 }), precipitation_probability_max = Json.array({ 0 }) },
-    }
+    mock.weather = WeatherFake.steady(33, { max = 34, min = 24, chance = 0 })
     local before = #mock.commands
     T.eq(Scheduler.tick(), 1, "hot on Friday evening: only the Shabbat rule")
     T.eq(commandsTo(mock, 21, before), 1)

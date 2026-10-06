@@ -1,10 +1,12 @@
 -- Schedules (src/core/schedules.lua, src/core/scheduler.lua, /v1/schedules) and the weather they
--- use (src/core/weather.lua, /v1/weather), with a controlled clock and a fake Open-Meteo.
+-- use (src/core/weather.lua, /v1/weather), with a controlled clock and a fake Open-Meteo
+-- (driver/tests/weather_fake.lua): since 1.10.0 (ADR-071) the weather is its saved forecast's hour.
 
 local Mock = require("c4mock")
 local T = require("helpers")
 local Json = require("src.core.json")
 local Helpers = require("calendar_helpers")
+local WeatherFake = require("weather_fake")
 
 local tests = {}
 
@@ -34,22 +36,20 @@ local function weekday(time)
     return os.date("*t", time).wday - 1
 end
 
+-- The fake Open-Meteo's forecast with the same weather every hour (`options`: wind, rain, chance).
 local function weather(temperature, options)
-    options = options or {}
-    return {
-        current = {
-            temperature_2m = temperature,
-            precipitation = options.rain or 0,
-            weather_code = options.code or 0,
-            wind_speed_10m = options.wind or 5,
-            wind_gusts_10m = (options.wind or 5) * 1.5,
-        },
-        daily = {
-            temperature_2m_max = Json.array({ temperature + 2 }),
-            temperature_2m_min = Json.array({ temperature - 8 }),
-            precipitation_probability_max = Json.array({ options.chance or 10 }),
-        },
-    }
+    return WeatherFake.steady(temperature, options)
+end
+
+-- How many times the controller asked Open-Meteo.
+local function weatherRequests(mock)
+    local count = 0
+    for _, request in ipairs(mock.urlRequests) do
+        if request.url:match("open%-meteo") then
+            count = count + 1
+        end
+    end
+    return count
 end
 
 local function scene(mock, admin, steps)
@@ -146,19 +146,22 @@ function tests.a_heat_rule_runs_once_until_it_has_cooled()
     local mock, admin, clock, Scheduler = start(noon)
     local sceneId = scene(mock, admin)
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30, once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
-    local step = 0
-    local function reading(temperature)
-        step = step + 1
-        mock.weather = weather(temperature)
-        clock.set(noon + step * 16 * 60)
+    -- The forecast for 13:00, 14:00, ... 18:00 and after.
+    local temperatures = { 29, 31, 31, 29, 27.5, 30.5 }
+    mock.weather = WeatherFake.forecast(function(time)
+        return temperatures[math.max(1, math.min(math.floor((time - noon) / 3600), #temperatures))]
+    end)
+    local function reading(hours)
+        clock.set(noon + hours * 3600)
         return Scheduler.tick()
     end
-    T.eq(reading(29), 0)
-    T.eq(reading(31), 1, "hotter than 30")
-    T.eq(reading(31), 0, "still hot: not again")
-    T.eq(reading(29), 0, "29 is not 2° below")
-    T.eq(reading(27.5), 0, "cooled: armed again")
-    T.eq(reading(30.5), 1, "hot again")
+    T.eq(reading(1), 0)
+    T.eq(reading(2), 1, "hotter than 30")
+    T.eq(reading(3), 0, "still hot: not again")
+    T.eq(reading(4), 0, "29 is not 2° below")
+    T.eq(reading(5), 0, "cooled: armed again")
+    T.eq(reading(6), 1, "hot again")
+    T.eq(weatherRequests(mock), 1, "one forecast for all of it")
 end
 
 -- The owner's Shabbat AC (1.10.0): "08:00 to 23:00, hotter than 23°" runs on Friday evening, an
@@ -169,20 +172,21 @@ function tests.a_rule_with_hours_is_ready_again_when_its_hours_begin_each_day()
     local mock, admin, clock, Scheduler = start(evening)
     local sceneId = scene(mock, admin)
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "08:00", to = "23:00", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
-    local function reading(time, temperature)
-        mock.weather = weather(temperature)
+    -- 26° until the morning of the third day, 22° from 06:00 then, 24° from 10:00.
+    mock.weather = WeatherFake.forecast(WeatherFake.steps({ { 0, 26 }, { at(3, 6, 0), 22 }, { at(3, 10, 0), 24 } }))
+    local function reading(time)
         clock.set(time)
         return Scheduler.tick()
     end
-    T.eq(reading(evening, 26), 1, "hotter than 23 in the evening")
-    T.eq(reading(evening + 3600, 26), 0, "still hot: not again")
-    T.eq(reading(at(1, 23, 30), 25), 0, "after 23:00: outside its hours")
-    T.eq(reading(at(2, 3, 0), 24), 0, "a warm night, never below 21")
-    T.eq(reading(at(2, 7, 59), 25), 0, "before 08:00")
-    T.eq(reading(at(2, 8, 1), 25), 1, "08:01 the next day: ready again, and hot")
-    T.eq(reading(at(2, 9, 0), 26), 0, "then not again while it stays hot")
-    T.eq(reading(at(3, 8, 1), 22), 0, "the day after, not hot at 08:00")
-    T.eq(reading(at(3, 11, 0), 24), 1, "it runs once it gets hot")
+    T.eq(reading(evening), 1, "hotter than 23 in the evening")
+    T.eq(reading(evening + 3600), 0, "still hot: not again")
+    T.eq(reading(at(1, 23, 30)), 0, "after 23:00: outside its hours")
+    T.eq(reading(at(2, 3, 0)), 0, "a warm night, never below 21")
+    T.eq(reading(at(2, 7, 59)), 0, "before 08:00")
+    T.eq(reading(at(2, 8, 1)), 1, "08:01 the next day: ready again, and hot")
+    T.eq(reading(at(2, 9, 0)), 0, "then not again while it stays hot")
+    T.eq(reading(at(3, 8, 1)), 0, "the day after, not hot at 08:00")
+    T.eq(reading(at(3, 11, 0)), 1, "it runs once it gets hot")
 end
 
 -- A rule that ran today under 1.9.0 (no window day kept) is not made ready again the same day.
@@ -205,39 +209,43 @@ function tests.weather_rules_keep_to_their_days_hours_and_once_a_day()
     local mock, admin, clock, Scheduler = start(morning)
     local sceneId = scene(mock, admin)
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "wind", above = 40, from = "12:00", to = "20:00" }, days = { weekday(morning) } })
-    mock.weather = weather(22, { wind = 55 })
+    -- Windy, calm from 13:00 to 14:00, then windy again.
+    mock.weather = WeatherFake.forecast(WeatherFake.steps({
+        { 0, { temperature = 22, wind = 55 } },
+        { morning + 4 * 3600, { temperature = 22, wind = 10 } },
+        { morning + 5 * 3600, { temperature = 22, wind = 60 } },
+    }))
     T.eq(Scheduler.tick(), 0, "windy, but before 12:00")
     clock.set(morning + 3 * 3600 + 60)
     T.eq(Scheduler.tick(), 1, "12:01, still windy")
-    mock.weather = weather(22, { wind = 10 })
     clock.set(morning + 4 * 3600)
     Scheduler.tick()
-    mock.weather = weather(22, { wind = 60 })
     clock.set(morning + 5 * 3600)
     T.eq(Scheduler.tick(), 0, "at most once a day")
     clock.set(morning + 86400 + 4 * 3600)
     T.eq(Scheduler.tick(), 0, "not on other days")
 end
 
+-- Rain is the forecast's precipitation in the hour now (ADR-071); a dry hour is the forecast's too.
 function tests.a_rain_rule_runs_when_rain_starts_and_again_after_a_dry_hour()
     local start0 = at(1, 10, 0)
     local mock, admin, clock, Scheduler = start(start0)
     local sceneId = scene(mock, admin)
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "rain", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
-    local minutes = 0
-    local function after(step, reading)
-        minutes = minutes + step
-        mock.weather = reading
-        clock.set(start0 + minutes * 60)
-        return Scheduler.tick()
+    -- Rain from 11:00 to 12:00, dry for an hour, rain from 13:00 to 14:00, dry until 17:00, rain.
+    local wet = { [1] = 1, [3] = 0.2, [7] = 1 }
+    mock.weather = WeatherFake.forecast(function(time)
+        return { temperature = 18, rain = wet[math.floor((time - start0) / 3600)] }
+    end)
+    local runs = {}
+    for minute = 0, 8 * 60, 5 do
+        clock.set(start0 + minute * 60)
+        if Scheduler.tick() > 0 then
+            runs[#runs + 1] = minute
+        end
     end
-    T.eq(after(0, weather(20)), 0)
-    T.eq(after(16, weather(18, { code = 61 })), 1, "rain started")
-    T.eq(after(16, weather(18)), 0, "dry for a moment")
-    T.eq(after(16, weather(18, { rain = 0.2 })), 0, "rain again within the hour: the same rain")
-    T.eq(after(16, weather(18)), 0)
-    T.eq(after(61, weather(18)), 0, "an hour dry: armed")
-    T.eq(after(16, weather(18, { rain = 1 })), 1, "new rain")
+    -- Not at 13:00: the hour between the two rains is not more than an hour dry.
+    T.same(runs, { 60, 420 }, "rain started at 11:00, and new rain at 17:00 after hours dry")
 end
 
 function tests.a_scheduled_scene_leaves_doors_and_gates_alone()
@@ -269,7 +277,8 @@ function tests.sun_schedules_and_the_weather_view()
     T.truthy(view.json.today.sunset:match("^%d%d:%d%d$"))
     T.eq(view.json.location.latitude, 32.08)
     mock.weather = weather(24, { wind = 12 })
-    clock.set(os.time() + 16 * 60)
+    -- Tried again 30 minutes after the failure.
+    clock.set(os.time() + 31 * 60)
     view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
     T.eq(view.status, "ok")
     T.eq(view.current.temperature, 24)
@@ -401,32 +410,196 @@ function tests.a_schedule_stored_before_1_2_0_runs_as_usual_on_shabbat()
     T.contains(mock.persist["directorlink_schedules"], '"during_shabbat":"run"', "and it is stored in full")
 end
 
-function tests.a_weather_outage_is_retried_every_five_minutes_not_every_minute()
+-- 1.10.0 (ADR-071): a forecast every 6 hours, 4 requests a day, whoever asks; a failed one is tried
+-- again every 30 minutes.
+function tests.the_forecast_is_read_every_six_hours_and_a_failure_retried_every_thirty_minutes()
     local noon = at(1, 12, 0)
     local mock, admin, clock, Scheduler = start(noon)
     local sceneId = scene(mock, admin)
     schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = { 0, 1, 2, 3, 4, 5, 6 } })
-    local function requests()
-        local count = 0
-        for _, request in ipairs(mock.urlRequests) do
-            if request.url:match("open%-meteo") then
-                count = count + 1
-            end
-        end
-        return count
-    end
-    for minute = 0, 11 do
+    for minute = 0, 61 do
         clock.set(noon + minute * 60)
         Scheduler.tick()
         T.http(mock, "GET", "/v1/weather", { key = admin })
     end
-    T.eq(requests(), 3, "at 12:00, 12:05 and 12:10")
+    T.eq(weatherRequests(mock), 3, "at 12:00, 12:30 and 13:00")
     mock.weather = weather(31)
-    clock.set(noon + 15 * 60)
-    T.eq(Scheduler.tick(), 1, "back: it runs")
-    clock.set(noon + 16 * 60)
+    clock.set(noon + 90 * 60)
+    T.eq(Scheduler.tick(), 1, "read at 13:30: it runs")
+    -- A day of schedules every minute, with an app open on Schedules all day.
+    for minute = 91, 90 + 24 * 60 - 1 do
+        clock.set(noon + minute * 60)
+        Scheduler.tick()
+        if minute % 5 == 0 then
+            T.http(mock, "GET", "/v1/weather", { key = admin })
+        end
+    end
+    T.eq(weatherRequests(mock) - 3, 4, "13:30, 19:30, 01:30 and 07:30: 4 in a day")
+end
+
+local function iso(time)
+    return os.date("!%Y-%m-%dT%H:%M:%SZ", time)
+end
+
+-- The weather now is the saved forecast's hour (ADR-071): the temperature and the wind between the
+-- two hours around now, the rain of the hour now, and the day's high, low and chance of rain. The
+-- API says it is the forecast, when it was read and until when it holds; "only if" uses it; and
+-- the request carries the rounded location and what is asked, nothing else.
+function tests.the_weather_now_is_the_forecasts_hour_and_the_api_says_so()
+    local ten = at(1, 10, 0)
+    local mock, admin, clock, Scheduler = start(ten)
+    local sceneId = scene(mock, admin)
+    local day = { weekday(ten) }
+    local warm = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "10:30" }, days = day, only_if = { hotter_than = 22 }, if_no_weather = "skip" })
+    local hot = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "10:30" }, days = day, only_if = { hotter_than = 24 } })
+    -- 20° at 10:00 and 26° at 11:00, the wind 10 and 30 km/h, rain from 10:00 to 11:00 only.
+    mock.weather = WeatherFake.forecast(WeatherFake.steps({
+        { 0, { temperature = 20, wind = 10 } },
+        { ten, { temperature = 20, wind = 10, rain = 0.4 } },
+        { ten + 3600, { temperature = 26, wind = 30 } },
+    }))
+    T.eq(Scheduler.tick(), 0, "read at 10:00")
+    T.eq(mock.urlRequests[#mock.urlRequests].url, "https://api.open-meteo.com/v1/forecast?latitude=32.08&longitude=34.78"
+        .. "&hourly=temperature_2m,precipitation,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max"
+        .. "&timezone=auto&timeformat=unixtime&forecast_days=6")
+    local halfPast = ten + 30 * 60 + 1
+    clock.set(halfPast)
+    T.eq(Scheduler.tick(), 1, "23° at 10:30, halfway from 20 to 26: hotter than 22, not than 24")
+    T.eq(T.http(mock, "GET", "/v1/schedules/" .. warm.id, { key = admin }).json.last_run.ran, 1)
+    T.eq(T.http(mock, "GET", "/v1/schedules/" .. hot.id, { key = admin }).json.last_run.skipped_by, "only_if")
+    -- The log says which forecast decided.
+    local logs = T.http(mock, "GET", "/v1/logs?category=schedules&limit=50", { key = admin }).body
+    T.contains(logs, '"forecast_from":"' .. iso(ten) .. '"')
+    local view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "ok")
+    T.eq(view.source, "forecast")
+    T.eq(view.fetched_at, iso(ten), "when the forecast was read")
+    T.eq(view.forecast_for, iso(halfPast))
+    T.eq(view.forecast_until, iso(ten + 5 * 86400), "5 days after it was read")
+    T.eq(view.detail, Json.null)
+    T.eq(view.current.temperature, 23)
+    T.eq(view.current.wind_speed, 20)
+    T.eq(view.current.wind_gusts, Json.null)
+    T.eq(view.current.precipitation, 0.4)
+    T.eq(view.current.raining, true, "rain forecast from 10:00 to 11:00")
+    T.eq(view.today.max_temperature, 26)
+    T.eq(view.today.min_temperature, 20)
+    T.eq(view.today.rain_chance, 80)
+    clock.set(ten + 90 * 60)
+    view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.current.temperature, 26)
+    T.eq(view.current.raining, false, "dry from 11:00")
+    T.eq(weatherRequests(mock), 1)
+end
+
+-- Without the internet the saved forecast is the weather, after a restart too, for 5 days after it
+-- was read; then there is none (if_no_weather) until Open-Meteo answers again. Read for another
+-- location it is not used.
+function tests.without_the_internet_the_saved_forecast_holds_for_five_days()
+    local saved = at(1, 8, 0)
+    local mock, admin, clock, Scheduler = start(saved)
+    local sceneId = scene(mock, admin)
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    local rule = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30, from = "09:00", to = "10:00" }, days = every })
+    local morning = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "07:00" }, days = every, only_if = { hotter_than = 25 }, if_no_weather = "skip" })
+    -- Every day 32° from 09:00 to 10:00 (and 27° at 10:00), 27° otherwise.
+    local function forecast()
+        return WeatherFake.forecast(function(time)
+            return os.date("*t", time).hour == 9 and 32 or 27
+        end)
+    end
+    mock.weather = forecast()
+    T.eq(Scheduler.tick(), 0, "read at 08:00")
+    mock.weather = nil
+    local function day(days, hh, mm)
+        local fields = os.date("*t", saved)
+        return os.time({ year = fields.year, month = fields.month, day = fields.day + days, hour = hh, min = mm, sec = 1 })
+    end
+    local Clock = require("src.core.clock")
+    for days = 0, 4 do
+        if days == 2 then
+            -- Restarted while offline: the forecast is kept.
+            mock = Mock.updateDriver(mock)
+            Clock = require("src.core.clock")
+            Clock.now = function()
+                return clock.now
+            end
+            Scheduler = require("src.core.scheduler")
+        end
+        if days > 0 then
+            clock.set(day(days, 7, 0))
+            T.eq(Scheduler.tick(), 1, "07:00, 27° in the forecast, day " .. days)
+            T.eq(T.http(mock, "GET", "/v1/schedules/" .. morning.id, { key = admin }).json.last_run.note, Json.null)
+        end
+        clock.set(day(days, 9, 0))
+        T.eq(Scheduler.tick(), 1, "09:00, 32° in the forecast, day " .. days)
+    end
+    local view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "ok")
+    T.eq(view.source, "forecast")
+    T.eq(view.fetched_at, iso(saved), "read before the internet went")
+    T.eq(view.detail, "Couldn't resolve host", "why it was not read again")
+    T.truthy(#mock.urlRequests > 0, "tried again meanwhile")
+    -- The fifth day after: the forecast holds until 08:00.
+    clock.set(day(5, 7, 0))
+    T.eq(Scheduler.tick(), 1, "07:00 on the fifth day: still the forecast")
+    clock.set(day(5, 9, 0))
+    T.eq(Scheduler.tick(), 0, "09:00 on the fifth day: run out, no weather")
+    view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "unreachable")
+    T.eq(view.source, Json.null)
+    T.eq(view.current, Json.null)
+    clock.set(day(6, 7, 0))
+    T.eq(Scheduler.tick(), 0)
+    T.eq(T.http(mock, "GET", "/v1/schedules/" .. morning.id, { key = admin }).json.last_run.skipped_by, "no_weather")
+    -- The internet is back: read within 30 minutes, and used at once.
+    mock.weather = forecast()
+    clock.set(day(6, 8, 59))
     Scheduler.tick()
-    T.eq(requests(), 4, "then every 15 minutes")
+    clock.set(day(6, 9, 0))
+    T.eq(Scheduler.tick(), 1, "09:00 with a new forecast")
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.fetched_at, iso(day(6, 8, 59)))
+    T.eq(T.http(mock, "GET", "/v1/schedules/" .. rule.id, { key = admin }).json.last_run.note, "heat")
+    -- The project moved: a forecast for the old location is not the weather there.
+    mock.weather = nil
+    mock.project.projectProperties.Latitude, mock.project.projectProperties.Longitude = "32.79", "34.99"
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    clock.set(day(6, 9, 40))
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.status, "unreachable")
+    mock.weather = forecast()
+    clock.set(day(6, 10, 15))
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.status, "ok")
+    T.contains(mock.urlRequests[#mock.urlRequests].url, "latitude=32.79&longitude=34.99")
+end
+
+-- What is kept (ADR-071): the forecast, about 3 KB, under 1.9.0's key with version 2 and no
+-- reading, so a 1.9.0 driver after a downgrade finds none and reads the weather anew; 1.9.0's
+-- reading is no forecast, and 1.10.0 reads one at once.
+function tests.the_saved_forecast_is_small_and_a_1_9_0_reading_is_not_one()
+    local noon = at(1, 12, 0)
+    local mock = Mock.startDriver(nil, nil, nil, function(fresh)
+        fresh.persist["directorlink_weather"] = "json:" .. Json.encode({ version = 1, fetched_at = noon - 600, data = { temperature = 24, raining = false, today = {} } })
+        require("src.core.clock").now = function()
+            return noon
+        end
+    end)
+    local admin = T.pair(mock)
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.status, "unreachable", "1.9.0's reading is not used")
+    mock.weather = weather(24)
+    require("src.core.clock").now = function()
+        return noon + 31 * 60
+    end
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.status, "ok")
+    local raw = mock.persist["directorlink_weather"]
+    T.truthy(#raw < 4000, "small: " .. #raw .. " bytes")
+    local kept = Json.decode(raw:sub(#"json:" + 1))
+    T.eq(kept.version, 2)
+    T.eq(kept.data, nil, "no reading for 1.9.0")
+    T.eq(kept.fetched_at, nil)
+    T.eq(kept.saved_at, noon + 31 * 60)
+    T.eq(#kept.temperature, 122, "from 12:00 to 13:00 five days later")
+    T.eq(kept.temperature[1], 24)
+    T.eq(#kept.days, 6)
 end
 
 function tests.switching_a_weather_rule_off_and_on_does_not_run_it_twice_a_day()
@@ -446,7 +619,7 @@ function tests.switching_a_weather_rule_off_and_on_does_not_run_it_twice_a_day()
         return noon + 20 * 60
     end
     updated.weather = nil
-    T.eq(T.http(updated, "GET", "/v1/weather", { key = admin }).json.status, "ok", "the saved reading, 20 minutes old")
+    T.eq(T.http(updated, "GET", "/v1/weather", { key = admin }).json.status, "ok", "the saved forecast, 20 minutes old")
 end
 
 function tests.a_run_just_before_midnight_is_not_lost_to_a_restart()
@@ -505,10 +678,17 @@ function tests.composer_shows_the_schedules_and_the_last_run()
     clock.set(runAt + 5)
     T.eq(Scheduler.tick(), 1)
     T.contains(mock.properties["Last Automation"], "Evening · schedule every day 06:45 · 1 device")
+    T.contains(mock.properties["Schedule Status"], "1 weather rule · no weather forecast yet")
     mock.weather = weather(31.5)
     clock.set(runAt + 20 * 60)
+    T.eq(Scheduler.tick(), 0, "Open-Meteo could not be reached: tried again 30 minutes later")
+    T.contains(mock.properties["Schedule Status"], "1 weather rule · no weather forecast (Open-Meteo unreachable)")
+    clock.set(runAt + 35 * 60)
     T.eq(Scheduler.tick(), 1)
-    T.contains(mock.properties["Last Automation"], "Evening · heat rule, 31.5C outside · 1 device")
+    T.contains(mock.properties["Last Automation"], "Evening · heat rule, 31.5C forecast · 1 device")
+    clock.set(runAt + 36 * 60)
+    Scheduler.tick()
+    T.contains(mock.properties["Schedule Status"], "1 weather rule · weather forecast from today " .. os.date("%H:%M", runAt + 35 * 60))
     T.eq(T.http(mock, "POST", "/v1/scenes/" .. sceneId .. "/run", { key = admin }).status, 202)
     T.contains(mock.properties["Last Automation"], "Evening · run from Chrome on Windows · 1 device")
     T.contains(Mock.updateDriver(mock).properties["Last Automation"], "run from Chrome on Windows", "kept across an update")
@@ -684,6 +864,60 @@ function tests.a_shabbat_schedule_leaves_doors_alone_and_keeps_to_only_if()
     T.eq(commandsTo(mock, 21, before), 1)
     T.eq(get(mock, admin, open.id).last_run.skipped, 1)
     T.eq(get(mock, admin, dry.id).last_run.skipped_by, "only_if")
+end
+
+-- The owner's Shabbat AC (ADR-071): "hotter than 23°, 08:30 to 23:00, only on Shabbat and holidays"
+-- turns the main ACs on, and nobody can fix anything on Shabbat. The forecast: 26° on Friday, 23°
+-- from the hour before candle lighting, 18° from 22:00, and on Saturday from 18° at 08:00 to 25° at
+-- 09:00 (23° at 08:43). It runs at candle lighting and at 08:43, with the internet or without it
+-- from Friday 13:00 (and a restart at 21:00).
+local function shabbatAc(offline)
+    local lighting = os.date("*t", CANDLES)
+    if lighting.hour < 9 or lighting.hour >= 23 then
+        T.skip("candle lighting is not between 08:30 and 23:00 in this time zone")
+    end
+    local mock, clock, Scheduler = startCalendar(localAt(FRIDAY, 12, 0))
+    local admin = T.pair(mock)
+    schedule(mock, admin, { scene_id = scene(mock, admin), trigger = { type = "weather", kind = "heat", above = 23, from = "08:30", to = "23:00" }, days = { 0, 1, 2, 3, 4, 5, 6 }, during_shabbat = "only" })
+    mock.weather = WeatherFake.forecast(WeatherFake.steps({
+        { 0, 26 },
+        { CANDLES - CANDLES % 3600 - 3600, 23 },
+        { localAt(FRIDAY, 22, 0), 18 },
+        { localAt(SATURDAY, 9, 0), 25 },
+    }))
+    local runs, cut, restarted = {}, false, false
+    local moment = localAt(FRIDAY, 12, 0) + 1
+    local morning = localAt(SATURDAY, 8, 20)
+    while moment < localAt(SATURDAY, 11, 0) do
+        if offline and not cut and moment >= localAt(FRIDAY, 13, 0) then
+            mock.weather, cut = nil, true
+        elseif offline and not restarted and moment >= localAt(FRIDAY, 21, 0) then
+            mock, clock, Scheduler = startCalendar(moment, mock)
+            restarted = true
+        end
+        clock.set(moment)
+        if Scheduler.tick() > 0 then
+            runs[#runs + 1] = os.date("%a %H:%M", moment)
+        end
+        -- Every minute around candle lighting and on Saturday morning, every 5 minutes otherwise.
+        local close = math.abs(moment - CANDLES) < 20 * 60 or (moment >= morning and moment < morning + 3600)
+        moment = moment + (close and 60 or 300)
+    end
+    T.same(runs, { os.date("%a %H:%M", CANDLES), os.date("%a %H:%M", localAt(SATURDAY, 8, 43)) })
+    local view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.source, "forecast")
+    return view
+end
+
+function tests.the_owners_shabbat_ac_runs_from_the_forecast()
+    local fetched = require("src.core.clock").parseIso(shabbatAc(false).fetched_at)
+    T.truthy(fetched > localAt(SATURDAY, 11, 0) - 6 * 3600, "read every 6 hours")
+end
+
+function tests.the_owners_shabbat_ac_runs_from_the_saved_forecast_without_the_internet()
+    local view = shabbatAc(true)
+    T.eq(view.fetched_at, os.date("!%Y-%m-%dT%H:%M:%SZ", localAt(FRIDAY, 12, 0) + 1), "the forecast read on Friday at noon")
+    T.eq(view.detail, "Couldn't resolve host")
 end
 
 function tests.the_printout_shows_heat_and_cool_setpoints()

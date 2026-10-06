@@ -8,7 +8,7 @@
 import { calendarOn, holyTimes, loadCalendar, noteCalendarOff, onOneLine, showCalendarSettings, upcomingTimes } from "../calendar.js";
 import { emptyState, skeletonCards } from "../components.js";
 import { h, iconButton, name } from "../dom.js";
-import { formatTemperature, t } from "../i18n.js";
+import { formatClock, formatTemperature, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import {
   ALL_DAYS,
@@ -20,6 +20,7 @@ import {
   daysText,
   findSchedule,
   formatOffset,
+  homeZone,
   loadSchedules,
   loadWeather,
   sceneNameOf,
@@ -135,6 +136,15 @@ function notLoaded(header) {
 
 // ---- weather card --------------------------------------------------------------------------
 
+// "Forecast for 14:20, updated today 08:00": since 1.10.0 (ADR-071) the weather is the hour for now
+// of the forecast the controller read then; a 1.9.0 driver's measured weather says nothing.
+function forecastLine(weather) {
+  if (weather.source !== "forecast") return null;
+  const moment = new Date(weather.forecast_for);
+  if (Number.isNaN(moment.getTime()) || !weather.fetched_at) return null;
+  return h("span", { class: "weather-more weather-source" }, t("schedules.weather.forecast", { time: formatClock(moment, homeZone()), when: dayAndTime(weather.fetched_at) }));
+}
+
 function weatherCard() {
   const weather = state.weather;
   if (!weather) return null;
@@ -159,6 +169,7 @@ function weatherCard() {
     ].filter(Boolean);
     body = [
       h("span", { class: "weather-now" }, now.join(" · ")),
+      forecastLine(weather),
       h("span", { class: "weather-more" }, [t("schedules.weather.today"), forecast.join(", ")].filter(Boolean).join(" "), sun.length ? ` · ${sun.join(" · ")}` : ""),
     ];
   } else {

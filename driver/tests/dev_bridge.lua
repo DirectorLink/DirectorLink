@@ -135,16 +135,9 @@ Server.originAllowed = function(origin)
     end
     return driverOrigins(origin) or origin:match("^http://localhost:%d+$") ~= nil or origin:match("^http://127%.0%.0%.1:%d+$") ~= nil
 end
--- And a fake Open-Meteo answers for its weather.
+-- And a fake Open-Meteo answers for its weather: a forecast, the same every hour (ADR-071).
 local Json = require("src.core.json")
-mock.weather = {
-    current = { temperature_2m = 27, precipitation = 0, weather_code = 1, wind_speed_10m = 12, wind_gusts_10m = 20 },
-    daily = {
-        temperature_2m_max = Json.array({ 31 }),
-        temperature_2m_min = Json.array({ 22 }),
-        precipitation_probability_max = Json.array({ 10 }),
-    },
-}
+mock.weather = require("weather_fake").steady(27, { wind = 12, max = 31, min = 22, chance = 10 })
 
 -- Blinds move in the fake home as KNX blinds do: SECONDS_PER_PERCENT per percent, reporting their
 -- level every few seconds and when they stop, and the actuator's own report of where it is about a

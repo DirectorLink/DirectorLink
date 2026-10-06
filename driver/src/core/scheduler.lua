@@ -5,7 +5,8 @@
 -- - Weather schedules run when the weather turns: hotter than the threshold, wind stronger than it,
 --   or rain starting; on their days, within their hours, and (by default) at most once a day. They
 --   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
---   it, or it has been dry for an hour.
+--   it, or it has been dry for an hour. The weather is the saved forecast's hour for now (1.10.0,
+--   ADR-071, src/core/weather.lua), with or without the internet.
 -- - Shabbat schedules (the Jewish calendar, ADR-037) run when a holy period begins (candle
 --   lighting) or ends (havdalah), plus their offset, once per period. "during_shabbat" keeps a
 --   time, sun or weather schedule away from holy time ("skip") or to it ("only"). While the
@@ -302,6 +303,8 @@ local function run(schedule, now, note, weather)
         schedule = schedule.id,
         scene = schedule.scene_id,
         note = note or Json.null,
+        -- The weather that decided it: the forecast read then (ADR-071).
+        forecast_from = weather and weather.saved_at and Clock.iso(weather.saved_at) or Json.null,
         ran = lastRun.ran or 0,
         skipped = lastRun.skipped or 0,
         failed = lastRun.failed or 0,
@@ -540,10 +543,11 @@ function Scheduler.tick(now)
                             remember(schedule, { outcome = "skipped", reason = "no_weather" })
                         end
                     elseif met then
-                        due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil }
+                        local decided = next(schedule.only_if or {}) ~= nil and weather or nil
+                        due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil, weather = decided }
                     else
                         runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
-                        Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
+                        Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id, forecast_from = Clock.iso(weather.saved_at or now) })
                         remember(schedule, { outcome = "skipped", reason = "only_if" })
                     end
                 end
@@ -561,7 +565,7 @@ function Scheduler.tick(now)
         if item.note == "late" then
             Log.info("schedules", "schedule caught up after a restart", { schedule = item.schedule.id, due_at = Clock.iso(item.at) })
         end
-        run(item.schedule, now, item.note)
+        run(item.schedule, now, item.note, item.weather)
         ran = ran + 1
     end
     if ran > 0 or changed then
