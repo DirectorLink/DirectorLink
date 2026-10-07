@@ -17,16 +17,19 @@ local KnxRelay = require("src.adapters.knx_relay")
 --   OPEN is all DirectorLink sends: never CLOSE or STOP (a gate closing or stopping on someone),
 --   never SELECT (the Control4 app's button, which closes whatever is not Closed), never a relay of
 --   its own (the controller's Invert settings decide what a relay's states mean).
--- - With Relay Configuration Hold, OPEN holds the Open relay until CLOSE, STOP or its Fail Safe
---   time: a hold (ADR-036). DirectorLink reads that property where Director gives it with the
---   driver's <devicedata> (C4:GetDeviceData), and then opens such a controller only where Relay
---   Hold is Allowed, scenes never.
+-- - With Relay Configuration Hold, OPEN holds the Open relay until CLOSE or STOP (its Fail Safe time
+--   ends it only with three relays: it then sends Stop): a hold (ADR-036). DirectorLink reads that
+--   property where Director gives it with the driver's <devicedata> (C4:GetDeviceData), again at
+--   every opening, and then opens such a controller only where Relay Hold is Allowed, scenes never.
 -- - Its state: the variable STATE and the events Opened (1), Closed (2), Partial (3) and Unknown
 --   (4), from its Closed Contact (connection 4) and Opened Contact (5) when one is bound. Without a
 --   contact STATE is only what it was last told (Opened at once after an OPEN with two or three
---   relays; always Unknown with one pulsed relay): DirectorLink shows a state only with a contact,
---   and uses what the controller says otherwise only to notice an opening made elsewhere (Closed,
---   then Opened).
+--   relays, where a second OPEN changes nothing; always Unknown with one pulsed relay):
+--   DirectorLink shows a state only with a contact, and uses what the controller says otherwise
+--   only to notice an opening made elsewhere (Closed, then Opened: without a contact, an OPEN sent
+--   in Control4 after a CLOSE).
+-- A KNX Contact/Relay on a controller's Close (2) or Stop (3) connection is part of that door: no
+-- door of its own (its pulse would close or stop the gate).
 -- A controller whose Open/Toggle relay is a KNX Contact/Relay DirectorLink shows on its own is that
 -- relay's door: one door, under the relay's id and name, in its room, as before (scene steps,
 -- favorites, ask-to-open links and the history keep naming it), opened by the controller and with
@@ -50,6 +53,8 @@ RelayController.CONTACTS = { 4, 5 }
 local surveyed = {}
 -- KNX Contact/Relay id -> the controller's proxy whose door it is.
 local merged = {}
+-- KNX Contact/Relay id -> the controller's proxy whose Close or Stop relay it is (no door, ADR-069).
+local closers = {}
 -- device id -> { controller, relay (a KNX Contact/Relay's id), hold }
 local tracked = {}
 
@@ -64,7 +69,8 @@ local function controllerOf(device)
 end
 
 -- The device bound to connection `binding` of the controller: its id, or nil; and false when Director
--- could not say.
+-- could not say. Only a number is an answer (0: nothing bound); an error, nil, a table or anything
+-- else is Director not saying, and the controller is then taken as bound.
 local function boundTo(controllerId, binding)
     local ok, providerId = pcall(function()
         return C4:GetBoundProviderDevice(controllerId, binding)
@@ -72,8 +78,13 @@ local function boundTo(controllerId, binding)
     if not ok then
         return nil, false
     end
-    providerId = tonumber(providerId)
-    return providerId and providerId > 0 and providerId or nil, true
+    if type(providerId) == "string" then
+        providerId = tonumber(providerId)
+    end
+    if type(providerId) ~= "number" then
+        return nil, false
+    end
+    return providerId > 0 and providerId or nil, true
 end
 
 local function isDoorbell(device)
@@ -107,10 +118,11 @@ local function addPartner(device, id)
 end
 
 -- Before the adapters start (src/adapters/manager.lua): what each controller's connections are bound
--- to, which KNX Contact/Relay is a controller's door, and which doorbell opens the same gate. A few
--- Director calls a controller (five C4:GetBoundProviderDevice).
+-- to, which KNX Contact/Relay is a controller's door (or its Close or Stop relay), and which doorbell
+-- or other controller opens the same gate. A few Director calls a controller (five
+-- C4:GetBoundProviderDevice).
 function RelayController.survey(registry)
-    surveyed, merged = {}, {}
+    surveyed, merged, closers = {}, {}, {}
     local ids = {}
     for id, device in pairs(registry.devices or {}) do
         if device.door_kind and controllerOf(device) then
@@ -147,6 +159,44 @@ function RelayController.survey(registry)
         end
         surveyed[id] = info
     end
+    -- A KNX Contact/Relay on a Close or Stop connection is no door (unless it is a controller's door);
+    -- one relay opened by two controllers makes their doors each other's partners.
+    local byRelay, relayIds = {}, {}
+    for _, id in ipairs(ids) do
+        local info = surveyed[id]
+        for _, binding in ipairs({ 2, 3 }) do
+            local relayId = info.relays[binding]
+            local relay = relayId and registry.devices[relayId]
+            if relay and KnxRelay.matches(relay) and not merged[relayId] and not closers[relayId] then
+                closers[relayId] = id
+            end
+        end
+        local openRelay = info.relays[1]
+        if openRelay then
+            if not byRelay[openRelay] then
+                byRelay[openRelay] = {}
+                relayIds[#relayIds + 1] = openRelay
+            end
+            table.insert(byRelay[openRelay], info)
+        end
+    end
+    for _, relayId in ipairs(relayIds) do
+        local infos = byRelay[relayId]
+        if #infos > 1 then
+            local doors = {}
+            for index, info in ipairs(infos) do
+                doors[index] = info.relay or info.proxy
+            end
+            for index, info in ipairs(infos) do
+                for other, door in ipairs(doors) do
+                    if other ~= index then
+                        addPartner(info, door)
+                    end
+                end
+            end
+            Log.warn("relay", "door controllers open the same relay: one gate shown more than once", { relay = relayId, doors = table.concat(doors, ",") })
+        end
+    end
 end
 
 -- The controller's proxy whose door `device` is: itself, or the controller a KNX Contact/Relay is the
@@ -167,7 +217,7 @@ local function infoOf(device)
 end
 
 function RelayController.matches(device)
-    return infoOf(device) ~= nil
+    return infoOf(device) ~= nil or closers[tonumber(device and device.id)] ~= nil
 end
 
 -- The KNX Contact/Relay a controller's proxy is shown as (ADR-069), or nil.
@@ -225,7 +275,13 @@ end
 -- before: this door as it was before a project refresh, if it was one.
 function RelayController.initialize(device, _registry, before)
     local info = infoOf(device)
-    if not info then
+    local closing = closers[tonumber(device.id)]
+    if not info and closing then
+        -- Shown as before it would be a door whose Open closes or stops the gate: part of the
+        -- controller's door instead (/v1/devices: an unsupported relay).
+        Log.info("relay", "a door controller's Close or Stop relay: not a door of its own", { device_id = device.id, door = surveyed[closing].relay or closing })
+        return false, "the Close or Stop relay of a Relay Door, Gate or Garage Door Controller: part of that door, never opened on its own"
+    elseif not info then
         return false, "not a Relay Door, Gate or Garage Door Controller's button"
     end
     if info.answered and not info.relays[1] then
@@ -337,7 +393,7 @@ end
 
 -- Whether the event that just changed the door (`before`: its state before) was it opening:
 -- "pulse", else nil. The controller saying Opened or Partial after Closed (with a contact, the door
--- moving; without one, an OPEN sent in Control4), or its KNX relay closing from open.
+-- moving; without one, an OPEN sent in Control4 after a CLOSE), or its KNX relay closing from open.
 function RelayController.opening(device, eventId, before, sourceId)
     local info = tracked[device.id]
     if not info or type(before) ~= "table" or type(device.state) ~= "table" then
@@ -351,6 +407,21 @@ function RelayController.opening(device, eventId, before, sourceId)
         return "pulse"
     end
     return nil
+end
+
+-- Whether the event that just changed the door was the controller saying Closed after Opened or
+-- Partial: the opening DirectorLink last commanded is over, and the next one is someone else's
+-- (src/adapters/manager.lua). Not its KNX relay's events, and not Closed after Unknown (a contact
+-- read late, before the door had moved).
+function RelayController.closed(device, _eventId, before, sourceId)
+    local info = tracked[device.id]
+    if not info or type(before) ~= "table" or type(device.state) ~= "table" then
+        return false
+    end
+    if info.relay and tonumber(sourceId) == info.relay then
+        return false
+    end
+    return device.state.door == "closed" and (before.door == "open" or before.door == "partly_open")
 end
 
 function RelayController.onVariableChanged()
@@ -369,6 +440,15 @@ function RelayController.execute(device, action, params)
     end
     local sent, err
     if action == "pulse" then
+        -- Read again at each opening: an installer who sets Hold in Composer sends DirectorLink no
+        -- project event. Where Director gives no value now, what the set-up read stands.
+        local configuration = RelayController.relayConfiguration(info.controller)
+        if configuration then
+            info.hold = configuration == "Hold"
+            if type(device.capabilities) == "table" then
+                device.capabilities.hold = info.hold
+            end
+        end
         if info.hold and not (type(params) == "table" and params.hold_allowed == true) then
             return false, {
                 code = "HOLD_NOT_ALLOWED",

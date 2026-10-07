@@ -44,8 +44,11 @@ On the owner's controller the gate at the DoorBird is a Relay Gate Controller (5
 2. The app lists the gate in its room ("Gate", with Open or Closed if a contact is bound). Open with its two taps opens it once: the log shows one OPEN to 530, and nothing else is sent to it.
 3. Open it from the Control4 app: History says it was opened in Control4, and admins who chose door alerts get one alert.
 4. A favorite, a scene's door step, an ask-to-open link and "open the gate" by its name all open it once. A member without doors sees it and its state, without Open.
-5. A controller set to Relay Configuration Hold (a test controller): Open answers that holding isn't allowed unless Relay Hold is Allowed in Composer.
-6. A KNX door relay bound to a controller stays one door under its own name; History and favorites keep working.
+5. A controller set to Relay Configuration Hold (a test controller): Open answers that holding isn't allowed unless Relay Hold is Allowed in Composer, at once after the change (no Refresh Project).
+6. A KNX door relay bound to a controller stays one door under its own name; History and favorites keep working. A KNX relay on a controller's Close or Stop connection is not listed as a door.
+7. Restart the controller: the gate is listed again, and its ask-to-open link is still there.
+8. A gate with a contact (a test controller): open it from the app, let it close, then open it from the Control4 app within a minute: History has both, the second "In Control4".
+9. Keep 530 on the official DoorBird driver's relay: moved to the DirectorLink · DoorBird driver's relay, an opening from the app may also show "In Control4" on the doorbell (ADR-069).
 
 ## 1100e. Spanish, Italian, and Appearance and language (1.10.0)
 
@@ -53,7 +56,7 @@ On the owner's controller the gate at the DoorBird is a Relay Gate Controller (5
 2. Text size Larger at 320 px, in each language: Home, a room, Climate, Scenes, Users and a dialog fit, nothing cut or overlapping. Small on an iPhone: tapping a text field doesn't zoom the page.
 3. Español, then Italiano: every screen in that language; a doorbell ring and a camera alert arrive in it; dates and numbers in its format. Spanish says "emparejar" for pairing with a code and "vincular" for linking the home to an account.
 4. Back to English and Hebrew: all as before; right to left in Hebrew.
-5. **Alerts on a page of their own:** Settings shows **Alerts** (התראות) between Account and Appearance and language, with a line: "Off", "On · 4 of 7 kinds", "Sign in to get alerts", or on iPhone in Safari "Add to Home Screen to get alerts". Settings → Controller no longer has the alerts card. Open Alerts: the switch and its kinds as before; Back returns to Settings with the Alerts row focused. Signed out, the page offers Sign in and comes back to it. A door's Ask screen with alerts off links to it. Check at 320 px in Hebrew and Larger text.
+5. **Alerts on a page of their own:** Settings shows **Alerts** (התראות) between Account and Appearance and language, with a line: "Off", "On · 4 of 7 kinds", "Sign in to get alerts", or on iPhone in Safari "Add to Home Screen to get alerts". Settings → Controller no longer has the alerts card. Open Alerts: the switch and its kinds as before; Back returns to Settings with the Alerts row focused. Signed out, the page offers Sign in and comes back to it; signed out with alerts still on (the account's session ended), the row reads "On · sign in again to change them" and the page shows the switch, whose Off works. In Safari on iPhone, signed out, the row and page say Add to Home Screen, without Sign in. A door's Ask screen with alerts off links to it. Check at 320 px in Hebrew and Larger text.
 
 ## 1100d. Commands that do more, in four languages (1.10.0)
 

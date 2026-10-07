@@ -586,12 +586,61 @@ test("Settings' Alerts row says how alerts are on this device, and its page hold
   assert.equal(status(), null, "a member of such a controller: no row");
   state.system = system;
   state.role = "admin";
-  // Signed out (signing out ends this device's alerts too: settings.js).
+  // Signed out with alerts on: signing out turns them off (settings.js), but a session that ended
+  // (30 days) or a cookie cleared does not, and this browser keeps getting them. The row and the
+  // page say so, and the switch's Off works without the account.
   state.account = { status: "signed-out", user: null, notice: null, busy: false };
+  assert.equal(status(), "On · sign in again to change them");
+  let page = alertsPage();
+  const offSwitch = byKey(page, "alerts-switch");
+  assert.equal(offSwitch.attributes["aria-checked"], "true");
+  assert.equal(offSwitch.attributes["aria-disabled"], undefined, "Off can be used");
+  assert.equal(offSwitch.attributes["aria-describedby"], "alerts-switch-help alerts-hint");
+  assert.equal(byKey(page, "alerts-hint").textContent, "Alerts are on; sign in again to change them.");
+  assert.ok(byKey(page, "alerts-sign-in-choose"), "it offers to sign in (Sign in, until the account service has said how)");
+  assert.equal(byKey(page, "alerts-kinds"), null, "the kinds wait for the account");
+  await setLanguage("he");
+  try {
+    assert.equal(status(), "פעילות · התחברו שוב כדי לשנות");
+    assert.equal(byKey(alertsPage(), "alerts-hint").textContent, "ההתראות פעילות; התחברו שוב כדי לשנות אותן.");
+  } finally {
+    await setLanguage("en");
+  }
+  // The account service out of reach, or not asked yet: on, as far as this device knows.
+  state.account = { status: "unavailable", user: null, notice: null, busy: false };
+  assert.equal(status(), "On");
+  assert.equal(byKey(alertsPage(), "alerts-switch").attributes["aria-checked"], "true");
+  assert.ok(byKey(alertsPage(), "alerts-account-retry"));
+  state.account = { status: "loading", user: null, notice: null, busy: false };
+  assert.equal(status(), "On");
+  state.account = { status: "signed-out", user: null, notice: null, busy: false };
+  const deletes = callsTo("DELETE").length;
+  for (const listener of offSwitch.listeners.click) listener({ type: "click" });
+  await settle();
+  assert.equal(callsTo("DELETE").length, deletes + 1, "the account service is asked to forget this browser");
+  assert.equal(browser.subscription, null, "and the browser drops its subscription");
   assert.equal(status(), "Sign in to get alerts");
-  assert.equal(byKey(alertsPage(), "alerts-switch"), null);
-  assert.ok(byKey(alertsPage(), "alerts-sign-in-choose"), "it offers to sign in (Sign in, until the account service has said how)");
+  page = alertsPage();
+  assert.equal(byKey(page, "alerts-switch"), null);
+  assert.equal(byKey(page, "alerts-message").textContent, "Alerts are off for this device.");
+  assert.ok(byKey(page, "alerts-sign-in-choose"));
+  // Signed out, what this browser lacks comes first: signing in would not help.
+  browser.permission = "denied";
+  assert.equal(status(), "Notifications are blocked");
+  assert.match(byKey(alertsPage(), "alerts-hint").textContent, /^Notifications are blocked for DirectorLink\./);
+  assert.ok(byKey(alertsPage(), "alerts-sign-in-choose"), "allowed again, they come through the account");
+  browser.permission = "granted";
+  delete window.PushManager;
+  try {
+    assert.equal(status(), "This browser can’t show alerts");
+    page = alertsPage();
+    assert.equal(byKey(page, "alerts-hint").textContent, "This browser can’t show alerts.");
+    assert.equal(byKey(page, "alerts-sign-in-choose"), null, "no sign-in that could not help");
+  } finally {
+    window.PushManager = push;
+  }
   admin();
+  alertsUi.message = null;
   await turnAlertsOff();
   assert.equal(status(), "Off");
 });

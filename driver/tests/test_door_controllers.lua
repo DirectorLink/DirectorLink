@@ -299,8 +299,8 @@ end
 
 -- A connected home with the clock in the test's hands, Dana's admin phone paired with alerts on and
 -- doors opened chosen: { mock, connection, clock, key, keyId, home, notified(), open(sealed) }.
-local function home(prepare)
-    local mock = Mock.startDriver(project(), nil, nil, function(m)
+local function home(prepare, theProject)
+    local mock = Mock.startDriver(theProject or project(), nil, nil, function(m)
         Properties["Door Control"] = "Enabled"
         if prepare then
             prepare(m)
@@ -480,6 +480,255 @@ function tests.ask_links_scene_steps_and_favorites_work_with_a_controllers_door(
     T.eq(answer.status, 202, answer.body)
     T.same(commandsSince(s.mock, before), { { device = GATE_DRIVER, command = "OPEN", params = {} } })
     T.eq(s.doors()[1].ids.link_id, link.json.link_id)
+end
+
+local function refresh()
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+end
+
+-- What Director answers for a connection may be nil or a table (not a number): that is Director not
+-- saying, as an error is, and the door stays; and an ask-to-open link goes only with its device,
+-- never because its door does not work for a moment.
+function tests.a_director_answering_nil_or_a_table_keeps_the_doors_and_their_ask_links()
+    local s = home()
+    -- The gate on the DoorBird's relay, the garage door on a relay module, the KNX relay a door
+    -- controller drives, a KNX relay of its own.
+    for _, id in ipairs({ GATE, GARAGE, BACK_RELAY, 70 }) do
+        local made = T.http(s.mock, "POST", "/v1/ask-links", { key = s.key, body = { relay_id = id, label = "Arriving" } })
+        T.eq(made.status, 201, made.body)
+    end
+    local function links()
+        local found = {}
+        for _, link in ipairs(T.http(s.mock, "GET", "/v1/ask-links", { key = s.key }).json.items) do
+            found[#found + 1] = link.relay_id
+        end
+        table.sort(found)
+        return found
+    end
+    local function removed()
+        local found = {}
+        for _, entry in ipairs(T.http(s.mock, "GET", "/v1/activity?kind=access", { key = s.key }).json.items) do
+            if entry.action == "ask_link_removed" then
+                found[#found + 1] = entry
+            end
+        end
+        return found
+    end
+    T.same(links(), { 70, GATE, GARAGE, BACK_RELAY })
+
+    local real = C4.GetBoundProviderDevice
+    local answers = {
+        ["nil"] = function()
+            return nil
+        end,
+        table = function(_, _, binding)
+            return { [binding] = 110 }
+        end,
+        boolean = function()
+            return true
+        end,
+    }
+    for _, name in ipairs({ "nil", "table", "boolean" }) do
+        C4.GetBoundProviderDevice = answers[name]
+        refresh()
+        local list = relays(s.mock, s.key)
+        T.eq(list[GATE] and list[GATE].kind, "gate", name .. ": not an answer, so taken as bound")
+        T.eq(list[GARAGE] and list[GARAGE].kind, "garage_door", name)
+        T.eq(list[BACK_RELAY] and list[BACK_RELAY].kind, "relay", name .. ": no relay known, the KNX relay is its own")
+        T.same(links(), { 70, GATE, GARAGE, BACK_RELAY }, name .. ": every link kept")
+    end
+    -- A number given as text is an answer.
+    C4.GetBoundProviderDevice = function(self, id, binding)
+        return tostring(real(self, id, binding))
+    end
+    refresh()
+    local list = relays(s.mock, s.key)
+    T.eq(list[GATE].door_state, "closed", "its contact known")
+    T.eq(list[SIDE_GATE], nil, "\"0\": nothing bound")
+    C4.GetBoundProviderDevice = real
+
+    -- A door that is there but does not work for now (nothing bound to the garage door's Open relay
+    -- for a moment; the KNX relay made a controller's Close relay) keeps its links; they open nothing
+    -- meanwhile.
+    s.mock.project.bindings[GARAGE_DRIVER][1] = nil
+    s.mock.project.bindings[DOOR_DRIVER][2] = 70
+    refresh()
+    list = relays(s.mock, s.key)
+    T.eq(list[GARAGE], nil)
+    T.eq(list[70], nil)
+    T.same(links(), { 70, GATE, GARAGE, BACK_RELAY })
+    s.mock.project.bindings[GARAGE_DRIVER][1] = 173
+    s.mock.project.bindings[DOOR_DRIVER][2] = nil
+    refresh()
+    list = relays(s.mock, s.key)
+    T.eq(list[GARAGE].kind, "garage_door")
+    T.eq(list[70].kind, "relay")
+    T.same(links(), { 70, GATE, GARAGE, BACK_RELAY })
+    T.eq(#removed(), 0, "nothing removed")
+
+    -- Removed in Composer: its links go.
+    Mock.removeDevice(s.mock.project, 70)
+    Mock.removeDevice(s.mock.project, GATE)
+    refresh()
+    T.same(links(), { GARAGE, BACK_RELAY })
+    local gone = removed()
+    T.eq(#gone, 2)
+    for _, entry in ipairs(gone) do
+        T.eq(entry.reason, "door_gone")
+    end
+end
+
+-- DirectorLink's own opening ends when the controller says Closed again (at most 90 s): what opens
+-- the door after that is someone else; a KNX relay a controller drives counts its own reports as any
+-- relay does (15 s).
+function tests.directorlinks_own_opening_ends_when_the_door_closes_again()
+    local s = home()
+    T.eq(T.http(s.mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = s.key }).status, 202)
+    s.messages("notify")
+    s.clock.now = s.clock.now + 2
+    Mock.controllerState(s.mock, GATE_DRIVER, "Opened")
+    s.clock.now = s.clock.now + 20
+    Mock.controllerState(s.mock, GATE_DRIVER, "Closed")
+    T.eq(#s.doors(), 1, "DirectorLink's own")
+    -- A keypad, 62 s after DirectorLink's Open.
+    s.clock.now = s.clock.now + 40
+    Mock.controllerState(s.mock, GATE_DRIVER, "Opened")
+    local entries = s.doors()
+    T.eq(#entries, 2)
+    T.eq(entries[1].who.type, "control4")
+    T.eq(#s.messages("notify"), 1, "and the alert")
+
+    -- Closed read late (from Unknown, before the gate moved) does not end it.
+    s.clock.now = s.clock.now + 300
+    Mock.controllerState(s.mock, GATE_DRIVER, "Unknown")
+    T.eq(T.http(s.mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = s.key }).status, 202)
+    Mock.controllerState(s.mock, GATE_DRIVER, "Closed")
+    s.clock.now = s.clock.now + 30
+    Mock.controllerState(s.mock, GATE_DRIVER, "Opened")
+    entries = s.doors()
+    T.eq(#entries, 3)
+    T.eq(entries[1].who.type, "key", "DirectorLink's own opening, once")
+    -- Without a Closed, 90 s at most.
+    s.clock.now = s.clock.now + 300
+    Mock.controllerState(s.mock, GATE_DRIVER, "Closed")
+    T.eq(T.http(s.mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = s.key }).status, 202)
+    s.clock.now = s.clock.now + 91
+    Mock.controllerState(s.mock, GATE_DRIVER, "Opened")
+    entries = s.doors()
+    T.eq(#entries, 5)
+    T.eq(entries[1].who.type, "control4")
+
+    -- The KNX relay a controller drives: Control4 pulses it 30 s after DirectorLink did.
+    Mock.fireDeviceEvent(s.mock, BACK_RELAY, 3)
+    T.eq(T.http(s.mock, "POST", "/v1/relays/" .. BACK_RELAY .. "/pulse", { key = s.key }).status, 202)
+    s.clock.now = s.clock.now + 1
+    Mock.fireDeviceEvent(s.mock, BACK_RELAY, 4)
+    Mock.fireDeviceEvent(s.mock, BACK_RELAY, 3)
+    T.eq(#s.doors(), 6, "DirectorLink's own pulse")
+    s.clock.now = s.clock.now + 30
+    Mock.fireDeviceEvent(s.mock, BACK_RELAY, 4)
+    Mock.fireDeviceEvent(s.mock, BACK_RELAY, 3)
+    entries = s.doors()
+    T.eq(#entries, 7)
+    T.eq(entries[1].who.type, "control4")
+    T.eq(entries[1].what, "Back Door Relay")
+end
+
+-- Relay Configuration set to Hold in Composer sends DirectorLink no project event: it is read again
+-- at each opening (one C4:GetDeviceData).
+function tests.a_hold_set_in_composer_counts_at_the_next_opening()
+    local p = project()
+    local mock, key = start(nil, p)
+    local reads, failing = 0, false
+    local real = C4.GetDeviceData
+    C4.GetDeviceData = function(self, id, tag)
+        if id == GATE_DRIVER then
+            reads = reads + 1
+            if failing then
+                error("not now")
+            end
+        end
+        return real(self, id, tag)
+    end
+    p.deviceData = p.deviceData or {}
+    p.deviceData[GATE_DRIVER] = holdData("Hold")
+    local before = #mock.commands
+    local refused = T.http(mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = key })
+    T.eq(refused.status, 409)
+    T.eq(refused.json.code, "HOLD_NOT_ALLOWED")
+    T.eq(#commandsSince(mock, before), 0, "nothing sent")
+    T.eq(reads, 1, "one read a press")
+    -- Director not giving it now: what was read last stands.
+    failing = true
+    T.eq(T.http(mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = key }).json.code, "HOLD_NOT_ALLOWED")
+    failing = false
+    -- Back to Pulse: it opens.
+    p.deviceData[GATE_DRIVER] = holdData("Pulse")
+    T.eq(T.http(mock, "POST", "/v1/relays/" .. GATE .. "/pulse", { key = key }).status, 202)
+    T.same(commandsSince(mock, before), { { device = GATE_DRIVER, command = "OPEN", params = {} } })
+    C4.GetDeviceData = real
+end
+
+-- A KNX Contact/Relay on a controller's Close or Stop connection would close or stop the gate with
+-- Open: it is part of that door, not a door of its own; unbound, it is a door again under its id.
+function tests.a_knx_relay_on_a_controllers_close_or_stop_connection_is_no_door()
+    local p = Mock.project()
+    Mock.withRelayControllers(p, {
+        { id = 73, controller = 163, name = "Back Gate", room = 10, kind = "gate", state = "Closed", bindings = { [1] = 75, [2] = 76, [3] = 77 }, relay = { id = 75, name = "Back Gate Open" } },
+    })
+    p.devices[76] = { deviceName = "Back Gate Close", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen" }
+    p.devices[77] = { deviceName = "Back Gate Stop", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen" }
+    local mock, key = start(nil, p)
+    local list = relays(mock, key)
+    T.eq(list[75].kind, "gate", "the gate, under its Open relay")
+    T.eq(list[76], nil, "its Close relay is no door")
+    T.eq(list[77], nil, "nor its Stop relay")
+    T.eq(list[70].kind, "relay", "a KNX relay of its own stays a door")
+    local before = #mock.commands
+    T.eq(T.http(mock, "POST", "/v1/relays/76/pulse", { key = key }).status, 404)
+    T.eq(T.http(mock, "PATCH", "/v1/relays/77", { key = key, body = { state = "open" } }).status, 404)
+    T.eq(#commandsSince(mock, before), 0, "nothing sent")
+    local devices = byId(T.http(mock, "GET", "/v1/devices", { key = key }).json.items)
+    T.eq(devices[76].supported, false)
+    T.eq(devices[77].supported, false)
+
+    p.bindings[163][2] = nil
+    p.bindings[163][3] = nil
+    refresh()
+    list = relays(mock, key)
+    T.eq(list[76].kind, "relay", "unbound: a door again")
+    T.eq(list[77].kind, "relay")
+end
+
+-- Two controllers on one relay (two rooms' buttons for one gate): both are shown, as in Control4,
+-- and are each other's partners: DirectorLink's Open of one is its own for the other, and one
+-- opening seen by both is one entry.
+function tests.two_controllers_on_one_relay_are_one_gate_to_history()
+    local p = Mock.project()
+    Mock.withRelayControllers(p, {
+        { id = 71, controller = 161, name = "Gate", room = 11, kind = "gate", state = "Closed", bindings = { [1] = 110, [4] = 175 } },
+        { id = 77, controller = 167, name = "Gate (Kitchen)", room = 10, kind = "gate", state = "Closed", bindings = { [1] = 110, [4] = 175 } },
+    })
+    local s = home(nil, p)
+    local list = relays(s.mock, s.key)
+    T.eq(list[71].kind, "gate")
+    T.eq(list[77].kind, "gate")
+    T.eq(T.http(s.mock, "POST", "/v1/relays/71/pulse", { key = s.key }).status, 202)
+    s.clock.now = s.clock.now + 10
+    Mock.controllerState(s.mock, 161, "Opened")
+    Mock.controllerState(s.mock, 167, "Opened")
+    T.eq(#s.doors(), 1, "DirectorLink's own, for both")
+    s.clock.now = s.clock.now + 20
+    Mock.controllerState(s.mock, 161, "Closed")
+    Mock.controllerState(s.mock, 167, "Closed")
+    s.clock.now = s.clock.now + 300
+    s.messages("notify")
+    Mock.controllerState(s.mock, 167, "Opened")
+    Mock.controllerState(s.mock, 161, "Opened")
+    local entries = s.doors()
+    T.eq(#entries, 2, "an opening in Control4, once")
+    T.eq(entries[1].who.type, "control4")
+    T.eq(#s.messages("notify"), 1)
 end
 
 -- ---- backups ---------------------------------------------------------------------------------------

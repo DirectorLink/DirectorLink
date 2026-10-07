@@ -59,8 +59,8 @@ Alerts.SCHEDULE_PER_HOUR = 3
 Alerts.PER_HOUR = 60
 -- A door or doorbell reporting an opening this soon after DirectorLink's own command to it was
 -- opened by that command (already in the history, with who did it). A Relay Door, Gate or Garage
--- Door Controller with only its Opened Contact says Opened once the gate is fully open: for its
--- door, CONTROLLER_OWN_SECONDS (ADR-069).
+-- Door Controller with only its Opened Contact says Opened once the gate is fully open: for what the
+-- controller says, CONTROLLER_OWN_SECONDS, or until it says Closed again (ADR-069).
 Alerts.OWN_SECONDS = 15
 Alerts.CONTROLLER_OWN_SECONDS = 90
 -- Names in a detail are cut to this many bytes (whole characters). Every detail is padded with
@@ -751,7 +751,10 @@ function Alerts.deviceEvent(device, eventId, before, sourceId)
         return
     end
     local commanded = options.commandedAt and options.commandedAt(device.id)
-    local own = device.controller_id ~= nil and Alerts.CONTROLLER_OWN_SECONDS or Alerts.OWN_SECONDS
+    -- The controller's own events: up to CONTROLLER_OWN_SECONDS (its door closing again ends it,
+    -- src/adapters/manager.lua); a KNX relay a controller drives reports at once, as any relay.
+    local fromController = device.controller_id ~= nil and tonumber(sourceId) == tonumber(device.controller_id)
+    local own = fromController and Alerts.CONTROLLER_OWN_SECONDS or Alerts.OWN_SECONDS
     if commanded and now - commanded <= own and now >= commanded then
         return -- DirectorLink's own command: the history has it already, with who
     end

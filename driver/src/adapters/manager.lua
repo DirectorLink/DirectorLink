@@ -373,6 +373,19 @@ function Manager.onDeviceEvent(deviceId, eventId)
         log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
+    -- A door that closed again (a Relay Door, Gate or Garage Door Controller's, ADR-069): its next
+    -- opening is not DirectorLink's last command's doing, however soon it comes.
+    if changed == true and adapter.closed then
+        local closedOk, closed = pcall(adapter.closed, device, eventId, before, sourceId)
+        if closedOk and closed == true then
+            commanded[deviceId] = nil
+            for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+                if tonumber(partner) then
+                    commanded[tonumber(partner)] = nil
+                end
+            end
+        end
+    end
     if changed == true and eventListener then
         local told, err = pcall(eventListener, device, eventId, before, sourceId)
         if not told then

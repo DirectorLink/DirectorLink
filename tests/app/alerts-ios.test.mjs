@@ -61,7 +61,7 @@ globalThis.fetch = async () => {
 
 const { state } = await import("../../app/js/state.js");
 const { saveRemote } = await import("../../app/js/remote.js");
-const { alertsPanel, alertsStatus } = await import("../../app/js/views/alerts.js");
+const { alertsPage, alertsPanel, alertsStatus } = await import("../../app/js/views/alerts.js");
 
 function byKey(node, key) {
   if (!node) return null;
@@ -72,6 +72,20 @@ function byKey(node, key) {
   }
   return null;
 }
+
+test("signed out in Safari, Settings → Alerts says to add the app to the Home Screen first: a sign-in there would not help (1.10.0)", () => {
+  Object.assign(state, { apiKey: "ak_test", role: "admin", status: "connected", account: { status: "signed-out", user: null, notice: null, busy: false } });
+  saveRemote({ home: "0123456789abcdef0123456789abcdef", keyId: "0a1b2c3d" });
+  assert.equal(alertsStatus(), "Add to Home Screen to get alerts");
+  const page = alertsPage();
+  assert.equal(byKey(page, "alerts-hint").textContent, "On iPhone and iPad, alerts work only in the app on the Home Screen (iOS 16.4 or later): tap Share, then Add to Home Screen, open DirectorLink from there and switch them on.");
+  assert.equal(byKey(page, "alerts-sign-in"), null, "the Home Screen app keeps its own sign-in");
+  assert.equal(byKey(page, "alerts-switch"), null);
+  // Before the account service has answered too.
+  state.account = { status: "loading", user: null, notice: null, busy: false };
+  assert.equal(alertsStatus(), "Add to Home Screen to get alerts");
+  assert.ok(byKey(alertsPage(), "alerts-hint"));
+});
 
 test("on iPhone and iPad the card says to add the app to the Home Screen, or which iOS it needs", () => {
   Object.assign(state, { apiKey: "ak_test", role: "admin", status: "connected", account: { status: "signed-in", user: { id: "u1" } } });
