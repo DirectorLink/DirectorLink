@@ -182,7 +182,8 @@ test("without a minimum, then with one: old drivers are refused before the home'
   assert.equal(refused.problem.status, 426);
   assert.equal(refused.problem.minimum_version, "1.8.0");
   assert.match(refused.problem.detail, /1\.7\.0.*1\.8\.0 or later/);
-  assert.ok(logged("driver_refused", old.home).length >= 1);
+  // The Worker writes its log line as it answers: wait for it rather than read it at once.
+  await eventually(() => logged("driver_refused", old.home).length >= 1, "the refusal in the log");
   for (const version of ["1.7.9", "0.9.0-smoke", "dev", "1.8"]) {
     assert.equal((await refusalOf({ home: old.home, secret: old.secret, version }))?.status, 426, version);
   }
