@@ -789,6 +789,8 @@ export default {
     otherRooms: "Other rooms",
     andOtherRooms: "{room} and other rooms",
     do: { off: "Off", on: "On", dimTo: "{percent}%", open: "Open", close: "Close", position: "{percent}% open", fan: "fan {speed}", speed: "{speed} speed", pulse: "Open (short press)", pauseMusic: "Pause", stopMusic: "Stop", featureOn: "{feature} on", featureOff: "{feature} off", resumeMusic: "Resume", musicVolume: "Volume {percent}%", playFavorite: "Play {name}", playFavoriteAt: "Play {name} at {percent}%", aFavorite: "a favorite", withRooms: "with {rooms}", onAsItWas: "On, as it was" },
+    // On, as it was (1.10.0): the ACs a scene leaves off until DirectorLink has seen each on once.
+    notSeenOn: { one: "Not seen on yet: {names} — turn it on once, or it stays off", other: "Not seen on yet: {names} — turn each on once, or they stay off" },
   },
   // Scene links (ADR-051, views/scene-links.js): a private link per scene for the phone's own automations.
   sceneLinks: {

@@ -4106,6 +4106,13 @@ a.scene-name:hover {
   overflow-wrap: anywhere;
 }
 
+/* ACs an On, as it was action would leave off now (1.10.0). */
+.scene-not-seen {
+  color: var(--errText);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
 .scene-result {
   font-size: 0.8125rem;
   font-weight: 500;

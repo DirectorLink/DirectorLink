@@ -22,13 +22,16 @@
 2. With a weather rule, Composer's Schedule Status ends with "weather forecast from today HH:MM". After 6 hours the time moves on (`/v1/logs?category=weather&level=debug`: "weather forecast read", 4 a day).
 3. Block the controller's internet: "updated" keeps the old time, the log says "could not read the weather forecast" once, and the weather rules still run. Restart the driver while offline: still the forecast. Internet back: within 30 minutes "updated" changes.
 4. "Hotter than 23°, 08:30–23:00, only on Shabbat and holidays": it runs at candle lighting if the forecast says 23° or more, and again on Saturday once the forecast passes 23° after 08:30. Its "schedule ran" log line has `forecast_from`.
+5. After a warm night, on Saturday at 08:30 the rule and "Main Morning" (08:30) run in the same minute: the rule runs second (its History entry is the newer one), and the main ACs end up on.
+6. On a hot day after the rule ran, restore a backup (Settings → Controller → Backup): the rule does not run again that day; it runs the next day once its hours begin and it is hot.
+7. Go back to 1.9.0 and then to 1.10.0 again with the controller's internet blocked: the weather card still shows the forecast ("updated" from before going back), and the weather rules run.
 
 ## 1100g. On, as it was, and Keep (1.10.0)
 
 1. After the update, turn a few ACs on in different modes, temperatures and fan speeds (Control4 app, keypad), then off. `GET /v1/thermostats` shows each `last_mode`.
 2. Shabbat/Holiday Main AC → Edit each AC action → Mode **On, as it was** → Save. The step reads "On, as it was"; Composer's Print Schedules and Scenes shows `-> on, as it was`.
 3. Run it with those ACs off: each comes back in its own mode, temperature and fan; the log shows only SET_MODE_HVAC per AC. An AC already on gets no command.
-4. An AC not turned on since the update: the run says "1 AC was left off: its last mode isn't known yet", and History says so. Turn it on and off, run again: it comes back.
+4. An AC not turned on since the update: the AC action (Mode On, as it was) and the scene's card in Scenes say "Not seen on yet: <its name> — turn it on once, or it stays off". The run says "1 AC was left off: its last mode isn't known yet", and History says so. Run it from a schedule: admins get "the schedule for <scene> had a problem" once. Turn it on and off: the line goes, and the next run brings it back.
 5. Keep: an AC action Cool, Temperature Keep, Fan Keep, Try it now on an AC set to heat 26: it switches to cool, its setpoint and fan stay.
 6. Commands, with the AC off: "הדלק את המזגן בסלון" turns it on in its last mode; for an AC with no known last mode it asks which mode; a mode said ("…על קר") uses that mode.
 7. Restart the driver: the last modes are kept.

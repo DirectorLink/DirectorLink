@@ -28,8 +28,11 @@ import {
   isolate,
   lastModeSupported,
   loadScenes,
+  notSeenOn,
+  notSeenOnText,
   resultText,
   runScene,
+  sceneNotSeenOn,
   sceneSummary,
   stepAction,
   stepWhat,
@@ -146,6 +149,8 @@ function runButton(scene) {
 
 function sceneCard(scene, admin) {
   const run = ui.sceneRuns[scene.id];
+  // ACs its On, as it was actions would leave off now (1.10.0).
+  const notSeen = notSeenOnText(sceneNotSeenOn(scene));
   return h(
     "div",
     { class: `card scene-card ${run ? `is-${run.stage}` : ""}` },
@@ -157,6 +162,7 @@ function sceneCard(scene, admin) {
         ? h("a", { class: "scene-name", href: `#/scene/${scene.id}`, dir: "auto", title: t("scenes.editLabel", { name: scene.name }), dataset: { key: `scene-edit:${scene.id}` } }, scene.name)
         : name(scene.name, "span", "scene-name"),
       h("span", { class: "scene-summary" }, sceneSummary(scene)),
+      notSeen ? h("span", { class: "scene-not-seen", dataset: { key: `scene-not-seen:${scene.id}` } }, notSeen) : null,
       // A plain "Done" is on the button already.
       run?.text && run.stage !== "done" ? h("span", { class: `scene-result scene-result-${run.stage}`, role: "status" }, run.text) : null
     ),
@@ -1101,7 +1107,11 @@ function doControls(adding, devices) {
       : segments(labels, adding.mode, "add-mode", (value) => { adding.mode = value; });
     const parts = [modeRow];
     // On, as it was: nothing else to choose, the temperature and fan are each AC's own (1.10.0).
-    if (adding.mode === "on") return [...parts, h("p", { class: "field-help" }, t("scenes.add.onAsItWasHelp"))];
+    // The ACs it would leave off now are named.
+    if (adding.mode === "on") {
+      const notSeen = notSeenOnText(notSeenOn(devices));
+      return [...parts, h("p", { class: "field-help" }, t("scenes.add.onAsItWasHelp")), notSeen ? h("p", { class: "notice notice-info", dataset: { key: "add-not-seen" } }, notSeen) : null];
+    }
     if (adding.mode !== "off") parts.push(temperatureChoice(adding, choices));
     const setting = adding.mode !== "off" && !adding.keepTemperature;
     if (setting && adding.mode === "auto" && choices.dual) {

@@ -34,7 +34,8 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
     for the project's location, so they need no internet.
   - **weather**: `{"type": "weather", "kind": "heat"|"wind"|"rain", "above": 30, "from":
     "12:00", "to": "20:00", "once_a_day": true}`:
-    - heat: hotter than `above` °C (15–45); it runs again only after it has cooled 2° below;
+    - heat: hotter than `above` °C (15–45), which means `above` or more, as it always has (23.0°
+      is hotter than 23°); it runs again only after it has cooled 2° below;
     - wind: stronger than `above` km/h (10–150); again only after it has dropped 10 km/h below;
     - rain: when it starts to rain; again only after an hour without rain (in the forecast, like
       everything about the weather: [The weather](#the-weather));
@@ -45,7 +46,8 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   - **shabbat** (1.2.0, with the Jewish calendar on): `{"type": "shabbat", "event":
     "candle_lighting"|"havdalah", "offset": -30}` — when Shabbat or a holiday begins or ends, plus
     minutes before (negative) or after, up to six hours (see [Shabbat and holidays](#shabbat-and-holidays)).
-- `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C), `wind_below` (km/h),
+- `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C; more than it, unlike
+  a heat rule's `above`), `wind_below` (km/h),
   `rain_expected` (today's forecast: a 50% chance or more). They are checked when the schedule is
   due, with the weather then (the forecast's).
 - `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no forecast
@@ -67,7 +69,10 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   holidays, are caught up for 6 hours after a restart (below).
 - Switching a schedule off and on, or changing it, does not make it run again the same day.
 - Weather schedules run when the reading crosses the threshold (or rain starts), on their days,
-  within their hours; hours across midnight (22:00–06:00) belong to the day they start.
+  within their hours; hours across midnight (22:00–06:00) belong to the day they start. Since
+  1.10.0 they run after the time, sun and Shabbat schedules of the same minute (also those caught
+  up after a restart): a morning scene at 08:30 does not undo what "hotter than 23°, from 08:30"
+  just did.
 - What the scheduler remembers (last run, whether a weather schedule may run again) is saved, so a
   restart does not run anything twice. A save that fails is logged; if what it remembers cannot be
   read at a start, nothing is caught up then (below), and the log says so.
@@ -82,8 +87,9 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
 - **The weather is always the forecast.** Weather schedules, "only if", `GET /v1/weather` and the
   app all read the saved forecast's hour for now: the temperature and the wind between the two hours
   around now (20° at 08:00 and 26° at 09:00 make 23° at 08:30), and rain when the forecast has any
-  precipitation in the hour now (Open-Meteo gives each hour's sum at its end). The hour without rain
-  that a rain rule waits for is the forecast's too.
+  precipitation in the hour now (Open-Meteo gives each hour's sum at its end); the weather code
+  is the one at the start of the hour now. The hour without rain that a rain rule waits for is the
+  forecast's too.
 - **Every 6 hours** the **controller** asks `api.open-meteo.com` itself for a new forecast, while an
   enabled schedule needs the weather, and for an hour after an app shows it: 4 requests a day. It
   replaces the saved one. Nothing goes through DirectorLink's servers. It sends the project's

@@ -199,9 +199,51 @@ function tests.an_ac_whose_last_mode_is_not_known_is_left_off_and_the_run_says_s
     T.eq(entry.counts.no_last_mode, nil)
 end
 
+-- A schedule that leaves ACs off this way alerts the admins who chose "a schedule had a problem",
+-- once a run, with the scene's name only (the same sealed alert as a device that refused: ADR-047,
+-- ADR-050). A run from the app says so on the spot, and alerts nobody.
+function tests.a_scheduled_run_that_leaves_acs_off_alerts_the_admins_once()
+    local alerts = {}
+    local mock = Mock.startDriver(project({ [30] = "Off", [33] = "Off" }), nil, nil, function()
+        require("src.cloud.alerts").scheduleFailed = function(at, info)
+            alerts[#alerts + 1] = { at = at, info = info }
+            return 1
+        end
+    end)
+    local admin = T.pair(mock)
+    local fields = os.date("*t")
+    fields.hour, fields.min, fields.sec = 10, 0, 0
+    local now = os.time(fields)
+    require("src.core.clock").now = function()
+        return now
+    end
+    local Scheduler = require("src.core.scheduler")
+    local shabbat = scene(mock, admin, { { type = "climate", device_ids = { 30, 33, 34 }, set = { mode = "on" } } }, "Shabbat AC")
+    local created = T.http(mock, "POST", "/v1/schedules", { key = admin, body = { scene_id = shabbat.id, trigger = { type = "time", at = "10:05" }, days = { 0, 1, 2, 3, 4, 5, 6 } } })
+    T.eq(created.status, 201, created.body)
+    T.eq(run(mock, admin, shabbat.id).skipped, 3)
+    T.eq(#alerts, 0, "a run from the app alerts nobody")
+    now = now + 5 * 60 + 1
+    T.eq(Scheduler.tick(), 1)
+    T.eq(#alerts, 1, "one alert for the run, not one per AC")
+    T.eq(alerts[1].at, now)
+    T.same(alerts[1].info, { what = "Shabbat AC" }, "the scene's name, as for a device that refused")
+    T.eq(T.http(mock, "GET", "/v1/activity?kind=schedule", { key = admin }).json.items[1].counts.no_last_mode, 3)
+
+    -- Seen on once each: the next day's run turns them on, and alerts nobody.
+    for _, id in ipairs({ 30, 33, 34 }) do
+        Mock.changeVariable(mock, id, 1104, "Cool")
+    end
+    turnOff(mock, { 30, 33, 34 })
+    now = now + 86400
+    T.eq(Scheduler.tick(), 1)
+    T.eq(#alerts, 1)
+end
+
 function tests.a_last_mode_directorlink_cannot_set_is_never_replaced_by_another()
     local mock, admin = start()
-    -- Dry from the AC's own remote: not one of the modes DirectorLink sets.
+    -- Dry from the AC's own remote, on a zone that lists it: not one of the modes DirectorLink sets.
+    Mock.changeVariable(mock, 30, 1120, "Off,Heat,Cool,Dry")
     Mock.changeVariable(mock, 30, 1104, "Dry")
     turnOff(mock, { 30 })
     T.eq(thermostat(mock, admin, 30).last_mode, "dry")
@@ -210,6 +252,26 @@ function tests.a_last_mode_directorlink_cannot_set_is_never_replaced_by_another(
     T.eq(tried.json.skipped, 1)
     T.eq(tried.json.problems[1].code, "MODE_NOT_SUPPORTED")
     T.contains(tried.json.problems[1].detail, "dry")
+end
+
+-- Only one of the thermostat's own modes (its HVAC_MODES_LIST) is remembered: a value outside it,
+-- such as "Undefined" while the zone's driver starts, or Dry on a zone that does not list it, leaves
+-- the last mode as it was.
+function tests.a_mode_outside_the_thermostat_s_own_list_is_never_remembered()
+    local mock, admin = start({ [34] = "Off" })
+    Mock.changeVariable(mock, 30, 1104, "Undefined")
+    turnOff(mock, { 30 })
+    T.eq(thermostat(mock, admin, 30).last_mode, "cool", "not undefined")
+    Mock.changeVariable(mock, 30, 1104, "Dry")
+    turnOff(mock, { 30 })
+    T.eq(thermostat(mock, admin, 30).last_mode, "cool", "Dry is not one of this zone's modes")
+    Mock.changeVariable(mock, 34, 1104, "Undefined")
+    T.eq(thermostat(mock, admin, 34).last_mode, Json.null, "never seen in one of its modes")
+    T.same(stored(mock).modes, { ["30"] = "cool", ["31"] = "auto", ["32"] = "heat", ["33"] = "heat" })
+    -- So the scene turns it back on in cool.
+    local tried = T.http(mock, "POST", "/v1/scenes/try", { key = admin, body = { steps = { { type = "climate", device_ids = { 30 }, set = { mode = "on" } } } } })
+    T.eq(tried.status, 202, tried.body)
+    T.eq(tried.json.ran, 1, tried.json)
 end
 
 -- Keep: a step with a mode alone sends no setpoint and no fan speed (the app's Keep).

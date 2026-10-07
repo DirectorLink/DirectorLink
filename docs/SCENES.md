@@ -144,7 +144,9 @@ off, AC off or blinds closed, and answers the same way. It is Home's "Turn off a
 with its fan on medium, the bedroom in heat at 23°.
 
 - **Each thermostat's last mode.** DirectorLink remembers the last mode each thermostat was in
-  that was not off, whoever set it: Control4's apps, a keypad, Composer programming, DirectorLink.
+  that was not off and is one of its own modes (its mode list: a value such as `Undefined` while a
+  zone's driver starts is not remembered), whoever set it: Control4's apps, a keypad, Composer
+  programming, DirectorLink.
   It looks when the driver starts, at a project refresh or a driver update, and at every change of
   the thermostat's variables (`src/core/last_modes.lua`, from `src/adapters/manager.lua`). It is
   kept in a small store of its own, `directorlink_last_modes` (`{"version": 1, "modes": {"30":
@@ -157,8 +159,13 @@ with its fan on medium, the bedroom in heat at 23°.
   on since DirectorLink 1.10.0 started watching (a new AC, or one off since the update) is left
   off and the run says so, in the app ("1 AC was left off: its last mode isn't known yet") and in
   History ("1 AC left off: no last mode known yet; set it once"; `counts.no_last_mode`): turn it on
-  once, in its mode, and from then on it comes back. Floor heating and thermostats with heat and
-  cool setpoints work the same (both setpoints kept). Composer's printout shows `on, as it was`.
+  once, in its mode, and from then on it comes back. A schedule's run that leaves one off also
+  alerts the admins who chose "A schedule has a problem", once a run. Floor heating and thermostats
+  with heat and cool setpoints work the same (both setpoints kept). Composer's printout shows `on,
+  as it was`.
+- **Before it runs.** The AC action editor and the scene's card in the list name the ACs it would
+  leave off now ("Not seen on yet: Living room AC, Bedroom AC — turn each on once, or they stay
+  off"): those whose `last_mode` is null, or one DirectorLink cannot set (Dry).
 - **Commands.** "Turn on the AC in the living room", "הדלק את המזגן בסלון", "enciende el aire del
   salón", "accendi il condizionatore del soggiorno" turn an AC that is off on in its last mode
   (`PATCH` with that mode alone), instead of asking which mode; "living room AC to 23" sets 23° in

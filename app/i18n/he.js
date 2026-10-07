@@ -779,6 +779,7 @@ export default {
     otherRooms: "חדרים אחרים",
     andOtherRooms: "{room} וחדרים אחרים",
     do: { off: "כיבוי", on: "הדלקה", dimTo: "{percent}%", open: "פתיחה", close: "סגירה", position: "{percent}% פתוח", fan: "מאוורר {speed}", speed: "מהירות {speed}", pulse: "פתיחה (לחיצה קצרה)", pauseMusic: "השהיה", stopMusic: "עצירה", featureOn: "הפעלת {feature}", featureOff: "כיבוי {feature}", resumeMusic: "המשך ניגון", musicVolume: "עוצמה {percent}%", playFavorite: "ניגון {name}", playFavoriteAt: "ניגון {name} בעוצמה {percent}%", aFavorite: "מועדף", withRooms: "עם {rooms}", onAsItWas: "הדלקה, כפי שהיה" },
+    notSeenOn: { one: "עוד לא נראה פועל: {names} — הפעילו אותו פעם אחת, אחרת יישאר כבוי", two: "עוד לא נראו פועלים: {names} — הפעילו כל אחד פעם אחת, אחרת יישארו כבויים", many: "עוד לא נראו פועלים: {names} — הפעילו כל אחד פעם אחת, אחרת יישארו כבויים", other: "עוד לא נראו פועלים: {names} — הפעילו כל אחד פעם אחת, אחרת יישארו כבויים" },
   },
   // Scene links (ADR-051, views/scene-links.js): a private link per scene for the phone's own automations.
   sceneLinks: {
