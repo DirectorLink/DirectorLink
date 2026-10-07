@@ -20,6 +20,8 @@ import {
   lightIsOn,
   matchesFilter,
   modeLabel,
+  relayIsOpen,
+  relayLabel,
   roomName,
   shownBrightness,
   summaryCounts,
@@ -30,7 +32,7 @@ import { installApp } from "../pwa.js";
 import { runScene } from "../scenes.js";
 import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
-import { cancelTurnOff, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
+import { cancelTurnOff, heaterNames, keptHeaters, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
 import { musicHomeSection } from "./music.js";
@@ -314,8 +316,10 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
     content = [cameraPicture(device, 320), h("span", { class: "fav-caption" }, name(device.name, "span", "fav-name"))];
     stateClass = "fav-camera";
   } else if (kind === "relay") {
-    content = [h("span", { class: "fav-icon" }, icon("door")), name(device.name, "span", "fav-name"), room];
-    stateClass = "fav-relay";
+    // A controller's door says what it is, and open or closed with a contact (1.10.0).
+    const what = device.kind && device.kind !== "relay" ? h("span", { class: "fav-state" }, relayLabel(device)) : null;
+    content = [h("span", { class: "fav-icon" }, icon("door")), name(device.name, "span", "fav-name"), room, what];
+    stateClass = `fav-relay ${relayIsOpen(device) ? "is-open" : ""}`.trim();
   } else if (kind === "doorbell") {
     stateClass = ringIsActive(device) ? "is-ringing" : "";
     content = [
@@ -501,6 +505,7 @@ function roomsSection() {
         : null
     ),
     filter ? turnOffNote(filter, run) : null,
+    filter ? heatersNote(filter, run, count) : null,
     shown.length
       ? h("div", { class: "room-grid" }, shown.map(roomCard))
       : h("p", { class: "muted-note" }, t("home.noMatch"))
@@ -567,6 +572,15 @@ function turnOffNote(filter, run) {
       run.more > 0 ? h("li", {}, t("scenes.more", { count: run.more })) : null
     )
   );
+}
+
+// Heaters on in these rooms: Turn off all leaves them as they are (ADR-066), and says so with its
+// second tap and its result, or alone when only heaters are on.
+function heatersNote(filter, run, count) {
+  if (!can("member") || (count > 0 && !["confirm", "running", "done", "partial"].includes(run?.stage))) return null;
+  const heaters = keptHeaters(filter);
+  if (!heaters.length) return null;
+  return h("p", { class: "muted-note turn-off-heaters" }, t("home.off.heaters", { count: heaters.length, names: heaterNames(heaters) }));
 }
 
 // Favorites picker (dialog body): every device with a star.

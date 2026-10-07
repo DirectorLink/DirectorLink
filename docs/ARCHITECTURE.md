@@ -42,7 +42,8 @@ driver/     the DriverWorks driver
                   users and their devices, and which keys share an account (users.lua,
                   accounts.lua; ADR-061)
   src/adapters/   Control4 proxy adapters (Light V2, Light V1 (legacy Light proxy), Thermostat V2, Control4
-                  thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, DoorBird, security
+                  thermostat proxy, Fan, Blind, Camera, KNX Contact/Relay, Relay Door, Gate and Garage Door
+                  Controllers (ADR-069), DoorBird, security
                   partitions: read-only, ADR-038; Samsung refrigerators through their DirectorLink
                   driver's variables, ADR-049)
   src/cloud/      remote access: WebSocket client, relay connection (docs/RELAY.md), the end-to-end
@@ -51,7 +52,8 @@ driver/     the DriverWorks driver
                   backup_seal.lua; ADR-048); alerts sealed to each device's key (alerts.lua; ADR-050)
   src/control4/   discovery and normalization; Director's project events (Composer changes, read
                   again without a restart) and device events; drivers updated in Composer (their
-                  devices set up again, ADR-059); camera snapshots
+                  devices set up again, ADR-059); camera snapshots; DirectorLink's camera agreement
+                  (camera_drivers.lua: a camera driver's marker, alerts and rings, ADR-065)
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, scene links (a private link per scene for the phone's automations,
                   ADR-051), ask-to-open links (a door's link that asks its person, ADR-058), schedules, scheduler, sun, weather, installer view; room names and layout;

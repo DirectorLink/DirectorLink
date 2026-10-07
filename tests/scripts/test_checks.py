@@ -3,9 +3,10 @@ check_app.py): the relay's CA file holds exactly the pinned roots however its bl
 nothing else in driver/certs reaches the package, line endings do not change it, check_repo vets
 what is staged, the door switches, the Jewish calendar, the alarm's status and Sonos in driver.xml
 ship off, the alarm stays read-only, one file talks to the Sonos players, the app names every
-month, holiday and weekly reading the calendar API can send, Say or type a command has a parser
-without imports and opens no door from the words, and the website's one script asks only for
-DirectorLink in numbers (check_sites.py).
+month, holiday and weekly reading the calendar API can send, every language has exactly English's
+strings, placeholders and the disclaimer (1.10.0), Say or type a command has a parser without
+imports and opens no door from the words, and the website's one script asks only for DirectorLink
+in numbers (check_sites.py).
 
     python -m unittest discover -s tests/scripts
 """
@@ -270,6 +271,47 @@ def driver_sources():
     return {path.relative_to(base).as_posix(): path.read_text(encoding="utf-8") for path in (base / "src").rglob("*.lua")}
 
 
+class DoorControllersOpenOnly(unittest.TestCase):
+    """A Relay Door, Gate or Garage Door Controller (ADR-069) is sent its own Open and nothing else."""
+
+    ADAPTER = "src/adapters/relay_controller.lua"
+    OPEN = 'C4:SendToDevice(info.controller, "OPEN", {})'
+
+    def refused(self, files):
+        return refusal(check_package.check_door_controllers_open_only, files)
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(driver_sources()))
+
+    def test_close_stop_select_or_another_command_is_refused(self):
+        files = driver_sources()
+        adapter = files[self.ADAPTER]
+        self.assertIn(self.OPEN, adapter)
+        for added in (
+            'C4:SendToDevice(info.controller, "CLOSE", {})',
+            'C4:SendToDevice(info.controller, "STOP", {})',
+            'C4:SendToProxy(5001, "SELECT", {})',
+            'C4:SendToDevice(info.controller, "LUA_ACTION", { ACTION = "CLOSE" })',
+            'C4:SendToDevice(info.relays[1], "CLOSE", {})',
+            'local command = "TOGGLE"',
+        ):
+            with self.subTest(added=added):
+                changed = adapter.replace(self.OPEN, self.OPEN + "\n            " + added, 1)
+                self.assertNotEqual(changed, adapter)
+                self.assertIsNotNone(self.refused({**files, self.ADAPTER: changed}))
+        # Its comments may name what it never sends.
+        self.assertIsNone(self.refused({**files, self.ADAPTER: adapter + '\n-- never "CLOSE" or C4:SendToDevice(id, "STOP", {})\n'}))
+
+    def test_the_hold_refusal_must_stay(self):
+        files = driver_sources()
+        guard = "if info.hold and not (type(params) == \"table\" and params.hold_allowed == true) then"
+        self.assertIn(guard, files[self.ADAPTER])
+        self.assertIn(guard, check_package.SECURITY_CONTRACT[self.ADAPTER])
+        self.assertIsNone(refusal(check_package.check_security_contract, files))
+        loosened = {**files, self.ADAPTER: files[self.ADAPTER].replace(guard, "if false then")}
+        self.assertIn("missing security contract", refusal(check_package.check_security_contract, loosened) or "")
+
+
 class AlarmReadOnly(unittest.TestCase):
     ADAPTER = "src/adapters/alarm.lua"
 
@@ -368,12 +410,86 @@ class CalendarNames(unittest.TestCase):
         self.assertIn("rosh_chodesh must name the month", refusal(check_app.check_calendar_names, self.spec, self.dictionaries) or "")
 
 
-class Commands(unittest.TestCase):
-    """check_app.py: Say or type a command (1.9.0, ADR-063) has a parser of its own without imports,
-    never opens a door or gate from the words, and the app's headers allow the microphone."""
+class Translations(unittest.TestCase):
+    """check_app.py (1.10.0, ADR-067): every language file has exactly en.js's keys, each with the
+    same placeholders and plural forms, and the disclaimer; theme-boot.js and the service worker
+    know every language."""
+
+    CODES = ("en", "he", "es", "it")
 
     def setUp(self):
-        self.files = {path: (ROOT / "app" / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/commands.js", "js/views/command.js", "_headers")}
+        self.dictionaries = {code: check_app.read_dictionary((ROOT / "app" / "i18n" / f"{code}.js").read_text(encoding="utf-8")) for code in self.CODES}
+
+    def refused(self):
+        return refusal(check_app.check_translations, self.dictionaries) or ""
+
+    def test_the_real_dictionaries_pass(self):
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        boot = (ROOT / "app" / "theme-boot.js").read_text(encoding="utf-8")
+        worker = (ROOT / "app" / "sw.js").read_text(encoding="utf-8")
+        self.assertIsNone(refusal(check_app.check_language_files, list(self.CODES), boot, worker))
+
+    def test_a_missing_or_extra_key_fails(self):
+        for code in ("es", "it", "he"):
+            with self.subTest(code=code):
+                del self.dictionaries[code]["settings"]["appearance"]["textSizeHelp"]
+                self.assertIn(f"app/i18n/{code}.js is missing 1 key(s) of en.js: settings.appearance.textSizeHelp", self.refused())
+                self.setUp()
+                self.dictionaries[code]["home"]["extra"] = "?"
+                self.assertIn(f"app/i18n/{code}.js has 1 key(s) en.js does not: home.extra", self.refused())
+                self.setUp()
+
+    def test_placeholders_must_match_english(self):
+        self.dictionaries["es"]["settings"]["rows"]["about"] = "Versión {versión} · código abierto"
+        self.assertIn("app/i18n/es.js: settings.rows.about has the placeholders {versión}, en.js {version}", self.refused())
+        self.setUp()
+        # A plural's forms count together: "one" may leave {count} out when "other" has it.
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "Una luce accesa", "other": "{count} luci accese"}
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "Una luce accesa", "other": "Luci accese"}
+        self.assertIn("home.lightsOn has the placeholders none, en.js {count}", self.refused())
+        self.setUp()
+        # The command examples may give the room as {inRoom} (Hebrew), and only those.
+        self.dictionaries["es"]["command"]["example"]["lights"] = "Apaga las luces {inRoom}"
+        self.assertIsNone(refusal(check_app.check_translations, self.dictionaries))
+        self.dictionaries["es"]["command"]["example"]["scene"] = "Ejecuta {inRoom}"
+        self.assertIn("command.example.scene has the placeholders {inRoom}, en.js {name}", self.refused())
+
+    def test_plural_forms_as_in_english(self):
+        self.dictionaries["es"]["home"]["lightsOn"] = "{count} luces encendidas"
+        self.assertIn("app/i18n/es.js: home.lightsOn must be plural forms, as in en.js", self.refused())
+        self.setUp()
+        self.dictionaries["it"]["home"]["lightsOn"] = {"one": "{count} luce accesa"}
+        self.assertIn('app/i18n/it.js: home.lightsOn needs an "other" form', self.refused())
+        self.setUp()
+        del self.dictionaries["es"]["perm"]["roomCount"]["zero"]
+        self.assertIn('app/i18n/es.js: perm.roomCount needs a "zero" form, as in en.js', self.refused())
+
+    def test_the_disclaimer_word_for_word(self):
+        for code, words in (("en", "DirectorLink is an independent project."), ("es", "DirectorLink es un proyecto independiente."), ("it", "DirectorLink è indipendente.")):
+            with self.subTest(code=code):
+                self.dictionaries[code]["settings"]["about"]["independent"] = words
+                self.assertIn(f"app/i18n/{code}.js settings.about.independent must be the disclaimer word for word", self.refused())
+                self.setUp()
+        # A language without its words written down must still name all three.
+        self.assertIsNone(refusal(check_app.check_translations, {"en": self.dictionaries["en"], "fr": {**self.dictionaries["it"], "settings": {**self.dictionaries["it"]["settings"], "about": {**self.dictionaries["it"]["settings"]["about"], "independent": "DirectorLink est un projet indépendant, sans lien avec Control4 ni Snap One."}}}}))
+        self.dictionaries["he"]["settings"]["about"]["independent"] = "פרויקט עצמאי."
+        self.assertIn("app/i18n/he.js settings.about.independent must say the disclaimer (DirectorLink, Control4, Snap One)", self.refused())
+
+    def test_every_language_before_the_first_paint_and_offline(self):
+        boot = (ROOT / "app" / "theme-boot.js").read_text(encoding="utf-8")
+        worker = (ROOT / "app" / "sw.js").read_text(encoding="utf-8")
+        self.assertIn("theme-boot.js must list the same languages", refusal(check_app.check_language_files, [*self.CODES, "fr"], boot, worker) or "")
+        self.assertIn("must cache /i18n/it.js", refusal(check_app.check_language_files, list(self.CODES), boot, worker.replace('"/i18n/it.js",', "")) or "")
+
+
+class Commands(unittest.TestCase):
+    """check_app.py: Say or type a command (1.9.0, ADR-063) has a parser of its own without imports
+    but the heaters' rule (1.10.0, ADR-066), which has none, never opens a door or gate from the
+    words, and the app's headers allow the microphone."""
+
+    def setUp(self):
+        self.files = {path: (ROOT / "app" / path).read_text(encoding="utf-8") for path in ("js/command-parser.js", "js/heaters.js", "js/commands.js", "js/views/command.js", "_headers")}
 
     def test_the_real_files_pass(self):
         self.assertIsNone(refusal(check_app.check_commands, self.files))
@@ -381,6 +497,14 @@ class Commands(unittest.TestCase):
     def test_a_parser_with_an_import_fails(self):
         self.files["js/command-parser.js"] = 'import { t } from "./i18n.js";\n' + self.files["js/command-parser.js"]
         self.assertIn("must not import", refusal(check_app.check_commands, self.files) or "")
+        self.setUp()
+        self.files["js/command-parser.js"] += '\nconst late = () => import("./i18n.js");\n'
+        self.assertIn("must not import", refusal(check_app.check_commands, self.files) or "")
+
+    def test_the_parser_imports_the_heaters_rule_which_imports_nothing(self):
+        self.assertIn('from "./heaters.js"', self.files["js/command-parser.js"])
+        self.files["js/heaters.js"] = 'import { t } from "./i18n.js";\n' + self.files["js/heaters.js"]
+        self.assertIn("heaters.js must not import", refusal(check_app.check_commands, self.files) or "")
 
     def test_opening_a_door_from_the_words_fails(self):
         self.files["js/commands.js"] += "\nexport const open = (relay) => pressRelay(relay);\n"

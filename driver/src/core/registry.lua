@@ -123,16 +123,40 @@ function Registry.relayList()
     return sortedList(relays)
 end
 
+-- A camera whose driver says it is a doorbell (DirectorLink's camera agreement, 1.10.0, ADR-065):
+-- that camera as a doorbell (src/adapters/camera.lua), with the camera's id; else nil.
+local function cameraDoorbell(device)
+    if device.kind == "camera" and device.supported == true and type(device.doorbell) == "table" then
+        return device.doorbell
+    end
+    return nil
+end
+
+-- Doorbells: the DoorBirds' doorstations, and cameras that are doorbells.
 function Registry.doorbellList()
     local doorbells = {}
 
     for id, device in pairs(Registry.devices or {}) do
         if device.kind == "doorbell" and device.supported == true then
             doorbells[id] = device
+        elseif cameraDoorbell(device) then
+            doorbells[id] = device.doorbell
         end
     end
 
     return sortedList(doorbells)
+end
+
+-- The doorbell with this id (a doorstation, or a camera that is a doorbell, as a doorbell), or nil.
+function Registry.getDoorbell(id)
+    local device = Registry.devices[tonumber(id)]
+    if not device then
+        return nil
+    end
+    if device.kind == "doorbell" then
+        return device
+    end
+    return cameraDoorbell(device)
 end
 
 -- Samsung refrigerators (ADR-049).
@@ -218,6 +242,10 @@ function Registry.counts()
                 supportedBlinds = supportedBlinds + 1
             elseif device.kind == "camera" then
                 supportedCameras = supportedCameras + 1
+                -- A camera that is a doorbell is one of the doorbells too.
+                if cameraDoorbell(device) then
+                    supportedDoorbells = supportedDoorbells + 1
+                end
             elseif device.kind == "relay" then
                 supportedRelays = supportedRelays + 1
             elseif device.kind == "doorbell" then

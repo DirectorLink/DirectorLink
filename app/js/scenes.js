@@ -8,7 +8,7 @@
 
 import { sceneSet } from "./fans.js";
 import { formatTemperature, formatTemperatureRange, t } from "./i18n.js";
-import { deviceRoomId, fanLabel, fanSpeedLabel, modeLabel, musicDevices, roomById, roomName, shownBrightness } from "./model.js";
+import { deviceRoomId, fanLabel, fanSpeedLabel, lastMode, modeLabel, musicDevices, roomById, roomName, shownBrightness } from "./model.js";
 import { api, errorText, noteForbidden, refreshDevices } from "./session.js";
 import { isDual } from "./setpoints.js";
 import { FEATURES as FRIDGE_FEATURES } from "./refrigerators.js";
@@ -59,6 +59,32 @@ export async function loadScenes() {
 
 export function findScene(id) {
   return (state.scenes || []).find((scene) => scene.id === id) || null;
+}
+
+// The controller remembers each thermostat's last mode, and a climate step turns each AC on as it
+// was (`mode: "on"`, 1.10.0, ADR-070).
+export const lastModeSupported = () => state.system?.features?.climate_last_mode === true;
+
+// The ACs among `thermostats` that On, as it was leaves off for now: the controller doesn't know
+// their last mode yet (`last_mode` in GET /v1/thermostats), or knows one it can't set them to (Dry
+// from the AC's own remote). Each comes back once it has been on in one of its modes.
+export function notSeenOn(thermostats) {
+  return lastModeSupported() ? thermostats.filter((thermostat) => !lastMode(thermostat)) : [];
+}
+
+// The ACs a scene's On, as it was actions would leave off now, each once.
+export function sceneNotSeenOn(scene) {
+  const found = new Map();
+  for (const step of scene.steps || []) {
+    if (step.type === "climate" && step.set?.mode === "on") for (const thermostat of notSeenOn(stepDevices(step))) found.set(thermostat.id, thermostat);
+  }
+  return [...found.values()];
+}
+
+// "Not seen on yet: Living room AC, Bedroom AC — turn each on once, or they stay off"; null for none.
+export function notSeenOnText(thermostats) {
+  if (!thermostats.length) return null;
+  return t("scenes.notSeenOn", { count: thermostats.length, names: thermostats.map((thermostat) => isolate(thermostat.name)).join(", ") });
 }
 
 export function sceneOpensDoors(scene) {
@@ -133,6 +159,8 @@ export function stepAction(step) {
   }
   if (step.type === "climate") {
     if (set.mode === "off") return t("scenes.do.off");
+    // Each AC in its last mode, its temperature and fan as they were (1.10.0).
+    if (set.mode === "on") return t("scenes.do.onAsItWas");
     return [
       set.mode ? modeLabel(set.mode) : null,
       Number.isFinite(set.target_temperature) ? formatTemperature(set.target_temperature) : setpointsText(set),
@@ -236,6 +264,8 @@ export function resultText(result) {
     if (codes.size === 1 && codes.has("SONOS_OFF")) return t("scenes.result.sonosOff");
     if (codes.size === 1 && codes.has("NO_PLAYERS")) return t("scenes.result.noPlayers");
     if (codes.size === 1 && codes.has("NO_SONOS_ROOM")) return t("scenes.result.noSonosRoom");
+    // ACs left off: their last mode is not known yet (1.10.0).
+    if (codes.size === 1 && codes.has("NO_LAST_MODE")) return t("scenes.result.noLastMode", { count: result.skipped });
     return t("scenes.result.skipped", { count: result.skipped });
   }
   if (problems.length) return t("scenes.result.partial");

@@ -2,7 +2,90 @@
 
 ## Current release
 
-`v1.9.0` — Users and their devices (190e), say or type a command (190d), handing the home to another admin (190c), ask before opening counts only devices that can be asked (190b), the website demo's Users (190a). No D1 migration; deploy the Worker before or with the driver.
+`v1.10.0` — A press during a connection blink (1100i), weather from a saved forecast (1100h), On, as it was (1100g), relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). The Worker changes (deploy it before updating DirectorLink; it works with 1.9.0 as before); no D1 migration.
+## 1100i. A press during a connection blink (1.10.0)
+
+1. Deploy the Worker, then update DirectorLink in Composer. Remote Status reads *Connected since …*. In Workers Observability the home's `driver_hello` has `interval_s: 5`.
+2. **A blink on purpose.** Away from home (the phone on mobile data), open a room through the account, with a light someone at home can see. On the router, reconnect the internet connection (for PPPoE: Disconnect, then Connect; the home gets a new public address, which ends the controller's open connection as a route change does; not a router reboot), with the router's status page open. Tap the light once **just as the router shows the internet connected again** (or in the last 2–3 s before it, if you know how long a reconnect takes): the relay still sends into the old connection, which is dead, and a request goes again only if the driver is back within 10 s of the tap (it finds the cut at its next ping, within 5 s, and is back about 1–2 s later). Within about 10 s of the tap the light changes, once, and the app shows it done, not "home offline". A tap earlier in a longer outage is not this case and may say the home is offline, as before 1.10.0.
+   - The driver's relay log (`GET /v1/logs?category=relay`): `relay connection closed` (`connection lost`, `heard_s` about the outage's length, `retry_s` 1), then `connected to the relay` with `attempts: 1`; and `a request the relay sent again` with `outcome` `new` (the tap never reached the controller before the cut) or `answered again` (it had, and its answer was lost).
+   - Workers Observability: `request_resent` for the home with `count: 1`, then `message_relayed` for the tap.
+   - If the relay log says `no answer` instead, the internet was away longer than the driver's silence rule (about 15 s): the driver dropped the connection itself, and the tap may say the home is offline, as before. Try again with a quicker reconnect.
+3. **A door opens once.** Repeat 2 with a gate's Open (its second tap while the internet reconnects): it opens once, and History has one opening.
+4. **Turn off all AC** (the case that was lost): repeat 2 with Home's Turn off all for the ACs. Every AC goes off, once, and the result names them.
+5. **A day of use.** The relay log still shows `relay connection closed` every 20–60 minutes (the provider moving its route), each with `retry_s` 1. In Workers Observability, the home's `message_failed` lines (the app's "home offline") say in `why` what kept a tap from going again: the home "did not come back in time", DirectorLink "restarted meanwhile", its "answer was lost" (a camera picture), or the connection ended a third time. A tap that fell in a blink shows as `request_resent` instead.
+6. **Older controllers as before.** A 1.9.0 controller on the deployed Worker works as before: its `driver_hello` has `interval_s: 10`, and it never gets `request_resent`.
+7. **An update during a tap.** Tap a light through the account while DirectorLink updates in Composer: the light changes or the app says the home is offline, never twice (History).
+
+## 1100h. Weather from a saved forecast (1.10.0)
+
+1. Scenes → Schedules: the weather card shows "Forecast for HH:MM, updated today HH:MM", and the values match open-meteo.com for that hour.
+2. With a weather rule, Composer's Schedule Status ends with "weather forecast from today HH:MM". After 6 hours the time moves on (`/v1/logs?category=weather&level=debug`: "weather forecast read", 4 a day).
+3. Block the controller's internet: "updated" keeps the old time, the log says "could not read the weather forecast" once, and the weather rules still run. Restart the driver while offline: still the forecast. Internet back: within 30 minutes "updated" changes.
+4. "Hotter than 23°, 08:30–23:00, only on Shabbat and holidays": it runs at candle lighting if the forecast says 23° or more, and again on Saturday once the forecast passes 23° after 08:30. Its "schedule ran" log line has `forecast_from`.
+5. After a warm night, on Saturday at 08:30 the rule and "Main Morning" (08:30) run in the same minute: the rule runs second (its History entry is the newer one), and the main ACs end up on.
+6. On a hot day after the rule ran, restore a backup (Settings → Controller → Backup): the rule does not run again that day; it runs the next day once its hours begin and it is hot.
+7. Go back to 1.9.0 and then to 1.10.0 again with the controller's internet blocked: the weather card still shows the forecast ("updated" from before going back), and the weather rules run.
+
+## 1100g. On, as it was, and Keep (1.10.0)
+
+1. After the update, turn a few ACs on in different modes, temperatures and fan speeds (Control4 app, keypad), then off. `GET /v1/thermostats` shows each `last_mode`.
+2. Shabbat/Holiday Main AC → Edit each AC action → Mode **On, as it was** → Save. The step reads "On, as it was"; Composer's Print Schedules and Scenes shows `-> on, as it was`.
+3. Run it with those ACs off: each comes back in its own mode, temperature and fan; the log shows only SET_MODE_HVAC per AC. An AC already on gets no command.
+4. An AC not turned on since the update: the AC action (Mode On, as it was) and the scene's card in Scenes say "Not seen on yet: <its name> — turn it on once, or it stays off". The run says "1 AC was left off: its last mode isn't known yet", and History says so. Run it from a schedule: admins get "the schedule for <scene> had a problem" once. Turn it on and off: the line goes, and the next run brings it back.
+5. Keep: an AC action Cool, Temperature Keep, Fan Keep, Try it now on an AC set to heat 26: it switches to cool, its setpoint and fan stay.
+6. Commands, with the AC off: "הדלק את המזגן בסלון" turns it on in its last mode; for an AC with no known last mode it asks which mode; a mode said ("…על קר") uses that mode.
+7. Restart the driver: the last modes are kept.
+
+## 1100f. Relay door and gate controllers (1.10.0)
+
+On the owner's controller the gate at the DoorBird is a Relay Gate Controller (530, its button 531).
+
+1. After the update, DirectorLink's log says the controller is set up as a gate: its relays, its contacts and `relay_configuration` (Pulse, Hold, or "not given by Director").
+2. The app lists the gate in its room ("Gate", with Open or Closed if a contact is bound). Open with its two taps opens it once: the log shows one OPEN to 530, and nothing else is sent to it.
+3. Open it from the Control4 app: History says it was opened in Control4, and admins who chose door alerts get one alert.
+4. A favorite, a scene's door step, an ask-to-open link and "open the gate" by its name all open it once. A member without doors sees it and its state, without Open.
+5. A controller set to Relay Configuration Hold (a test controller): Open answers that holding isn't allowed unless Relay Hold is Allowed in Composer, at once after the change (no Refresh Project).
+6. A KNX door relay bound to a controller stays one door under its own name; History and favorites keep working. A KNX relay on a controller's Close or Stop connection is not listed as a door.
+7. Restart the controller: the gate is listed again, and its ask-to-open link is still there.
+8. A gate with a contact (a test controller): open it from the app, let it close, then open it from the Control4 app within a minute: History has both, the second "In Control4".
+9. Keep 530 on the official DoorBird driver's relay: moved to the DirectorLink · DoorBird driver's relay, an opening from the app may also show "In Control4" on the doorbell (ADR-069).
+
+## 1100e. Spanish, Italian, and Appearance and language (1.10.0)
+
+1. Settings shows **Appearance and language** as a row; open it: Language, Theme, Colors and Text size. Language, theme and colors change on your other devices too; Text size only on this one.
+2. Text size Larger at 320 px, in each language: Home, a room, Climate, Scenes, Users and a dialog fit, nothing cut or overlapping. Small on an iPhone: tapping a text field doesn't zoom the page.
+3. Español, then Italiano: every screen in that language; a doorbell ring and a camera alert arrive in it; dates and numbers in its format. Spanish says "emparejar" for pairing with a code and "vincular" for linking the home to an account.
+4. Back to English and Hebrew: all as before; right to left in Hebrew.
+5. **Alerts on a page of their own:** Settings shows **Alerts** (התראות) between Account and Appearance and language, with a line: "Off", "On · 4 of 7 kinds", "Sign in to get alerts", or on iPhone in Safari "Add to Home Screen to get alerts". Settings → Controller no longer has the alerts card. Open Alerts: the switch and its kinds as before; Back returns to Settings with the Alerts row focused. Signed out, the page offers Sign in and comes back to it; signed out with alerts still on (the account's session ended), the row reads "On · sign in again to change them" and the page shows the switch, whose Off works. In Safari on iPhone, signed out, the row and page say Add to Home Screen, without Sign in. A door's Ask screen with alerts off links to it. Check at 320 px in Hebrew and Larger text.
+
+## 1100d. Commands that do more, in four languages (1.10.0)
+
+1. Hebrew, iPhone Home Screen app: dictate "כבו את האור במטבח ותסגרו את התריסים": two parts shown, both done. "Kitchen lights off. Close the blinds." (two sentences): two parts.
+2. "תעלה את המזגן בסלון": +1°. "kitchen lights brighter": +20. "תגביר את המוזיקה בסלון": volume +10. "alza il volume in cucina di 10" and "sube el volumen un 10" (no unit): nothing.
+3. These do nothing: "האור בחדר הורים דלוק", "שער חניה פתוח" (questions without "?"), "יותר חם לי", "apaga la luz de la cocina a las siete", "no apagues la luz", "spegni la luce alle sette", "turn off the lights in the room" (asks which room).
+4. "תכבה את רחצה ספוטים כניסה ואת המזגן": asks which room (never the Entrance AC).
+5. Español: "enciende la luz de la cocina y apaga la del salón": the kitchen on, only the salón's lights off. Italiano: "spegni le luci della cucina e metti il condizionatore a 23".
+6. "open the main gate and turn on the porch light": the light goes on; the gate waits for its own second tap.
+7. Change the app's language with words in the command field: back on Home, the field and its answer are empty.
+
+## 1100c. Heaters left as they are (1.10.0)
+
+1. "כבו את האורות בחדר הורים": דוד הורים stays on, and the answer says it was left. "תכבו את דוד הורים": it goes off.
+2. Home's Turn off all: the count leaves the heaters out; the second tap and the result name them; they stay on.
+3. A room with a heater on: All off leaves it on, and a note under the button says so.
+4. A scene that turns off a room's lights still turns off its heaters (scenes are unchanged).
+5. A weather schedule "hotter than 23°, 08:00–23:00, only on Shabbat and holidays": on a hot Friday it runs at candle lighting; a 23:20 scene turns the AC off; on Saturday it runs again soon after 08:00 if it's above 23°, even after a warm night (the log's "schedule ran"), and not again that day while it stays hot.
+
+## 1100b. One agreement for every DirectorLink camera driver (1.10.0)
+
+1. Log Level Info: each Hikvision camera logs "a camera of DirectorLink's camera agreement" with `events_by`. Note which: "by DIRECTORLINK_CAMERA_EVENTS" (Hikvision 1.1 with the variable), "by name from Director", or "Hikvision event 1". At Debug, after Refresh Project, "what Director gives of a camera driver's events" shows whether Control4 lists a driver's events.
+2. Walk past a camera with camera alerts on: one alert, in the app's language.
+3. With the DirectorLink · DoorBird (or UniFi) driver set to the agreement as a doorbell: it shows with the doorbells; a press shows Home's banner with its live picture and a ring alert with the app closed; a second press within 30 s gives no second alert; its room shows its last rings. Updating DirectorLink with the app open shows no banner.
+4. `GET /v1/devices?type=doorbell` lists the doorbell camera; `POST /v1/doorbells/<id>/open` on it answers 409 NOT_SUPPORTED.
+
+## 1100a. The website (1.10.0)
+
+1. directorlink.io says "In English, Hebrew, Spanish and Italian", and the alerts line mentions DirectorLink Drivers.
 
 ## 190e. Users and their devices (1.9.0)
 
@@ -43,7 +126,7 @@
 
 ## 190b. Ask before opening counts only devices that can be asked (1.9.0)
 
-1. iPhone Home Screen app: alerts on, make an ask link. In iOS Settings turn off Notifications for DirectorLink, then open the app: Settings → Controller shows alerts off. Run the link: "nobody", and History says "Nobody was asked". Turn alerts on again: the next run is "asked".
+1. iPhone Home Screen app: alerts on, make an ask link. In iOS Settings turn off Notifications for DirectorLink, then open the app: Settings → Alerts shows alerts off. Run the link: "nobody", and History says "Nobody was asked". Turn alerts on again: the next run is "asked".
 2. In Chrome with alerts on, remove the site's notification permission without opening the app. Run the ask link: "asked" once (the push fails), then "nobody". The Worker log has `alerts_gone_told`.
 3. A member with doors makes a link on phone A; on their device B, the door's Ask screen lists phone A's link under "On your other devices"; Remove asks first, and A's link then gets 404.
 
@@ -104,7 +187,7 @@
 1. Log Level Debug. Open Cameras through the account (mobile data): every tile gets its picture within a few seconds, and the browser's console says "DirectorLink: 11 camera pictures in … ms, 4 at once (remote)". Note it, and the same at home.
 2. The driver log's `snapshot` lines: after the first round, `requests` is 1 a picture (2 means that camera or NVR took only one kept login at a time: note which), and `in_flight` is never above 8.
 3. Two devices on Cameras at once: the pictures stay right, and there is no `CAMERA_LOGIN_FAILED`. At home, a camera's full view (and the doorbell's banner when it rings) shows a new picture about every second, not every two.
-4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Controller → Alerts on this device shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
+4. **Camera alerts:** with the DirectorLink · Hikvision Camera driver and its Alert on for the garden camera, Settings → Alerts shows "A camera sees a person, a vehicle or a line crossed", off. Turn it on, close the app, walk past the camera: "Person at Garden at HH:MM." within seconds, titled "Camera alert". Tapping opens that camera's full view; Back goes to Cameras.
 5. Walk past again within a minute: no second alert. A member without cameras, or without that camera's room, gets none. In Hebrew the words are Hebrew.
 6. This checks that the Hikvision driver's Alert reaches DirectorLink and that `LAST_ALERT` is read at it (Person, Vehicle, Line Crossing…).
 
@@ -199,7 +282,7 @@
 
 ## 0zo. Alerts (1.6.0)
 
-1. On a computer (Chrome, Edge or Firefox), signed in as an admin on a linked device: Settings → Controller → Alerts on this device → allow. It says "Alerts are on for this device". In Hebrew, the card is in Hebrew.
+1. On a computer (Chrome, Edge or Firefox), signed in as an admin on a linked device: Settings → Alerts → Alerts on this device → allow. It says "Alerts are on for this device". In Hebrew, the card is in Hebrew.
 2. Turn Remote Access Off in Composer for 2 minutes, then On: no notification.
 3. Turn it Off for 11 minutes: one notification, "Your home – DirectorLink has not reached it since HH:MM…", and no second one for the same absence. Tapping it opens History.
 4. Unplug the controller's network for 11 minutes (a connection that dies silently): one notification. Plug it back in; it reconnects.

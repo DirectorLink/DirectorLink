@@ -717,6 +717,20 @@ function tests.devices_are_matched_by_id_else_by_name_in_the_same_room_and_the_r
     T.same(list(s.mock, old.key, "/v1/profile").prefs.favorites, { "light:120", "thermostat:30", "blind:50" })
 end
 
+-- A camera that is a doorbell (1.10.0, ADR-065) is the doorbell of its favorite "doorbell:<id>":
+-- kept by a restore, as a DoorBird's is.
+function tests.a_doorbell_camera_s_favorite_comes_back_with_a_restore()
+    local s = start(Mock.withAgreementCameras(Mock.project()))
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = s.key, body = { prefs = {
+        favorites = { "doorbell:68", "camera:68", "doorbell:93" },
+    } } }).status, 200)
+    local document = export(s)
+    T.eq(T.http(s.mock, "PATCH", "/v1/profile", { key = s.key, body = { prefs = { favorites = {} } } }).status, 200)
+    local done = replace(s, document)
+    T.eq(done.references.unmatched_count, 0, "nothing left out")
+    T.same(list(s.mock, s.key, "/v1/profile").prefs.favorites, { "doorbell:68", "camera:68", "doorbell:93" })
+end
+
 function tests.a_room_that_is_gone_never_becomes_the_whole_home()
     local old = start()
     furnish(old)
@@ -1693,6 +1707,21 @@ function tests.a_restore_waits_for_the_project()
     local answer = restore(s, { document = export(s) })
     T.eq(answer.status, 503)
     T.eq(answer.json.code, "PROJECT_NOT_READY")
+end
+
+-- A climate step that turns each AC on as it was (1.10.0, ADR-070) is kept as it is.
+function tests.a_step_that_turns_each_ac_on_as_it_was_comes_back()
+    local old = start()
+    local made = T.http(old.mock, "POST", "/v1/scenes", { key = old.key, body = { name = "Shabbat AC", steps = {
+        { type = "climate", device_ids = { 30 }, set = { mode = "on" } },
+        { type = "climate", room_id = 11, set = { mode = "on" } },
+    } } })
+    T.eq(made.status, 201, made.body)
+    local document = export(old)
+    T.same(document.sections.scenes.scenes[1].steps[2].set, { mode = "on" })
+    local s = start()
+    replace(s, document)
+    T.same(list(s.mock, s.key, "/v1/scenes").items[1].steps, made.json.steps)
 end
 
 return tests

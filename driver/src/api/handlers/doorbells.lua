@@ -12,7 +12,8 @@ local function findDoorbell(ctx)
     if not id then
         return nil, problem
     end
-    local device = ctx.services.registry.getDevice(id)
+    -- A DoorBird's doorstation, or a camera that is a doorbell (ADR-065), as a doorbell.
+    local device = ctx.services.registry.getDoorbell(id)
     -- A doorbell the caller may not see is, for them, one that does not exist (ADR-054).
     if not device or device.kind ~= "doorbell" or device.supported ~= true or not Access.canSee(ctx.apiKey, device) then
         return nil, Problem.notFound("Doorbell", id)
@@ -57,6 +58,14 @@ function Doorbells.open(ctx)
     local device, problem = findDoorbell(ctx)
     if not device then
         return problem
+    end
+    -- One that opens nothing (a doorbell camera, a DoorBird without its button) says so first,
+    -- whatever Door Control and the caller's doors: no setting would let it open.
+    if not (device.capabilities and device.capabilities.open == true) then
+        return Problem.fromAdapter({
+            code = "ACTION_NOT_SUPPORTED",
+            message = device.camera_doorbell and "This doorbell has nothing to open" or "This DoorBird has no button to open with",
+        })
     end
     if not Access.canOpen(ctx.apiKey, device) then
         return Problem.new(403, "FORBIDDEN", "Opening doors and gates is not among this person's permissions")

@@ -5,7 +5,9 @@
 -- - Weather schedules run when the weather turns: hotter than the threshold, wind stronger than it,
 --   or rain starting; on their days, within their hours, and (by default) at most once a day. They
 --   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
---   it, or it has been dry for an hour.
+--   it, or it has been dry for an hour. The weather is the saved forecast's hour for now (1.10.0,
+--   ADR-071, src/core/weather.lua), with or without the internet. In a minute when other schedules
+--   run too, they run after them (1.10.0).
 -- - Shabbat schedules (the Jewish calendar, ADR-037) run when a holy period begins (candle
 --   lighting) or ends (havdalah), plus their offset, once per period. "during_shabbat" keeps a
 --   time, sun or weather schedule away from holy time ("skip") or to it ("only"). While the
@@ -276,6 +278,16 @@ local function inHours(trigger, minute)
     return minute >= from or minute < to
 end
 
+-- Whether a run left an AC off because its last mode is not known yet (On, as it was: ADR-070).
+local function leftOff(result)
+    for _, problem in ipairs(type(result) == "table" and type(result.problems) == "table" and result.problems or {}) do
+        if type(problem) == "table" and problem.code == "NO_LAST_MODE" then
+            return true
+        end
+    end
+    return false
+end
+
 local function run(schedule, now, note, weather)
     local runtime = Schedules.runtime(schedule.id)
     local ok, result, failure = pcall(state.services.runScene, schedule.scene_id, { id = "schedule:" .. schedule.id, role = "member" })
@@ -302,14 +314,17 @@ local function run(schedule, now, note, weather)
         schedule = schedule.id,
         scene = schedule.scene_id,
         note = note or Json.null,
+        -- The weather that decided it: the forecast read then (ADR-071).
+        forecast_from = weather and weather.saved_at and Clock.iso(weather.saved_at) or Json.null,
         ran = lastRun.ran or 0,
         skipped = lastRun.skipped or 0,
         failed = lastRun.failed or 0,
         error = lastRun.error or Json.null,
     })
-    -- A device refused, or the scene could not run: the home's admins are alerted (ADR-047), with
-    -- the scene's name sealed to them (ADR-050).
-    if state.services.onFailed and (lastRun.error or (lastRun.failed or 0) > 0) then
+    -- A device refused, the scene could not run, or it left an AC off whose last mode is not known
+    -- yet (1.10.0, ADR-070): the home's admins are alerted, once a run (ADR-047), with the scene's
+    -- name sealed to them (ADR-050).
+    if state.services.onFailed and (lastRun.error or (lastRun.failed or 0) > 0 or leftOff(result)) then
         local scene = Scenes.find(schedule.scene_id)
         pcall(state.services.onFailed, now, { what = scene and scene.name or nil })
     end
@@ -472,7 +487,7 @@ function Scheduler.tick(now)
             -- Nothing.
         elseif trigger.type == "weather" then
             if weather then
-                local armedBefore, drySince = runtime.armed, runtime.dry_since
+                local armedBefore, drySince, windowBefore = runtime.armed, runtime.dry_since, runtime.window_day
                 if runtime.armed == nil then
                     runtime.armed = true
                 end
@@ -482,6 +497,16 @@ function Scheduler.tick(now)
                 if trigger.from and Schedules.minutes(trigger.from) > Schedules.minutes(trigger.to) and info.minute < Schedules.minutes(trigger.to) then
                     day = dayBefore(info)
                 end
+                -- A rule with hours is ready again when its hours begin each day (1.10.0): "08:00 to
+                -- 23:00, hotter than 23°" runs each day from 08:00 once it is that hot, whatever the
+                -- night was like. A rule that already ran today before 1.10.0 kept no such day: it
+                -- is not made ready again the same day.
+                if trigger.from and inHours(trigger, info.minute) and runtime.window_day ~= day.date then
+                    if not (runtime.window_day == nil and runtime.fired_day == day.date) then
+                        runtime.armed = true
+                    end
+                    runtime.window_day = day.date
+                end
                 local onceDone = trigger.once_a_day ~= false and runtime.fired_day == day.date
                 -- Held back in holy time ("skip"), a rule stays armed: it runs after havdalah if
                 -- the weather still passes.
@@ -489,10 +514,10 @@ function Scheduler.tick(now)
                     runtime.armed = false
                     runtime.dry_since = nil
                     runtime.fired_day = day.date
-                    run(schedule, now, trigger.kind, weather)
-                    ran = ran + 1
+                    -- Runs with the minute's others, after them (below).
+                    due[#due + 1] = { schedule = schedule, at = now, note = trigger.kind, weather = weather, reacts = true }
                 end
-                changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince
+                changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince or runtime.window_day ~= windowBefore
             end
         else
             local key, at, late
@@ -530,18 +555,24 @@ function Scheduler.tick(now)
                             remember(schedule, { outcome = "skipped", reason = "no_weather" })
                         end
                     elseif met then
-                        due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil }
+                        local decided = next(schedule.only_if or {}) ~= nil and weather or nil
+                        due[#due + 1] = { schedule = schedule, at = at, note = late and "late" or nil, weather = decided }
                     else
                         runtime.last_run = { at = Clock.iso(now), skipped_by = "only_if" }
-                        Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id })
+                        Log.info("schedules", "schedule skipped: its conditions were not met", { schedule = schedule.id, forecast_from = Clock.iso(weather.saved_at or now) })
                         remember(schedule, { outcome = "skipped", reason = "only_if" })
                     end
                 end
             end
         end
     end
-    -- In the order they were due: after a restart, what is caught up runs oldest first.
+    -- In the order they were due: after a restart, what is caught up runs oldest first. Weather
+    -- rules run last (1.10.0): they react to the weather now, so a time, sun or Shabbat schedule of
+    -- the same minute (a morning scene at 08:30, when a rule's hours begin) cannot undo what they did.
     table.sort(due, function(a, b)
+        if (a.reacts == true) ~= (b.reacts == true) then
+            return b.reacts == true
+        end
         if a.at ~= b.at then
             return a.at < b.at
         end
@@ -551,7 +582,7 @@ function Scheduler.tick(now)
         if item.note == "late" then
             Log.info("schedules", "schedule caught up after a restart", { schedule = item.schedule.id, due_at = Clock.iso(item.at) })
         end
-        run(item.schedule, now, item.note)
+        run(item.schedule, now, item.note, item.weather)
         ran = ran + 1
     end
     if ran > 0 or changed then
@@ -580,7 +611,7 @@ end
 -- `services.runScene(sceneId, caller)` runs a saved scene and returns its result;
 -- `services.calendar` is the Jewish calendar (src/core/jewish_calendar.lua);
 -- `services.onFailed(at, { what })`, if any, is told of each run that failed (a device refused, or
--- an error), with its scene's name.
+-- an error) or left an AC off with no last mode known, with its scene's name.
 function Scheduler.start(services)
     state.services = services
     state.firstTick = true

@@ -1,0 +1,101 @@
+// Made-up homes named in Spanish and in Italian, for Say or type a command (1.10.0, ADR-068):
+// tests/app/command-parser-es-it.test.mjs and the README's sentences (command-parser.test.mjs).
+// Rooms, lights, an AC with floor heating's words, blinds and an awning, a fan, Sonos rooms,
+// doors and gates, scenes, and heaters wired as lights (as a family names them).
+
+const light = (id, name, room, fields = {}) => ({ kind: "light", id, name, room, dimmable: true, on: false, ...fields });
+const thermostat = (id, name, room, fields = {}) => ({ kind: "thermostat", id, name, room, modes: ["off", "cool", "heat", "auto"], mode: "cool", dual: false, min: 16, max: 30, ...fields });
+
+export const ES = {
+  rooms: [
+    { id: 1, names: ["Salón"] },
+    { id: 2, names: ["Cocina"] },
+    { id: 3, names: ["Dormitorio principal"] },
+    { id: 4, names: ["Habitación de los niños"] },
+    { id: 5, names: ["Terraza"] },
+    { id: 6, names: ["Garaje"] },
+    { id: 7, names: ["Baño principal"] },
+    { id: 8, names: ["Entrada"] },
+    { id: 9, names: ["Cuarto de Nora"] },
+  ],
+  devices: [
+    light(100, "Luces del techo", 1, { on: true }),
+    light(101, "Lámpara de pie", 1),
+    light(102, "Tira LED", 1, { dimmable: false }),
+    light(103, "Isla", 2, { on: true }),
+    light(104, "Focos", 2, { on: true }),
+    light(105, "Lámpara de noche", 3),
+    light(106, "Luces del techo", 3),
+    light(107, "Luz", 4),
+    // Heaters wired as lights, kept on or off by Composer programming.
+    light(108, "Termo niños", 4, { dimmable: false, on: true }),
+    light(109, "Toallero", 7, { dimmable: false, on: true }),
+    light(110, "Suelo radiante", 7, { dimmable: false }),
+    light(111, "Luz espejo", 7),
+    light(112, "Luces terraza", 5, { dimmable: false }),
+    light(113, "Lámpara", 9),
+    thermostat(200, "Aire acondicionado", 1, { modes: ["off", "cool", "heat", "auto", "fan"] }),
+    thermostat(201, "Clima dormitorio", 3, { mode: "off" }),
+    thermostat(202, "Aire niños", 4, { mode: "auto", dual: true }),
+    { kind: "blind", id: 300, name: "Persiana", room: 1, position: true },
+    { kind: "blind", id: 301, name: "Persiana", room: 2, position: true },
+    { kind: "blind", id: 302, name: "Toldo", room: 5, position: false },
+    { kind: "blind", id: 303, name: "Estor", room: 3, position: true },
+    { kind: "fan", id: 400, name: "Ventilador", room: 3, on: false },
+    { kind: "music", id: "RINCON_ES1", name: "Salón", room: 1 },
+    { kind: "music", id: "RINCON_ES2", name: "Cocina", room: 2 },
+    { kind: "relay", id: 500, name: "Puerta del garaje", room: 6, canOpen: true },
+    { kind: "relay", id: 501, name: "Puerta principal", room: 8, canOpen: true },
+  ],
+  scenes: [
+    { id: "es000001", name: "Buenas noches" },
+    { id: "es000002", name: "Cine" },
+    { id: "es000003", name: "Salir de casa" },
+  ],
+};
+
+export const IT = {
+  rooms: [
+    { id: 1, names: ["Soggiorno"] },
+    { id: 2, names: ["Cucina"] },
+    { id: 3, names: ["Camera da letto"] },
+    { id: 4, names: ["Cameretta"] },
+    { id: 5, names: ["Terrazzo"] },
+    { id: 6, names: ["Garage"] },
+    { id: 7, names: ["Bagno"] },
+    { id: 8, names: ["Ingresso"] },
+    { id: 9, names: ["Camera di Dino"] },
+  ],
+  devices: [
+    light(100, "Luci del soffitto", 1, { on: true }),
+    light(101, "Lampada da terra", 1),
+    light(102, "Striscia LED", 1, { dimmable: false }),
+    light(103, "Isola", 2, { on: true }),
+    light(104, "Faretti", 2, { on: true }),
+    light(105, "Lampada comodino", 3),
+    light(106, "Luci del soffitto", 3),
+    light(107, "Luce", 4),
+    light(108, "Scaldabagno", 7, { dimmable: false, on: true }),
+    light(109, "Scaldasalviette", 7, { dimmable: false }),
+    light(110, "Luce specchio", 7),
+    light(111, "Luci terrazzo", 5, { dimmable: false }),
+    light(112, "Lampada", 9),
+    thermostat(200, "Condizionatore", 1, { modes: ["off", "cool", "heat", "auto", "fan"] }),
+    thermostat(201, "Climatizzatore camera", 3, { mode: "off" }),
+    thermostat(202, "Clima cameretta", 4, { mode: "auto", dual: true }),
+    { kind: "blind", id: 300, name: "Tapparella", room: 1, position: true },
+    { kind: "blind", id: 301, name: "Tapparella", room: 2, position: true },
+    { kind: "blind", id: 302, name: "Tenda da sole", room: 5, position: false },
+    { kind: "blind", id: 303, name: "Persiana", room: 3, position: true },
+    { kind: "fan", id: 400, name: "Ventilatore", room: 3, on: false },
+    { kind: "music", id: "RINCON_IT1", name: "Soggiorno", room: 1 },
+    { kind: "music", id: "RINCON_IT2", name: "Cucina", room: 2 },
+    { kind: "relay", id: 500, name: "Porta del garage", room: 6, canOpen: true },
+    { kind: "relay", id: 501, name: "Cancello", room: 8, canOpen: true },
+  ],
+  scenes: [
+    { id: "it000001", name: "Buonanotte" },
+    { id: "it000002", name: "Cinema" },
+    { id: "it000003", name: "Esco di casa" },
+  ],
+};

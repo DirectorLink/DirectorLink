@@ -8,9 +8,11 @@ local Fan = require("src.adapters.fan")
 local Blind = require("src.adapters.blind")
 local Camera = require("src.adapters.camera")
 local KnxRelay = require("src.adapters.knx_relay")
+local RelayController = require("src.adapters.relay_controller")
 local DoorBird = require("src.adapters.doorbird")
 local Alarm = require("src.adapters.alarm")
 local Refrigerator = require("src.adapters.refrigerator")
+local LastModes = require("src.core.last_modes")
 
 local Manager = {}
 
@@ -22,6 +24,9 @@ local adapters = {
     Fan,
     Blind,
     Camera,
+    -- Before KnxRelay: a KNX Contact/Relay that is a Relay Door or Gate Controller's door is the
+    -- controller's (ADR-069).
+    RelayController,
     KnxRelay,
     DoorBird,
     Alarm,
@@ -35,7 +40,8 @@ local matched = {}
 -- Told of each device event an adapter took (alerts: a doorbell's ring, a door opened elsewhere).
 local eventListener = nil
 -- When DirectorLink last sent each device a command that worked (Clock.now()): what the device
--- reports soon after is that command's doing.
+-- reports soon after is that command's doing. A command to a device counts for its partners too (a
+-- gate's controller and the DoorBird doorbell whose relay it drives, ADR-069).
 local commanded = {}
 -- Device whose events (and variables) belong to another device: a DoorBird driver's events -> its
 -- doorbell, a Samsung Refrigerator driver's variables and events -> its refrigerator.
@@ -81,6 +87,10 @@ local function attach(id, device, adapter, before, quietly)
         eventTargets[tonumber(device.event_source_id)] = id
     end
     countKind(device, 1)
+    -- A thermostat's mode, when it is not off: the one a scene turns it back on in (ADR-070).
+    if device.kind == "climate" then
+        pcall(LastModes.saw, device, registry)
+    end
     return true
 end
 
@@ -103,6 +113,16 @@ function Manager.initialize(deviceRegistry, previous)
     for _, adapter in ipairs(adapters) do
         if adapter.reset then
             adapter.reset()
+        end
+    end
+    -- What adapters must know of the whole project before any device starts (which KNX relay is a
+    -- door controller's, ADR-069).
+    for _, adapter in ipairs(adapters) do
+        if adapter.survey then
+            local ok, err = pcall(adapter.survey, registry)
+            if not ok then
+                log("survey failed: " .. tostring(err))
+            end
         end
     end
 
@@ -265,6 +285,30 @@ function Manager.setUpAgain(deviceIds)
     return results
 end
 
+-- Devices whose driver now says something else of what they are, which their adapter looks at a few
+-- a minute (the scheduler's tick): a camera driver's marker of DirectorLink's camera agreement that
+-- came after the driver started, or its kind (ADR-065). Each is set up again, as at a driver update.
+-- Returns id -> true when the device works now, false if not.
+function Manager.lookAgain()
+    local results = {}
+    if not registry then
+        return results
+    end
+    for _, adapter in ipairs(adapters) do
+        if adapter.lookAgain then
+            local ok, ids = pcall(adapter.lookAgain, registry)
+            if not ok then
+                log("looking at devices again failed: " .. tostring(ids))
+            elseif type(ids) == "table" and #ids > 0 then
+                for id, works in pairs(Manager.setUpAgain(ids)) do
+                    results[id] = works
+                end
+            end
+        end
+    end
+    return results
+end
+
 function Manager.counts()
     return {
         total = initializedCounts.total,
@@ -298,13 +342,19 @@ function Manager.onVariableChanged(deviceId, variableId, value)
         log("state update failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
+    -- Whoever changed a thermostat's mode (ADR-070).
+    if changed == true and device.kind == "climate" then
+        pcall(LastModes.saw, device, registry)
+    end
 
     return changed == true
 end
 
 function Manager.onDeviceEvent(deviceId, eventId)
-    deviceId = tonumber(deviceId)
-    deviceId = eventTargets[deviceId] or deviceId
+    -- The device that fired it, which the adapter and the listener are told too (a door controller's
+    -- door hears its controller and its own KNX relay, whose event ids differ in meaning).
+    local sourceId = tonumber(deviceId)
+    deviceId = eventTargets[sourceId] or sourceId
     local adapter = attached[deviceId]
     if not adapter or not adapter.onDeviceEvent or not registry then
         return false
@@ -318,13 +368,26 @@ function Manager.onDeviceEvent(deviceId, eventId)
     for key, value in pairs(type(device.state) == "table" and device.state or {}) do
         before[key] = value
     end
-    local ok, changed = pcall(adapter.onDeviceEvent, device, eventId)
+    local ok, changed = pcall(adapter.onDeviceEvent, device, eventId, sourceId)
     if not ok then
         log("event handling failed for device " .. tostring(deviceId) .. ": " .. tostring(changed))
         return false
     end
+    -- A door that closed again (a Relay Door, Gate or Garage Door Controller's, ADR-069): its next
+    -- opening is not DirectorLink's last command's doing, however soon it comes.
+    if changed == true and adapter.closed then
+        local closedOk, closed = pcall(adapter.closed, device, eventId, before, sourceId)
+        if closedOk and closed == true then
+            commanded[deviceId] = nil
+            for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+                if tonumber(partner) then
+                    commanded[tonumber(partner)] = nil
+                end
+            end
+        end
+    end
     if changed == true and eventListener then
-        local told, err = pcall(eventListener, device, eventId, before)
+        local told, err = pcall(eventListener, device, eventId, before, sourceId)
         if not told then
             log("event listener failed for device " .. tostring(deviceId) .. ": " .. tostring(err))
         end
@@ -332,8 +395,8 @@ function Manager.onDeviceEvent(deviceId, eventId)
     return changed == true
 end
 
--- `listener(device, eventId, before)` is told of each event an adapter took, after it did (`before`:
--- a copy of the device's state before).
+-- `listener(device, eventId, before, sourceId)` is told of each event an adapter took, after it did
+-- (`before`: a copy of the device's state before; `sourceId`: the device that fired it).
 function Manager.onEvent(listener)
     eventListener = listener
 end
@@ -380,7 +443,13 @@ function Manager.execute(deviceId, action, params)
         return false, result
     end
 
-    commanded[deviceId] = Clock.now()
+    local now = Clock.now()
+    commanded[deviceId] = now
+    for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+        if tonumber(partner) then
+            commanded[tonumber(partner)] = now
+        end
+    end
     return true, result
 end
 

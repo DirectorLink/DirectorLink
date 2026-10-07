@@ -52,11 +52,11 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Whether the controller lets every user add their own devices (1.9.0) | `features.users` | that the home's last `hello` listed `users`; nothing about anyone | yes |
 | Alerts: this browser's push subscription | its own | its push address and keys, for those who switched alerts on; since 1.7.0 also the key id its device uses, and whether it wants the offline alert | that this key's device switched them on, and its choices (1.7.0); since 1.9.0 also when the account service has no browser left for that key (`alerts_gone`, key ids only, ADR-062), which the cloud knew |
 | Alerts: the home was offline (the cloud's own) | its kind, home id and time | its kind, home id and time | — |
-| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom, the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
+| Alerts the controller makes (1.7.0): a doorbell rang, a door opened and by whom (since 1.10.0 also a Relay Door, Gate or Garage Door Controller's: the same kind, ADR-069), the refrigerator, a schedule; since 1.8.0 what a camera of the DirectorLink · Hikvision drivers saw (since 1.10.0 any camera driver of DirectorLink's camera agreement, its doorbell cameras' rings too: the same kinds, ADR-065) | what happened and where, opened with its own alert key | **never** what or which: only which key ids one is for, when, and whether it is brief, all the same size; that tells some kinds (*Metadata* below): a brief one is a ring or (1.8.0) a door's question, one that is not brief for a key that is not an admin key is the refrigerator or (1.8.0) a camera | yes |
 | A device's alert key (1.7.0) | its own, kept for its service worker | **never** | derived from that device's lock key |
 | API key and lock key | its own | **never** | lock keys of the home's devices; API keys only as hashes |
 | Devices, rooms, states, commands, pictures | yes | **never** (locked) | yes |
-| Say or type a command (1.9.0, ADR-063): the words | yes: understood on the device; when spoken, the browser's own speech service hears the sound (Chrome's at Google, Edge's at Microsoft, Safari's at Apple), not DirectorLink | **never** | only the requests it makes, as a tap makes them |
+| Say or type a command (1.9.0, ADR-063; several things and steps, 1.10.0, ADR-066; Spanish and Italian, ADR-068): the words | yes: understood on the device; when spoken, the browser's own speech service hears the sound (Chrome's at Google, Edge's at Microsoft, Safari's at Apple), not DirectorLink | **never** | only the requests it makes, as a tap makes them |
 | Automatic backups (1.6.0) | opened with the backup password | sealed: their date, size and which password's key; **never** what they hold | makes them; cannot open them |
 | The backup password | while typed | **never** | **never** (only its public key) |
 | DirectorLink in numbers (1.7.0): homes linked, people with an account, driver downloads | the totals, like anyone | counts them once an hour; publishes the totals only (ADR-052) | sends nothing for them |
@@ -64,6 +64,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | Joining from another device (1.7.0): the invitation sent to the new device | yes (the two devices) | sealed: **never** what it holds | made it; sees an ordinary for-me invitation |
 | Joining from another device (1.8.0): the push that a new device asks | its own choice; the push, opened by its worker | nothing new: it made the request, and pushes only that a device of the account asks, the home, when and the request's id (never the label); and whether each browser wants the push | no |
 | DirectorLink's version on the controller | its own controller's (`GET /v1/system`) | yes, from every connection (`X-DirectorLink-Version`, the `hello`); since 1.8.0 it can refuse versions below a minimum it is set to (ADR-059), which teaches it nothing new | yes |
+| A request sent again after a lost connection (1.10.0, ADR-072) | — | a random id per start of the driver (`instance` in the `hello`), so that it tells a restart from a reconnect (it saw each connection already); the sealed request, in memory, a few seconds longer | the relay's ids of what it got, and its sealed answers, in memory for up to 2 minutes |
 | Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
 | Ask-before-opening links (1.8.0): a door's link that asks its person | shown once, when its person makes it; the question opened with the device's alert key | as a scene link's run: **its id and secret in transit**, when, and the result word (asked, waiting, nobody, doors_off, not_asked), so that it is an ask link; then a brief sealed `notify` for its person's key ids, so which keys a link asks; which door, and the question, **never** | the link's id, a hash of its secret, its door and the key that made it; every question and the opening that answered it in History |
 | When, and how much data, flows | yes | yes | yes |
@@ -98,6 +99,13 @@ only devices that can still get the question: a device whose browser lost its pu
 tells it so, and the account service tells it which keys have no browser left (key ids only, which
 it already knew), so that such a run answers `nobody` rather than `asked`. The cloud learns nothing
 new by it.
+
+**The weather** does not involve DirectorLink's servers at all: the controller asks Open-Meteo
+(a free weather service) itself, sending only the project's location rounded to two decimals
+(about a kilometre), and Open-Meteo sees the home's internet address, as with any request. Since
+1.10.0 (ADR-071) it asks for a 5-day forecast every 6 hours at most (4 times a day; every 15 minutes
+before), and only while a schedule uses the weather or for an hour after an app showed it; the
+forecast stays on the controller.
 
 ## Keys
 
@@ -337,7 +345,7 @@ uses to let it in, without a link:
    service also pushes "A new device asks to join your home" at once to that account's browsers
    registered at the home with an admin key (since 1.9.0, with a driver that lists `users`, with any
    of its keys; *6. Alerts*) whose device wants it (Settings →
-   Controller → Alerts on this device, on by default), at most 3 an hour; tapping it opens the app,
+   Alerts, on by default), at most 3 an hour; tapping it opens the app,
    which then shows the request. The push says nothing the cloud did not already have. **Show code** sends that device's own
    public key. Only then does the new device send its public key, which the cloud and the other
    device check against the commitment.
@@ -480,14 +488,15 @@ controller, whether an account owns the home and whether Dana's belongs to it.
 
 Anyone with a key at the home can get notifications on their phones and computers, with the app
 closed: a doorbell rang, a camera of the DirectorLink · Hikvision drivers saw a person, a vehicle or
-a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose), a door or gate was
+a line crossed (1.8.0, ADR-056: whoever may see that camera, if they choose; since 1.10.0 a camera
+of any driver of DirectorLink's camera agreement, and a doorbell camera's ring, ADR-065), a door or gate was
 opened (admins, if they choose), the refrigerator's door was left open (members and admins; since
 1.8.0 whoever sees that refrigerator), a schedule had a problem (admins), the home has been
 unreachable for 10 minutes (admins), and (1.8.0) a new device of their own account asks to join
 (admins; since 1.9.0 every user, who approves it, ADR-061). Before 1.7.0 on the controller, only the offline and schedule alerts, for admins.
 
-1. On Settings → Controller, someone signed in to an account, on a device linked to the home,
-   switches on **Alerts on this device**. The browser asks for permission and makes a push
+1. On Settings → Alerts (Settings → Controller before 1.10.0), someone signed in to an account, on
+   a device linked to the home, switches on **Alerts on this device**. The browser asks for permission and makes a push
    subscription with the cloud's public key (VAPID); the app registers it with its device's key id
    (`POST /v1/homes/{home_id}/alerts`) and tells the controller (`PUT /v1/alerts/choices`, sealed).
    A switch per kind follows; the controller keeps them, per key. On iPhone and iPad only the app

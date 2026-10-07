@@ -1,5 +1,6 @@
 // Alerts on this device (app/js/alerts.js, app/js/views/alerts.js, ADR-047, ADR-050): who sees the
-// switch in Settings → Controller, what it says on each device, and what turning it on and off does:
+// switch in Settings → Alerts (1.10.0; Settings → Controller before) and what its row on Settings'
+// list says, what it says on each device, and what turning it on and off does:
 // the permission (asked only here), the browser's push subscription with the account service's key,
 // its registration with this device's key id, the controller told (DirectorLink 1.7.0) and each
 // kind chosen there, the words and the alert key kept for the service worker, and the clean-up when
@@ -49,7 +50,7 @@ class FakeElement extends FakeNode {
 const stored = new Map();
 globalThis.Node = FakeNode;
 globalThis.window = globalThis;
-window.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io", href: "https://app.directorlink.io/#/settings/controller", pathname: "/", search: "", hash: "#/settings/controller" };
+window.location = { hostname: "app.directorlink.io", origin: "https://app.directorlink.io", href: "https://app.directorlink.io/#/settings/alerts", pathname: "/", search: "", hash: "#/settings/alerts" };
 window.addEventListener = () => {};
 window.removeEventListener = () => {};
 window.matchMedia = () => ({ matches: false, addEventListener() {} });
@@ -185,7 +186,7 @@ const { setLanguage } = await import("../../app/js/i18n.js");
 const { saveRemote } = await import("../../app/js/remote.js");
 const session = await import("../../app/js/session.js");
 const { alertKey, alertTexts, alertsUi, turnAlertsOff, turnAlertsOn } = await import("../../app/js/alerts.js");
-const { alertsPanel } = await import("../../app/js/views/alerts.js");
+const { alertsPage, alertsPanel, alertsStatus } = await import("../../app/js/views/alerts.js");
 
 // ---- helpers -----------------------------------------------------------------------------------
 
@@ -537,6 +538,113 @@ test("an admin chooses the push of a new device asking to join, kept with the br
   await turnAlertsOff();
 });
 
+test("Settings' Alerts row says how alerts are on this device, and its page holds the switch (1.10.0)", async () => {
+  await turnAlertsOff();
+  const status = () => alertsStatus();
+  // Signed in, linked, allowed by the browser: off until switched on.
+  withChoices("admin", { doorbell: true, door_opened: false, schedule_failed: true });
+  assert.equal(status(), "Off");
+  assert.ok(byKey(alertsPage(), "alerts-switch"), "the page holds the switch");
+  // What it still needs, as the card's hint says it.
+  browser.permission = "denied";
+  assert.equal(status(), "Notifications are blocked");
+  browser.permission = "granted";
+  const push = window.PushManager;
+  delete window.PushManager;
+  try {
+    assert.equal(status(), "This browser can’t show alerts");
+  } finally {
+    window.PushManager = push;
+  }
+  const remote = localStorage.getItem("directorlink.remote");
+  localStorage.removeItem("directorlink.remote");
+  assert.equal(status(), "Link this device to your account first");
+  localStorage.setItem("directorlink.remote", remote);
+  // On: how many of the kinds this key may choose are on (the servers' two for an admin, then the
+  // controller's), once the controller has said which.
+  await press();
+  assert.equal(isOn(), true);
+  assert.equal(status(), "On · 4 of 5 kinds");
+  await pressKind("door_opened");
+  assert.equal(status(), "On · 5 of 5 kinds");
+  await setLanguage("he");
+  try {
+    assert.equal(status(), "פעילות · 5 מתוך 5 סוגים");
+  } finally {
+    await setLanguage("en");
+  }
+  // Not known yet (a start, before the controller is read): on, without a count.
+  const choices = alertsUi.choices;
+  alertsUi.choices = null;
+  assert.equal(status(), "On");
+  alertsUi.choices = choices;
+  // A controller before 1.7.0: an admin's alerts, without kinds.
+  const system = state.system;
+  state.system = { features: {} };
+  assert.equal(status(), "On");
+  state.role = "member";
+  assert.equal(status(), null, "a member of such a controller: no row");
+  state.system = system;
+  state.role = "admin";
+  // Signed out with alerts on: signing out turns them off (settings.js), but a session that ended
+  // (30 days) or a cookie cleared does not, and this browser keeps getting them. The row and the
+  // page say so, and the switch's Off works without the account.
+  state.account = { status: "signed-out", user: null, notice: null, busy: false };
+  assert.equal(status(), "On · sign in again to change them");
+  let page = alertsPage();
+  const offSwitch = byKey(page, "alerts-switch");
+  assert.equal(offSwitch.attributes["aria-checked"], "true");
+  assert.equal(offSwitch.attributes["aria-disabled"], undefined, "Off can be used");
+  assert.equal(offSwitch.attributes["aria-describedby"], "alerts-switch-help alerts-hint");
+  assert.equal(byKey(page, "alerts-hint").textContent, "Alerts are on; sign in again to change them.");
+  assert.ok(byKey(page, "alerts-sign-in-choose"), "it offers to sign in (Sign in, until the account service has said how)");
+  assert.equal(byKey(page, "alerts-kinds"), null, "the kinds wait for the account");
+  await setLanguage("he");
+  try {
+    assert.equal(status(), "פעילות · התחברו שוב כדי לשנות");
+    assert.equal(byKey(alertsPage(), "alerts-hint").textContent, "ההתראות פעילות; התחברו שוב כדי לשנות אותן.");
+  } finally {
+    await setLanguage("en");
+  }
+  // The account service out of reach, or not asked yet: on, as far as this device knows.
+  state.account = { status: "unavailable", user: null, notice: null, busy: false };
+  assert.equal(status(), "On");
+  assert.equal(byKey(alertsPage(), "alerts-switch").attributes["aria-checked"], "true");
+  assert.ok(byKey(alertsPage(), "alerts-account-retry"));
+  state.account = { status: "loading", user: null, notice: null, busy: false };
+  assert.equal(status(), "On");
+  state.account = { status: "signed-out", user: null, notice: null, busy: false };
+  const deletes = callsTo("DELETE").length;
+  for (const listener of offSwitch.listeners.click) listener({ type: "click" });
+  await settle();
+  assert.equal(callsTo("DELETE").length, deletes + 1, "the account service is asked to forget this browser");
+  assert.equal(browser.subscription, null, "and the browser drops its subscription");
+  assert.equal(status(), "Sign in to get alerts");
+  page = alertsPage();
+  assert.equal(byKey(page, "alerts-switch"), null);
+  assert.equal(byKey(page, "alerts-message").textContent, "Alerts are off for this device.");
+  assert.ok(byKey(page, "alerts-sign-in-choose"));
+  // Signed out, what this browser lacks comes first: signing in would not help.
+  browser.permission = "denied";
+  assert.equal(status(), "Notifications are blocked");
+  assert.match(byKey(alertsPage(), "alerts-hint").textContent, /^Notifications are blocked for DirectorLink\./);
+  assert.ok(byKey(alertsPage(), "alerts-sign-in-choose"), "allowed again, they come through the account");
+  browser.permission = "granted";
+  delete window.PushManager;
+  try {
+    assert.equal(status(), "This browser can’t show alerts");
+    page = alertsPage();
+    assert.equal(byKey(page, "alerts-hint").textContent, "This browser can’t show alerts.");
+    assert.equal(byKey(page, "alerts-sign-in-choose"), null, "no sign-in that could not help");
+  } finally {
+    window.PushManager = push;
+  }
+  admin();
+  alertsUi.message = null;
+  await turnAlertsOff();
+  assert.equal(status(), "Off");
+});
+
 test("a controller that cannot be told leaves alerts off; a change it cannot save says so", async () => {
   await turnAlertsOff();
   withChoices("member");
@@ -632,18 +740,32 @@ test("camera alerts are offered only with a controller that has them, off until 
   await turnAlertsOff();
 });
 
-test("the app gives the service worker a word for every camera detection the worker knows, in English and Hebrew", async () => {
+test("the app gives the service worker a word for every camera detection the worker knows, in every language", async () => {
   const worker = readFileSync(new URL("../../app/sw.js", import.meta.url), "utf8");
   const known = [...worker.matchAll(/^\s+(camera(?:_[a-z_]+)?):/gm)].map((match) => match[1]).sort();
   assert.ok(known.includes("camera_person") && known.includes("camera_other") && known.includes("camera_title"));
-  for (const language of ["en", "he"]) {
+  for (const language of ["en", "es", "it", "he"]) {
     await setLanguage(language);
     const texts = alertTexts();
+    assert.equal(texts.lang, language);
     const given = Object.keys(texts).filter((name) => name.startsWith("camera")).sort();
     assert.deepEqual(given, known, language);
     for (const name of given) assert.ok(texts[name] && !texts[name].startsWith("alerts."), `${language}: ${name}`);
     assert.match(texts.camera, /\{what\}.*\{name\}.*\{time\}/, language);
   }
   assert.equal(alertTexts().camera_person, "אדם");
+  await setLanguage("en");
+});
+
+// DirectorLink's camera agreement (1.10.0, ADR-065): an animal, a package and a license plate are
+// said in the app's words, in English and Hebrew.
+test("the camera agreement's new labels have their words for the service worker", async () => {
+  assert.equal(alertTexts().camera_animal, "Animal");
+  assert.equal(alertTexts().camera_package, "Package");
+  assert.equal(alertTexts().camera_license_plate, "License plate");
+  await setLanguage("he");
+  assert.equal(alertTexts().camera_animal, "בעל חיים");
+  assert.equal(alertTexts().camera_package, "חבילה");
+  assert.equal(alertTexts().camera_license_plate, "לוחית רישוי");
   await setLanguage("en");
 });

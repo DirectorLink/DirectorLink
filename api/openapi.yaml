@@ -98,9 +98,9 @@ tags:
   - name: Cameras
     description: Camera snapshots, fetched on the controller so camera logins never leave it.
   - name: Relays
-    description: Relays that open doors and gates (KNX Contact/Relay).
+    description: Doors and gates DirectorLink opens with a short press, a pulse. KNX Contact/Relay devices, and since 1.10.0 Control4's Relay Door, Gate and Garage Door Controllers, whatever relay they drive (ADR-069); `kind` says which.
   - name: Doorbells
-    description: Video doorbells (DoorBird) — rings, motion, access, and opening the gate or door wired to them.
+    description: Video doorbells — rings, motion, access, and opening the gate or door wired to them. A DoorBird, and since 1.10.0 a camera whose driver follows DirectorLink's camera agreement and says it is a doorbell (ADR-065, docs/CAMERA_DRIVERS.md); such a doorbell has the camera's id, its picture is that camera's, and it rings.
   - name: Refrigerators
     description: |
       Samsung refrigerators (since 1.7.0, ADR-049), through the Samsung Refrigerator (DirectorLink)
@@ -135,7 +135,8 @@ tags:
     description: |
       Which alerts each device gets (1.7.0, ADR-050): a doorbell rang, a door or gate was opened, the
       refrigerator's door was left open, a schedule failed; since 1.8.0 a camera of the DirectorLink ·
-      Hikvision drivers saw someone or something (ADR-056). The controller sends them through
+      Hikvision drivers saw someone or something (ADR-056), since 1.10.0 a camera of any driver of
+      DirectorLink's camera agreement (ADR-065). The controller sends them through
       DirectorLink's servers sealed to each device's own key, so the servers learn only which key
       ids an alert is for and when (docs/RELAY.md, `notify`). Each key reads and sets its own choices.
   - name: Logs
@@ -1757,14 +1758,16 @@ paths:
       x-directorlink-role: member
       summary: The weather at home
       description: |
-        Open-Meteo's current conditions and today's forecast for the project's location (Composer
-        project properties), as the controller last read them, and today's sunrise and sunset,
-        worked out on the controller. The controller reads the weather every 15 minutes while a
-        schedule needs it, and for an hour after this is asked. Weather data by Open-Meteo.com
-        (CC BY 4.0).
+        The weather now and today's forecast for the project's location (Composer project
+        properties), and today's sunrise and sunset, worked out on the controller. Since 1.10.0
+        (ADR-071) the weather now is the hour for now of Open-Meteo's hourly forecast, which the
+        controller reads every 6 hours while a schedule needs the weather, and for an hour after this
+        is asked, and keeps for 5 days: with or without the internet, schedules and this answer use
+        the same forecast (`source: forecast`). Up to 1.9.0 it was the current conditions, read every
+        15 minutes, and there was no `source`. Weather data by Open-Meteo.com (CC BY 4.0).
       responses:
         "200":
-          description: The latest reading; `status` says why there is none.
+          description: The weather now; `status` says why there is none.
           content:
             application/json:
               schema:
@@ -1849,7 +1852,7 @@ paths:
         - $ref: "#/components/parameters/RoomIdQuery"
         - name: type
           in: query
-          description: Only devices of this type.
+          description: Only devices of this type. A camera that is a doorbell (1.10.0, ADR-065) is a `camera` in this list, and with `type=doorbell` a `doorbell` too (its `href` the doorbell's), as `/v1/doorbells` and `inventory.doorbells` count it.
           schema:
             $ref: "#/components/schemas/DeviceType"
         - name: supported
@@ -2324,6 +2327,13 @@ paths:
       operationId: listRelays
       x-directorlink-role: member
       summary: List relays
+      description: |
+        The doors and gates, sorted by name. Since 1.10.0 (ADR-069) also Control4's Relay Door, Gate
+        and Garage Door Controllers, each under its button's id, in its room, with `kind` and, when
+        the controller has a contact, `door_state`. A controller whose Open relay is a KNX
+        Contact/Relay DirectorLink lists is that relay's door (its id, name and room, the
+        controller's kind and state), not a second one. A controller with nothing bound to its Open
+        relay is not listed.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
@@ -2370,7 +2380,10 @@ paths:
         door or gate open until the relay is opened. Since 1.1.1 that is refused with 409
         `HOLD_NOT_ALLOWED`, and nothing is sent, unless the **Relay Hold** property of DirectorLink
         in Composer is set to Allowed (the default is Not allowed). Like a pulse, only for those who
-        open doors and gates (admins, members given them: else 403 `FORBIDDEN`, ADR-054).
+        open doors and gates (admins, members given them: else 403 `FORBIDDEN`, ADR-054). A Relay
+        Door, Gate or Garage Door Controller's door (1.10.0, ADR-069) has no relay of DirectorLink's
+        to hold or release: 409 `NOT_SUPPORTED`, nothing sent (one shown as a KNX relay holds and
+        releases that relay, as before).
       requestBody:
         required: true
         content:
@@ -2409,7 +2422,12 @@ paths:
       summary: Pulse the relay (open a door or gate)
       description: |
         Closes the relay and opens it again after 500 ms, the way Control4's Relay Door, Gate and
-        Garage Door Controllers trigger it. Every pulse is written to the log with the API key used.
+        Garage Door Controllers trigger it. A controller's door (`kind` door, gate or garage_door,
+        1.10.0, ADR-069) is sent the controller's own Open, once: one pulse of its Open relay for its
+        own pulse time, with its own settings (one relay: the gate's button, not sent while a
+        contact says it is open). A controller set to hold its relay (Relay Configuration Hold, where
+        Director gives that property) would hold the door open: 409 `HOLD_NOT_ALLOWED` unless Relay
+        Hold is Allowed, and never in a scene. Every pulse is written to the log with the API key used.
         For admins and the members given doors and gates (ADR-054); a member who sees the relay but
         may not open it gets 403 `FORBIDDEN`. Needs **Door Control** = Enabled in Composer.
 
@@ -2499,7 +2517,9 @@ paths:
         Presses the DoorBird's button exactly as the Control4 app does; the button runs the action
         the installer chose (by default *Trigger Relay 1*). Needs **Door Control** = Enabled in
         Composer, and a person who opens doors and gates (ADR-054: else 403 `FORBIDDEN`). Every
-        request is written to the log with the API key used.
+        request is written to the log with the API key used. A doorbell that cannot open anything
+        (`can_open` false: a DoorBird without its button, a doorbell camera, ADR-065) answers 409
+        `NOT_SUPPORTED`, before Door Control and the caller's permissions are looked at.
       responses:
         "202":
           description: Button pressed. The body is the doorbell as last reported.
@@ -3935,6 +3955,7 @@ components:
               type: integer
             doorbells:
               type: integer
+              description: Since 1.10.0 a doorbell camera (ADR-065) counts here and in `cameras`.
             refrigerators:
               type: integer
               description: Since 1.7.0.
@@ -3997,10 +4018,13 @@ components:
               description: "Always true since 1.8.0: links that ask their person to open a door or gate (`/v1/ask-links`), and a pulse that answers one (ADR-058). Missing before 1.8.0."
             camera_alerts:
               type: boolean
-              description: "A camera of the project is on the DirectorLink · Hikvision Camera driver, whose alerts this DirectorLink passes on: the `camera` alert choice (1.8.0, ADR-056). Missing before 1.8.0."
+              description: "A camera of the project raises alerts this DirectorLink passes on: the `camera` alert choice (1.8.0, ADR-056: the DirectorLink · Hikvision Camera driver; since 1.10.0 any camera driver of DirectorLink's camera agreement, ADR-065). Missing before 1.8.0."
             users:
               type: boolean
               description: "Always true since 1.9.0: `GET /v1/users` (Settings → Users), up to five devices a user, the devices of one account brought into one user, pairing codes for a chosen user (`/v1/pairing-code`), members adding and removing their own devices (ADR-061). Missing before 1.9.0."
+            climate_last_mode:
+              type: boolean
+              description: "Always true since 1.10.0: each thermostat's `last_mode` in `/v1/thermostats`, and the climate scene step `mode` `on` that turns each AC on as it was (ADR-070). Missing before 1.10.0, whose scenes refuse `on`."
 
     PairRequest:
       oneOf:
@@ -4494,7 +4518,14 @@ components:
             lights `{"on": true|false}` or `{"brightness": 0-100}` (on/off lights turn on);
             climate any of `mode` (off, heat, cool, auto), `target_temperature` (kept within
             each thermostat's range) and `fan_speed` (low, medium, high, auto, on, circulate; left
-            out where a unit does not have it), and with `mode: off` nothing else; fans (1.2.0)
+            out where a unit does not have it), and with `mode: off` nothing else; what is left out
+            stays as it is (a step with a mode alone keeps the temperature and fan); since 1.10.0
+            (ADR-070) `mode: on`, alone: each thermostat that is off goes back to its last mode that
+            was not off (`last_mode` in `GET /v1/thermostats`), with nothing else sent, so its
+            temperature and fan stay as they were; one that is on is left as it is (it counts as
+            ran); one whose last mode is not known yet is skipped with `NO_LAST_MODE`, and one whose
+            last mode DirectorLink cannot set with `MODE_NOT_SUPPORTED` (never a guessed mode);
+            fans (1.2.0)
             `{"on": true|false}` or `{"speed": 1-4}` (1 low to 4 high); blinds
             `{"position": 0-100}`; relays `{"action": "pulse"}`, what their Open button does (a
             door or gate relay is never held closed by a scene); music `{"action": "pause"}` or
@@ -4529,7 +4560,8 @@ components:
               maximum: 4
             mode:
               type: string
-              enum: ["off", heat, cool, auto]
+              enum: ["off", "on", heat, cool, auto]
+              description: '`on` (1.10.0): each AC on as it was, in its last mode; drivers before 1.10.0 refuse it.'
             target_temperature:
               type: number
               minimum: 5
@@ -4896,7 +4928,7 @@ components:
           description: Devices whose commands were handed to the controller (and Sonos groups told to pause or stop).
         skipped:
           type: integer
-          description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project).
+          description: Devices left alone (not allowed for this key, not possible for the device, or gone from the project; since 1.10.0 an AC a step turns on as it was whose last mode is not known yet, `NO_LAST_MODE`).
         failed:
           type: integer
           description: Devices whose commands the controller refused.
@@ -5134,14 +5166,15 @@ components:
 
     Weather:
       type: object
-      required: [status, location, fetched_at, current, today, attribution]
+      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, attribution]
       properties:
         status:
           type: string
           enum: [ok, waiting, unreachable, no_location]
-          description: "`no_location`: set the latitude and longitude in Composer's project properties."
+          description: "`no_location`: set the latitude and longitude in Composer's project properties. `unreachable`: Open-Meteo could not be reached and no saved forecast holds now (none was read, or it ran out 5 days after it was read)."
         detail:
           type: [string, "null"]
+          description: Why the last read of the forecast failed, also while the saved forecast is used (`ok`).
         location:
           type: [object, "null"]
           description: For admin keys only (rounded); null for other roles.
@@ -5153,8 +5186,22 @@ components:
         fetched_at:
           type: [string, "null"]
           format: date-time
+          description: When the controller read the forecast in use from Open-Meteo (1.10.0); up to 1.9.0, the current conditions.
+        source:
+          type: [string, "null"]
+          enum: [forecast, null]
+          description: "1.10.0 (ADR-071): `forecast`, the saved forecast's hour for now, always when there is weather; null without. A 1.9.0 driver gives no `source`: its weather was measured."
+        forecast_for:
+          type: [string, "null"]
+          format: date-time
+          description: The moment `current` is for (1.10.0); null without weather.
+        forecast_until:
+          type: [string, "null"]
+          format: date-time
+          description: When the saved forecast runs out, 5 days after it was read (1.10.0); then the weather is unknown until a new one is read.
         current:
           type: [object, "null"]
+          description: "The weather now. From the forecast (1.10.0): the temperature and the wind between the two hours around now, the precipitation of the hour now, `raining` when it is more than 0, and no gusts."
           properties:
             temperature:
               type: number
@@ -5164,9 +5211,10 @@ components:
               description: km/h
             wind_gusts:
               type: [number, "null"]
+              description: Null since 1.10.0.
             precipitation:
               type: number
-              description: mm
+              description: mm (in the hour now, from the forecast)
             raining:
               type: boolean
             weather_code:
@@ -5741,7 +5789,7 @@ components:
 
     Relay:
       type: object
-      required: [id, name, room, state, state_reported]
+      required: [id, name, room, state, state_reported, kind, door_state]
       properties:
         id:
           type: integer
@@ -5760,6 +5808,23 @@ components:
         state_reported:
           type: boolean
           description: False when DirectorLink cannot watch this relay's state.
+        kind:
+          type: string
+          enum: [relay, door, gate, garage_door]
+          description: |
+            Since 1.10.0 (ADR-069): `door`, `gate` or `garage_door` for a Control4 Relay Door, Gate
+            or Garage Door Controller's (also a KNX relay one drives); `relay` for a relay
+            DirectorLink pulses itself, a door or a gate. A driver before 1.10.0 sends neither field:
+            read that as `relay` and a null `door_state`.
+        door_state:
+          oneOf:
+            - type: string
+              enum: [open, closed, partly_open]
+            - type: "null"
+          description: |
+            Since 1.10.0 (ADR-069): whether the door or gate is open, as its controller's Closed or
+            Opened Contact says (`partly_open`: neither closed nor fully open). Null when not known:
+            no contact, both contacts at once, or a relay without a controller.
 
     RelayUpdate:
       type: object
@@ -5792,7 +5857,7 @@ components:
             - $ref: "#/components/schemas/RoomRef"
             - type: "null"
         camera:
-          description: The doorbell's camera; get pictures from `snapshot_href`.
+          description: The doorbell's camera; get pictures from `snapshot_href`. For a doorbell camera (1.10.0, ADR-065) it is that camera, with the same id. Null for a person who does not see cameras (ADR-054).
           oneOf:
             - type: object
               required: [id, snapshot_href]
@@ -5807,10 +5872,11 @@ components:
           description: True when `POST …/open` can press the doorbell's button.
         connected:
           type: [boolean, "null"]
-          description: False after the doorbell driver reported a communication failure; null until the first event.
+          description: False after the doorbell driver reported a communication failure; null until the first event, and always for a doorbell camera (ADR-065).
         last_ring_at:
           type: [string, "null"]
           format: date-time
+          description: The last ring. A doorbell camera's (ADR-065) is its driver's `LAST_RING` when that is new (later than the ring before) and from two minutes behind the controller's clock to five seconds ahead of it, else when the ring reached the controller (always after the ring before); after a restart, its driver's `LAST_RING` unless that is ahead of the controller's clock.
         last_motion_at:
           type: [string, "null"]
           format: date-time
@@ -6200,6 +6266,7 @@ components:
         - heat_setpoint
         - cool_setpoint
         - setpoint_deadband
+        - last_mode
       properties:
         id:
           type: integer
@@ -6256,6 +6323,9 @@ components:
         setpoint_deadband:
           type: [number, "null"]
           description: Degrees Celsius, the smallest gap the thermostat keeps between its heat and cool setpoints. Null when not reported and on single-setpoint thermostats. When not reported, cool must still be above heat (by 1 °F in a Fahrenheit project, 0.1 °C otherwise).
+        last_mode:
+          type: [string, "null"]
+          description: The last mode the thermostat was in that was not off (its current one while it is on), as `mode` names it, wherever it was set (Control4's apps, a keypad, Composer programming, DirectorLink); null until DirectorLink has seen it in one. What a scene's `mode` `on` and a command that turns the AC on bring it back to. Since 1.10.0 (ADR-070); missing before.
 
     ThermostatUpdate:
       type: object
@@ -6868,13 +6938,13 @@ components:
           description: This key's device switched alerts on.
         kinds:
           type: object
-          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one; `camera` only with a camera on the DirectorLink · Hikvision Camera driver that this key may see), each wanted or not.
+          description: The kinds this key's role may get that this home has (a refrigerator's only once it has one; `camera` only with a camera that raises alerts (a driver of DirectorLink's camera agreement, ADR-065, or the DirectorLink · Hikvision Camera driver) that this key may see; `door_opened` with a door, a gate or a DoorBird, not for a doorbell camera alone), each wanted or not.
           properties:
             doorbell:
               type: boolean
             camera:
               type: boolean
-              description: "A camera saw someone or something (1.8.0, ADR-056): its driver's own alert, as the camera's Alert On, the hub's alerts switch and its snooze let it through; at most one a camera a minute. Off until chosen."
+              description: "A camera saw someone or something (1.8.0, ADR-056; ADR-065): its driver's own alert, as its settings let it through (the Hikvision drivers: the camera's Alert On, the hub's alerts switch and its snooze); at most one a camera a minute. Off until chosen."
             door_opened:
               type: boolean
             fridge_door:
@@ -7054,6 +7124,9 @@ components:
               type: integer
             failed:
               type: integer
+            no_last_mode:
+              type: integer
+              description: Of the skipped, the ACs a scene left off because their last mode is not known yet (`NO_LAST_MODE`); only when there are some. Since 1.10.0 (ADR-070).
         ids:
           type: object
           properties:

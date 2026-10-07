@@ -31,7 +31,9 @@ Scenes.MAX_FAVORITE_URI = 2048
 Scenes.MAX_FAVORITE_META = 8192
 -- Rooms that play a favorite grouped with the step's own.
 Scenes.MAX_WITH_ROOMS = 32
-Scenes.MODES = { off = true, heat = true, cool = true, auto = true }
+-- "on" (1.10.0, ADR-070): each thermostat in its last mode that was not off (src/core/last_modes.lua),
+-- its own when it is on, with nothing else sent: it comes back as it was.
+Scenes.MODES = { off = true, on = true, heat = true, cool = true, auto = true }
 Scenes.FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = true, circulate = true }
 -- Fans (1.2.0) take a speed from 1 (low) to 4 (high), as the Fan proxy lists them.
 Scenes.MAX_FAN_SPEED = 4
@@ -58,6 +60,10 @@ local KEPT = {
     end },
     { key = "directorlink_scene_steps_2", mark = "music_steps_kept", newer = function(step)
         return step.type == "music" and Scenes.NEWER_MUSIC_ACTIONS[step.set.action] == true
+    end },
+    -- 1.10.0 (ADR-070): the climate steps that turn each AC on as it was, which 1.9.0 leaves out.
+    { key = "directorlink_scene_steps_3", mark = "climate_steps_kept", newer = function(step)
+        return step.type == "climate" and step.set.mode == "on"
     end },
 }
 
@@ -202,7 +208,9 @@ function Scenes.cleanSet(stepType, set)
         if heat and cool and cool <= heat then
             return nil
         end
-        if next(result) == nil or (result.mode == "off" and (result.fan_speed or result.target_temperature or heat or cool)) then
+        -- Off, and on as it was, take nothing else.
+        local alone = result.mode == "off" or result.mode == "on"
+        if next(result) == nil or (alone and (result.fan_speed or result.target_temperature or heat or cool)) then
             return nil
         end
         return result

@@ -24,7 +24,7 @@ import { fanLevel, fanSpeeds, levelChange } from "./fans.js";
 import { isFavorite, toggleFavorite } from "./favorites.js";
 import { formatRelative, formatTemperature, t } from "./i18n.js";
 import { icon } from "./icons.js";
-import { blindStateLabel, climateIsOn, fanLabel, fanSpeedLabel, fanStateLabel, labelOr, modeLabel, roomName, shownBrightness } from "./model.js";
+import { blindStateLabel, climateIsOn, fanLabel, fanSpeedLabel, fanStateLabel, labelOr, modeLabel, relayIsOpen, relayLabel, roomName, shownBrightness } from "./model.js";
 import { FEATURE_ICONS, fridgeFeatures, zones } from "./refrigerators.js";
 import { isDual, shownSetpoints } from "./setpoints.js";
 import { canSetPosition, canStop, shadeView } from "./shades.js";
@@ -618,9 +618,11 @@ function askLinkButton(relay) {
 export function relayRow(relay, { showRoom = false } = {}) {
   const key = deviceKey("relay", relay.id);
   const confirming = ui.relayStage[relay.id] === "confirm";
+  // Its kind and, with a contact, open or closed (1.10.0): also for whoever may not open it.
+  const what = relayLabel(relay);
   return h(
     "div",
-    { class: "device relay" },
+    { class: `device relay ${relayIsOpen(relay) ? "is-open" : ""}`.trim() },
     h(
       "div",
       { class: "device-main" },
@@ -633,7 +635,7 @@ export function relayRow(relay, { showRoom = false } = {}) {
           "span",
           { class: "device-meta" },
           showRoom ? [name(roomName(relay.room)), " · "] : null,
-          !can("doors") ? t("relays.noAccess") : confirming ? t("relays.confirmHint") : t("relays.hint")
+          !can("doors") ? `${what} · ${t("relays.noAccess")}` : confirming ? t("relays.confirmHint") : what
         )
       ),
       favoriteStar("relay", relay)

@@ -3,9 +3,11 @@
 // the rooms the list shows at that moment (rooms this person hides are left alone). A second tap
 // within 5 seconds runs it, like the Open button of doors; there is no undo. One request does it
 // all (POST /v1/off, members and above), as quick through the account as at home; drivers before
-// 1.3.0 get each device's own command, all at once.
+// 1.3.0 get each device's own command, all at once. Since 1.10.0 (ADR-066) it leaves lights named
+// for heating as they are (heaters.js), and says so.
 
 import { blindMove, optimistic, sendingBlinds, setStage } from "./controls.js";
+import { isHeater } from "./heaters.js";
 import { t } from "./i18n.js";
 import { blindIsOpen, climateIsOn, lightIsOn, matchesFilter, visibleRooms } from "./model.js";
 import { api, errorText, handleUnauthorized, keyGeneration, noteForbidden, refreshDevices } from "./session.js";
@@ -38,7 +40,9 @@ function canClose(blind) {
   return !(view.moving && view.target === 0);
 }
 
-const TO_TURN_OFF = { lights: lightIsOn, climate: canTurnOff, blinds: canClose };
+// A light that is on, unless it is named for heating: a heater kept by Composer programming is
+// switched only by its own switch (heaters.js, ADR-066).
+const TO_TURN_OFF = { lights: (light) => lightIsOn(light) && !isHeater(light), climate: canTurnOff, blinds: canClose };
 
 // The devices the button acts on now: on or open, in the rooms the filtered list shows.
 export function offTargets(filter) {
@@ -47,6 +51,20 @@ export function offTargets(filter) {
   return visibleRooms()
     .filter(({ group }) => matchesFilter(group, filter))
     .flatMap(({ group }) => group[type.group].filter(TO_TURN_OFF[filter]));
+}
+
+// The heaters on in those rooms, which the button leaves as they are (ADR-066).
+export function keptHeaters(filter) {
+  if (filter !== "lights") return [];
+  return visibleRooms()
+    .filter(({ group }) => matchesFilter(group, filter))
+    .flatMap(({ group }) => group.lights.filter((light) => lightIsOn(light) && isHeater(light)));
+}
+
+// Heaters' names for "… leaves the heater “דוד הורים” as it is" (here, a room's All off and a
+// command), each kept apart from the words around it.
+export function heaterNames(lights) {
+  return lights.map((light) => `⁨${light.name || ""}⁩`).join(", ");
 }
 
 // First tap: asks for a second one within 5 seconds. Second tap: turns them off.

@@ -1,5 +1,6 @@
-// Settings' list and its pages (app/js/views/settings.js, 1.5.0): appearance and language on the
-// list with a row per page, who sees which row, the line each row says, the update badge, the Rooms
+// Settings' list and its pages (app/js/views/settings.js, 1.5.0): a row per page (Appearance and
+// language too since 1.10.0: tests/app/appearance.test.mjs; Alerts since 1.10.0, its signed-in lines
+// in tests/app/alerts.test.mjs), who sees which row, the line each row says, the update badge, the Rooms
 // page with its admin parts and the Sonos rooms, Back to the list (and the row it focuses),
 // Settings → Controller with Updates and Backup, the Home notice that opens Settings → Controller at
 // the steps, and sign-in coming back to Settings → Account.
@@ -183,7 +184,7 @@ function notConnected() {
 
 // ---- the list ----------------------------------------------------------------------------------
 
-test("Settings' list: appearance and language, then one row per page; admins see two more", () => {
+test("Settings' list: one row per page; admins see three more", () => {
   home("admin");
   const list = settingsView({});
   assert.equal(list[0].tagName, "HEADER");
@@ -194,19 +195,20 @@ test("Settings' list: appearance and language, then one row per page; admins see
     "settings-row:calendar",
     "settings-row:access",
     "settings-row:account",
+    "settings-row:alerts",
+    "settings-row:appearance",
     "settings-row:app",
     "settings-row:about",
   ]);
   const keys = keysOf(list);
-  for (const key of ["palette-graphite", "theme-auto", "theme-dark", "language-auto", "language-en", "language-he"]) assert.ok(keys.includes(key), key);
-  // Everything else is on its own page.
-  for (const key of ["room-show:10", "room-move:10", "room-name:10:en", "settings-host", "settings-pair-again", "settings-forget", "update-check-now", "calendar-save", "backup-download", "account-sign-in", "notifications-on"]) {
+  // Everything is on its own page, the language, theme and colours too (1.10.0).
+  for (const key of ["palette-graphite", "theme-auto", "language-he", "room-show:10", "room-move:10", "room-name:10:en", "settings-host", "settings-pair-again", "settings-forget", "update-check-now", "calendar-save", "backup-download", "account-sign-in", "alerts-sign-in", "alerts-switch", "notifications-on"]) {
     assert.ok(!keys.includes(key), `${key} is not on the list`);
   }
-  assert.deepEqual(ids(list).filter((id) => id.startsWith("settings-")), ["settings-appearance", "settings-appearance-title", "settings-language", "settings-language-title"]);
+  assert.deepEqual(ids(list).filter((id) => id.startsWith("settings-")), []);
   // Each row opens its page; People and devices is #/access, as before.
   const hrefs = rows(list).map((key) => byKey(list, key).attributes.href);
-  assert.deepEqual(hrefs, ["#/settings/controller", "#/settings/rooms", "#/settings/calendar", "#/access", "#/settings/account", "#/settings/app", "#/settings/about"]);
+  assert.deepEqual(hrefs, ["#/settings/controller", "#/settings/rooms", "#/settings/calendar", "#/access", "#/settings/account", "#/settings/alerts", "#/settings/appearance", "#/settings/app", "#/settings/about"]);
   for (const href of hrefs.filter((value) => value.startsWith("#/settings/"))) assert.ok(SETTINGS_PAGES.includes(href.slice("#/settings/".length)), href);
   // A link with an icon, a title, a line and a chevron.
   const row = byKey(list, "settings-row:rooms");
@@ -221,7 +223,7 @@ test("Settings' list: appearance and language, then one row per page; admins see
 test("members and viewers: no Shabbat and holidays, no People and devices", () => {
   for (const role of ["member", "doors", "viewer"]) {
     home(role);
-    assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:app", "settings-row:about"], role);
+    assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:appearance", "settings-row:app", "settings-row:about"], role);
   }
   // An admin with the calendar off in Composer (or a driver before 1.2.0): no calendar row.
   home("admin");
@@ -230,7 +232,7 @@ test("members and viewers: no Shabbat and holidays, no People and devices", () =
   assert.ok(rows().includes("settings-row:access"));
   // Not paired yet: the pages that work without a controller.
   notConnected();
-  assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:app", "settings-row:about"]);
+  assert.deepEqual(rows(), ["settings-row:controller", "settings-row:rooms", "settings-row:account", "settings-row:appearance", "settings-row:app", "settings-row:about"]);
 });
 
 test("each row says in one line how things are", async () => {
@@ -407,7 +409,7 @@ test("at home, This home says Update DirectorLink when the account service turne
 
 test("every page opens with its title and Back to Settings' list", () => {
   home("admin");
-  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", account: "Account", app: "App", about: "About" };
+  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", account: "Account", alerts: "Alerts", appearance: "Appearance and language", app: "App", about: "About" };
   assert.deepEqual(Object.keys(titles).sort(), [...SETTINGS_PAGES].sort());
   for (const page of SETTINGS_PAGES) {
     const view = settingsView({ page });
@@ -549,6 +551,111 @@ test("Settings → Controller: the controller, then Updates, then Backup for adm
   home("viewer");
   page = settingsView({ page: "controller", navigate() {} });
   assert.match(textOf(page), /View only: this device can see the home but not control it\./);
+});
+
+test("Settings → Alerts (1.10.0): a page of its own, its row before Appearance and language, for whoever may have them", async (context) => {
+  // This browser has no push: its row and page say so first, signed in or not (1.10.0).
+  home("admin");
+  assert.equal(rowStatus("alerts"), "This browser can’t show alerts");
+  assert.equal(byKey(settingsView({ page: "alerts" }), "alerts-hint").textContent, "This browser can’t show alerts.");
+  assert.equal(byKey(settingsView({ page: "alerts" }), "alerts-sign-in"), null, "no sign-in that could not help");
+  // A browser with push (and notifications, on a secure page) from here on.
+  Object.assign(window, { isSecureContext: true, PushManager: function PushManager() {}, Notification: { permission: "default" } });
+  Object.defineProperty(navigator, "serviceWorker", { value: {}, configurable: true });
+  context.after(() => {
+    delete window.PushManager;
+    delete window.Notification;
+    delete navigator.serviceWorker;
+  });
+  // An admin: alerts with any controller (admins only before 1.7.0); signed out, the line says so.
+  home("admin");
+  let list = settingsView({});
+  const second = rows(list).slice(-5);
+  assert.deepEqual(second, ["settings-row:account", "settings-row:alerts", "settings-row:appearance", "settings-row:app", "settings-row:about"]);
+  const row = byKey(list, "settings-row:alerts");
+  assert.equal(row.attributes.href, "#/settings/alerts");
+  assert.equal(byClass(row, "settings-row-title").textContent, "Alerts");
+  assert.ok(byClass(row, "settings-row-icon").children.length, "its icon: the bell");
+  assert.equal(rowStatus("alerts", list), "Sign in to get alerts");
+  state.account = { status: "loading", user: null, notice: null, busy: false };
+  assert.equal(rowStatus("alerts"), "Loading…");
+  state.account = { status: "unavailable", user: null, notice: null, busy: false };
+  assert.equal(rowStatus("alerts"), "Can’t reach the account service");
+  // Signed in, on a device not linked to the home yet (the switch's own lines: alerts.test.mjs).
+  state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+  assert.equal(rowStatus("alerts"), "Link this device to your account first");
+
+  // A member: only with a controller that lets every key choose (DirectorLink 1.7.0), as the card.
+  home("member");
+  assert.ok(!rows().includes("settings-row:alerts"), "a member of a controller before 1.7.0 gets no alerts");
+  state.system.features.alert_choices = true;
+  assert.ok(rows().includes("settings-row:alerts"));
+  assert.equal(rowStatus("alerts"), "Sign in to get alerts");
+  home("viewer");
+  state.system.features.alert_choices = true;
+  assert.ok(rows().includes("settings-row:alerts"), "and a viewer");
+  // Not paired yet: no key to have alerts with.
+  notConnected();
+  assert.ok(!rows().includes("settings-row:alerts"));
+
+  // The page, signed out: alerts come through the account; signing in comes back to it.
+  home("member");
+  state.system.features.alert_choices = true;
+  let page = settingsView({ page: "alerts" });
+  assert.equal(byClass(page, "page-title").textContent, "Alerts");
+  assert.equal(byKey(page, "back").attributes.href, "#/settings");
+  assert.deepEqual(cards(page), ["settings-alerts"]);
+  assert.equal(find(page, (node) => node.attributes.id === "settings-alerts-title").textContent, "On this device");
+  assert.match(textOf(page), /Alerts come through your DirectorLink account: sign in, then switch them on for this device\./);
+  assert.equal(byKey(page, "alerts-switch"), null, "no switch before signing in");
+  assigned.length = 0;
+  byKey(page, "alerts-sign-in").dispatch("click");
+  byKey(page, "alerts-sign-in-apple").dispatch("click");
+  assert.equal(assigned.length, 2);
+  for (const url of assigned) assert.equal(new URL(url).searchParams.get("return_to"), "https://app.directorlink.io/#/settings/alerts");
+  // A sign-in that came back without working says so here, where it began.
+  state.account = { status: "signed-out", user: null, notice: "cancelled", busy: false };
+  assert.match(textOf(settingsView({ page: "alerts" })), /Sign-in was cancelled\./);
+  state.account = { status: "unavailable", user: null, notice: null, busy: false };
+  page = settingsView({ page: "alerts" });
+  assert.match(textOf(page), /Can’t reach DirectorLink’s account service right now\./);
+  assert.ok(byKey(page, "alerts-account-retry"));
+  // Signed in: the switch, as it was on Settings → Controller.
+  state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+  page = settingsView({ page: "alerts" });
+  assert.ok(byKey(page, "alerts-switch"));
+  assert.equal(byKey(page, "alerts-sign-in"), null);
+  assert.match(textOf(page), /Alerts on this device/);
+  // Settings → Controller no longer has it.
+  home("admin");
+  state.system.features.alert_choices = true;
+  state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+  page = settingsView({ page: "controller", navigate() {} });
+  assert.ok(!cards(page).includes("settings-alerts"));
+  assert.equal(byKey(page, "alerts-switch"), null);
+  assert.ok(!textOf(page).includes("Alerts on this device"));
+
+  // Opened by its address by someone who may not have them: why; before connecting, what every
+  // page says then.
+  home("member");
+  page = settingsView({ page: "alerts" });
+  assert.equal(byKey(page, "alerts-admins").textContent, "Only the home’s admins get alerts.");
+  notConnected();
+  assert.match(textOf(settingsView({ page: "alerts" })), /Not connected yet/);
+
+  // Back from the page focuses its row (app.js).
+  home("admin");
+  assert.equal(settingsRowKey({ name: "settings", page: "alerts", tab: "settings" }), "settings-row:alerts");
+
+  await setLanguage("he");
+  try {
+    list = settingsView({});
+    assert.equal(byClass(byKey(list, "settings-row:alerts"), "settings-row-title").textContent, "התראות");
+    assert.equal(rowStatus("alerts", list), "התחברו כדי לקבל התראות");
+    assert.equal(byClass(settingsView({ page: "alerts" }), "page-title").textContent, "התראות");
+  } finally {
+    await setLanguage("en");
+  }
 });
 
 test("only Settings → Controller is redrawn by every poll (its Last update), so the other pages keep focus", () => {

@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also shows alerts (push), and opens the app where a notification's tap leads.
 
-const CACHE_NAME = "directorlink-shell-v42";
+const CACHE_NAME = "directorlink-shell-v43";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -78,6 +78,7 @@ const ASSETS = [
   "/js/views/command.js",
   "/js/command-parser.js",
   "/js/commands.js",
+  "/js/heaters.js",
   "/js/views/connect.js",
   "/js/views/find.js",
   "/js/views/history.js",
@@ -85,9 +86,12 @@ const ASSETS = [
   "/js/views/room.js",
   "/js/views/settings.js",
   "/js/views/updates.js",
-  // Languages. One added later is saved on first use even if it is not listed here.
+  // Languages (all of them: an update replaces this cache, and the app must still open offline in
+  // the language it shows; check_app.py requires every language here).
   "/i18n/en.js",
   "/i18n/he.js",
+  "/i18n/es.js",
+  "/i18n/it.js",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
@@ -238,6 +242,9 @@ const ALERT_TEXTS = {
   camera: "{what} at {name} at {time}.",
   camera_person: "Person",
   camera_vehicle: "Vehicle",
+  camera_animal: "Animal",
+  camera_package: "Package",
+  camera_license_plate: "License plate",
   camera_face: "Face",
   camera_motion: "Motion",
   camera_line_crossing: "Line crossed",
@@ -340,7 +347,7 @@ function sealedNotice(detail, texts, home) {
       return { title: texts.title, body: fill(template, { name, who: whoText(by, texts), scene: text(detail.via), time }), tag: `door-${id}`, url: HISTORY_URL };
     }
     case "camera": {
-      // A camera of the DirectorLink · Hikvision drivers (ADR-056): what it saw, in the app's words.
+      // A camera's alert (ADR-056, ADR-065): what it saw, in the app's words.
       if (!name) return null;
       const what = /^[a-z_]+$/.test(detail.what ?? "") && typeof texts[`camera_${detail.what}`] === "string" ? texts[`camera_${detail.what}`] : texts.camera_other;
       return { title: texts.camera_title, body: fill(texts.camera, { what, name, time }), tag: `camera-${id}`, url: id ? `/#/cameras/${id}` : "/#/cameras" };

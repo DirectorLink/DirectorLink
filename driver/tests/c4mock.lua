@@ -477,8 +477,10 @@ end
 -- ADR-056): each its own driver with one camera proxy, digest login, its snapshot the sub stream's
 -- picture at the size asked for, and the driver's variables, numbered from 1001 in the order it adds
 -- them. Its event 1 is Alert. `list`: { { id, protocol, name, room (10 or 11), address, channel,
--- driver } }; by default 65 "Garden" (Living Room, driver 150) and 66 "Back Gate" (Kitchen, 151).
--- A camera whose `address` another uses too is an NVR's channel.
+-- driver, marker, events } }; by default 65 "Garden" (Living Room, driver 150) and 66 "Back Gate"
+-- (Kitchen, 151). A camera whose `address` another uses too is an NVR's channel. `marker`: the driver
+-- sets DirectorLink's camera agreement's marker (1.10.0, ADR-065: DIRECTORLINK_CAMERA "1", KIND
+-- "camera", its 15th and 16th variables); `events`: Director gives its driver.xml's events (by name).
 Mock.HIKVISION_VARIABLES = {
     "ONLINE", "ALERTS_ENABLED", "ALERT_ACTIVE", "MOTION", "PERSON", "VEHICLE", "LINE_CROSSING",
     "INTRUSION", "TAMPER", "ALARM_INPUT", "MOTION_DETECTION_ENABLED", "LAST_DETECTION", "LAST_ALERT",
@@ -519,8 +521,158 @@ function Mock.withHikvisionCameras(project, list)
             project.variables[camera.protocol][1000 + index] = isText and "" or (name == "ONLINE" and "1" or "0")
             project.variableNames[camera.protocol][1000 + index] = name
         end
+        if camera.marker then
+            local count = #Mock.HIKVISION_VARIABLES
+            project.variables[camera.protocol][1001 + count] = "1"
+            project.variableNames[camera.protocol][1001 + count] = "DIRECTORLINK_CAMERA"
+            project.variables[camera.protocol][1002 + count] = "camera"
+            project.variableNames[camera.protocol][1002 + count] = "DIRECTORLINK_CAMERA_KIND"
+        end
+        if camera.marker or camera.events then
+            project.deviceData = project.deviceData or {}
+            project.deviceData[camera.protocol] = { version = "100", events = Mock.eventsXml(Mock.HIKVISION_EVENTS) }
+        end
     end
     return project
+end
+
+-- The Hikvision camera driver.xml's first events (ids and names).
+Mock.HIKVISION_EVENTS = {
+    { 1, "Alert" }, { 2, "Motion Detected" }, { 3, "Motion Ended" }, { 4, "Person Detected" },
+    { 5, "Vehicle Detected" }, { 6, "Line Crossing" }, { 18, "Camera Online" }, { 19, "Camera Offline" },
+}
+
+-- A driver.xml's <events> as Director gives the tag: `list` { { id, name }, ... }.
+function Mock.eventsXml(list)
+    local parts = {}
+    for _, event in ipairs(list) do
+        parts[#parts + 1] = string.format("\n\t\t<event><id>%d</id><name>%s</name><description>When NAME: %s</description></event>", event[1], event[2], event[2])
+    end
+    return table.concat(parts) .. "\n\t"
+end
+
+-- Variables a driver adds while it runs (`added`: { NAME = value }, in that order by name), each with
+-- the next id; one it has already is set instead. Director tells other drivers nothing of a new one.
+function Mock.addVariables(mock, deviceId, added)
+    local project = mock.project
+    project.variables[deviceId] = project.variables[deviceId] or {}
+    project.variableNames[deviceId] = project.variableNames[deviceId] or {}
+    local names = {}
+    for name in pairs(added or {}) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    local last = 1000
+    for id in pairs(project.variables[deviceId]) do
+        last = math.max(last, id)
+    end
+    for _, name in ipairs(names) do
+        local existing = nil
+        for id, known in pairs(project.variableNames[deviceId]) do
+            if known == name then
+                existing = id
+            end
+        end
+        if existing then
+            Mock.changeVariable(mock, deviceId, existing, added[name])
+        else
+            last = last + 1
+            project.variables[deviceId][last] = added[name]
+            project.variableNames[deviceId][last] = name
+        end
+    end
+end
+
+-- Cameras whose drivers follow DirectorLink's camera agreement (1.10.0, ADR-065; made up: no such
+-- driver is in this repository): one camera proxy each, a basic login, and the driver's variables
+-- ONLINE, then (with `marker`, "1" by default; false: not yet) DIRECTORLINK_CAMERA and
+-- DIRECTORLINK_CAMERA_KIND (`kind`, "camera" or "doorbell"), then LAST_ALERT and LAST_RING, then
+-- (with `events_variable`) DIRECTORLINK_CAMERA_EVENTS. Its events, as Director gives its driver.xml:
+-- Mock.AGREEMENT_EVENTS (Alert is 7, Ring 8), or `events` ({ { id, name } }). `list`: { { id,
+-- protocol, name, room (10 or 11), address, kind, marker, events, events_variable, file } }; by
+-- default 67 "Porch" (a camera, Living Room, driver 157) and 68 "Entrance" (a doorbell, Kitchen,
+-- driver 158).
+Mock.AGREEMENT_EVENTS = { { 1, "Camera Online" }, { 2, "Camera Offline" }, { 3, "Motion" }, { 7, "Alert" }, { 8, "Ring" } }
+Mock.AGREEMENT_FILE = "DirectorLink-Example-Camera.c4z"
+
+function Mock.withAgreementCameras(project, list)
+    list = list or {
+        { id = 67, protocol = 157, name = "Porch", room = 11, address = "192.0.2.51", kind = "camera" },
+        { id = 68, protocol = 158, name = "Entrance", room = 10, address = "192.0.2.52", kind = "doorbell" },
+    }
+    project.cameras = project.cameras or {}
+    project.deviceData = project.deviceData or {}
+    for _, camera in ipairs(list) do
+        local room = camera.room or 11
+        local roomName = room == 10 and "Kitchen" or "Living Room"
+        local driver = camera.file or Mock.AGREEMENT_FILE
+        project.devices[camera.protocol] = {
+            deviceName = camera.name, driverFileName = driver, roomId = room, roomName = roomName,
+            proxies = { [camera.id] = { deviceName = camera.name, driverFileName = "camera.c4i" } },
+        }
+        project.devices[camera.id] = {
+            deviceName = camera.name, driverFileName = "camera.c4i", roomId = room, roomName = roomName,
+            protocol = { [camera.protocol] = { deviceName = camera.name, driverFileName = driver } },
+        }
+        project.cameras[camera.id] = {
+            address = camera.address, http_port = 80, auth_type = "BASIC", username = "viewer", password = "cam-pass",
+            query = "snapshot.jpg?size=%dx%d",
+        }
+        local names, values = { "ONLINE" }, { ONLINE = "1", LAST_ALERT = "", LAST_RING = "" }
+        if camera.marker ~= false then
+            names[#names + 1] = "DIRECTORLINK_CAMERA"
+            names[#names + 1] = "DIRECTORLINK_CAMERA_KIND"
+            values.DIRECTORLINK_CAMERA = camera.marker or "1"
+            values.DIRECTORLINK_CAMERA_KIND = camera.kind or "camera"
+        end
+        names[#names + 1] = "LAST_ALERT"
+        names[#names + 1] = "LAST_RING"
+        if camera.events_variable then
+            names[#names + 1] = "DIRECTORLINK_CAMERA_EVENTS"
+            values.DIRECTORLINK_CAMERA_EVENTS = camera.events_variable
+        end
+        project.variables[camera.protocol] = {}
+        project.variableNames[camera.protocol] = {}
+        for index, name in ipairs(names) do
+            project.variables[camera.protocol][1000 + index] = values[name]
+            project.variableNames[camera.protocol][1000 + index] = name
+        end
+        project.deviceData[camera.protocol] = { version = "1", events = Mock.eventsXml(camera.events or Mock.AGREEMENT_EVENTS) }
+    end
+    return project
+end
+
+-- The id of the event `name` among the driver's events (as Director gives its driver.xml), or nil.
+local function eventNamed(mock, deviceId, name)
+    local data = (mock.project.deviceData or {})[deviceId]
+    for id, eventName in tostring(data and data.events or ""):gmatch("<id>(%d+)</id><name>(.-)</name>") do
+        if eventName == name then
+            return tonumber(id)
+        end
+    end
+    return nil
+end
+
+local function setNamed(mock, deviceId, name, value)
+    for variableId, known in pairs(mock.project.variableNames[deviceId] or {}) do
+        if known == name then
+            Mock.changeVariable(mock, deviceId, variableId, value)
+        end
+    end
+end
+
+-- A camera driver of the agreement raises an alert as the agreement says: LAST_ALERT (the label),
+-- then its event named Alert. Returns how many registrations of the event heard it.
+function Mock.cameraAlert(mock, protocol, label)
+    setNamed(mock, protocol, "LAST_ALERT", label)
+    return Mock.fireDeviceEvent(mock, protocol, eventNamed(mock, protocol, "Alert") or -1)
+end
+
+-- A doorbell camera's driver of the agreement rings: LAST_RING (`at`, ISO 8601 UTC; now by default),
+-- then its event named Ring. Returns how many registrations of the event heard it.
+function Mock.cameraRing(mock, protocol, at)
+    setNamed(mock, protocol, "LAST_RING", at or os.date("!%Y-%m-%dT%H:%M:%SZ"))
+    return Mock.fireDeviceEvent(mock, protocol, eventNamed(mock, protocol, "Ring") or -1)
 end
 
 -- The Hikvision camera driver raises an alert as it does: LAST_ALERT (the detection's label, e.g.
@@ -535,6 +687,64 @@ function Mock.hikvisionAlert(mock, protocol, label)
         end
     end
     return Mock.fireDeviceEvent(mock, protocol, Mock.HIKVISION_ALERT)
+end
+
+-- Control4's Relay Door, Gate and Garage Door Controllers (ADR-069): each a driver with one uibutton
+-- proxy, its variable STATE (1001) and its connections, as C4:GetBoundProviderDevice gives them
+-- (project.bindings[controller][connection] = the device bound there: 1 Open/Toggle relay, 2 Close,
+-- 3 Stop, 4 Closed Contact, 5 Opened Contact). `list`: { { id (the proxy), controller, name, room,
+-- file, kind ("door", "gate", "garage_door"), state ("Opened", "Closed", "Partial", "Unknown"),
+-- bindings } }; by default:
+--   71 "Main Gate" (Living Room; driver 161, gate_relay_control.c4z): its relay is the DoorBird's
+--      (driver 110, whose doorstation is 93 "Front Gate"), a Closed Contact bound; Closed.
+--   72 "Garage Door" (Kitchen; driver 162, a second download "garagedoor_relay_control (1).c4z"):
+--      Open and Close relays on a relay module (173, 174), no contact; Unknown.
+--   73 "Back Door" (Kitchen; driver 163, door_relay_control.c4z): its relay is a KNX Contact/Relay
+--      DirectorLink shows, 75 "Back Door Relay" (Kitchen), an Opened Contact bound; Closed.
+--   74 "Side Gate" (Living Room; driver 164): nothing bound to its Open/Toggle relay.
+Mock.CONTROLLER_FILES = { door = "door_relay_control.c4z", gate = "gate_relay_control.c4z", garage_door = "garagedoor_relay_control.c4z" }
+
+function Mock.withRelayControllers(project, list)
+    list = list or {
+        { id = 71, controller = 161, name = "Main Gate", room = 11, kind = "gate", state = "Closed", bindings = { [1] = 110, [4] = 175 } },
+        { id = 72, controller = 162, name = "Garage Door", room = 10, kind = "garage_door", file = "garagedoor_relay_control (1).c4z", state = "Unknown", bindings = { [1] = 173, [2] = 174 } },
+        { id = 73, controller = 163, name = "Back Door", room = 10, kind = "door", state = "Closed", bindings = { [1] = 75, [5] = 176 }, relay = { id = 75, name = "Back Door Relay" } },
+        { id = 74, controller = 164, name = "Side Gate", room = 11, kind = "gate", state = "Unknown", bindings = {} },
+    }
+    project.bindings = project.bindings or {}
+    project.variableNames = project.variableNames or {}
+    for _, door in ipairs(list) do
+        local room = door.room or 11
+        local roomName = door.roomName or (room == 10 and "Kitchen" or "Living Room")
+        local file = door.file or Mock.CONTROLLER_FILES[door.kind or "gate"]
+        local driverName = door.kind == "door" and "Relay Door Controller (OS2.9+)" or door.kind == "garage_door" and "Relay Garage Door Controller (OS2.9+)" or "Relay Gate Controller (OS2.9+)"
+        project.devices[door.controller] = {
+            deviceName = driverName, driverFileName = file, roomId = room, roomName = roomName,
+            proxies = { [door.id] = { deviceName = door.name, driverFileName = "uibutton.c4i" } },
+        }
+        project.devices[door.id] = {
+            deviceName = door.name, driverFileName = "uibutton.c4i", roomId = room, roomName = roomName,
+            protocol = { [door.controller] = { deviceName = driverName, driverFileName = file } },
+        }
+        if door.relay then
+            project.devices[door.relay.id] = {
+                deviceName = door.relay.name, driverFileName = "knx_contact_relay.c4z", roomId = door.relay.room or room, roomName = door.relay.roomName or roomName,
+            }
+        end
+        project.bindings[door.controller] = door.bindings or {}
+        project.variables[door.controller] = { [1001] = door.state or "Unknown" }
+        project.variableNames[door.controller] = { [1001] = "STATE" }
+    end
+    return project
+end
+
+-- A door controller's state changes as its driver does it: STATE, then the event of that state
+-- (Opened 1, Closed 2, Partial 3, Unknown 4). Returns how many registrations heard the event.
+Mock.CONTROLLER_EVENTS = { Opened = 1, Closed = 2, Partial = 3, Unknown = 4 }
+
+function Mock.controllerState(mock, controller, value)
+    Mock.changeVariable(mock, controller, 1001, value)
+    return Mock.fireDeviceEvent(mock, controller, Mock.CONTROLLER_EVENTS[value])
 end
 
 -- The refrigerator's driver reports: variables by name, e.g. { DOOR_OPEN = "1" }.
@@ -746,8 +956,25 @@ function Mock.install(project)
     -- The <devicedata> tags of a driver's driver.xml (project.deviceData[id][tag]); a driver without
     -- any says "" for "version", as Director gives a missing tag. Every protocol driver has version
     -- "1" unless a test says otherwise; Director updating a driver changes it (Mock.updateDeviceDriver).
+    -- Without a tag, the whole <devicedata> (its version and events, or a test's `devicedata`).
     function C4:GetDeviceData(deviceId, tag)
         local data = (project.deviceData or {})[deviceId]
+        if tag == nil then
+            if not data then
+                return ""
+            end
+            if data.devicedata ~= nil then
+                return data.devicedata
+            end
+            local parts = { "<devicedata>" }
+            for _, name in ipairs({ "version", "events" }) do
+                if data[name] ~= nil then
+                    parts[#parts + 1] = "<" .. name .. ">" .. tostring(data[name]) .. "</" .. name .. ">"
+                end
+            end
+            parts[#parts + 1] = "</devicedata>"
+            return table.concat(parts)
+        end
         if data and data[tag] ~= nil then
             return data[tag]
         end
@@ -760,6 +987,16 @@ function Mock.install(project)
 
     function C4:RegisterDeviceEvent(deviceId, eventId)
         mock.deviceEvents[#mock.deviceEvents + 1] = { deviceId, eventId }
+    end
+
+    -- The device bound to a connection of another device (project.bindings), 0 when none; an error
+    -- while project.bindingsUnreadable is set, as a Director without the call.
+    function C4:GetBoundProviderDevice(deviceId, bindingId)
+        if project.bindingsUnreadable then
+            error("GetBoundProviderDevice is not available")
+        end
+        local bindings = (project.bindings or {})[deviceId]
+        return bindings and bindings[bindingId] or 0
     end
 
     function C4:RegisterSystemEvent(eventId, deviceId)
@@ -970,7 +1207,9 @@ function Mock.install(project)
             if not mock.weather then
                 return nil, "Couldn't resolve host"
             end
-            return { code = 200, headers = { ["Content-Type"] = "application/json" }, body = Json.encode(mock.weather) }
+            -- A function answers at the moment it is asked (driver/tests/weather_fake.lua).
+            local answer = type(mock.weather) == "function" and mock.weather(url) or mock.weather
+            return { code = 200, headers = { ["Content-Type"] = "application/json" }, body = Json.encode(answer) }
         end
         if mock.camerasOffline then
             return nil, "Couldn't connect to server"

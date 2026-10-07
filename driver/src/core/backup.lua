@@ -609,6 +609,11 @@ local function findRoom(m, id, strict)
     return nil
 end
 
+-- Whether `device` is of `kind`: a camera that is a doorbell (ADR-065) is a doorbell too.
+local function isKind(device, kind)
+    return device ~= nil and (device.kind == kind or (kind == "doorbell" and device.kind == "camera" and type(device.doorbell) == "table"))
+end
+
 -- The device of `kind` a backup's device id is now: the same id, still a device of that kind, with
 -- the same name; else the one other device of that kind with that name in the same room (the ids
 -- were swapped, or it was added again); else the same id with another name (renamed). Doors and
@@ -616,7 +621,7 @@ end
 local function findDevice(m, id, kind)
     local devices = m.registry.devices or {}
     local device = devices[id]
-    local same = device ~= nil and device.kind == kind
+    local same = isKind(device, kind)
     local info = m.devices[tostring(id)]
     local name = infoName(info)
     if same and device.name == name then
@@ -682,7 +687,7 @@ local function resolve(m, kind, id, where, strict)
                 now = (m.registry.rooms or {})[id]
             else
                 now = (m.registry.devices or {})[id]
-                now = now and now.kind == kind and now or nil
+                now = isKind(now, kind) and now or nil
             end
             local entry = {
                 kind = kind,

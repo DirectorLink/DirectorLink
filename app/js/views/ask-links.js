@@ -70,7 +70,7 @@ function requirements(links) {
         { class: "notice notice-info", dataset: { key: "ask-link-alerts" } },
         t("askLinks.alertsNeeded"),
         " ",
-        h("a", { href: "#/settings/controller" }, t("askLinks.alertsLink"))
+        h("a", { href: "#/settings/alerts" }, t("askLinks.alertsLink"))
       )
     );
   }

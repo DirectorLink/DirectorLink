@@ -22,6 +22,19 @@ function Classifier.isHikvisionCameraDriver(driverFileName)
     return name == HIKVISION_CAMERA_DRIVER or name:gsub(" %(%d+%)%.c4z$", ".c4z") == HIKVISION_CAMERA_DRIVER
 end
 
+-- Control4's Relay Door, Gate and Garage Door Controllers (1.10.0, ADR-069), also a second download
+-- of one ("gate_relay_control (1).c4z"): the kind of door each opens, or nil for any other driver.
+local RELAY_CONTROLLERS = {
+    ["door_relay_control.c4z"] = "door",
+    ["gate_relay_control.c4z"] = "gate",
+    ["garagedoor_relay_control.c4z"] = "garage_door",
+}
+
+function Classifier.relayController(driverFileName)
+    local name = normalizedDriverName(driverFileName)
+    return RELAY_CONTROLLERS[name] or RELAY_CONTROLLERS[(name:gsub(" %(%d+%)%.c4z$", ".c4z"))]
+end
+
 function Classifier.classify(driverFileName)
     local name = normalizedDriverName(driverFileName)
 

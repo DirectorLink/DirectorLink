@@ -1,10 +1,12 @@
--- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang, a camera of the DirectorLink
--- · Hikvision drivers saw someone or something (1.8.0, ADR-056), a door or gate was opened, the
--- refrigerator's door was left open, a schedule failed. Each goes to DirectorLink's servers as
--- one "notify" message that names only the key ids it is for and, for each, the details sealed to
--- that key: what happened, when, by the names the controller has (the doorbell, the door, who opened
--- it as the history names them), so that the servers can deliver it to the browsers of those keys
--- (Web Push) without being able to read it. Only the device of that key can open its part.
+-- Alerts the controller makes (ADR-050, docs/RELAY.md): a doorbell rang (a DoorBird, or since 1.10.0
+-- a doorbell camera of DirectorLink's camera agreement, ADR-065), a camera saw someone or something
+-- (1.8.0, ADR-056: the DirectorLink · Hikvision drivers; since 1.10.0 every camera driver of the
+-- agreement), a door or gate was opened, the refrigerator's door was left open, a schedule failed.
+-- Each goes to DirectorLink's servers as one "notify" message that names only the key ids it is
+-- for and, for each, the details sealed to that key: what happened, when, by the names the
+-- controller has (the doorbell, the door, who opened it as the history names them), so that the
+-- servers can deliver it to the browsers of those keys (Web Push) without being able to read it.
+-- Only the device of that key can open its part.
 --
 -- Who gets what is decided here: a key whose person may get the kind (src/auth/access.lua, ADR-054:
 -- a doorbell's ring whoever sees that doorbell, the refrigerator's door whoever sees that
@@ -26,6 +28,7 @@ local Clock = require("src.core.clock")
 local CameraAdapter = require("src.adapters.camera")
 local DoorBird = require("src.adapters.doorbird")
 local KnxRelay = require("src.adapters.knx_relay")
+local RelayController = require("src.adapters.relay_controller")
 local Json = require("src.core.json")
 local Log = require("src.core.log")
 local Random = require("src.core.random")
@@ -55,8 +58,11 @@ Alerts.CAMERA_PER_HOUR = 30
 Alerts.SCHEDULE_PER_HOUR = 3
 Alerts.PER_HOUR = 60
 -- A door or doorbell reporting an opening this soon after DirectorLink's own command to it was
--- opened by that command (already in the history, with who did it).
+-- opened by that command (already in the history, with who did it). A Relay Door, Gate or Garage
+-- Door Controller with only its Opened Contact says Opened once the gate is fully open: for what the
+-- controller says, CONTROLLER_OWN_SECONDS, or until it says Closed again (ADR-069).
 Alerts.OWN_SECONDS = 15
+Alerts.CONTROLLER_OWN_SECONDS = 90
 -- Names in a detail are cut to this many bytes (whole characters). Every detail is padded with
 -- spaces to DETAIL_BYTES before it is sealed, so that every part's ciphertext has the same size
 -- (512 bytes, 684 in base64) whatever its kind and names; one larger has its names shortened. Every
@@ -265,7 +271,16 @@ function Alerts.start(deps)
                 end
                 return false
             elseif kind == "door_opened" then
-                return #registry.relayList() > 0 or #registry.doorbellList() > 0
+                -- A doorbell camera opens nothing (ADR-065): a DoorBird's doorstation does.
+                if #registry.relayList() > 0 then
+                    return true
+                end
+                for _, doorbell in ipairs(registry.doorbellList()) do
+                    if not doorbell.camera_doorbell then
+                        return true
+                    end
+                end
+                return false
             end
             return kind == "fridge_door" and deps.hasFridge ~= nil and deps.hasFridge() == true
         end,
@@ -281,10 +296,15 @@ function Alerts.start(deps)
         doorbellEvent = function(eventId)
             return DoorBird.EVENTS[tonumber(eventId)]
         end,
-        cameraAlert = function(eventId)
-            return tonumber(eventId) == CameraAdapter.ALERT_EVENT
-        end,
+        cameraEvent = CameraAdapter.eventOf,
         relayClosed = KnxRelay.closedEvent,
+        -- A door of a Relay Door, Gate or Garage Door Controller (ADR-069): its adapter says.
+        relayOpening = function(device, eventId, before, sourceId)
+            if RelayController.handles(device) then
+                return RelayController.opening(device, eventId, before, sourceId), true
+            end
+            return nil, false
+        end,
         commandedAt = deps.adapters.commandedAt,
         record = deps.activity.record,
     })
@@ -547,8 +567,9 @@ local function deviceDetail(kind, device)
     }
 end
 
--- A doorbell rang (the DoorBird's event): everyone who may see it, at most once in RING_SECONDS. The
--- ring's time is the doorbell's own (its last_ring_at), so that the app knows the alert's ring.
+-- A doorbell rang (the DoorBird's event, or a doorbell camera's Ring: `device` is then that camera
+-- as a doorbell, ADR-065): everyone who may see it, at most once in RING_SECONDS. The ring's time is
+-- the doorbell's own (its last_ring_at), so that the app knows the alert's ring.
 function Alerts.ring(device, now)
     now = now or Clock.now()
     if tooSoon("doorbell:" .. tostring(device.id), Alerts.RING_SECONDS, now) then
@@ -558,8 +579,8 @@ function Alerts.ring(device, now)
     return sent("doorbell", send(deviceDetail("doorbell", device), now, true, type(last) == "string" and last or nil))
 end
 
--- A camera of the DirectorLink · Hikvision drivers raised an alert (its driver's Alert event, with
--- the camera's Alert On filter, the hub's switch and its snooze already applied:
+-- A camera raised an alert (its driver's Alert event, DirectorLink's camera agreement, ADR-065; the
+-- Hikvision drivers apply the camera's Alert On filter, the hub's switch and its snooze before:
 -- src/adapters/camera.lua): the keys that chose camera alerts and may see that camera's pictures,
 -- saying what it saw (`device.state.alert.what`: person, vehicle, line_crossing, ... or other), at
 -- most once a camera in CAMERA_SECONDS and CAMERA_PER_HOUR an hour. Not brief: someone in the
@@ -682,15 +703,19 @@ function Alerts.recorded(entry)
 end
 
 -- A device's event that its adapter took (src/adapters/manager.lua; `before`: the device's state
--- before it): a doorbell's ring, a camera's alert, or a door or gate opened that DirectorLink did
--- not open (in Control4: its app, a keypad, its programming, the DoorBird's own app), which goes
--- into the history, at most once a door in DOOR_SECONDS, and from there to the admins. A relay
--- counts only when it closes from open as last reported: a relay that reports "closed" again (a
--- status read after a restart, a cyclic report) or whose state is not known yet opened nothing.
--- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; cameraAlert(eventId);
--- relayClosed(eventId); commandedAt(deviceId) (DirectorLink's last command to it); record(kind,
--- action, fields).
-function Alerts.deviceEvent(device, eventId, before)
+-- before it): a doorbell's ring (a doorbell camera's too), a camera's alert, or a door or gate
+-- opened that DirectorLink did not open (in Control4: its app, a keypad, its programming, the
+-- DoorBird's own app), which goes into the history, at most once a door in DOOR_SECONDS, and from
+-- there to the admins. A relay counts only when it closes from open as last reported: a relay that
+-- reports "closed" again (a status read after a restart, a cyclic report) or whose state is not
+-- known yet opened nothing. A door of a Relay Door, Gate or Garage Door Controller (ADR-069) counts
+-- when the controller goes from Closed to Opened or Partial, or its KNX relay closes from open; one
+-- opening of a gate that a DoorBird doorbell also opens (partners) is noted once.
+-- options (configure): doorbellEvent(eventId) -> "doorbell" | "opened" | ...; cameraEvent(device,
+-- eventId) -> "alert" | "ring" | nil; relayClosed(eventId); relayOpening(device, eventId, before,
+-- sourceId) -> "pulse" | nil, and whether it knew the device; commandedAt(deviceId) (DirectorLink's
+-- last command to it); record(kind, action, fields).
+function Alerts.deviceEvent(device, eventId, before, sourceId)
     local options = state.options
     if not options or type(device) ~= "table" then
         return
@@ -698,8 +723,11 @@ function Alerts.deviceEvent(device, eventId, before)
     local now = Clock.now()
     local opened
     if device.kind == "camera" then
+        local event = options.cameraEvent and options.cameraEvent(device, eventId)
         local capabilities = type(device.capabilities) == "table" and device.capabilities or {}
-        if capabilities.alerts == true and options.cameraAlert and options.cameraAlert(eventId) then
+        if event == "ring" and type(device.doorbell) == "table" then
+            Alerts.ring(device.doorbell, now)
+        elseif event == "alert" and capabilities.alerts == true then
             Alerts.camera(device, now)
         end
         return
@@ -710,17 +738,34 @@ function Alerts.deviceEvent(device, eventId, before)
             return
         end
         opened = event == "opened" and "doorbell" or nil
-    elseif device.kind == "relay" and options.relayClosed and options.relayClosed(eventId) then
-        opened = type(before) == "table" and before.relay == "open" and "pulse" or nil
+    elseif device.kind == "relay" then
+        local known = false
+        if options.relayOpening then
+            opened, known = options.relayOpening(device, eventId, before, sourceId)
+        end
+        if not known and options.relayClosed and options.relayClosed(eventId) then
+            opened = type(before) == "table" and before.relay == "open" and "pulse" or nil
+        end
     end
     if not opened then
         return
     end
     local commanded = options.commandedAt and options.commandedAt(device.id)
-    if commanded and now - commanded <= Alerts.OWN_SECONDS and now >= commanded then
+    -- The controller's own events: up to CONTROLLER_OWN_SECONDS (its door closing again ends it,
+    -- src/adapters/manager.lua); a KNX relay a controller drives reports at once, as any relay.
+    local fromController = device.controller_id ~= nil and tonumber(sourceId) == tonumber(device.controller_id)
+    local own = fromController and Alerts.CONTROLLER_OWN_SECONDS or Alerts.OWN_SECONDS
+    if commanded and now - commanded <= own and now >= commanded then
         return -- DirectorLink's own command: the history has it already, with who
     end
-    if tooSoon("control4:" .. tostring(device.id), Alerts.DOOR_SECONDS, now) then
+    -- A gate and the doorbell that opens it too: one opening, one entry.
+    local group = tonumber(device.id)
+    for _, partner in ipairs(type(device.partners) == "table" and device.partners or {}) do
+        if tonumber(partner) and tonumber(partner) < group then
+            group = tonumber(partner)
+        end
+    end
+    if tooSoon("control4:" .. tostring(group), Alerts.DOOR_SECONDS, now) then
         return
     end
     if options.record then

@@ -296,6 +296,10 @@ test("making a door's link shows its secret once, with the steps for iPhone, Sir
   assert.match(textOf(nodes), /asks you before Main gate opens/);
   assert.match(textOf(nodes), /whoever gets hold of it can only make your phone ask/);
   assert.ok(byKey(nodes, "ask-link-alerts"), "the question comes as an alert: this device has them off");
+  // It leads to Settings → Alerts (1.10.0; Settings → Controller before).
+  const alertsLink = byKey(nodes, "ask-link-alerts").children.find((child) => child.tagName === "A");
+  assert.equal(alertsLink.attributes.href, "#/settings/alerts");
+  assert.equal(alertsLink.textContent, "Alerts on this device");
   byKey(nodes, "ask-link-label").listeners.input[0]({ target: { value: " Arriving home " } });
   await press(nodes, "ask-link-make");
   assert.deepEqual(calls("POST", "/v1/ask-links").at(-1).body, { relay_id: GATE, label: "Arriving home" });

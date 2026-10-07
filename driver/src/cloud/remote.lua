@@ -14,6 +14,9 @@
 -- And (1.9.0, ADR-061)
 --   accounts  which keys share a Google or Apple account, as opaque tags (src/auth/accounts.lua);
 --          not answered
+-- Each e2e, join, claim and link reaches this module once per relay id: relay.lua passes them
+-- through src/cloud/answers.lua, which gives one the relay sends again after a lost connection its
+-- first answer (1.10.0, ADR-072), before any sealed request is opened or checked for replay.
 -- Problems the relay has to know about (unknown key, broken seal, replay) are sent in the clear as
 -- a `code`; they reveal nothing about the home. Remote.handleLocal opens requests sealed the same
 -- way on the home network (POST /v1/sealed, naming the home "lan").

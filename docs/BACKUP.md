@@ -28,7 +28,7 @@ says to update DirectorLink.
 | The Sonos room choices (1.6.0) | Each Sonos player an admin put in a room: the room and the player's name. | Matched to the project, as a scene's room. A backup made before 1.6.0 has none: the choices on the controller stay as they are. |
 
 Not in a backup: pending invitations (revoked by a restore; see ADR-042 for why), the activity
-history (it stays on the controller, and a restore adds to it; ADR-046), what the schedules ran, the request ids kept against replays, the random pool, the weather, the last automation shown
+history (it stays on the controller, and a restore adds to it; ADR-046), what the schedules ran, each thermostat's last mode (1.10.0, ADR-070: seen again as the thermostats are used), the request ids kept against replays, the random pool, the weather, the last automation shown
 in Composer, the pairing and start counters, the log and a claim token (both only in memory). A
 remote identity the relay never accepted (Remote Access never on, or never connected) is not in a
 backup either, and none is made for one: restored, it would replace a home that is linked now.
@@ -211,7 +211,9 @@ door.
 
 What the schedules ran stays with the controller that ran them. After a restore every schedule starts
 as if saved then: nothing that was due before runs, and nothing is caught up; a weather rule waits
-until the weather has turned (it was probably run already where the backup was made).
+until the weather has turned (it was probably run already where the backup was made), and one with
+hours that had begun counts them as begun that day, so it is ready again when they begin the next
+day (1.10.0).
 
 ### Another home's backup
 

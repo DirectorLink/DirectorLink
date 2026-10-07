@@ -6,6 +6,7 @@
 // 2 minutes more, so that a late confirmation still shows (refrigerators.js).
 
 import { fanChangeConfirmed, optimisticFan } from "./fans.js";
+import { isHeater } from "./heaters.js";
 import { t } from "./i18n.js";
 import {
   CONFIRM_MS as FRIDGE_CONFIRM_MS,
@@ -532,11 +533,12 @@ export function stopBlind(blind) {
   );
 }
 
-// Room "All off": lights, air conditioning and fans off.
+// Room "All off": lights, air conditioning and fans off; lights named for heating stay as they are.
 export function allOff(group) {
   const commands = [];
   for (const light of group.lights) {
-    if (light.on) commands.push(setLight(light, { on: false }));
+    // Lights named for heating are left as they are: only their own switch changes them (ADR-066).
+    if (light.on && !isHeater(light)) commands.push(setLight(light, { on: false }));
   }
   for (const fan of group.fans || []) {
     if (fan.on) commands.push(setFan(fan, { on: false }));

@@ -10,6 +10,7 @@ local Version = require("src.core.version")
 local WebSocket = require("src.cloud.websocket")
 local Activity = require("src.core.activity")
 local Access = require("src.auth.access")
+local Answers = require("src.cloud.answers")
 
 local Relay = {}
 
@@ -17,12 +18,13 @@ Relay.HOST = "api.directorlink.io"
 Relay.PORT = 443
 Relay.PATH = "/relay/connect"
 Relay.BINDING = 6001
--- A ping every 10 s (25 s up to 1.5.0): a connection that died without a word is found within
--- seconds, at the next ping. The hello says how often (ping_s), so the relay holds requests for a
--- driver whose pings have stopped instead of sending them into a dead connection (ADR-045).
-Relay.KEEPALIVE_MS = 10000
+-- A ping every 5 s (10 s from 1.6.0, 25 s up to 1.5.0): a connection that died without a word is
+-- found within seconds, at the next ping, which Director then refuses. The hello says how often
+-- (ping_s), so the relay holds requests for a driver whose pings have stopped instead of sending
+-- them into a dead connection (ADR-045, ADR-072).
+Relay.KEEPALIVE_MS = 5000
 -- A connection that hears nothing (not even a pong) for this many keep-alive ticks in a row is
--- dropped: about 30 s. Ticks, not the clock, so setting the controller's clock back cannot
+-- dropped: about 15 s. Ticks, not the clock, so setting the controller's clock back cannot
 -- delay it.
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
@@ -33,10 +35,18 @@ Relay.REFUSED_RETRY_SECONDS = 300
 Relay.UPDATE_RETRY_SECONDS = 3600
 Relay.UPDATE_STATUS = "Update DirectorLink: this version can no longer connect to remote access"
 -- A connection that was up for STABLE_SECONDS and is lost is tried again after QUICK_RETRY_SECONDS,
--- then with the backoff; one lost sooner goes on with the backoff, so a connection that keeps
--- failing as soon as it opens is not retried every second.
+-- and so are the next QUICK_IN_ROW connections that open and are lost sooner (1.10.0, ADR-072: the
+-- home's route to Cloudflare was seen to flip again within seconds, and a request the relay keeps
+-- for the next connection goes again only within 10 s). Then, and after an attempt that does not
+-- open, the backoff: a connection that keeps failing as soon as it opens is not retried every second.
 Relay.QUICK_RETRY_SECONDS = 1
 Relay.STABLE_SECONDS = 60
+Relay.QUICK_IN_ROW = 2
+-- A connection that opens after one was lost pings every WATCH_MS for its first WATCH_PINGS pings
+-- (1.10.0, ADR-072), before the keep-alive's first: a second cut right after the first is found
+-- within a second rather than 5 s, in time for the relay to send its requests again.
+Relay.WATCH_MS = 1000
+Relay.WATCH_PINGS = 4
 -- Closed with 4000 "replaced": another connection with this home's identity took its place (a
 -- second controller, after a backup was restored on it). Waiting longer keeps the two from pushing
 -- each other off every few seconds.
@@ -49,8 +59,10 @@ Relay.CANDIDATE_SECONDS = 24 * 3600
 -- What this driver tells the relay it takes, in its hello (1.7.0); `alerts_gone` (1.9.0, ADR-062):
 -- the key ids whose browsers the account service no longer has (src/cloud/remote.lua); `users`
 -- (1.9.0, ADR-061): the relay sends which keys share an account (`accounts`), and any device of an
--- account may approve that account's new device, as the controller lets every user add their own.
-Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users" })
+-- account may approve that account's new device, as the controller lets every user add their own;
+-- `resend` (1.10.0, ADR-072): a request already sent when the connection ended may come again on
+-- the next one, with the same id, and runs once (src/cloud/answers.lua).
+Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users", "resend" })
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -63,6 +75,7 @@ local state = {
     socket = nil,
     identity = nil,
     attempts = 0, -- failed attempts since the last stable connection (the backoff's step)
+    quickLeft = 0, -- connections lost soon after they opened that may still be retried at once
     tries = 0, -- attempts started since the connection was lost
     connectedAt = nil,
     downSince = nil, -- when the connection was lost
@@ -72,6 +85,8 @@ local state = {
     pingedAt = nil,
     polledAt = nil, -- when Director last polled the connection (OnPoll)
     keepalive = nil,
+    watch = nil, -- the first seconds' pings of a connection that follows a lost one
+    dropped = false, -- an open connection was lost since the last one opened
     retry = nil,
     connecting = nil, -- the limit on the attempt in progress (watchConnect)
     services = nil,
@@ -85,6 +100,9 @@ local state = {
     -- once, until a connection opens again; and the minimum it named, if any (GET /v1/remote).
     updateRequired = false,
     minimumVersion = nil,
+    -- A random id made at this start of the driver (1.10.0), in the hello: the relay sends a request
+    -- again only to the instance it went to, which remembers what it ran (src/cloud/answers.lua).
+    instance = nil,
 }
 
 local function log(level, message, data)
@@ -178,9 +196,11 @@ end
 
 local function stopTimers()
     cancel(state.keepalive)
+    cancel(state.watch)
     cancel(state.retry)
     cancel(state.connecting)
     state.keepalive = nil
+    state.watch = nil
     state.retry = nil
     state.connecting = nil
 end
@@ -201,6 +221,8 @@ local function scheduleReconnect(reason, seconds, note)
         return
     end
     if not seconds then
+        -- The backoff ends a row of quick retries (quickRetry).
+        state.quickLeft = 0
         state.attempts = state.attempts + 1
         seconds = Relay.BACKOFF_SECONDS[math.min(state.attempts, #Relay.BACKOFF_SECONDS)]
     end
@@ -290,9 +312,16 @@ local function onMessage(text, kind)
         waiting.done(message)
         return
     end
-    -- Sealed requests, invitations and claims (remote.lua).
-    if state.remote and state.remote(message, send) then
-        return
+    -- Sealed requests, invitations, claims and links (remote.lua). Each runs once: one the relay
+    -- sends again after a lost connection gets its first answer (answers.lua, ADR-072).
+    if state.remote then
+        local handled, what = Answers.handle(message, send, state.remote)
+        if what then
+            log("info", "a request the relay sent again", { type = tostring(message.type), resent = tonumber(message.resent), outcome = what })
+        end
+        if handled then
+            return
+        end
     end
     if message.type == "request" then
         refuseRequest(message)
@@ -317,11 +346,20 @@ local function connectionFacts(data)
     return data
 end
 
--- A connection that was up long enough and is lost is tried again at once; otherwise the backoff
+-- A connection that was up long enough and is lost is tried again at once, and so are the next
+-- QUICK_IN_ROW that open and are lost sooner (a route that flips again); otherwise the backoff
 -- goes on. Returns the wait in seconds, or nil for the backoff.
 local function quickRetry()
-    if state.connectedAt and os.time() - state.connectedAt >= Relay.STABLE_SECONDS then
+    if not state.connectedAt then
+        return nil
+    end
+    if os.time() - state.connectedAt >= Relay.STABLE_SECONDS then
         state.attempts = 0
+        state.quickLeft = Relay.QUICK_IN_ROW
+        return Relay.QUICK_RETRY_SECONDS
+    end
+    if state.quickLeft > 0 then
+        state.quickLeft = state.quickLeft - 1
         return Relay.QUICK_RETRY_SECONDS
     end
     return nil
@@ -331,6 +369,7 @@ end
 local function dropped(reason)
     if state.connectedAt then
         state.lastDrop = { at = os.time(), reason = tostring(reason) }
+        state.dropped = true
     end
 end
 
@@ -338,6 +377,8 @@ local function startKeepalive()
     cancel(state.keepalive)
     pcall(function()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
+            -- Answers' clock: these ticks, not the controller clock.
+            Answers.tick(Relay.KEEPALIVE_MS / 1000)
             state.quietTicks = state.quietTicks + 1
             if state.quietTicks >= Relay.SILENCE_TICKS then
                 local facts = connectionFacts()
@@ -352,6 +393,28 @@ local function startKeepalive()
             ping()
         end, true)
     end)
+end
+
+-- The first seconds of a connection that follows a lost one: a ping every WATCH_MS, WATCH_PINGS
+-- times. Director refuses a ping into a connection that was cut (`connection lost`).
+local function startWatch()
+    cancel(state.watch)
+    state.watch = nil
+    local left = Relay.WATCH_PINGS
+    local timer
+    pcall(function()
+        timer = C4:SetTimer(Relay.WATCH_MS, function()
+            left = left - 1
+            if left <= 0 then
+                cancel(timer)
+                if state.watch == timer then
+                    state.watch = nil
+                end
+            end
+            ping()
+        end, true)
+    end)
+    state.watch = timer
 end
 
 -- Director polls a connection it monitors (OnPoll). The relay connection asks it not to
@@ -434,9 +497,10 @@ local function onOpen()
     state.connectedAt = os.time()
     local identity = Relay.identity()
     -- `features` (1.7.0): what the relay may send this driver besides what every version takes;
-    -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0). A driver that does not list one
-    -- is never sent its messages.
-    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES })
+    -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0); `resend` (1.10.0). A driver that
+    -- does not list one is never sent its messages. `instance` (1.10.0): this start of the driver.
+    state.instance = state.instance or Random.hex(32)
+    send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES, instance = state.instance })
     -- What could not be told while the connection was down (Relay.tellSoon), in order.
     local later = state.later
     state.later = {}
@@ -445,6 +509,11 @@ local function onOpen()
     end
     Relay.announceKeys()
     startKeepalive()
+    -- After a lost connection, the route may flip again at once (ADR-072).
+    if state.dropped then
+        startWatch()
+    end
+    state.dropped = false
     local drop = state.lastDrop
     publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8)
         .. (drop and (" - last drop " .. os.date("%H:%M", drop.at) .. " (" .. drop.reason .. ")") or "")
@@ -774,9 +843,11 @@ function Relay.start()
     end
     state.enabled = true
     state.attempts = 0
+    state.quickLeft = 0
     state.tries = 0
     state.downSince = nil
     state.lastDrop = nil
+    state.dropped = false
     log("info", "remote access switched on")
     connect()
 end
@@ -825,6 +896,8 @@ function Relay.reset()
     state.status = "Off"
     state.updateRequired = false
     state.minimumVersion = nil
+    state.instance = nil
+    Answers.reset()
 end
 
 return Relay

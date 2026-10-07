@@ -1,4 +1,4 @@
-// Say or type a command (1.9.0, ADR-063): the field under Home's header, and the same field in a
+// Say or type a command (1.9.0, ADR-063; 1.10.0, ADR-066): the field under Home's header, and the same field in a
 // dialog from the header of the other screens on wide screens, or with the "/" key. A microphone
 // where the browser can turn speech into text (the Web Speech API: Chrome, Edge, Safari; not the
 // iPhone's Home Screen app, where the keyboard's own microphone does it). What it understood, the
@@ -10,10 +10,10 @@
 // the caret). app.js leaves it in place (dom.js replaceKeeping).
 
 import { MAX_LENGTH } from "../command-parser.js";
-import { chooseOption, clearCommand, commandMessage, commandState, confirmCommand, submitCommand } from "../commands.js";
+import { cancelCommandPart, chooseOption, clearCommand, commandMessage, commandState, confirmCommand, submitCommand } from "../commands.js";
 import { doorbellButton, relayButton } from "../components.js";
 import { announce, h, iconButton, speakFrom } from "../dom.js";
-import { currentLanguage, t } from "../i18n.js";
+import { currentLanguage, languageInfo, t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { IS_IOS } from "../platform.js";
 import { findScene, isolate, runScene } from "../scenes.js";
@@ -32,6 +32,8 @@ let abandoned = null;
 let typedBefore = "";
 // The browser refused its speech service (no Siri, a policy): the keyboard's microphone then.
 let speechOff = false;
+// The app's language the fields were last drawn in.
+let fieldLanguage = null;
 
 // ---- the microphone --------------------------------------------------------------------------
 
@@ -89,7 +91,8 @@ function startListening(where) {
     commandMessage(t("command.speech.unavailable"), "error");
     return;
   }
-  recognition.lang = currentLanguage() === "he" ? "he-IL" : "en-US";
+  // The app's language (js/i18n.js LANGUAGES: he-IL, es-ES, it-IT, en-US).
+  recognition.lang = languageInfo().speech;
   recognition.interimResults = true;
   recognition.maxAlternatives = 3;
   recognition.continuous = false;
@@ -269,6 +272,15 @@ function bar(where) {
     bars.set(where, parts);
   }
   const { input, label, go, output: below } = parts;
+  // The app's language changed: the words in the field (and what it heard) were for the other
+  // one, whose commands this language does not understand; the answer goes too (commands.js).
+  if (fieldLanguage !== currentLanguage()) {
+    if (fieldLanguage !== null) {
+      abortListening();
+      clearWords();
+    }
+    fieldLanguage = currentLanguage();
+  }
   label.textContent = t("command.label");
   input.setAttribute("placeholder", !speechAvailable() && IS_IOS ? t("command.placeholderDictation") : t("command.placeholder"));
   go.setAttribute("aria-label", t("command.go"));
@@ -305,8 +317,9 @@ function doorControl(ref) {
   ];
 }
 
-// A scene that opens doors: its Run button, which asks for its second tap as on Scenes.
-function sceneControl(id, where) {
+// A scene that opens doors: its Run button, which asks for its second tap as on Scenes (`suffix`
+// tells apart the parts of several things said).
+function sceneControl(id, where, suffix = "") {
   const scene = findScene(id);
   if (!scene) return null;
   const run = ui.sceneRuns[scene.id];
@@ -322,7 +335,7 @@ function sceneControl(id, where) {
           class: `button button-primary button-small ${run?.stage === "confirm" ? "is-confirm" : ""}`,
           disabled: run?.stage === "running",
           "aria-label": t("scenes.runLabel", { name: scene.name }),
-          dataset: { key: `command-scene:${where}` },
+          dataset: { key: `command-scene:${where}${suffix}` },
           onclick: () => runScene(scene),
         },
         icon(run?.stage === "confirm" ? "door" : "scene"),
@@ -359,14 +372,67 @@ function examples(list, where) {
   );
 }
 
+// Heaters a command left as they are (ADR-066).
+function note(now) {
+  return now.note ? h("p", { class: "command-note", dir: "auto" }, now.note) : null;
+}
+
+// Turn off all's confirm, with its counts: Turn off (or Close) and Cancel.
+function confirmControl(now, where, { confirm, cancel, suffix = "" }) {
+  const blinds = now.action.filters.length === 1 && now.action.filters[0] === "blinds";
+  return [
+    h("p", { class: "command-result" }, now.text),
+    h(
+      "div",
+      { class: "command-actions" },
+      h(
+        "button",
+        { type: "button", class: "button button-primary button-small", dataset: { key: `command-confirm:${where}${suffix}` }, onclick: thenField(where, confirm) },
+        icon(blinds ? "blinds" : "power"),
+        h("span", {}, t(blinds ? "command.off.close" : "command.off.confirm"))
+      ),
+      h("button", { type: "button", class: "button button-quiet button-small", dataset: { key: `command-cancel:${where}${suffix}` }, onclick: thenField(where, cancel) }, t("common.cancel"))
+    ),
+  ];
+}
+
+// One of two or three things said: what it understood, then its result or its second tap.
+function partBody(part, where, index) {
+  const suffix = `:${index}`;
+  const result = (stage, text) => h("p", { class: `command-result is-${stage}` }, icon(stage === "done" ? "check" : "info"), h("span", {}, text));
+  let below;
+  switch (part.stage) {
+    case "running":
+      below = h("p", { class: "command-result is-running" }, t("command.result.running"));
+      break;
+    case "confirm":
+      below = confirmControl(part, where, { confirm: () => confirmCommand(index), cancel: () => cancelCommandPart(index), suffix });
+      break;
+    case "door":
+      below = doorControl(part.action.device);
+      break;
+    case "scene":
+      below = sceneControl(part.action.id, where, suffix);
+      break;
+    case "cancelled":
+      below = h("p", { class: "command-result" }, part.text);
+      break;
+    default:
+      below = result(part.stage, part.text);
+  }
+  return h("div", { class: "command-part", dataset: { key: `command-part:${where}${suffix}` } }, said(part.said), note(part), below);
+}
+
 function body(now, where) {
   switch (now.stage) {
     case "running":
-      return [said(now.said), h("p", { class: "command-result is-running" }, t("command.result.running"))];
+      return [said(now.said), note(now), h("p", { class: "command-result is-running" }, t("command.result.running"))];
     case "done":
     case "partial":
     case "error":
-      return [now.said ? said(now.said) : null, h("p", { class: `command-result is-${now.stage}` }, icon(now.stage === "done" ? "check" : "info"), h("span", {}, now.text))];
+      return [now.said ? said(now.said) : null, note(now), h("p", { class: `command-result is-${now.stage}` }, icon(now.stage === "done" ? "check" : "info"), h("span", {}, now.text))];
+    case "several":
+      return now.parts.map((part, index) => partBody(part, where, index));
     case "ask":
       return [
         h("p", { class: "command-question", id: `command-question-${where}` }, now.text),
@@ -390,24 +456,8 @@ function body(now, where) {
           )
         ),
       ];
-    case "confirm": {
-      const blinds = now.action.filters.length === 1 && now.action.filters[0] === "blinds";
-      return [
-        said(now.said),
-        h("p", { class: "command-result" }, now.text),
-        h(
-          "div",
-          { class: "command-actions" },
-          h(
-            "button",
-            { type: "button", class: "button button-primary button-small", dataset: { key: `command-confirm:${where}` }, onclick: thenField(where, confirmCommand) },
-            icon(blinds ? "blinds" : "power"),
-            h("span", {}, t(blinds ? "command.off.close" : "command.off.confirm"))
-          ),
-          h("button", { type: "button", class: "button button-quiet button-small", dataset: { key: `command-cancel:${where}` }, onclick: thenField(where, clearCommand) }, t("common.cancel"))
-        ),
-      ];
-    }
+    case "confirm":
+      return [said(now.said), note(now), confirmControl(now, where, { confirm: () => confirmCommand(), cancel: clearCommand })];
     case "door":
       return [said(now.said), doorControl(now.action.device)];
     case "scene":
@@ -439,7 +489,7 @@ function output(where) {
     "div",
     { class: `command-output is-${now.stage}` },
     h("div", { class: "command-body" }, body(now, where)),
-    now.stage === "running" ? null : iconButton("close", t("command.dismiss"), { class: "command-dismiss", dataset: { key: `command-dismiss:${where}` }, onclick: thenField(where, clearCommand) })
+    now.stage === "running" || now.parts?.some((part) => part.stage === "running") ? null : iconButton("close", t("command.dismiss"), { class: "command-dismiss", dataset: { key: `command-dismiss:${where}` }, onclick: thenField(where, clearCommand) })
   );
 }
 

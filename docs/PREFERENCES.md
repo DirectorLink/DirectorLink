@@ -3,15 +3,16 @@
 **Status: built in DirectorLink 0.12.0.** Scenes (0.13.0, `docs/SCENES.md`) and schedules (0.14.0,
 `docs/SCHEDULES.md`) follow the same rules. Users' roles and permissions: 1.8.0 (ADR-054, *Users:
 admins and members* below). Users and their devices: 1.9.0 (ADR-061, *Users and their devices*
-below).
+below). Settings → Appearance and language, the text size, Spanish and Italian: 1.10.0 (ADR-067,
+*Appearance and language* below).
 
 ## Where each setting lives
 
 | Whose | Examples | Where | Who changes it |
 | --- | --- | --- | --- |
 | The home's | room names per language, the room order, rooms hidden from members, scenes, schedules, users' roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
-| A user's | language, theme, palette, favorites, hidden rooms | the controller, in their **profile** | that user, from any of their devices |
-| This device's | the controller's address, the access key, the browser's notification permission | the browser | this device |
+| A user's | language, theme, palette (colours), favorites, hidden rooms | the controller, in their **profile** | that user, from any of their devices |
+| This device's | the controller's address, the access key, the browser's notification permission, the text size | the browser | this device |
 
 Everything on the controller works without the internet and without DirectorLink's servers,
 survives driver updates (`src/core/store.lua`), and travels through the end-to-end lock when used
@@ -143,6 +144,34 @@ own devices (`GET /v1/users`).
   become the profile's. Changes are saved to the profile a moment later, several together.
 - The browser keeps its own copy too, so the app opens in the right language before it reaches the
   controller, and works as before with a driver older than 0.12.0 (no profiles).
+
+## Appearance and language (1.10.0, ADR-067)
+
+**Settings → Appearance and language** (`#/settings/appearance`, a row on Settings' list between
+Alerts and App, saying the language, theme and colours, and the text size when it is not the
+default) has three cards:
+
+- **Language:** Auto (the browser's first language DirectorLink has, else English; it says which),
+  English, עברית, Español or Italiano. Hebrew is right to left. Saved in the profile as
+  `language` (`auto` or the code).
+- **Theme and colours:** Auto (the device's light or dark setting), Light or Dark; and the five
+  colour sets. Saved in the profile as `theme` and `palette`.
+- **Text size:** Small, Default, Large or Larger (93.75%, 100%, 112.5%, 125% of the browser's
+  default font size), each written at the size it gives. **This device only** (`localStorage`
+  `directorlink.textSize`), never sent to the controller: a phone and a big screen need different
+  sizes, and one user has both. The whole app scales with it, before the first paint
+  (`theme-boot.js`).
+
+The page says what follows the user: "Your language, theme and colours follow you to all your
+devices. The text size is for this device only." (with a profile; before connecting, "Kept on this
+device", until the profile takes them). Favorites and hidden rooms follow the user too, from Home
+and Settings → Rooms.
+
+What the other places show in Spanish and Italian: the Jewish calendar's months, holidays and
+weekly readings are the Hebrew names transliterated as in English (Tishrei, Chanukah, Pesach,
+Bereshit), and its dates use digits; alerts on the phone use the app's words in the app's
+language; Composer's property and action names, the API console, the driver's Composer
+documentation and the website are in English.
 
 ## Rooms
 

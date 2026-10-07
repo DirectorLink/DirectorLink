@@ -270,6 +270,13 @@ test("entries newest first, a section a day, an icon per kind, who and what in o
   assert.match(byClass(view, "history-status")[0].textContent, /That’s everything from the last 30 days/);
 });
 
+test("a scene that left ACs off, their last mode not known yet, says so (1.10.0)", () => {
+  const run = (counts) => ({ id: 1, at: new Date().toISOString(), kind: "scene", action: "run", who: { type: "controller" }, what: "Shabbat AC", outcome: "ran", counts });
+  assert.equal(history.outcomeText(run({ ran: 5, skipped: 1, failed: 0, no_last_mode: 1 })), "Ran on 5 devices · 1 skipped · 1 AC left off: no last mode known yet; set it once");
+  assert.equal(history.outcomeText(run({ ran: 4, skipped: 2, failed: 0, no_last_mode: 2 })), "Ran on 4 devices · 2 skipped · 2 AC left off: no last mode known yet; set each once");
+  assert.equal(history.outcomeText(run({ ran: 5, skipped: 1, failed: 0 })), "Ran on 5 devices · 1 skipped", "a driver before 1.10.0 does not say it");
+});
+
 test("automatic backups to the account: made, or not and why", () => {
   const entry = (fields) => ({ id: 1, at: new Date().toISOString(), kind: "system", action: "cloud_backup", who: { type: "controller" }, ...fields });
   assert.equal(history.outcomeText(entry({ outcome: "ran" })), "");
