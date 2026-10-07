@@ -109,7 +109,10 @@ end
 -- Links made for another home than the one the relay knows, whose key is gone (revoked or
 -- expired), whose person may no longer open the door, or whose door is gone, go: at start, after a
 -- restore, when keys change (src/api/handlers/scene_links.lua's prune), before a list and when one
--- is refused. A door is gone only once the project was read (at start nothing is).
+-- is refused. A door is gone only once the project was read (at start nothing is), and only when the
+-- project no longer has the device: one that is there but not a door that works for now (a door
+-- controller whose connections Director did not say, a driver being replaced) keeps its links, which
+-- open nothing meanwhile (ADR-069), as favorites (src/core/favorites_gone.lua).
 function Handlers.prune(services)
     if AskLinks.count() == 0 or not AskLinks.complete() then
         return {}
@@ -127,7 +130,7 @@ function Handlers.prune(services)
         end
         local relay = relayOf(registry, link.relay_id)
         if not relay then
-            return projectRead and "door_gone" or nil
+            return projectRead and registry.getDevice(link.relay_id) == nil and "door_gone" or nil
         elseif keys and not Access.canOpen(keys[link.by], relay) then
             return "no_access"
         end

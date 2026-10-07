@@ -553,7 +553,20 @@ test("Settings → Controller: the controller, then Updates, then Backup for adm
   assert.match(textOf(page), /View only: this device can see the home but not control it\./);
 });
 
-test("Settings → Alerts (1.10.0): a page of its own, its row before Appearance and language, for whoever may have them", async () => {
+test("Settings → Alerts (1.10.0): a page of its own, its row before Appearance and language, for whoever may have them", async (context) => {
+  // This browser has no push: its row and page say so first, signed in or not (1.10.0).
+  home("admin");
+  assert.equal(rowStatus("alerts"), "This browser can’t show alerts");
+  assert.equal(byKey(settingsView({ page: "alerts" }), "alerts-hint").textContent, "This browser can’t show alerts.");
+  assert.equal(byKey(settingsView({ page: "alerts" }), "alerts-sign-in"), null, "no sign-in that could not help");
+  // A browser with push (and notifications, on a secure page) from here on.
+  Object.assign(window, { isSecureContext: true, PushManager: function PushManager() {}, Notification: { permission: "default" } });
+  Object.defineProperty(navigator, "serviceWorker", { value: {}, configurable: true });
+  context.after(() => {
+    delete window.PushManager;
+    delete window.Notification;
+    delete navigator.serviceWorker;
+  });
   // An admin: alerts with any controller (admins only before 1.7.0); signed out, the line says so.
   home("admin");
   let list = settingsView({});
