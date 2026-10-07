@@ -189,6 +189,78 @@ function tests.a_rule_with_hours_is_ready_again_when_its_hours_begin_each_day()
     T.eq(reading(at(3, 11, 0)), 1, "it runs once it gets hot")
 end
 
+-- What light 20 was told since command `from`: true (on) or false (off), in order.
+local function light20(mock, from)
+    local told = {}
+    for index = from + 1, #mock.commands do
+        local command = mock.commands[index]
+        if command.device == 20 then
+            told[#told + 1] = (command.params or {}).LIGHT_BRIGHTNESS_TARGET_PRESET_ID == 1
+        end
+    end
+    return told
+end
+
+-- A weather rule runs after the time, sun and Shabbat schedules due in the same minute (1.10.0): the
+-- owner's Shabbat morning scene at 08:30, when the AC rule's hours begin after a warm night, cannot
+-- undo the rule's AC; nor can a schedule caught up after a power cut.
+function tests.a_weather_rule_runs_after_the_schedules_of_the_same_minute()
+    local morning = at(1, 8, 30)
+    local mock, admin, clock, Scheduler = start(morning - 3600)
+    local acOn = scene(mock, admin, { { type = "lights", device_ids = { 20 }, set = { on = true } } })
+    local allOff = scene(mock, admin, { { type = "lights", device_ids = { 20 }, set = { on = false } } })
+    local everyDay = { 0, 1, 2, 3, 4, 5, 6 }
+    schedule(mock, admin, { scene_id = acOn, trigger = { type = "weather", kind = "heat", above = 23, from = "08:30", to = "23:00", once_a_day = false }, days = everyDay })
+    schedule(mock, admin, { scene_id = allOff, trigger = { type = "time", at = "08:30" }, days = everyDay })
+    mock.weather = weather(25)
+    T.eq(Scheduler.tick(), 0, "07:30: before its hours")
+    local before = #mock.commands
+    clock.set(morning + 1)
+    T.eq(Scheduler.tick(), 2)
+    T.same(light20(mock, before), { false, true }, "the morning scene, then the rule")
+
+    -- The next morning the controller is off from 08:20 to 08:33: both run late, in the same order.
+    local nextMorning = morning + 86400
+    local updated = Mock.updateDriver(mock)
+    require("src.core.clock").now = function()
+        return nextMorning + 3 * 60
+    end
+    updated.weather = weather(25)
+    before = #updated.commands
+    T.eq(require("src.core.scheduler").tick(), 2)
+    T.same(light20(updated, before), { false, true })
+end
+
+-- After a restore (ADR-042) a weather rule waits until the weather has turned, also one with hours
+-- that began before it: they count as begun today. Tomorrow's hours make it ready again, and a
+-- restore before its hours begin leaves the day as any other.
+function tests.after_a_restore_a_rule_with_hours_waits_until_tomorrow_s_hours()
+    local ten = at(1, 10, 0)
+    local mock, admin, clock, Scheduler = start(ten)
+    local Schedules = require("src.core.schedules")
+    local sceneId = scene(mock, admin)
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "08:30", to = "23:00", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "22:00", to = "09:00", once_a_day = false }, days = { 0, 1, 2, 3, 4, 5, 6 } })
+    mock.weather = weather(26)
+    T.eq(Scheduler.tick(), 1, "10:00: the day rule")
+    clock.set(ten + 60)
+    T.eq(Scheduler.tick(), 0)
+    T.truthy(Schedules.restore(Schedules.backup(), ten + 60))
+    clock.set(ten + 120)
+    T.eq(Scheduler.tick(), 0, "still hot after the restore: not again today")
+    clock.set(at(1, 22, 0))
+    T.eq(Scheduler.tick(), 1, "22:00: the night rule's hours begin")
+    T.truthy(Schedules.restore(Schedules.backup(), at(2, 2, 0)))
+    clock.set(at(2, 2, 1))
+    T.eq(Scheduler.tick(), 0, "02:00: the night rule's hours began yesterday")
+    clock.set(at(2, 8, 31))
+    T.eq(Scheduler.tick(), 1, "08:31 the next day: the day rule, ready again")
+    -- Restored before its hours begin: they begin as on any day.
+    T.truthy(Schedules.restore(Schedules.backup(), at(3, 7, 0)))
+    clock.set(at(3, 8, 31))
+    T.eq(Scheduler.tick(), 1)
+end
+
 -- A rule that ran today under 1.9.0 (no window day kept) is not made ready again the same day.
 function tests.a_rule_that_ran_today_before_the_update_does_not_run_again_today()
     local evening = at(1, 18, 0)
@@ -572,13 +644,15 @@ function tests.without_the_internet_the_saved_forecast_holds_for_five_days()
     T.contains(mock.urlRequests[#mock.urlRequests].url, "latitude=32.79&longitude=34.99")
 end
 
--- What is kept (ADR-071): the forecast, about 3 KB, under 1.9.0's key with version 2 and no
--- reading, so a 1.9.0 driver after a downgrade finds none and reads the weather anew; 1.9.0's
--- reading is no forecast, and 1.10.0 reads one at once.
-function tests.the_saved_forecast_is_small_and_a_1_9_0_reading_is_not_one()
+-- What is kept (ADR-071): the forecast, about 3 KB, under a key of its own. 1.9.0's reading stays
+-- under its key, untouched: it is no forecast, and 1.10.0 reads one at once. Back on 1.9.0, that
+-- driver finds its own old reading (too old to use) and writes over it; forward again, the forecast
+-- is still there, so the weather is known without the internet.
+function tests.the_saved_forecast_is_small_and_kept_apart_from_1_9_0_s_reading()
     local noon = at(1, 12, 0)
+    local old = "json:" .. Json.encode({ version = 1, fetched_at = noon - 600, data = { temperature = 24, raining = false, today = {} } })
     local mock = Mock.startDriver(nil, nil, nil, function(fresh)
-        fresh.persist["directorlink_weather"] = "json:" .. Json.encode({ version = 1, fetched_at = noon - 600, data = { temperature = 24, raining = false, today = {} } })
+        fresh.persist["directorlink_weather"] = old
         require("src.core.clock").now = function()
             return noon
         end
@@ -590,16 +664,48 @@ function tests.the_saved_forecast_is_small_and_a_1_9_0_reading_is_not_one()
         return noon + 31 * 60
     end
     T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.status, "ok")
-    local raw = mock.persist["directorlink_weather"]
+    T.eq(mock.persist["directorlink_weather"], old, "1.9.0's key is left alone")
+    local raw = mock.persist["directorlink_forecast"]
     T.truthy(#raw < 4000, "small: " .. #raw .. " bytes")
     local kept = Json.decode(raw:sub(#"json:" + 1))
     T.eq(kept.version, 2)
-    T.eq(kept.data, nil, "no reading for 1.9.0")
-    T.eq(kept.fetched_at, nil)
     T.eq(kept.saved_at, noon + 31 * 60)
     T.eq(#kept.temperature, 122, "from 12:00 to 13:00 five days later")
     T.eq(kept.temperature[1], 24)
     T.eq(#kept.days, 6)
+
+    -- 1.9.0 for a day writes its readings; then 1.10.0 again, without the internet.
+    mock.persist["directorlink_weather"] = "json:" .. Json.encode({ version = 1, fetched_at = noon + 86400, data = { temperature = 30, raining = false, today = {} } })
+    local back = Mock.updateDriver(mock)
+    require("src.core.clock").now = function()
+        return noon + 2 * 86400
+    end
+    back.weather = nil
+    local view = T.http(back, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "ok", "the forecast read before going back")
+    T.eq(view.source, "forecast")
+    T.eq(view.current.temperature, 24)
+end
+
+-- The weather code is the one at the start of the hour now (Open-Meteo's is an instant value);
+-- the precipitation the hour's sum, given at its end.
+function tests.the_weather_code_is_the_one_of_the_hour_now()
+    local noon = at(1, 12, 0)
+    local mock, admin, clock = start(noon)
+    mock.weather = WeatherFake.forecast(function(time)
+        if time >= noon + 3600 then
+            return { temperature = 18, rain = 2, code = 63 }
+        end
+        return { temperature = 24, code = 3 }
+    end)
+    clock.set(noon + 20 * 60)
+    local current = T.http(mock, "GET", "/v1/weather", { key = admin }).json.current
+    T.eq(current.weather_code, 3, "12:20: overcast, the hour's own code, not 13:00's rain")
+    T.eq(current.raining, false)
+    clock.set(noon + 80 * 60)
+    current = T.http(mock, "GET", "/v1/weather", { key = admin }).json.current
+    T.eq(current.weather_code, 63)
+    T.eq(current.raining, true)
 end
 
 function tests.switching_a_weather_rule_off_and_on_does_not_run_it_twice_a_day()

@@ -798,6 +798,7 @@ export default {
     otherRooms: "Altre stanze",
     andOtherRooms: "{room} e altre stanze",
     do: { off: "Spegni", on: "Accendi", dimTo: "{percent}%", open: "Apri", close: "Chiudi", position: "Apri al {percent}%", fan: "ventola {speed}", speed: "Velocità {speed}", pulse: "Apri (pressione breve)", pauseMusic: "Pausa", stopMusic: "Interrompi", featureOn: "Attiva {feature}", featureOff: "Disattiva {feature}", resumeMusic: "Riprendi", musicVolume: "Volume {percent}%", playFavorite: "Riproduci {name}", playFavoriteAt: "Riproduci {name} al {percent}%", aFavorite: "un preferito", withRooms: "con {rooms}", onAsItWas: "Accendi, com’era" },
+    notSeenOn: { one: "Non ancora visto acceso: {names} — accendilo una volta o resterà spento", other: "Non ancora visti accesi: {names} — accendili una volta ciascuno o resteranno spenti" },
   },
   // Scene links (ADR-051, views/scene-links.js): a private link per scene for the phone's own automations.
   sceneLinks: {

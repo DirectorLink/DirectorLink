@@ -25,9 +25,10 @@ Weather.KEEP_SECONDS = 5 * 86400
 Weather.FORECAST_DAYS = 6
 Weather.TIMEOUT_SECONDS = 15
 Weather.HOST = "https://api.open-meteo.com"
--- 1.9.0 kept its last reading under the same key (version 1, `fetched_at` and `data`); it finds no
--- reading in this one and reads the weather anew.
-local STORE_KEY = "directorlink_weather"
+-- A key of its own: 1.9.0 keeps its last reading (version 1, `fetched_at` and `data`) under
+-- "directorlink_weather", which 1.10.0 leaves alone, so going back to 1.9.0 and forward again keeps
+-- the forecast. 1.9.0 then finds its own old reading, too old to use after 45 minutes.
+local STORE_KEY = "directorlink_forecast"
 local STORE_VERSION = 2
 local MAX_HOURS = 8 * 24
 local MAX_DAYS = 16
@@ -194,7 +195,8 @@ end
 
 -- The weather at `now` from a forecast for `place`, or nil when it does not hold now. The
 -- temperature and the wind are between the hours before and after now; the precipitation is the
--- hour now's (Open-Meteo gives each hour's sum at its end), and it rains when there is any.
+-- hour now's (Open-Meteo gives each hour's sum at its end), and it rains when there is any; the
+-- weather code is the one at the hour's start (Open-Meteo's is the moment's).
 local function readingAt(forecast, place, now)
     if not forecast or forecast.place ~= place or now < forecast.start or now >= untilOf(forecast) then
         return nil
@@ -218,7 +220,8 @@ local function readingAt(forecast, place, now)
         temperature = temperature,
         wind_speed = between(forecast.wind_speed),
         precipitation = precipitation,
-        weather_code = forecast.weather_code[slot + 1],
+        -- The code at the hour's start (an instant value, as the temperature).
+        weather_code = forecast.weather_code[slot],
         raining = precipitation > 0,
         today = today(forecast, now),
         source = "forecast",

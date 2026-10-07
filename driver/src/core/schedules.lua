@@ -325,10 +325,30 @@ function Schedules.snapshot()
     return { data = Schedules.backup(), runtime = state.runtime, catch_up_after = state.catchUpAfter }
 end
 
+-- The local date ("2026-10-10") of the day whose hours of a weather `trigger` hold `now`, or nil
+-- outside them; hours across midnight (22:00 to 06:00) belong to the day they start, as the
+-- scheduler reads them.
+local function hoursDay(trigger, now)
+    local from, to = Schedules.minutes(trigger.from), Schedules.minutes(trigger.to)
+    if not from or not to then
+        return nil
+    end
+    local fields = os.date("*t", now)
+    local minute = fields.hour * 60 + fields.min
+    if from < to and (minute < from or minute >= to) or from > to and minute < from and minute >= to then
+        return nil
+    end
+    if from > to and minute < to then
+        fields = os.date("*t", os.time({ year = fields.year, month = fields.month, day = fields.day - 1, hour = 12, min = 0, sec = 0 }))
+    end
+    return string.format("%04d-%02d-%02d", fields.year, fields.month, fields.day)
+end
+
 -- Replaces every schedule with the ones of `data`, read as the store's are. They start as if saved
 -- `now`: nothing due before runs (Scheduler: changed after its time), and a weather rule waits
--- until the weather has turned first. With `snapshot` (Schedules.snapshot), what the scheduler
--- remembered then comes back instead. Returns true once both are saved.
+-- until the weather has turned first; one with hours that have begun counts them as begun (1.10.0),
+-- so it is not made ready again before tomorrow's. With `snapshot` (Schedules.snapshot), what the
+-- scheduler remembered then comes back instead. Returns true once both are saved.
 function Schedules.restore(data, now, snapshot)
     local schedules = Schedules.read(data)
     local runtime = {}
@@ -339,7 +359,7 @@ function Schedules.restore(data, now, snapshot)
         for _, schedule in ipairs(schedules) do
             schedule.updated_epoch = math.max(schedule.updated_epoch or 0, now)
             if schedule.trigger.type == "weather" then
-                runtime[schedule.id] = { armed = false }
+                runtime[schedule.id] = { armed = false, window_day = hoursDay(schedule.trigger, now) }
             end
         end
         state.catchUpAfter = now

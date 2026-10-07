@@ -211,7 +211,9 @@ door.
 
 What the schedules ran stays with the controller that ran them. After a restore every schedule starts
 as if saved then: nothing that was due before runs, and nothing is caught up; a weather rule waits
-until the weather has turned (it was probably run already where the backup was made).
+until the weather has turned (it was probably run already where the backup was made), and one with
+hours that had begun counts them as begun that day, so it is ready again when they begin the next
+day (1.10.0).
 
 ### Another home's backup
 

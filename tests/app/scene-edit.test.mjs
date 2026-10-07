@@ -76,7 +76,7 @@ globalThis.history = { state: { directorlinkInApp: true }, back: () => backs.pus
 const { state, ui } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
 const { MAX_STEPS } = await import("../../app/js/scenes.js");
-const { resetSceneEditor, sceneEditorView, sceneReturnKey } = await import("../../app/js/views/scenes.js");
+const { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } = await import("../../app/js/views/scenes.js");
 
 // ---- what a screen holds -----------------------------------------------------------------------
 
@@ -789,6 +789,61 @@ test("an action with a mode alone opens with Keep; one that turns each AC on as 
   nodes = edit(2);
   press(nodes, "add-confirm");
   assert.deepEqual(draft().steps[2], { type: "climate", room_id: 13, device_ids: null, set: { mode: "on" } });
+});
+
+// The ACs On, as it was would leave off now are named: in the action and on the scene's card in the
+// list, so they can be turned on once before Shabbat (their last mode null in GET /v1/thermostats,
+// or one DirectorLink can't set).
+test("On, as it was names the ACs it would leave off now, in the action and on the scene's card", async () => {
+  const notSeen = (nodes) => plain(byKey(nodes, "add-not-seen")?.textContent ?? "");
+  const card = () => plain(byKey(scenesView(actions), `scene-not-seen:${KEY}`)?.textContent ?? "");
+  homeWithLastModes([{ type: "climate", room_id: null, device_ids: null, set: { mode: "on" } }]);
+  state.thermostats[0].last_mode = "cool";
+  state.thermostats[1].last_mode = null;
+  assert.equal(notSeen(edit(0)), "Not seen on yet: Bedroom AC — turn it on once, or it stays off");
+  assert.equal(card(), "Not seen on yet: Bedroom AC — turn it on once, or it stays off");
+  // Dry from the AC's own remote is no mode to come back in either.
+  state.thermostats[0].last_mode = "dry";
+  assert.equal(notSeen(edit(0)), "Not seen on yet: Living AC, Bedroom AC — turn each on once, or they stay off");
+  assert.equal(card(), "Not seen on yet: Living AC, Bedroom AC — turn each on once, or they stay off");
+  // Only the ACs the action goes to: the Living Room's is known.
+  state.thermostats[0].last_mode = "cool";
+  let nodes = add();
+  press(nodes, "add-room:11");
+  nodes = add();
+  press(nodes, "add-kind:climate");
+  nodes = add();
+  press(nodes, "add-mode:on");
+  nodes = add();
+  assert.equal(byKey(nodes, "add-not-seen"), null);
+  press(nodes, "add-room:13");
+  nodes = add();
+  assert.equal(notSeen(nodes), "Not seen on yet: Bedroom AC — turn it on once, or it stays off");
+  resetSceneEditor();
+  // All known: nothing said.
+  state.thermostats[1].last_mode = "heat";
+  assert.equal(byKey(edit(0), "add-not-seen"), null);
+  assert.equal(card(), "");
+  // Other actions say nothing; nor does a driver before 1.10.0 (no last modes).
+  state.thermostats[1].last_mode = null;
+  state.scenes[0].steps = [{ type: "climate", room_id: null, device_ids: null, set: { mode: "cool" } }];
+  assert.equal(card(), "");
+  state.scenes[0].steps = [{ type: "climate", room_id: null, device_ids: null, set: { mode: "on" } }];
+  state.system = { ...state.system, features: {} };
+  assert.equal(card(), "");
+  state.system = { ...state.system, features: { climate_last_mode: true } };
+  for (const [language, text] of [
+    ["he", "עוד לא נראה פועל: Bedroom AC — הפעילו אותו פעם אחת, אחרת יישאר כבוי"],
+    ["es", "Aún no se ha visto encendido: Bedroom AC — enciéndelo una vez o se quedará apagado"],
+    ["it", "Non ancora visto acceso: Bedroom AC — accendilo una volta o resterà spento"],
+  ]) {
+    await setLanguage(language);
+    try {
+      assert.equal(card(), text, language);
+    } finally {
+      await setLanguage("en");
+    }
+  }
 });
 
 // ---- Hebrew ------------------------------------------------------------------------------------

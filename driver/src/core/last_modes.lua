@@ -2,9 +2,10 @@
 -- scene's climate step with mode "on" turns a thermostat that is off back on in it, sending nothing
 -- else, so it comes back as it was before it was turned off; the app's commands do the same ("turn
 -- on the AC in the living room"), from `last_mode` in GET /v1/thermostats. It is seen whenever
--- DirectorLink sees a thermostat in a mode other than off, whoever set it (Control4's apps, a
--- keypad, Composer programming, DirectorLink): when its adapter starts it (the driver starting, a
--- project refresh, a driver update) and at every change of its variables (src/adapters/manager.lua).
+-- DirectorLink sees a thermostat in a mode other than off, one of the thermostat's own modes,
+-- whoever set it (Control4's apps, a keypad, Composer programming, DirectorLink): when its adapter
+-- starts it (the driver starting, a project refresh, a driver update) and at every change of its
+-- variables (src/adapters/manager.lua).
 -- Kept in a small store of its own, written only when a thermostat's last mode changes; not in
 -- backups (it is seen again).
 
@@ -27,6 +28,23 @@ local function modeOf(value)
         return nil
     end
     return text
+end
+
+-- The thermostat's mode now as the API names it, when it is one of its own modes (its list, which
+-- may hold dry or fan) and not off; nil otherwise. A value outside the list (such as "Undefined"
+-- while a driver starts) is never remembered: the last mode stays the one before.
+local function ownMode(device)
+    local mode = modeOf(device.state.hvac_mode)
+    local modes = type(device.capabilities) == "table" and device.capabilities.hvac_modes or nil
+    if not mode or type(modes) ~= "table" then
+        return nil
+    end
+    for _, listed in ipairs(modes) do
+        if modeOf(listed) == mode then
+            return mode
+        end
+    end
+    return nil
 end
 
 local function load()
@@ -70,13 +88,13 @@ local function prune(registry)
     end
 end
 
--- `device`: a thermostat as its adapter keeps it. Remembers its mode when it is not off; returns
--- true when its last mode changed (and was saved).
+-- `device`: a thermostat as its adapter keeps it. Remembers its mode when it is not off and is one
+-- of its own modes; returns true when its last mode changed (and was saved).
 function LastModes.saw(device, registry)
     if type(device) ~= "table" or device.kind ~= "climate" or type(device.state) ~= "table" then
         return false
     end
-    local id, mode = tonumber(device.id), modeOf(device.state.hvac_mode)
+    local id, mode = tonumber(device.id), ownMode(device)
     if not id or not mode then
         return false
     end

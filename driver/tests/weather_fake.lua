@@ -9,7 +9,8 @@
 --
 -- `hour(time)` gives the weather of the hour that starts at `time`: a temperature, or
 -- { temperature, wind, rain (mm in that hour), code }. Open-Meteo gives each hour's precipitation
--- at the hour's end (the sum of the preceding hour), and so does this.
+-- at the hour's end (the sum of the preceding hour), and so does this; the weather code, like the
+-- temperature, at the hour's start.
 
 local Json = require("src.core.json")
 
@@ -48,7 +49,8 @@ function WeatherFake.forecast(fn, days)
             hourly.temperature_2m[#hourly.time] = orNull(hour.temperature)
             hourly.wind_speed_10m[#hourly.time] = orNull(hour.wind or 5)
             hourly.precipitation[#hourly.time] = rain
-            hourly.weather_code[#hourly.time] = before.code or (rain > 0 and 61 or 1)
+            -- The code is the moment's (Open-Meteo: instant), so the hour that starts then.
+            hourly.weather_code[#hourly.time] = hour.code or ((hour.rain or 0) > 0 and 61 or 1)
         end
         local daily = { time = {}, temperature_2m_max = {}, temperature_2m_min = {}, precipitation_probability_max = {} }
         for day = 0, WeatherFake.DAYS - 1 do

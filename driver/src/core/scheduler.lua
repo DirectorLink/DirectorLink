@@ -6,7 +6,8 @@
 --   or rain starting; on their days, within their hours, and (by default) at most once a day. They
 --   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
 --   it, or it has been dry for an hour. The weather is the saved forecast's hour for now (1.10.0,
---   ADR-071, src/core/weather.lua), with or without the internet.
+--   ADR-071, src/core/weather.lua), with or without the internet. In a minute when other schedules
+--   run too, they run after them (1.10.0).
 -- - Shabbat schedules (the Jewish calendar, ADR-037) run when a holy period begins (candle
 --   lighting) or ends (havdalah), plus their offset, once per period. "during_shabbat" keeps a
 --   time, sun or weather schedule away from holy time ("skip") or to it ("only"). While the
@@ -277,6 +278,16 @@ local function inHours(trigger, minute)
     return minute >= from or minute < to
 end
 
+-- Whether a run left an AC off because its last mode is not known yet (On, as it was: ADR-070).
+local function leftOff(result)
+    for _, problem in ipairs(type(result) == "table" and type(result.problems) == "table" and result.problems or {}) do
+        if type(problem) == "table" and problem.code == "NO_LAST_MODE" then
+            return true
+        end
+    end
+    return false
+end
+
 local function run(schedule, now, note, weather)
     local runtime = Schedules.runtime(schedule.id)
     local ok, result, failure = pcall(state.services.runScene, schedule.scene_id, { id = "schedule:" .. schedule.id, role = "member" })
@@ -310,9 +321,10 @@ local function run(schedule, now, note, weather)
         failed = lastRun.failed or 0,
         error = lastRun.error or Json.null,
     })
-    -- A device refused, or the scene could not run: the home's admins are alerted (ADR-047), with
-    -- the scene's name sealed to them (ADR-050).
-    if state.services.onFailed and (lastRun.error or (lastRun.failed or 0) > 0) then
+    -- A device refused, the scene could not run, or it left an AC off whose last mode is not known
+    -- yet (1.10.0, ADR-070): the home's admins are alerted, once a run (ADR-047), with the scene's
+    -- name sealed to them (ADR-050).
+    if state.services.onFailed and (lastRun.error or (lastRun.failed or 0) > 0 or leftOff(result)) then
         local scene = Scenes.find(schedule.scene_id)
         pcall(state.services.onFailed, now, { what = scene and scene.name or nil })
     end
@@ -502,8 +514,8 @@ function Scheduler.tick(now)
                     runtime.armed = false
                     runtime.dry_since = nil
                     runtime.fired_day = day.date
-                    run(schedule, now, trigger.kind, weather)
-                    ran = ran + 1
+                    -- Runs with the minute's others, after them (below).
+                    due[#due + 1] = { schedule = schedule, at = now, note = trigger.kind, weather = weather, reacts = true }
                 end
                 changed = changed or runtime.armed ~= armedBefore or runtime.dry_since ~= drySince or runtime.window_day ~= windowBefore
             end
@@ -554,8 +566,13 @@ function Scheduler.tick(now)
             end
         end
     end
-    -- In the order they were due: after a restart, what is caught up runs oldest first.
+    -- In the order they were due: after a restart, what is caught up runs oldest first. Weather
+    -- rules run last (1.10.0): they react to the weather now, so a time, sun or Shabbat schedule of
+    -- the same minute (a morning scene at 08:30, when a rule's hours begin) cannot undo what they did.
     table.sort(due, function(a, b)
+        if (a.reacts == true) ~= (b.reacts == true) then
+            return b.reacts == true
+        end
         if a.at ~= b.at then
             return a.at < b.at
         end
@@ -594,7 +611,7 @@ end
 -- `services.runScene(sceneId, caller)` runs a saved scene and returns its result;
 -- `services.calendar` is the Jewish calendar (src/core/jewish_calendar.lua);
 -- `services.onFailed(at, { what })`, if any, is told of each run that failed (a device refused, or
--- an error), with its scene's name.
+-- an error) or left an AC off with no last mode known, with its scene's name.
 function Scheduler.start(services)
     state.services = services
     state.firstTick = true
