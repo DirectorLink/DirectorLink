@@ -18,7 +18,12 @@ import { STARTUP_MS, startWorker } from "./worker.mjs";
 const APP = "http://localhost:8080";
 const TEST = { timeout: 30_000 };
 const DANA = { sub: "google-dana-resend", email: "dana-resend@example.com", name: "Dana" };
-const TIMEOUT_MS = 3000; // REQUEST_TIMEOUT_MS for this run; a resend waits min(8 s, this)
+// REQUEST_TIMEOUT_MS for this run: above the 8 s a resend waits (RESEND_TIMEOUT_MS), which keeps a
+// resent request within the app's 20 s (production waits 15 s for a request); and above the 10 s
+// within which a request may go again (RESEND_WITHIN_MS), so that it is the bound.
+const TIMEOUT_MS = 12000;
+const RESEND_TIMEOUT_MS = 8000;
+const RESEND_WITHIN_MS = 10000;
 const RECONNECT_WAIT_MS = 2000; // RECONNECT_WAIT_MS for this run
 const FEATURES = ["scene_links", "alerts_gone", "users", "resend"];
 
@@ -64,8 +69,9 @@ async function claimedHome() {
   return state;
 }
 
-// One connection of the driver. options: features (its hello's), instance (null for none).
-async function connect(state, behave, { features = FEATURES, instance = state.instance } = {}) {
+// One connection of the driver. options: features (its hello's), instance (null for none), hello
+// (false: the hello waits for connection.hello()).
+async function connect(state, behave, { features = FEATURES, instance = state.instance, hello = true } = {}) {
   const connection = await connectDriver({ url: worker.ws, home: state.home, secret: state.secret, pingIntervalMs: 0, silenceTimeoutMs: 0, hello: false });
   drivers.push(connection);
   const number = state.seen.length ? Math.max(...state.seen.map((item) => item.connection)) + 1 : 1;
@@ -75,9 +81,12 @@ async function connect(state, behave, { features = FEATURES, instance = state.in
     state.seen.push({ connection: number, message });
     behave?.(message, connection);
   });
-  connection.sendJson({ type: "hello", home: state.home, version: "1.10.0", ping_s: 5, features, ...(instance ? { instance } : {}) });
-  // The hello is handled before what follows on this socket; give the relay a moment for it.
-  await sleep(100);
+  connection.hello = () => connection.sendJson({ type: "hello", home: state.home, version: "1.10.0", ping_s: 5, features, ...(instance ? { instance } : {}) });
+  if (hello) {
+    connection.hello();
+    // The hello is handled before what follows on this socket; give the relay a moment for it.
+    await sleep(100);
+  }
   return connection;
 }
 
@@ -223,7 +232,7 @@ test("a driver without the feature still gets 502 HOME_DISCONNECTED, and is neve
   const started = Date.now();
   await state.connect((message, connection) => connection.sendJson(answer(state, message)), { features: old });
   assertDisconnected(await pending);
-  assert.ok(Date.now() - started < TIMEOUT_MS, "at once, as before");
+  assert.ok(Date.now() - started < RECONNECT_WAIT_MS, "at once, as before");
   await sleep(300);
   assert.equal(got(state).length, 1, "not sent again");
   first.destroy();
@@ -293,8 +302,10 @@ test("a request sent again gets a fresh wait, and a driver that no longer has it
   const timedOut = await silent;
   assert.equal(timedOut.status, 504, timedOut.text);
   assert.equal(timedOut.json.code, "HOME_TIMEOUT");
+  // 8 s, not the request's own 12 s: sent within 10 s and answered within 8, a resent request ends
+  // within 18 s of reaching the relay, under the app's 20 s.
   const waited = Date.now() - resentAt;
-  assert.ok(waited >= TIMEOUT_MS - 300 && waited < TIMEOUT_MS + 2000, `timed out ${waited} ms after the resend`);
+  assert.ok(waited >= RESEND_TIMEOUT_MS - 300 && waited < RESEND_TIMEOUT_MS + 2000, `timed out ${waited} ms after the resend`);
 
   // It ran, but its answer was too large to keep (a picture): as before 1.10.0, 502.
   first = await state.connect(() => {});
@@ -305,5 +316,47 @@ test("a request sent again gets a fresh wait, and a driver that no longer has it
   await state.connect((message, connection) => connection.sendJson({ type: "e2e", id: message.id, ok: false, code: "ANSWER_NOT_KEPT" }));
   const result = await lost;
   assertDisconnected(result);
-  assert.match(result.json.detail, /answer was lost/);
+  // The driver also says so for a request it may have run and forgotten (more than 512 in 30 s).
+  assert.match(result.json.detail, /^The home may have carried it out, but its answer was lost/);
+});
+
+// A request that reached the relay just as the driver's new connection opened goes on it before its
+// hello has come. If that connection is cut too (the route flipping again), the hello that came
+// meanwhile says the driver takes `resend`: the request goes again on the next connection.
+test("a request sent on a new connection before its hello goes again when that one is cut too", TEST, async () => {
+  const state = await claimedHome();
+  const second = await state.connect(() => {}, { hello: false });
+  const pending = press(state);
+  await eventually(() => got(state).length === 1, "the request to reach the new connection");
+  second.hello();
+  await sleep(150);
+  second.destroy();
+  await sleep(150);
+  await state.connect((message, connection) => connection.sendJson(answer(state, message)));
+  const result = await pending;
+  assert.equal(result.status, 200, result.text);
+  assert.deepEqual(got(state).map((item) => [item.connection, item.message.resent ?? 0]), [[2, 0], [3, 1]]);
+});
+
+// Sent again only within 10 s of reaching the relay (RESEND_WITHIN_MS): a request whose connection
+// is found gone 8 s after it came goes again; one found gone after 10.5 s fails at once, as before.
+test("a request goes again only within 10 s of reaching the relay", { timeout: 40_000 }, async () => {
+  const run = async (lostAfterMs) => {
+    const state = await claimedHome();
+    await state.connect((message, connection) => connection.socket.pause());
+    const started = Date.now();
+    const pending = press(state);
+    await eventually(() => got(state).length === 1, "the request to reach the connection");
+    await sleep(Math.max(0, started + lostAfterMs - Date.now()));
+    const replacedAt = Date.now();
+    await state.connect((message, connection) => connection.sendJson(answer(state, message)));
+    const result = await pending;
+    return { result, sends: got(state).map((item) => item.message.resent ?? 0), afterMs: Date.now() - replacedAt };
+  };
+  const [inTime, late] = await Promise.all([run(RESEND_WITHIN_MS - 2000), run(RESEND_WITHIN_MS + 500)]);
+  assert.equal(inTime.result.status, 200, inTime.result.text);
+  assert.deepEqual(inTime.sends, [0, 1]);
+  assertDisconnected(late.result);
+  assert.deepEqual(late.sends, [0], "not sent again");
+  assert.ok(late.afterMs < RECONNECT_WAIT_MS, `at once: ${late.afterMs} ms`);
 });

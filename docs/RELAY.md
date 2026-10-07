@@ -183,7 +183,7 @@ same holds the other way for what the driver asks the relay (`invitation`, `back
 | driver → relay | `{"type":"link_result","id":"…","ok":true,"result":"ran"}` | How it went: `ran`, `partly` (some devices skipped or failed), `failed` (none ran) or `nothing` (there was nothing to run: its devices were removed in Composer); or `"ok":false` with `NOT_FOUND` (an unknown link, a wrong secret, a scene gone or with doors or gates, the key that made the link gone: all alike), `RATE_LIMITED` (6 runs a minute a link; `retry_s`) or `INTERNAL`. Never names the scene. Since 1.7.0. Since 1.8.0 the link may be a door's ask-to-open link (ADR-058), which opens nothing: `asked` (a `notify` went to its person's devices just before), `waiting`, `nobody`, `doors_off` or `not_asked`; `RATE_LIMITED` also after 10 runs an hour that asked or said why nobody was asked (`retry_s` then up to 3600, which the account service passes on as `Retry-After`). Never names the door. |
 | relay → driver | `{"type":"alerts_gone","id":"…","keys":["<key id>", …]}` | The key ids that no browser registered at the home can get alerts for any more (1.9.0, ADR-062), sent to a driver whose `hello` lists `alerts_gone`: after each `keys`, and when browsers are removed (also by a registration: the same browser registered again with another key, or an account's oldest beyond ten), those of its keys with none registered by an account that uses them; after a `notify`, those it named that had none, or whose every browser the push service no longer knew (404, 410); after any other push, those whose last browser went so. Key ids only, at most 200: the cloud knew which keys have browsers. The driver switches those keys' alerts off (as their app would: `on` false, their kinds kept), so that it seals nothing more to them and an ask-to-open link whose devices are all gone answers `nobody`; their app switches alerts on again at its next start if it still has them. No answer. Drivers before 1.9.0 are never sent it (and would ignore it). |
 | relay → driver | the same `e2e`, `join`, `claim` or `link` message again, with `"resent":1` (or `2`) | A request already sent when the driver's connection ended, unanswered (1.10.0, ADR-072): the same id and the same body, on the next connection, right after its `hello`, only to a driver whose `hello` lists `resend` and names the same `instance`. The driver runs each id once: a repeat gets the first answer again, byte for byte; one still running gets nothing then (its answer goes on the connection there is when it is done); one it never got runs. |
-| driver → relay | `{"type":"e2e","id":"…","ok":false,"code":"ANSWER_NOT_KEPT"}` (or `join_result`, `claim_result`, `link_result`) | That request ran, but its answer is no longer kept (too large to keep, such as a picture, or let go to stay within the driver's budget): the relay answers `502 HOME_DISCONNECTED`, as when a connection ended before 1.10.0. Also for a request sent again that the driver may have run and forgotten (more than 512 requests in 2 minutes). Since 1.10.0. |
+| driver → relay | `{"type":"e2e","id":"…","ok":false,"code":"ANSWER_NOT_KEPT"}` (or `join_result`, `claim_result`, `link_result`) | That request ran, but its answer is no longer kept (too large to keep, such as a picture, or let go to stay within the driver's budget): the relay answers `502 HOME_DISCONNECTED`, as when a connection ended before 1.10.0. Also for a request sent again that the driver may have run and forgotten (more than 512 requests in 2 minutes, one of those forgotten within the last 30 s); the relay's log then says the home *may have* carried it out. Since 1.10.0. |
 | relay → driver | `{"type":"request",…}` | Version 0. Refused: `{"type":"response","id":"…","status":410,…}` with `code` `RELAY_REQUESTS_RETIRED`; nothing reaches the API. Never sent again. |
 
 A message of a type the driver does not know is ignored (logged at debug level as `ignored relay
@@ -203,7 +203,8 @@ request was sent again).
 
 ## Keeping the connection
 
-**What keeps it open.** The driver sends `ping` every 5 s (10 s from 1.6.0, 25 s up to 1.5.0) and
+**What keeps it open.** The driver sends `ping` every 5 s (10 s from 1.6.0, 25 s up to 1.5.0;
+every second in the first 4 s of a connection that follows a lost one, 1.10.0) and
 the relay's runtime answers `pong` without waking the home's object. Data then crosses Cloudflare
 in both directions every 5 s, well inside any idle limit (Cloudflare closes a WebSocket that
 carries nothing in either direction for a while, without a documented figure). A connection that
@@ -233,17 +234,23 @@ once.
 
 | What happens | Remote Status and log reason | Next attempt |
 | --- | --- | --- |
-| Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute |
+| Director reports the connection offline: the network, the router or Cloudflare cut it | `connection lost` | 1 s, if it was up a minute (or is one of the two after it, below) |
 | Nothing heard for three pings, about 15 s (the driver closes it, with `1000 no answer`) | `no answer` | 1 s |
 | The relay closes it: `4000 replaced` (another controller with this identity) | `closed by the relay (4000 replaced)` | 30 s |
 | The relay closes it: `4001 secret replaced` (the owner approved a new secret) | `closed by the relay (4001 secret replaced)` | 1 s; refused, then the new secret 1 s later |
-| The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute |
+| The relay closes it with any other code | `closed by the relay (…)` | 1 s, if it was up a minute (or is one of the two after it, below) |
 | An attempt that does not open within 30 s, or fails | `no connection within 30 s`, `connection lost` | backoff |
 | The relay refuses the upgrade: `401` / other | `refused: <code>` | 300 s / backoff |
 | The relay refuses this version: `426 DRIVER_UPDATE_REQUIRED` (1.8.0) | `Update DirectorLink: this version can no longer connect to remote access` (the log: `update required`) | 3600 s |
 
 A connection lost less than a minute after it opened goes on with the backoff (5 s, 10 s, 30 s,
-then every 60 s), so one that fails as soon as it opens is not tried every second.
+then every 60 s), so one that fails as soon as it opens is not tried every second. Except
+(1.10.0) right after a connection up a minute was lost: the next two connections that open and
+are lost sooner are also tried again after 1 s (the home's route was seen to flip again within
+seconds, and the relay sends a request again only within 10 s, *While the driver reconnects*);
+a third, or one after an attempt that did not open, goes on with the backoff. A connection that
+follows a lost one pings every second for its first 4 s: a second cut is found within a second,
+not at the keep-alive's first ping 5 s later.
 
 **Cloudflare's part.** Cloudflare documents three cases where it closes WebSockets on its side,
 and DirectorLink cannot prevent them. A deploy of the relay restarts every Durable Object and
@@ -296,25 +303,33 @@ connection die). Before 1.10.0 it failed with `502 HOME_DISCONNECTED`, at once r
 15 s timeout, and was never sent again, because the controller may have carried it out: a press in
 the seconds between a cut and the driver noticing it was lost. Since 1.10.0:
 
-- **The relay keeps it** and waits for the driver's next `hello`, up to 8 s (`RECONNECT_WAIT_MS`).
-  If that `hello` lists `resend` and names the same `instance` as the connection the request went
-  on, the relay sends the exact same frame again (the same id, the same sealed body, with
+- **The relay keeps it** and waits for the driver's next `hello`, up to 8 s (`RECONNECT_WAIT_MS`),
+  when the `hello` of the connection it went on lists `resend` (by the time that connection ends:
+  a request sent in the moment between a new connection's upgrade and its `hello` is kept too).
+  If the next `hello` lists `resend` and names the same `instance` as the connection the request
+  went on, the relay sends the exact same frame again (the same id, the same sealed body, with
   `"resent":1`), and waits 8 s for its answer. A request is sent again at most twice (three sends
-  in all: a second blink right after the first is covered; more would not fit the app's wait), and
-  only within 10 s of reaching the relay, so it is answered within 18 s, under the 20 s the app
-  waits for a request through the account (`app/js/remote.js`).
+  in all: a second blink right after the first is covered, since the driver finds it within a
+  second and comes back at once, *What can end it, and what follows*; more would not fit the app's
+  wait), and only within 10 s of reaching the relay, so it is answered within 18 s, under the 20 s
+  the app waits for a request through the account (`app/js/remote.js`). The first resend goes
+  within about 7 s (the cut found within 5 s, then 1 s and the TLS handshake); the second within
+  10 s while each reconnect's handshake and upgrade take under a second, as measured on the
+  owner's home.
 - **The driver runs each id once** (`driver/src/cloud/answers.lua`). It remembers, by the relay's
   id, every `e2e`, `join`, `claim` and `link` it got, for 2 minutes (at most 512), and, once
-  answered, its answer (at most 64 answers and 512 KB together; one over 64 KB, such as a camera
-  picture, is not kept). The same id again gets the saved answer, byte for byte, and nothing runs;
-  one still running gets nothing then, and its answer goes on whatever connection is open when it
-  is done; one whose answer is not kept gets `ANSWER_NOT_KEPT`, and the app `502 HOME_DISCONNECTED`
-  as before; one it never got runs. This is checked before a sealed request is opened, so a repeat
-  never meets the replay check (`REPLAYED`), and the replay check still refuses the same sealed
-  request under another id. Its clock counts the controller clock's steps, never backwards and at
-  most 30 s each, so a clock set forward cannot make it forget early; if it had to forget requests
-  younger than 2 minutes (more than 512), a request sent again that it does not know gets
-  `ANSWER_NOT_KEPT` rather than run.
+  answered, its answer (at most 64 answers and 512 KB together; one over 16 KB, such as a camera
+  picture or a long list, is not kept; a command answers in well under 2 KB). To make room, answers
+  older than 30 s go first (the relay no longer asks for them), then the largest, so pictures and
+  lists never push out a press's answer. The same id again gets the saved answer, byte for byte,
+  and nothing runs; one still running gets nothing then, and its answer goes on whatever connection
+  is open when it is done; one whose answer is not kept gets `ANSWER_NOT_KEPT`, and the app `502
+  HOME_DISCONNECTED` as before; one it never got runs. This is checked before a sealed request is
+  opened, so a repeat never meets the replay check (`REPLAYED`), and the replay check still refuses
+  the same sealed request under another id. Its clock is the keep-alive's ticks (5 s each), not the
+  controller clock, so no clock change can make it forget early, and nothing ages while the
+  connection is down; if it had to forget, to stay within 512, a request that came within the last
+  30 s, a request sent again that it does not know gets `ANSWER_NOT_KEPT` rather than run.
 - **A driver that restarted** (a Composer update, a reboot) remembers nothing, and its `hello` names
   a new `instance`: the relay does not send it what went to the one before, and answers `502
   HOME_DISCONNECTED`. Were a sealed request sent all the same, the driver would refuse it: it was
@@ -360,10 +375,12 @@ the driver's next ping finds it dead (at most 5 s). Since 1.10.0 neither loses t
 answered a few seconds late. It still fails (`502 HOME_DISCONNECTED`, as before) when the driver
 does not come back within 8 s, when it restarted meanwhile, when the connection blinks a third
 time, and when its answer was too large to keep (a camera picture, which the app asks for again
-anyway). If drops go on, the logs above show which side ended the connection. If `heard_s` was
-under one ping interval (5 s; 10 s before 1.10.0, 25 s before 1.6.0) and the relay saw 1006, the
-connection was cut between the two: by the home's network, the internet provider or Cloudflare's
-edge.
+anyway). What the driver sends the relay on its own (an `alert`, a `notify` for a doorbell, a
+door or a camera; its own questions, which have their own waits) into a connection that has died
+is still lost, as before 1.10.0: only requests from the relay go again. If drops go on, the logs
+above show which side ended the connection. If `heard_s` was under one ping interval (5 s; 10 s
+before 1.10.0, 25 s before 1.6.0) and the relay saw 1006, the connection was cut between the two:
+by the home's network, the internet provider or Cloudflare's edge.
 
 ## What a relayed request may do
 
