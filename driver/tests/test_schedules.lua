@@ -978,9 +978,11 @@ end
 -- 09:00 (23° at 08:43). It runs at candle lighting and at 08:43, with the internet or without it
 -- from Friday 13:00 (and a restart at 21:00).
 local function shabbatAc(offline)
+    -- The simulation starts on Friday at 12:00 local time (and cuts the internet at 13:00), so
+    -- candle lighting must come after 13:00 and before the rule's 23:00 in this time zone.
     local lighting = os.date("*t", CANDLES)
-    if lighting.hour < 9 or lighting.hour >= 23 then
-        T.skip("candle lighting is not between 08:30 and 23:00 in this time zone")
+    if lighting.hour < 13 or lighting.hour >= 23 then
+        T.skip("candle lighting is not between 13:00 and 23:00 in this time zone")
     end
     local mock, clock, Scheduler = startCalendar(localAt(FRIDAY, 12, 0))
     local admin = T.pair(mock)
