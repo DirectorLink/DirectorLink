@@ -35,10 +35,18 @@ Relay.REFUSED_RETRY_SECONDS = 300
 Relay.UPDATE_RETRY_SECONDS = 3600
 Relay.UPDATE_STATUS = "Update DirectorLink: this version can no longer connect to remote access"
 -- A connection that was up for STABLE_SECONDS and is lost is tried again after QUICK_RETRY_SECONDS,
--- then with the backoff; one lost sooner goes on with the backoff, so a connection that keeps
--- failing as soon as it opens is not retried every second.
+-- and so are the next QUICK_IN_ROW connections that open and are lost sooner (1.10.0, ADR-072: the
+-- home's route to Cloudflare was seen to flip again within seconds, and a request the relay keeps
+-- for the next connection goes again only within 10 s). Then, and after an attempt that does not
+-- open, the backoff: a connection that keeps failing as soon as it opens is not retried every second.
 Relay.QUICK_RETRY_SECONDS = 1
 Relay.STABLE_SECONDS = 60
+Relay.QUICK_IN_ROW = 2
+-- A connection that opens after one was lost pings every WATCH_MS for its first WATCH_PINGS pings
+-- (1.10.0, ADR-072), before the keep-alive's first: a second cut right after the first is found
+-- within a second rather than 5 s, in time for the relay to send its requests again.
+Relay.WATCH_MS = 1000
+Relay.WATCH_PINGS = 4
 -- Closed with 4000 "replaced": another connection with this home's identity took its place (a
 -- second controller, after a backup was restored on it). Waiting longer keeps the two from pushing
 -- each other off every few seconds.
@@ -67,6 +75,7 @@ local state = {
     socket = nil,
     identity = nil,
     attempts = 0, -- failed attempts since the last stable connection (the backoff's step)
+    quickLeft = 0, -- connections lost soon after they opened that may still be retried at once
     tries = 0, -- attempts started since the connection was lost
     connectedAt = nil,
     downSince = nil, -- when the connection was lost
@@ -76,6 +85,8 @@ local state = {
     pingedAt = nil,
     polledAt = nil, -- when Director last polled the connection (OnPoll)
     keepalive = nil,
+    watch = nil, -- the first seconds' pings of a connection that follows a lost one
+    dropped = false, -- an open connection was lost since the last one opened
     retry = nil,
     connecting = nil, -- the limit on the attempt in progress (watchConnect)
     services = nil,
@@ -185,9 +196,11 @@ end
 
 local function stopTimers()
     cancel(state.keepalive)
+    cancel(state.watch)
     cancel(state.retry)
     cancel(state.connecting)
     state.keepalive = nil
+    state.watch = nil
     state.retry = nil
     state.connecting = nil
 end
@@ -208,6 +221,8 @@ local function scheduleReconnect(reason, seconds, note)
         return
     end
     if not seconds then
+        -- The backoff ends a row of quick retries (quickRetry).
+        state.quickLeft = 0
         state.attempts = state.attempts + 1
         seconds = Relay.BACKOFF_SECONDS[math.min(state.attempts, #Relay.BACKOFF_SECONDS)]
     end
@@ -331,11 +346,20 @@ local function connectionFacts(data)
     return data
 end
 
--- A connection that was up long enough and is lost is tried again at once; otherwise the backoff
+-- A connection that was up long enough and is lost is tried again at once, and so are the next
+-- QUICK_IN_ROW that open and are lost sooner (a route that flips again); otherwise the backoff
 -- goes on. Returns the wait in seconds, or nil for the backoff.
 local function quickRetry()
-    if state.connectedAt and os.time() - state.connectedAt >= Relay.STABLE_SECONDS then
+    if not state.connectedAt then
+        return nil
+    end
+    if os.time() - state.connectedAt >= Relay.STABLE_SECONDS then
         state.attempts = 0
+        state.quickLeft = Relay.QUICK_IN_ROW
+        return Relay.QUICK_RETRY_SECONDS
+    end
+    if state.quickLeft > 0 then
+        state.quickLeft = state.quickLeft - 1
         return Relay.QUICK_RETRY_SECONDS
     end
     return nil
@@ -345,6 +369,7 @@ end
 local function dropped(reason)
     if state.connectedAt then
         state.lastDrop = { at = os.time(), reason = tostring(reason) }
+        state.dropped = true
     end
 end
 
@@ -352,7 +377,8 @@ local function startKeepalive()
     cancel(state.keepalive)
     pcall(function()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
-            Answers.tick()
+            -- Answers' clock: these ticks, not the controller clock.
+            Answers.tick(Relay.KEEPALIVE_MS / 1000)
             state.quietTicks = state.quietTicks + 1
             if state.quietTicks >= Relay.SILENCE_TICKS then
                 local facts = connectionFacts()
@@ -367,6 +393,28 @@ local function startKeepalive()
             ping()
         end, true)
     end)
+end
+
+-- The first seconds of a connection that follows a lost one: a ping every WATCH_MS, WATCH_PINGS
+-- times. Director refuses a ping into a connection that was cut (`connection lost`).
+local function startWatch()
+    cancel(state.watch)
+    state.watch = nil
+    local left = Relay.WATCH_PINGS
+    local timer
+    pcall(function()
+        timer = C4:SetTimer(Relay.WATCH_MS, function()
+            left = left - 1
+            if left <= 0 then
+                cancel(timer)
+                if state.watch == timer then
+                    state.watch = nil
+                end
+            end
+            ping()
+        end, true)
+    end)
+    state.watch = timer
 end
 
 -- Director polls a connection it monitors (OnPoll). The relay connection asks it not to
@@ -461,6 +509,11 @@ local function onOpen()
     end
     Relay.announceKeys()
     startKeepalive()
+    -- After a lost connection, the route may flip again at once (ADR-072).
+    if state.dropped then
+        startWatch()
+    end
+    state.dropped = false
     local drop = state.lastDrop
     publish("Connected since " .. os.date("%H:%M", state.connectedAt) .. " - home " .. identity.home_id:sub(1, 8)
         .. (drop and (" - last drop " .. os.date("%H:%M", drop.at) .. " (" .. drop.reason .. ")") or "")
@@ -790,9 +843,11 @@ function Relay.start()
     end
     state.enabled = true
     state.attempts = 0
+    state.quickLeft = 0
     state.tries = 0
     state.downSince = nil
     state.lastDrop = nil
+    state.dropped = false
     log("info", "remote access switched on")
     connect()
 end

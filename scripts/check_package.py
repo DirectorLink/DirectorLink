@@ -169,7 +169,7 @@ SECURITY_CONTRACT = {
     # answered from memory, and one that may have been forgotten is not run (ADR-072).
     "src/cloud/answers.lua": (
         "local entry = state.byId[id]\n    if entry then",
-        "if resent and state.forgotYoung and at - state.forgotYoung < Answers.SECONDS then",
+        "if resent and state.forgotAt and at - state.forgotAt < Answers.RESEND_SECONDS then",
     ),
     # The end-to-end lock (docs/ACCOUNTS.md): the MAC is checked before anything is decrypted,
     # requests are fresh and used once, claims come only from the home network, and invitation

@@ -24,17 +24,22 @@ local Answers = {}
 Answers.TYPES = { e2e = "e2e", join = "join_result", claim = "claim_result", link = "link_result" }
 -- How long a request is remembered. The relay sends one again only within 10 s of getting it.
 Answers.SECONDS = 120
--- Requests remembered at most (their ids, about 150 bytes each), and answers kept at most, in
--- number and in bytes together. An answer larger than MAX_ANSWER_BYTES (a camera picture) is not
--- kept: the request is remembered as done.
+-- How long after it came a request may still come again: the relay sends it again only within 10 s
+-- of getting it (docs/RELAY.md); 30 s leaves room. An answer older than that is never asked for
+-- again, and a request forgotten older than that never comes again.
+Answers.RESEND_SECONDS = 30
+-- Requests remembered at most (their ids, about 350 bytes each with their entry), and answers kept
+-- at most, in number and in bytes together. An answer larger than MAX_ANSWER_BYTES (a camera
+-- picture, a long list) is not kept: the request is remembered as done. A command answers in well
+-- under 2 KB.
 Answers.MAX_REQUESTS = 512
 Answers.MAX_ANSWERS = 64
 Answers.MAX_BYTES = 512 * 1024
-Answers.MAX_ANSWER_BYTES = 64 * 1024
--- Seconds as this module counts them: the clock's steps, never backwards and each at most
--- STEP_SECONDS, so that a clock set forward cannot make a request be forgotten early (and one set
--- back keeps it longer). Relay's keep-alive (every 5 s) and every request count a step.
-Answers.STEP_SECONDS = 30
+Answers.MAX_ANSWER_BYTES = 16 * 1024
+-- Seconds as this module counts them: Relay's keep-alive ticks (every 5 s while connected), not the
+-- clock, as its silence rule counts. No clock change, forward, back or back and forth, can make a
+-- request be forgotten early; while the connection is down, nothing is forgotten.
+Answers.TICK_SECONDS = 5
 Answers.NOT_KEPT = "ANSWER_NOT_KEPT"
 
 local state = {
@@ -42,19 +47,9 @@ local state = {
     order = {}, -- the same entries, oldest first
     answers = 0,
     bytes = 0,
-    wall = nil,
-    elapsed = 0,
-    forgotYoung = nil, -- when a request younger than SECONDS was forgotten to stay within MAX_REQUESTS
+    elapsed = 0, -- keep-alive ticks, in seconds
+    forgotAt = nil, -- when the newest request forgotten before SECONDS (to stay within MAX_REQUESTS) came
 }
-
-local function now()
-    local wall = os.time()
-    if state.wall and wall > state.wall then
-        state.elapsed = state.elapsed + math.min(wall - state.wall, Answers.STEP_SECONDS)
-    end
-    state.wall = wall
-    return state.elapsed
-end
 
 local function dropAnswer(entry)
     if entry.answer then
@@ -73,7 +68,7 @@ local function prune(at)
             return
         end
         if not old then
-            state.forgotYoung = at
+            state.forgotAt = oldest.at
         end
         table.remove(state.order, 1)
         state.byId[oldest.id] = nil
@@ -81,7 +76,25 @@ local function prune(at)
     end
 end
 
--- Keeps `text` as the answer of `entry` when it fits, dropping the oldest answers kept to stay
+-- The answer to let go to make room for `entry`'s: the oldest the relay can no longer ask for
+-- (RESEND_SECONDS), else the largest (the oldest of the same size), so that lists and pictures go
+-- before a press's few hundred bytes. Nil when no other answer is kept.
+local function toDrop(entry)
+    local largest = nil
+    for _, other in ipairs(state.order) do
+        if other ~= entry and other.answer then
+            if state.elapsed - other.at >= Answers.RESEND_SECONDS then
+                return other
+            end
+            if not largest or #other.answer > #largest.answer then
+                largest = other
+            end
+        end
+    end
+    return largest
+end
+
+-- Keeps `text` as the answer of `entry` when it fits, letting other answers go (toDrop) to stay
 -- within MAX_ANSWERS and MAX_BYTES.
 local function keep(entry, text)
     entry.done = true
@@ -92,13 +105,12 @@ local function keep(entry, text)
     entry.answer = text
     state.answers = state.answers + 1
     state.bytes = state.bytes + #text
-    for _, other in ipairs(state.order) do
-        if state.answers <= Answers.MAX_ANSWERS and state.bytes <= Answers.MAX_BYTES then
+    while state.answers > Answers.MAX_ANSWERS or state.bytes > Answers.MAX_BYTES do
+        local other = toDrop(entry)
+        if not other then
             return
         end
-        if other ~= entry then
-            dropAnswer(other)
-        end
+        dropAnswer(other)
     end
 end
 
@@ -110,15 +122,15 @@ end
 -- writes to the relay connection there is when it is called. Returns what `run` returns for a
 -- message of another type; for one the relay may send again, true and what happened, for the log:
 -- nil (a request run for the first time), "new" (sent again, never got before: run now),
--- "answered again", "still running", "answer not kept" or "forgotten" (sent again, but requests
--- not yet SECONDS old were forgotten meanwhile, so it may have run: it does not run again).
+-- "answered again", "still running", "answer not kept" or "forgotten" (sent again, but a request
+-- not yet RESEND_SECONDS old was forgotten meanwhile, so it may have run: it does not run again).
 function Answers.handle(message, send, run)
     local kind = Answers.TYPES[message.type]
     local id = message.id
     if not kind or type(id) ~= "string" or id == "" or #id > 64 then
         return run(message, send)
     end
-    local at = now()
+    local at = state.elapsed
     prune(at)
     local entry = state.byId[id]
     if entry then
@@ -132,7 +144,8 @@ function Answers.handle(message, send, run)
         return true, "still running"
     end
     local resent = message.resent ~= nil
-    if resent and state.forgotYoung and at - state.forgotYoung < Answers.SECONDS then
+    -- A request it may have got and forgotten: one forgotten early had come within RESEND_SECONDS.
+    if resent and state.forgotAt and at - state.forgotAt < Answers.RESEND_SECONDS then
         send(notKept(message))
         return true, "forgotten"
     end
@@ -152,9 +165,10 @@ function Answers.handle(message, send, run)
     return true, resent and "new" or nil
 end
 
--- A keep-alive tick: time goes on, and what is old is forgotten.
-function Answers.tick()
-    prune(now())
+-- A keep-alive tick, `seconds` apart (TICK_SECONDS): time goes on, and what is old is forgotten.
+function Answers.tick(seconds)
+    state.elapsed = state.elapsed + (tonumber(seconds) or Answers.TICK_SECONDS)
+    prune(state.elapsed)
 end
 
 -- For tests and Remote Status: how many requests are remembered, answers kept and their bytes.
@@ -165,7 +179,7 @@ end
 -- Test support: forget everything (a fresh driver instance).
 function Answers.reset()
     state.byId, state.order, state.answers, state.bytes = {}, {}, 0, 0
-    state.wall, state.elapsed, state.forgotYoung = nil, 0, nil
+    state.elapsed, state.forgotAt = 0, nil
 end
 
 return Answers
