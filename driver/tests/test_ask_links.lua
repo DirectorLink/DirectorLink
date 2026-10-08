@@ -568,6 +568,44 @@ function tests.links_survive_an_update_and_requests_do_not()
     T.eq(broken.persist[STORE], "json:{not json", "left as it was")
 end
 
+-- Review of 1.10.0 (finding 8): the run reached the controller just as the connection died, and its
+-- question (`notify`) and answer went into the dead connection. The relay sends the run again on the
+-- next connection (ADR-072) and gets the answer it kept, "asked"; since 1.10.1 (ADR-073) the
+-- question goes again too, the same one (its id, its sealed parts), so the phone is really asked.
+-- Kept a minute, as a ring: a push service keeps it no longer, and the request lasts two.
+function tests.a_question_lost_with_the_connection_is_asked_after_the_reconnect()
+    local s = start()
+    Harness.relaySays({ type = "relay_features", id = "f1", features = { "alert_acks" } })
+    local link, _, notice = asked(s)
+    local outbox = require("src.cloud.outbox")
+    T.eq(outbox.counts(), 1, "kept until the relay answers it")
+    local kept = 0
+    for _, timer in ipairs(s.mock.timers) do
+        if not timer.cancelled and (timer.source or ""):find("cloud/outbox", 1, true) then
+            kept = kept + 1
+            T.eq(timer.delay, 60000, "a minute")
+        end
+    end
+    T.eq(kept, 1)
+
+    Harness.reconnect(s.mock, s.connection)
+    -- The run comes again: answered from memory, nothing asked twice.
+    ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, Json.encode({ type = "link", id = "ask-" .. counter, link = link.link_id, secret = link.secret, resent = 1 })))
+    local messages = sent(s.connection)
+    T.eq(#ofType(messages, "link_result"), 1)
+    T.eq(ofType(messages, "link_result")[1].result, "asked")
+    T.eq(#ofType(messages, "notify"), 0, "not asked again by the run")
+    -- The relay says it answers alerts: the question goes, once.
+    Harness.relaySays({ type = "relay_features", id = "f2", features = { "alert_acks" } })
+    local notices = ofType(sent(s.connection), "notify")
+    T.eq(#notices, 1)
+    T.eq(notices[1].id, notice.id)
+    T.eq(notices[1].resent, 1)
+    T.same(notices[1]["for"], notice["for"])
+    Harness.relaySays({ type = "notify_result", id = notice.id, ok = true })
+    T.eq(outbox.counts(), 0)
+end
+
 function tests.a_scene_link_and_an_ask_link_share_the_run()
     local s = start()
     s.alertsOn("phone")

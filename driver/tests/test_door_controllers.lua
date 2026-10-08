@@ -93,6 +93,12 @@ function tests.each_controller_is_a_door_gate_or_garage_door_in_its_own_room()
     T.eq(devices[BACK_DOOR].supported, false)
     T.eq(devices[SIDE_GATE].type, "relay")
     T.eq(devices[SIDE_GATE].supported, false)
+    -- The button is part of the relay's door (1.10.1): apps leave it out of a room's other devices.
+    T.eq(devices[BACK_DOOR].part_of, BACK_RELAY, "the door it is shown as")
+    T.eq(T.http(mock, "GET", "/v1/devices/" .. BACK_DOOR, { key = key }).json.part_of, BACK_RELAY)
+    T.eq(devices[BACK_RELAY].part_of, Json.null, "the door itself")
+    T.eq(devices[GATE].part_of, Json.null)
+    T.eq(devices[SIDE_GATE].part_of, Json.null, "nothing to open: part of nothing, a device of its own")
     -- In their rooms, and in the inventory.
     local inventory = T.http(mock, "GET", "/v1/system", { key = key }).json.inventory
     T.eq(inventory.relays, 4)
@@ -691,6 +697,9 @@ function tests.a_knx_relay_on_a_controllers_close_or_stop_connection_is_no_door(
     local devices = byId(T.http(mock, "GET", "/v1/devices", { key = key }).json.items)
     T.eq(devices[76].supported, false)
     T.eq(devices[77].supported, false)
+    T.eq(devices[76].part_of, 75, "part of the gate, under its Open relay (1.10.1)")
+    T.eq(devices[77].part_of, 75)
+    T.eq(devices[73].part_of, 75, "the controller's button too")
 
     p.bindings[163][2] = nil
     p.bindings[163][3] = nil
@@ -698,6 +707,41 @@ function tests.a_knx_relay_on_a_controllers_close_or_stop_connection_is_no_door(
     list = relays(mock, key)
     T.eq(list[76].kind, "relay", "unbound: a door again")
     T.eq(list[77].kind, "relay")
+    devices = byId(T.http(mock, "GET", "/v1/devices", { key = key }).json.items)
+    T.eq(devices[76].part_of, Json.null, "a door of its own again")
+    T.eq(devices[77].part_of, Json.null)
+end
+
+-- `part_of` in /v1/devices (1.10.1): a door controller's button, or its Close relay, names the door it
+-- is part of only while DirectorLink shows that door, and only to whoever sees it (ADR-054).
+function tests.a_part_names_its_door_only_while_shown_and_to_whoever_sees_it()
+    local p = Mock.project()
+    Mock.withRelayControllers(p, {
+        -- The button in the Living Room, its KNX relay (the door) in the Kitchen.
+        { id = 73, controller = 163, name = "Back Gate", room = 11, kind = "gate", state = "Closed", bindings = { [1] = 75, [4] = 176 }, relay = { id = 75, name = "Back Gate Relay", room = 10, roomName = "Kitchen" } },
+        -- Nothing on its Open relay: no door, so its Close relay is part of nothing shown.
+        { id = 74, controller = 164, name = "Side Gate", room = 10, kind = "gate", state = "Unknown", bindings = { [2] = 78 } },
+    })
+    p.devices[78] = { deviceName = "Side Gate Close", driverFileName = "knx_contact_relay.c4z", roomId = 10, roomName = "Kitchen" }
+    local mock, admin = start(nil, p)
+    local devices = byId(T.http(mock, "GET", "/v1/devices", { key = admin }).json.items)
+    T.eq(devices[73].part_of, 75)
+    T.eq(devices[73].room.name, "Living Room", "listed in its own room")
+    T.eq(devices[74].part_of, Json.null, "not a door: part of nothing")
+    T.eq(devices[78].supported, false, "never opened on its own")
+    T.eq(devices[78].part_of, Json.null, "its door is not shown: nothing to name")
+
+    -- A member who sees the Living Room only sees the button, as a device of its own.
+    local created = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Kid's phone", role = "member", access = { all_rooms = false, rooms = { 11 }, doors = true } } })
+    T.eq(created.status, 201, created.body)
+    local member = created.json.key
+    devices = byId(T.http(mock, "GET", "/v1/devices", { key = member }).json.items)
+    T.eq(devices[75], nil, "the door is in a room not theirs")
+    T.eq(devices[73].part_of, Json.null, "nor named to them")
+    T.eq(T.http(mock, "GET", "/v1/devices/73", { key = member }).json.part_of, Json.null)
+    created = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Cook's phone", role = "member", access = { all_rooms = false, rooms = { 10, 11 }, doors = false } } })
+    devices = byId(T.http(mock, "GET", "/v1/devices", { key = created.json.key }).json.items)
+    T.eq(devices[73].part_of, 75, "a member without doors still sees the door and its state")
 end
 
 -- Two controllers on one relay (two rooms' buttons for one gate): both are shown, as in Control4,

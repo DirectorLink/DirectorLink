@@ -6,7 +6,11 @@
 // cloud cannot read what it says, not even its kind. Each part goes, at once, to the browsers
 // registered with that key id by an account that uses that key at the home (member_keys), and to
 // nobody else; `brief` (a doorbell) is kept by the push service a minute only. At most
-// NOTIFY_PER_HOUR (60) notify messages a home an hour are delivered.
+// NOTIFY_PER_HOUR (60) notify messages a home an hour are delivered. Since 1.10.1 (ADR-073) a
+// notify may carry an `id`: it is answered {"type":"notify_result","id","ok":true}, and an id
+// handled already (the driver sends again what it sent into a connection that died) is not pushed
+// again. The ids are kept 10 minutes (NOTIFY_IDS_MS), at most NOTIFY_IDS_MAX (200), in storage,
+// so that they outlive the object's eviction while the driver reconnects, and a deploy.
 //
 // The cloud makes one alert itself, and the controller made one in the clear before 1.7.0, each
 // carrying its kind, the home id and a time, never a name (ADR-047):
@@ -52,6 +56,8 @@
 //                    still to reach (null: all), while it is tried again
 //   schedule_alerts  the times of the schedule alerts of the last hour
 //   notify_times     the times of the notify messages of the last hour
+//   notify_ids       [[id, ms], …]: the ids of the notify messages handled in the last 10
+//                    minutes, oldest first, at most NOTIFY_IDS_MAX (1.10.1)
 //   device_request_choices  { <SHA-256 of an endpoint>: { on, at } }: whether that browser wants the
 //                    push of a new device asking to join (1.8.0); only browsers whose app said so
 //   device_request_pushes   { <account id>: [times] }: the account's join pushes of the last hour
@@ -92,6 +98,14 @@ const SCHEDULE_ALERTS_PER_HOUR = 3;
 // and keys one may name.
 export const NOTIFY_PER_HOUR = 60;
 const NOTIFY_MAX_KEYS = 50;
+// The ids of the notify messages handled (1.10.1, ADR-073), so that one the driver sends again is
+// pushed once: kept 10 minutes, well past the 2 minutes the driver keeps an alert to send again
+// (its own timers count them, which may run late on a busy controller), and at most 200 (a driver
+// sends at most 60 alerts an hour). A notify id: what the driver makes (16 hex digits), or any
+// short word of these characters.
+const NOTIFY_IDS_MS = 10 * 60 * 1000;
+const NOTIFY_IDS_MAX = 200;
+const NOTIFY_ID = /^[0-9A-Za-z_-]{1,64}$/;
 // A sealed part's ciphertext, in base64 characters: the controller pads every detail to 496 bytes,
 // which seal to 512 (684 characters).
 const SEALED_MAX_CT = 700;
@@ -723,12 +737,28 @@ export class HomeAlerts {
   }
 
   // {"type":"notify"} from the controller (1.7.0, ADR-050): each sealed part to the browsers of its
-  // key, once, at once. Nothing in it says what it is about; only how many are logged.
-  async notify(data, homeId) {
+  // key, once, at once. Nothing in it says what it is about; only how many are logged. One with an
+  // `id` (1.10.1, ADR-073) is answered with `answer({ type: "notify_result", id, ok })` once its id
+  // is recorded (before the pushes: the driver may then forget it), and one whose id was handled
+  // already is answered the same and not pushed again: the driver sent it again after a lost
+  // connection, not knowing it had arrived. Recorded before it is pushed, so that no event is ever
+  // pushed twice: should the object fail in between, the alert is lost rather than doubled.
+  async notify(data, homeId, answer = () => {}) {
+    const id = typeof data?.id === "string" && NOTIFY_ID.test(data.id) ? data.id : null;
+    const resent = Number.isInteger(data?.resent) && data.resent > 0 ? data.resent : undefined;
     const parts = sealedParts(data?.for);
     if (!parts) {
       log("notify_ignored", { home: homeId, why: "not sealed parts for key ids" });
+      if (id) answer({ type: "notify_result", id, ok: false, code: "INVALID_REQUEST" });
       return;
+    }
+    if (id) {
+      const first = await this.firstNotify(id);
+      answer({ type: "notify_result", id, ok: true });
+      if (!first) {
+        log("notify_again", { home: homeId, keys: parts.size, resent: resent ?? null });
+        return;
+      }
     }
     const now = Date.now();
     const recent = ((await this.storage.get("notify_times")) ?? []).filter((time) => now - time < HOUR_MS && time <= now);
@@ -747,8 +777,10 @@ export class HomeAlerts {
       log("notify_failed", { home: homeId, error: String(error?.message ?? error) });
       return;
     }
+    // `resent`: it reached the relay only when the driver sent it again (1.10.1).
+    const again = resent ? { resent } : {};
     if (list.length === 0) {
-      log("notify_sent", { home: homeId, at: when, keys: parts.size, devices: 0 });
+      log("notify_sent", { home: homeId, at: when, keys: parts.size, devices: 0, ...again });
       await this.browsersGone(homeId, [...parts.keys()], []);
       return;
     }
@@ -756,7 +788,46 @@ export class HomeAlerts {
     const messageOf = (subscription) => ({ kind: "sealed", home: homeId, key: subscription.key_id, at: when, sealed: parts.get(subscription.key_id) });
     // `list` has every browser of the keys it names: those with none, or none left, are told.
     const outcome = await this.deliver(homeId, list, messageOf, brief ? BRIEF_TTL_SECONDS : ALERT_TTL_SECONDS, "sealed", [...parts.keys()]);
-    log("notify_sent", { home: homeId, at: when, keys: parts.size, brief, ...(outcome ? outcome.counts : { devices: list.length, delivered: 0 }) });
+    log("notify_sent", { home: homeId, at: when, keys: parts.size, brief, ...(outcome ? outcome.counts : { devices: list.length, delivered: 0 }), ...again });
+  }
+
+  // Whether the notify `id` is new here (1.10.1, ADR-073); records it if so. The ids live in storage
+  // (`notify_ids`) and, once read, in memory: a socket's messages may wake an object that was
+  // evicted while the driver reconnected (hibernation), or a new one after a deploy, and the id
+  // sent again must still be known there. The check and the record happen with nothing awaited
+  // between them, so the same id on two sockets at once is pushed once. A failed write forgets
+  // the id again (and throws: neither answered nor pushed; the driver sends it again at its next
+  // connection, while it keeps it).
+  async firstNotify(id) {
+    if (!this.notifyIds) {
+      this.notifyIds = this.storage.get("notify_ids").then(
+        (stored) => new Map((Array.isArray(stored) ? stored : []).filter((item) => Array.isArray(item) && typeof item[0] === "string" && Number.isFinite(item[1]))),
+        (error) => {
+          this.notifyIds = null;
+          throw error;
+        }
+      );
+    }
+    const ids = await this.notifyIds;
+    const now = Date.now();
+    for (const [old, at] of ids) {
+      if (now - at <= NOTIFY_IDS_MS) break;
+      ids.delete(old);
+    }
+    if (ids.has(id)) {
+      return false;
+    }
+    ids.set(id, now);
+    while (ids.size > NOTIFY_IDS_MAX) {
+      ids.delete(ids.keys().next().value);
+    }
+    try {
+      await this.storage.put("notify_ids", [...ids]);
+    } catch (error) {
+      ids.delete(id);
+      throw error;
+    }
+    return true;
   }
 
   // Pushes `messageOf(subscription)` to each of `list`, kept `ttl` seconds by the push service, and

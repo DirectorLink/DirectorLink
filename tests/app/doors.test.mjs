@@ -3,7 +3,8 @@
 // gate" for a relay of its own and for every relay of a driver before 1.10.0) and, when the
 // controller has a contact, open or closed, in English, Hebrew, Spanish and Italian; the two taps
 // open it as any door (POST /v1/relays/{id}/pulse), and a controller that holds its relay is
-// explained in the app's words.
+// explained in the app's words. A controller's button shown as the KNX relay it drives, and a
+// DoorBird's button, are no "other device" in their room (1.10.1: `part_of` in /v1/devices).
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -264,4 +265,60 @@ test("a controller's gate is opened by its name in a command, in every language 
     assert.deepEqual(result.action.device, { kind: "relay", id: 71 }, text);
   }
   await setLanguage("en");
+});
+
+// As DirectorLink 1.10.1 lists them in /v1/devices (driver/tests/c4mock.lua: withRelayControllers,
+// the DoorBird, the camera of no driver, the alarm's partition), all in the Kitchen.
+const kitchenDevices = [
+  { id: 73, name: "Back Door", type: "other", room: kitchen, supported: false, href: null, part_of: 75 },
+  { id: 75, name: "Back Door Relay", type: "relay", room: kitchen, supported: true, href: "/v1/relays/75", part_of: null },
+  { id: 91, name: "DoorBird", type: "other", room: kitchen, supported: false, href: null, part_of: 93 },
+  { id: 40, name: "Front Door", type: "other", room: kitchen, supported: false, href: null, part_of: null },
+  { id: 93, name: "Front Gate", type: "doorbell", room: kitchen, supported: true, href: "/v1/doorbells/93", part_of: null },
+  { id: 81, name: "Garage", type: "other", room: kitchen, supported: false, href: null, part_of: null },
+  { id: 90, name: "Gate Intercom", type: "other", room: kitchen, supported: false, href: null, part_of: 93 },
+];
+const frontGate = { id: 93, name: "Front Gate", room: kitchen, camera: null, can_open: true, connected: null, events: [], last_ring_at: null, last_opened_at: null, last_motion_at: null, last_access_at: null };
+
+function othersIn(nodes) {
+  const section = byClass(nodes, "others");
+  if (!section) return null;
+  return {
+    title: plain(section.children[0].textContent),
+    names: byClass(section, "others-list").children.map((item) => plain(item.textContent)),
+  };
+}
+
+test("a door controller's button and a DoorBird's button are no other device in their room, in every language", async () => {
+  const { roomView } = await import("../../app/js/views/room.js");
+  const { t } = await import("../../app/js/i18n.js");
+  for (const language of ["en", "he", "es", "it"]) {
+    await setLanguage(language);
+    await connect();
+    state.devices = kitchenDevices.map((item) => ({ ...item }));
+    state.doorbells = [{ ...frontGate }];
+    state.alarm = null;
+    let room = roomView(kitchen.id, { openCamera() {} });
+    assert.ok(byKey(room, "relay:75:open"), `${language}: the door, once, under its relay`);
+    // The alarm is not shown (Alarm Status Off): its partition is a device the app cannot control.
+    assert.deepEqual(othersIn(room), { title: t("rooms.otherDevices", { count: 2 }), names: ["Front Door", "Garage"] }, language);
+
+    // With the alarm on Home, its partition is not one either.
+    state.alarm = { enabled: true, partitions: [{ id: 81, name: "Garage", room: kitchen }] };
+    room = roomView(kitchen.id, { openCamera() {} });
+    assert.deepEqual(othersIn(room), { title: t("rooms.otherDevices", { count: 1 }), names: ["Front Door"] }, language);
+  }
+  await setLanguage("en");
+  state.alarm = null;
+
+  // Part of a device this app does not show (not read, or not the user's): a device of its own.
+  state.doorbells = [];
+  assert.deepEqual(othersIn(roomView(kitchen.id, { openCamera() {} })).names, ["DoorBird", "Front Door", "Garage", "Gate Intercom"]);
+  // A driver before 1.10.1 says no part_of: as before, every device it cannot control.
+  state.doorbells = [{ ...frontGate }];
+  state.devices = kitchenDevices.map(({ part_of: _partOf, ...item }) => item);
+  assert.deepEqual(othersIn(roomView(kitchen.id, { openCamera() {} })), {
+    title: "5 other devices",
+    names: ["Back Door", "DoorBird", "Front Door", "Garage", "Gate Intercom"],
+  });
 });

@@ -73,6 +73,15 @@ function DoorBird.initialize(device, registry, before)
         camera = sibling(registry, protocolId, "camera.c4i"),
     }
     tracked[device.id] = info
+    -- The driver's other proxies (its button, intercom and camera) are parts of this doorbell, not
+    -- devices of their own (/v1/devices: part_of, 1.10.1); another doorstation stays a doorbell.
+    local protocol = registry and registry.protocols and registry.protocols[protocolId]
+    for _, proxy in ipairs(protocol and protocol.proxies or {}) do
+        local part = tonumber(proxy.id) ~= tonumber(device.id) and registry.devices and registry.devices[tonumber(proxy.id)]
+        if part and part.kind ~= "doorbell" and (part.part_of == nil or tonumber(device.id) < tonumber(part.part_of)) then
+            part.part_of = device.id
+        end
+    end
 
     device.supported = true
     device.adapter_error = nil

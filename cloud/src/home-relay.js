@@ -33,6 +33,11 @@
 // A request already sent when the connection ends (1.10.0, ADR-072) is sent again, the same frame
 // with the same id, on the driver's next connection once its hello lists `resend` and names the same
 // driver `instance` (resendLost): that driver runs each id once and gives a repeat its first answer.
+//
+// Every request ends within REQUEST_BUDGET_MS (18 s) of reaching this object (1.10.1, ADR-073): the
+// wait for the driver, the sends and the answer together, so the app (20 s) hears the relay's 504.
+// An alert the driver sends with an id (`notify`, 1.10.1) is answered `notify_result`, and one it
+// sends again after a lost connection is not pushed twice (alerts.js keeps the ids it handled).
 
 import { DurableObject } from "cloudflare:workers";
 import { bearerToken, json, problem, sameSecret, sha256Hex } from "./http.js";
@@ -66,13 +71,25 @@ const DEFAULT_PING_S = 25;
 // one: 1.10.0, ADR-072) waits for the driver's next hello, at most RECONNECT_WAIT_MS, and goes again
 // on that connection when the hello lists `resend` and comes from the same driver instance (one that
 // has not restarted: its memory of what it ran is whole). At most MAX_RESENDS times, and only within
-// RESEND_WITHIN_MS of reaching the relay; each resend waits RESEND_TIMEOUT_MS for its answer. So a
+// RESEND_WITHIN_MS (10 s) of reaching the relay; each resend waits RESEND_TIMEOUT_MS for its answer. So a
 // resent request is answered within 18 s of reaching the relay, under the app's 20 s (app/js/
 // remote.js). Otherwise it fails as before (502 HOME_DISCONNECTED).
 const RESEND_FEATURE = "resend";
 const MAX_RESENDS = 2;
-const RESEND_WITHIN_MS = 10000;
+const DEFAULT_RESEND_WITHIN_MS = 10000;
 const RESEND_TIMEOUT_MS = 8000;
+// Every request ends within this long of reaching the home's object (1.10.1, ADR-073): waiting for
+// the driver to come back (RECONNECT_WAIT_MS), sending, sending again (above) and the answer
+// (REQUEST_TIMEOUT_MS) together. Up to 1.10.0 a request that first waited 8 s for the driver then
+// had the full 15 s for its answer: 23 s, while the app gives up after 20 s (app/js/remote.js) and
+// says DirectorLink's servers could not be reached, though the home may still carry it out. At 18 s
+// the relay's own 504 HOME_TIMEOUT reaches the app first, with time to spare for the Worker's own
+// work and the way back.
+const REQUEST_BUDGET_MS = 18000;
+// A driver whose hello lists this keeps the alerts it sends (`notify`) until the relay answers
+// `notify_result`, and sends them again after a lost connection (1.10.1, ADR-073); the relay says
+// it does, right after that hello (`relay_features`). Alerts.js pushes each id once.
+const ALERT_ACKS = "alert_acks";
 // The driver ran a request sent again but no longer has its answer (too large to keep, such as a
 // picture): the caller gets 502 HOME_DISCONNECTED, as before 1.10.0 when the connection ended.
 const ANSWER_NOT_KEPT = "ANSWER_NOT_KEPT";
@@ -105,7 +122,8 @@ export class HomeRelay extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    // Relayed requests waiting for the driver: id -> { resolve, timer, conn, record, resend }.
+    // Relayed requests waiting for the driver: id -> { resolve, timer, conn, record, resend,
+    // deadline } (`deadline`, 1.10.1: when its budget ends, REQUEST_BUDGET_MS after it came).
     // `resend` (1.10.0): { frame, instance, receivedAt, sent, lostAt, why } for one the driver may be
     // sent again (`instance` once its connection's hello listed `resend`); `lostAt` while its
     // connection has ended and it waits for the next hello. Memory is
@@ -254,6 +272,12 @@ export class HomeRelay extends DurableObject {
 
     switch (type) {
       case "hello":
+        // This relay answers each alert with an id (1.10.1, ADR-073): said at once, before anything
+        // else the hello lets it send (`accounts`, `alerts_gone`, requests sent again), so that the
+        // driver sends again what it kept from its last connection, and knows a relay that does not.
+        if (attachment.features.includes(ALERT_ACKS)) {
+          this.reply(ws, { type: "relay_features", id: crypto.randomUUID(), features: [ALERT_ACKS] });
+        }
         await this.ctx.storage.put({ version: attachment.version, last_seen: iso(attachment.lastSeen), driver_features: attachment.features });
         if (data.home !== attachment.home) {
           log("hello_home_mismatch", { home: attachment.home, hello_home: String(data.home) });
@@ -375,7 +399,9 @@ export class HomeRelay extends DurableObject {
         return;
       case "notify":
         // An alert sealed to some of the home's keys (1.7.0, ADR-050): to their browsers (alerts.js).
-        await this.alerts.notify(data, attachment.home);
+        // One with an id (1.10.1, ADR-073) is answered `notify_result` on this socket, and pushed once
+        // however often the driver sends it.
+        await this.alerts.notify(data, attachment.home, (answer) => this.reply(ws, answer));
         return;
       case "response":
       case "claim_result":
@@ -494,7 +520,8 @@ export class HomeRelay extends DurableObject {
     if (again && !again.instance) {
       again.instance = takesResend(attachment);
     }
-    const left = again?.instance ? Math.min(reconnectWaitMs(this.env), again.receivedAt + RESEND_WITHIN_MS - Date.now()) : 0;
+    const now = Date.now();
+    const left = again?.instance ? Math.min(reconnectWaitMs(this.env), again.receivedAt + resendWithinMs(this.env) - now, entry.deadline - now) : 0;
     if (!again?.instance || again.sent >= MAX_RESENDS || left <= 0) {
       this.settle(id, { failed: why });
       return;
@@ -532,7 +559,8 @@ export class HomeRelay extends DurableObject {
       most = Math.max(most, again.sent);
       again.lostAt = null;
       entry.conn = attachment.conn;
-      entry.timer = setTimeout(() => this.settle(id, { timeout: true }), Math.min(RESEND_TIMEOUT_MS, requestTimeoutMs(this.env)));
+      // Its own wait, and never past the request's budget (1.10.1).
+      entry.timer = setTimeout(() => this.settle(id, { timeout: true }), Math.min(RESEND_TIMEOUT_MS, requestTimeoutMs(this.env), entry.deadline - now));
       count += 1;
       try {
         ws.send(JSON.stringify({ ...again.frame, resent: again.sent }));
@@ -550,14 +578,18 @@ export class HomeRelay extends DurableObject {
   // request (webSocketMessage). `resend` (1.10.0): the frame may go again on the driver's next
   // connection if this one ends before the answer, when this connection's hello lists `resend` (by
   // the time it ends: lost); `receivedAt`, when the request reached the relay (the resends stop
-  // RESEND_WITHIN_MS after it).
+  // RESEND_WITHIN_MS after it, and every wait ends REQUEST_BUDGET_MS after it: 1.10.1).
   exchange(ws, frame, { record = null, resend = false, receivedAt = Date.now() } = {}) {
     const attachment = ws.deserializeAttachment() ?? {};
+    const deadline = receivedAt + REQUEST_BUDGET_MS;
+    if (Date.now() >= deadline) {
+      return Promise.resolve({ timeout: true }); // nothing left of its budget: not sent at all
+    }
     return new Promise((resolve) => {
-      const timer = setTimeout(() => this.settle(frame.id, { timeout: true }), requestTimeoutMs(this.env));
+      const timer = setTimeout(() => this.settle(frame.id, { timeout: true }), Math.min(requestTimeoutMs(this.env), deadline - Date.now()));
       // `instance`: the driver start it went to, once its connection's hello said it takes `resend`.
       const again = resend ? { frame, instance: takesResend(attachment), receivedAt, sent: 0, lostAt: null, why: null } : null;
-      const entry = { resolve, timer, conn: attachment.conn, record, resend: again };
+      const entry = { resolve, timer, conn: attachment.conn, record, resend: again, deadline };
       this.pending.set(frame.id, entry);
       try {
         ws.send(JSON.stringify(frame));
@@ -570,7 +602,8 @@ export class HomeRelay extends DurableObject {
   // The driver's socket; if it has just disconnected or gone quiet (stale), the one it opens next,
   // once it says hello (or, after RECONNECT_WAIT_MS, whichever is connected and heard; null if
   // none). Null at once when the home has been away longer. Nothing is sent into a stale socket.
-  async liveDriver() {
+  // `deadline` (1.10.1): the wait ends then at the latest (the request's budget).
+  async liveDriver(deadline = Infinity) {
     const ws = this.driverSocket();
     if (ws && !this.stale(ws)) {
       return ws;
@@ -587,7 +620,7 @@ export class HomeRelay extends DurableObject {
       };
       // At the deadline, a socket that passed the secret check but whose hello is still on its
       // way is used all the same: the driver is back.
-      const timer = setTimeout(() => resume(this.heardDriverSocket()), reconnectWaitMs(this.env));
+      const timer = setTimeout(() => resume(this.heardDriverSocket()), Math.max(0, Math.min(reconnectWaitMs(this.env), deadline - Date.now())));
       this.waiting.add(resume);
     });
     if (!socket && expected.restarted && !this.driverSocket()) {
@@ -753,19 +786,19 @@ export class HomeRelay extends DurableObject {
   }
 
   async forward(path, homeId) {
-    const ws = await this.liveDriver();
+    const receivedAt = Date.now();
+    const ws = await this.liveDriver(receivedAt + REQUEST_BUDGET_MS);
     if (!ws) {
       return this.offline();
     }
     const id = crypto.randomUUID();
-    const timeoutMs = requestTimeoutMs(this.env);
     const started = Date.now();
     // Version 0's test requests are never sent again: the driver refuses them anyway.
-    const outcome = await this.exchange(ws, { type: "request", id, method: "GET", path, body: null });
+    const outcome = await this.exchange(ws, { type: "request", id, method: "GET", path, body: null }, { receivedAt });
     const ms = Date.now() - started;
     if (outcome.timeout) {
       log("request_timeout", { home: homeId, id, path, ms });
-      return problem(504, "HOME_TIMEOUT", `The home did not answer within ${timeoutMs / 1000} s`);
+      return homeTimeout(receivedAt);
     }
     if (outcome.failed) {
       log("request_failed", { home: homeId, id, path, ms, why: outcome.failed });
@@ -785,20 +818,19 @@ export class HomeRelay extends DurableObject {
       return problem(400, "INVALID_MESSAGE", "Only e2e, join and claim messages are relayed");
     }
     const receivedAt = Date.now();
-    const ws = await this.liveDriver();
+    const ws = await this.liveDriver(receivedAt + REQUEST_BUDGET_MS);
     if (!ws) {
       return this.offline();
     }
     const id = crypto.randomUUID();
-    const timeoutMs = requestTimeoutMs(this.env);
     const started = Date.now();
     const record = message.type === "e2e" && typeof userId === "string" && userId ? { user: userId, key: message.envelope?.key } : null;
     // Sent again if the connection ends first (1.10.0): the driver runs each id once.
     const outcome = await this.exchange(ws, { ...message, id }, { record, resend: true, receivedAt });
     const ms = Date.now() - started;
     if (outcome.timeout) {
-      log("message_timeout", { home: homeId, type: message.type, ms });
-      return problem(504, "HOME_TIMEOUT", `The home did not answer within ${timeoutMs / 1000} s`);
+      log("message_timeout", { home: homeId, type: message.type, ms, total_ms: Date.now() - receivedAt });
+      return homeTimeout(receivedAt);
     }
     if (outcome.failed) {
       log("message_failed", { home: homeId, type: message.type, ms, why: outcome.failed });
@@ -836,7 +868,7 @@ export class HomeRelay extends DurableObject {
       done(429, { why: "home limit" });
       return problem(429, "TOO_MANY_RUNS", "Too many runs for this home; try again in a minute", { "Retry-After": String(wait) });
     }
-    const ws = await this.liveDriver();
+    const ws = await this.liveDriver(started + REQUEST_BUDGET_MS);
     if (!ws) {
       done(503);
       return problem(503, "HOME_OFFLINE", "The home is not connected to the relay");
@@ -847,12 +879,11 @@ export class HomeRelay extends DurableObject {
       return linkNotFound();
     }
     const id = crypto.randomUUID();
-    const timeoutMs = requestTimeoutMs(this.env);
     // Sent again if the connection ends first (1.10.0): the driver runs each id once.
     const outcome = await this.exchange(ws, { type: "link", id, link: linkId, secret }, { resend: true, receivedAt: started });
     if (outcome.timeout) {
       done(504);
-      return problem(504, "HOME_TIMEOUT", `The home did not answer within ${timeoutMs / 1000} s`);
+      return homeTimeout(started);
     }
     if (outcome.failed) {
       done(502, { why: outcome.failed });
@@ -979,6 +1010,12 @@ function requestTimeoutMs(env) {
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_TIMEOUT_MS;
 }
 
+// 504 for a request that reached the relay at `receivedAt` and was not answered in time: within
+// REQUEST_TIMEOUT_MS of being sent, or within its budget (1.10.1), whichever ended first.
+function homeTimeout(receivedAt) {
+  return problem(504, "HOME_TIMEOUT", `The home did not answer within ${Math.round((Date.now() - receivedAt) / 1000)} s`);
+}
+
 // The interval the driver's hello announced (ping_s, seconds; 1.6.0), or null: none, or not a
 // number from 1 to 300.
 function pingSeconds(value) {
@@ -999,6 +1036,14 @@ function takesResend({ features, instance } = {}) {
 function reconnectWaitMs(env) {
   const value = Number(env.RECONNECT_WAIT_MS);
   return Number.isInteger(value) && value >= 0 ? value : DEFAULT_RECONNECT_WAIT_MS;
+}
+
+// RESEND_WITHIN_MS (.dev.vars, for the tests only): with the production 10 s a request is sent again
+// within 10 s and then waits at most 8 s, so the 18 s budget never ends either wait first;
+// budget.test.mjs sets it longer than the budget to see that the budget does.
+function resendWithinMs(env) {
+  const value = Number(env.RESEND_WITHIN_MS);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_RESEND_WITHIN_MS;
 }
 
 // When the runtime last answered this socket's "ping" (milliseconds), or null.

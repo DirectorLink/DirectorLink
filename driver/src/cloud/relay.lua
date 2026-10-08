@@ -11,6 +11,7 @@ local WebSocket = require("src.cloud.websocket")
 local Activity = require("src.core.activity")
 local Access = require("src.auth.access")
 local Answers = require("src.cloud.answers")
+local Outbox = require("src.cloud.outbox")
 
 local Relay = {}
 
@@ -61,8 +62,21 @@ Relay.CANDIDATE_SECONDS = 24 * 3600
 -- (1.9.0, ADR-061): the relay sends which keys share an account (`accounts`), and any device of an
 -- account may approve that account's new device, as the controller lets every user add their own;
 -- `resend` (1.10.0, ADR-072): a request already sent when the connection ended may come again on
--- the next one, with the same id, and runs once (src/cloud/answers.lua).
-Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users", "resend" })
+-- the next one, with the same id, and runs once (src/cloud/answers.lua); `alert_acks` (1.10.1,
+-- ADR-073): this driver keeps its alerts until the relay answers them, and sends them again after a
+-- lost connection to a relay that says it answers them (src/cloud/outbox.lua).
+Relay.FEATURES = Json.array({ "scene_links", "alerts_gone", "users", "resend", "alert_acks" })
+Relay.ALERT_ACKS = "alert_acks"
+-- Alerts made while the connection is down are kept for the next one (1.10.1, ADR-073) only within
+-- this long of losing a connection whose relay answered alerts: a reconnect takes seconds, a short
+-- outage a minute or two (the longest an alert is kept, Alerts.KEEP_SECONDS). After it, as before
+-- 1.10.1: an alert while not connected is not made, and counts toward no limit; a home away longer
+-- is the account service's offline alert (ADR-047). Counted by a timer, not the clock.
+Relay.KEEP_WINDOW_SECONDS = 120
+-- A relay heard on a connection (a pong, a message) that has not said it answers alerts by the
+-- second keep-alive tick after is taken as one that does not (before 1.10.1, ADR-073). Two, so that
+-- a `relay_features` slowed down on its way (it comes right after the hello) still counts.
+Relay.ACKS_TICKS = 2
 
 local IDENTITY_KEY = "directorlink_remote_identity"
 -- 0.9.0 kept the identity encrypted under this name; it is moved when Director can still read it.
@@ -103,6 +117,17 @@ local state = {
     -- A random id made at this start of the driver (1.10.0), in the hello: the relay sends a request
     -- again only to the instance it went to, which remembers what it ran (src/cloud/answers.lua).
     instance = nil,
+    -- Alerts (1.10.1, ADR-073): the number of the connection (one more at each that opens); whether
+    -- the relay of this one answers alerts (nil until it says so, `relay_features`; false once it is
+    -- heard without saying so: settleAcks); whether anything was heard on this connection since its
+    -- hello, and the keep-alive ticks since then while undecided; and the timer of the window after
+    -- a lost connection whose relay answered alerts, while alerts are kept for the next one
+    -- (Relay.KEEP_WINDOW_SECONDS).
+    connection = 0,
+    acks = nil,
+    heardSinceHello = false,
+    heardTicks = 0,
+    keepWindow = nil,
 }
 
 local function log(level, message, data)
@@ -207,6 +232,26 @@ end
 
 local connect
 
+local function closeKeepWindow()
+    cancel(state.keepWindow)
+    state.keepWindow = nil
+end
+
+-- A connection whose relay answered alerts was lost (1.10.1, ADR-073): alerts are kept for the next
+-- one for KEEP_WINDOW_SECONDS from now (a new window if one was open), then no more.
+local function openKeepWindow()
+    closeKeepWindow()
+    local timer
+    pcall(function()
+        timer = C4:SetTimer(Relay.KEEP_WINDOW_SECONDS * 1000, function()
+            if state.keepWindow == timer then
+                state.keepWindow = nil
+            end
+        end, false)
+    end)
+    state.keepWindow = timer
+end
+
 local function ago(time)
     return time and os.time() - time or nil
 end
@@ -216,6 +261,11 @@ end
 -- relay"), with the reason, the number of the attempt that follows and how long until it starts.
 local function scheduleReconnect(reason, seconds, note)
     stopTimers()
+    -- An open connection is lost: if its relay answered alerts, those made meanwhile are kept for a
+    -- while (ADR-073). Before the retry's timer, which is the last one set.
+    if state.connectedAt and state.acks == true and state.enabled then
+        openKeepWindow()
+    end
     state.connectedAt = nil
     if not state.enabled then
         return
@@ -293,9 +343,40 @@ local function refuseRequest(message)
     })
 end
 
+-- Whether this connection's relay answers alerts is settled (1.10.1, ADR-073): `acks`. When it
+-- does, the alerts kept from the last connection (and those made while there was none) go now,
+-- oldest first, except one that went to a relay not known to answer alerts (src/cloud/outbox.lua);
+-- when it does not (a relay before 1.10.1), they are let go, nothing more is kept while the
+-- connection is down, and the alerts that follow go once, as before.
+local function settleAcks(acks)
+    state.acks = acks
+    if acks then
+        local count, again = Outbox.resend(state.connection, send)
+        if count > 0 then
+            log("info", "alerts sent again", { count = count, resent = again })
+        end
+    else
+        closeKeepWindow()
+        Outbox.clear()
+    end
+end
+
+-- What this relay does besides what every relay does (1.10.1, ADR-073), right after the hello:
+-- {"type":"relay_features","id","features":["alert_acks"]}.
+local function relayFeatures(message)
+    local acks = false
+    for _, feature in ipairs(type(message.features) == "table" and message.features or {}) do
+        if feature == Relay.ALERT_ACKS then
+            acks = true
+        end
+    end
+    settleAcks(acks)
+end
+
 local function onMessage(text, kind)
     state.lastHeard = os.time()
     state.quietTicks = 0
+    state.heardSinceHello = true
     if kind == "pong" or text == "pong" then
         return
     end
@@ -311,6 +392,20 @@ local function onMessage(text, kind)
         state.asked[message.id] = nil
         waiting.done(message)
         return
+    end
+    -- The relay has an alert this driver sent (1.10.1, ADR-073), or says it answers alerts.
+    if message.type == "notify_result" then
+        if type(message.id) == "string" then
+            Outbox.done(message.id)
+        end
+        return
+    elseif message.type == "relay_features" then
+        relayFeatures(message)
+        return
+    elseif state.acks == nil and (message.type == "accounts" or message.type == "alerts_gone") then
+        -- What a relay sends after this driver's `keys`, which follow its hello: a relay that answers
+        -- alerts says so before (it answers the hello first), so this one does not.
+        settleAcks(false)
     end
     -- Sealed requests, invitations, claims and links (remote.lua). Each runs once: one the relay
     -- sends again after a lost connection gets its first answer (answers.lua, ADR-072).
@@ -379,6 +474,15 @@ local function startKeepalive()
         state.keepalive = C4:SetTimer(Relay.KEEPALIVE_MS, function()
             -- Answers' clock: these ticks, not the controller clock.
             Answers.tick(Relay.KEEPALIVE_MS / 1000)
+            -- A relay heard since the hello that has not said it answers alerts by the second tick
+            -- after does not (before 1.10.1, ADR-073). One not heard yet may be a connection that
+            -- died: undecided.
+            if state.acks == nil and state.heardSinceHello then
+                state.heardTicks = state.heardTicks + 1
+                if state.heardTicks >= Relay.ACKS_TICKS then
+                    settleAcks(false)
+                end
+            end
             state.quietTicks = state.quietTicks + 1
             if state.quietTicks >= Relay.SILENCE_TICKS then
                 local facts = connectionFacts()
@@ -500,6 +604,11 @@ local function onOpen()
     -- `scene_links`: `link` runs (ADR-051); `alerts_gone` (1.9.0); `resend` (1.10.0). A driver that
     -- does not list one is never sent its messages. `instance` (1.10.0): this start of the driver.
     state.instance = state.instance or Random.hex(32)
+    -- Whether this connection's relay answers alerts is not known yet (1.10.1, ADR-073).
+    state.connection = state.connection + 1
+    state.acks = nil
+    state.heardSinceHello = false
+    state.heardTicks = 0
     send({ type = "hello", home = identity.home_id, version = Version.BRIDGE_VERSION, ping_s = math.floor(Relay.KEEPALIVE_MS / 1000), features = Relay.FEATURES, instance = state.instance })
     -- What could not be told while the connection was down (Relay.tellSoon), in order.
     local later = state.later
@@ -693,6 +802,42 @@ function Relay.tell(message)
     return true
 end
 
+-- Whether an alert can go to the relay now (1.10.1, ADR-073): while connected, or while the driver
+-- reconnects within KEEP_WINDOW_SECONDS of losing a connection whose relay answered alerts (it is
+-- kept for the next connection). Otherwise not, as before: an unreachable home is the account
+-- service's own alert (ADR-047).
+function Relay.mayAlert()
+    return Relay.connected() or (state.enabled and state.keepWindow ~= nil)
+end
+
+-- Sends an alert (`notify`, ADR-050) so that it arrives once (1.10.1, ADR-073): with an id, kept
+-- until the relay answers it (src/cloud/outbox.lua) for at most `seconds`, and sent again after a
+-- lost connection; while down within the window after a relay that answers alerts, kept and sent
+-- after the next hello. To a relay that said it does not answer them (before 1.10.1), it goes once,
+-- as before, without an id. `kind`: for the log; `letGo()`: called if it is let go before it ever
+-- went (the hourly limits count only what was sent). Returns "sent" when it went, "kept" when it is
+-- kept for the next connection, false when not connected (Relay.mayAlert false).
+function Relay.alert(message, seconds, kind, letGo)
+    local open = state.socket ~= nil and state.connectedAt ~= nil
+    if open and state.acks == false then
+        send(message)
+        return "sent"
+    end
+    if not open and not Relay.mayAlert() then
+        return false
+    end
+    local entry, kept = Outbox.add(message, seconds, kind, letGo)
+    if not open then
+        if kept then
+            log("info", "an alert kept for the next connection", { kind = tostring(kind), keep_s = seconds })
+            return "kept"
+        end
+        return false
+    end
+    send(Outbox.text(entry, state.connection, state.acks == true))
+    return "sent"
+end
+
 -- What must reach the relay even if the connection is down now (an `owner_cancel`, ADR-064): told
 -- at once, or kept in memory and told right after the next hello, before anything else is asked
 -- (the newest LATER_MAX). Returns true.
@@ -751,6 +896,8 @@ function Relay.resetIdentity()
     end
     state.identity = identity
     state.trying = nil
+    -- Alerts kept to be sent again were sealed for the home id that is gone (ADR-073).
+    Outbox.clear()
     log("warn", "remote identity reset", { home_id = identity.home_id })
     if state.enabled then
         if state.socket then
@@ -790,6 +937,7 @@ end
 function Relay.restoreIdentity(identity)
     state.trying = nil
     state.backupRefused = nil
+    Outbox.clear()
     if identity == nil then
         state.identity = nil
         return true
@@ -860,6 +1008,10 @@ function Relay.stop()
         state.socket:close(1000, false, "stopped")
     end
     state.connectedAt = nil
+    -- Nothing is kept for a connection that will not come (ADR-073).
+    state.acks = nil
+    closeKeepWindow()
+    Outbox.clear()
     publish("Off")
     if wasEnabled then
         log("info", "remote access switched off")
@@ -897,7 +1049,9 @@ function Relay.reset()
     state.updateRequired = false
     state.minimumVersion = nil
     state.instance = nil
+    state.connection = 0
     Answers.reset()
+    Outbox.reset()
 end
 
 return Relay

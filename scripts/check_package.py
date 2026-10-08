@@ -164,6 +164,19 @@ SECURITY_CONTRACT = {
         "if state.services.keys.complete and not state.services.keys.complete() then",
         # Relayed requests go through the answer memory, so one sent again runs once (ADR-072).
         "local handled, what = Answers.handle(message, send, state.remote)",
+        # An alert goes again only after the relay it goes to said it answers alerts, and to one that
+        # does not, once, as before (ADR-073).
+        "if open and state.acks == false then",
+        "local count, again = Outbox.resend(state.connection, send)",
+        # Kept while down only within the window after a relay that answered alerts (1.10.1 review).
+        "return Relay.connected() or (state.enabled and state.keepWindow ~= nil)",
+    ),
+    # Alerts kept to be sent again are bounded in time (a timer each) and in number and bytes, and
+    # only one that went to a relay known to answer alerts goes again (1.10.1 review).
+    "src/cloud/outbox.lua": (
+        "entry.timer = C4:SetTimer(",
+        "while #state.entries > Outbox.MAX or state.bytes > Outbox.MAX_BYTES do",
+        "elseif entry.sends == 0 or entry.known then",
     ),
     # A request the relay sends again after a lost connection never runs twice: a known id is
     # answered from memory, and one that may have been forgotten is not run (ADR-072).
