@@ -111,7 +111,7 @@ end
 local mock = Mock.startDriver(project, specText, nil, function()
     Properties["Alarm Status"] = "On"
     local Relay = require("src.cloud.relay")
-    local connected, tell = Relay.connected, Relay.tell
+    local connected, tell, mayAlert, alert = Relay.connected, Relay.tell, Relay.mayAlert, Relay.alert
     Relay.connected = function()
         return relaying.on or connected()
     end
@@ -121,6 +121,17 @@ local mock = Mock.startDriver(project, specText, nil, function()
             return true
         end
         return tell(message)
+    end
+    -- Alerts go through these since 1.10.1 (ADR-073).
+    Relay.mayAlert = function()
+        return relaying.on or mayAlert()
+    end
+    Relay.alert = function(message, seconds, kind)
+        if relaying.on then
+            relaying.told[#relaying.told + 1] = message
+            return true
+        end
+        return alert(message, seconds, kind)
     end
 end)
 -- The fake home lets the API open its (fake) doors.

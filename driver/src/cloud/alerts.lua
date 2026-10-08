@@ -69,6 +69,15 @@ Alerts.CONTROLLER_OWN_SECONDS = 90
 -- push is padded to one size too (cloud/src/web-push.js).
 Alerts.MAX_NAME = 60
 Alerts.DETAIL_BYTES = 496
+-- How long an alert the relay has not answered is kept to be sent again after a lost connection
+-- (1.10.1, ADR-073, src/cloud/outbox.lua), by kind. A doorbell's ring and a door's ask-to-open
+-- question a minute: the push service keeps them only a minute too (they are brief), a visitor
+-- does not wait longer, and a question answered later has little of its two minutes left. The
+-- others two minutes: worth knowing late too (a camera at night, a door opened, the refrigerator,
+-- a schedule), but kept only through a reconnect (seconds) or a short outage; a home away longer
+-- is the account service's offline alert (ADR-047), and its history says what happened.
+Alerts.KEEP_SECONDS = { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120 }
+Alerts.KEEP_DEFAULT_SECONDS = 60
 
 local STORE_KEY = "directorlink_alert_choices"
 local STORE_VERSION = 1
@@ -203,7 +212,10 @@ function Alerts.load()
     return state.readable
 end
 
--- options: connected() and tell(message) (the relay connection; false while not connected), keys
+-- options: connected() and tell(message) (the relay connection; false while not connected);
+-- mayAlert() and alert(message, seconds, kind) (1.10.1, ADR-073: also while it reconnects to a
+-- relay that answers alerts, which are then kept for its next connection: Relay.alert), used when
+-- given; keys
 -- (src/auth/keys.lua), homeId(), available() (the lock passed its self-test), present(kind, key)
 -- (the home has what the kind is about: a doorbell, a camera with alerts that `key` may see, a door,
 -- a refrigerator); for deviceEvent, below.
@@ -253,6 +265,8 @@ function Alerts.start(deps)
     Alerts.configure({
         connected = deps.relay.connected,
         tell = deps.relay.tell,
+        mayAlert = deps.relay.mayAlert,
+        alert = deps.relay.alert,
         keys = deps.keys,
         homeId = function()
             return deps.relay.identity().home_id
@@ -491,8 +505,11 @@ local function send(detail, now, brief, at, only, allowed)
     if not state.loaded or not state.readable or not options then
         return nil, "not ready"
     end
-    -- Only while connected: an unreachable home is the account service's own alert (ADR-047).
-    if options.connected and not options.connected() then
+    -- Only while connected: an unreachable home is the account service's own alert (ADR-047). Since
+    -- 1.10.1 also while the driver reconnects to a relay that answers alerts (ADR-073): kept for a
+    -- minute or two, and sent once it is back.
+    local reachable = options.mayAlert or options.connected
+    if reachable and not reachable() then
         return nil, "not connected"
     end
     if options.available and not options.available() then
@@ -538,7 +555,14 @@ local function send(detail, now, brief, at, only, allowed)
     if brief then
         message.brief = true
     end
-    if not options.tell(message) then
+    -- With an id, until the relay answers it, and again after a lost connection (1.10.1, ADR-073).
+    local told
+    if options.alert then
+        told = options.alert(message, Alerts.KEEP_SECONDS[detail.kind] or Alerts.KEEP_DEFAULT_SECONDS, detail.kind)
+    else
+        told = options.tell(message)
+    end
+    if not told then
         return nil, "not connected"
     end
     state.hour[#state.hour + 1] = now

@@ -216,7 +216,9 @@ function tests.a_ring_goes_sealed_to_every_key_that_switched_alerts_on_and_wants
     -- The ring's own time, as the app shows it (last_ring_at): it knows the alert's ring.
     local doorbell = T.http(home.mock, "GET", "/v1/doorbells/93", { key = home.admin }).json
     T.eq(message.at, doorbell.last_ring_at)
-    T.eq(count(message), 4, "type, at, brief and for: nothing else in the clear")
+    -- And (1.10.1, ADR-073) a random id, for the relay to answer it.
+    T.eq(count(message), 5, "type, at, brief, for and its id: nothing else in the clear")
+    T.truthy(type(message.id) == "string" and message.id:match("^%x+$") and #message.id == 16, "16 random hex digits")
     T.eq(count(message["for"]), 2)
     for _, word in ipairs({ "Front Gate", "Kitchen", "doorbell", "Dana", "Hall" }) do
         T.notContains(notified[1].text, word, "no names and no kind in the clear")
@@ -326,7 +328,7 @@ function tests.a_camera_alert_goes_sealed_to_the_keys_that_chose_it_and_may_see_
     T.eq(#notified, 1, "one message")
     local message = notified[1].message
     T.eq(message.brief, nil, "not brief")
-    T.eq(count(message), 3, "type, at and for: nothing else in the clear")
+    T.eq(count(message), 4, "type, at, for and its id (1.10.1): nothing else in the clear")
     T.eq(count(message["for"]), 2, "the admin and the hall tablet; not the member who did not choose it, nor the guest")
     for _, word in ipairs({ "Garden", "Living Room", "camera", "erson" }) do
         T.notContains(notified[1].text, word, "no names and no kind in the clear")
@@ -826,6 +828,246 @@ function tests.at_most_sixty_alerts_an_hour_leave_the_controller()
     home.clock.now = home.clock.now + 3600
     Mock.fireDeviceEvent(home.mock, 110, 102)
     T.eq(#home.notified(), 1)
+end
+
+-- ---- sent again after a lost connection (1.10.1, ADR-073) ----------------------------------------
+
+local function Outbox()
+    return require("src.cloud.outbox")
+end
+
+local features = 0
+
+-- The relay says it answers alerts, as a relay from 1.10.1 does right after the hello.
+local function answersAlerts()
+    features = features + 1
+    Harness.relaySays({ type = "relay_features", id = "features-" .. features, features = { "alert_acks" } })
+end
+
+local function has(list, value)
+    for _, item in ipairs(list or {}) do
+        if item == value then
+            return true
+        end
+    end
+    return false
+end
+
+-- The timers that bound how long alerts are kept (src/cloud/outbox.lua), not run or cancelled.
+local function keeping(mock)
+    local found = {}
+    for _, timer in ipairs(mock.timers) do
+        if not timer.fired and not timer.cancelled and (timer.source or ""):find("cloud/outbox", 1, true) then
+            found[#found + 1] = timer
+        end
+    end
+    return found
+end
+
+-- The relay connection's keep-alive tick (every 5 s).
+local function keepalive(mock)
+    for index = #mock.timers, 1, -1 do
+        local timer = mock.timers[index]
+        if timer.repeating and not timer.cancelled and timer.delay == 5000 and (timer.source or ""):find("cloud/relay", 1, true) then
+            return timer
+        end
+    end
+    return nil
+end
+
+-- The 21:01 case for alerts: the doorbell rang just as the connection died without a close, so the
+-- ring went into the dead connection and the relay never had it (up to 1.10.0 it was lost). After
+-- the reconnect, once the relay says it answers alerts, the driver sends the same ring again: the
+-- same id and the same sealed parts (not sealed again), marked resent. A ring the relay answered
+-- goes no more.
+function tests.a_ring_sent_into_a_dead_connection_goes_again_after_the_reconnect()
+    local home = home()
+    home.on("admin")
+    answersAlerts()
+    home.notified()
+    home.clock.now = os.time() + 3600
+    T.eq(Mock.fireDeviceEvent(home.mock, 110, 102), 1)
+    local answered = home.notified()[1].message
+    Harness.relaySays({ type = "notify_result", id = answered.id, ok = true })
+    T.eq(Outbox().counts(), 0, "answered: kept no more")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local first = home.notified()
+    T.eq(#first, 1)
+    local ring = first[1].message
+    T.truthy(ring.id ~= answered.id, "each alert its own id")
+    T.eq(Outbox().counts(), 1, "kept until the relay answers it")
+
+    local hello = Harness.reconnect(home.mock, home.connection)
+    T.truthy(has(hello.features, "alert_acks"), "the hello says the driver keeps its alerts")
+    T.eq(#home.notified(), 0, "nothing before the relay says it answers alerts")
+    answersAlerts()
+    local again = home.notified()
+    T.eq(#again, 1, "sent again, once: not the ring the relay answered")
+    local resent = again[1].message
+    T.eq(resent.id, ring.id, "the same id")
+    T.eq(resent.resent, 1)
+    T.eq(resent.at, ring.at)
+    T.eq(resent.brief, true)
+    T.same(resent["for"], ring["for"], "the same sealed parts")
+    T.eq(count(resent), 6, "type, at, brief, for, id and resent: nothing else in the clear")
+
+    Harness.relaySays({ type = "notify_result", id = ring.id, ok = true })
+    T.eq(Outbox().counts(), 0)
+    T.eq(#keeping(home.mock), 0, "and its timer is gone")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 0, "answered: never again")
+    local logs = T.http(home.mock, "GET", "/v1/logs?category=relay&limit=100", { key = home.admin }).body
+    T.contains(logs, "alerts sent again")
+end
+
+-- A ring sent into a connection that died, and the next connection died too before the relay said
+-- anything (the route flipping again): the driver cannot tell that relay's answer, so it keeps the
+-- ring, and the connection after sends it again (resent twice).
+function tests.an_alert_is_kept_through_a_connection_that_died_before_the_relay_said_anything()
+    local home = home()
+    home.on("admin")
+    answersAlerts()
+    home.notified()
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local ring = home.notified()[1].message
+    Harness.reconnect(home.mock, home.connection)
+    -- Nothing heard on this one: its keep-alive tick decides nothing.
+    keepalive(home.mock).callback()
+    T.eq(Outbox().counts(), 1)
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    local again = home.notified()
+    T.eq(#again, 1)
+    T.eq(again[1].message.id, ring.id)
+    T.eq(again[1].message.resent, 1, "it went once before: on the first connection")
+end
+
+-- The doorbell rang in the second the driver was reconnecting, after a relay that answers alerts:
+-- the ring is sealed and kept, and goes after the next hello once the relay says it answers alerts
+-- (not marked resent: it never went). Up to 1.10.0 it was not sent at all.
+function tests.an_alert_made_while_the_driver_reconnects_goes_after_the_hello()
+    local home = home()
+    home.on("admin")
+    answersAlerts()
+    home.notified()
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    home.connection.sent = ""
+    home.clock.now = os.time() + 3600
+    T.eq(Mock.fireDeviceEvent(home.mock, 110, 102), 1)
+    T.eq(home.connection.sent, "", "no connection to carry it")
+    T.eq(Outbox().counts(), 1, "kept")
+    Harness.reconnect(home.mock, home.connection)
+    T.eq(#home.notified(), 0)
+    answersAlerts()
+    local sentNow = home.notified()
+    T.eq(#sentNow, 1)
+    T.eq(sentNow[1].message.resent, nil, "it never went before")
+    T.truthy(sentNow[1].message.id)
+    T.eq(count(sentNow[1].message["for"]), 1)
+end
+
+-- A relay before 1.10.1 never says it answers alerts. Once it is heard without saying so (what it
+-- sends after the driver's keys, such as `alerts_gone`; or a keep-alive tick after a pong), what the
+-- driver kept is let go, and the alerts that follow go once, without an id, as from 1.10.0;
+-- nothing goes again after a reconnect, and nothing is kept while the connection is down.
+function tests.a_relay_that_does_not_answer_alerts_gets_each_once_as_before()
+    local home = home()
+    home.on("admin")
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local first = home.notified()[1].message
+    T.truthy(first.id, "not known yet: with an id")
+    T.eq(Outbox().counts(), 1)
+    Harness.relaySays({ type = "alerts_gone", id = "g1", keys = { "ffffffff" } })
+    T.eq(Outbox().counts(), 0, "let go")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local second = home.notified()[1].message
+    T.eq(second.id, nil, "as before 1.10.1")
+    T.eq(count(second), 4, "type, at, brief and for")
+    T.eq(Outbox().counts(), 0)
+
+    -- Down: nothing kept, nothing sealed for later.
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 0)
+    T.contains(T.http(home.mock, "GET", "/v1/logs?category=alerts&limit=20", { key = home.admin }).body, "not connected")
+    Harness.reconnect(home.mock, home.connection)
+    T.eq(#home.notified(), 0)
+
+    -- The next connection, to the same relay: an alert with an id again, until the relay is heard (a
+    -- pong) and the keep-alive's tick comes without its word.
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.truthy(home.notified()[1].message.id)
+    ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, "pong"))
+    keepalive(home.mock).callback()
+    T.eq(Outbox().counts(), 0, "let go")
+    -- Even if the next relay answers alerts (the Worker updated meanwhile), what went to this one is
+    -- never sent again: it may have pushed it.
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 0)
+end
+
+-- How long and how many: a ring (and a door's question) a minute, a camera's alert two (each by a
+-- timer of its own, in real time); at most twenty alerts and 128 KB, the oldest let go first; and
+-- what goes again goes oldest first.
+function tests.alerts_are_kept_a_minute_or_two_and_at_most_twenty()
+    T.same(require("src.cloud.alerts").KEEP_SECONDS, { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120 })
+    local home = home(nil, Mock.withHikvisionCameras(Mock.project()))
+    home.on("admin", { camera = true })
+    answersAlerts()
+    home.notified()
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Mock.hikvisionAlert(home.mock, 150, "Person"), 1)
+    local ring, camera = unpack(home.notified())
+    local timers = keeping(home.mock)
+    T.eq(#timers, 2)
+    T.eq(timers[1].delay, 60000, "a ring: a minute")
+    T.eq(timers[2].delay, 120000, "a camera: two minutes")
+    timers[1].fired = true
+    timers[1].callback()
+    T.eq(Outbox().counts(), 1, "the ring is let go after its minute")
+    T.contains(T.http(home.mock, "GET", "/v1/logs?category=relay&limit=50", { key = home.admin }).body, "an alert was not acknowledged in time")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    local again = home.notified()
+    T.eq(#again, 1)
+    T.eq(again[1].message.id, camera.message.id, "only the camera's alert")
+    T.truthy(ring.message.id ~= camera.message.id)
+    Harness.relaySays({ type = "notify_result", id = camera.message.id, ok = true })
+
+    -- Twenty-two rings unanswered: the newest twenty are kept, and go again oldest first.
+    local ids = {}
+    for index = 1, 22 do
+        home.clock.now = home.clock.now + 31
+        Mock.fireDeviceEvent(home.mock, 110, 102)
+        ids[index] = home.notified()[1].message.id
+    end
+    T.eq(Outbox().counts(), 20)
+    T.eq(#keeping(home.mock), 20, "the timers of those let go are cancelled")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    local resent = home.notified()
+    T.eq(#resent, 20)
+    for index, item in ipairs(resent) do
+        T.eq(item.message.id, ids[index + 2], "oldest first")
+    end
+
+    -- At most 128 KB together.
+    Outbox().clear()
+    for _ = 1, 3 do
+        Outbox().add({ type = "notify", ["for"] = { big = string.rep("a", 50000) } }, 60, "doorbell")
+    end
+    local kept, bytes = Outbox().counts()
+    T.eq(kept, 2)
+    T.truthy(bytes <= Outbox().MAX_BYTES, "within the budget: " .. bytes)
 end
 
 -- ---- admin keys ---------------------------------------------------------------------------------
