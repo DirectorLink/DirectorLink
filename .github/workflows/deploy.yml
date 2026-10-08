@@ -5,9 +5,15 @@ name: Deploy DirectorLink sites
 #   console/ -> https://console.directorlink.io  (Worker directorlink-console)
 #   site/    -> https://directorlink.io, www     (Worker directorlink-site)
 #   github-link/ -> https://github.directorlink.io (Worker directorlink-github, a redirect to GitHub)
-# Pushes to main deploy; pull requests from this repository get preview versions.
-# Needs the repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; without them the
-# jobs report that and succeed, so CI stays green before Cloudflare is set up.
+#
+# Nothing reaches production without the owner's approval (ADR-075). The "check" job (pull
+# requests and pushes to main, no secrets) runs `wrangler deploy --dry-run` on each folder. On
+# main, the "deploy" job then waits for the owner to approve the "production" environment
+# (Actions -> the run -> Review deployments); only that environment holds the secrets
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, and it deploys only from main. Without them the
+# job says so and succeeds, deploying nothing. Pull requests get no preview versions: they would
+# need the token. Each static site gets a build.json (the commit and the time) that
+# scripts/verify_live.mjs and the hourly watch-live.yml compare with the public source.
 
 on:
   push:
@@ -35,19 +41,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
-    # Forks never get the secrets; skip their pull requests instead of failing.
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+  check:
+    name: Check the four folders (wrangler dry run, no secrets)
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        folder: [app, console, site, github-link]
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      # --dry-run reads the configuration and the files and uploads nothing: it needs no token.
+      - name: Dry run
+        run: |
+          failed=""
+          for folder in app console site github-link; do
+            echo "::group::$folder"
+            (cd "$folder" && npx --yes wrangler@4.143.0 deploy --dry-run) || failed="$failed $folder"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::wrangler's dry run failed for:$failed"
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy (after the owner's approval)
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -55,23 +86,36 @@ jobs:
 
       - name: Check Cloudflare credentials
         id: credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set; nothing deployed."
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          elif [ ! -f "${{ matrix.folder }}/wrangler.jsonc" ]; then
-            echo "${{ matrix.folder }}/wrangler.jsonc does not exist yet; nothing deployed."
+            echo "::notice::CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID are not set in the production environment; nothing deployed."
             echo "ready=false" >> "$GITHUB_OUTPUT"
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # build.json is never committed (.gitignore); each .assetsignore publishes it. github-link is
+      # a Worker script, not files: it has none.
       - name: Deploy
-        if: steps.credentials.outputs.ready == 'true' && github.event_name != 'pull_request'
-        working-directory: ${{ matrix.folder }}
-        run: npx --yes wrangler@4.143.0 deploy
-
-      - name: Upload a preview version
-        if: steps.credentials.outputs.ready == 'true' && github.event_name == 'pull_request'
-        working-directory: ${{ matrix.folder }}
-        run: npx --yes wrangler@4.143.0 versions upload --preview-alias "pr-${{ github.event.number }}"
+        if: steps.credentials.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          failed=""
+          for folder in app console site github-link; do
+            echo "::group::$folder"
+            if [ "$folder" != "github-link" ]; then
+              printf '{"commit": "%s", "built_at": "%s"}\n' "$GITHUB_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$folder/build.json"
+              cat "$folder/build.json"
+            fi
+            (cd "$folder" && npx --yes wrangler@4.143.0 deploy) || failed="$failed $folder"
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::wrangler deploy failed for:$failed"
+            exit 1
+          fi

@@ -1,0 +1,117 @@
+name: Watch the live sites
+
+# Every hour, and after each deploy: do app.directorlink.io, console.directorlink.io,
+# directorlink.io and github.directorlink.io serve exactly the source at a commit on main?
+# (scripts/verify_live.mjs, ADR-075). When something differs, this run fails and opens one issue,
+# "The live site differs from the source", or updates the one that is open; when everything is the
+# same again, it says so there and closes it. A deploy that finished minutes ago is checked again
+# once it has settled, and what cannot be reached is not called different: only a file, header or
+# redirect that differs, or a build.json commit that is not on main, opens the issue. No secrets.
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_run:
+    workflows: ["Deploy DirectorLink sites"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: watch-live
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    # After a deploy run on main only: a pull request's run deploys nothing.
+    if: github.repository == 'DirectorLink/DirectorLink' && (github.event_name != 'workflow_run' || github.event.workflow_run.event != 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      TITLE: The live site differs from the source
+    steps:
+      # The whole history, so that the script can tell whether a commit is on main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+
+      - name: Compare what is served with the source
+        id: verify
+        run: |
+          set +e
+          node scripts/verify_live.mjs --wait --json "$RUNNER_TEMP/report.json" > "$RUNNER_TEMP/report.txt"
+          set -e
+          cat "$RUNNER_TEMP/report.txt"
+          cat "$RUNNER_TEMP/report.txt" >> "$GITHUB_STEP_SUMMARY"
+          node -e '
+            const report = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const unstamped = report.sites.filter((site) => site.notes.includes("not deployed with a build.json yet"));
+            console.log(`result=${report.result}`);
+            console.log(`fingerprint=${report.fingerprint ?? ""}`);
+            console.log(`unstamped=${unstamped.map((site) => new URL(site.url).host).join(" ")}`);
+          ' "$RUNNER_TEMP/report.json" >> "$GITHUB_OUTPUT"
+
+      - name: Say what was not checked
+        if: steps.verify.outputs.result == 'pending' || steps.verify.outputs.result == 'incomplete'
+        run: echo "::warning::Not everything could be checked (${{ steps.verify.outputs.result }}); nothing found differs. The next run checks again."
+
+      - name: Say which sites have no build.json yet
+        if: steps.verify.outputs.unstamped != ''
+        env:
+          UNSTAMPED: ${{ steps.verify.outputs.unstamped }}
+        run: echo "::notice::Not deployed with a build.json yet ($UNSTAMPED); compared with main's latest commits instead."
+
+      - name: Open or update the issue
+        if: steps.verify.outputs.result == 'differs'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINGERPRINT: ${{ steps.verify.outputs.fingerprint }}
+        run: |
+          number="$(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" --paginate \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE and .user.login == "github-actions[bot]") | .number' | head -n 1)"
+          {
+            echo "The hourly check of the live sites (\`node scripts/verify_live.mjs\`, ADR-075) found that what is served differs from the public source."
+            echo
+            echo "Run: https://github.directorlink.io/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```text'
+            head -c 60000 "$RUNNER_TEMP/report.txt"
+            echo '```'
+            echo
+            echo "<!-- fingerprint: $FINGERPRINT -->"
+          } > "$RUNNER_TEMP/body.md"
+          if [ -z "$number" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$RUNNER_TEMP/body.md"
+          else
+            before="$(gh issue view "$number" --repo "$GITHUB_REPOSITORY" --json body --jq .body | sed -n 's/^<!-- fingerprint: \(.*\) -->$/\1/p')"
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+            if [ "$before" != "$FINGERPRINT" ]; then
+              gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/body.md"
+            fi
+          fi
+
+      - name: Close the issue when everything is the same again
+        if: steps.verify.outputs.result == 'equal'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for number in $(gh api "repos/$GITHUB_REPOSITORY/issues?state=open&per_page=100" --paginate \
+            --jq '.[] | select(.pull_request == null and .title == env.TITLE and .user.login == "github-actions[bot]") | .number'); do
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "Everything served is the same as the public source again: https://github.directorlink.io/actions/runs/$GITHUB_RUN_ID"
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY"
+          done
+
+      - name: Fail on a difference
+        if: steps.verify.outputs.result == 'differs'
+        run: |
+          echo "::error::What is served differs from the public source: see the report above and the issue \"$TITLE\"."
+          exit 1

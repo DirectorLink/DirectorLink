@@ -1,6 +1,6 @@
 // Cloudflare Workers static assets: the DirectorLink website on https://directorlink.io and www.
-// Deployed by .github/workflows/deploy.yml (wrangler deploy); `previews` lets pull requests get a
-// preview URL. The asset settings are Cloudflare's defaults, written out on purpose.
+// Deployed by .github/workflows/deploy.yml (wrangler deploy) after the owner approves (ADR-075).
+// The asset settings are Cloudflare's defaults, written out on purpose.
 {
   "name": "directorlink-site",
   "compatibility_date": "2026-09-25",
@@ -15,6 +15,5 @@
   "routes": [
     { "pattern": "directorlink.io", "custom_domain": true },
     { "pattern": "www.directorlink.io", "custom_domain": true }
-  ],
-  "previews": {}
+  ]
 }

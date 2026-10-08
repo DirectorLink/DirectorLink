@@ -203,9 +203,9 @@ The service worker saves the app on the device, so it still opens when the inter
 
 ## Cloudflare
 
-The app is the Cloudflare Workers static-assets project `directorlink-app` on the `app.directorlink.io` custom domain ([`wrangler.jsonc`](wrangler.jsonc): assets from `.`, Cloudflare's default HTML and 404 handling). `.github/workflows/deploy.yml` runs `wrangler deploy` from this folder on pushes to `main`; pull requests get preview versions (the `previews` block).
+The app is the Cloudflare Workers static-assets project `directorlink-app` on the `app.directorlink.io` custom domain ([`wrangler.jsonc`](wrangler.jsonc): assets from `.`, Cloudflare's default HTML and 404 handling). `.github/workflows/deploy.yml` runs `wrangler deploy` from this folder on pushes to `main`, after the owner approves the run (ADR-075; pull requests get only a dry run, no preview versions), and first writes `build.json` here: the commit and the time, which `scripts/verify_live.mjs` compares with the source.
 
-`_headers` sets the security headers, `_redirects` the old console addresses; `.assetsignore` keeps `wrangler.jsonc`, `.assetsignore` and this README from being published. No environment variables are required. Every merge to `main` deploys, so web changes must go out together with the driver version they need.
+`_headers` sets the security headers, `_redirects` the old console addresses; `.assetsignore` keeps `wrangler.jsonc`, `.assetsignore` and this README from being published. No environment variables are required. Every merge to `main` that the owner approves deploys, so web changes must go out together with the driver version they need.
 
 ## Local development
 

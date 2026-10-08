@@ -85,6 +85,10 @@ jobs:
       - name: Test the build and check scripts
         run: python -m unittest discover -s tests/scripts
 
+      # scripts/verify_live.mjs against fake sites and a Git repository made for the test (ADR-075).
+      - name: Test the check of the live sites
+        run: node --test tests/scripts/*.test.mjs
+
       - name: Check that no local configuration or secrets are committed
         run: python scripts/check_repo.py
 

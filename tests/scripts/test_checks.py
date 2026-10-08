@@ -649,5 +649,59 @@ class SiteDemo(unittest.TestCase):
         self.assertIn("garden-640.jpg is missing", self.refused(page, script, pictures - {"garden-640.jpg"}) or "")
 
 
+class DeployApproval(unittest.TestCase):
+    """check_sites.py (ADR-075): the sites' deploy and the driver's release run only in the
+    production environment, which the owner approves and which alone has the Cloudflare token;
+    pull requests get no preview versions; each site gets a build.json; the hourly watch only
+    reads the code and writes issues."""
+
+    def setUp(self):
+        self.workflows = {path.name: path.read_text(encoding="utf-8") for path in (ROOT / ".github" / "workflows").glob("*.yml")}
+        self.ignores = {folder: (ROOT / folder / ".assetsignore").read_text(encoding="utf-8") for folder in check_sites.STAMPED_SITES}
+
+    def refused(self, workflows=None, ignores=None, tracked=()):
+        return refusal(check_sites.check_workflows, {**self.workflows, **(workflows or {})}, {**self.ignores, **(ignores or {})}, set(tracked)) or ""
+
+    def edited(self, name, old, new):
+        self.assertIn(old, self.workflows[name])
+        return {name: self.workflows[name].replace(old, new)}
+
+    def test_the_real_workflows_pass(self):
+        self.assertEqual(self.refused(), "")
+
+    def test_the_deploy_waits_for_the_owner(self):
+        self.assertRegex(self.refused(self.edited("deploy.yml", "    environment: production\n", "")), "outside the production environment|without the owner's approval")
+        # Deploying from a job without the environment, even with no secret named in it.
+        dry_run = "(cd \"$folder\" && npx --yes wrangler@4.143.0 deploy --dry-run)"
+        self.assertIn("deploys without the owner's approval", self.refused(self.edited("deploy.yml", dry_run, dry_run.replace(" --dry-run", ""))))
+
+    def test_the_release_waits_for_the_owner(self):
+        self.assertIn("publishes a release without the owner's approval", self.refused(self.edited("release.yml", "    environment: production\n", "")))
+        self.assertIn("only from main", self.refused(self.edited("release.yml", "    if: github.ref == 'refs/heads/main'\n    runs-on: ubuntu-24.04\n    environment: production", "    runs-on: ubuntu-24.04\n    environment: production")))
+        self.assertIn("contents: read", self.refused(self.edited("release.yml", "permissions:\n  contents: read\n\njobs:", "permissions:\n  contents: write\n\njobs:")))
+
+    def test_no_other_job_reads_a_secret_or_gets_a_preview(self):
+        secret = "        run: lua5.1 driver/tests/run.lua --shard ${{ matrix.part }}/3\n"
+        leaked = self.edited("validate.yml", secret, secret + "        env:\n          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n")
+        self.assertIn("reads a secret outside the production environment", self.refused(leaked))
+        preview = self.edited("deploy.yml", "deploy --dry-run)", "versions upload --preview-alias pr)")
+        self.assertIn("uploads a preview version", self.refused(preview))
+        target = self.edited("validate.yml", "  pull_request:\n", "  pull_request_target:\n")
+        self.assertIn("no pull_request_target", self.refused(target))
+
+    def test_each_site_gets_a_build_json_it_publishes_and_nobody_commits(self):
+        unstamped = self.edited("deploy.yml", "printf '{\"commit\": \"%s\", \"built_at\": \"%s\"}\\n'", "printf '{}\\n'")
+        self.assertIn("must write each site's build.json", self.refused(unstamped))
+        self.assertIn("app/.assetsignore must not keep build.json", self.refused(ignores={"app": self.ignores["app"] + "*.json\n"}))
+        self.assertIn("site/build.json must not be committed", self.refused(tracked={"site/build.json"}))
+
+    def test_the_watch_runs_every_hour_and_only_reads_and_writes_issues(self):
+        wider = self.edited("watch-live.yml", "permissions:\n  contents: read\n  issues: write\n", "permissions:\n  contents: write\n  issues: write\n")
+        self.assertIn("watch-live.yml permissions must be exactly", self.refused(wider))
+        unscheduled = self.edited("watch-live.yml", "  schedule:\n    - cron: \"17 * * * *\"\n", "")
+        self.assertIn("must run on a schedule", self.refused(unscheduled))
+        self.assertIn("watch-live.yml must compare", refusal(check_sites.check_workflows, {name: text for name, text in self.workflows.items() if name != "watch-live.yml"}, self.ignores, set()) or "")
+
+
 if __name__ == "__main__":
     unittest.main()

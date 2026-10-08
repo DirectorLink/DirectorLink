@@ -698,9 +698,26 @@ device's key.
 
 ## What the lock does not protect
 
-- **The app's code.** The app is a web page served from app.directorlink.io. Whoever controls that
-  site could ship code that reads keys in the browser. The code is open source and deployed only
-  from this repository by CI (`deploy.yml`). A native app would remove this trust, later.
+- **The app's code.** The app is a web page served from app.directorlink.io. Whoever can change
+  what that site (or the console, or the website) serves could ship code that uses the keys in
+  each browser that opens it: the relay cannot read sealed requests, but the page that seals them
+  can. What protects it (ADR-075):
+  - **Only deploys the owner approves.** The sites, the short link and the driver's releases are
+    published only by GitHub Actions from `main`, and each run waits for the owner's approval (the
+    `production` environment; `docs/BUILD.md`, "After a merge"). The Cloudflare token is a secret of
+    that environment only, so no branch, pull request or other workflow can reach it; pull requests
+    get no preview versions.
+  - **A check anyone can run.** Each site serves `/build.json`, the commit it was built from. Every
+    hour, and after each deploy, `watch-live.yml` checks that the commit is on `main` and that every
+    file each site serves, the headers it sets and its redirects (the drivers' download links), and
+    the short link, are byte for byte the source's; a difference opens an issue. Anyone can run the
+    same check, with no secrets: `node scripts/verify_live.mjs` (`SECURITY.md`).
+  - **What remains.** Whoever controls the owner's GitHub account (approves deploys, changes the
+    workflows) or the Cloudflare account (deploys without GitHub), or the domain's DNS or registrar
+    (sends the addresses elsewhere), could still serve other code. The check would see it served
+    to itself, and say so within the hour, but a site could serve the check the source and a
+    browser something else, and the check sees only the source's files, not one added beside them
+    that nothing loads. A native app would remove this trust, later.
 - **The controller's storage.** The lock keys `K` and the home secret are stored on the
   controller. Whoever can read its storage (root access, possibly a project backup) could act as
   those devices, remotely and with sealed requests at home. With the home secret as well, they

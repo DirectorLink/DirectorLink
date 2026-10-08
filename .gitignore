@@ -5,6 +5,11 @@ build/
 Thumbs.db
 dist/
 __pycache__/
+# Written by .github/workflows/deploy.yml into each site at each deploy (the commit and the time,
+# ADR-075); never committed.
+/app/build.json
+/console/build.json
+/site/build.json
 
 # Local tool configuration (it holds account details) and secrets: never committed
 # (scripts/check_repo.py fails the build if they are).
