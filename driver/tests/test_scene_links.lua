@@ -398,8 +398,9 @@ function tests.the_hello_says_the_driver_takes_link_runs()
     T.eq(hello.type, "hello")
     -- And since 1.9.0 the key ids whose browsers the account service dropped (ADR-062), and `users`
     -- (ADR-061): which keys share an account, members approving joins; since 1.10.0 `resend`
-    -- (ADR-072): a request sent again after a lost connection runs once.
-    T.same(hello.features, { "scene_links", "alerts_gone", "users", "resend" })
+    -- (ADR-072): a request sent again after a lost connection runs once; since 1.10.1 `alert_acks`
+    -- (ADR-073): its alerts are kept until the relay answers them, and sent again.
+    T.same(hello.features, { "scene_links", "alerts_gone", "users", "resend", "alert_acks" })
 end
 
 -- ---- Backups --------------------------------------------------------------------------------

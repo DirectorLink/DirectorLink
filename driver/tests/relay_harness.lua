@@ -131,7 +131,40 @@ local function accept(request)
         .. "Sec-WebSocket-Accept: " .. C4:Base64Encode(sha1(key .. GUID)) .. "\r\n\r\n")
 end
 
+-- The relay sends `message` (a table), as one text frame.
+local function relaySays(message)
+    ReceivedFromNetwork(BINDING, 443, serverFrame(1, Json.encode(message)))
+end
+
+-- The connection is lost (Director reports it offline) and the driver connects again: its waiting
+-- reconnect is run at once, whatever its delay. Returns the new connection's hello (decoded) and
+-- all the frames it sent on opening.
+local function reconnect(mock, connection)
+    OnConnectionStatusChanged(BINDING, 443, "OFFLINE")
+    local retry
+    for index = #mock.timers, 1, -1 do
+        local timer = mock.timers[index]
+        if not timer.fired and not timer.cancelled and not timer.repeating and (timer.source or ""):find("cloud/relay", 1, true) then
+            retry = timer
+            break
+        end
+    end
+    T.truthy(retry, "a reconnect is waiting")
+    retry.fired = true
+    retry.callback()
+    connection.sent = ""
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    local upgrade = connection.sent
+    connection.sent = ""
+    accept(upgrade)
+    local frames = clientFrames(connection.sent)
+    connection.sent = ""
+    return Json.decode(frames[1].payload), frames
+end
+
 Harness.BINDING = BINDING
+Harness.relaySays = relaySays
+Harness.reconnect = reconnect
 Harness.accept = accept
 Harness.bigEndian = bigEndian
 Harness.serverFrame = serverFrame
