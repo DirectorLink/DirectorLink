@@ -5643,7 +5643,7 @@ components:
 
     Device:
       type: object
-      required: [id, name, type, room, supported, href]
+      required: [id, name, type, room, supported, href, part_of]
       properties:
         id:
           type: integer
@@ -5661,6 +5661,16 @@ components:
         href:
           type: [string, "null"]
           description: Path of the typed resource for supported devices, e.g. `/v1/lights/259`.
+        part_of:
+          type: [integer, "null"]
+          description: |
+            Since 1.10.1: for a device this API does not control (`supported` false), the id of the
+            supported device it is part of, which apps show instead: a Relay Door, Gate or Garage
+            Door Controller's button shown as the KNX Contact/Relay it drives, a KNX relay on such a
+            controller's Close or Stop connection (both: that door, ADR-069), a DoorBird's button,
+            intercom or camera (its doorbell). Null otherwise, and when the caller does not see that
+            device. Apps leave such a device out of a room's devices they cannot control. A driver
+            before 1.10.1 sends no `part_of`: read it as null.
 
     DeviceList:
       type: object

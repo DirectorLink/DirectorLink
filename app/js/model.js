@@ -102,6 +102,25 @@ export function musicDevices() {
   return state.music.items.map((item) => ({ ...item, room: item.room_id != null ? { id: item.room_id } : null }));
 }
 
+// The ids of what this app shows: its devices, and the alarm's partitions while Home shows them.
+function shownIds() {
+  const lists = [state.lights, state.thermostats, state.fans, state.blinds, state.cameras, state.relays, state.doorbells, state.refrigerators];
+  const ids = new Set(lists.flatMap((list) => (list || []).map((device) => device.id)));
+  if (state.alarm?.enabled === true) for (const partition of state.alarm.partitions || []) ids.add(partition.id);
+  return ids;
+}
+
+// A device this app cannot control, unless it is shown already: part of a device shown (1.10.1,
+// `part_of`: a door controller's button shown as the KNX relay it drives, a DoorBird's button), or
+// an alarm partition shown on Home. A driver before 1.10.1 says no `part_of`.
+export function otherDevices(roomId) {
+  const id = Number(roomId);
+  const shown = shownIds();
+  return state.devices.filter(
+    (device) => !device.supported && deviceRoomId(device) === id && !shown.has(device.id) && !(device.part_of != null && shown.has(device.part_of))
+  );
+}
+
 export function devicesInRoom(roomId) {
   const id = Number(roomId);
   const pick = (list) => list.filter((device) => deviceRoomId(device) === id);
@@ -115,8 +134,8 @@ export function devicesInRoom(roomId) {
     doorbells: pick(state.doorbells),
     refrigerators: pick(state.refrigerators || []),
     music: pick(musicDevices()),
-    // Devices this app cannot control.
-    others: state.devices.filter((device) => !device.supported && deviceRoomId(device) === id),
+    // Devices this app cannot control, and does not show otherwise.
+    others: otherDevices(id),
   };
 }
 
