@@ -43,4 +43,4 @@ Use `localhost` as the controller address and the pairing code the dev server pr
 
 ## Deploying
 
-`.github/workflows/deploy.yml` runs `wrangler deploy` in this folder on pushes to `main`. `python scripts/check_sites.py` validates it.
+`.github/workflows/deploy.yml` runs `wrangler deploy` in this folder on pushes to `main`, after the owner approves the run (ADR-075), with a `build.json` (the commit and the time) that `scripts/verify_live.mjs` compares with the source. `python scripts/check_sites.py` validates it.

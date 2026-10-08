@@ -21,6 +21,7 @@ find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
 lua5.1 driver/tests/run.lua                                    # driver tests (fake Director)
 TZ=Asia/Jerusalem lua5.1 driver/tests/run.lua test_calendar test_schedules test_holy_times     # and TZ=America/New_York
 python -m unittest discover -s tests/scripts                   # the build and check scripts themselves
+node --test tests/scripts/*.test.mjs                           # the check of the live sites (scripts/verify_live.mjs)
 python scripts/check_repo.py                                   # no local tool configuration or secrets tracked
 python scripts/check_api.py                                    # spec is valid and matches the driver routes
 python scripts/build.py                                        # dist/DirectorLink.c4z + dist/openapi.json
@@ -104,7 +105,7 @@ Use `localhost` as the controller address and the pairing code the dev server pr
 Built `.c4z` files are not committed. Every official build is produced by GitHub Actions and attached to a GitHub Release. Releases are immutable from 1.1.0 on, once the repository's immutable-releases setting is on: after publishing, neither the tag nor the files can change. 1.0.0 and older were published mutable. The app's update notice offers only immutable releases (ADR-035).
 
 1. Work on a `dev/<feature>` branch and merge it to `main` through a pull request.
-2. Changing `VERSION` on `main` triggers the release workflow, which runs the tests and checks, builds, and publishes the `v<version>` release with:
+2. Changing `VERSION` on `main` triggers the release workflow (`release.yml`). Its first job runs the tests and checks and builds, with read-only access; then it waits for the owner's approval (below). After it, the second job builds again from the same commit, publishes only if the files are byte for byte the ones the first job tested, and creates the `v<version>` release with:
 
 ```text
 DirectorLink.c4z
@@ -112,11 +113,23 @@ openapi.json
 SHA256SUMS.txt
 ```
 
-Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release. `gh release create` uploads the files before it publishes the release, so it works with immutable releases.
+Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release, before asking for the approval and again before publishing. `gh release create` uploads the files before it publishes the release, so it works with immutable releases.
+
+### After a merge: the owner approves
+
+Nothing reaches production without the owner's approval (ADR-075). Deploying the sites and publishing a release each wait in GitHub's `production` environment. After a merge to `main` that changes `app/`, `console/`, `site/` or `github-link/` (the sites) or `VERSION` (a release):
+
+1. Open **Actions**, then the run: **Deploy DirectorLink sites** for the sites, **Publish DirectorLink Release** for the driver. Its "check" or "build" job runs first; the next one shows **Waiting**.
+2. **Review deployments**, tick **production**, **Approve and deploy**. **Reject** stops it; nothing is published.
+3. For the sites, **Watch the live sites** runs once the deploy is done and should say that everything served is the same as the source (see below).
+
+A newer deploy run cancels one still waiting, so for the sites approve the latest run (it deploys everything as of its commit). A run waits for approval for up to 30 days. Nothing is deployed or published on its own: while the owner is away, the sites stay as they are.
+
+The environment, in **Settings → Environments → production** (made by hand once, not in the repository): **Required reviewers**: the owner's GitHub account, and **Prevent self-review** off (the owner approves runs of their own merges); **Deployment branches and tags**: selected branches, `main` only; the environment secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The repository has no Cloudflare secrets of its own (**Settings → Secrets and variables → Actions → Repository secrets**): a secret there would reach any workflow, on any branch.
 
 ## Deploying the sites
 
-`.github/workflows/deploy.yml` publishes `app/`, `console/` and `site/` to Cloudflare Workers (static assets) with `wrangler deploy` whenever one of them changes on `main`; pull requests from this repository get preview versions. Each folder's `wrangler.jsonc` names its Worker and custom domain:
+`.github/workflows/deploy.yml` publishes `app/`, `console/` and `site/` to Cloudflare Workers (static assets), and the short link `github-link/`, with `wrangler deploy` whenever one of them changes on `main`, once the owner approves (above). Its first job, `check`, runs `wrangler deploy --dry-run` on each folder, with no secrets, also for pull requests; pull requests get no preview versions, since those need the token. Each folder's `wrangler.jsonc` names its Worker and custom domain:
 
 | Folder | Worker | Domain |
 | --- | --- | --- |
@@ -125,11 +138,25 @@ Release notes come from `docs/releases/v<version>.md`. The workflow refuses to r
 | `site/` | `directorlink-site` | `directorlink.io`, `www.directorlink.io` |
 | `github-link/` | `directorlink-github` | `github.directorlink.io` (a redirect to the repository on GitHub, keeping the path) |
 
-The workflow needs two repository secrets: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the jobs succeed and deploy nothing.
+The deploy needs two secrets of the `production` environment: `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (an API token for the account with *Workers Scripts: Edit* and, for the `directorlink.io` zone, *Workers Routes: Edit* and *DNS: Edit* — custom domains create their DNS records). Without them the job says so, succeeds and deploys nothing.
+
+Before deploying `app/`, `console/` and `site/`, the job writes into each a `build.json`, never committed (`.gitignore`), which the site then serves:
+
+```json
+{"commit": "<the full commit of main>", "built_at": "2026-10-08T12:00:00Z"}
+```
+
+`scripts/check_sites.py` checks that the deploy and the release run only in `production` and only from `main`, that no other job reads a secret, that each site gets its `build.json` and publishes it, and the watch below.
+
+### Checking what is served
+
+`node scripts/verify_live.mjs` (Node 22, nothing to install, no secrets) checks that what the sites serve is exactly the public source: for each of app.directorlink.io, console.directorlink.io and directorlink.io it reads `/build.json`, checks that the commit is on `main`, fetches every file the folder publishes at that commit (what `wrangler deploy` uploads: not what its `.assetsignore` names, nor `_headers` and `_redirects`, which are Cloudflare's settings) and compares their SHA-256 with the commit's; it checks the headers `_headers` sets, every redirect in `_redirects` (the drivers' download, releases, issues and source links) and that `https://github.directorlink.io` leads where `github-link/worker.js` says. A site without a `build.json` (deployed before ADR-075) is compared with the latest commits of `main` that changed its folder. In a clone it reads the clone (fetching `origin`'s `main` when a site names a newer commit; `--no-fetch` never fetches); anywhere else the public repository on GitHub (`--github` forces that). Exit code 0 when everything is the same, 1 otherwise; `--json FILE` also writes the report as JSON, and `--wait` waits out a deploy that finished minutes ago. `tests/scripts/verify_live.test.mjs` tests it against fake sites.
+
+`.github/workflows/watch-live.yml` runs it every hour and after each deploy, from a full clone, with only read access to the code and write access to issues. When something differs (a file, a header, a redirect, or a `build.json` commit that is not on `main`) the run fails and opens the issue "The live site differs from the source", or updates the one that is open, commenting when the differences change; when everything is the same again it comments there and closes it. Within 10 minutes of a deploy (`built_at`) a difference is checked again once the deploy has settled, and a site that cannot be reached or turns the check away is not a difference: the run warns and the next one checks again.
 
 The workflows' actions are pinned to exact commits (Dependabot proposes updates, `.github/dependabot.yml`) and wrangler to an exact version. The cloud (`cloud/`) is not deployed by a workflow: see `cloud/README.md`.
 
-The driver only answers browsers from `https://app.directorlink.io` and `https://console.directorlink.io` (since 1.0.0, not `localhost` either), so a preview URL can show a site but cannot talk to a controller. The dev server (`scripts/dev_server.py`) also allows `http://localhost` and `http://127.0.0.1`, for local testing.
+The driver only answers browsers from `https://app.directorlink.io` and `https://console.directorlink.io` (since 1.0.0, not `localhost` either), so a copy of a site served anywhere else cannot talk to a controller. The dev server (`scripts/dev_server.py`) also allows `http://localhost` and `http://127.0.0.1`, for local testing.
 
 ## Minimum Director version
 

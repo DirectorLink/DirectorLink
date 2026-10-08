@@ -1,5 +1,11 @@
 name: Publish DirectorLink Release
 
+# A change of VERSION on main tests and builds the driver ("build", read-only), then waits for the
+# owner to approve the "production" environment (Actions -> the run -> Review deployments) before
+# "publish" creates the release (ADR-075). The build is byte for byte reproducible (docs/BUILD.md),
+# so "publish" builds again from the same commit and publishes only if the files are exactly the
+# ones "build" tested.
+
 on:
   push:
     branches: ["main"]
@@ -8,15 +14,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  build:
+    name: Test and build
     runs-on: ubuntu-24.04
+    outputs:
+      sums: ${{ steps.sums.outputs.sums }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -43,6 +54,18 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
 
+      # Before anyone is asked to approve: a release that exists already is never replaced.
+      - name: Check that the release does not exist yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing to replace an immutable release."
+            exit 1
+          fi
+
       - name: Run driver tests
         run: lua5.1 driver/tests/run.lua
 
@@ -63,6 +86,62 @@ jobs:
       - name: Check live responses against the API spec
         run: python scripts/check_contract.py
 
+      - name: Checksums of the tested files
+        id: sums
+        shell: bash
+        run: |
+          SUMS="$(cd dist && sha256sum DirectorLink.c4z openapi.json | tr '\n' ';')"
+          echo "$SUMS" | tr ';' '\n'
+          echo "sums=$SUMS" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish the release (after the owner's approval)
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    environment: production
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.x"
+
+      - name: Install Python tools
+        run: pip install -r requirements-dev.txt
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build driver
+        run: python scripts/build.py
+
+      - name: Validate package
+        run: python scripts/check_package.py
+
+      - name: Check that these are the files the build job tested
+        shell: bash
+        env:
+          TESTED: ${{ needs.build.outputs.sums }}
+        run: |
+          BUILT="$(cd dist && sha256sum DirectorLink.c4z openapi.json | tr '\n' ';')"
+          echo "$BUILT" | tr ';' '\n'
+          if [ -z "$TESTED" ] || [ "$BUILT" != "$TESTED" ]; then
+            echo "::error::The package built here is not the one the build job tested: nothing published."
+            exit 1
+          fi
+
       - name: Create checksums
         shell: bash
         run: (cd dist && sha256sum DirectorLink.c4z openapi.json) > SHA256SUMS.txt
@@ -75,7 +154,7 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           NOTES="docs/releases/$TAG.md"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "Release $TAG already exists; refusing to replace an immutable release."
             exit 1
           fi

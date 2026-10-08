@@ -11,8 +11,12 @@ scripts or styles, no scripts from elsewhere). The landing page's one script ask
 DirectorLink in numbers, which stays hidden until it has totals (ADR-052); the demo home's script
 (try/) talks to nothing and stores nothing (ADR-060). Links to the source
 code use the short link: the repository's long address appears only where a machine needs it.
+Nothing reaches production without the owner's approval (ADR-075): the workflows that deploy the
+sites and publish the driver do it only in the "production" environment, and each site gets a
+build.json that the hourly watch compares with the source.
 """
 
+from fnmatch import fnmatch
 from html.parser import HTMLParser
 import json
 import re
@@ -21,6 +25,8 @@ import struct
 import subprocess
 import sys
 import zlib
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 CONSOLE = ROOT / "console"
@@ -216,8 +222,6 @@ def check_common(folder):
     expected = [{"pattern": domain, "custom_domain": True} for domain in domains]
     if routes != expected:
         fail(f"{name}/wrangler.jsonc routes must be exactly the custom domains {', '.join(domains)}")
-    if "previews" not in config:
-        fail(f"{name}/wrangler.jsonc needs a previews block, or pull-request preview builds fail")
     if config.get("observability", {}).get("enabled") is not True:
         fail(f"{name}/wrangler.jsonc must enable Workers observability")
     if "main" in config:
@@ -640,6 +644,106 @@ def check_short_links():
             fail(f"{relative} uses the repository's long address; link to {GITHUB} instead")
 
 
+# ADR-075: nothing reaches production without the owner's approval. The jobs that deploy the sites
+# or publish the driver use the "production" environment, which the owner approves for each run,
+# which alone holds the Cloudflare token, and which deploys only from main; no other job reads a
+# secret or deploys (pull requests get only wrangler's dry run, no preview versions); each static
+# site gets a build.json that the hourly watch (watch-live.yml, scripts/verify_live.mjs) compares
+# with the public source, and that watch can only read the code and write issues.
+WORKFLOWS = ROOT / ".github" / "workflows"
+PRODUCTION = "production"
+STAMPED_SITES = ("app", "console", "site")
+WATCH_PERMISSIONS = {"contents": "read", "issues": "write"}
+
+
+def workflow(name, text):
+    data = yaml.safe_load(text)
+    if not isinstance(data, dict) or not isinstance(data.get("jobs"), dict):
+        fail(f".github/workflows/{name} is not a workflow with jobs")
+    # YAML 1.1 reads a bare `on:` key as true.
+    data["on"] = data.get("on", data.get(True))
+    return data
+
+
+def environment(job):
+    value = job.get("environment")
+    return value.get("name") if isinstance(value, dict) else value
+
+
+def job_runs(job):
+    return "\n".join(str(step.get("run", "")) for step in job.get("steps", []) if isinstance(step, dict))
+
+
+def check_workflows(workflows, ignores, tracked):
+    """workflows: {file name: YAML text} of .github/workflows; ignores: {site folder: its
+    .assetsignore}; tracked: the paths Git tracks."""
+    deploys = releases = 0
+    for name, text in sorted(workflows.items()):
+        data = workflow(name, text)
+        triggers = data["on"] if isinstance(data["on"], (dict, list)) else [data["on"]]
+        if "pull_request_target" in triggers:
+            fail(f".github/workflows/{name}: no pull_request_target (it runs others' code with this repository's secrets)")
+        for job_name, job in data["jobs"].items():
+            where = f".github/workflows/{name} job {job_name}"
+            production = environment(job) == PRODUCTION
+            runs = job_runs(job)
+            if "secrets." in json.dumps(job) and not production:
+                fail(f"{where} reads a secret outside the production environment (ADR-075)")
+            if re.search(r"versions upload|wrangler(@[\w.]+)? preview", runs):
+                fail(f"{where} uploads a preview version: that needs the Cloudflare token, which only production has")
+            if any(re.search(r"wrangler(@[\w.]+)? deploy\b", line) and "--dry-run" not in line for line in runs.splitlines()):
+                deploys += 1
+                if not production:
+                    fail(f"{where} deploys without the owner's approval: it needs environment: {PRODUCTION}")
+                for folder in STAMPED_SITES:
+                    if folder not in runs:
+                        fail(f"{where} must deploy {folder}/ with a build.json")
+                for part in ("build.json", '"commit"', '"built_at"', "$GITHUB_SHA"):
+                    if part not in runs:
+                        fail(f"{where} must write each site's build.json: {{\"commit\": ..., \"built_at\": ...}} ({part})")
+            if "gh release create" in runs:
+                releases += 1
+                if not production:
+                    fail(f"{where} publishes a release without the owner's approval: it needs environment: {PRODUCTION}")
+            permissions = job.get("permissions") or {}
+            if isinstance(permissions, dict) and "write" in permissions.values() and not production and name != "watch-live.yml":
+                fail(f"{where} may write to the repository outside the production environment")
+            if production and "refs/heads/main" not in str(job.get("if", "")):
+                fail(f"{where} runs in production: only from main (if: ... github.ref == 'refs/heads/main')")
+        if name in ("deploy.yml", "release.yml") and data.get("permissions") != {"contents": "read"}:
+            fail(f".github/workflows/{name}: the workflow's permissions must be contents: read (the job that publishes asks for more)")
+    if not deploys or not releases:
+        fail("the sites' deploy (wrangler deploy) and the driver's release (gh release create) must each be in a workflow job")
+
+    if "watch-live.yml" not in workflows:
+        fail(".github/workflows/watch-live.yml must compare the live sites with the source every hour (ADR-075)")
+    watch = workflow("watch-live.yml", workflows["watch-live.yml"])
+    if watch.get("permissions") != WATCH_PERMISSIONS:
+        fail(f".github/workflows/watch-live.yml permissions must be exactly {WATCH_PERMISSIONS}")
+    if any(job.get("permissions") for job in watch["jobs"].values()):
+        fail(".github/workflows/watch-live.yml jobs must not ask for more permissions")
+    if not isinstance(watch["on"], dict) or "schedule" not in watch["on"]:
+        fail(".github/workflows/watch-live.yml must run on a schedule")
+    if "node scripts/verify_live.mjs" not in "\n".join(job_runs(job) for job in watch["jobs"].values()):
+        fail(".github/workflows/watch-live.yml must run node scripts/verify_live.mjs")
+
+    for folder in STAMPED_SITES:
+        for pattern in ignores[folder].split():
+            if not pattern.startswith(("#", "!")) and fnmatch("build.json", pattern.lstrip("/").rstrip("/")):
+                fail(f"{folder}/.assetsignore must not keep build.json from being published ({pattern})")
+        if f"{folder}/build.json" in tracked:
+            fail(f"{folder}/build.json must not be committed: deploy.yml writes it at each deploy")
+
+
+def check_deploy_workflows():
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
+    check_workflows(
+        {path.name: path.read_text(encoding="utf-8") for path in sorted(WORKFLOWS.glob("*.yml"))},
+        {folder: (ROOT / folder / ".assetsignore").read_text(encoding="utf-8") for folder in STAMPED_SITES},
+        set(tracked),
+    )
+
+
 def check_disclaimers():
     """The disclaimer stays prominent: near the top of the README and the API's README, and in the console."""
     for relative, lines in (("README.md", 12), ("api/README.md", 6)):
@@ -656,7 +760,8 @@ def main():
     check_icons()
     check_github_link()
     check_short_links()
-    print("OK: DirectorLink console, site and short link validated")
+    check_deploy_workflows()
+    print("OK: DirectorLink console, site, short link and their deploy validated")
 
 
 if __name__ == "__main__":

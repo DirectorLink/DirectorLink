@@ -570,8 +570,6 @@ def main():
         fail("app/wrangler.jsonc must deploy this folder as the directorlink-app Worker")
     if {"pattern": "app.directorlink.io", "custom_domain": True} not in config.get("routes", []):
         fail("app/wrangler.jsonc must serve the app on the app.directorlink.io custom domain")
-    if "previews" not in config:
-        fail("app/wrangler.jsonc needs a previews block, or pull-request preview builds fail")
     if config.get("observability", {}).get("enabled") is not True:
         fail("app/wrangler.jsonc must keep Workers observability enabled, as production had it")
     ignored = (APP / ".assetsignore").read_text(encoding="utf-8").split()

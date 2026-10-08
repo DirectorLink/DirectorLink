@@ -1,6 +1,6 @@
 // Cloudflare Worker: https://github.directorlink.io, the short link to the source code on GitHub
 // (worker.js answers every request with a redirect into the repository).
-// Deployed by .github/workflows/deploy.yml (wrangler deploy).
+// Deployed by .github/workflows/deploy.yml (wrangler deploy) after the owner approves (ADR-075).
 {
   "name": "directorlink-github",
   "main": "worker.js",
@@ -10,6 +10,5 @@
   },
   "routes": [
     { "pattern": "github.directorlink.io", "custom_domain": true }
-  ],
-  "previews": {}
+  ]
 }
