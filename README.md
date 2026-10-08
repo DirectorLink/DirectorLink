@@ -53,6 +53,16 @@ The app on a demo home: made-up rooms and devices, and drawn camera pictures.
     <td align="center">Which one?</td>
     <td align="center">A member's own devices</td>
   </tr>
+  <tr>
+    <td><img src="docs/screenshots/appearance.png" width="260" alt="Settings, Appearance and language: English chosen, Hebrew, Spanish and Italian; theme, colours and text size"></td>
+    <td><img src="docs/screenshots/scene-ac.png" width="260" alt="A scene's AC action for the whole home: On, as it was"></td>
+    <td><img src="docs/screenshots/doors.png" width="260" alt="Doors and gates: the front door asks Tap again to open; Garage door · Closed; Gate · Closed"></td>
+  </tr>
+  <tr>
+    <td align="center">Appearance and language</td>
+    <td align="center">AC as it was</td>
+    <td align="center">Gates and doors of relay controllers</td>
+  </tr>
 </table>
 
 <img src="docs/screenshots/desktop.png" alt="Home in a desktop browser: side navigation, the field to say or type a command, scenes, favorites and room cards side by side">
