@@ -126,12 +126,12 @@ local mock = Mock.startDriver(project, specText, nil, function()
     Relay.mayAlert = function()
         return relaying.on or mayAlert()
     end
-    Relay.alert = function(message, seconds, kind)
+    Relay.alert = function(message, seconds, kind, letGo)
         if relaying.on then
             relaying.told[#relaying.told + 1] = message
-            return true
+            return "sent"
         end
-        return alert(message, seconds, kind)
+        return alert(message, seconds, kind, letGo)
     end
 end)
 -- The fake home lets the API open its (fake) doors.

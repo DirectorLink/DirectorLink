@@ -71,12 +71,12 @@ const DEFAULT_PING_S = 25;
 // one: 1.10.0, ADR-072) waits for the driver's next hello, at most RECONNECT_WAIT_MS, and goes again
 // on that connection when the hello lists `resend` and comes from the same driver instance (one that
 // has not restarted: its memory of what it ran is whole). At most MAX_RESENDS times, and only within
-// RESEND_WITHIN_MS of reaching the relay; each resend waits RESEND_TIMEOUT_MS for its answer. So a
+// RESEND_WITHIN_MS (10 s) of reaching the relay; each resend waits RESEND_TIMEOUT_MS for its answer. So a
 // resent request is answered within 18 s of reaching the relay, under the app's 20 s (app/js/
 // remote.js). Otherwise it fails as before (502 HOME_DISCONNECTED).
 const RESEND_FEATURE = "resend";
 const MAX_RESENDS = 2;
-const RESEND_WITHIN_MS = 10000;
+const DEFAULT_RESEND_WITHIN_MS = 10000;
 const RESEND_TIMEOUT_MS = 8000;
 // Every request ends within this long of reaching the home's object (1.10.1, ADR-073): waiting for
 // the driver to come back (RECONNECT_WAIT_MS), sending, sending again (above) and the answer
@@ -521,7 +521,7 @@ export class HomeRelay extends DurableObject {
       again.instance = takesResend(attachment);
     }
     const now = Date.now();
-    const left = again?.instance ? Math.min(reconnectWaitMs(this.env), again.receivedAt + RESEND_WITHIN_MS - now, entry.deadline - now) : 0;
+    const left = again?.instance ? Math.min(reconnectWaitMs(this.env), again.receivedAt + resendWithinMs(this.env) - now, entry.deadline - now) : 0;
     if (!again?.instance || again.sent >= MAX_RESENDS || left <= 0) {
       this.settle(id, { failed: why });
       return;
@@ -1036,6 +1036,14 @@ function takesResend({ features, instance } = {}) {
 function reconnectWaitMs(env) {
   const value = Number(env.RECONNECT_WAIT_MS);
   return Number.isInteger(value) && value >= 0 ? value : DEFAULT_RECONNECT_WAIT_MS;
+}
+
+// RESEND_WITHIN_MS (.dev.vars, for the tests only): with the production 10 s a request is sent again
+// within 10 s and then waits at most 8 s, so the 18 s budget never ends either wait first;
+// budget.test.mjs sets it longer than the budget to see that the budget does.
+function resendWithinMs(env) {
+  const value = Number(env.RESEND_WITHIN_MS);
+  return Number.isInteger(value) && value > 0 ? value : DEFAULT_RESEND_WITHIN_MS;
 }
 
 // When the runtime last answered this socket's "ping" (milliseconds), or null.

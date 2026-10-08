@@ -8,10 +8,11 @@
 
 1. After deploying the Worker but **before** updating the driver (still 1.10.0): ring the doorbell. The phone gets one alert as before; Workers Observability shows `notify_sent` with no `resent` and no `notify_again`.
 2. Update the driver to 1.10.1. Close the app on the phone, alerts on with Doorbell chosen. Unplug the controller's network cable, ring the doorbell within about 20 s, plug the cable back in: the ring arrives once, a few seconds after the controller reconnects. The controller's relay log (`/v1/logs?category=relay`) says an alert was kept for the next connection (or went into the dead one), then that alerts were sent again; Workers Observability shows `notify_sent` with `resent`, or `notify_again`.
-3. The same with the cable out for about 75 s: the ring does **not** arrive (the log says an alert was not acknowledged in time); a camera alert in the same window (Camera alerts chosen) **does** arrive.
-4. Over a few days: no notification ever shows twice for one event. A `notify_again` line in Workers Observability is a duplicate that was prevented.
-5. Budget: every `message_timeout` in Workers Observability has `total_ms` at or below 18000. A tap while the controller reconnects either works or shows that the home did not answer, never that DirectorLink's servers could not be reached (unless the phone itself is offline).
-6. An ask-to-open link run from the phone's shortcut while the controller is unplugged for a few seconds: the question reaches its person once, after the reconnect.
+3. The same with the cable out for about 75 s: the ring does **not** arrive (the log says an alert was not acknowledged in time); a camera alert in the same window (Camera alerts chosen) **does** arrive. The alerts log (`/v1/logs?category=alerts`) says `alert kept for the next connection` for an alert made after the controller noticed the loss (within 5 s), not `alert sent`.
+4. The cable out for about 4 minutes, with a camera alert every minute or so: the alerts log says `alert kept for the next connection` for those in the first 2 minutes after the controller noticed the loss, and `alert not sent` (`not connected`) for later ones, as in 1.10.0; none says `limit`.
+5. Over a few days: no notification ever shows twice for one event. A `notify_again` line in Workers Observability is a duplicate that was prevented.
+6. Budget: every `message_timeout` in Workers Observability has `total_ms` at or below 18000. A tap while the controller reconnects either works or shows "Your home is not connected to DirectorLink right now…", never that DirectorLink's servers could not be reached (unless the phone itself is offline).
+7. An ask-to-open link run from the phone's shortcut while the controller is unplugged for a few seconds: the question reaches its person once, after the reconnect.
 
 ## 1101b. Parts of doors and doorbells (1.10.1)
 
