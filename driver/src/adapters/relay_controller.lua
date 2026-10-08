@@ -149,8 +149,10 @@ function RelayController.survey(registry)
         if relay and KnxRelay.matches(relay) and not merged[openRelay] then
             merged[openRelay] = id
             info.relay = openRelay
-            -- The controller's button is no door of its own (/v1/devices: another device).
+            -- The controller's button is no door of its own (/v1/devices: another device, part of
+            -- the relay's door).
             device.shown_as = openRelay
+            device.part_of = openRelay
         elseif openRelay then
             for _, doorbellId in ipairs(doorbellsOf(registry, openRelay)) do
                 info.partners[#info.partners + 1] = doorbellId
@@ -169,6 +171,9 @@ function RelayController.survey(registry)
             local relay = relayId and registry.devices[relayId]
             if relay and KnxRelay.matches(relay) and not merged[relayId] and not closers[relayId] then
                 closers[relayId] = id
+                -- Part of the controller's door (/v1/devices: part_of), under its relay's id when
+                -- it is shown as one.
+                relay.part_of = info.relay or id
             end
         end
         local openRelay = info.relays[1]

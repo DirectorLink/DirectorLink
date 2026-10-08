@@ -18,6 +18,15 @@ local TYPES = {
     other = true,
 }
 
+-- A device as the caller sees it: `part_of` names only a device they see too (ADR-054).
+local function view(ctx, registry, device)
+    local item = Views.device(registry, device)
+    if item.part_of ~= Json.null and not Access.canSee(ctx.apiKey, registry.getDevice(item.part_of)) then
+        item.part_of = Json.null
+    end
+    return item
+end
+
 function Devices.list(ctx)
     local query = ctx.query
     local roomId, roomProblem = Validate.optionalInteger(query.room_id, "room_id", 1)
@@ -41,11 +50,11 @@ function Devices.list(ctx)
             device = registry.getDoorbell(device.id) or device
         end
         if Access.canSee(ctx.apiKey, device) then
-            local view = Views.device(registry, device)
+            local item = view(ctx, registry, device)
             if (roomId == nil or tonumber(device.room_id) == roomId)
-                and (query.type == nil or view.type == query.type)
-                and (supported == nil or view.supported == supported) then
-                items[#items + 1] = view
+                and (query.type == nil or item.type == query.type)
+                and (supported == nil or item.supported == supported) then
+                items[#items + 1] = item
             end
         end
     end
@@ -63,7 +72,7 @@ function Devices.get(ctx)
     if not device or not Access.canSee(ctx.apiKey, device) then
         return Problem.notFound("Device", id)
     end
-    return 200, Views.device(registry, device)
+    return 200, view(ctx, registry, device)
 end
 
 return Devices

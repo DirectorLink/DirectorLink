@@ -484,6 +484,13 @@ def scenario(client, bridge):
     client.check("POST", "/v1/relays/71/pulse", 202)
     if client.check("PATCH", "/v1/relays/71", 409, body={"state": "open"})["code"] != "NOT_SUPPORTED":
         fail("a door controller's relay is the controller's: PATCH should be NOT_SUPPORTED")
+    # 1.10.1: the controller's button shown as the KNX relay 75, and the DoorBird's button and
+    # intercom, are parts of the door and of the doorbell 93 (`part_of`), not devices of their own.
+    parts = {item["id"]: item["part_of"] for item in client.check("GET", "/v1/devices", 200)["items"]}
+    if (parts.get(73), parts.get(90), parts.get(91), parts.get(75), parts.get(72), parts.get(40)) != (75, 93, 93, None, None, None):
+        fail(f"GET /v1/devices should name the door or doorbell a part belongs to, and nothing else: {parts}")
+    if client.check("GET", "/v1/devices/73", 200)["part_of"] != 75:
+        fail("GET /v1/devices/73 should be part of the door 75")
 
     # A Samsung refrigerator (1.7.0, Mock.withRefrigerator): the driver 140, the refrigerator 141.
     # The dev bridge's refrigerator confirms a feature 4 seconds later, as through Samsung's cloud.

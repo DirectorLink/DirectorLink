@@ -96,9 +96,25 @@ function Views.deviceType(device)
     return TYPE_BY_KIND[device.kind] or "other"
 end
 
+local function shown(device)
+    return type(device) == "table" and device.supported == true and RESOURCE_PATH[Views.deviceType(device)] ~= nil
+end
+
+-- The device an unsupported one is part of (1.10.1), when DirectorLink shows that one: a door
+-- controller's button shown as the KNX relay it drives, a KNX relay on a controller's Close or Stop
+-- connection (ADR-069), a DoorBird's button, intercom or camera (its doorbell). Its id, or nil.
+function Views.partOf(registry, device)
+    local wholeId = tonumber(device.part_of)
+    if not wholeId or shown(device) then
+        return nil
+    end
+    local whole = registry.getDevice(wholeId)
+    return shown(whole) and wholeId or nil
+end
+
 function Views.device(registry, device)
     local deviceType = Views.deviceType(device)
-    local supported = device.supported == true and RESOURCE_PATH[deviceType] ~= nil
+    local supported = shown(device)
     return {
         id = device.id,
         name = device.name,
@@ -106,6 +122,7 @@ function Views.device(registry, device)
         room = Views.roomRef(registry, device.room_id, device.room_name),
         supported = supported,
         href = supported and (RESOURCE_PATH[deviceType] .. tostring(device.id)) or Json.null,
+        part_of = Views.partOf(registry, device) or Json.null,
     }
 end
 
