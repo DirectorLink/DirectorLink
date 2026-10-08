@@ -269,8 +269,13 @@ function click(element) {
 
 // Lets the page's requests, its WebCrypto work and what follows them run (real time, not timers),
 // and the timers it sets for "now" (a list or a look asked for at once), without moving the clock.
+// How long a step may take in real time before the test gives up. Generous: the page's WebCrypto
+// work (its keys) can take seconds on a loaded CI machine late in the run; a passing step returns
+// as soon as its check holds, so this only lengthens a failure.
+const STEP_MS = 30_000;
+
 async function until(check, what) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + STEP_MS;
   while (Date.now() < deadline) {
     if (await check()) return;
     mock.timers.tick(0);
@@ -285,7 +290,7 @@ async function until(check, what) {
 // ticking on and on while a slow machine catches up would carry the clock past a request's 10
 // minutes, and the page would give up on what the test waits for.
 async function untilTicking(ms, check, what) {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + STEP_MS;
   let ticks = 0;
   while (Date.now() < deadline) {
     if (ticks < 4) {
