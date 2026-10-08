@@ -2,12 +2,13 @@
 -- in the controller's local time.
 -- - Time and sun schedules run at their minute on their days (up to 5 minutes late, e.g. after a
 --   restart), once; an "only if" is checked then, with the latest weather.
--- - Weather schedules run when the weather turns: hotter than the threshold, wind stronger than it,
---   or rain starting; on their days, within their hours, and (by default) at most once a day. They
---   run again only after it has cooled 2° below the threshold, the wind has dropped 10 km/h below
---   it, or it has been dry for an hour. The weather is the saved forecast's hour for now (1.10.0,
---   ADR-071, src/core/weather.lua), with or without the internet. In a minute when other schedules
---   run too, they run after them (1.10.0).
+-- - Weather schedules run when the weather turns: the threshold or hotter, the threshold or a
+--   stronger wind, or rain starting; on their days, within their hours, and (by default) at most
+--   once a day. They run again only after it has cooled to 2° below the threshold or less, the wind
+--   has dropped to 10 km/h below it or less, or it has been dry for an hour. The threshold itself
+--   always counts, in rules and "only if" alike (1.10.1, ADR-074). The weather is the saved
+--   forecast's hour for now (1.10.0, ADR-071, src/core/weather.lua), with or without the
+--   internet. In a minute when other schedules run too, they run after them (1.10.0).
 -- - Shabbat schedules (the Jewish calendar, ADR-037) run when a holy period begins (candle
 --   lighting) or ends (havdalah), plus their offset, once per period. "during_shabbat" keeps a
 --   time, sun or weather schedule away from holy time ("skip") or to it ("only"). While the
@@ -242,7 +243,8 @@ function Scheduler.nextRun(schedule, now)
 end
 
 -- True or false for a time or sun schedule's "only if" with this weather, or nil when it needs
--- weather and there is none.
+-- weather and there is none. The threshold itself counts (1.10.1, ADR-074): "hotter_than 23" is 23°
+-- or warmer, "wind_below 20" 20 km/h or less.
 function Scheduler.conditionsMet(schedule, weather)
     local onlyIf = schedule.only_if or {}
     if next(onlyIf) == nil then
@@ -254,10 +256,10 @@ function Scheduler.conditionsMet(schedule, weather)
     if onlyIf.not_raining and weather.raining then
         return false
     end
-    if onlyIf.hotter_than and not (weather.temperature > onlyIf.hotter_than) then
+    if onlyIf.hotter_than and not (weather.temperature >= onlyIf.hotter_than) then
         return false
     end
-    if onlyIf.wind_below and not (weather.wind_speed and weather.wind_speed < onlyIf.wind_below) then
+    if onlyIf.wind_below and not (weather.wind_speed and weather.wind_speed <= onlyIf.wind_below) then
         return false
     end
     if onlyIf.rain_expected and not ((weather.today.rain_chance or 0) >= Scheduler.RAIN_EXPECTED_CHANCE) then
@@ -331,14 +333,15 @@ local function run(schedule, now, note, weather)
 end
 
 -- Sets `runtime.armed` from the reading: false while the weather still is past its threshold
--- after running, true again once it has turned back.
+-- after running, true again once it has turned back: to 2° below a heat rule's threshold or cooler,
+-- 10 km/h below a wind rule's or calmer (the threshold counts, 1.10.1).
 local function rearm(trigger, runtime, weather, now)
     if trigger.kind == "heat" then
-        if weather.temperature < trigger.above - Scheduler.HEAT_REARM then
+        if weather.temperature <= trigger.above - Scheduler.HEAT_REARM then
             runtime.armed = true
         end
     elseif trigger.kind == "wind" then
-        if weather.wind_speed and weather.wind_speed < trigger.above - Scheduler.WIND_REARM then
+        if weather.wind_speed and weather.wind_speed <= trigger.above - Scheduler.WIND_REARM then
             runtime.armed = true
         end
     else
@@ -353,6 +356,7 @@ local function rearm(trigger, runtime, weather, now)
     end
 end
 
+-- `above` or hotter, `above` km/h or a stronger wind (as since 0.14.0), or raining.
 local function weatherActive(trigger, weather)
     if trigger.kind == "heat" then
         return weather.temperature >= trigger.above

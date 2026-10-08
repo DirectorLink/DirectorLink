@@ -1,7 +1,7 @@
 # Schedules and the weather
 
 **Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0; the weather from a saved
-forecast in 1.10.0 (ADR-071).**
+forecast in 1.10.0 (ADR-071); a threshold itself counts, everywhere, in 1.10.1 (ADR-074).**
 
 A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, when the
 weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
@@ -34,22 +34,32 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
     for the project's location, so they need no internet.
   - **weather**: `{"type": "weather", "kind": "heat"|"wind"|"rain", "above": 30, "from":
     "12:00", "to": "20:00", "once_a_day": true}`:
-    - heat: hotter than `above` °C (15–45), which means `above` or more, as it always has (23.0°
-      is hotter than 23°); it runs again only after it has cooled 2° below;
-    - wind: stronger than `above` km/h (10–150); again only after it has dropped 10 km/h below;
+    - heat: `above` °C (15–45) or hotter (as since 0.14.0); it runs again only after it has
+      cooled to 2° below or less;
+    - wind: `above` km/h (10–150) or more; again only after it has dropped to 10 km/h below or
+      less;
     - rain: when it starts to rain; again only after an hour without rain (in the forecast, like
       everything about the weather: [The weather](#the-weather));
     - `from`/`to` (optional) limit it to those hours (they may cross midnight); `once_a_day`
       (default on) at most once per day. With hours, the rule is ready again each day when its
-      hours begin (1.10.0), whatever the weather did overnight: "08:00 to 23:00, hotter than 23°"
-      runs every day from 08:00 once it is that hot, even after a night that never cooled 2° below.
+      hours begin (1.10.0), whatever the weather did overnight: "08:00 to 23:00, 23° or hotter"
+      runs every day from 08:00 once it is that hot, even after a night that never cooled to 21°.
   - **shabbat** (1.2.0, with the Jewish calendar on): `{"type": "shabbat", "event":
     "candle_lighting"|"havdalah", "offset": -30}` — when Shabbat or a holiday begins or ends, plus
     minutes before (negative) or after, up to six hours (see [Shabbat and holidays](#shabbat-and-holidays)).
-- `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C; more than it, unlike
-  a heat rule's `above`), `wind_below` (km/h),
-  `rain_expected` (today's forecast: a 50% chance or more). They are checked when the schedule is
-  due, with the weather then (the forecast's).
+- `only_if` (time, sun and Shabbat schedules): `not_raining`, `hotter_than` (°C: that or warmer),
+  `wind_below` (km/h: that or less), `rain_expected` (today's forecast: a 50% chance or more). They
+  are checked when the schedule is due, with the weather then (the forecast's).
+- **The threshold itself counts** (1.10.1, ADR-074), in weather rules and `only_if` alike: at
+  23.0°, a heat rule at 23 ("23° or hotter") and `hotter_than` 23 ("only if 23° or warmer") both
+  hold; at 40.0 km/h a wind rule at 40 ("40 km/h or more"), at 20.0 km/h `wind_below` 20 ("20 km/h
+  or less"); a heat rule at 23 is ready again at 21.0° or cooler, a wind rule at 40 at 30 km/h or
+  calmer. The app, Composer's printout and the API's descriptions say so ("When it's 23° or hotter
+  outside", "Only if it's 23° or warmer"). **Changed in 1.10.1, only at exactly the threshold:**
+  up to 1.10.0 `hotter_than` 23 needed more than 23°, `wind_below` 20 less than 20 km/h, and a rule
+  was ready again only under 21° (30 km/h), while a rule's own threshold already counted. With the
+  forecast's hours interpolated and rounded to 0.1 (ADR-071), exactly 23.0 is common. The names
+  (`above`, `hotter_than`, `wind_below`) and every schedule's numbers stay as they are.
 - `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no forecast
   read yet, or the saved one ran out after 5 days without the internet; no location): `run` (the
   default) or `skip`.
@@ -71,7 +81,7 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
 - Weather schedules run when the reading crosses the threshold (or rain starts), on their days,
   within their hours; hours across midnight (22:00–06:00) belong to the day they start. Since
   1.10.0 they run after the time, sun and Shabbat schedules of the same minute (also those caught
-  up after a restart): a morning scene at 08:30 does not undo what "hotter than 23°, from 08:30"
+  up after a restart): a morning scene at 08:30 does not undo what "23° or hotter, from 08:30"
   just did.
 - What the scheduler remembers (last run, whether a weather schedule may run again) is saved, so a
   restart does not run anything twice. A save that fails is logged; if what it remembers cannot be
@@ -100,7 +110,7 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   one there is no weather (`unreachable`): weather rules wait, and "only if" does what
   `if_no_weather` says. At a start, a saved forecast older than 6 hours is read anew.
 - **Why a forecast:** a fraction of the requests (4 a day instead of 96), and the same weather with
-  or without the internet, which matters on Shabbat, when nobody fixes anything: "hotter than 23°,
+  or without the internet, which matters on Shabbat, when nobody fixes anything: "23° or hotter,
   08:30–23:00, only on Shabbat and holidays" still turns the AC on when the internet fails on
   Friday. The trade-off: a forecast can differ from what happens, usually by a degree or two, and
   the timing of rain more (a shower may come an hour early or late, or not at all).
@@ -202,7 +212,9 @@ in Composer, on the DirectorLink device (0.15.0):
   1.10.0), or
   `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
 - **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
-  and last run) and every scene with its steps and device names and ids to the Lua output.
+  and last run) and every scene with its steps and device names and ids to the Lua output. Weather
+  thresholds read `heat 23C or more outside`, `wind 40 km/h or more`, `only if 28C or hotter and
+  wind 20 km/h or less` (1.10.1; `heat above 23C outside`, `hotter than 28C` before).
 - **Jewish Calendar** (Off / On, 1.2.0): Shabbat and holiday times for schedules and the app. Off by
   default; no restart is needed either way.
 - **Calendar Status** (read-only): what the calendar works out, e.g. `Israel (from the location) ·
@@ -231,7 +243,9 @@ device will both run; these properties are how to find the DirectorLink side.
 - The editor: 1 · the scene; 2 · when — At a time, Sun (sunrise or sunset, an hour or half an
   hour before or after), or Weather (heat, rain, wind, with the reading now, the threshold, the
   hours and at most once a day); 3 · the days (with Every day, Sun–Thu and Fri–Sat); 4 · only if;
-  then the whole schedule in one sentence, and Save.
+  then the whole schedule in one sentence, and Save. Under a threshold's number it says that the
+  number itself counts (1.10.1): "or hotter" under 30°, "or more" under 40 km/h, and for only if
+  "or warmer" and "or less".
 - With the Jewish calendar on (1.2.0, `features.jewish_calendar` in `GET /v1/system`): a fourth
   "when", Shabbat and holidays (candle lighting or havdalah, and how long before or after; no days
   to pick), a row "On Shabbat and holidays: Run as usual / Not on Shabbat and holidays / Only on

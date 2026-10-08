@@ -87,7 +87,7 @@ export function formatOffset(minutes) {
   return t("schedules.offset.hoursMinutes", { hours: hoursText, minutes: t("schedules.offset.minutes", { count: rest }) });
 }
 
-// "Every day at 06:45", "Fri–Sat, 30 min before sunset", "When it’s hotter than 30° outside",
+// "Every day at 06:45", "Fri–Sat, 30 min before sunset", "When it’s 30° or hotter outside",
 // "30 min before candle lighting".
 export function whenText(schedule) {
   const trigger = schedule.trigger || {};
