@@ -401,13 +401,15 @@ function section(title, ...content) {
   return h("section", { class: "card scene-section" }, h("h2", { class: "add-title" }, title), ...content);
 }
 
-export function stepper({ value, format, label, key, min, max, step, onChange }) {
+// `label` goes under the number; `name`, when the label only goes on from it ("30°", "or hotter"),
+// says what − and + change, for screen readers ("Lower temperature").
+export function stepper({ value, format, label, name = label, key, min, max, step, onChange }) {
   return h(
     "div",
-    { class: "stepper", role: "group", "aria-label": label },
-    iconButton("minus", t("schedules.editor.less", { what: label }), { class: "stepper-button", disabled: value <= min, dataset: { key: `${key}-down` }, onclick: () => onChange(Math.max(min, value - step)) }),
+    { class: "stepper", role: "group", "aria-label": name },
+    iconButton("minus", t("schedules.editor.less", { what: name }), { class: "stepper-button", disabled: value <= min, dataset: { key: `${key}-down` }, onclick: () => onChange(Math.max(min, value - step)) }),
     h("div", { class: "stepper-value" }, h("output", { class: "stepper-number", "aria-live": "polite" }, format(value)), h("span", { class: "stepper-label" }, label)),
-    iconButton("plus", t("schedules.editor.more", { what: label }), { class: "stepper-button", disabled: value >= max, dataset: { key: `${key}-up` }, onclick: () => onChange(Math.min(max, value + step)) })
+    iconButton("plus", t("schedules.editor.more", { what: name }), { class: "stepper-button", disabled: value >= max, dataset: { key: `${key}-up` }, onclick: () => onChange(Math.min(max, value + step)) })
   );
 }
 
@@ -551,7 +553,9 @@ function whenSection(draft) {
         stepper({
           value: draft[draft.kind],
           format: (value) => (draft.kind === "heat" ? formatTemperature(value) : t("schedules.kmh", { value })),
+          // "30°" and "or hotter": the threshold itself counts (1.10.1, ADR-074).
           label: t(`schedules.editor.above.${draft.kind}`),
+          name: t(`schedules.editor.threshold.${draft.kind}`),
           key: "schedule-above",
           min,
           max,
@@ -646,11 +650,11 @@ function onlyIfSection(draft) {
     toggle(t("schedules.editor.notRaining"), draft.notRaining, "schedule-if-dry", (on) => change(draft, () => { draft.notRaining = on; })),
     toggle(t("schedules.editor.hotterThan"), draft.hot, "schedule-if-hot", (on) => change(draft, () => { draft.hot = on; })),
     draft.hot
-      ? stepper({ value: draft.hotterThan, format: formatTemperature, label: t("schedules.editor.outside"), key: "schedule-hot", min: 15, max: 45, step: 1, onChange: (value) => change(draft, () => { draft.hotterThan = value; }) })
+      ? stepper({ value: draft.hotterThan, format: formatTemperature, label: t("schedules.editor.outside"), name: t("schedules.editor.threshold.heat"), key: "schedule-hot", min: 15, max: 45, step: 1, onChange: (value) => change(draft, () => { draft.hotterThan = value; }) })
       : null,
     toggle(t("schedules.editor.windBelow"), draft.calm, "schedule-if-calm", (on) => change(draft, () => { draft.calm = on; })),
     draft.calm
-      ? stepper({ value: draft.windBelow, format: (value) => t("schedules.kmh", { value }), label: t("schedules.editor.wind"), key: "schedule-calm", min: 10, max: 150, step: 5, onChange: (value) => change(draft, () => { draft.windBelow = value; }) })
+      ? stepper({ value: draft.windBelow, format: (value) => t("schedules.kmh", { value }), label: t("schedules.editor.wind"), name: t("schedules.editor.threshold.wind"), key: "schedule-calm", min: 10, max: 150, step: 5, onChange: (value) => change(draft, () => { draft.windBelow = value; }) })
       : null,
     toggle(t("schedules.editor.rainExpected"), draft.rainExpected, "schedule-if-rain", (on) => change(draft, () => { draft.rainExpected = on; }), t("schedules.editor.rainExpectedHelp")),
     any

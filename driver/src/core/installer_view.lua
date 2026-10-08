@@ -48,8 +48,8 @@ end
 
 local SHABBAT_EVENTS = { candle_lighting = "candle lighting", havdalah = "havdalah" }
 
--- "Sun-Thu 06:45", "every day 30 min before sunset", "heat above 30C 12:00-20:00, once a day",
--- "30 min before candle lighting", "Sat: at havdalah".
+-- "Sun-Thu 06:45", "every day 30 min before sunset", "heat 30C or more outside, 12:00-20:00, once
+-- a day", "30 min before candle lighting", "Sat: at havdalah".
 function View.whenText(schedule)
     local trigger = schedule.trigger
     local days = View.daysText(schedule.days)
@@ -68,10 +68,11 @@ function View.whenText(schedule)
         return days == "every day" and text or (days .. ": " .. text)
     end
     local text
+    -- The threshold itself counts (1.10.1, ADR-074).
     if trigger.kind == "heat" then
-        text = "heat above " .. number(trigger.above) .. "C outside"
+        text = "heat " .. number(trigger.above) .. "C or more outside"
     elseif trigger.kind == "wind" then
-        text = "wind above " .. number(trigger.above) .. " km/h"
+        text = "wind " .. number(trigger.above) .. " km/h or more"
     else
         text = "rain starts"
     end
@@ -89,7 +90,7 @@ end
 
 local DURING_SHABBAT = { skip = "not on Shabbat and holidays", only = "only on Shabbat and holidays" }
 
--- "only if not raining and hotter than 28C", "not on Shabbat and holidays", or nil.
+-- "only if not raining and 28C or hotter", "not on Shabbat and holidays", or nil.
 function View.conditionsText(schedule)
     local onlyIf = schedule.only_if or {}
     local parts = {}
@@ -97,10 +98,10 @@ function View.conditionsText(schedule)
         parts[#parts + 1] = "not raining"
     end
     if onlyIf.hotter_than then
-        parts[#parts + 1] = "hotter than " .. number(onlyIf.hotter_than) .. "C"
+        parts[#parts + 1] = number(onlyIf.hotter_than) .. "C or hotter"
     end
     if onlyIf.wind_below then
-        parts[#parts + 1] = "wind below " .. number(onlyIf.wind_below) .. " km/h"
+        parts[#parts + 1] = "wind " .. number(onlyIf.wind_below) .. " km/h or less"
     end
     if onlyIf.rain_expected then
         parts[#parts + 1] = "rain expected today"

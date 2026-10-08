@@ -1634,7 +1634,7 @@ paths:
       summary: Create a schedule
       description: |
         Runs a scene at a time of day, at sunrise or sunset (with an offset), or when the weather
-        turns — hotter than a threshold, wind stronger than one, or rain starting — on the chosen
+        turns — a temperature or hotter, a wind speed or more, or rain starting — on the chosen
         days (0 Sunday to 6 Saturday), in the controller's local time. At most 50. A scheduled
         scene runs like one from a member's key: doors and gates in it are skipped.
 
@@ -4958,14 +4958,16 @@ components:
     ScheduleTrigger:
       description: |
         `time`: `at` ("HH:MM"). `sun`: `event` (sunrise, sunset) and `offset` in minutes (-180 to
-        180; negative is before). `weather`: `kind` heat (`above` °C, 15 to 45), wind (`above`
-        km/h, 10 to 150) or rain (starts raining), optional hours `from`–`to` ("HH:MM", may cross
-        midnight), and `once_a_day` (default true). A weather schedule runs again only after it has
-        cooled 2° below the threshold, the wind has dropped 10 km/h below it, or an hour without
-        rain. `shabbat` (needs the Jewish calendar, `/v1/calendar`): `event` candle_lighting (when
-        Shabbat or a holiday begins) or havdalah (when it ends), and `offset` in minutes (-360 to
-        360; negative is before). Shabbat and holidays that follow each other are one period, so
-        it runs once when the period begins, or once when it ends.
+        180; negative is before). `weather`: `kind` heat (`above` °C or hotter, 15 to 45), wind
+        (`above` km/h or more, 10 to 150) or rain (starts raining), optional hours `from`–`to`
+        ("HH:MM", may cross midnight), and `once_a_day` (default true). A weather schedule runs
+        again only after it has cooled to 2° below the threshold or less, the wind has dropped to
+        10 km/h below it or less, or an hour without rain. The threshold itself counts (for running
+        again and in `only_if` since 1.10.1). `shabbat` (needs the Jewish
+        calendar, `/v1/calendar`): `event` candle_lighting (when Shabbat or a holiday begins) or
+        havdalah (when it ends), and `offset` in minutes (-360 to 360; negative is before). Shabbat
+        and holidays that follow each other are one period, so it runs once when the period
+        begins, or once when it ends.
       type: object
       required: [type]
       additionalProperties: false
@@ -4990,6 +4992,7 @@ components:
           enum: [heat, wind, rain]
         above:
           type: number
+          description: The threshold, which itself counts — heat `above` °C or hotter, wind `above` km/h or more.
         from:
           type: string
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
@@ -5001,8 +5004,10 @@ components:
 
     ScheduleConditions:
       description: |
-        For time and sun schedules: run only if it is not raining, hotter than a temperature, the
-        wind is below a speed, or rain is forecast for today (a 50% chance or more). Checked when
+        For time, sun and Shabbat schedules: run only if it is not raining, `hotter_than` a
+        temperature or warmer, the wind `wind_below` a speed or less, or rain is forecast for today
+        (a 50% chance or more). The threshold itself counts, as for weather triggers (since 1.10.1:
+        up to 1.10.0 `hotter_than` needed more than it and `wind_below` less than it). Checked when
         the schedule runs, with the latest weather.
       type: object
       additionalProperties: false
@@ -5013,10 +5018,12 @@ components:
           type: number
           minimum: 15
           maximum: 45
+          description: °C; runs at this temperature or warmer.
         wind_below:
           type: number
           minimum: 10
           maximum: 150
+          description: km/h; runs at this wind speed or less.
         rain_expected:
           type: boolean
 

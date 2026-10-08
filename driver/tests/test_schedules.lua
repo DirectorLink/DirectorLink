@@ -164,6 +164,33 @@ function tests.a_heat_rule_runs_once_until_it_has_cooled()
     T.eq(weatherRequests(mock), 1, "one forecast for all of it")
 end
 
+-- The threshold itself counts (1.10.1, ADR-074): "30° or hotter" runs at 30.0°, "40 km/h or more"
+-- at 40.0 km/h, and each is ready again once back to 28° (2° below) or 30 km/h (10 below) or less.
+function tests.a_weather_rule_counts_its_threshold_and_its_way_back()
+    local noon = at(1, 12, 0)
+    local mock, admin, clock, Scheduler = start(noon)
+    local sceneId = scene(mock, admin)
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30, once_a_day = false }, days = every })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "wind", above = 40, once_a_day = false }, days = every })
+    -- The forecast for 13:00, 14:00, ... 18:00 and after: °C and km/h.
+    local hours = { { 29.9, 39.9 }, { 30, 40 }, { 28.1, 30.1 }, { 30, 40 }, { 28, 30 }, { 30, 40 } }
+    mock.weather = WeatherFake.forecast(function(time)
+        local hour = hours[math.max(1, math.min(math.floor((time - noon) / 3600), #hours))]
+        return { temperature = hour[1], wind = hour[2] }
+    end)
+    local function reading(hour)
+        clock.set(noon + hour * 3600)
+        return Scheduler.tick()
+    end
+    T.eq(reading(1), 0, "29.9° and 39.9 km/h: not yet")
+    T.eq(reading(2), 2, "30° and 40 km/h: the thresholds themselves")
+    T.eq(reading(3), 0, "28.1° and 30.1 km/h: not back yet")
+    T.eq(reading(4), 0, "so not again")
+    T.eq(reading(5), 0, "28° and 30 km/h: back, ready again")
+    T.eq(reading(6), 2, "and at the thresholds again")
+end
+
 -- The owner's Shabbat AC (1.10.0): "08:00 to 23:00, hotter than 23°" runs on Friday evening, an
 -- evening scene turns the AC off at 23:20, and on Saturday it runs again from 08:00 once it is that
 -- hot, even after a night that never cooled 2° below.
@@ -564,6 +591,37 @@ function tests.the_weather_now_is_the_forecasts_hour_and_the_api_says_so()
     T.eq(weatherRequests(mock), 1)
 end
 
+-- "Only if" counts its threshold itself, as weather rules do (1.10.1, ADR-074): `hotter_than` 23
+-- is 23° or warmer, `wind_below` 20 is 20 km/h or less. With the forecast's hours interpolated and
+-- rounded to 0.1, exactly 23.0 is common. Just past them, it is skipped.
+function tests.only_if_counts_its_threshold_itself()
+    local ten = at(1, 10, 0)
+    local mock, admin, clock, Scheduler = start(ten)
+    local sceneId = scene(mock, admin)
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    local made = {}
+    for _, onlyIf in ipairs({ { hotter_than = 23 }, { wind_below = 20 }, { hotter_than = 23, wind_below = 20 } }) do
+        made[#made + 1] = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "10:30" }, days = every, only_if = onlyIf, if_no_weather = "skip" })
+    end
+    -- 23° and 20 km/h today, 22.9° and 20.1 km/h from tomorrow.
+    mock.weather = WeatherFake.forecast(WeatherFake.steps({
+        { 0, { temperature = 23, wind = 20 } },
+        { at(2, 0, 0), { temperature = 22.9, wind = 20.1 } },
+    }))
+    T.eq(Scheduler.tick(), 0, "read at 10:00")
+    clock.set(at(1, 10, 30) + 1)
+    T.eq(Scheduler.tick(), 3, "23° is 23° or warmer, 20 km/h is 20 km/h or less")
+    T.eq(T.http(mock, "GET", "/v1/weather", { key = admin }).json.current.temperature, 23)
+    for _, created in ipairs(made) do
+        T.eq(T.http(mock, "GET", "/v1/schedules/" .. created.id, { key = admin }).json.last_run.ran, 1)
+    end
+    clock.set(at(2, 10, 30) + 1)
+    T.eq(Scheduler.tick(), 0, "22.9° and 20.1 km/h: just past them")
+    for _, created in ipairs(made) do
+        T.eq(T.http(mock, "GET", "/v1/schedules/" .. created.id, { key = admin }).json.last_run.skipped_by, "only_if")
+    end
+end
+
 -- Without the internet the saved forecast is the weather, after a restart too, for 5 days after it
 -- was read; then there is none (if_no_weather) until Open-Meteo answers again. Read for another
 -- location it is not used.
@@ -841,6 +899,28 @@ function tests.the_composer_action_prints_every_schedule_and_scene()
     T.contains(text, "all climate in Living Room (11) -> cool 24C")
     T.contains(text, "Main Door (70) -> pulse (skipped when a schedule runs it)")
     T.contains(text, "made in the DirectorLink app")
+end
+
+-- The printout says that the threshold itself counts (1.10.1, ADR-074).
+function tests.the_printout_says_the_threshold_counts()
+    local mock, admin = start(os.time())
+    local sceneId = scene(mock, admin)
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 23, from = "08:30", to = "23:00", once_a_day = false }, days = every })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "wind", above = 40 }, days = { 0, 1, 2, 3, 4 } })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "07:00" }, days = every, only_if = { hotter_than = 28, wind_below = 20 } })
+    local lines = {}
+    local realPrint = print
+    _G.print = function(line)
+        lines[#lines + 1] = line
+    end
+    local ok, err = pcall(ExecuteCommand, "LUA_ACTION", { ACTION = "PRINT_AUTOMATION" })
+    _G.print = realPrint
+    T.truthy(ok, err)
+    local text = table.concat(lines, " | ")
+    T.contains(text, "[on] heat 23C or more outside, 08:30-23:00 -> Evening")
+    T.contains(text, "[on] wind 40 km/h or more, Sun-Thu, once a day -> Evening")
+    T.contains(text, "-> Evening · only if 28C or hotter and wind 20 km/h or less")
 end
 
 -- ---- Shabbat and holidays (the Jewish calendar, ADR-037) --------------------------------------
