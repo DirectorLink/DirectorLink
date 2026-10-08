@@ -161,7 +161,7 @@ since 1.10.1 a `notify` with an `id`).
 | driver → relay | `ping` (plain text) | Keep-alive, every 5 s (10 s from 1.6.0, 25 s before), and if Director polls the connection. |
 | relay → driver | `pong` (plain text) | Answer to `ping`, sent by the runtime without waking the relay's code. |
 | driver → relay | `{"type":"hello","home":"<home_id>","version":"1.10.1","ping_s":5,"features":["scene_links","alerts_gone","users","resend","alert_acks"],"instance":"<32 hex>"}` | First message after connecting. `ping_s`: how often the driver pings, in seconds (since 1.6.0; without it the relay counts 25 s). `features` (since 1.7.0): what the relay may send this driver besides what every version takes; `scene_links`: `link` runs; `users` (1.9.0, ADR-061): `accounts`, and any device of an account may approve that account's new device (the controller lets every user add their own; the home's object keeps the last hello's features as `driver_features`). `alerts_gone` (since 1.9.0): `alerts_gone`. `resend` (1.10.0, ADR-072): a request already sent when a connection ended may come again on the next one (*While the driver reconnects*, below). `alert_acks` (1.10.1, ADR-073): the driver gives each `notify` an `id`, keeps it until the relay answers `notify_result`, and sends it again after a lost connection to a relay that says it answers them (`relay_features`; *Alerts the driver sends*, below). A driver that does not list a feature is never sent its messages. `instance` (1.10.0): a random id the driver makes at each start, so that the relay sends a request again only to the start of the driver it went to. |
-| relay → driver | `{"type":"relay_features","id":"…","features":["alert_acks"]}` | What this relay does besides what every relay does (1.10.1, ADR-073): sent only to a driver whose `hello` lists `alert_acks`, at once, before anything else that `hello` lets the relay send (`accounts`, `alerts_gone`, requests sent again). `alert_acks`: it answers each `notify` that has an `id` with `notify_result`, and pushes an id once. No answer. A relay before 1.10.1 never sends it: the driver takes a relay heard without it (its `accounts` or `alerts_gone`, or a keep-alive tick after a `pong`) as one that does not answer alerts. |
+| relay → driver | `{"type":"relay_features","id":"…","features":["alert_acks"]}` | What this relay does besides what every relay does (1.10.1, ADR-073): sent only to a driver whose `hello` lists `alert_acks`, at once, before anything else that `hello` lets the relay send (`accounts`, `alerts_gone`, requests sent again). `alert_acks`: it answers each `notify` that has an `id` with `notify_result`, and pushes an id once. No answer. A relay before 1.10.1 never sends it: the driver takes a relay heard without it (its `accounts` or `alerts_gone` first, or the second keep-alive tick after a `pong`) as one that does not answer alerts. |
 | driver → relay | `{"type":"keys","ids":["<key id>", …]}` | The ids of the home's API keys (ids only), after `hello` and after every change. The cloud forgets the others; an account whose keys are all gone leaves the home (never its owner). Since 0.11.0. |
 | relay → driver | `{"type":"accounts","id":"…","keys":{"<key id>":["<16 hex>", …]}}` | Which of the home's keys share a Google or Apple account (1.9.0, ADR-061, `docs/ACCOUNTS.md` *Users and accounts*): for each key an account uses (`member_keys`), a tag per account, the first 16 hex digits of SHA-256(`DirectorLink account v1\|<home id>\|<account id>`), at most 4 a key, sorted; a key no account uses is left out. Never an account's id or email. Sent only to a driver whose `hello` lists `users`, after each `keys` message it sent (in the order of its frames), after an account's first sealed request with a key, and after a join, a member removed, a new owner, or an account deleted or left without a sign-in. It replaces what the driver knew; no answer. The driver suggests bringing an account's devices into one user, which an admin confirms; it never moves a device on this message. |
 | relay → driver | `{"type":"e2e","id":"…","envelope":{…}}` | A request sealed by a device (the lock, `docs/ACCOUNTS.md`). |
@@ -180,7 +180,7 @@ since 1.10.1 a `notify` with an `id`).
 | relay → driver | `{"type":"backup_result","id":"…","ok":true,"backup":"<32 hex>","complete":false}` | Kept (`complete` after the last); or `"ok":false` with `INVALID_REQUEST` (also for a character that is not printable ASCII), `NOT_CLAIMED` (no account has claimed the home), `BACKUP_TOO_LARGE`, `BACKUP_LIMIT` (the home started 4 backups this UTC day; its first `daily` one goes besides), `ACCOUNT_BACKUPS_FULL` (the backups that must stay in the owner's account, with this one, would pass 25 MB), `SIZE_MISMATCH`, `OUT_OF_ORDER`, `UPLOAD_NOT_FOUND` or `INTERNAL`: the driver stops and logs why. With no answer within 30 s it stops too. |
 | driver → relay | `{"type":"keys","ids":[…],"admins":["<key id>", …]}` | Since 1.6.0 `keys` also says which of the ids are admin keys (since 1.8.0 the keys of admin people, ADR-054): only accounts that use one get the home's alerts (ADR-047) and may list, download and delete the account's backups of the home (ADR-048), the owner too. Without `admins` (drivers before 1.6.0) the cloud knows no admin: nobody can switch alerts on, and only the home's owner sees its backups. |
 | driver → relay | `{"type":"alert","kind":"schedule_failed","at":"<ISO time>"}` | A scheduled scene failed at `at` (a device refused, or it could not run): the cloud alerts the home's admins, at most three times an hour. Nothing names the schedule, the scene or a device. Sent only while connected; no answer. Since 1.6.0 (ADR-047); from 1.7.0 drivers send `notify` instead, which the cloud cannot read. |
-| driver → relay | `{"type":"notify","at":"<ISO time>","for":{"<key id>":{"iv":"…","ct":"…","mac":"…"}, …},"brief":true}` | An alert the controller made (a doorbell rang, a camera saw someone (1.8.0, ADR-056), a door or gate was opened, the refrigerator's door was left open, a schedule failed), for the keys it names, each part sealed to that key's alert key (ADR-050), every `ct` 684 characters (each detail is padded to one size): the cloud cannot read what it is about; only which keys it names and `brief` tell it some kinds (ADR-050's Consequence). It pushes each part, at once, only to the browsers registered with that key id by an account that uses that key at the home. `brief` (a doorbell, or since 1.8.0 a door's ask-before-opening question, ADR-058): the push service keeps it a minute. At most 50 keys, 60 messages a home an hour. Since 1.7.0; up to 1.10.0 sent only while connected, and never answered. Since 1.10.1 (ADR-073), unless the relay is known not to answer alerts: `"id":"<16 hex>"`, random, answered `notify_result`; sent again after a lost connection with `"resent":1` (2, …: how often it went before), the same id and the same sealed parts; one made while the driver reconnects after a relay that answers alerts goes after the next `relay_features`. |
+| driver → relay | `{"type":"notify","at":"<ISO time>","for":{"<key id>":{"iv":"…","ct":"…","mac":"…"}, …},"brief":true}` | An alert the controller made (a doorbell rang, a camera saw someone (1.8.0, ADR-056), a door or gate was opened, the refrigerator's door was left open, a schedule failed), for the keys it names, each part sealed to that key's alert key (ADR-050), every `ct` 684 characters (each detail is padded to one size): the cloud cannot read what it is about; only which keys it names and `brief` tell it some kinds (ADR-050's Consequence). It pushes each part, at once, only to the browsers registered with that key id by an account that uses that key at the home. `brief` (a doorbell, or since 1.8.0 a door's ask-before-opening question, ADR-058): the push service keeps it a minute. At most 50 keys, 60 messages a home an hour. Since 1.7.0; up to 1.10.0 sent only while connected, and never answered. Since 1.10.1 (ADR-073), unless the relay is known not to answer alerts: `"id":"<16 hex>"`, random, answered `notify_result`; sent again after a lost connection with `"resent":1` (2, …: how often it went before), the same id and the same sealed parts; one made while the driver reconnects, within 2 minutes of losing a connection whose relay answers alerts, goes after the next `relay_features`; one that went to a relay that had not said so yet is not sent again. |
 | relay → driver | `{"type":"notify_result","id":"…","ok":true}` | The relay has that `notify` (1.10.1, ADR-073): the id is recorded before anything is pushed, and an id it had already (the driver sent it again, not knowing it had arrived) is answered the same and not pushed again. `"ok":false` with `INVALID_REQUEST` for one that is not sealed parts for key ids (nothing pushed). Either way the driver keeps it no more. Only for a `notify` with an `id`. |
 | relay → driver | `{"type":"link","id":"…","link":"<8 hex>","secret":"<40 hex>"}` | A scene's link, run from a phone's automation (1.7.0, ADR-051, docs/SCENES.md): not sealed. Sent only to a driver whose `hello` lists `scene_links`, for a home an account has claimed, at most 30 a minute a home, and none from an address whose runs were answered 404 ten times in 10 minutes. The driver checks the secret against the hash it keeps, in constant time, and runs the scene as DirectorLink itself, which opens no door or gate (until 1.8.0: as a member's key would). |
 | driver → relay | `{"type":"link_result","id":"…","ok":true,"result":"ran"}` | How it went: `ran`, `partly` (some devices skipped or failed), `failed` (none ran) or `nothing` (there was nothing to run: its devices were removed in Composer); or `"ok":false` with `NOT_FOUND` (an unknown link, a wrong secret, a scene gone or with doors or gates, the key that made the link gone: all alike), `RATE_LIMITED` (6 runs a minute a link; `retry_s`) or `INTERNAL`. Never names the scene. Since 1.7.0. Since 1.8.0 the link may be a door's ask-to-open link (ADR-058), which opens nothing: `asked` (a `notify` went to its person's devices just before), `waiting`, `nobody`, `doors_off` or `not_asked`; `RATE_LIMITED` also after 10 runs an hour that asked or said why nobody was asked (`retry_s` then up to 3600, which the account service passes on as `Retry-After`). Never names the door. |
@@ -357,8 +357,9 @@ the sends again (at most two, within 10 s) and the wait for the answer (up to 15
 again) all come out of it. Up to 1.10.0 a request that first waited 8 s for the driver then had its
 full 15 s: 23 s, while the app gives up after 20 s (`app/js/remote.js`) and says that DirectorLink's
 servers could not be reached, though the home may still carry it out. Now the relay's own `504
-HOME_TIMEOUT` ("The home did not answer within 18 s") comes first, and the app says the home did
-not answer. The 2 s left are for the Worker's own work (the session, the membership) and the way
+HOME_TIMEOUT` ("The home did not answer within 18 s") comes first, and the app says that the home
+is not connected right now ("Your home is not connected to DirectorLink right now…", as for every
+`HOME_TIMEOUT`). The 2 s left are for the Worker's own work (the session, the membership) and the way
 back. A request that waited for the driver goes with what is left of its 18 s (at least 10 s with
 the production values); one with nothing left is not sent at all.
 
@@ -371,8 +372,15 @@ had died without anyone noticing was lost. Since 1.10.1:
   and is kept in memory (`driver/src/cloud/outbox.lua`) until the relay answers `notify_result`
   with that id. After a reconnect, once the relay says it answers alerts (`relay_features`), what
   was not answered goes again, oldest first: the same frame, with `"resent"`. An alert made while
-  the connection was down, after a relay that answers alerts, is sealed and kept too, and goes then
-  for the first time (up to 1.10.0 it was not made at all).
+  the connection is down, within 2 minutes of losing a connection whose relay answers alerts
+  (`Relay.KEEP_WINDOW_SECONDS`, a timer started at each such loss), is sealed and kept too, and goes
+  then for the first time (up to 1.10.0 it was not made at all); after those 2 minutes it is not
+  made, as in 1.10.0. Only an alert that went to a relay known to answer alerts goes again: one
+  that went while the relay had not said so yet, on a connection that then ended, is let go (that
+  relay may have been one before 1.10.1, which pushed it and ignored its id).
+- **The hourly limits count what was sent.** An alert kept counts toward the controller's limits
+  (60 an hour, 30 of them a camera's) as one sent, and is given back if it is let go before it ever
+  went: an outage uses up no limit.
 - **For a minute or two, twenty at most.** A doorbell's ring and a door's question are kept 60 s
   (they are brief: the push service keeps them only a minute, a visitor does not wait longer, and a
   question has two minutes in all); a camera's alert, a door opened, the refrigerator and a schedule
@@ -388,10 +396,11 @@ had died without anyone noticing was lost. Since 1.10.1:
   the push, so that a failure between the two loses the alert rather than doubling it.
 - **Only to a relay that says so.** The driver lists `alert_acks` in its `hello`, and a relay from
   1.10.1 answers `relay_features` at once, before anything else that `hello` lets it send. A relay
-  heard without it (its `accounts` or `alerts_gone`, which follow the driver's `keys`, or a
-  keep-alive tick after a `pong`) does not answer alerts: what the driver kept is let go, never sent
-  to the next relay (which could push it a second time), and its alerts go once, without an id, as
-  from 1.10.0. A connection that ends before the relay was heard on it decides nothing.
+  heard without it (its `accounts` or `alerts_gone` before any `relay_features`, which follow the
+  driver's `keys`, or the second keep-alive tick after anything was heard, such as a `pong`) does
+  not answer alerts: what the driver kept is let go, never sent to the next relay (which could push
+  it a second time), and its alerts go once, without an id, as from 1.10.0. A connection that ends
+  before the relay was heard on it decides nothing.
 - **Older versions.** A driver before 1.10.1 sends no id and is answered nothing, as before. A
   1.10.1 driver with a relay before 1.10.1 behaves as 1.10.0 (that relay ignores the id of the
   alerts sent before it was heard).
@@ -411,8 +420,11 @@ had died without anyone noticing was lost. Since 1.10.1:
   got before: it ran) or `forgotten`.
 - `alerts sent again` (info, 1.10.1): after a reconnect, how many alerts went (`count`), and how
   many of them had gone before (`resent`). `an alert kept for the next connection` (its `kind`,
-  `keep_s`), `an alert was not acknowledged in time` and `an alert was let go to keep fewer` (its
-  `kind`, and how often it went: `sent`).
+  `keep_s`), `an alert was not acknowledged in time`, `an alert was let go to keep fewer` and `an
+  alert was not sent again: the relay it went to had not said it answers alerts` (its `kind`, and
+  how often it went: `sent`). The alerts log (`category=alerts`) says `alert kept for the next
+  connection` (or `open request kept for the next connection`) for one only kept, rather than
+  `alert sent`.
 
 Remote Status keeps the last loss after it reconnects: `Connected since 14:23 - home 3f9a1c2e -
 last drop 14:22 (connection lost)`. In the relay's own log (Workers Observability) the same loss

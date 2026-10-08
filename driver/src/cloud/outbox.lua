@@ -5,13 +5,16 @@
 -- kept here until the relay answers `notify_result` with that id; after a reconnect to a relay that
 -- said it answers them (`relay_features`, src/cloud/relay.lua), what was not answered goes again on
 -- the new connection, oldest first, marked `resent`. The relay pushes each id once, so an alert
--- that did arrive (only its answer was lost) is not pushed twice.
+-- that did arrive (only its answer was lost) is not pushed twice. Only one that went to a relay
+-- known to answer alerts goes again: a relay before 1.10.1 pushed what it got and ignored its id,
+-- so the next relay would push it a second time.
 --
 -- Bounded: an alert is kept at most its `seconds` (Alerts.KEEP_SECONDS: a minute for a doorbell's
 -- ring or a door's question, two for the others), counted by a timer of its own, so in real time
 -- whatever the controller's clock does, and also while the connection is down; and at most MAX
 -- alerts and MAX_BYTES together (the oldest go first). Memory only: a driver that restarts sends
--- nothing again.
+-- nothing again. An alert let go before it ever went is told so (`letGo`): the hourly limits count
+-- only what was sent (src/cloud/alerts.lua).
 
 local Json = require("src.core.json")
 local Log = require("src.core.log")
@@ -25,7 +28,10 @@ Outbox.MAX = 20
 Outbox.MAX_BYTES = 128 * 1024
 
 local state = {
-    entries = {}, -- oldest first: { id, text, kind, sends, connection, timer }
+    -- Oldest first: { id, text, kind, sends, connection, known, timer, letGo }. `connection`: the
+    -- number of the connection it last went on; `known`: that connection's relay was known then (or
+    -- later, on that connection) to answer alerts.
+    entries = {},
     bytes = 0,
 }
 
@@ -42,6 +48,11 @@ local function removeAt(index)
     state.bytes = state.bytes - #entry.text
     cancel(entry.timer)
     entry.timer = nil
+    -- Never sent (kept while the connection was down): as if it had not been made.
+    if entry.sends == 0 and entry.letGo then
+        pcall(entry.letGo)
+    end
+    entry.letGo = nil
     return entry
 end
 
@@ -56,10 +67,11 @@ end
 
 -- Keeps `message` (a table with its `type`) until the relay answers it: gives it an id
 -- (`message.id`, 16 random hex digits) and makes its text once (the sealed parts are not encoded
--- again). `seconds`: how long it is worth sending; `kind`: for the log only. Returns the entry
--- ({ id, text }) and whether it is kept: not when no timer could bound it, nor when it alone is
--- over MAX_BYTES (it is sent once then, as before 1.10.1).
-function Outbox.add(message, seconds, kind)
+-- again). `seconds`: how long it is worth sending; `kind`: for the log only; `letGo()`, if given:
+-- called when it is let go before it ever went. Returns the entry ({ id, text }) and whether it is
+-- kept: not when no timer could bound it, nor when it alone is over MAX_BYTES (it is sent once
+-- then, as before 1.10.1).
+function Outbox.add(message, seconds, kind, letGo)
     message.id = Random.hex(16)
     local entry = { id = message.id, kind = kind, sends = 0 }
     entry.text = Json.encode(message)
@@ -82,33 +94,52 @@ function Outbox.add(message, seconds, kind)
         local dropped = removeAt(1)
         Log.info("relay", "an alert was let go to keep fewer", { kind = dropped.kind, sent = dropped.sends })
     end
-    return entry, indexOf(entry) ~= nil
+    local kept = indexOf(entry) ~= nil
+    if kept then
+        entry.letGo = letGo
+    end
+    return entry, kept
 end
 
 -- The text to write for `entry` now on the connection numbered `connection`: as it was made, or,
--- when it went before, marked `resent` with how many times.
-function Outbox.text(entry, connection)
+-- when it went before, marked `resent` with how many times. `known`: that connection's relay is
+-- known to answer alerts (it said so); while it has not said yet, false.
+function Outbox.text(entry, connection, known)
     local text = entry.text
     if entry.sends > 0 then
         text = '{"resent":' .. entry.sends .. "," .. text:sub(2)
     end
     entry.sends = entry.sends + 1
     entry.connection = connection
+    entry.known = known == true
     return text
 end
 
--- Sends again, with `send(text)`, oldest first, every alert kept that has not gone on the connection
--- numbered `connection` (it went on one that ended, or none was open when it was made). Returns how
--- many, and how many of them had gone before.
+-- The relay of the connection numbered `connection` said it answers alerts: what went on it is known
+-- to have gone to such a relay, and every other alert kept goes now, with `send(text)`, oldest
+-- first: one made while no connection was open, and one that went on a connection that ended, if
+-- that connection's relay was known to answer alerts. One that went to a relay not known to (it
+-- had said nothing yet when the alert went, and may be one before 1.10.1, which pushed it) is let
+-- go: sent to this relay it could be pushed a second time. Returns how many went, and how many of
+-- them had gone before.
 function Outbox.resend(connection, send)
     local count, again = 0, 0
-    for _, entry in ipairs(state.entries) do
-        if entry.connection ~= connection then
+    local index = 1
+    while index <= #state.entries do
+        local entry = state.entries[index]
+        if entry.connection == connection then
+            entry.known = true
+            index = index + 1
+        elseif entry.sends == 0 or entry.known then
             if entry.sends > 0 then
                 again = again + 1
             end
             count = count + 1
-            send(Outbox.text(entry, connection))
+            send(Outbox.text(entry, connection, true))
+            index = index + 1
+        else
+            removeAt(index)
+            Log.info("relay", "an alert was not sent again: the relay it went to had not said it answers alerts", { kind = entry.kind, sent = entry.sends })
         end
     end
     return count, again

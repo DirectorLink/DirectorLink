@@ -213,9 +213,9 @@ function Alerts.load()
 end
 
 -- options: connected() and tell(message) (the relay connection; false while not connected);
--- mayAlert() and alert(message, seconds, kind) (1.10.1, ADR-073: also while it reconnects to a
--- relay that answers alerts, which are then kept for its next connection: Relay.alert), used when
--- given; keys
+-- mayAlert() and alert(message, seconds, kind, letGo) (1.10.1, ADR-073: also while it reconnects
+-- to a relay that answers alerts, which are then kept for its next connection: Relay.alert, which
+-- says "sent" or "kept"), used when given; keys
 -- (src/auth/keys.lua), homeId(), available() (the lock passed its self-test), present(kind, key)
 -- (the home has what the kind is about: a doorbell, a camera with alerts that `key` may see, a door,
 -- a refrigerator); for deviceEvent, below.
@@ -484,6 +484,18 @@ function Alerts.plaintext(detail)
     return text .. string.rep(" ", Alerts.DETAIL_BYTES - #text)
 end
 
+-- An alert counted at `at` in the hourly list `state[name]` is given back: it was kept for the next
+-- connection and let go before it ever went (1.10.1, ADR-073).
+local function giveBack(name, at)
+    local list = state[name]
+    for index = #list, 1, -1 do
+        if list[index] == at then
+            table.remove(list, index)
+            return
+        end
+    end
+end
+
 -- Whether `name` ("kind:id") was alerted less than `seconds` ago; if not, it is now.
 local function tooSoon(name, seconds, now)
     local last = state.last[name]
@@ -498,16 +510,17 @@ end
 -- `at` (a time, or the ISO text of one; default `now`). `brief`: kept by the push services a minute
 -- only (a doorbell). `only` (a set of key ids): to those keys instead, whatever their role and kinds,
 -- if their device switched alerts on (an open request, ADR-058). `allowed(key)`: which of the keys
--- may get this one (a camera's: the keys that may see that camera, ADR-056). Returns how many keys
--- it went to and their ids (a set), or nil and why not.
-local function send(detail, now, brief, at, only, allowed)
+-- may get this one (a camera's: the keys that may see that camera, ADR-056). `also`: the name of
+-- another hourly list in `state` it counts in (a camera's). Returns how many keys it went to, their
+-- ids (a set) and whether it was only kept for the next connection, or nil and why not.
+local function send(detail, now, brief, at, only, allowed, also)
     local options = state.options
     if not state.loaded or not state.readable or not options then
         return nil, "not ready"
     end
     -- Only while connected: an unreachable home is the account service's own alert (ADR-047). Since
-    -- 1.10.1 also while the driver reconnects to a relay that answers alerts (ADR-073): kept for a
-    -- minute or two, and sent once it is back.
+    -- 1.10.1 also while the driver reconnects to a relay that answers alerts, for two minutes after
+    -- the connection was lost (ADR-073): kept for a minute or two, and sent once it is back.
     local reachable = options.mayAlert or options.connected
     if reachable and not reachable() then
         return nil, "not connected"
@@ -556,9 +569,16 @@ local function send(detail, now, brief, at, only, allowed)
         message.brief = true
     end
     -- With an id, until the relay answers it, and again after a lost connection (1.10.1, ADR-073).
+    -- One kept for the next connection counts toward the hourly limits as one sent, and is given back
+    -- if it is let go before it ever went: only what was sent counts.
     local told
     if options.alert then
-        told = options.alert(message, Alerts.KEEP_SECONDS[detail.kind] or Alerts.KEEP_DEFAULT_SECONDS, detail.kind)
+        told = options.alert(message, Alerts.KEEP_SECONDS[detail.kind] or Alerts.KEEP_DEFAULT_SECONDS, detail.kind, function()
+            giveBack("hour", now)
+            if also then
+                giveBack(also, now)
+            end
+        end)
     else
         told = options.tell(message)
     end
@@ -566,12 +586,22 @@ local function send(detail, now, brief, at, only, allowed)
         return nil, "not connected"
     end
     state.hour[#state.hour + 1] = now
-    return count, ids
+    if also then
+        state[also][#state[also] + 1] = now
+    end
+    return count, ids, told == "kept"
 end
 
-local function sent(kind, count, why)
+-- `kept`: it was only kept for the next connection (1.10.1, ADR-073); it may never go.
+local function sent(kind, count, why, kept)
     if count then
-        Log.info("alerts", count > 0 and "alert sent" or "alert for nobody", { kind = kind, keys = count })
+        local said = "alert sent"
+        if count == 0 then
+            said = "alert for nobody"
+        elseif kept then
+            said = "alert kept for the next connection"
+        end
+        Log.info("alerts", said, { kind = kind, keys = count })
     else
         Log.info("alerts", "alert not sent", { kind = kind, why = why })
     end
@@ -624,13 +654,9 @@ function Alerts.camera(device, now)
     local detail = deviceDetail("camera", device)
     local alert = type(device.state) == "table" and device.state.alert or nil
     detail.what = type(alert) == "table" and type(alert.what) == "string" and alert.what or "other"
-    local count, why = send(detail, now, false, nil, nil, function(key)
+    return sent("camera", send(detail, now, false, nil, nil, function(key)
         return Access.canSeePictures(key, device)
-    end)
-    if count and count > 0 then
-        state.cameras[#state.cameras + 1] = now
-    end
-    return sent("camera", count, why)
+    end, "cameras"))
 end
 
 -- The history recorded a door or gate opened (`entry`, src/core/activity.lua: a pulse, a relay held
@@ -706,9 +732,15 @@ function Alerts.openRequest(device, request, keyIds, now)
     detail.request = request.id
     detail.seconds = request.seconds
     detail.via = cut(request.label, Alerts.MAX_NAME)
-    local count, ids = send(detail, now, true, nil, keyIds or {})
+    local count, ids, kept = send(detail, now, true, nil, keyIds or {})
     if count then
-        Log.info("alerts", count > 0 and "open request sent" or "open request for nobody", { keys = count, device_id = device.id })
+        local said = "open request sent"
+        if count == 0 then
+            said = "open request for nobody"
+        elseif kept then
+            said = "open request kept for the next connection"
+        end
+        Log.info("alerts", said, { keys = count, device_id = device.id })
     else
         Log.info("alerts", "open request not sent", { why = ids, device_id = device.id })
     end

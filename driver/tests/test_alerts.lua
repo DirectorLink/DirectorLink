@@ -970,8 +970,8 @@ function tests.an_alert_made_while_the_driver_reconnects_goes_after_the_hello()
 end
 
 -- A relay before 1.10.1 never says it answers alerts. Once it is heard without saying so (what it
--- sends after the driver's keys, such as `alerts_gone`; or a keep-alive tick after a pong), what the
--- driver kept is let go, and the alerts that follow go once, without an id, as from 1.10.0;
+-- sends after the driver's keys, such as `alerts_gone`; or the second keep-alive tick after a pong),
+-- what the driver kept is let go, and the alerts that follow go once, without an id, as from 1.10.0;
 -- nothing goes again after a reconnect, and nothing is kept while the connection is down.
 function tests.a_relay_that_does_not_answer_alerts_gets_each_once_as_before()
     local home = home()
@@ -1000,11 +1000,13 @@ function tests.a_relay_that_does_not_answer_alerts_gets_each_once_as_before()
     T.eq(#home.notified(), 0)
 
     -- The next connection, to the same relay: an alert with an id again, until the relay is heard (a
-    -- pong) and the keep-alive's tick comes without its word.
+    -- pong) and two keep-alive ticks come without its word.
     home.clock.now = home.clock.now + 31
     Mock.fireDeviceEvent(home.mock, 110, 102)
     T.truthy(home.notified()[1].message.id)
     ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, "pong"))
+    keepalive(home.mock).callback()
+    T.eq(Outbox().counts(), 1, "one tick: not decided yet")
     keepalive(home.mock).callback()
     T.eq(Outbox().counts(), 0, "let go")
     -- Even if the next relay answers alerts (the Worker updated meanwhile), what went to this one is
@@ -1012,6 +1014,206 @@ function tests.a_relay_that_does_not_answer_alerts_gets_each_once_as_before()
     Harness.reconnect(home.mock, home.connection)
     answersAlerts()
     T.eq(#home.notified(), 0)
+end
+
+-- The window after a lost connection while alerts are kept (Relay.KEEP_WINDOW_SECONDS), if open.
+local function keepWindow(mock)
+    for index = #mock.timers, 1, -1 do
+        local timer = mock.timers[index]
+        if not timer.repeating and not timer.fired and not timer.cancelled and timer.delay == 120000 and (timer.source or ""):find("cloud/relay", 1, true) then
+            return timer
+        end
+    end
+    return nil
+end
+
+-- The alerts log's last line.
+local function lastAlertLine(home)
+    local items = T.http(home.mock, "GET", "/v1/logs?category=alerts&limit=10", { key = home.admin }).json.items
+    return items[#items]
+end
+
+-- 1.10.1 review (rv-acks, finding 1): alerts made while the connection is down are kept only within
+-- two minutes of losing a connection whose relay answered alerts, by a timer of its own; after it,
+-- as in 1.10.0, an alert is not made at all (nothing sealed, nothing kept, "not connected"). The
+-- window opens again at the next connection lost after its relay said it answers alerts, not after
+-- one that ended before it said anything. What was kept before the window ended still goes within
+-- its own time.
+function tests.alerts_are_kept_only_within_two_minutes_of_losing_the_connection()
+    T.eq(require("src.cloud.relay").KEEP_WINDOW_SECONDS, 120)
+    local home = home()
+    home.on("admin")
+    answersAlerts()
+    home.notified()
+    T.eq(keepWindow(home.mock), nil, "connected: no window")
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    local window = keepWindow(home.mock)
+    T.truthy(window, "the window opens when the connection is lost")
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 1, "kept")
+    T.eq(lastAlertLine(home).message, "alert kept for the next connection")
+
+    window.fired = true
+    window.callback()
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 1, "after the window: nothing more kept")
+    T.eq(#keeping(home.mock), 1, "nor sealed for later")
+    local last = lastAlertLine(home)
+    T.eq(last.message, "alert not sent")
+    T.eq(last.data.why, "not connected")
+
+    -- Back within the first ring's minute: it goes; the window does not open again for a connection
+    -- that ends before its relay says anything.
+    Harness.reconnect(home.mock, home.connection)
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    T.eq(keepWindow(home.mock), nil, "nothing heard on it: no window")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 1)
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 1, "the ring kept before the window ended")
+    -- Lost again after a relay that said it answers alerts: a new window.
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    T.truthy(keepWindow(home.mock))
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 2)
+    T.eq(lastAlertLine(home).message, "alert kept for the next connection")
+    -- A door's question too (an ask-to-open link's, ADR-058) says it was kept, not sent.
+    local count = require("src.cloud.alerts").openRequest({ id = 300, name = "Gate", room_name = "Yard", room_id = 3 }, { id = "r1", seconds = 120, label = "Courier" }, { [home.adminId] = true })
+    T.eq(count, 1)
+    T.eq(lastAlertLine(home).message, "open request kept for the next connection")
+    T.eq(Outbox().counts(), 3)
+    -- Remote access switched off: no window, nothing kept.
+    require("src.cloud.relay").stop()
+    T.eq(keepWindow(home.mock), nil)
+    T.eq(Outbox().counts(), 0)
+end
+
+-- 1.10.1 review (rv-acks, finding 1): an alert kept for the next connection and let go before it
+-- ever went uses up no hourly limit (PER_HOUR, CAMERA_PER_HOUR): only what was sent counts. Here the
+-- window's timer is not run, so that every alert of a long outage is kept and let go: once back,
+-- a camera's alert and a ring still go (up to the review: "limit" for an hour).
+function tests.an_alert_kept_and_let_go_uses_up_no_hourly_limit()
+    local home = home(nil, Mock.withHikvisionCameras(Mock.project()))
+    home.on("admin", { camera = true })
+    answersAlerts()
+    home.notified()
+    home.clock.now = os.time() + 3600
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    for _ = 1, 30 do
+        home.clock.now = home.clock.now + 61
+        T.eq(Mock.hikvisionAlert(home.mock, 150, "Person"), 1)
+        Mock.fireDeviceEvent(home.mock, 110, 102)
+        for _, timer in ipairs(keeping(home.mock)) do
+            timer.fired = true
+            timer.callback()
+        end
+    end
+    T.eq(Outbox().counts(), 0, "all let go")
+    T.eq(lastAlertLine(home).message, "alert kept for the next connection", "kept, not sent")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 0, "nothing left to send")
+    home.clock.now = home.clock.now + 61
+    T.eq(Mock.hikvisionAlert(home.mock, 150, "Person"), 1)
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(#home.notified(), 2, "a camera's alert and a ring")
+    local logs = T.http(home.mock, "GET", "/v1/logs?category=alerts&limit=10", { key = home.admin }).body
+    T.truthy(not logs:find('"limit"', 1, true), logs)
+
+    -- One kept and sent once the connection is back counts, as one sent while connected.
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    local ring = home.notified()[1].message
+    Harness.relaySays({ type = "notify_result", id = ring.id, ok = true })
+    for _ = 1, 57 do
+        home.clock.now = home.clock.now + 31
+        Mock.fireDeviceEvent(home.mock, 110, 102)
+    end
+    T.eq(#home.notified(), 57, "60 in the hour with the camera's alert, the ring and the ring kept")
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(#home.notified(), 0, "the 61st waits")
+end
+
+-- 1.10.1 review (rv-acks, finding 3): a relay's `relay_features` that comes after the first
+-- keep-alive tick that follows a pong (a slow wake of the relay) still counts: the relay is taken as
+-- one that does not answer alerts only at the second tick, so what was kept through the blink goes.
+function tests.a_late_word_from_the_relay_still_gets_what_was_kept()
+    local home = home()
+    home.on("admin")
+    answersAlerts()
+    home.notified()
+    home.clock.now = os.time() + 3600
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(Outbox().counts(), 1)
+    Harness.reconnect(home.mock, home.connection)
+    ReceivedFromNetwork(6001, 443, Harness.serverFrame(1, "pong"))
+    keepalive(home.mock).callback()
+    T.eq(Outbox().counts(), 1, "one tick after a pong decides nothing")
+    answersAlerts()
+    local again = home.notified()
+    T.eq(#again, 1, "the ring kept through the blink goes")
+    T.eq(again[1].message.resent, nil)
+end
+
+-- 1.10.1 review (rv-acks, finding 2): an alert that went on a connection whose relay had not said it
+-- answers alerts (here after a relay before 1.10.1), which then ended before it said anything, is
+-- not sent again to the next relay even if that one answers alerts: the relay it went to may have
+-- been one before 1.10.1, which pushed it and ignored its id, and the next one would push it a
+-- second time. One that went before its relay said so, on a connection whose relay then did, is
+-- sent again after a cut as any other.
+function tests.an_alert_that_went_to_a_relay_not_known_to_answer_alerts_is_not_sent_again()
+    local home = home()
+    home.on("admin")
+    Harness.relaySays({ type = "alerts_gone", id = "g1", keys = { "ffffffff" } })
+    home.notified()
+    Harness.reconnect(home.mock, home.connection)
+    home.clock.now = os.time() + 3600
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local ring = home.notified()[1].message
+    T.truthy(ring.id, "not known yet: with an id")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 0, "not sent again")
+    T.eq(Outbox().counts(), 0, "and let go")
+    T.contains(T.http(home.mock, "GET", "/v1/logs?category=relay&limit=20", { key = home.admin }).body, "an alert was not sent again")
+
+    -- Went before the word, on a connection whose relay then said it answers alerts: sent again.
+    Harness.reconnect(home.mock, home.connection)
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    local early = home.notified()[1].message
+    answersAlerts()
+    T.eq(#home.notified(), 0, "it went on this connection")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    local again = home.notified()
+    T.eq(#again, 1)
+    T.eq(again[1].message.id, early.id)
+    T.eq(again[1].message.resent, 1)
+    Harness.relaySays({ type = "notify_result", id = early.id, ok = true })
+
+    -- Also after a relay that answered alerts: the next connection's relay may be another version
+    -- (a Worker rolled back, or a gradual deploy), so one that went before it said anything and then
+    -- died is let go too. A loss, as in 1.10.0, rather than a second push.
+    OnConnectionStatusChanged(6001, 443, "OFFLINE")
+    Harness.reconnect(home.mock, home.connection)
+    home.clock.now = home.clock.now + 31
+    Mock.fireDeviceEvent(home.mock, 110, 102)
+    T.eq(#home.notified(), 1, "went on the new connection before its relay said anything")
+    Harness.reconnect(home.mock, home.connection)
+    answersAlerts()
+    T.eq(#home.notified(), 0)
+    T.eq(Outbox().counts(), 0)
 end
 
 -- How long and how many: a ring (and a door's question) a minute, a camera's alert two (each by a

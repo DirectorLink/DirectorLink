@@ -1,11 +1,14 @@
 // Every request through the relay ends within 18 s of reaching the home's object (1.10.1, ADR-073,
 // cloud/src/home-relay.js REQUEST_BUDGET_MS, docs/RELAY.md): waiting for the driver to come back,
 // sending, sending again and the answer together, so that the relay's own 504 HOME_TIMEOUT reaches
-// the app before its 20 s (app/js/remote.js) run out, and the app says the home did not answer
-// rather than that DirectorLink's servers could not be reached. Up to 1.10.0 a request that first
+// the app before its 20 s (app/js/remote.js) run out, and the app says the home is not connected
+// right now (errors.remote.homeOffline) rather than that DirectorLink's servers could not be reached. Up to 1.10.0 a request that first
 // waited 8 s for the driver then waited 15 s for its answer: 23 s. Pinned with REQUEST_TIMEOUT_MS
-// above the budget (30 s) and the production RECONNECT_WAIT_MS (8 s). The Worker under
-// `wrangler dev`, a fake Google and a fake controller that takes requests and never answers.
+// above the budget (30 s), RECONNECT_WAIT_MS 12 s (8 s in production) and RESEND_WITHIN_MS 30 s
+// (10 s in production): with the production values a request is sent again within 10 s and then
+// waits at most 8 s, so the budget could never be what ends a request sent again, and a test with
+// them would pass without it. The Worker under `wrangler dev`, a fake Google and a fake controller
+// that takes requests and never answers.
 //   node --test tests/cloud/budget.test.mjs
 
 import assert from "node:assert/strict";
@@ -22,7 +25,8 @@ const TOKEN = "budget-test-token";
 const BUDGET_MS = 18000; // REQUEST_BUDGET_MS
 const APP_TIMEOUT_MS = 20000; // app/js/remote.js TIMEOUT_MS
 const TIMEOUT_MS = 30000; // REQUEST_TIMEOUT_MS for this run: above the budget
-const RECONNECT_WAIT_MS = 8000; // as in production
+const RECONNECT_WAIT_MS = 12000; // 8000 in production: here the wait for the driver outlasts the budget
+const RESEND_WITHIN_MS = 30000; // 10000 in production: here a request may still go again when its budget ends
 const DANA = { sub: "google-dana-budget", email: "dana-budget@example.com", name: "Dana" };
 const FEATURES = ["scene_links", "alerts_gone", "users", "resend", "alert_acks"];
 
@@ -35,7 +39,7 @@ before(async () => {
   google = await startFakeGoogle();
   worker = await startWorker({
     migrate: true,
-    devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS, RECONNECT_WAIT_MS },
+    devVars: { ...googleVars(google, APP, "https://api.directorlink.test"), TEST_TOKEN: TOKEN, REQUEST_TIMEOUT_MS: TIMEOUT_MS, RECONNECT_WAIT_MS, RESEND_WITHIN_MS },
   });
   dana = await signInAs(worker.http, google, DANA, APP);
 }, { timeout: STARTUP_MS + 10_000 });
@@ -129,8 +133,8 @@ test("every request ends within 18 s of reaching the relay, before the app's 20 
       assert.equal(state.got.length, 1, "it went to the home");
       return result;
     })(),
-    // The driver had just lost its connection: the request waits for it (7 s here), goes on its
-    // next connection and gets what is left of the 18 s (up to 1.10.0: 7 s and then 15 s more).
+    // The driver had just lost its connection: the request waits for it (11 s here), goes on its
+    // next connection and gets what is left of the 18 s (up to 1.10.0: 11 s and then 15 s more).
     (async () => {
       const state = await claimedHome();
       state.connection.destroy();
@@ -164,19 +168,32 @@ test("every request ends within 18 s of reaching the relay, before the app's 20 
   assertWithinBudget(testRequest, "a test request");
 });
 
-// A request sent again after a lost connection (ADR-072) keeps to the same budget: it was sent again
-// within 10 s of reaching the relay and waits 8 s at most for its answer, never past the 18 s.
+// A request sent again after a lost connection (ADR-072) keeps to the same budget. Its connection
+// is lost 10 s after it reached the relay: the wait for the driver's next hello ends at the budget
+// (8 s later, not RECONNECT_WAIT_MS's 12 s: home-relay.js lost), and once sent again so does the
+// wait for its answer (4 s, not RESEND_TIMEOUT_MS's 8 s: resendLost). Without either, 22 s.
 test("a request sent again keeps to the same budget", { timeout: 60_000 }, async () => {
-  const state = await claimedHome();
-  const pending = press(state);
-  await eventually(() => state.got.length === 1, "the request to reach the first connection");
-  await sleep(1500);
-  state.connection.destroy();
-  await sleep(200);
-  await state.connect();
-  const result = await pending;
-  assert.equal(state.got.length, 2, "sent again");
-  assert.equal(state.got[1].resent, 1);
-  assert.equal(result.status, 504, result.text);
-  assert.ok(result.ms < BUDGET_MS + 1500, `answered at ${result.ms} ms`);
+  const lostLate = async (back) => {
+    const state = await claimedHome();
+    const started = Date.now();
+    const pending = press(state);
+    await eventually(() => state.got.length === 1, "the request to reach the first connection");
+    await sleep(started + 10000 - Date.now());
+    state.connection.destroy();
+    if (back) {
+      await sleep(started + 14000 - Date.now());
+      await state.connect();
+    }
+    return { state, result: await pending };
+  };
+  const [neverBack, sentAgain] = await Promise.all([lostLate(false), lostLate(true)]);
+  // The driver does not come back: it fails at the budget, as one that did not come back in time.
+  const failed = neverBack.result;
+  assert.equal(failed.status, 502, failed.text);
+  assert.equal(failed.json.code, "HOME_DISCONNECTED");
+  assert.ok(failed.ms >= BUDGET_MS - 500 && failed.ms < BUDGET_MS + 1500, `ended at ${failed.ms} ms, not RECONNECT_WAIT_MS after the loss`);
+  // It comes back 4 s after the loss: sent again, and its wait for the answer ends at the budget.
+  assert.equal(sentAgain.state.got.length, 2, "sent again");
+  assert.equal(sentAgain.state.got[1].resent, 1);
+  assertWithinBudget(sentAgain.result, "a request sent again");
 });
