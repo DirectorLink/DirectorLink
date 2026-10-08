@@ -2,6 +2,32 @@
 
 ## Current release
 
+`v1.10.1` — Alerts after a connection blink and the 18 s budget (1101c), parts of doors and doorbells (1101b), a weather threshold itself counts (1101a). The Worker changes (deploy it before updating DirectorLink; it works with 1.9.0 and 1.10.0 as before); no D1 migration.
+
+## 1101c. Alerts after a connection blink, and the 18 s budget (1.10.1)
+
+1. After deploying the Worker but **before** updating the driver (still 1.10.0): ring the doorbell. The phone gets one alert as before; Workers Observability shows `notify_sent` with no `resent` and no `notify_again`.
+2. Update the driver to 1.10.1. Close the app on the phone, alerts on with Doorbell chosen. Unplug the controller's network cable, ring the doorbell within about 20 s, plug the cable back in: the ring arrives once, a few seconds after the controller reconnects. The controller's relay log (`/v1/logs?category=relay`) says an alert was kept for the next connection (or went into the dead one), then that alerts were sent again; Workers Observability shows `notify_sent` with `resent`, or `notify_again`.
+3. The same with the cable out for about 75 s: the ring does **not** arrive (the log says an alert was not acknowledged in time); a camera alert in the same window (Camera alerts chosen) **does** arrive.
+4. Over a few days: no notification ever shows twice for one event. A `notify_again` line in Workers Observability is a duplicate that was prevented.
+5. Budget: every `message_timeout` in Workers Observability has `total_ms` at or below 18000. A tap while the controller reconnects either works or shows that the home did not answer, never that DirectorLink's servers could not be reached (unless the phone itself is offline).
+6. An ask-to-open link run from the phone's shortcut while the controller is unplugged for a few seconds: the question reaches its person once, after the reconnect.
+
+## 1101b. Parts of doors and doorbells (1.10.1)
+
+1. Open the DoorBird's room, and the room of any gate controller that drives a KNX relay: "other devices" no longer lists the DoorBird's button or intercom, the controller's button, or an alarm partition shown on Home; the gate appears once under Doors & gates.
+2. In the API console, `GET /v1/devices` still lists them, each with `part_of` set to the doorbell's or door's id.
+
+## 1101a. A weather threshold itself counts (1.10.1)
+
+1. A time schedule for the next minute with "Only if it's N° or warmer", N being today's temperature on the Schedules weather card rounded down: it runs. With N+1 it is skipped ("the weather didn't match").
+2. The same with "the wind is N km/h or less" at the wind shown: it runs.
+3. The editor: Weather → Heat shows "23°" with "or hotter" under it and "Runs again only after it has cooled to 21° or less"; Only if shows "or warmer" and "or less"; the summary matches. Also in Hebrew, Spanish and Italian.
+4. Composer, Print Schedules and Scenes: `heat 23C or more outside`, `only if 28C or hotter`.
+5. The owner's "23° or hotter, 08:30–23:00, only on Shabbat" rule runs as in 1.10.0.
+
+## Previous release
+
 `v1.10.0` — A press during a connection blink (1100i), weather from a saved forecast (1100h), On, as it was (1100g), relay door and gate controllers (1100f), Spanish, Italian and Appearance and language (1100e), commands that do more in four languages (1100d), heaters left as they are (1100c), one agreement for every DirectorLink camera driver (1100b), the website (1100a). The Worker changes (deploy it before updating DirectorLink; it works with 1.9.0 as before); no D1 migration.
 ## 1100i. A press during a connection blink (1.10.0)
 
