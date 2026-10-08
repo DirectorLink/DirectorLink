@@ -572,7 +572,7 @@
         h("div", { class: "card sched" }, h("span", { class: "dev-icon" }, icon("sun")),
           h("div", {}, h("div", { class: "dev-name" }, "Every day at sunset"), h("div", { class: "scene-steps" }, "Turns on the Garden and Entrance lights"), h("span", { class: "tag" }, "Next: today 18:20"))),
         h("div", { class: "card sched" }, h("span", { class: "dev-icon" }, icon("climate")),
-          h("div", {}, h("div", { class: "dev-name" }, "When it’s hotter than 30° outside"), h("div", { class: "scene-steps" }, "Closes the shutters, 12:00–17:00"))))),
+          h("div", {}, h("div", { class: "dev-name" }, "When it’s 30° or hotter outside"), h("div", { class: "scene-steps" }, "Closes the shutters, 12:00–17:00"))))),
     ];
   }
   function camerasScreen() {
