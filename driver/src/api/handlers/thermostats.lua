@@ -3,12 +3,15 @@ local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local Access = require("src.auth.access")
+local Units = require("src.adapters.thermostat_units")
 
 local Thermostats = {}
 
 local MODES = { off = true, heat = true, cool = true, auto = true }
 local FAN_SPEEDS = { low = true, medium = true, high = true, auto = true, on = true, circulate = true }
 local SETPOINTS = { "heat_setpoint", "cool_setpoint" }
+-- 1.10.2 (ADR-076): the same in °F, for any thermostat; a whole °F reaches a °F thermostat exactly.
+local IN_FAHRENHEIT = { "target_temperature", "heat_setpoint", "cool_setpoint" }
 
 local function contains(list, value)
     for _, item in ipairs(list) do
@@ -30,6 +33,41 @@ local function findThermostat(ctx)
         return nil, Problem.notFound("Thermostat", id)
     end
     return device
+end
+
+-- The request with its °F temperatures as °C (1.10.2): `target_temperature_f` is
+-- `target_temperature`, and so on, unrounded, so a whole °F comes back exact on a °F thermostat
+-- (Units.toNative). The range is the °C one in whole °F, inside it. Either scale for a value, not
+-- both. Returns the request as the rest of the handler reads it, or nil and a problem.
+local function fromFahrenheit(body, options)
+    local converted = nil
+    local low, high = Units.fahrenheitRange(options.min, options.max)
+    for _, field in ipairs(IN_FAHRENHEIT) do
+        local value = body[field .. "_f"]
+        if value ~= nil then
+            if body[field] ~= nil then
+                return nil, Problem.invalidRequest("Send " .. field .. " or " .. field .. "_f, not both")
+            end
+            if type(value) ~= "number" or value ~= value or value < low or value > high then
+                return nil, Problem.invalidField(field .. "_f", field .. "_f must be a number from " .. low .. " to " .. high)
+            end
+            converted = converted or {}
+            converted[field] = Units.fromFahrenheit(value)
+        end
+    end
+    if not converted then
+        return body
+    end
+    local request = {}
+    for key, value in pairs(body) do
+        if not key:match("_f$") then
+            request[key] = value
+        end
+    end
+    for field, value in pairs(converted) do
+        request[field] = value
+    end
+    return request
 end
 
 function Thermostats.list(ctx)
@@ -71,12 +109,23 @@ function Thermostats.update(ctx)
         fan_speed = true,
         heat_setpoint = true,
         cool_setpoint = true,
+        target_temperature_f = true,
+        heat_setpoint_f = true,
+        cool_setpoint_f = true,
     }, true)
     if problem then
         return problem
     end
+    -- A temperature sensor (1.10.2) has nothing to set.
+    if Views.isSensor(device) then
+        return Problem.new(409, "NOT_SUPPORTED", "This is a temperature sensor; it has nothing to set")
+    end
 
     local options = Views.thermostatOptions(device)
+    body, problem = fromFahrenheit(body, options)
+    if problem then
+        return problem
+    end
     local commands = {}
 
     if body.mode ~= nil then

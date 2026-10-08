@@ -52,6 +52,9 @@ info:
 
     **Conventions.** JSON properties are snake_case, times are ISO 8601 in UTC, temperatures are
     degrees Celsius, and IDs are the numeric IDs of the Control4 project (treat them as opaque).
+    Since 1.10.2 a thermostat says its scale (`scale`) and one in Fahrenheit also gives its values in
+    °F (`*_f`), as Control4 reports them; `temperature_scale` in `GET /v1/system` is the project's,
+    for what no one thermostat says (the weather, weather schedules).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -2022,7 +2025,10 @@ paths:
         the other when needed to keep `setpoint_deadband`; both together must already be that far
         apart (400 `INVALID_FIELD`); `target_temperature` with a setpoint is 400 `INVALID_REQUEST`.
         Nothing is sent when a request is refused. Auto example:
-        `{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}`.
+        `{"mode": "auto", "heat_setpoint": 20, "cool_setpoint": 24}`. Since 1.10.2 each temperature
+        may be sent in °F instead (`target_temperature_f`, `heat_setpoint_f`, `cool_setpoint_f`, not
+        with its °C field): a °F thermostat gets exactly that °F, e.g. `{"target_temperature_f": 69}`.
+        A temperature sensor (`sensor: true`) has nothing to set: 409 `NOT_SUPPORTED`.
       requestBody:
         required: true
         content:
@@ -3929,6 +3935,14 @@ components:
               description: For admin keys only, rounded to two decimals; null for other roles.
             timezone:
               type: [string, "null"]
+        temperature_scale:
+          type: string
+          enum: [C, F]
+          description: >-
+            The project's temperature scale, for what no one thermostat says (the weather, weather
+            schedules' thresholds, "only if") — Composer's, as Director reports it; else the one most
+            thermostats work in; else C. Since 1.10.2 (ADR-076); missing before (then °C).
+            Thresholds stay °C in the API.
         inventory:
           type: object
           description: What the home has; for a member (1.8.0, ADR-054) only what they see, their rooms and the devices there that they see.
@@ -4544,7 +4558,11 @@ components:
             setpoints (left out where they come closer than the thermostat's deadband);
             single-setpoint thermostats take `heat_setpoint` in heat and `cool_setpoint` in cool.
             On dual-setpoint thermostats `target_temperature` sets the setpoint of the step's mode
-            (or of the current mode), and is left out in auto and off.
+            (or of the current mode), and is left out in auto and off. Temperatures are °C; a
+            thermostat in °F gets the whole °F nearest, so a client in °F sends its whole °F as °C to
+            0.1 (69 °F as 20.6) and the thermostat gets exactly that °F (1.10.2). A temperature
+            sensor (`sensor: true`) is skipped (`NOT_SUPPORTED`), and a step for a room's climate
+            leaves it out.
           type: object
           additionalProperties: false
           properties:
@@ -4992,7 +5010,7 @@ components:
           enum: [heat, wind, rain]
         above:
           type: number
-          description: The threshold, which itself counts — heat `above` °C or hotter, wind `above` km/h or more.
+          description: The threshold, which itself counts — heat `above` °C or hotter, wind `above` km/h or more. A client in °F (`temperature_scale`, 1.10.2) that shows the weather in whole °F keeps a whole °F as the °C of the half degree below, rounded up to 0.1 (81 °F as 27.0, which is 80.6 °F), as the weather is °C to 0.1; it then counts from the moment that client shows that °F.
         from:
           type: string
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
@@ -5018,7 +5036,7 @@ components:
           type: number
           minimum: 15
           maximum: 45
-          description: °C; runs at this temperature or warmer.
+          description: °C; runs at this temperature or warmer. In °F, as `above`.
         wind_below:
           type: number
           minimum: 10
@@ -6297,9 +6315,10 @@ components:
           type: boolean
         current_temperature:
           type: [number, "null"]
+          description: Degrees Celsius; null when the thermostat reports none (since 1.10.2 a value left at 0 is not reported, never 0°).
         target_temperature:
           type: [number, "null"]
-          description: Degrees Celsius. On dual-setpoint thermostats, the setpoint of the current mode (null in auto and off).
+          description: Degrees Celsius. On dual-setpoint thermostats, the setpoint of the current mode (null in auto and off). Null when the thermostat reports none (since 1.10.2 a setpoint left at 0 °F, or -17.8 °C, is not reported).
         target_temperature_min:
           type: number
           description: Applies to `target_temperature`, `heat_setpoint` and `cool_setpoint`. 5 on floor heating set through its heat setpoint.
@@ -6343,6 +6362,37 @@ components:
         last_mode:
           type: [string, "null"]
           description: The last mode the thermostat was in that was not off (its current one while it is on), as `mode` names it, wherever it was set (Control4's apps, a keypad, Composer programming, DirectorLink); null until DirectorLink has seen it in one. What a scene's `mode` `on` and a command that turns the AC on bring it back to. Since 1.10.0 (ADR-070); missing before.
+        scale:
+          type: string
+          enum: [C, F]
+          description: The scale the thermostat works in, as Control4 reports it (its scale variable, else the project's, else the one its temperature is reported in). Clients show it in this scale; a `F` one has the `*_f` fields. Since 1.10.2 (ADR-076); missing before (then °C).
+        sensor:
+          type: boolean
+          description: A temperature (and humidity) reading with nothing to set, such as a temperature sensor on the thermostat proxy; `modes` and `fan_speeds` are empty, `mode` and the setpoints null, PATCH answers 409 and scene steps for its room leave it out. Since 1.10.2; missing before.
+        humidity:
+          type: number
+          description: Relative humidity in %, when a sensor reports one. Since 1.10.2; missing otherwise.
+        current_temperature_f:
+          type: [number, "null"]
+          description: "`scale: F` only: `current_temperature` in °F, as reported (to 0.1). Since 1.10.2."
+        target_temperature_f:
+          type: [number, "null"]
+          description: "`scale: F` only: `target_temperature` in whole °F, as the thermostat takes it. Since 1.10.2."
+        target_temperature_min_f:
+          type: integer
+          description: "`scale: F` only: the range in whole °F, inside the °C one (16–32 °C is 61–89 °F). Since 1.10.2."
+        target_temperature_max_f:
+          type: integer
+          description: "`scale: F` only. Since 1.10.2."
+        heat_setpoint_f:
+          type: [number, "null"]
+          description: "`scale: F` only: `heat_setpoint` in whole °F. Since 1.10.2."
+        cool_setpoint_f:
+          type: [number, "null"]
+          description: "`scale: F` only: `cool_setpoint` in whole °F. Since 1.10.2."
+        setpoint_deadband_f:
+          type: [number, "null"]
+          description: "`scale: F` only: `setpoint_deadband` in °F. Since 1.10.2."
 
     ThermostatUpdate:
       type: object
@@ -6362,6 +6412,15 @@ components:
         cool_setpoint:
           type: number
           description: Degrees Celsius, as `heat_setpoint`; the heat setpoint moves down with it when needed.
+        target_temperature_f:
+          type: number
+          description: "`target_temperature` in °F (since 1.10.2), between `target_temperature_min_f` and `target_temperature_max_f` (the °C range in whole °F, inside it); a °F thermostat gets exactly a whole °F sent. Not with `target_temperature`."
+        heat_setpoint_f:
+          type: number
+          description: "`heat_setpoint` in °F (since 1.10.2). Not with `heat_setpoint`."
+        cool_setpoint_f:
+          type: number
+          description: "`cool_setpoint` in °F (since 1.10.2). Not with `cool_setpoint`."
 
     ThermostatList:
       type: object

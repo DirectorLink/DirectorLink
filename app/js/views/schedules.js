@@ -23,6 +23,8 @@ import {
   homeZone,
   loadSchedules,
   loadWeather,
+  outside,
+  outsideScale,
   sceneNameOf,
   scheduleIcon,
   statusText,
@@ -32,6 +34,7 @@ import {
 import { loadScenes } from "../scenes.js";
 import { api, errorText, noteForbidden, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
+import { cooledTo, fromCelsius, thresholdToCelsius } from "../temperature.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
 const MAX_SCHEDULES = 50;
@@ -41,6 +44,11 @@ const OFFSETS = [-60, -30, 0, 30, 60];
 // Minutes before (negative) or after candle lighting and havdalah; the API takes -360 to 360.
 const SHABBAT_OFFSETS = [-120, -60, -30, -15, 0, 15, 30, 60, 120];
 const LIMITS = { heat: [15, 45, 1], wind: [10, 150, 5] };
+
+// The thresholds the editor offers: 15-45 °C, or 59-113 °F in a °F home (1.10.2, ADR-076).
+function limitsOf(kind) {
+  return kind === "heat" && outsideScale() === "F" ? [59, 113, 1] : LIMITS[kind];
+}
 let weatherTimer = null;
 
 function notice(message) {
@@ -157,13 +165,13 @@ function weatherCard() {
     const current = weather.current;
     const today = weather.today || {};
     const now = [
-      formatTemperature(current.temperature),
+      formatTemperature(outside(current.temperature)),
       Number.isFinite(current.wind_speed) ? t("schedules.weather.wind", { value: Math.round(current.wind_speed) }) : null,
       current.raining ? t("schedules.now.raining") : t("schedules.now.dry"),
     ].filter(Boolean);
     const forecast = [
       Number.isFinite(today.min_temperature) && Number.isFinite(today.max_temperature)
-        ? t("schedules.weather.range", { min: formatTemperature(today.min_temperature), max: formatTemperature(today.max_temperature) })
+        ? t("schedules.weather.range", { min: formatTemperature(outside(today.min_temperature)), max: formatTemperature(outside(today.max_temperature)) })
         : null,
       Number.isFinite(today.rain_chance) ? t("schedules.weather.rainChance", { value: Math.round(today.rain_chance) }) : null,
     ].filter(Boolean);
@@ -304,6 +312,8 @@ export function draftFor(key) {
   const trigger = existing?.trigger || {};
   const onlyIf = existing?.only_if || {};
   const shabbat = trigger.type === "shabbat";
+  // Thresholds in the home's scale; in °F the °C kept stays as it is until its number is changed.
+  const scale = outsideScale();
   ui.scheduleEditor = {
     key,
     id: existing?.id || null,
@@ -315,7 +325,8 @@ export function draftFor(key) {
     event: trigger.type === "sun" ? trigger.event : "sunset",
     offset: trigger.type === "sun" ? trigger.offset || 0 : 0,
     kind: trigger.type === "weather" ? trigger.kind : "heat",
-    heat: trigger.kind === "heat" ? trigger.above : 30,
+    heat: trigger.kind === "heat" ? fromCelsius(trigger.above, scale) : fromCelsius(30, scale),
+    heatKept: trigger.kind === "heat" ? trigger.above : null,
     wind: trigger.kind === "wind" ? trigger.above : 40,
     hours: Boolean(trigger.from),
     from: trigger.from || "08:00",
@@ -330,7 +341,8 @@ export function draftFor(key) {
     days: existing ? [...existing.days] : [...ALL_DAYS],
     notRaining: Boolean(onlyIf.not_raining),
     hot: Number.isFinite(onlyIf.hotter_than),
-    hotterThan: Number.isFinite(onlyIf.hotter_than) ? onlyIf.hotter_than : 28,
+    hotterThan: fromCelsius(Number.isFinite(onlyIf.hotter_than) ? onlyIf.hotter_than : 28, scale),
+    hotterThanKept: Number.isFinite(onlyIf.hotter_than) ? onlyIf.hotter_than : null,
     calm: Number.isFinite(onlyIf.wind_below),
     windBelow: Number.isFinite(onlyIf.wind_below) ? onlyIf.wind_below : 40,
     rainExpected: Boolean(onlyIf.rain_expected),
@@ -345,6 +357,17 @@ export function draftFor(key) {
 
 const draftDays = (draft) => (draft.type === "shabbat" ? draft.shabbatDays : draft.days);
 
+// A heat threshold as the schedule keeps it, in °C (1.10.2): in °F so that it counts from the whole
+// °F shown (temperature.js thresholdToCelsius), within what the controller takes (15-45 °C).
+function heatThreshold(draft) {
+  return inLimits(thresholdToCelsius(draft.heat, outsideScale(), draft.heatKept));
+}
+
+function inLimits(celsius) {
+  const [min, max] = LIMITS.heat;
+  return Math.min(max, Math.max(min, celsius));
+}
+
 // The schedule the choices describe, as the API takes it. during_shabbat goes only with the Jewish
 // calendar on: drivers before 1.2.0 refuse fields they do not know. A Shabbat trigger sends "run",
 // which clears the condition of the kind it was made from.
@@ -355,13 +378,14 @@ export function scheduleBody(draft) {
   else if (draft.type === "shabbat") trigger = { type: "shabbat", event: draft.shabbatEvent, offset: draft.shabbatOffset };
   else {
     trigger = { type: "weather", kind: draft.kind, once_a_day: draft.once };
-    if (draft.kind !== "rain") trigger.above = draft[draft.kind];
+    if (draft.kind === "heat") trigger.above = heatThreshold(draft);
+    else if (draft.kind !== "rain") trigger.above = draft[draft.kind];
     if (draft.hours) Object.assign(trigger, { from: draft.from, to: draft.to });
   }
   const onlyIf = {};
   if (draft.type !== "weather") {
     if (draft.notRaining) onlyIf.not_raining = true;
-    if (draft.hot) onlyIf.hotter_than = draft.hotterThan;
+    if (draft.hot) onlyIf.hotter_than = inLimits(thresholdToCelsius(draft.hotterThan, outsideScale(), draft.hotterThanKept));
     if (draft.calm) onlyIf.wind_below = draft.windBelow;
     if (draft.rainExpected) onlyIf.rain_expected = true;
   }
@@ -548,7 +572,7 @@ function whenSection(draft) {
       )
     );
     if (draft.kind !== "rain") {
-      const [min, max, step] = LIMITS[draft.kind];
+      const [min, max, step] = limitsOf(draft.kind);
       parts.push(
         stepper({
           value: draft[draft.kind],
@@ -565,7 +589,7 @@ function whenSection(draft) {
       );
     }
     parts.push(
-      h("p", { class: "field-help" }, t(`schedules.editor.again.${draft.kind}`, { value: draft.kind === "heat" ? formatTemperature(draft.heat - 2) : draft.wind - 10 })),
+      h("p", { class: "field-help" }, t(`schedules.editor.again.${draft.kind}`, { value: draft.kind === "heat" ? formatTemperature(cooledTo(heatThreshold(draft), 2, outsideScale())) : draft.wind - 10 })),
       toggle(t("schedules.editor.onlyBetween"), draft.hours, "schedule-hours", (on) => change(draft, () => { draft.hours = on; })),
       draft.hours
         ? h(
@@ -650,7 +674,7 @@ function onlyIfSection(draft) {
     toggle(t("schedules.editor.notRaining"), draft.notRaining, "schedule-if-dry", (on) => change(draft, () => { draft.notRaining = on; })),
     toggle(t("schedules.editor.hotterThan"), draft.hot, "schedule-if-hot", (on) => change(draft, () => { draft.hot = on; })),
     draft.hot
-      ? stepper({ value: draft.hotterThan, format: formatTemperature, label: t("schedules.editor.outside"), name: t("schedules.editor.threshold.heat"), key: "schedule-hot", min: 15, max: 45, step: 1, onChange: (value) => change(draft, () => { draft.hotterThan = value; }) })
+      ? stepper({ value: draft.hotterThan, format: formatTemperature, label: t("schedules.editor.outside"), name: t("schedules.editor.threshold.heat"), key: "schedule-hot", min: limitsOf("heat")[0], max: limitsOf("heat")[1], step: 1, onChange: (value) => change(draft, () => { draft.hotterThan = value; }) })
       : null,
     toggle(t("schedules.editor.windBelow"), draft.calm, "schedule-if-calm", (on) => change(draft, () => { draft.calm = on; })),
     draft.calm

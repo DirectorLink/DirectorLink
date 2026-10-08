@@ -20,6 +20,7 @@ import { api, errorText, handleUnauthorized, keyGeneration, keyInUse, noteForbid
 import { activeSetpoint, isDual, sameTemperature, withSetpoint } from "./setpoints.js";
 import { MOVE_POLL_MS, REPORT_GAP_MS, afterMove, answered, followMove, followSettle, followsReport, startMove, startSettle } from "./shades.js";
 import { KINDS, can, clearError, deviceKey, findDevice, notify, replaceDevice, setError, state, subscribe, ui } from "./state.js";
+import { apiChange, defaultRange, inOwnScale, isSensor, roundIn, scaleOf, usualTarget } from "./temperature.js";
 
 const CONFIRM_MS = 5000;
 const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -84,6 +85,8 @@ async function waitForConfirmation(kind, id, change, since = keyGeneration()) {
     if (since !== keyGeneration()) return null;
     last = await api(`${KINDS[kind].path}/${id}`);
     if (since !== keyGeneration()) return null;
+    // A thermostat in its own scale, as the change is (temperature.js).
+    if (kind === "thermostat") last = inOwnScale(last);
     if (CONFIRMERS[kind](last, change)) {
       return { device: last, confirmed: true };
     }
@@ -161,7 +164,9 @@ export async function sendChange(kind, id, change, { before } = {}) {
   // it is.
   const since = keyGeneration();
   try {
-    const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body: change });
+    // A °F thermostat's temperatures go as °F, exactly as chosen (temperature.js).
+    const body = kind === "thermostat" ? apiChange(current, change) : change;
+    const answer = await api(`${KINDS[kind].path}/${id}`, { method: "PATCH", body });
     if (since !== keyGeneration()) return;
     if (needsConfirmation) {
       const confirmation = await waitForConfirmation(kind, id, change, since);
@@ -233,12 +238,14 @@ const nudges = new Map();
 // setpoint pushes it to keep the thermostat's gap; null when the tap changes nothing (at a limit).
 // `shown`: the thermostat with the values the taps so far have reached.
 export function nudgedChange(shown, delta, field = "target_temperature") {
+  // A sensor has nothing to set (1.10.2).
+  if (isSensor(shown)) return null;
   const from = shown[field];
   const base = Number.isFinite(from)
     ? from
     : Number.isFinite(shown.current_temperature)
       ? Math.round(shown.current_temperature)
-      : 22;
+      : usualTarget(scaleOf(shown));
   const value = clampTarget(shown, base + delta);
   if (value === from) return null;
   if (field === "target_temperature") return { target_temperature: value };
@@ -285,10 +292,13 @@ export function nudgeTarget(thermostat, delta, field = "target_temperature") {
   nudges.set(id, entry);
 }
 
+// Within the thermostat's range, in what it is set in: 0.5 °C, or whole °F (1.10.2).
 export function clampTarget(thermostat, value) {
-  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : 10;
-  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : 32;
-  return Math.min(max, Math.max(min, Math.round(value * 2) / 2));
+  const scale = scaleOf(thermostat);
+  const [low, high] = defaultRange(scale, false);
+  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : low;
+  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : high;
+  return Math.min(max, Math.max(min, roundIn(value, scale)));
 }
 
 export function setThermostat(thermostat, change) {

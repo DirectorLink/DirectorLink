@@ -60,6 +60,11 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   was ready again only under 21° (30 km/h), while a rule's own threshold already counted. With the
   forecast's hours interpolated and rounded to 0.1 (ADR-071), exactly 23.0 is common. The names
   (`above`, `hotter_than`, `wind_below`) and every schedule's numbers stay as they are.
+- **In a °F home** (1.10.2, ADR-076; `temperature_scale` in `GET /v1/system`) the app shows the
+  weather and the thresholds in whole °F and keeps them in °C: a whole °F as the °C of half a degree
+  below, rounded up to 0.1 ("81° or hotter" is `above` 27.0, which is 80.6 °F). The rule then runs
+  exactly when the app shows 81° or more, the threshold itself included. A threshold keeps its °C
+  while its number is not changed. Composer's printout says °F there too ("heat 81F or more outside").
 - `if_no_weather`: what a schedule with `only_if` does when there is no weather data (no forecast
   read yet, or the saved one ran out after 5 days without the internet; no location): `run` (the
   default) or `skip`.

@@ -357,9 +357,11 @@ function tests.a_single_setpoint_zone_is_unchanged_and_refuses_setpoints()
     table.sort(keys)
     T.same(keys, {
         "activity", "cool_setpoint", "current_temperature", "fan_speed", "fan_speeds", "heat_setpoint", "id",
-        "last_mode", "mode", "modes", "name", "online", "room", "setpoint_deadband", "setpoints", "target_temperature",
-        "target_temperature_max", "target_temperature_min",
-    }, "the 1.0.0 keys, the four of 1.1.0 and last_mode (1.10.0)")
+        "last_mode", "mode", "modes", "name", "online", "room", "scale", "sensor", "setpoint_deadband", "setpoints",
+        "target_temperature", "target_temperature_max", "target_temperature_min",
+    }, "the 1.0.0 keys, the four of 1.1.0, last_mode (1.10.0), scale and sensor (1.10.2): a °C zone has no *_f")
+    T.eq(thermostat.scale, "C")
+    T.eq(thermostat.sensor, false)
 
     local answer = refused(mock, patch, { heat_setpoint = 20 }, 409, "NOT_SUPPORTED", 30)
     T.contains(answer.detail, "send target_temperature")

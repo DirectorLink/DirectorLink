@@ -14,6 +14,7 @@ import { isDual } from "./setpoints.js";
 import { FEATURES as FRIDGE_FEATURES } from "./refrigerators.js";
 import { scenePosition } from "./shades.js";
 import { can, notify, state, ui } from "./state.js";
+import { fromCelsius, inScale, isSensor, projectScale } from "./temperature.js";
 
 export const SCENE_ICONS = ["bulb", "moon", "sun", "leave", "movie", "climate", "blinds", "home"];
 export const STEP_TYPES = ["lights", "climate", "fans", "blinds", "relays", "music", "refrigerators"];
@@ -30,6 +31,8 @@ const CONFIRM_MS = 5000;
 export function devicesOfType(type) {
   // Sonos rooms, in the room they are shown in (none while Sonos is off).
   if (type === "music") return musicDevices();
+  // A temperature sensor (1.10.2) has nothing a scene could set.
+  if (type === "climate") return state.thermostats.filter((thermostat) => !isSensor(thermostat));
   return state[LISTS[type]] || [];
 }
 
@@ -139,11 +142,14 @@ export function stepWhere(step) {
   return t("scenes.severalRooms");
 }
 
+// A step's temperature (°C as kept) in the project's scale (1.10.2): whole °F in a °F home.
+const shown = (celsius) => fromCelsius(celsius, projectScale(state.system));
+
 // "20°–24°", "Heat 20°" or "Cool 24°" for a step's heat and cool setpoints (just "20°" when the
 // step's mode already says which); null without them.
 function setpointsText(set) {
-  const heat = Number.isFinite(set.heat_setpoint) ? set.heat_setpoint : null;
-  const cool = Number.isFinite(set.cool_setpoint) ? set.cool_setpoint : null;
+  const heat = Number.isFinite(set.heat_setpoint) ? shown(set.heat_setpoint) : null;
+  const cool = Number.isFinite(set.cool_setpoint) ? shown(set.cool_setpoint) : null;
   if (heat !== null && cool !== null) return formatTemperatureRange(heat, cool);
   if (heat !== null) return set.mode === "heat" ? formatTemperature(heat) : `${t("climate.heatShort")} ${formatTemperature(heat)}`;
   if (cool !== null) return set.mode === "cool" ? formatTemperature(cool) : `${t("climate.coolShort")} ${formatTemperature(cool)}`;
@@ -163,7 +169,7 @@ export function stepAction(step) {
     if (set.mode === "on") return t("scenes.do.onAsItWas");
     return [
       set.mode ? modeLabel(set.mode) : null,
-      Number.isFinite(set.target_temperature) ? formatTemperature(set.target_temperature) : setpointsText(set),
+      Number.isFinite(set.target_temperature) ? formatTemperature(shown(set.target_temperature)) : setpointsText(set),
       set.fan_speed ? t("scenes.do.fan", { speed: fanLabel(set.fan_speed) }) : null,
     ]
       .filter(Boolean)
@@ -355,7 +361,8 @@ export function copyHouse() {
     else if (light.dimmable && Number.isFinite(shownBrightness(light))) add("lights", { brightness: Math.max(1, Math.min(100, Math.round(shownBrightness(light)))) }, light.id);
     else add("lights", { on: true }, light.id);
   }
-  for (const thermostat of state.thermostats) {
+  // Each in °C, as a scene step keeps it (1.10.2: the whole °F of a °F one as °C to 0.1).
+  for (const thermostat of state.thermostats.filter((item) => !isSensor(item)).map((item) => inScale(item, "C"))) {
     const set = {};
     if (thermostat.mode && (thermostat.modes || []).includes(thermostat.mode)) set.mode = thermostat.mode;
     if (set.mode !== "off") {

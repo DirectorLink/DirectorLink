@@ -65,6 +65,7 @@ end
 local sonosForwarding = false
 local agreementCameras = false
 local doorControllers = false
+local fahrenheit = false
 local fakeCameras = 0
 for index = 2, #(arg or {}) do
     if arg[index] == "sonos" then
@@ -72,6 +73,7 @@ for index = 2, #(arg or {}) do
     end
     agreementCameras = agreementCameras or arg[index] == "agreement"
     doorControllers = doorControllers or arg[index] == "doors"
+    fahrenheit = fahrenheit or arg[index] == "fahrenheit"
     fakeCameras = tonumber((arg[index] or ""):match("^cameras=(%d+)$")) or fakeCameras
 end
 
@@ -87,7 +89,9 @@ local CAMERA_NAMES = {
 -- An ask-to-open link's run ("ask", below): the relay counts as connected while it runs, and what
 -- the driver tells it (the sealed question) is kept here instead.
 local relaying = { on = false, told = {} }
-local project = Mock.demoProject()
+-- With an argument "fahrenheit" (scripts/dev_server.py --fahrenheit, 1.10.2): a US home in °F,
+-- with the thermostats of #75 (Mock.fahrenheitProject).
+local project = fahrenheit and Mock.fahrenheitProject() or Mock.demoProject()
 if fakeCameras > 0 then
     for _, id in ipairs({ 60, 61, 107, 108 }) do
         project.devices[id] = nil

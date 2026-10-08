@@ -37,7 +37,10 @@ them in full (ADR-025); ADR-054 says what each became.
     `cool_setpoint` instead of `target_temperature` (5–40, cool above heat). With `mode: off`,
     nothing else. The temperature is kept within each thermostat's range; a fan speed a unit does
     not have is left out. What a step leaves out stays as it is: `{"mode": "cool"}` sends the mode
-    alone, and each AC keeps its temperature and fan (the app's **Keep**).
+    alone, and each AC keeps its temperature and fan (the app's **Keep**). Temperatures are °C; in a
+    °F home (1.10.2, ADR-076) the app shows and sets them in whole °F and keeps each as °C to 0.1
+    (69 °F as 20.6), which a °F thermostat gets back as exactly that °F. A temperature sensor
+    (`sensor: true`) is skipped, and a step for a room's climate leaves it out.
   - climate, since 1.10.0 (ADR-070): `{"mode": "on"}`, alone, turns each AC on **as it was**: one
     that is off goes back to its last mode that was not off, and nothing else is sent, so its
     temperature and fan are the ones it had; one that is on is left as it is (it counts as ran,

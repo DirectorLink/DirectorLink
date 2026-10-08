@@ -29,6 +29,7 @@ import { FEATURE_ICONS, fridgeFeatures, zones } from "./refrigerators.js";
 import { isDual, shownSetpoints } from "./setpoints.js";
 import { canSetPosition, canStop, shadeView } from "./shades.js";
 import { can, deviceKey, notify, state, ui } from "./state.js";
+import { isSensor, projectScale } from "./temperature.js";
 
 // ---- generic -------------------------------------------------------------------------------
 
@@ -197,9 +198,8 @@ export function lightRow(light, { showRoom = false } = {}) {
 function climateStatus(thermostat) {
   const parts = [];
   if (!thermostat.online) parts.push(t("climate.offline"));
-  if (Number.isFinite(thermostat.current_temperature)) {
-    parts.push(t("climate.now", { temperature: formatTemperature(thermostat.current_temperature) }));
-  }
+  // "now —" when it reports no room temperature (1.10.2): never 0°.
+  parts.push(t("climate.now", { temperature: formatTemperature(thermostat.current_temperature) }));
   if (thermostat.activity && thermostat.activity !== "idle") {
     parts.push(labelOr(`climate.activity.${thermostat.activity}`, thermostat.activity));
   }
@@ -262,7 +262,45 @@ function setpointSteppers(thermostat, controls) {
   return steppers.length > 1 ? h("div", { class: "stepper-pair", role: "group", "aria-label": t("climate.setpoints") }, steppers) : steppers[0];
 }
 
+// A temperature sensor's reading (1.10.2): "73° · 30%", "—" when it reports none; the humidity
+// named for screen readers.
+function sensorReading(thermostat) {
+  const temperature = formatTemperature(thermostat.current_temperature);
+  if (!Number.isFinite(thermostat.humidity)) return temperature;
+  const percent = Math.round(thermostat.humidity);
+  const humidity = t("climate.humidity", { percent });
+  return [temperature, " · ", h("span", { title: humidity, "aria-label": humidity }, t("common.percent", { percent }))];
+}
+
+// A thermostat with nothing to set (1.10.2, `sensor`): one compact row with its reading, no mode,
+// target or fan.
+function sensorCard(thermostat, showRoom) {
+  return h(
+    "div",
+    { class: "device climate is-sensor" },
+    h(
+      "div",
+      { class: "device-main" },
+      h("span", { class: "device-icon" }, icon("climate")),
+      h(
+        "div",
+        { class: "device-text" },
+        name(thermostat.name, "span", "device-name"),
+        h(
+          "span",
+          { class: "device-meta" },
+          showRoom ? [name(roomName(thermostat.room)), " · "] : null,
+          thermostat.online ? null : `${t("climate.offline")} · `,
+          sensorReading(thermostat)
+        )
+      ),
+      favoriteStar("thermostat", thermostat)
+    )
+  );
+}
+
 export function thermostatCard(thermostat, { showRoom = false } = {}) {
+  if (isSensor(thermostat)) return sensorCard(thermostat, showRoom);
   const key = deviceKey("thermostat", thermostat.id);
   const target = thermostat.target_temperature;
   const min = thermostat.target_temperature_min;
@@ -421,7 +459,7 @@ export function fanRow(fan, { showRoom = false } = {}) {
 
 // Fridge and freezer: the temperature each reports, and what it is set to.
 function fridgeZones(fridge) {
-  const items = zones(fridge);
+  const items = zones(fridge, projectScale(state.system));
   if (!items.length) return null;
   return h(
     "div",

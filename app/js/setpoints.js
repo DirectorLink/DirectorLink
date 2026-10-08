@@ -1,10 +1,15 @@
 // Thermostats with separate heat and cool setpoints (`setpoints: "dual"`, the Control4
 // thermostat proxy). In auto the thermostat keeps both, at least `setpoint_deadband` apart; in heat
 // or cool it works to one of them, which the API also reports as `target_temperature`.
-// No imports, so the rules can be tested under Node (tests/app/setpoints.test.mjs).
+// Since 1.10.2 (ADR-076) a thermostat's values are in its own scale (temperature.js): in °F the
+// steps and the gap are whole degrees. Imports only temperature.js, so the rules can be tested
+// under Node (tests/app/setpoints.test.mjs).
+
+import { defaultRange, scaleOf } from "./temperature.js";
 
 // How close a reported temperature must be to count as the one sent. In °F projects the
-// controller takes whole °F, so a 0.5 °C step can come back up to 0.3 off (22.5 → 73 °F → 22.8).
+// controller takes whole °F, so a 0.5 °C step can come back up to 0.3 off (22.5 → 73 °F → 22.8);
+// since 1.10.2 a °F thermostat is compared in whole °F, which come back as sent.
 export const TEMPERATURE_TOLERANCE = 0.4;
 
 export const SETPOINT_FIELDS = ["heat_setpoint", "cool_setpoint"];
@@ -20,11 +25,13 @@ const finite = (value) => (Number.isFinite(value) ? value : null);
 // sends, and at least 0.5. Rounded up, it is still at least the deadband after the controller rounds
 // both setpoints to whole °F (a 1.7 °C deadband is 3 °F; a 2 °C gap is 3.6 °F).
 // Without a deadband the controller still wants cool above heat. 0.5 is not enough in a °F
-// project (22.5 and 23 are both 73 °F); 1 always is.
+// project (22.5 and 23 are both 73 °F); 1 always is. A thermostat in °F (1.10.2): its deadband in
+// whole °F, at least 1.
 export function setpointGap(thermostat) {
   const deadband = Number(thermostat?.setpoint_deadband);
   if (!Number.isFinite(deadband) || deadband <= 0) return 1;
   // The tiny margin keeps 2.0000000001 (float noise) at 2.
+  if (scaleOf(thermostat) === "F") return Math.max(1, Math.ceil(deadband - 1e-9));
   return Math.max(0.5, Math.ceil(deadband * 2 - 1e-9) / 2);
 }
 
@@ -47,8 +54,9 @@ export function shownSetpoints(thermostat) {
 // setpointGap away (cool up with heat, heat down with cool). Null when `value` is outside the
 // thermostat's range or the other one would have to leave it, as the controller would refuse.
 export function withSetpoint(thermostat, field, value) {
-  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : 5;
-  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : 35;
+  const [low, high] = defaultRange(scaleOf(thermostat), true);
+  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : low;
+  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : high;
   if (!SETPOINT_FIELDS.includes(field) || !Number.isFinite(value) || value < min || value > max) return null;
   const gap = setpointGap(thermostat);
   let heat = finite(thermostat.heat_setpoint);

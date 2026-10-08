@@ -3,6 +3,7 @@ local Clock = require("src.core.clock")
 local Version = require("src.core.version")
 local Problem = require("src.api.problem")
 local Access = require("src.auth.access")
+local Units = require("src.adapters.thermostat_units")
 
 local System = {}
 
@@ -143,6 +144,8 @@ function System.info(ctx)
             longitude = admin and rounded(number(properties.Longitude)) or Json.null,
             timezone = text(metadata.timezone),
         },
+        -- "C" or "F" (1.10.2): what clients show temperatures in that no one thermostat says.
+        temperature_scale = Units.projectScale(registry),
         -- A member's: only what they see.
         inventory = inventory(ctx.apiKey, registry, counts),
         lifecycle = {
