@@ -2,6 +2,24 @@
 
 ## Current release
 
+`v1.10.2` — Light switches and KNX dimmers (1102b), thermostats in their own scale (1102a). No Worker change; no D1 migration.
+
+## 1102b. Light switches and KNX dimmers (1.10.2)
+
+1. After the update, the start-up log (`light_state`) has "light driver capabilities": `knx_switch.c4i` dimmer false, set_level false; `knx_dimmer.c4i` true and true.
+2. A room with KNX switches: no slider; each shows On or Off and toggles. A favorite switch on Home says On or Off.
+3. Dim a KNX dimmer to 30 %, then 70 %: the light really dims and brightens; then Off and On. The log (`light_command`) shows `SET_BRIGHTNESS_TARGET` with `LIGHT_BRIGHTNESS_TARGET` 30 and `RATE` 0.
+4. A command "<switch name> 50%" answers that it only turns on and off; "<dimmer name> 40%" dims.
+
+## 1102a. Thermostats in their own scale (1.10.2)
+
+1. °C home after the update: Climate and Home look as before (0.5 °C steps); each zone's "initialized thermostat" log line is unchanged; `GET /v1/thermostats` has `scale: "C"`, `sensor: false`; `GET /v1/system` has `temperature_scale: "C"`.
+2. A zone that reports no room temperature (a floor-heating zone that showed "now 0°") shows "now —"; `current_temperature` is null.
+3. Set 23.5 from a card, a command and a scene: the log shows `SET_SETPOINT_SINGLE {CELSIUS=23.5}`.
+4. `python scripts/dev_server.py --fahrenheit`: the minisplit shows 69°, now 74°, + sends `FAHRENHEIT 70`; the Nest shows Cool 71°, Heat 68°, fan Auto/On; "Bathroom" shows "73° · 30%" with no controls; "Weather Driver" is absent; the scene AC editor works in °F; an "81° or hotter" rule is saved as `above` 27.0.
+
+## Previous release
+
 `v1.10.1` — Alerts after a connection blink and the 18 s budget (1101c), parts of doors and doorbells (1101b), a weather threshold itself counts (1101a). The Worker changes (deploy it before updating DirectorLink; it works with 1.9.0 and 1.10.0 as before); no D1 migration.
 
 ## 1101c. Alerts after a connection blink, and the 18 s budget (1.10.1)
