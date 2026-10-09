@@ -59,9 +59,26 @@ local function encodeValue(value, encoding)
     return value
 end
 
+-- What the KNX drivers' driver.xml declare in <capabilities> (as read on a real controller, OS
+-- 4.2.1, 2026-10-09), as C4:GetDeviceData(id, "capabilities") gives it: what is inside the tag.
+Mock.KNX_SWITCH_CAPABILITIES = [[
+    <dimmer>False</dimmer>
+    <set_level>False</set_level>
+    <ramp_level>False</ramp_level>
+    <on_off>True</on_off>
+]]
+Mock.KNX_DIMMER_CAPABILITIES = [[
+    <dimmer>True</dimmer>
+    <set_level>True</set_level>
+    <ramp_level>True</ramp_level>
+    <supports_target>True</supports_target>
+    <requires_target_preset_ids>True</requires_target_preset_ids>
+]]
+
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
--- and one unsupported device.
+-- and one unsupported device. The KNX switch's proxy has a level, 0 or 100, as the real ones do;
+-- its driver declares it a switch. The other dimmer's driver declares nothing.
 function Mock.project()
     return {
         osVersion = "3.4.3.727848-res",
@@ -188,7 +205,7 @@ function Mock.project()
         },
         variables = {
             [20] = { [1000] = "1", [1001] = "80" },
-            [21] = { [1000] = "0" },
+            [21] = { [1000] = "0", [1001] = "0" },
             [22] = { [1000] = "1", [1001] = "40" },
             [30] = {
                 [1100] = "CELSIUS",
@@ -223,6 +240,11 @@ function Mock.project()
         variableNames = {
             [50] = { [1000] = "Level", [1001] = "Target Level" },
             [51] = { [1000] = "Level", [1001] = "Target Level" },
+        },
+        -- The <devicedata> tags of drivers' driver.xml (C4:GetDeviceData).
+        deviceData = {
+            [101] = { capabilities = Mock.KNX_DIMMER_CAPABILITIES },
+            [102] = { capabilities = Mock.KNX_SWITCH_CAPABILITIES },
         },
     }
 end
@@ -956,7 +978,8 @@ function Mock.install(project)
     -- The <devicedata> tags of a driver's driver.xml (project.deviceData[id][tag]); a driver without
     -- any says "" for "version", as Director gives a missing tag. Every protocol driver has version
     -- "1" unless a test says otherwise; Director updating a driver changes it (Mock.updateDeviceDriver).
-    -- Without a tag, the whole <devicedata> (its version and events, or a test's `devicedata`).
+    -- Without a tag, the whole <devicedata> (its version, capabilities and events, or a test's
+    -- `devicedata`).
     function C4:GetDeviceData(deviceId, tag)
         local data = (project.deviceData or {})[deviceId]
         if tag == nil then
@@ -967,7 +990,7 @@ function Mock.install(project)
                 return data.devicedata
             end
             local parts = { "<devicedata>" }
-            for _, name in ipairs({ "version", "events" }) do
+            for _, name in ipairs({ "version", "capabilities", "events" }) do
                 if data[name] ~= nil then
                     parts[#parts + 1] = "<" .. name .. ">" .. tostring(data[name]) .. "</" .. name .. ">"
                 end

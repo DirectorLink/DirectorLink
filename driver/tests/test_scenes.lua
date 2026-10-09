@@ -80,7 +80,7 @@ function tests.an_admin_makes_a_scene_and_a_member_runs_it()
     table.sort(lights)
     T.same(lights, { 20, 21, 22 }, "every light in the home, first")
     T.eq(devices[#devices], 22, "the desk lamp last, dimmed")
-    T.same(sent[#sent].params, { PERCENT = 10 })
+    T.same(sent[#sent].params, { LIGHT_BRIGHTNESS_TARGET = 10, RATE = 0 })
     local thermostat = {}
     for _, command in ipairs(sent) do
         if command.device == 30 then

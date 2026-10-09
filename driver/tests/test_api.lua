@@ -359,11 +359,13 @@ function tests.lights_report_state_and_capabilities()
     local knx = byId(lights, 20)
     T.eq(knx.on, true)
     T.eq(knx.dimmable, true)
-    T.eq(knx.brightness_reported, false, "KNX dimmers do not report their level")
+    T.eq(knx.brightness_reported, true, "a KNX dimmer at 80% reported a level between 0 and 100")
 
+    -- Its proxy has a level (0), as the real KNX switches do; its driver declares it a switch.
     local switch = byId(lights, 21)
     T.eq(switch.on, false)
     T.eq(switch.dimmable, false)
+    T.eq(switch.brightness_reported, false)
     T.truthy(isNull(switch.brightness), "on/off lights have null brightness")
 
     T.eq(byId(lights, 22).brightness, 40)
@@ -383,10 +385,10 @@ function tests.light_patch_maps_to_control4_commands()
     T.same(lastCommand(mock).params, { LIGHT_BRIGHTNESS_TARGET_PRESET_ID = 2 })
 
     T.http(mock, "PATCH", "/v1/lights/20", { key = key, body = { brightness = 60 } })
-    T.same(lastCommand(mock), { device = 20, command = "RAMP_TO_LEVEL", params = { LEVEL = 60, TIME = 0 } })
+    T.same(lastCommand(mock), { device = 20, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET = 60, RATE = 0 } })
 
     T.http(mock, "PATCH", "/v1/lights/22", { key = key, body = { on = true, brightness = 35 } })
-    T.same(lastCommand(mock), { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { PERCENT = 35 } })
+    T.same(lastCommand(mock), { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET = 35, RATE = 0 } })
 end
 
 function tests.light_patch_validates_input()
@@ -1184,7 +1186,7 @@ function tests.requests_can_arrive_in_small_chunks()
     T.eq(get.json.name, "Desk Lamp")
     local patch = T.http(mock, "PATCH", "/v1/lights/22", { key = key, body = { brightness = 70 }, chunkSize = 5 })
     T.eq(patch.status, 202)
-    T.same(lastCommand(mock).params, { PERCENT = 70 })
+    T.same(lastCommand(mock).params, { LIGHT_BRIGHTNESS_TARGET = 70, RATE = 0 })
 end
 
 function tests.malformed_http_gets_a_problem_response()

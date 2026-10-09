@@ -1,4 +1,5 @@
 local Log = require("src.core.log")
+local LightCapabilities = require("src.control4.light_capabilities")
 
 local LightV2 = {}
 
@@ -63,11 +64,18 @@ function LightV2.initialize(device)
         return false, device.adapter_error
     end
 
+    -- A dimmer or a switch: what its driver declares, else whether it has a level variable (the
+    -- Light V2 proxy gives switches one too, at 0 or 100: src/control4/light_capabilities.lua).
     local brightnessValue = safeGetVariable(device.id, VARIABLE_BRIGHTNESS)
-    local dimmable = brightnessValue ~= nil
-    local brightness = dimmable and clampPercent(brightnessValue) or nil
+    local hasLevel = brightnessValue ~= nil
+    local dimmable, dimmableBy = LightCapabilities.dimmable(device, hasLevel)
+    local watchLevel = dimmable and hasLevel
+    local brightness = watchLevel and clampPercent(brightnessValue) or nil
     local power = boolValue(stateValue)
 
+    -- The KNX dimmer's level was not seen to follow a change of brightness (alpha.6): it counts as
+    -- reported once it reports a level between 0 and 100, which only a dimmer reporting its level
+    -- does (it does report 0 and 100 when it turns off and on).
     local knxDimmer = dimmable and hasProtocolDriver(device, "knx_dimmer.c4i")
 
     tracked[device.id] = {
@@ -80,7 +88,7 @@ function LightV2.initialize(device)
     device.capabilities = {
         on_off = true,
         brightness = dimmable,
-        brightness_feedback = dimmable and not knxDimmer,
+        brightness_feedback = watchLevel and (not knxDimmer or (brightness ~= nil and brightness > 0 and brightness < 100)),
     }
     device.state = {
         power = power,
@@ -90,6 +98,12 @@ function LightV2.initialize(device)
     if dimmable then
         table.insert(device.actions, "set_brightness")
     end
+    Log.debug("light_state", "light", {
+        device_id = device.id,
+        dimmable = dimmable,
+        by = dimmableBy,
+        level_variable = hasLevel,
+    })
 
     -- Register only variables that actually exist. RegisterVariableListener invokes
     -- OnWatchedVariableChanged immediately after successful registration.
@@ -104,7 +118,8 @@ function LightV2.initialize(device)
         return false, device.adapter_error
     end
 
-    if dimmable then
+    -- A switch's level (0 or 100) says nothing Light State does not.
+    if watchLevel then
         local brightnessListenerOk, brightnessListenerError = pcall(function()
             C4:RegisterVariableListener(device.id, VARIABLE_BRIGHTNESS)
         end)
@@ -147,6 +162,11 @@ function LightV2.onVariableChanged(device, variableId, value)
         if brightness ~= nil then
             device.state.brightness = brightness
             device.state.power = brightness > 0
+            if info.knx_dimmer and device.capabilities and not device.capabilities.brightness_feedback
+                and brightness > 0 and brightness < 100 then
+                device.capabilities.brightness_feedback = true
+                Log.info("light_state", "the KNX dimmer reports its level", { device_id = device.id, brightness = brightness })
+            end
             Log.debug("light_state", "brightness variable changed", {
                 device_id = device.id,
                 variable_id = VARIABLE_BRIGHTNESS,
@@ -160,41 +180,23 @@ function LightV2.onVariableChanged(device, variableId, value)
     return false
 end
 
-local function sendBrightnessPercent(deviceId, target)
+-- A level, as Snap One documents SET_BRIGHTNESS_TARGET for Light V2 (1.10.2, ADR-077): the level
+-- in LIGHT_BRIGHTNESS_TARGET (0-100) and RATE, the ramp in milliseconds (0: at once). The KNX
+-- dimmer's driver reads exactly these (its own presets aside); PERCENT, sent up to 1.10.1, is read
+-- by neither, and RAMP_TO_LEVEL did not move it either (#11).
+local function sendBrightnessTarget(deviceId, target)
+    local params = {
+        LIGHT_BRIGHTNESS_TARGET = target,
+        RATE = 0,
+    }
     Log.info("light_command", "sending brightness target", {
         device_id = deviceId,
         command = "SET_BRIGHTNESS_TARGET",
-        params = { PERCENT = target },
+        params = params,
     })
 
     local ok, err = pcall(function()
-        C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", {
-            PERCENT = target,
-        })
-    end)
-
-    if not ok then
-        return false, tostring(err)
-    end
-
-    return true
-end
-
-local function sendRampToLevel(deviceId, target)
-    -- Control4 explicitly documents this as the DriverWorks-to-light form.
-    -- Use it for KNX dimmers where the broker/app PERCENT path serializes
-    -- differently from C4:SendToDevice and real testing showed no physical change.
-    Log.info("light_command", "sending KNX dimmer ramp", {
-        device_id = deviceId,
-        command = "RAMP_TO_LEVEL",
-        params = { LEVEL = target, TIME = 0 },
-    })
-
-    local ok, err = pcall(function()
-        C4:SendToDevice(deviceId, "RAMP_TO_LEVEL", {
-            LEVEL = target,
-            TIME = 0,
-        })
+        C4:SendToDevice(deviceId, "SET_BRIGHTNESS_TARGET", params)
     end)
 
     if not ok then
@@ -264,16 +266,11 @@ function LightV2.execute(device, action, params)
             }
         end
 
-        if info.knx_dimmer then
-            sent, sendError = sendRampToLevel(device.id, target)
-            result.control_path = "knx_ramp_to_level"
-            result.command = "RAMP_TO_LEVEL"
-        else
-            sent, sendError = sendBrightnessPercent(device.id, target)
-            result.control_path = "light_v2_percent"
-            result.command = "SET_BRIGHTNESS_TARGET"
-        end
+        sent, sendError = sendBrightnessTarget(device.id, target)
+        result.control_path = "light_v2_target"
+        result.command = "SET_BRIGHTNESS_TARGET"
         result.requested_brightness = target
+        result.rate_ms = 0
     else
         return false, {
             code = "ACTION_NOT_SUPPORTED",
@@ -297,8 +294,14 @@ function LightV2.execute(device, action, params)
     return true, result
 end
 
+-- Its driver was updated in Composer: what it declares is read again (Manager.setUpAgain).
+function LightV2.forget(device)
+    LightCapabilities.forget(device)
+end
+
 function LightV2.reset()
     tracked = {}
+    LightCapabilities.reset()
 end
 
 return LightV2

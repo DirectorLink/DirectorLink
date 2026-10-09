@@ -191,7 +191,8 @@ adapters: the API shows only `on`, `brightness`, `mode`, `target_temperature`, `
 Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy. It has its
 own adapter (`light_v1.lua`), so the Light V2 path validated on real hardware stays unchanged:
 
-- state variable `1000`, and level variable `1001` on dimmers (a proxy without it is a switch)
+- state variable `1000`, and level variable `1001` on dimmers (a proxy without it is a switch); since
+  1.10.2 what its driver declares (`<dimmer>`, `<set_level>`) decides first (ADR-077)
 - the light is controllable only when `1000` exists and its listeners register
 - normalized `on` → `ON`, `off` → `OFF`, `set_brightness` → `SET_LEVEL` with `LEVEL`, no ramp
   time (the dimmer's own rate)
@@ -355,11 +356,12 @@ Implemented in `v0.1.0-alpha.7`, with On/Off validated and KNX DriverWorks dimme
 
 - Light V2 proxy detection
 - state variable `1000`
-- brightness variable `1001` when present
+- brightness variable `1001` when present; dimmer or switch by what the driver declares in its
+  `<capabilities>` (`<dimmer>`, `<set_level>`), else by `1001` (1.10.2, ADR-077)
 - variable subscriptions/live registry updates
 - normalized `on` → Light V2 preset ID 1
 - normalized `off` → Light V2 preset ID 2
-- normalized `set_brightness` → adapter-selected compatibility path; KNX dimmers use `RAMP_TO_LEVEL` with `LEVEL` + `TIME = 0`, other Light V2 dimmers use `SET_BRIGHTNESS_TARGET` + `PERCENT`
+- normalized `set_brightness` → `SET_BRIGHTNESS_TARGET` with `LIGHT_BRIGHTNESS_TARGET` + `RATE = 0`, for every Light V2 dimmer (1.10.2, ADR-077; before: `RAMP_TO_LEVEL` for KNX dimmers, `PERCENT` for others, #11)
 - dedicated `GET /v1/lights` endpoint
 - PWA Light controls
 

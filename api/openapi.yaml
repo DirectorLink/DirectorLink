@@ -5702,9 +5702,16 @@ components:
           description: Brightness percent. Null for on/off lights or when unknown.
         dimmable:
           type: boolean
+          description: |
+            True when the light takes a level. Since 1.10.2, what the light's driver declares
+            (`dimmer` or `set_level` in its capabilities) where it declares them, else whether the
+            light reports a level; an on/off light takes only `on` (a brightness is refused with 409
+            `NOT_SUPPORTED`).
         brightness_reported:
           type: boolean
-          description: False when the light does not report its level back (some KNX dimmers).
+          description: |
+            False when the light does not report its level back. A KNX dimmer counts as reporting
+            it once it has reported a level between 0 and 100 (1.10.2).
 
     LightUpdate:
       type: object

@@ -264,6 +264,14 @@ function Manager.setUpAgain(deviceIds)
             stopWatching(source)
         end
     end
+    -- What an adapter keeps of a driver file for all its devices (a light driver's capabilities,
+    -- ADR-077) is let go first: read again from the updated driver, once for these devices.
+    for id in pairs(chosen) do
+        local adapter = matched[id]
+        if adapter.forget then
+            pcall(adapter.forget, registry.getDevice(id))
+        end
+    end
     for id in pairs(chosen) do
         local device = registry.getDevice(id)
         local before = nil
