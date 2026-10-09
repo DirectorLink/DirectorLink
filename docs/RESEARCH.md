@@ -139,6 +139,28 @@ References:
 - https://control4.github.io/docs-driverworks-api/
 - https://github.com/snap-one/docs-driverworks/tree/master/driver_development_training/sample_light_driver
 
+### KNX switches and dimmers — 2026-10-09 (1.10.2, ADR-077)
+
+Read on the owner's controller (CORE-1, OS 4.2.1), read-only, for interoperability:
+
+- 107 lights are on `knx_switch.c4i` and 2 on `knx_dimmer.c4i`, all behind `light_v2.c4i` proxies.
+  The switches' proxies have variable `1001` too, at 0 or 100, which 1.10.1 took for a dimmer.
+- What each driver declares in its driver.xml `<capabilities>`: the switch `<dimmer>False</dimmer>`,
+  `<set_level>False</set_level>`, `<ramp_level>False</ramp_level>`, `<on_off>True</on_off>`; the
+  dimmer `<dimmer>True</dimmer>`, `<set_level>True</set_level>`, `<ramp_level>True</ramp_level>`,
+  `<supports_target>True</supports_target>`, `<requires_target_preset_ids>True</requires_target_preset_ids>`.
+- The KNX dimmer's driver handles the proxy command `SET_BRIGHTNESS_TARGET` with the level in
+  `LIGHT_BRIGHTNESS_TARGET` (0–100), an optional ramp `RATE` (ms; 0 sets the level at once) and an
+  optional `LIGHT_BRIGHTNESS_TARGET_PRESET_ID` (its On and Off presets mean 100 and 0). It reads no
+  `PERCENT`: what alpha.6 to 1.10.1 sent moved nothing, and `RAMP_TO_LEVEL` (alpha.7 on) did not
+  either (#11).
+- Snap One's proxy documentation (*Light V2*, `SET_BRIGHTNESS_TARGET`) gives a driver with
+  `supports_target` exactly `LIGHT_BRIGHTNESS_TARGET` (FLOAT, within the driver's min and max) and
+  `RATE` (milliseconds, within its min and max rate); a driver without it gets `LEVEL` and `TIME`.
+  `dimmer` and `set_level` default to false and may change while a driver runs (dynamic capabilities).
+- `C4:GetDeviceData(id, "capabilities")` gives what is inside a driver's `<capabilities>`
+  (DriverWorks API, `GetDeviceData`, from OS 2.10: a tag of the first two levels of `<devicedata>`).
+
 
 ## Light (legacy) proxy
 
@@ -195,6 +217,15 @@ heat-only floor-heating Thermostat V2 in a °F project (#19).
 | 1134 / 1135 | COOL_SETPOINT_F / COOL_SETPOINT_C | |
 | 1146 / 1147 | DEADBAND_F / DEADBAND_C | the smallest gap between heat and cool |
 | 1149 / 1150 | the single setpoint, °F / °C | 0 in both on that floor-heating zone |
+
+Snap One's thermostat proxy documentation (snap-one.github.io/docs-driverworks-proxyprotocol-tstat,
+read for 1.10.2, ADR-076) adds 1106 HOLD_MODE, 1136/1137 OUTDOOR_TEMPERATURE_F/C, 1141
+HUMIDITY_STATE and 1144 PRESET; it documents no humidity variable (other Control4 clients read 1138
+HUMIDITY) and no `GET_STATE` state document. A thermostat with separate heat and cool setpoints
+declares `has_single_setpoint` false and reports `HEAT_SETPOINT_CHANGED` and
+`COOL_SETPOINT_CHANGED`, so its 1149/1150 stay 0, as the Nest of #75 showed (0 °F, shown as −18°).
+Other clients send `SET_SETPOINT_*` with the one key that matches 1100 (`FAHRENHEIT` in a °F
+project); the proxy hands its driver the value in every scale.
 
 On that zone only `SET_SETPOINT_HEAT {FAHRENHEIT}` was listed, no `SET_SETPOINT_SINGLE`. The proxy
 thermostats list `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL` with `FAHRENHEIT` or `CELSIUS`. Open:

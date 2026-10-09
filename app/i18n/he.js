@@ -274,6 +274,7 @@ export default {
     setpoints: "יעדי חימום וקירור",
     mode: "מצב",
     modeUnknown: "מצב לא ידוע",
+    humidity: "לחות {percent}%",
     fan: "מאוורר",
     modes: { off: "כבוי", heat: "חימום", cool: "קירור", auto: "אוטומטי" },
     fans: { low: "נמוך", medium: "בינוני", high: "גבוה", auto: "אוטומטי", on: "פועל", circulate: "סחרור" },

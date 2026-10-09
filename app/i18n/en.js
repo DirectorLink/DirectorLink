@@ -278,6 +278,8 @@ export default {
     setpoints: "Heat and cool setpoints",
     mode: "Mode",
     modeUnknown: "Mode unknown",
+    // A temperature sensor's humidity (1.10.2), for screen readers: its card shows "73° · 30%".
+    humidity: "Humidity {percent}%",
     fan: "Fan",
     modes: { off: "Off", heat: "Heat", cool: "Cool", auto: "Auto" },
     fans: { low: "Low", medium: "Medium", high: "High", auto: "Auto", on: "On", circulate: "Circulate" },

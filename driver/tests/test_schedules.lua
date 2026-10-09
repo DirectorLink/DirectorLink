@@ -191,6 +191,56 @@ function tests.a_weather_rule_counts_its_threshold_and_its_way_back()
     T.eq(reading(6), 2, "and at the thresholds again")
 end
 
+-- In a °F project (1.10.2, ADR-076) the app shows the weather in whole °F and keeps a whole-°F
+-- threshold as °C to 0.1: from the half degree below, rounded up (81 °F: 80.5 °F is 26.94 °C, kept as
+-- 27.0), as the forecast is °C to 0.1. The threshold itself then counts at the °F shown: "81° or
+-- hotter" runs at 27.0 °C (80.6 °F, shown as 81°), not at 26.9 °C (80.4 °F, shown as 80°); "only
+-- if 77° or warmer" (24.8) at 24.8 °C (76.6 °F), not at 24.7 (76.5 °F, shown as 76°). Composer's
+-- printout says them in °F.
+function tests.a_fahrenheit_threshold_counts_at_the_whole_degree_chosen()
+    local noon = at(1, 12, 0)
+    local project = Mock.project()
+    project.projectProperties.TemperatureScale = "FAHRENHEIT"
+    local mock = Mock.startDriver(project)
+    local admin = T.pair(mock, "Chrome on Windows")
+    local now = noon
+    require("src.core.clock").now = function()
+        return now
+    end
+    local Scheduler = require("src.core.scheduler")
+    local sceneId = scene(mock, admin)
+    local every = { 0, 1, 2, 3, 4, 5, 6 }
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 27, once_a_day = false }, days = every })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "15:30" }, days = every, only_if = { hotter_than = 24.8 }, if_no_weather = "skip" })
+    schedule(mock, admin, { scene_id = sceneId, trigger = { type = "time", at = "17:30" }, days = every, only_if = { hotter_than = 24.8 }, if_no_weather = "skip" })
+    -- 13:00 26.9 °C (80.4 °F), 14:00 27.0 (80.6), 15:00-16:00 24.8 (76.6), 17:00 and after 24.7 (76.5);
+    -- between two hours the forecast is interpolated.
+    local temperatures = { 26.9, 27, 24.8, 24.8, 24.7 }
+    mock.weather = WeatherFake.forecast(function(time)
+        return temperatures[math.max(1, math.min(math.floor((time - noon) / 3600), #temperatures))]
+    end)
+    now = noon + 3600
+    T.eq(Scheduler.tick(), 0, "shown as 80°: not 81° or hotter")
+    now = noon + 2 * 3600
+    T.eq(Scheduler.tick(), 1, "shown as 81°: 81° or hotter")
+    now = noon + 3.5 * 3600 + 1
+    T.eq(Scheduler.tick(), 1, "shown as 77°: 77° or warmer")
+    now = noon + 5.5 * 3600 + 1
+    T.eq(Scheduler.tick(), 0, "shown as 76°: not")
+
+    local lines = {}
+    local realPrint = print
+    _G.print = function(line)
+        lines[#lines + 1] = line
+    end
+    local ok, err = pcall(ExecuteCommand, "LUA_ACTION", { ACTION = "PRINT_AUTOMATION" })
+    _G.print = realPrint
+    T.truthy(ok, err)
+    local text = table.concat(lines, " | ")
+    T.contains(text, "heat 81F or more outside")
+    T.contains(text, "only if 77F or hotter")
+end
+
 -- The owner's Shabbat AC (1.10.0): "08:00 to 23:00, hotter than 23°" runs on Friday evening, an
 -- evening scene turns the AC off at 23:20, and on Saturday it runs again from 08:00 once it is that
 -- hot, even after a night that never cooled 2° below.

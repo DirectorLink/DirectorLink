@@ -512,7 +512,7 @@ end
 -- The dev server's project has the fans too.
 function tests.the_demo_project_has_fans()
     local mock = Mock.startDriver(Mock.demoProject())
-    T.contains(mock.properties["Inventory"], "3 thermostats, 2 fans")
+    T.contains(mock.properties["Inventory"], "4 thermostats, 2 fans")
     local key = T.pair(mock)
     T.eq(T.http(mock, "GET", "/v1/fans/41", { key = key }).json.speed, 2)
 end

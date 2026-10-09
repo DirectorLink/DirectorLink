@@ -20,6 +20,7 @@ import { icon } from "../icons.js";
 import { NO_ROOM, climateIsOn, fanIsOn, lightIsOn, roomById, roomGroup, roomName } from "../model.js";
 import { isHeater } from "../heaters.js";
 import { can } from "../state.js";
+import { isSensor } from "../temperature.js";
 import { heaterNames } from "../turn-off.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { musicCards } from "./music.js";
@@ -48,7 +49,9 @@ export function roomView(roomId, { openCamera }) {
   // With fans (1.2.0), All off turns them off too.
   const allOffHint = group.fans.length ? t("rooms.allOffHintFans") : t("rooms.allOffHint");
   const actions = [];
-  if ((group.lights.length || group.thermostats.length || group.fans.length) && can("member")) {
+  // A temperature sensor (1.10.2) has nothing to turn off.
+  const acs = group.thermostats.filter((thermostat) => !isSensor(thermostat));
+  if ((group.lights.length || acs.length || group.fans.length) && can("member")) {
     actions.push(
       h(
         "button",

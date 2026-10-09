@@ -23,6 +23,7 @@ import {
   relayIsOpen,
   relayLabel,
   roomName,
+  sensorText,
   shownBrightness,
   summaryCounts,
   targetText,
@@ -32,6 +33,7 @@ import { installApp } from "../pwa.js";
 import { runScene } from "../scenes.js";
 import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
+import { isSensor } from "../temperature.js";
 import { cancelTurnOff, heaterNames, keptHeaters, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
@@ -123,7 +125,8 @@ function summaryChips() {
   if (state.lights.length) {
     add("lights", "bulb", counts.lightsOn ? t("home.lightsOn", { count: counts.lightsOn }) : t("home.lightsAllOff"), counts.lightsOn > 0);
   }
-  if (state.thermostats.length) {
+  // Temperature sensors (1.10.2) are no AC to turn on or off.
+  if (state.thermostats.some((thermostat) => !isSensor(thermostat))) {
     add("climate", "climate", counts.climateOn ? t("home.climateOn", { count: counts.climateOn }) : t("home.climateAllOff"), counts.climateOn > 0);
   }
   if (state.blinds.length) {
@@ -282,10 +285,14 @@ function favoriteTile({ entry, kind, device }, { editing, index, count, openCame
       room,
       h("span", { class: "fav-state" }, device.on ? (device.dimmable ? t("lights.level", { percent: shownBrightness(device) }) : t("lights.on")) : t("lights.off")),
     ];
+  } else if (kind === "thermostat" && isSensor(device)) {
+    // A temperature sensor (1.10.2): its reading, "73° · 30%".
+    content = [h("span", { class: "fav-icon" }, icon("climate")), name(device.name, "span", "fav-name"), room, h("span", { class: "fav-state" }, sensorText(device))];
   } else if (kind === "thermostat") {
     stateClass = climateIsOn(device) ? "is-cool" : "";
     const parts = [
-      Number.isFinite(device.current_temperature) ? formatTemperature(device.current_temperature) : null,
+      // "—" when it reports no room temperature (1.10.2), never 0°.
+      formatTemperature(device.current_temperature),
       climateIsOn(device) ? `${modeLabel(device.mode)} ${targetText(device)}` : modeLabel(device.mode),
     ].filter(Boolean);
     content = [
@@ -416,6 +423,10 @@ function roomStatus(group) {
     parts.push(on ? t("rooms.lightsOnOf", { on, count: group.lights.length }) : t("rooms.lightsOff", { count: group.lights.length }));
   }
   for (const thermostat of group.thermostats) {
+    if (isSensor(thermostat)) {
+      parts.push(sensorText(thermostat));
+      continue;
+    }
     parts.push(
       climateIsOn(thermostat)
         ? t("rooms.climateOn", { mode: modeLabel(thermostat.mode), temperature: targetText(thermostat) })

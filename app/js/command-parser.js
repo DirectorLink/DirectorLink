@@ -1223,13 +1223,14 @@ function verb(summary) {
   return main[0] || null;
 }
 
-// A temperature as the app sends it (0.5 steps), or a problem when it is outside what the
-// thermostats take.
+// A temperature as the app sends it (0.5 steps; whole degrees when a thermostat is in °F, 1.10.2),
+// or a problem when it is outside what the thermostats take (each in its own scale).
 function temperatureFor(value, thermostats) {
-  const rounded = Math.round(value * 2) / 2;
+  const fahrenheit = thermostats.some((device) => device.scale === "F");
+  const rounded = fahrenheit ? Math.round(value) : Math.round(value * 2) / 2;
   for (const device of thermostats) {
-    const min = Number.isFinite(device.min) ? device.min : 10;
-    const max = Number.isFinite(device.max) ? device.max : 32;
+    const min = Number.isFinite(device.min) ? device.min : device.scale === "F" ? 50 : 10;
+    const max = Number.isFinite(device.max) ? device.max : device.scale === "F" ? 90 : 32;
     if (rounded < min || rounded > max) return problem("range", { device: { kind: device.kind, id: device.id }, min, max, unit: "degrees" });
   }
   return rounded;
@@ -1353,7 +1354,9 @@ function kindIntent(kind, targets, where, summary, act) {
       const running = targets.filter(isOn);
       if (!running.length) return problem("isOff", { device: named, room: where.room });
       const onIds = running.map((device) => device.id);
-      const change = { temperatureBy: dir * (Math.round(step * 2) / 2) };
+      // Whole degrees when an AC is in °F (1.10.2), 0.5 otherwise.
+      const fahrenheit = running.some((device) => device.scale === "F");
+      const change = { temperatureBy: dir * (fahrenheit ? Math.max(1, Math.round(step)) : Math.round(step * 2) / 2) };
       // With heat and cool setpoints in auto: which one.
       if (running.some((device) => device.dual && device.mode !== "heat" && device.mode !== "cool")) {
         return { status: "ask", question: "setpoint", options: ["cool", "heat"].map((setpoint) => action("climate", { ...where, ids: onIds, change: { setpoint, ...change } }).action) };

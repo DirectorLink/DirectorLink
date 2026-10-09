@@ -4,7 +4,9 @@
 // driver gives up after about a minute), so the app shows the switch as waiting until the feature
 // reports the change, or for CONFIRM_MS at most; then it keeps reading quietly for LATE_MS, so that
 // a change confirmed later still shows.
-// No imports, so the rules can be tested under Node (tests/app/refrigerators.test.mjs).
+// Imports only temperature.js, so the rules can be tested under Node (tests/app/refrigerators.test.mjs).
+
+import { fromCelsius } from "./temperature.js";
 
 // The features, in the order the card and the scene editor show them.
 export const FEATURES = ["power_cool", "power_freeze", "sabbath_mode", "ice_maker"];
@@ -48,10 +50,12 @@ function reported(value) {
 }
 
 // The two compartments with what they report: [{ zone: "fridge" | "freezer", temperature,
-// setpoint }], without one that reports neither (a one-door refrigerator has no freezer).
-export function zones(fridge) {
+// setpoint }], without one that reports neither (a one-door refrigerator has no freezer). In
+// `scale`, the project's (1.10.2, ADR-076): whole °F in a °F home, °C as reported otherwise.
+export function zones(fridge, scale = "C") {
+  const shown = (value) => (value === null ? null : fromCelsius(value, scale));
   return ["fridge", "freezer"]
-    .map((zone) => ({ zone, temperature: reported(fridge?.[`${zone}_temperature`]), setpoint: reported(fridge?.[`${zone}_setpoint`]) }))
+    .map((zone) => ({ zone, temperature: shown(reported(fridge?.[`${zone}_temperature`])), setpoint: shown(reported(fridge?.[`${zone}_setpoint`])) }))
     .filter((item) => item.temperature !== null || item.setpoint !== null);
 }
 

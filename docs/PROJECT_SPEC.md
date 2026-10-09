@@ -191,7 +191,8 @@ adapters: the API shows only `on`, `brightness`, `mode`, `target_temperature`, `
 Older Control4 dimmers and switches (LDZ-101/102, LDZ-5S1) use the legacy Light proxy. It has its
 own adapter (`light_v1.lua`), so the Light V2 path validated on real hardware stays unchanged:
 
-- state variable `1000`, and level variable `1001` on dimmers (a proxy without it is a switch)
+- state variable `1000`, and level variable `1001` on dimmers (a proxy without it is a switch); since
+  1.10.2 what its driver declares (`<dimmer>`, `<set_level>`) decides first (ADR-077)
 - the light is controllable only when `1000` exists and its listeners register
 - normalized `on` → `ON`, `off` → `OFF`, `set_brightness` → `SET_LEVEL` with `LEVEL`, no ramp
   time (the dimmer's own rate)
@@ -251,6 +252,24 @@ Control4 thermostats with separate heat and cool setpoints. The variables (`ther
   reported as `null`, so clients do not offer or push it.
 - The room temperature is converted as measured, not rounded to whole °F first.
 - Setpoints are kept within 5–35 °C.
+
+### Thermostats in °F, values not reported, sensors and Nests — 1.10.2
+
+ADR-076 (GitHub issue #75):
+
+- Each thermostat says its `scale` (1100, else Composer's `TemperatureScale`, else the scale its
+  room temperature is reported in), and a °F one has its values in °F too (`*_f`), which PATCH also
+  takes. A Thermostat V2 single setpoint in a °F project is sent as `FAHRENHEIT` in whole degrees.
+- A temperature read as exactly 0 in its variable is not reported (null): a real 0 °C reads 32 in
+  the °F variable. So is a room at exactly 0.0 °C and a setpoint outside 0–50 °C (−17.8 °C is 0 °F).
+- A Thermostat V2 zone whose single setpoint is not reported reads and watches 1132–1135, 1146/1147,
+  1150 and its fan speed list 1121; one that is not heat-only and reports a heat or cool setpoint
+  works to them as the Control4 thermostat proxy does (`setpoints: dual`), as a Nest reports them.
+- A Thermostat V2 proxy that lists no Heat, Cool or Auto mode and reports no setpoint is a sensor
+  (`sensor: true`): its temperature, and its humidity (the variable named HUMIDITY, else 1138);
+  nothing to set. One named "Weather" (or whose driver's file says weather) is left out.
+- Zones on their single setpoint in °C start exactly as in 1.0.0; only a zone whose single setpoint
+  or room temperature is not reported reads more.
 
 ## Adapters added in 1.2.0
 
@@ -355,11 +374,12 @@ Implemented in `v0.1.0-alpha.7`, with On/Off validated and KNX DriverWorks dimme
 
 - Light V2 proxy detection
 - state variable `1000`
-- brightness variable `1001` when present
+- brightness variable `1001` when present; dimmer or switch by what the driver declares in its
+  `<capabilities>` (`<dimmer>`, `<set_level>`), else by `1001` (1.10.2, ADR-077)
 - variable subscriptions/live registry updates
 - normalized `on` → Light V2 preset ID 1
 - normalized `off` → Light V2 preset ID 2
-- normalized `set_brightness` → adapter-selected compatibility path; KNX dimmers use `RAMP_TO_LEVEL` with `LEVEL` + `TIME = 0`, other Light V2 dimmers use `SET_BRIGHTNESS_TARGET` + `PERCENT`
+- normalized `set_brightness` → `SET_BRIGHTNESS_TARGET` with `LIGHT_BRIGHTNESS_TARGET` + `RATE = 0`, for every Light V2 dimmer (1.10.2, ADR-077; before: `RAMP_TO_LEVEL` for KNX dimmers, `PERCENT` for others, #11)
 - dedicated `GET /v1/lights` endpoint
 - PWA Light controls
 

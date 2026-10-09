@@ -85,7 +85,7 @@ function tests.legacy_light_patch_sends_on_off_set_level()
 
     -- Light V2 lights are unchanged.
     T.http(mock, "PATCH", "/v1/lights/22", { key = key, body = { brightness = 35 } })
-    T.same(lastCommand(mock), { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { PERCENT = 35 } })
+    T.same(lastCommand(mock), { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET = 35, RATE = 0 } })
 end
 
 function tests.legacy_light_state_follows_its_variables()
@@ -119,7 +119,7 @@ function tests.a_scene_sets_legacy_and_v2_lights_alike()
     T.eq(#sent, 5)
     T.same(sent[1], { device = 25, command = "SET_LEVEL", params = { LEVEL = 40 } })
     T.same(sent[2], { device = 26, command = "ON", params = {} }, "an on/off light turns on")
-    T.same(sent[3], { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { PERCENT = 40 } })
+    T.same(sent[3], { device = 22, command = "SET_BRIGHTNESS_TARGET", params = { LIGHT_BRIGHTNESS_TARGET = 40, RATE = 0 } })
     local kitchen = {}
     for index = 4, #sent do
         kitchen[sent[index].device] = sent[index]
@@ -145,6 +145,27 @@ function tests.a_legacy_dimmer_whose_level_cannot_be_watched_is_unsupported()
     T.eq(pantry.supported, false)
     T.eq(T.http(mock, "GET", "/v1/lights/25", { key = key }).status, 404)
     T.eq(T.http(mock, "GET", "/v1/lights/26", { key = key }).json.on, false, "the switch still works")
+end
+
+-- 1.10.2 (ADR-077): as for Light V2, what the light's driver declares decides. A legacy switch whose
+-- proxy has a level is a switch when its driver says so; one that declares nothing keeps the level
+-- rule.
+function tests.a_legacy_switch_with_a_level_is_a_switch_when_its_driver_says_so()
+    local project = Mock.withLegacyLights(Mock.project())
+    project.variables[26][1001] = "100"
+    project.variables[26][1000] = "1"
+    project.deviceData[121] = { capabilities = "<dimmer>False</dimmer><set_level>False</set_level><on_off>True</on_off>" }
+    local mock = Mock.startDriver(project)
+    local key = T.pair(mock)
+    local porch = T.http(mock, "GET", "/v1/lights/26", { key = key }).json
+    T.eq(porch.dimmable, false)
+    T.eq(porch.on, true)
+    T.truthy(isNull(porch.brightness))
+    T.truthy(not listening(mock, 26, 1001))
+    local before = #mock.commands
+    T.eq(T.http(mock, "PATCH", "/v1/lights/26", { key = key, body = { brightness = 30 } }).status, 409)
+    T.eq(#mock.commands, before)
+    T.eq(T.http(mock, "GET", "/v1/lights/25", { key = key }).json.dimmable, true, "the dimmer's driver declares nothing")
 end
 
 function tests.the_debug_log_lists_what_a_legacy_light_has()

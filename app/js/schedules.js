@@ -6,6 +6,14 @@
 import { currentLanguage, formatClock, formatTemperature, t } from "./i18n.js";
 import { api, errorText } from "./session.js";
 import { notify, state } from "./state.js";
+import { fromCelsius, projectScale } from "./temperature.js";
+
+// The scale outside temperatures are shown in: the project's (1.10.2, ADR-076). Thresholds and
+// the weather stay °C in the API.
+export const outsideScale = () => projectScale(state.system);
+
+// An outside temperature or threshold (°C) as shown: whole °F in a °F home.
+export const outside = (celsius) => fromCelsius(celsius, outsideScale());
 
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 // The Israeli week: Sunday to Thursday, and the weekend.
@@ -104,7 +112,7 @@ export function whenText(schedule) {
     if (!offset) return t(`schedules.when.at.${trigger.event}`, { days });
     return t(`schedules.when.${offset < 0 ? "before" : "after"}.${trigger.event}`, { days, minutes: Math.abs(offset) });
   }
-  if (trigger.kind === "heat") return t("schedules.when.heat", { above: formatTemperature(trigger.above) });
+  if (trigger.kind === "heat") return t("schedules.when.heat", { above: formatTemperature(outside(trigger.above)) });
   if (trigger.kind === "wind") return t("schedules.when.wind", { above: trigger.above });
   return t("schedules.when.rain");
 }
@@ -131,7 +139,7 @@ export function conditionText(schedule) {
   const onlyIf = schedule.only_if || {};
   const parts = [];
   if (onlyIf.not_raining) parts.push(t("schedules.if.notRaining"));
-  if (Number.isFinite(onlyIf.hotter_than)) parts.push(t("schedules.if.hotterThan", { value: formatTemperature(onlyIf.hotter_than) }));
+  if (Number.isFinite(onlyIf.hotter_than)) parts.push(t("schedules.if.hotterThan", { value: formatTemperature(outside(onlyIf.hotter_than)) }));
   if (Number.isFinite(onlyIf.wind_below)) parts.push(t("schedules.if.windBelow", { value: onlyIf.wind_below }));
   if (onlyIf.rain_expected) parts.push(t("schedules.if.rainExpected"));
   // A Shabbat trigger on some weekdays only (set through the API: the app sends all seven).
@@ -218,7 +226,7 @@ export function statusText(schedule, now = new Date()) {
 export function weatherNow(kind) {
   const current = state.weather?.status === "ok" ? state.weather.current : null;
   if (!current) return "";
-  if (kind === "heat") return t("schedules.now.temperature", { value: formatTemperature(current.temperature) });
+  if (kind === "heat") return t("schedules.now.temperature", { value: formatTemperature(outside(current.temperature)) });
   if (kind === "wind") return Number.isFinite(current.wind_speed) ? t("schedules.now.wind", { value: Math.round(current.wind_speed) }) : "";
   if (kind === "rain") return current.raining ? t("schedules.now.raining") : t("schedules.now.dry");
   return "";

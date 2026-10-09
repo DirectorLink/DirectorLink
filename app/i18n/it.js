@@ -284,6 +284,7 @@ export default {
     setpoints: "Temperature impostate in caldo e in freddo",
     mode: "Modalità",
     modeUnknown: "Modalità sconosciuta",
+    humidity: "Umidità {percent}%",
     fan: "Ventilazione",
     modes: { off: "Spento", heat: "Caldo", cool: "Freddo", auto: "Automatico" },
     fans: { low: "Bassa", medium: "Media", high: "Alta", auto: "Automatica", on: "Sempre attiva", circulate: "Circolazione" },

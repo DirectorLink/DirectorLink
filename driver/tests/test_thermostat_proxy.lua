@@ -388,7 +388,7 @@ end
 -- The dev server's project: every 1.1.0 family starts next to the default devices.
 function tests.the_demo_project_starts_every_family()
     local mock = Mock.startDriver(Mock.demoProject())
-    T.contains(mock.properties["Inventory"], "5 lights, 3 thermostats")
+    T.contains(mock.properties["Inventory"], "5 lights, 4 thermostats")
     local key = T.pair(mock)
     T.eq(T.http(mock, "GET", "/v1/thermostats/31", { key = key }).status, 200)
     local floor = T.http(mock, "GET", "/v1/thermostats/32", { key = key }).json

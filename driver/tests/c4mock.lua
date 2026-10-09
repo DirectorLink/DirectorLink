@@ -59,9 +59,26 @@ local function encodeValue(value, encoding)
     return value
 end
 
+-- What the KNX drivers' driver.xml declare in <capabilities> (as read on a real controller, OS
+-- 4.2.1, 2026-10-09), as C4:GetDeviceData(id, "capabilities") gives it: what is inside the tag.
+Mock.KNX_SWITCH_CAPABILITIES = [[
+    <dimmer>False</dimmer>
+    <set_level>False</set_level>
+    <ramp_level>False</ramp_level>
+    <on_off>True</on_off>
+]]
+Mock.KNX_DIMMER_CAPABILITIES = [[
+    <dimmer>True</dimmer>
+    <set_level>True</set_level>
+    <ramp_level>True</ramp_level>
+    <supports_target>True</supports_target>
+    <requires_target_preset_ids>True</requires_target_preset_ids>
+]]
+
 -- A small project: two rooms, three lights (KNX dimmer, KNX switch, other dimmer),
 -- one thermostat, two blinds (one without a known level), two cameras (digest and basic login)
--- and one unsupported device.
+-- and one unsupported device. The KNX switch's proxy has a level, 0 or 100, as the real ones do;
+-- its driver declares it a switch. The other dimmer's driver declares nothing.
 function Mock.project()
     return {
         osVersion = "3.4.3.727848-res",
@@ -188,7 +205,7 @@ function Mock.project()
         },
         variables = {
             [20] = { [1000] = "1", [1001] = "80" },
-            [21] = { [1000] = "0" },
+            [21] = { [1000] = "0", [1001] = "0" },
             [22] = { [1000] = "1", [1001] = "40" },
             [30] = {
                 [1100] = "CELSIUS",
@@ -223,6 +240,11 @@ function Mock.project()
         variableNames = {
             [50] = { [1000] = "Level", [1001] = "Target Level" },
             [51] = { [1000] = "Level", [1001] = "Target Level" },
+        },
+        -- The <devicedata> tags of drivers' driver.xml (C4:GetDeviceData).
+        deviceData = {
+            [101] = { capabilities = Mock.KNX_DIMMER_CAPABILITIES },
+            [102] = { capabilities = Mock.KNX_SWITCH_CAPABILITIES },
         },
     }
 end
@@ -351,6 +373,121 @@ function Mock.withDualThermostat(project, options)
         [1146] = "DEADBAND_F", [1147] = "DEADBAND_C",
     }
     return project
+end
+
+-- The thermostat variable names of Thermostat V2 (1100-1150, docs/RESEARCH.md; 1138 HUMIDITY).
+Mock.THERMOSTAT_NAMES = {
+    [1100] = "SCALE", [1104] = "HVAC_MODE", [1105] = "FAN_MODE", [1107] = "HVAC_STATE",
+    [1112] = "IS_CONNECTED", [1120] = "HVAC_MODES_LIST", [1121] = "FAN_MODES_LIST",
+    [1130] = "TEMPERATURE_F", [1131] = "TEMPERATURE_C", [1132] = "HEAT_SETPOINT_F",
+    [1133] = "HEAT_SETPOINT_C", [1134] = "COOL_SETPOINT_F", [1135] = "COOL_SETPOINT_C", [1138] = "HUMIDITY",
+    [1146] = "DEADBAND_F", [1147] = "DEADBAND_C", [1149] = "SINGLE_SETPOINT_F", [1150] = "SINGLE_SETPOINT_C",
+}
+
+-- A Thermostat V2 proxy (thermostatV2.c4i) and its protocol driver. options: id, protocol, room
+-- (10 Kitchen or 11 Living Room), name, driver (the protocol driver's file), driverName, variables.
+function Mock.withThermostatV2(project, options)
+    local id, protocol = options.id, options.protocol
+    local roomId = options.room or 11
+    local roomName = roomId == 10 and "Kitchen" or "Living Room"
+    local driverName = options.driverName or "Thermostat"
+    project.devices[protocol] = {
+        deviceName = driverName, driverFileName = options.driver, roomId = roomId, roomName = roomName,
+        proxies = { [id] = { deviceName = options.name, driverFileName = "thermostatV2.c4i" } },
+    }
+    project.devices[id] = {
+        deviceName = options.name, driverFileName = "thermostatV2.c4i", roomId = roomId, roomName = roomName,
+        protocol = { [protocol] = { deviceName = driverName, driverFileName = options.driver } },
+    }
+    project.variables[id] = options.variables
+    project.variableNames[id] = {}
+    for variableId in pairs(options.variables) do
+        project.variableNames[id][variableId] = Mock.THERMOSTAT_NAMES[variableId] or tostring(variableId)
+    end
+    return project
+end
+
+-- The thermostats of #75 (1.10.2, ADR-076), as a °F project reports them. options: id, protocol,
+-- room, name, and what each lists below.
+--   minisplit: one setpoint, 74 °F now, 69 °F set, in Cool.
+--   Nest: no single setpoint (0), its heat and cool setpoints (68 °F, 71 °F) instead, 72 °F now, fan
+--     speeds Auto and On, in Cool; mode, heat, heatC, cool, coolC change them (false: not reported).
+--   sensor: a temperature and humidity reading (73 °F, 30 %) with no scale variable and no mode or
+--     setpoint; scale, fahrenheit, celsius, humidity change them.
+--   weather: an outdoor weather driver on the thermostat proxy; driver changes its file.
+function Mock.withMinisplit(project, options)
+    options = options or {}
+    return Mock.withThermostatV2(project, {
+        id = options.id or 33, protocol = options.protocol or 171, room = options.room or 11,
+        name = options.name or "Living Room Minisplit", driver = "minisplit_wifi.c4z", driverName = "Minisplit",
+        variables = {
+            [1100] = "FAHRENHEIT", [1104] = "Cool", [1105] = "Low", [1107] = "Cool", [1112] = "1",
+            [1120] = "Auto,Cool,Heat,Off", [1130] = "74", [1131] = "23.3", [1149] = "69", [1150] = "20.6",
+        },
+    })
+end
+
+function Mock.withNestThermostat(project, options)
+    options = options or {}
+    local function value(given, default)
+        if given == false then
+            return nil
+        end
+        return given or default
+    end
+    return Mock.withThermostatV2(project, {
+        id = options.id or 34, protocol = options.protocol or 172, room = options.room or 10,
+        name = options.name or "Hallway", driver = "nest_thermostat.c4z", driverName = "Nest Thermostat",
+        variables = {
+            [1100] = "FAHRENHEIT", [1104] = options.mode or "Cool", [1105] = "Auto", [1107] = "Off", [1112] = "1",
+            [1120] = "Off,Heat,Cool,Auto", [1121] = "Auto,On", [1130] = "72", [1131] = "22.2",
+            [1132] = value(options.heat, "68"), [1133] = value(options.heatC, "20"),
+            [1134] = value(options.cool, "71"), [1135] = value(options.coolC, "21.7"),
+            [1146] = "3", [1147] = "1.7", [1149] = "0",
+        },
+    })
+end
+
+function Mock.withTemperatureSensor(project, options)
+    options = options or {}
+    local variables = {
+        [1104] = "Undefined", [1105] = "Undefined", [1107] = "Undefined", [1112] = "1",
+        [1130] = options.fahrenheit or "73", [1131] = options.celsius or "0", [1138] = options.humidity or "30", [1149] = "0",
+    }
+    if options.scale then
+        variables[1100] = options.scale
+    end
+    return Mock.withThermostatV2(project, {
+        id = options.id or 36, protocol = options.protocol or 174, room = options.room or 11,
+        name = options.name or "Bathroom", driver = "temperature_humidity_sensor.c4z", driverName = "Temperature Sensor",
+        variables = variables,
+    })
+end
+
+function Mock.withWeatherThermostat(project, options)
+    options = options or {}
+    return Mock.withThermostatV2(project, {
+        id = options.id or 37, protocol = options.protocol or 175, room = options.room or 10,
+        name = options.name or "Weather Driver", driver = options.driver or "weather.c4z", driverName = "Weather",
+        variables = {
+            [1100] = "FAHRENHEIT", [1104] = "Off", [1107] = "Off", [1112] = "1",
+            [1130] = "84", [1131] = "28.9", [1149] = "0",
+        },
+    })
+end
+
+-- A °C floor-heating zone that reports no room temperature (1131 left at 0), off, as seen on a
+-- CoolMaster floor zone (1.10.2): its card says "—", never 0°.
+function Mock.withUnreportedTemperatureZone(project, options)
+    options = options or {}
+    return Mock.withThermostatV2(project, {
+        id = options.id or 35, protocol = options.protocol or 173, room = options.room or 10,
+        name = options.name or "Kitchen floor", driver = "coolautomation_cmnet_zone.c4z", driverName = "Floor Zone",
+        variables = {
+            [1100] = "CELSIUS", [1104] = "Off", [1105] = "Undefined", [1107] = "Off", [1112] = "1",
+            [1120] = "Off,Heat", [1131] = "0", [1149] = "77",
+        },
+    })
 end
 
 -- A Fan proxy (fan.c4i) with the variables read on a live Director (#18): IS_ON (1000),
@@ -815,10 +952,36 @@ end
 -- The project the dev server and the app preview show: the default one plus every family added
 -- since (1.1.0, the fans and the alarm's partitions of 1.2.0, and a Samsung refrigerator of 1.7.0
 -- with its driver's 1.0.0 variables).
+-- Its thermostats are all in °C since 1.10.2 (the °F ones are in Mock.fahrenheitProject), with a
+-- floor zone that reports no room temperature.
 function Mock.demoProject()
     local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
+    Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "CELSIUS" })
+    Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "CELSIUS", heat = "21.5" })
+    Mock.withUnreportedTemperatureZone(project)
+    Mock.withFans(project)
+    Mock.withPartitions(project)
+    Mock.withRefrigerator(project)
+    return project
+end
+
+-- The dev server's °F project (scripts/dev_server.py --fahrenheit, 1.10.2): the demo home as a US
+-- home reports it (Composer's TemperatureScale and every thermostat in °F), with the thermostats of
+-- #75: a minisplit (69 °F set, 74 °F now), a thermostat with heat and cool setpoints and no single
+-- one (a Nest), a temperature and humidity sensor without a scale variable, and a weather driver on
+-- the thermostat proxy (left out of Climate).
+function Mock.fahrenheitProject()
+    local project = Mock.withShades(Mock.withLegacyLights(Mock.project()))
+    project.projectProperties.TemperatureScale = "FAHRENHEIT"
+    local parents = project.variables[30]
+    parents[1100], parents[1130], parents[1131], parents[1149] = "FAHRENHEIT", "78", "25.6", "72"
     Mock.withDualThermostat(project, { id = 31, protocol = 112, room = 10, scale = "FAHRENHEIT" })
     Mock.withHeatOnlyZone(project, { id = 32, protocol = 113, room = 11, name = "Bathroom floor", scale = "FAHRENHEIT", heat = "21.5" })
+    project.variables[32][1132] = "71"
+    Mock.withMinisplit(project)
+    Mock.withNestThermostat(project)
+    Mock.withTemperatureSensor(project)
+    Mock.withWeatherThermostat(project)
     Mock.withFans(project)
     Mock.withPartitions(project)
     Mock.withRefrigerator(project)
@@ -956,7 +1119,8 @@ function Mock.install(project)
     -- The <devicedata> tags of a driver's driver.xml (project.deviceData[id][tag]); a driver without
     -- any says "" for "version", as Director gives a missing tag. Every protocol driver has version
     -- "1" unless a test says otherwise; Director updating a driver changes it (Mock.updateDeviceDriver).
-    -- Without a tag, the whole <devicedata> (its version and events, or a test's `devicedata`).
+    -- Without a tag, the whole <devicedata> (its version, capabilities and events, or a test's
+    -- `devicedata`).
     function C4:GetDeviceData(deviceId, tag)
         local data = (project.deviceData or {})[deviceId]
         if tag == nil then
@@ -967,7 +1131,7 @@ function Mock.install(project)
                 return data.devicedata
             end
             local parts = { "<devicedata>" }
-            for _, name in ipairs({ "version", "events" }) do
+            for _, name in ipairs({ "version", "capabilities", "events" }) do
                 if data[name] ~= nil then
                     parts[#parts + 1] = "<" .. name .. ">" .. tostring(data[name]) .. "</" .. name .. ">"
                 end
