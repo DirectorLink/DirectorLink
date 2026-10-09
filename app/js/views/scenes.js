@@ -43,6 +43,7 @@ import { groupsAvailable, loadFavorites, musicFavorites, musicRooms } from "../m
 import { isDual, setpointGap, withSetpoint } from "../setpoints.js";
 import { sceneBlindChoices } from "../shades.js";
 import { can, notify, state, ui } from "../state.js";
+import { fromCelsius, inScale, isSensor, projectScale, toCelsius } from "../temperature.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 import { scenesNav } from "./schedules.js";
 import { confirmLinkLoss, deleteQuestion, doorLinkWarning, linksRow, sceneLinkSection } from "./scene-links.js";
@@ -172,7 +173,7 @@ function sceneCard(scene, admin) {
 
 // Ready-made starting points: they open the editor filled in, nothing is saved until Save.
 function sceneIdeas() {
-  const has = { lights: state.lights.length > 0, climate: state.thermostats.length > 0, fans: state.fans.length > 0, blinds: state.blinds.length > 0 };
+  const has = { lights: state.lights.length > 0, climate: state.thermostats.some((thermostat) => !isSensor(thermostat)), fans: state.fans.length > 0, blinds: state.blinds.length > 0 };
   const step = (type, set) => has[type] && { type, room_id: null, device_ids: null, set };
   return [
     { id: "allOff", icon: "home", steps: [step("lights", { on: false }), step("climate", { mode: "off" }), step("fans", { on: false })] },
@@ -614,7 +615,12 @@ async function deleteDraft(draft) {
 
 // ---- adding an action ----------------------------------------------------------------------
 
+// The scale the AC choices are in (1.10.2, ADR-076): the project's, °F or °C. A step keeps °C to
+// 0.1, from which a °F thermostat gets the whole °F chosen exactly (temperature.js).
+const sceneScale = () => projectScale(state.system);
+
 function newAdding() {
+  const scale = sceneScale();
   // `fan`: the AC's fan speed (null: Keep); `keepTemperature`: the AC's temperature is kept (1.10.0);
   // `fanDo` and `fanSpeed`: what fans do (off, on or a speed, 1-4).
   // `screen`: the screen these choices belong to ("add", or "edit:<index>"). `fridgeFeature` and
@@ -632,9 +638,9 @@ function newAdding() {
     brightness: 50,
     mode: null,
     keepTemperature: false,
-    temperature: 24,
-    heat: 20,
-    cool: 24,
+    temperature: fromCelsius(24, scale),
+    heat: fromCelsius(20, scale),
+    cool: fromCelsius(24, scale),
     fan: null,
     fanDo: "off",
     fanSpeed: 2,
@@ -713,9 +719,11 @@ function editAdding(steps, index) {
     adding.mode = set.mode ?? null;
     // No temperature in a step that sets a mode: Keep (1.10.0).
     if (set.mode !== "off" && set.mode !== "on") adding.keepTemperature = !Number.isFinite(target) && !Number.isFinite(set.heat_setpoint) && !Number.isFinite(set.cool_setpoint);
-    if (Number.isFinite(target)) adding.temperature = target;
-    if (Number.isFinite(set.heat_setpoint)) adding.heat = set.heat_setpoint;
-    if (Number.isFinite(set.cool_setpoint)) adding.cool = set.cool_setpoint;
+    // In the scale the choices are in: whole °F in a °F home.
+    const scale = sceneScale();
+    if (Number.isFinite(target)) adding.temperature = fromCelsius(target, scale);
+    if (Number.isFinite(set.heat_setpoint)) adding.heat = fromCelsius(set.heat_setpoint, scale);
+    if (Number.isFinite(set.cool_setpoint)) adding.cool = fromCelsius(set.cool_setpoint, scale);
     adding.fan = set.fan_speed ?? null;
   } else if (step.type === "fans") {
     if (set.on === false) adding.fanDo = "off";
@@ -813,24 +821,29 @@ function unique(values) {
 // `dual`: some have heat and cool setpoints, which Auto then sets, kept at least `gap` apart (the
 // largest gap any of them needs). On, as it was, for thermostats with a mode besides off, with a
 // driver that remembers their last mode.
+// Since 1.10.2 in the scene's scale (sceneScale): each thermostat's range and gap in it.
 function climateChoices(devices) {
+  const scale = sceneScale();
+  const shown = devices.map((device) => inScale(device, scale));
   const offered = unique(devices.flatMap((device) => device.modes || []));
-  const duals = devices.filter(isDual);
+  const duals = shown.filter(isDual);
   const asItWas = lastModeSupported() && offered.some((mode) => mode !== "off");
+  const [low, high] = scale === "F" ? [61, 89] : [16, 32];
   return {
     modes: MODE_ORDER.filter((mode) => mode === "off" || (mode === "on" ? asItWas : offered.includes(mode))),
-    min: Math.min(...devices.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : 16))),
-    max: Math.max(...devices.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : 32))),
+    min: Math.min(...shown.map((device) => (Number.isFinite(device.target_temperature_min) ? device.target_temperature_min : low))),
+    max: Math.max(...shown.map((device) => (Number.isFinite(device.target_temperature_max) ? device.target_temperature_max : high))),
     fans: unique(devices.flatMap((device) => device.fan_speeds || [])),
     dual: duals.length > 0,
-    gap: Math.max(0.5, ...duals.map(setpointGap)),
+    gap: Math.max(scale === "F" ? 1 : 0.5, ...duals.map(setpointGap)),
+    scale,
   };
 }
 
 // The Heat and Cool choices as a thermostat, so their steppers follow the same push rule as a
 // thermostat card (setpoints.js).
-function setpointChoices(adding, { min, max, gap }) {
-  return { heat_setpoint: adding.heat, cool_setpoint: adding.cool, target_temperature_min: min, target_temperature_max: max, setpoint_deadband: gap };
+function setpointChoices(adding, { min, max, gap, scale }) {
+  return { heat_setpoint: adding.heat, cool_setpoint: adding.cool, target_temperature_min: min, target_temperature_max: max, setpoint_deadband: gap, scale };
 }
 
 // Keeps the choices possible for the devices picked now (e.g. no Dim for on/off lights, no position
@@ -868,10 +881,12 @@ function chosenSet(adding, targets) {
   if (adding.type === "climate") {
     // Off, and on as it was (each AC in its last mode, its temperature and fan kept), alone.
     if (adding.mode === "off" || adding.mode === "on") return { mode: adding.mode };
+    // Kept in °C to 0.1: a whole °F comes back exactly (1.10.2).
+    const scale = sceneScale();
     let set;
     if (adding.keepTemperature) set = { mode: adding.mode };
-    else if (adding.mode === "auto" && targets.some(isDual)) set = { mode: "auto", heat_setpoint: adding.heat, cool_setpoint: adding.cool };
-    else set = { mode: adding.mode, target_temperature: adding.temperature };
+    else if (adding.mode === "auto" && targets.some(isDual)) set = { mode: "auto", heat_setpoint: toCelsius(adding.heat, scale), cool_setpoint: toCelsius(adding.cool, scale) };
+    else set = { mode: adding.mode, target_temperature: toCelsius(adding.temperature, scale) };
     if (adding.fan) set.fan_speed = adding.fan;
     return set;
   }

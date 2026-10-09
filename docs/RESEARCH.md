@@ -218,6 +218,15 @@ heat-only floor-heating Thermostat V2 in a °F project (#19).
 | 1146 / 1147 | DEADBAND_F / DEADBAND_C | the smallest gap between heat and cool |
 | 1149 / 1150 | the single setpoint, °F / °C | 0 in both on that floor-heating zone |
 
+Snap One's thermostat proxy documentation (snap-one.github.io/docs-driverworks-proxyprotocol-tstat,
+read for 1.10.2, ADR-076) adds 1106 HOLD_MODE, 1136/1137 OUTDOOR_TEMPERATURE_F/C, 1141
+HUMIDITY_STATE and 1144 PRESET; it documents no humidity variable (other Control4 clients read 1138
+HUMIDITY) and no `GET_STATE` state document. A thermostat with separate heat and cool setpoints
+declares `has_single_setpoint` false and reports `HEAT_SETPOINT_CHANGED` and
+`COOL_SETPOINT_CHANGED`, so its 1149/1150 stay 0, as the Nest of #75 showed (0 °F, shown as −18°).
+Other clients send `SET_SETPOINT_*` with the one key that matches 1100 (`FAHRENHEIT` in a °F
+project); the proxy hands its driver the value in every scale.
+
 On that zone only `SET_SETPOINT_HEAT {FAHRENHEIT}` was listed, no `SET_SETPOINT_SINGLE`. The proxy
 thermostats list `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL` with `FAHRENHEIT` or `CELSIUS`. Open:
 whether they take `CELSIUS` in a °F project, fractional `FAHRENHEIT`, what they do themselves

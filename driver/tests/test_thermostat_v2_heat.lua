@@ -84,27 +84,52 @@ function tests.a_heat_only_zone_in_celsius_sends_celsius()
     T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { CELSIUS = 21.5 } })
 end
 
--- An AC zone never takes the heat setpoint path, even when its single setpoint reads 0.
-function tests.an_ac_zone_stays_on_its_single_setpoint()
+-- An AC zone never takes the heat setpoint path, even when its single setpoint reads 0. Since
+-- 1.10.2 (ADR-076, #75) such a zone reads its heat and cool setpoints, as a Nest reports them, and
+-- follows them when it has one: here only heat, so in Cool it has no target ("—", never -18°).
+function tests.an_ac_zone_with_a_heat_setpoint_and_no_single_one_follows_its_setpoints()
     local project = Mock.project()
     project.variables[30][1149] = "0"
     project.variables[30][1150] = "0"
     project.variables[30][1133] = "20"
     local mock, key, get, patch = start(project)
-    T.eq(get().target_temperature_min, 16)
+    local thermostat = get()
+    T.eq(thermostat.setpoints, "dual")
+    T.eq(thermostat.heat_setpoint, 20)
+    T.truthy(isNull(thermostat.cool_setpoint), "no cool setpoint reported")
+    T.truthy(isNull(thermostat.target_temperature), "in Cool, the cool setpoint: not reported")
+    local before = #mock.commands
+    T.eq(patch({ target_temperature = 23 }).status, 409, "no cool setpoint to set")
+    T.eq(#mock.commands, before)
+    T.truthy(listening(mock, 30, 1133) and listening(mock, 30, 1150), "the setpoints it has are watched")
+
+    OnWatchedVariableChanged(30, 1104, "Heat")
+    T.eq(get().target_temperature, 20)
     T.eq(patch({ target_temperature = 23 }).status, 202)
-    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_SINGLE", params = { CELSIUS = 23 } })
-    T.eq(patch({ target_temperature = 15 }).status, 400)
-    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "nothing new is read or watched")
-    OnWatchedVariableChanged(30, 1149, "0")
-    OnWatchedVariableChanged(30, 1120, "Off,Heat,Cool")
-    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "nor after later changes")
-    T.eq(get().target_temperature_min, 16)
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { CELSIUS = 23 } })
 
     local logs = T.http(mock, "GET", "/v1/logs?category=climate", { key = key }).json.items
     T.eq(logs[1].message, "initialized thermostat")
-    T.eq(logs[1].data.setpoint_source, nil, "the line of 1.0.0")
-    T.eq(logs[1].data.target_temperature_c, -18)
+    T.eq(logs[1].data.setpoint_source, "dual")
+    T.eq(logs[1].data.target_temperature_c, nil, "not -18")
+end
+
+-- An AC zone whose single setpoint reads 0 and that reports no other setpoint keeps its single
+-- setpoint: no target to show ("—"), and one can still be set, as in 1.0.0.
+function tests.an_ac_zone_without_any_setpoint_reported_stays_on_its_single_setpoint()
+    local project = Mock.project()
+    project.variables[30][1149] = "0"
+    project.variables[30][1150] = "0"
+    local mock, _, get, patch = start(project)
+    local thermostat = get()
+    T.eq(thermostat.setpoints, "single")
+    T.truthy(isNull(thermostat.target_temperature), "0 °F is not a target")
+    T.eq(thermostat.target_temperature_min, 16)
+    T.eq(patch({ target_temperature = 23 }).status, 202)
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_SINGLE", params = { CELSIUS = 23 } })
+    T.eq(patch({ target_temperature = 15 }).status, 400)
+    OnWatchedVariableChanged(30, 1149, "73.4")
+    T.eq(get().target_temperature, 23, "once it is reported")
 end
 
 -- The owner's floor zones: heat-only, with a real single setpoint. Same state, command and range.
@@ -152,7 +177,8 @@ function tests.the_setpoint_path_follows_later_values()
     T.eq(thermostat.target_temperature, 22)
     T.eq(thermostat.target_temperature_min, 16)
     patch({ target_temperature = 22 })
-    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_SINGLE", params = { CELSIUS = 22 } })
+    -- In a °F project, whole °F in the project's scale (1.10.2, #75).
+    T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_SINGLE", params = { FAHRENHEIT = 72 } })
     local logs = T.http(mock, "GET", "/v1/logs?category=climate", { key = key }).json.items
     T.eq(logs[#logs].message, "setpoint path changed")
     T.eq(logs[#logs].data.setpoint_source, "single")
@@ -172,24 +198,28 @@ function tests.the_setpoint_path_follows_later_values()
     T.same(lastCommand(mockReal), { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 70 } })
 end
 
--- The mode list can arrive after start-up too: until then the zone counts as Off,Heat,Cool and
--- reads nothing of its heat setpoint. When it turns heat-only, 1133 and 1150 are read and watched.
+-- The mode list can arrive after start-up too: until then the zone counts as Off,Heat,Cool, and
+-- since 1.10.2 one whose single setpoint reads 0 follows the heat setpoint it reports as a Nest's
+-- (ADR-076). When it turns heat-only, it is on its heat setpoint as floor heating.
 function tests.a_mode_list_that_arrives_late_can_move_a_zone_to_its_heat_setpoint()
     local project = heatOnlyProject("FAHRENHEIT")
     project.variables[30][1120] = ""
     local mock, _, get, patch = start(project)
     local thermostat = get()
     T.same(thermostat.modes, { "off", "heat", "cool" })
-    T.eq(thermostat.target_temperature_min, 16)
-    T.truthy(not listening(mock, 30, 1133) and not listening(mock, 30, 1150), "not heat-only yet")
+    T.eq(thermostat.setpoints, "dual", "not heat-only yet")
+    -- In a °F project, in whole °F (71 °F, 21.7 °C), as the thermostat takes it.
+    T.eq(thermostat.target_temperature_f, 71, "in Heat, its heat setpoint")
+    T.eq(thermostat.target_temperature, 21.7)
+    T.truthy(listening(mock, 30, 1133) and listening(mock, 30, 1150))
 
     project.variables[30][1120] = "Off,Heat"
     OnWatchedVariableChanged(30, 1120, "Off,Heat")
     thermostat = get()
     T.same(thermostat.modes, { "off", "heat" })
+    T.eq(thermostat.setpoints, "single")
     T.eq(thermostat.target_temperature, 21.5, "the heat setpoint, not 0 °F")
     T.eq(thermostat.target_temperature_min, 5)
-    T.truthy(listening(mock, 30, 1133) and listening(mock, 30, 1150), "now watched")
     patch({ target_temperature = 23 })
     T.same(lastCommand(mock), { device = 30, command = "SET_SETPOINT_HEAT", params = { FAHRENHEIT = 73 } })
     OnWatchedVariableChanged(30, 1133, "22.8")

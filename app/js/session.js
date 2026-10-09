@@ -25,6 +25,7 @@ import { keyExchange, open, pairingLock } from "./lock.js";
 import { pairWithCpace, unprotectedReason } from "./cpace.js";
 import { t } from "./i18n.js";
 import { KINDS, notify, state } from "./state.js";
+import { inOwnScale } from "./temperature.js";
 
 const POLL_MS = 10000;
 // A refresh that fails is retried soon; only this many failures in a row mean "unreachable".
@@ -687,7 +688,8 @@ async function loadAll() {
   state.system = system;
   state.rooms = rooms?.items || [];
   state.lights = lights?.items || [];
-  state.thermostats = thermostats?.items || [];
+  // Each in its own scale, °F or °C (1.10.2, temperature.js).
+  state.thermostats = (thermostats?.items || []).map(inOwnScale);
   state.fans = fans;
   state.refrigerators = refrigerators;
   state.blinds = blinds?.items || [];
@@ -878,7 +880,8 @@ export async function refreshDevices() {
     useDoorbells(doorbells);
     kinds.forEach((kind, index) => {
       const listName = KINDS[kind].list;
-      const fresh = results[index]?.items || [];
+      const items = results[index]?.items || [];
+      const fresh = kind === "thermostat" ? items.map(inOwnScale) : items;
       state[listName] = fresh.map((device) => {
         const pending = state.pending[`${kind}:${device.id}`];
         return pending ? state[listName].find((item) => item.id === device.id) || device : device;

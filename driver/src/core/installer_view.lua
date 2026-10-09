@@ -7,6 +7,8 @@ local Scenes = require("src.core.scenes")
 local Scheduler = require("src.core.scheduler")
 local Schedules = require("src.core.schedules")
 local Weather = require("src.core.weather")
+local Registry = require("src.core.registry")
+local Units = require("src.adapters.thermostat_units")
 
 local View = {}
 
@@ -46,6 +48,12 @@ local function number(value)
     return string.format("%.1f", value)
 end
 
+-- A temperature (°C as stored) in the project's scale (1.10.2, ADR-076): "23C", or "73F" in a °F
+-- project, as the app shows it there.
+local function temperature(celsius)
+    return Units.text(celsius, Units.projectScale(Registry))
+end
+
 local SHABBAT_EVENTS = { candle_lighting = "candle lighting", havdalah = "havdalah" }
 
 -- "Sun-Thu 06:45", "every day 30 min before sunset", "heat 30C or more outside, 12:00-20:00, once
@@ -70,7 +78,7 @@ function View.whenText(schedule)
     local text
     -- The threshold itself counts (1.10.1, ADR-074).
     if trigger.kind == "heat" then
-        text = "heat " .. number(trigger.above) .. "C or more outside"
+        text = "heat " .. temperature(trigger.above) .. " or more outside"
     elseif trigger.kind == "wind" then
         text = "wind " .. number(trigger.above) .. " km/h or more"
     else
@@ -98,7 +106,7 @@ function View.conditionsText(schedule)
         parts[#parts + 1] = "not raining"
     end
     if onlyIf.hotter_than then
-        parts[#parts + 1] = number(onlyIf.hotter_than) .. "C or hotter"
+        parts[#parts + 1] = temperature(onlyIf.hotter_than) .. " or hotter"
     end
     if onlyIf.wind_below then
         parts[#parts + 1] = "wind " .. number(onlyIf.wind_below) .. " km/h or less"
@@ -213,7 +221,7 @@ function View.lastAutomation(event)
         if trigger.type == "weather" and event.weather then
             -- The weather is the forecast's (ADR-071).
             if trigger.kind == "heat" then
-                why = "heat rule, " .. number(event.weather.temperature) .. "C forecast"
+                why = "heat rule, " .. temperature(event.weather.temperature) .. " forecast"
             elseif trigger.kind == "wind" then
                 why = "wind rule, " .. number(event.weather.wind_speed or 0) .. " km/h forecast"
             else
@@ -267,13 +275,13 @@ local function stepText(step, registry)
             parts[#parts + 1] = set.mode
         end
         if set.target_temperature then
-            parts[#parts + 1] = number(set.target_temperature) .. "C"
+            parts[#parts + 1] = temperature(set.target_temperature)
         end
         if set.heat_setpoint then
-            parts[#parts + 1] = "heat " .. number(set.heat_setpoint) .. "C"
+            parts[#parts + 1] = "heat " .. temperature(set.heat_setpoint)
         end
         if set.cool_setpoint then
-            parts[#parts + 1] = "cool " .. number(set.cool_setpoint) .. "C"
+            parts[#parts + 1] = "cool " .. temperature(set.cool_setpoint)
         end
         if set.fan_speed then
             parts[#parts + 1] = "fan " .. set.fan_speed

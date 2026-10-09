@@ -284,6 +284,7 @@ export default {
     setpoints: "Temperaturas objetivo de calor y frío",
     mode: "Modo",
     modeUnknown: "Modo desconocido",
+    humidity: "Humedad {percent}%",
     fan: "Ventilador",
     modes: { off: "Apagado", heat: "Calor", cool: "Frío", auto: "Automático" },
     fans: { low: "Bajo", medium: "Medio", high: "Alto", auto: "Automático", on: "Encendido", circulate: "Circular" },

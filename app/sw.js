@@ -66,6 +66,7 @@ const ASSETS = [
   "/js/setpoints.js",
   "/js/shades.js",
   "/js/state.js",
+  "/js/temperature.js",
   "/js/theme.js",
   "/js/turn-off.js",
   "/js/updates.js",

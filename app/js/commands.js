@@ -21,6 +21,7 @@ import { findScene, isolate, runScene, sceneOpensDoors } from "./scenes.js";
 import { activeSetpoint, isDual, setpointGap, withSetpoint } from "./setpoints.js";
 import { canSetPosition } from "./shades.js";
 import { can, deviceKey, findDevice, notify, state, ui } from "./state.js";
+import { defaultRange, isSensor, roundIn, scaleOf } from "./temperature.js";
 import { heaterNames, keptHeaters, offTargets, turnOffNow } from "./turn-off.js";
 
 // A result stays this long ("Kitchen: lights off · Done"); a question or a problem until the next
@@ -96,7 +97,10 @@ export function commandCatalog() {
   };
   if (control) {
     add("light", state.lights, (light) => ({ dimmable: light.dimmable !== false, on: Boolean(light.on) }));
-    add("thermostat", state.thermostats, (thermostat) => ({
+    // A temperature sensor (1.10.2) has nothing a command could set. Each in its own scale: in a
+    // °F home "72" and "2 degrees warmer" are °F.
+    add("thermostat", state.thermostats.filter((thermostat) => !isSensor(thermostat)), (thermostat) => ({
+      scale: scaleOf(thermostat),
       modes: thermostat.modes || [],
       mode: thermostat.mode || null,
       // Its last mode, to turn it on as it was (1.10.0, ADR-070); null when not known.
@@ -215,7 +219,7 @@ export function commandExamples() {
     return id != null ? roomName(roomById(id)) : null;
   };
   const lights = can("member") ? roomWith(state.lights) : null;
-  const climate = can("member") ? roomWith(state.thermostats) : null;
+  const climate = can("member") ? roomWith(state.thermostats.filter((thermostat) => !isSensor(thermostat))) : null;
   const scene = can("member") ? (state.scenes || [])[0]?.name : null;
   return [
     lights ? t("command.example.lights", { room: lights, inRoom: inRoom(lights) }) : t("command.example.lightsDefault"),
@@ -332,8 +336,9 @@ export function thermostatPlan(thermostat, change) {
       if (!field) return { refused: t("command.problem.setpointWhich", { name }) };
       const both = withSetpoint(thermostat, field, change.temperature);
       if (!both) {
-        const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : 5;
-        const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : 35;
+        const [low, high] = defaultRange(scaleOf(thermostat), true);
+        const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : low;
+        const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : high;
         const range = { name, min: formatTemperature(min), max: formatTemperature(max) };
         if (change.temperature < min || change.temperature > max) return { refused: t("command.problem.range", range) };
         // The other setpoint would have to leave the range to stay apart.
@@ -375,11 +380,14 @@ export function steppedTemperature(thermostat, change) {
   const dual = isDual(thermostat);
   const from = dual ? (change.setpoint ? thermostat[`${change.setpoint}_setpoint`] : activeSetpoint(thermostat)) : thermostat.target_temperature;
   if (!Number.isFinite(from)) return { refused: dual && !change.setpoint ? t("command.problem.setpointWhich", { name }) : t("command.problem.noSetpoint", { name }) };
-  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : dual ? 5 : 10;
-  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : dual ? 35 : 32;
+  // In the thermostat's own scale (1.10.2): whole °F in °F.
+  const scale = scaleOf(thermostat);
+  const [low, high] = defaultRange(scale, dual);
+  const min = Number.isFinite(thermostat.target_temperature_min) ? thermostat.target_temperature_min : low;
+  const max = Number.isFinite(thermostat.target_temperature_max) ? thermostat.target_temperature_max : high;
   if (by > 0 && from >= max) return { refused: t("command.problem.atHighest", { name, temperature: formatTemperature(from) }) };
   if (by < 0 && from <= min) return { refused: t("command.problem.atLowest", { name, temperature: formatTemperature(from) }) };
-  const temperature = Math.min(max, Math.max(min, Math.round((from + by) * 2) / 2));
+  const temperature = Math.min(max, Math.max(min, roundIn(from + by, scale)));
   return change.setpoint ? { setpoint: change.setpoint, temperature } : { temperature };
 }
 

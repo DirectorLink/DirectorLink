@@ -486,7 +486,8 @@ local function stepDevices(registry, step)
     end
     local devices = {}
     for _, device in ipairs(registry[LISTS[step.type]]()) do
-        if step.room_id == nil or tonumber(device.room_id) == step.room_id then
+        -- A temperature sensor (1.10.2) is no AC: a step for a room's climate leaves it out.
+        if (step.room_id == nil or tonumber(device.room_id) == step.room_id) and not Views.isSensor(device) then
             devices[#devices + 1] = device
         end
     end
@@ -565,6 +566,9 @@ local function deviceCommands(step, device)
         end
         return nil, "INVALID_STEP", "This step does not say what to do"
     elseif step.type == "climate" then
+        if Views.isSensor(device) then
+            return nil, "NOT_SUPPORTED", "This is a temperature sensor; it has nothing to set"
+        end
         local options = Views.thermostatOptions(device)
         if set.mode == "on" then
             return onAsItWas(device, options)

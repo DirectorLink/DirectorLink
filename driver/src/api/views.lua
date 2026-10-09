@@ -4,6 +4,7 @@
 local Json = require("src.core.json")
 local RoomNames = require("src.core.room_names")
 local LastModes = require("src.core.last_modes")
+local Units = require("src.adapters.thermostat_units")
 
 local Views = {}
 
@@ -399,15 +400,32 @@ function Views.thermostatOptions(device)
     }
 end
 
--- True for thermostats with separate heat and cool setpoints (the Control4 thermostat proxy).
+-- True for thermostats with separate heat and cool setpoints (the Control4 thermostat proxy, and
+-- since 1.10.2 a Thermostat V2 one that reports them instead of a single setpoint, as a Nest does).
 function Views.isDual(device)
     return (device.capabilities or {}).setpoints == "dual"
+end
+
+-- "F" or "C": the scale the thermostat works in (1.10.2, its adapter's), °C when it says none.
+function Views.thermostatScale(device)
+    return (device.capabilities or {}).scale == "F" and "F" or "C"
+end
+
+-- A thermostat proxy that only reads a temperature (and humidity), with nothing to set (1.10.2).
+function Views.isSensor(device)
+    return (device.capabilities or {}).sensor == true
 end
 
 -- On a dual-setpoint thermostat `target_temperature` is the setpoint of the current mode (null in
 -- auto and off); the three setpoint keys are null on single-setpoint ones. A setpoint the
 -- thermostat does not use (no mode for it, such as heat on an Off,Cool one) is null too, even when
 -- the proxy has its variables: clients treat a reported setpoint as one they can set.
+--
+-- 1.10.2 (ADR-076), additive: `scale` is the thermostat's ("F" or "C", as Control4 reports it), and
+-- a °F thermostat also has its values in °F as it reports them (`*_f`: whole °F setpoints, the
+-- range inside the °C one); °C thermostats have no `*_f` fields. A value not reported is null,
+-- never 0 °C or -18 °C. `sensor`: a temperature (and humidity) reading with nothing to set (no
+-- mode, setpoint or fan speed; PATCH answers 409); `humidity` (%) only when reported.
 function Views.thermostat(registry, device)
     local state = device.state or {}
     local capabilities = device.capabilities or {}
@@ -415,7 +433,8 @@ function Views.thermostat(registry, device)
     local dual = capabilities.setpoints == "dual"
     local heat = dual and capabilities.has_heat and state.heat_setpoint_c or nil
     local cool = dual and capabilities.has_cool and state.cool_setpoint_c or nil
-    return {
+    local scale = Views.thermostatScale(device)
+    local view = {
         id = device.id,
         name = device.name,
         room = Views.roomRef(registry, device.room_id, device.room_name),
@@ -435,7 +454,23 @@ function Views.thermostat(registry, device)
         setpoint_deadband = nullable(capabilities.deadband_c),
         -- Its last mode that was not off (1.10.0, ADR-070): what "on as it was" turns it on in.
         last_mode = nullable(LastModes.get(device.id)),
+        scale = scale,
+        sensor = Views.isSensor(device),
     }
+    if type(state.humidity) == "number" then
+        view.humidity = state.humidity
+    end
+    if scale == "F" then
+        local low, high = Units.fahrenheitRange(options.min, options.max)
+        view.current_temperature_f = nullable(state.current_temperature_f)
+        view.target_temperature_f = nullable(state.target_temperature_f)
+        view.target_temperature_min_f = low
+        view.target_temperature_max_f = high
+        view.heat_setpoint_f = nullable(heat and state.heat_native)
+        view.cool_setpoint_f = nullable(cool and state.cool_native)
+        view.setpoint_deadband_f = nullable(dual and capabilities.deadband_native or nil)
+    end
+    return view
 end
 
 function Views.apiKey(record, currentId)

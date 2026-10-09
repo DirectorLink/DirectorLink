@@ -253,6 +253,24 @@ Control4 thermostats with separate heat and cool setpoints. The variables (`ther
 - The room temperature is converted as measured, not rounded to whole °F first.
 - Setpoints are kept within 5–35 °C.
 
+### Thermostats in °F, values not reported, sensors and Nests — 1.10.2
+
+ADR-076 (GitHub issue #75):
+
+- Each thermostat says its `scale` (1100, else Composer's `TemperatureScale`, else the scale its
+  room temperature is reported in), and a °F one has its values in °F too (`*_f`), which PATCH also
+  takes. A Thermostat V2 single setpoint in a °F project is sent as `FAHRENHEIT` in whole degrees.
+- A temperature read as exactly 0 in its variable is not reported (null): a real 0 °C reads 32 in
+  the °F variable. So is a room at exactly 0.0 °C and a setpoint outside 0–50 °C (−17.8 °C is 0 °F).
+- A Thermostat V2 zone whose single setpoint is not reported reads and watches 1132–1135, 1146/1147,
+  1150 and its fan speed list 1121; one that is not heat-only and reports a heat or cool setpoint
+  works to them as the Control4 thermostat proxy does (`setpoints: dual`), as a Nest reports them.
+- A Thermostat V2 proxy that lists no Heat, Cool or Auto mode and reports no setpoint is a sensor
+  (`sensor: true`): its temperature, and its humidity (the variable named HUMIDITY, else 1138);
+  nothing to set. One named "Weather" (or whose driver's file says weather) is left out.
+- Zones on their single setpoint in °C start exactly as in 1.0.0; only a zone whose single setpoint
+  or room temperature is not reported reads more.
+
 ## Adapters added in 1.2.0
 
 ### Fan proxy (`fan.c4i`) — 1.2.0

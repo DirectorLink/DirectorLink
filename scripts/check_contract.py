@@ -1057,6 +1057,32 @@ def scenario(client, bridge):
     client.check("POST", "/v1/auth/pair", 429, body={"pairing_code": "00000000"})
 
 
+def fahrenheit_scenario(client, bridge):
+    """A US home (dev_server.py --fahrenheit, 1.10.2, ADR-076): thermostats in °F with their `*_f`
+    fields, a Nest's heat and cool setpoints, a temperature sensor, and the project's scale."""
+    paired = client.check("POST", "/v1/auth/pair", 201, body={"pairing_code": bridge.pairing_code, "name": "contract test"})
+    client.key, client.key_id = paired["key"], paired["id"]
+    system = client.check("GET", "/v1/system", 200)
+    if system.get("temperature_scale") != "F":
+        fail("GET /v1/system: a °F project's temperature_scale is not F")
+    listed = client.check("GET", "/v1/thermostats", 200)
+    if any(item["id"] == 37 for item in listed["items"]):
+        fail("GET /v1/thermostats lists the weather driver")
+    minisplit = client.check("GET", "/v1/thermostats/33", 200)
+    if minisplit.get("target_temperature_f") != 69 or minisplit.get("current_temperature_f") != 74:
+        fail(f"GET /v1/thermostats/33: not 69 °F set and 74 °F now: {minisplit}")
+    client.check("PATCH", "/v1/thermostats/33", 202, body={"target_temperature_f": 70})
+    client.check("PATCH", "/v1/thermostats/33", 400, body={"target_temperature_f": 120})
+    client.check("PATCH", "/v1/thermostats/33", 400, body={"target_temperature": 21, "target_temperature_f": 70})
+    client.check("GET", "/v1/thermostats/34", 200)
+    client.check("PATCH", "/v1/thermostats/34", 202, body={"mode": "auto", "heat_setpoint_f": 66, "cool_setpoint_f": 74})
+    sensor = client.check("GET", "/v1/thermostats/36", 200)
+    if sensor.get("sensor") is not True or sensor.get("humidity") != 30:
+        fail(f"GET /v1/thermostats/36: not a sensor with its humidity: {sensor}")
+    client.check("PATCH", "/v1/thermostats/36", 409, body={"mode": "heat"})
+    client.check("GET", "/v1/thermostats/37", 404)
+
+
 def main():
     examples = check_examples()
     lua = shutil.which("lua5.1") or shutil.which("lua")
@@ -1083,6 +1109,19 @@ def main():
         server.shutdown()
         bridge.process.terminate()
         players.terminate()
+
+    # The same API in a °F project (1.10.2): its own fake Director, the same coverage.
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, fahrenheit=True)
+    server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    us = Client(server.server_address[1])
+    try:
+        fahrenheit_scenario(us, bridge)
+    finally:
+        server.shutdown()
+        bridge.process.terminate()
+    client.covered |= us.covered
+    client.checked += us.checked
 
     missing = sorted({(op[0], op[1]) for op in OPERATIONS} - client.covered)
     if missing:

@@ -6,6 +6,7 @@ import { zones } from "./refrigerators.js";
 import { isDual } from "./setpoints.js";
 import { movingText, shadeView } from "./shades.js";
 import { state } from "./state.js";
+import { projectScale } from "./temperature.js";
 
 // Devices without a room are collected under this id.
 export const NO_ROOM = 0;
@@ -62,7 +63,7 @@ export function fanStateLabel(fan) {
 
 // "3° · −18°": a refrigerator's fridge and freezer temperatures, the ones it reports.
 export function fridgeTemperatures(fridge) {
-  return zones(fridge)
+  return zones(fridge, projectScale(state.system))
     .filter((zone) => zone.temperature !== null)
     .map((zone) => formatTemperature(zone.temperature))
     .join(" · ");
@@ -222,6 +223,13 @@ export function modeLabel(mode) {
 
 export function fanLabel(speed) {
   return labelOr(`climate.fans.${speed}`, speed);
+}
+
+// A temperature sensor's reading in a line (1.10.2): "73° · 30%", "—" when it reports none.
+export function sensorText(thermostat) {
+  const parts = [formatTemperature(thermostat.current_temperature)];
+  if (Number.isFinite(thermostat.humidity)) parts.push(t("common.percent", { percent: Math.round(thermostat.humidity) }));
+  return parts.join(" · ");
 }
 
 // The temperature a thermostat works to, for tiles and summaries: "24°", or "20°–24°" for a

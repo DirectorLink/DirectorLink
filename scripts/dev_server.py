@@ -9,10 +9,15 @@ and API clients can be developed without a controller:
     python -m http.server 8080 --directory app     # app; use "localhost" as the controller
 
 The fake project has two rooms; five lights (two of them older Light proxies), plus an older light
-that cannot be read and is listed as unsupported; three thermostats (an AC zone, and two that report
-in °F: a Control4 thermostat with heat and cool setpoints, and floor heating set through its heat
-setpoint); two fans (one on at Medium, one off), which follow their commands; two blinds, two
-cameras and a door relay.
+that cannot be read and is listed as unsupported; four thermostats in °C (an AC zone, a Control4
+thermostat with heat and cool setpoints, floor heating set through its heat setpoint, and a floor
+zone that reports no room temperature); two fans (one on at Medium, one off), which follow their
+commands; two blinds, two cameras and a door relay.
+With --fahrenheit (1.10.2, ADR-076) the project is a US home's instead: Composer's temperature scale
+and every thermostat in °F, with the thermostats of GitHub issue #75: 33 "Living Room Minisplit"
+(74 °F now, 69 °F set), 34 "Hallway" (a Nest: heat and cool setpoints, no single one), 36
+"Bathroom" (a temperature and humidity reading with nothing to set) and 37 "Weather Driver" (an
+outdoor weather driver on the thermostat proxy, left out).
 Two more shades report their movement as KNX blinds do (one of them only opens and closes fully),
 and every blind moves over some seconds, reported while the requests come in.
 A Samsung refrigerator in the kitchen (its driver is device 140, with the variables of the
@@ -161,7 +166,7 @@ class FakeCameras:
 class Bridge:
     """One Lua process running the driver; requests are serialized because the driver is single-threaded."""
 
-    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150, agreement=False, doors=False):
+    def __init__(self, lua, spec_path, sonos_port=None, cameras=0, camera_ms=150, agreement=False, doors=False, fahrenheit=False):
         # Fake Sonos players on this port (tests/sonos/fake-sonos.mjs): the driver's requests to
         # players reach them through _fetch.
         self.sonos_port = sonos_port
@@ -178,6 +183,8 @@ class Bridge:
             arguments.append("agreement")
         if doors:
             arguments.append("doors")
+        if fahrenheit:
+            arguments.append("fahrenheit")
         self.process = subprocess.Popen(
             arguments,
             cwd=ROOT,
@@ -421,12 +428,13 @@ def main():
     parser.add_argument("--door-controllers", action="store_true", help="Relay Door, Gate and Garage Door Controllers: 71 Main Gate (driver 161), 72 Garage Door (162), the KNX relay 75 as door controller 163's door")
     parser.add_argument("--camera-ms", type=int, default=150, metavar="MS", help="how long a fake camera takes for a picture (default 150)")
     parser.add_argument("--latency", type=int, default=0, metavar="MS", help="a round trip added to every request, as the account's relay adds")
+    parser.add_argument("--fahrenheit", action="store_true", help="a US home: Composer's scale and every thermostat in °F, with the thermostats of issue #75")
     args = parser.parse_args()
     if not args.lua:
         sys.exit("Lua 5.1 not found; install it or pass --lua")
 
     spec = ROOT / "dist" / "openapi.json"
-    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms, args.agreement_cameras, args.door_controllers)
+    bridge = Bridge(args.lua, spec if spec.is_file() else None, args.sonos, args.cameras, args.camera_ms, args.agreement_cameras, args.door_controllers, args.fahrenheit)
     if args.jewish_calendar:
         bridge.set_property("Jewish Calendar", "On")
     if args.sonos:
@@ -448,6 +456,8 @@ def main():
             print('Door controllers: 71 Main Gate (driver 161), 72 Garage Door (162), 75 Back Door Relay (163); "event 161 1" opens the gate in Control4')
         if args.latency:
             print(f"Latency: {args.latency} ms a round trip")
+        if args.fahrenheit:
+            print("Fahrenheit: a US home (33 minisplit, 34 Nest, 36 sensor, 37 weather driver left out)")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
         print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run); "alert <camera driver> <label>"; "ring <doorbell camera driver>"; "stats".')
