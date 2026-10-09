@@ -7,8 +7,12 @@ local Log = require("src.core.log")
 -- REST on a real installation (bkwagner, #14); no DirectorLink command has moved one of these
 -- lights yet, so the init log below lists what each proxy really has.
 --
--- A separate adapter on purpose: light_v2.lua is the path validated on real hardware and stays
--- untouched. The helpers are copies of its own; a shared module can come once both are validated.
+-- A separate adapter on purpose: light_v2.lua is the path validated on real hardware, and its
+-- commands stay its own. The helpers are copies of its own; a shared module can come once both are
+-- validated. Since 1.10.2 (ADR-077) both decide dimmer or switch alike: by what the light's driver
+-- declares (src/control4/light_capabilities.lua), else by the level variable as before.
+local LightCapabilities = require("src.control4.light_capabilities")
+
 local LightV1 = {}
 
 local VARIABLE_STATE = 1000
@@ -86,13 +90,17 @@ function LightV1.initialize(device)
         return false, device.adapter_error
     end
 
-    -- Switches (an LDZ-101 in switch mode) have no level variable.
+    -- Switches (an LDZ-101 in switch mode) have no level variable. A driver that declares itself
+    -- a switch is one, level variable or not.
     local levelValue = safeGetVariable(device.id, VARIABLE_LEVEL)
-    local dimmable = levelValue ~= nil
+    local hasLevel = levelValue ~= nil
+    local dimmable, dimmableBy = LightCapabilities.dimmable(device, hasLevel)
+    local watchLevel = dimmable and hasLevel
 
     Log.debug("light_state", "legacy light", {
         device_id = device.id,
         dimmable = dimmable,
+        by = dimmableBy,
         protocols = protocolDrivers(device),
         variables = variableNames(device.id),
     })
@@ -110,11 +118,11 @@ function LightV1.initialize(device)
     device.capabilities = {
         on_off = true,
         brightness = dimmable,
-        brightness_feedback = dimmable,
+        brightness_feedback = watchLevel,
     }
     device.state = {
         power = boolValue(stateValue),
-        brightness = dimmable and clampPercent(levelValue) or nil,
+        brightness = watchLevel and clampPercent(levelValue) or nil,
     }
     device.actions = { "on", "off" }
     if dimmable then
@@ -132,7 +140,7 @@ function LightV1.initialize(device)
         return false, device.adapter_error
     end
 
-    if dimmable then
+    if watchLevel then
         local levelListenerOk, levelListenerError = pcall(function()
             C4:RegisterVariableListener(device.id, VARIABLE_LEVEL)
         end)
@@ -272,8 +280,14 @@ function LightV1.execute(device, action, params)
     return true, result
 end
 
+-- Its driver was updated in Composer: what it declares is read again (Manager.setUpAgain).
+function LightV1.forget(device)
+    LightCapabilities.forget(device)
+end
+
 function LightV1.reset()
     tracked = {}
+    LightCapabilities.reset()
 end
 
 return LightV1
