@@ -2,6 +2,25 @@
 
 ## Current release
 
+`v1.12.1` — Cameras in your order (1121b), the weather on Home (1121a). No Worker change; no D1 migration.
+
+## 1121b. Cameras in your order (1.12.1)
+
+1. On the iPhone (admin), Cameras: an **Order** button. Tap it: every camera, the DoorBird's and the doorbell camera too, with its room.
+2. Drag a camera by its handle (touch and hold), and use the arrows; Save. The tab shows the new order and the first camera large. A room with the doorbell shows its cameras and doorbell in the same order.
+3. The same order on the iPad and on an Android member's phone, which has no Order button.
+4. Order, move a camera, Cancel (or switch tab): nothing changes. In Hebrew the list reads right to left.
+5. A camera added in Composer comes last; after a controller restart the order stays. A backup made now, the order changed, then restored: the preview counts the camera order, and it comes back.
+
+## 1121a. The weather on Home (1.12.1)
+
+1. On the iPhone's Home Screen app, Home shows the line under "Say or type a command"; "Now" and "Today" match the Schedules card, rounded.
+2. Before 15:00 it says Today, from 15:00 Tomorrow (compare `tomorrow` in the console's `GET /v1/weather`). After sunset it shows tomorrow's sunrise and a moon; before sunrise today's sunrise.
+3. Hebrew on the iPhone and on a narrow screen: 27° and 22°–31° read correctly and the line wraps cleanly, with no dots.
+4. An Android member's phone shows the line too; Settings → About shows "Weather by Open-Meteo". Away from home, through the account, it shows and updates; left open 10+ minutes, "Now" moves. The controller's log shows Open-Meteo read no more than every 6 hours.
+
+## Previous release
+
 `v1.12.0` — Pairing codes on 32-bit controllers (1120c), adding users and their devices (1120b), Direct HTTPS at home (1120a). A Worker change with a D1 migration (`0011_https_names`) and two secrets (`DLHOME_DNS_TOKEN`, `ACME_ACCOUNT_KEY`).
 
 ## 1120c. Pairing codes (1.12.0)
