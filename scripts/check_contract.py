@@ -1131,28 +1131,33 @@ def scenario(client, bridge):
 
 
 def direct_https(client, bridge):
-    """Direct HTTPS (1.12.0, ADR-082): not allowed as it ships; Allowed in Composer, still off until the
-    home's owner turns it on, which needs Remote Access and a home linked to an account (the dev
-    bridge has no relay); off always works."""
+    """Direct HTTPS (1.12.0, ADR-082; since 1.12.2 switched in Composer only): off as it ships; On in
+    Composer turns it on, and without Remote Access and a home linked to an account (the dev bridge
+    has no relay) it says what it needs; 1.12.1's Allowed is On; PUT /v1/https, the switch of the
+    1.12.0 and 1.12.1 apps, is always 409 SET_IN_COMPOSER and changes nothing."""
     off = client.check("GET", "/v1/https", 200)
-    if off["state"] != "not_allowed" or off["allowed"] is not False or off["enabled"] is not False or off["name"] is not None:
-        fail(f"GET /v1/https should be not allowed as DirectorLink ships: {off}")
-    if client.check("PUT", "/v1/https", 409, body={"enabled": True})["code"] != "HTTPS_NOT_ALLOWED":
-        fail("PUT /v1/https while Composer says Off should be 409 HTTPS_NOT_ALLOWED")
-    bridge.set_property("Direct HTTPS", "Allowed")
-    allowed = client.check("GET", "/v1/https", 200)
-    if allowed["state"] != "off" or allowed["allowed"] is not True or allowed["enabled"] is not False or allowed["remote"] is not False:
-        fail(f"GET /v1/https with Direct HTTPS Allowed should be off until the owner turns it on: {allowed}")
-    if client.check("PUT", "/v1/https", 409, body={"enabled": True})["code"] != "REMOTE_ACCESS_NEEDED":
-        fail("PUT /v1/https without Remote Access should be 409 REMOTE_ACCESS_NEEDED")
-    client.check("PUT", "/v1/https", 400, body={"enabled": "yes"})
-    client.check("PUT", "/v1/https", 400, body={"enabled": False, "certificate": "x"})
-    switched = client.check("PUT", "/v1/https", 200, body={"enabled": False})
-    if switched["state"] != "off" or switched["certificate"] is not None:
-        fail(f"PUT /v1/https off should answer the state: {switched}")
-    if client.check("GET", "/v1/system", 200).get("direct_https", "missing") is not None:
-        fail("GET /v1/system should say direct_https null while nothing listens")
+    if off["state"] != "off" or off["allowed"] is not False or off["enabled"] is not False or off["name"] is not None:
+        fail(f"GET /v1/https should be off as DirectorLink ships: {off}")
+    for body in ({"enabled": True}, {"enabled": False}, {"enabled": "yes"}, {}):
+        refused = client.check("PUT", "/v1/https", 409, body=body)
+        if refused["code"] != "SET_IN_COMPOSER" or "Composer" not in refused.get("detail", ""):
+            fail(f"PUT /v1/https should be 409 SET_IN_COMPOSER, saying where it is set: {refused}")
+    if client.check("GET", "/v1/https", 200)["state"] != "off":
+        fail("PUT /v1/https should change nothing")
+    for value in ("On", "Allowed"):
+        bridge.set_property("Direct HTTPS", value)
+        on = client.check("GET", "/v1/https", 200)
+        if on["allowed"] is not True or on["enabled"] is not True or on["remote"] is not False or on["state"] != "error":
+            fail(f"GET /v1/https with Direct HTTPS {value} should be on, waiting for Remote Access: {on}")
+        if not isinstance(on["error"], str) or "Remote Access" not in on["error"]:
+            fail(f"GET /v1/https should say that it needs Remote Access: {on}")
+        if client.check("PUT", "/v1/https", 409, body={"enabled": False})["code"] != "SET_IN_COMPOSER":
+            fail("PUT /v1/https while on should be 409 SET_IN_COMPOSER")
+        if client.check("GET", "/v1/system", 200).get("direct_https", "missing") is not None:
+            fail("GET /v1/system should say direct_https null while nothing listens")
     bridge.set_property("Direct HTTPS", "Off")
+    if client.check("GET", "/v1/https", 200)["state"] != "off":
+        fail("GET /v1/https should be off again once Composer says Off")
 
 
 def fahrenheit_scenario(client, bridge):

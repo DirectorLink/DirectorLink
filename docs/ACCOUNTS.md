@@ -72,7 +72,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | An alert sent again after a lost connection (1.10.1, ADR-073) | — | a random id per alert, kept 10 minutes (at most 200) so that it pushes each once, and whether an alert came again (that a connection ended while it was on its way: it saw each connection end already); never more of what it is about | its own sealed alerts not yet answered, in memory for up to 2 minutes |
 | Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
 | Ask-before-opening links (1.8.0): a door's link that asks its person | shown once, when its person makes it; the question opened with the device's alert key | as a scene link's run: **its id and secret in transit**, when, and the result word (asked, waiting, nobody, doors_off, not_asked), so that it is an ask link; then a brief sealed `notify` for its person's key ids, so which keys a link asks; which door, and the question, **never** | the link's id, a hash of its secret, its door and the key that made it; every question and the opening that answered it in History |
-| Direct HTTPS (1.12.0, ADR-082): the home's own name (`<20 random letters and digits>.dlhome.cc`) | its home's, in `GET /v1/system` while it listens, and admins in `GET /v1/https` | yes, from the first certificate the controller asks for: bound to the home in D1 for good (`https_names`), with when its first certificate was issued; **and it is public**: Certificate Transparency logs list every certificate issued for it, with their dates, and anyone may look up its DNS record | yes |
+| Direct HTTPS (1.12.0, ADR-082; since 1.12.2 on whenever the installer sets it On in Composer, ADR-085): the home's own name (`<20 random letters and digits>.dlhome.cc`) | its home's, in `GET /v1/system` while it listens, and admins in `GET /v1/https` | yes, from the first certificate the controller asks for: bound to the home in D1 for good (`https_names`), with when its first certificate was issued; **and it is public**: Certificate Transparency logs list every certificate issued for it, with their dates, and anyone may look up its DNS record | yes |
 | Direct HTTPS: the controller's LAN address (a private IPv4 address such as 192.168.1.201) | — | yes, while Direct HTTPS is on: the controller sends it with each request and when it changes, and the Worker writes it as the name's public DNS record (DNS only), deleted when it is turned off. Anyone who knows the name can read it: a private address, which says nothing outside the home | yes |
 | Direct HTTPS: the certificate and its key | the certificate, as any browser that connects | the certificates (public anyway) and its ACME account's key; the controller's CSR in transit; **never** the controller's private key | the key (in its store, never sent, logged or backed up) and the certificate |
 | Requests on port 28443 at home (Direct HTTPS) | yes | **never**: they go from the device to the controller on the home network | yes |
@@ -255,7 +255,8 @@ admin, without removing anyone (*Handing the home to another admin*, below).
 ### 2. Away from home
 
 The app tries the controller on the home network first, because that is faster: since 1.12.0 at its
-own HTTPS name first, when the home's owner turned on Direct connection at home (ADR-082), then (not
+own HTTPS name first, when Direct HTTPS is on (ADR-082; since 1.12.2 the installer turns it on in
+Composer, ADR-085), then (not
 on iPhone and iPad) at its address. If the controller cannot be reached that way, the app sends
 locked envelopes to the cloud with the account's session. The cloud checks that the account is a
 member of the home and passes the envelope to the home's relay connection. The controller unlocks
@@ -833,8 +834,9 @@ device's key.
 
 They cannot use the home-network connection at the controller's address: WebKit blocks it (see the
 README). Until 1.12.0 they always went through the cloud, locked, even at home. Since 1.12.0, when
-the installer allows **Direct HTTPS** in Composer and the home's owner turns on Direct connection at
-home (Settings → Controller, ADR-082), the controller serves the same API over HTTPS on port 28443
+**Direct HTTPS** is on (ADR-082; since 1.12.2 the installer turns it on in Composer, DirectorLink →
+Direct HTTPS → On, and nobody else is asked, ADR-085; Settings → Controller → Direct connection at
+home says how it is and what it means), the controller serves the same API over HTTPS on port 28443
 under the home's own name, with a Let's Encrypt certificate the cloud gets for it: they reach it
 there on the home network, sealed the same way, and go through the cloud only away from home
 (`app/README.md`, Direct connection at home). The cloud learns the name and the controller's LAN

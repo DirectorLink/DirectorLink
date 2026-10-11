@@ -4,10 +4,10 @@
 // certificate has expired; a request without an answer goes the next way, a command never twice;
 // Chrome's Local Network Access refused leaves the device on the account; a new name is tried at
 // once, and while away the look for the home network tries it first, briefly. Then Settings →
-// Controller's card: the owner's switch and what it means, other admins read only, members nothing,
-// every state's words and the refusals'. Against a fake controller (sealed at its name and at its
-// address, tests/app/direct-home.mjs) and a fake account service, under fake time. iPhone and iPad:
-// tests/app/direct-https-ios.test.mjs.
+// Controller's card (1.12.2: switched in Composer only): how it is and what it means for every
+// admin, where the installer turns it on, no switch, members nothing, every state's words. Against
+// a fake controller (sealed at its name and at its address, tests/app/direct-home.mjs) and a fake
+// account service, under fake time. iPhone and iPad: tests/app/direct-https-ios.test.mjs.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -438,38 +438,63 @@ async function card({ access = { role: "admin", owner: true }, status = httpsSta
   return directCard();
 }
 
-test("every state in words: off, getting a certificate, on until its date, what went wrong, and Composer's", () => {
+test("every state in words: off, getting a certificate, on until its date, what went wrong; an older controller's Composer Off is Off", () => {
   assert.equal(directStateText({ state: "off" }), "Off");
   assert.equal(directStateText({ state: "requesting" }), "Getting a certificate…");
   assert.equal(directStateText({ state: "listening", certificate: { not_after: CERT_END } }), "On until Jan 8, 2027");
   assert.equal(directStateText({ state: "listening", certificate: null }), "On");
   assert.equal(directStateText({ state: "error", error: "DNS challenge failed" }), "Didn’t work: DNS challenge failed");
   assert.equal(directStateText({ state: "error", error: null }), "Didn’t work");
-  assert.equal(directStateText({ state: "not_allowed" }), "Not allowed in Composer");
+  assert.equal(directStateText({ state: "not_allowed" }), "Off");
 });
 
-test("the owner: what it means before it is on, the switch, and the state while the controller gets its certificate", async () => {
-  let nodes = await card({ status: httpsStatus({ enabled: false, state: "off", certificate: null }) });
-  const explanation = textOf(byKey(nodes, "direct-explanation"));
-  assert.match(explanation, /every device, iPhones and iPads too, reaches your controller directly on your home network: faster, and without DirectorLink’s servers/);
-  assert.match(explanation, /a random name under dlhome\.cc that points to its address inside your home network, which only devices at home can reach/);
-  assert.match(explanation, /listed publicly in certificate logs, and DirectorLink’s servers learn the name and that address/);
-  assert.match(explanation, /Chrome may ask to reach devices on your local network: allow it/);
-  const toggle = byKey(nodes, "direct-switch");
-  assert.equal(toggle.attributes.role, "switch");
-  assert.equal(toggle.attributes["aria-checked"], "false");
-  assert.equal(toggle.attributes["aria-disabled"], undefined);
-  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Off");
-  assert.deepEqual(net.sent.filter((call) => call.method === "PUT"), [], "nothing changes before the owner turns it on");
+// No switch anywhere on the card: nothing with role switch, no button but Retry.
+function assertNoSwitch(nodes) {
+  assert.equal(byKey(nodes, "direct-switch"), null);
+  walk(nodes, (node) => {
+    assert.notEqual(node.attributes?.role, "switch", "no switch");
+    if (node.tagName === "BUTTON") assert.equal(node.dataset.key, "direct-retry", "no button but Retry");
+  });
+}
 
-  // On: PUT {"enabled": true}; the controller gets its certificate, asked every 3 s.
-  await press(nodes, "direct-switch");
-  await until(() => !ui.directHttps.busy);
-  assert.deepEqual(net.sent.filter((call) => call.method === "PUT").map((call) => call.body), [{ enabled: true }]);
-  nodes = directCard();
+const OFF = { allowed: false, enabled: false, state: "off", certificate: null };
+const INSTALLER = "Your installer turns it on in Composer: DirectorLink → Direct HTTPS → On.";
+
+test("off: the state, what it means, and where the installer turns it on; no switch, for the owner and for other admins", async () => {
+  for (const access of [{ role: "admin", owner: true }, { role: "admin", owner: false }]) {
+    const nodes = await card({ access, status: httpsStatus(OFF) });
+    assertNoSwitch(nodes);
+    assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Off");
+    const explanation = textOf(byKey(nodes, "direct-explanation"));
+    assert.match(explanation, /every device, iPhones and iPads too, reaches your controller directly on your home network: faster, and without DirectorLink’s servers/);
+    assert.match(explanation, /a random name under dlhome\.cc that points to its address inside your home network, which only devices at home can reach/);
+    assert.match(explanation, /listed publicly in certificate logs, and DirectorLink’s servers learn the name and that address/);
+    assert.match(explanation, /Chrome may ask to reach devices on your local network: allow it/);
+    assert.equal(textOf(byKey(nodes, "direct-composer")), INSTALLER);
+    // The path stays left to right in every language.
+    assert.match(byKey(nodes, "direct-composer").textContent, /⁨DirectorLink → Direct HTTPS → On⁩/);
+    assert.equal(byKey(nodes, "direct-remote"), null);
+    assert.equal(byKey(nodes, "direct-update"), null);
+    assert.equal(byKey(nodes, "direct-owner-only"), null);
+  }
+  // A 1.12.0 or 1.12.1 controller with Composer Off says not_allowed: Off, the same words.
+  const older = await card({ status: httpsStatus({ ...OFF, state: "not_allowed" }) });
+  assert.equal(textOf(byKey(older, "direct-state")), "Status: Off");
+  assert.equal(textOf(byKey(older, "direct-composer")), INSTALLER);
+  assert.deepEqual(net.sent.filter((call) => call.method === "PUT"), [], "the app never switches it");
+});
+
+test("on: the state and what it means, without the installer's words; while it gets its certificate, asked every 3 s, then this device goes the new way", async () => {
+  let nodes = await card({ status: httpsStatus() });
+  assertNoSwitch(nodes);
+  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: On until Jan 8, 2027");
+  assert.ok(byKey(nodes, "direct-explanation"), "what it means, also while on");
+  assert.equal(byKey(nodes, "direct-composer"), null);
+  assert.equal(byKey(nodes, "direct-remote"), null);
+
+  // Turned on in Composer a moment ago: the controller is getting its certificate.
+  nodes = await card({ status: httpsStatus({ state: "requesting", certificate: null }) });
   assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Getting a certificate…");
-  assert.equal(byKey(nodes, "direct-switch").attributes["aria-checked"], "true");
-  assert.equal(byKey(nodes, "direct-explanation"), null, "said before it was on");
   const reads = () => net.sent.filter((call) => call.method === "GET" && call.path === "/v1/https").length;
   const before = reads();
   await advance(POLL_MS);
@@ -482,50 +507,29 @@ test("the owner: what it means before it is on, the switch, and the state while 
   const after = reads();
   await advance(POLL_MS * 3);
   assert.equal(reads(), after, "no more asking once it is on");
-
-  // Off again: PUT {"enabled": false}.
-  await press(directCard(), "direct-switch");
-  await until(() => !ui.directHttps.busy);
-  assert.deepEqual(net.sent.filter((call) => call.method === "PUT").at(-1).body, { enabled: false });
-  assert.equal(textOf(byKey(directCard(), "direct-state")), "Status: Off");
+  assert.deepEqual(net.sent.filter((call) => call.method === "PUT"), [], "the app never switches it");
 });
 
-test("the owner: Composer first, then Remote Access and the home linked; the controller's refusals in words", async () => {
-  let nodes = await card({ status: httpsStatus({ allowed: false, enabled: false, state: "not_allowed", certificate: null }) });
-  assert.equal(byKey(nodes, "direct-switch"), null, "nothing to switch until the installer allows it");
-  assert.equal(textOf(byKey(nodes, "direct-composer")), "Your installer has to allow it first: in Composer, set DirectorLink’s Direct HTTPS property to Allowed.");
-  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Not allowed in Composer");
-
-  nodes = await card({ status: httpsStatus({ remote: false, enabled: false, state: "off", certificate: null }) });
-  assert.equal(byKey(nodes, "direct-switch").attributes["aria-disabled"], "true", "it can't be turned on yet");
+test("on, waiting for Remote Access and the home linked: what the controller says, and where to link it", async () => {
+  const nodes = await card({
+    status: httpsStatus({ remote: false, state: "error", certificate: null, error: "It needs Remote Access and the home linked to an account." }),
+  });
+  assertNoSwitch(nodes);
+  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Didn’t work: It needs Remote Access and the home linked to an account.");
   assert.match(textOf(byKey(nodes, "direct-remote")), /^It needs Remote Access on in Composer, and this home linked to your account\. Link it in Settings → Account$/);
   assert.equal(byKey(nodes, "direct-account").attributes.href, "#/settings/account");
-  await press(nodes, "direct-switch");
-  assert.deepEqual(net.sent.filter((call) => call.method === "PUT"), [], "nothing is sent");
-
-  // The controller refuses (things changed since the card was read).
-  for (const [status, code, text] of [
-    [409, "HTTPS_NOT_ALLOWED", "Your installer has to allow it first: in Composer, set DirectorLink’s Direct HTTPS property to Allowed."],
-    [409, "REMOTE_ACCESS_NEEDED", "It needs Remote Access on in Composer, and this home linked to your account."],
-    [403, "FORBIDDEN", "Only the home’s owner can turn it on or off."],
-  ]) {
-    nodes = await card({ status: httpsStatus({ enabled: false, state: "off", certificate: null }) });
-    net.put = [status, { status, code, detail: "refused" }];
-    await press(nodes, "direct-switch");
-    await until(() => !ui.directHttps.busy);
-    assert.equal(textOf(byKey(directCard(), "direct-message")), text, code);
-  }
+  assert.equal(byKey(nodes, "direct-composer"), null);
 });
 
-test("other admins see how it is, without the switch; members see nothing; nor does anyone with an older DirectorLink", async () => {
-  let nodes = await card({ access: { role: "admin", owner: false } });
-  assert.equal(byKey(nodes, "direct-switch"), null);
-  assert.equal(byKey(nodes, "direct-explanation"), null);
-  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: On until Jan 8, 2027");
-  assert.equal(textOf(byKey(nodes, "direct-owner-only")), "Only the home’s owner can turn it on or off.");
-  nodes = await card({ access: { role: "admin", owner: false }, status: httpsStatus({ allowed: false, enabled: false, state: "not_allowed", certificate: null }) });
-  assert.ok(byKey(nodes, "direct-composer"), "the installer's part, for the admin who may be the installer");
+test("a 1.12.0 or 1.12.1 controller allowed in Composer with its owner's switch off: update it", async () => {
+  const nodes = await card({ status: httpsStatus({ allowed: true, enabled: false, state: "off", certificate: null }) });
+  assertNoSwitch(nodes);
+  assert.equal(textOf(byKey(nodes, "direct-state")), "Status: Off");
+  assert.equal(textOf(byKey(nodes, "direct-update")), "Your installer allowed it in Composer. To turn it on, update DirectorLink on the controller.");
+  assert.equal(byKey(nodes, "direct-composer"), null);
+});
 
+test("members see nothing; nor does anyone with an older DirectorLink", async () => {
   await card({ access: { role: "member", owner: false } });
   state.access = { role: "member", owner: false };
   assert.equal(directCard(), null);
@@ -551,16 +555,35 @@ test("Forget key while the card waits for the certificate: nothing more is asked
   assert.equal(ui.directHttps, null);
 });
 
-test("the card's words in Hebrew, Spanish and Italian", () => {
+test("the card's words in Hebrew, Spanish and Italian", async () => {
   const keys = (node, prefix = "") => Object.entries(node).flatMap(([key, value]) => (typeof value === "object" ? keys(value, `${prefix}${key}.`) : [`${prefix}${key}`]));
   for (const [code, dictionary] of Object.entries(dictionaries)) {
     assert.deepEqual(keys(dictionary.directHttps), keys(en.directHttps), code);
     assert.deepEqual(keys(dictionary.settings.controller.via), keys(en.settings.controller.via), code);
     assert.equal(typeof dictionary.settings.controller.thisDevice, "string", code);
     assert.match(dictionary.directHttps.how, /dlhome\.cc/, code);
-    assert.match(dictionary.directHttps.notAllowed, /Direct HTTPS.*Allowed/, code);
+    assert.match(dictionary.directHttps.installer, /Composer.*\{path\}/, code);
+    assert.match(dictionary.directHttps.updateDriver, /Composer.*DirectorLink/, code);
     assert.match(dictionary.directHttps.state.listening, /\{date\}/, code);
     assert.match(dictionary.directHttps.state.error, /\{error\}/, code);
+    assert.equal(typeof dictionary.history.system.directOn, "string", code);
+    assert.equal(typeof dictionary.history.system.directOff, "string", code);
   }
+  for (const gone of ["label", "notAllowed", "ownerOnly"]) assert.equal(en.directHttps[gone], undefined, `no ${gone}: there is no switch`);
   assert.match(dictionaries.he.directHttps.how, /יומני התעודות/);
+
+  // The card in Hebrew, off: the installer's words, the path in Composer kept left to right.
+  const nodes = await card({ status: httpsStatus(OFF) });
+  await setLanguage("he");
+  try {
+    const hebrew = directCard();
+    assertNoSwitch(hebrew);
+    assert.equal(textOf(byKey(hebrew, "direct-state")), "מצב: כבוי");
+    assert.equal(textOf(byKey(hebrew, "direct-composer")), "המתקין מפעיל את זה ב-Composer: DirectorLink → Direct HTTPS → On.");
+    assert.match(byKey(hebrew, "direct-composer").textContent, /⁨DirectorLink → Direct HTTPS → On⁩/);
+    assert.match(textOf(byKey(hebrew, "direct-explanation")), /השם מופיע בפומבי ביומני התעודות, והשרתים של DirectorLink יודעים את השם ואת הכתובת הזו/);
+  } finally {
+    await setLanguage("en");
+  }
+  assert.ok(nodes);
 });

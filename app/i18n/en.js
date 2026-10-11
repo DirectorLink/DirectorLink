@@ -1565,6 +1565,8 @@ export default {
       added: "DirectorLink added to the project",
       updateRequired: "Remote access stopped: update DirectorLink, this version can no longer connect",
       updateRequiredTo: "Remote access stopped: update DirectorLink to {to} or later, this version can no longer connect",
+      directOn: "Direct connection at home turned on",
+      directOff: "Direct connection at home turned off",
     },
     counts: {
       ran: { one: "Ran on 1 device", other: "Ran on {count} devices" },
@@ -2219,7 +2221,6 @@ export default {
   // Settings → Controller → Direct connection at home (1.12.0, ADR-082; js/views/direct.js).
   directHttps: {
     title: "Direct connection at home",
-    label: "Direct connection at home",
     intro: "When it’s on, every device, iPhones and iPads too, reaches your controller directly on your home network: faster, and without DirectorLink’s servers.",
     how: "For that, your controller gets a random name under dlhome.cc that points to its address inside your home network, which only devices at home can reach. The name is listed publicly in certificate logs, and DirectorLink’s servers learn the name and that address.",
     chrome: "On Android and computers, Chrome may ask to reach devices on your local network: allow it.",
@@ -2231,12 +2232,11 @@ export default {
       on: "On",
       error: "Didn’t work: {error}",
       errorUnknown: "Didn’t work",
-      notAllowed: "Not allowed in Composer",
     },
-    notAllowed: "Your installer has to allow it first: in Composer, set DirectorLink’s Direct HTTPS property to Allowed.",
+    installer: "Your installer turns it on in Composer: {path}.",
+    updateDriver: "Your installer allowed it in Composer. To turn it on, update DirectorLink on the controller.",
     remoteNeeded: "It needs Remote Access on in Composer, and this home linked to your account.",
     remoteLink: "Link it in Settings → Account",
-    ownerOnly: "Only the home’s owner can turn it on or off.",
   },
   settings: {
     title: "Settings",
