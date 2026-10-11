@@ -240,15 +240,33 @@ local function rounded(value)
     return value and math.floor(value * 100 + 0.5) / 100 or Json.null
 end
 
+-- A day's high, low and chance of rain from the forecast (null without weather), and its sunrise and
+-- sunset on the controller's local date `info`.
+local function dayView(values, info)
+    local sunrise, sunset = Scheduler.sunTimes(info)
+    values = values or {}
+    return {
+        max_temperature = nullable(values.max_temperature),
+        min_temperature = nullable(values.min_temperature),
+        rain_chance = nullable(values.rain_chance),
+        sunrise = clock(sunrise),
+        sunset = clock(sunset),
+    }
+end
+
 -- GET /v1/weather: the weather now and today's sunrise and sunset (worked out on the controller,
 -- so they are there without the internet too). Since 1.10.0 (ADR-071) the weather now is the saved
 -- forecast's hour for now (`source`), read at `fetched_at`; `detail` says why the last read failed,
--- also while the saved forecast is used. Reading it keeps the forecast fresh for an hour.
+-- also while the saved forecast is used. Reading it keeps the forecast fresh for an hour. Since
+-- 1.12.1 (ADR-084) `tomorrow` too, as `today`: the app's line on Home shows it from 15:00, and
+-- tomorrow's sunrise after sunset.
 function Handlers.weather(ctx)
     local now = Clock.now()
     Weather.wanted(now)
     local data, fetchedAt, reason, detail = Weather.current(now)
-    local sunrise, sunset = Scheduler.sunTimes(Scheduler.localTime(now))
+    local today = Scheduler.localTime(now)
+    -- By calendar date, at noon, as the scheduler counts days (a daylight saving change skips none).
+    local tomorrow = Scheduler.localTime(os.time({ year = today.year, month = today.month, day = today.day + 1, hour = 12, min = 0, sec = 0 }))
     local latitude, longitude = Weather.location()
     local result = {
         status = data and "ok" or string.lower(reason or "waiting"),
@@ -267,13 +285,8 @@ function Handlers.weather(ctx)
             raining = data.raining,
             weather_code = nullable(data.weather_code),
         } or Json.null,
-        today = {
-            max_temperature = nullable(data and data.today.max_temperature),
-            min_temperature = nullable(data and data.today.min_temperature),
-            rain_chance = nullable(data and data.today.rain_chance),
-            sunrise = clock(sunrise),
-            sunset = clock(sunset),
-        },
+        today = dayView(data and data.today, today),
+        tomorrow = dayView(data and data.tomorrow, tomorrow),
         attribution = "Weather data by Open-Meteo.com",
     }
     return 200, result

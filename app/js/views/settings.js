@@ -1820,6 +1820,9 @@ function aboutSection() {
     h("p", { class: "about-slogan" }, t("settings.about.slogan")),
     h("p", {}, t("settings.about.text")),
     h("p", { class: "about-independent" }, t("settings.about.independent")),
+    // Home's weather line shows Open-Meteo's forecast to every user (1.12.1), members too, who see
+    // no Schedules card with its credit (CC BY 4.0).
+    h("p", {}, h("a", { class: "weather-credit", href: "https://open-meteo.com/", target: "_blank", rel: "noopener", dataset: { key: "about-weather-credit" } }, t("schedules.weather.credit"))),
     h(
       "div",
       { class: "button-row" },
