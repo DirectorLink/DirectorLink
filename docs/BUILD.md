@@ -5,16 +5,38 @@ A C4Z is a ZIP-based Control4 driver package. DirectorLink packages `driver.xml`
 ## Tools
 
 - Python 3 with `pip install -r requirements-dev.txt` (PyYAML, openapi-spec-validator, jsonschema)
-- Lua 5.1 (`lua5.1`, `luac5.1`) for syntax checks and the driver tests
+- Lua 5.1 (`lua5.1`, `luac5.1`) for syntax checks and the driver tests; on Linux, `bash scripts/install_lua.sh` builds 5.1.5 from lua.org's checked source into `~/.lua-5.1.5/bin` (add it to `PATH`; CI does)
 - Node.js 22 for the JavaScript syntax check and the app tests; the cloud tests also run `wrangler dev` (`npx wrangler@4.143.0`)
 
 ## Everything CI runs
 
-From the repository root. CI (`.github/workflows/validate.yml`) runs the same in parallel jobs,
-about 4 minutes in all: the driver tests in three parts (`lua5.1 driver/tests/run.lua --shard 1/3`,
-`2/3`, `3/3`, split by the times listed in `driver/tests/run.lua`; every suite is in one part), the
-time-zone runs, the build and checks, and the app and cloud tests. The last job, `validate`, passes
-only when all of them passed.
+From the repository root. CI (`.github/workflows/validate.yml`) runs the same in parallel jobs:
+
+- `changes` (read-only, no secrets) decides whether the tests run. A pull request is compared with
+  the base it is merged with, a push to a `dev/` branch with `main`
+  (`git diff --no-renames --name-only`: a moved file counts where it was too). When every changed
+  path is under `docs/`, `site/` or `github-link/`, or is `README.md`, `SECURITY.md`, `NOTICE` or
+  `LICENSE`, the driver tests, the time-zone runs and the app and cloud tests are skipped. Any other
+  path, no change at all, or anything it cannot compare runs everything. **A push to `main` always
+  runs everything**: a release starts only once Validate has passed on its commit.
+- The driver tests in six parts (`lua5.1 driver/tests/run.lua --shard 1/6` … `6/6`), split by the
+  times listed in `driver/tests/run.lua`. A suite that alone takes longer than a part should is cut
+  into pieces, its tests dealt out in turn (`test_backup` into two: `test_backup:1/2` in the part's
+  first line); every test is in exactly one part. Then the time-zone runs, and the app and cloud
+  tests.
+- The build and checks: always, with the website's own test (`tests/app/site-*.test.mjs`) too.
+- `validate`, the one check to require, passes only when `changes` and the build and checks passed,
+  and the tests passed, or were skipped because `changes` found only the website and the docs
+  changed. A job that failed or was cancelled fails it.
+
+A pull request that changes code takes about 3 to 4 minutes (was about 6), the longest of the
+driver parts and the app and cloud tests; one that changes only the website or the docs about 2
+(the build and checks). Lua 5.1 comes from `scripts/install_lua.sh`, not from Ubuntu's package
+mirror (one hung until a job was cancelled after 25 minutes): lua.org's `lua-5.1.5.tar.gz` (or
+Debian's copy of the same file when lua.org does not answer), checked against the SHA-256 lua.org
+lists and built, then kept by `actions/cache`, keyed on the script, so most runs build nothing.
+Every job has a time limit, and so does every step that downloads (the cache 2 minutes, then the
+job builds Lua itself; the install 5).
 
 ```bash
 find driver -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p   # Lua syntax
@@ -115,7 +137,7 @@ SHA256SUMS.txt
 
 Release notes come from `docs/releases/v<version>.md`. The workflow refuses to replace an existing release, before asking for the approval and again before publishing. `gh release create` uploads the files before it publishes the release, so it works with immutable releases.
 
-From the merge to the approval: about 5 to 7 minutes (Validate's 4 to 6, more when one of its jobs is slow; then `gate` and `build`, about a minute and a half with their runners' start), was about 20. Every push to `main` starts a short **Publish DirectorLink Release** run, which says "nothing to release" when `VERSION` did not change.
+From the merge to the approval: about 5 to 6 minutes (Validate's 3 to 4, every test on `main`, more when one of its jobs is slow; then `gate` and `build`, about a minute and a half with their runners' start), was about 20. Every push to `main` starts a short **Publish DirectorLink Release** run, which says "nothing to release" when `VERSION` did not change.
 
 When Validate fails on the commit that changed `VERSION`, nothing is built or asked: the release waits. If it failed by chance, **Re-run failed jobs** in Validate's run; once it passes, the release starts by itself. If it needs a fix, merge the fix (it does not change `VERSION`), wait for Validate to pass on it, then **Actions → Publish DirectorLink Release → Run workflow** on `main`: run by hand, the workflow releases `main`'s latest commit, after the same checks (Validate passed on it, the release does not exist yet).
 
@@ -150,7 +172,7 @@ Before deploying `app/`, `console/` and `site/`, the job writes into each a `bui
 {"commit": "<the full commit of main>", "built_at": "2026-10-08T12:00:00Z"}
 ```
 
-`scripts/check_sites.py` checks that the deploy and the release run only in `production` and only from `main`, that no other job reads a secret, that each site gets its `build.json` and publishes it, and the watch below. For the release it also checks that it starts only after Validate DirectorLink (or by hand), that its first job's condition is exactly the one above (a successful run of Validate on a push to `main` of this repository, or by hand on `main`) and asks GitHub's API whether Validate passed, that every job checks out the commit Validate passed (never `github.sha`, which after Validate is `main`'s latest commit) and creates the release there, that only `publish` may write (exactly `contents: write`), and that it publishes only the files `build` checked.
+`scripts/check_sites.py` checks that the deploy and the release run only in `production` and only from `main`, that no other job reads a secret, that each site gets its `build.json` and publishes it, and the watch below. For the release it also checks that it starts only after Validate DirectorLink (or by hand), that its first job's condition is exactly the one above (a successful run of Validate on a push to `main` of this repository, or by hand on `main`) and asks GitHub's API whether Validate passed, that every job checks out the commit Validate passed (never `github.sha`, which after Validate is `main`'s latest commit) and creates the release there, that only `publish` may write (exactly `contents: write`), and that it publishes only the files `build` checked. For Validate, that it runs on every push to `main` and on pull requests and only reads, that each job that may be skipped needs `changes` and is never skipped on a push to `main` (`if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.tests == 'true'`), and that `validate` runs `always()`, needs every other job and checks each one's result. In every workflow, every job has `timeout-minutes`, every action is pinned to a full commit, and no job uses `apt-get`. `tests/scripts/test_validate_workflow.py` runs the `changes` and `validate` scripts themselves, against Git repositories made for the test and with each mix of job results.
 
 ### Checking what is served
 

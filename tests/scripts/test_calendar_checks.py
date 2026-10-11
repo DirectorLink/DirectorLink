@@ -1,6 +1,7 @@
 """The Jewish calendar's checks (1.2.0, ADR-037): check_package.py refuses a calendar file that
 could reach the network, and driver/tests/run.lua runs only the suites it is given (CI runs the
-calendar's suites again in two time zones).
+calendar's suites again in two time zones) and splits them into CI's parts of about equal time,
+every test in exactly one part.
 
     python -m unittest discover -s tests/scripts
 """
@@ -18,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import check_package  # noqa: E402
+import yaml  # noqa: E402
 
 # The full path: on Windows "lua5.1" reads as a name with an extension, which CreateProcess takes as is.
 LUA = shutil.which("lua5.1")
@@ -86,6 +88,16 @@ class CalendarPrivacy(unittest.TestCase):
         self.assertIn("check_calendar_privacy(files)", main)
 
 
+def run_lua_tables():
+    """driver/tests/run.lua's suites, the seconds it lists for each, and its DEFAULT_SECONDS."""
+    source = (ROOT / "driver" / "tests" / "run.lua").read_text(encoding="utf-8")
+    start = source.index("local suites = {")
+    listed = re.findall(r'^    "(test_\w+)",$', source[start:source.index("}", start)], re.M)
+    seconds = {name: int(value) for name, value in re.findall(r"^    (test_\w+) = (\d+),$", source, re.M)}
+    default = int(re.search(r"^local DEFAULT_SECONDS = (\d+)$", source, re.M).group(1))
+    return listed, seconds, default
+
+
 @unittest.skipUnless(LUA, "lua5.1 is not installed")
 class DriverTestRunner(unittest.TestCase):
     def run_suites(self, *names):
@@ -109,18 +121,50 @@ class DriverTestRunner(unittest.TestCase):
         self.assertIn("unknown suite test_no_such_suite", result.stdout)
         self.assertNotIn("passed", result.stdout, "nothing ran")
 
-    # CI runs the suites in three parts at once (.github/workflows/validate.yml).
+    # CI runs the suites in parts at once (.github/workflows/validate.yml): every test in exactly
+    # one part, and no part much longer than the others by the times run.lua lists.
     def test_the_parts_run_every_suite_once(self):
-        source = (ROOT / "driver" / "tests" / "run.lua").read_text(encoding="utf-8")
-        start = source.index("local suites = {")
-        listed = re.findall(r'^    "(test_\w+)",$', source[start:source.index("}", start)], re.M)
-        parts = []
-        for index in (1, 2, 3):
-            result = self.run_suites("--shard", f"{index}/3", "--list")
+        listed, seconds, default = run_lua_tables()
+        job = yaml.safe_load((ROOT / ".github" / "workflows" / "validate.yml").read_text(encoding="utf-8"))["jobs"]["driver-tests"]
+        count = len(job["strategy"]["matrix"]["part"])
+        self.assertEqual(job["strategy"]["matrix"]["part"], list(range(1, count + 1)))
+        self.assertIn(f"lua5.1 driver/tests/run.lua --shard ${{{{ matrix.part }}}}/{count}", [step.get("run") for step in job["steps"]])
+        pieces, times = {}, []
+        for index in range(1, count + 1):
+            result = self.run_suites("--shard", f"{index}/{count}", "--list")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            parts.append(result.stdout.split())
+            self.assertTrue(result.stdout.split(), f"part {index} is empty")
+            time = 0
+            for entry in result.stdout.split():
+                name, _, piece = entry.partition(":")
+                piece, of = (int(number) for number in piece.split("/")) if piece else (1, 1)
+                pieces.setdefault(name, []).append((piece, of))
+                time += seconds.get(name, default) / of
+            times.append(time)
+        self.assertEqual(sorted(pieces), sorted(listed))
+        for name, got in pieces.items():
+            self.assertEqual(sorted(got), [(piece, got[0][1]) for piece in range(1, got[0][1] + 1)], name)
+        self.assertLessEqual(max(times), 1.15 * sum(times) / count, f"seconds in each part: {times}")
+
+    # A suite longer than a part should be (test_backup in six parts) is cut into pieces, its tests
+    # dealt out in turn: here the quickest suite that is longer than another, in two parts.
+    def test_a_suite_longer_than_a_part_is_cut_into_pieces(self):
+        _, seconds, _ = run_lua_tables()
+        small = min(seconds, key=lambda name: (seconds[name], name))
+        cut = min((name for name in seconds if seconds[name] > seconds[small]), key=lambda name: (seconds[name], name))
+        parts = [self.run_suites("--shard", f"{index}/2", "--list", cut, small).stdout.split() for index in (1, 2)]
         self.assertTrue(all(parts), parts)
-        self.assertEqual(sorted(name for part in parts for name in part), sorted(listed))
+        self.assertEqual(sorted(parts[0] + parts[1]), sorted([f"{cut}:1/2", f"{cut}:2/2", small]))
+        whole = self.run_suites(cut, small)
+        self.assertEqual(whole.returncode, 0, whole.stdout + whole.stderr)
+        counts = []
+        for index in (1, 2):
+            result = self.run_suites("--shard", f"{index}/2", cut, small)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn(f"part {index}/2: {' '.join(parts[index - 1])}\n", result.stdout)
+            counts.append(int(re.search(r"^(\d+) passed, 0 failed", result.stdout, re.M).group(1)))
+        self.assertTrue(all(counts), counts)
+        self.assertIn(f"{sum(counts)} passed, 0 failed", whole.stdout)
 
     def test_a_part_of_the_named_suites_runs_only_those(self):
         result = self.run_suites("--shard", "1/2", "test_json", "test_http", "test_router")
