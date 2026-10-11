@@ -109,7 +109,7 @@ function weather({ read = "08:00", temperature = 26.6, code = 1, raining = false
 }
 
 // Without the isolates around numbers.
-const plain = (text) => text.replace(/[⁦-⁩]/g, "");
+const plain = (text) => text.replace(/[\u2066-\u2069]/g, "");
 // The line's text at a local time that day (the weather read then, unless it says otherwise).
 const line = (time, answer = weather({ read: time }), day) => plain(homeWeatherText(answer, at(time, day)));
 
@@ -290,7 +290,7 @@ test("in Hebrew, Spanish and Italian; numbers and degrees isolated so Hebrew rea
     assert.equal(line("16:00"), "עכשיו 27° · מחר 21°–28° · גשם 40% · שקיעה 18:13");
     assert.equal(line("20:00"), "עכשיו 27° · מחר 21°–28° · גשם 40% · זריחה 06:32");
     const raw = homeWeatherText(weather(), at("08:00"));
-    for (const isolated of ["⁦27°⁩", "⁦23°–30°⁩", "⁦14%⁩"]) assert.ok(raw.includes(isolated), isolated);
+    for (const isolated of ["\u206627°\u2069", "\u206623°–30°\u2069", "\u206614%\u2069"]) assert.ok(raw.includes(isolated), isolated);
     assert.equal(homeWeather(weather(), at("08:00")).sky, "clear");
   });
   await inLanguage("es", () => {
@@ -305,9 +305,14 @@ test("in Hebrew, Spanish and Italian; numbers and degrees isolated so Hebrew rea
 
 // ---- on Home -----------------------------------------------------------------------------------
 
-// The line on Home, its text with plain spaces.
+// The line on Home; what a screen reader hears of it; the parts it shows (without what only a
+// screen reader hears).
 const homeLine = () => byKey(homeView({}), "home-weather");
-const spoken = (node) => plain(node.textContent).replace(/ /g, " ");
+const spoken = (node) => plain(node.textContent);
+function shownParts(node) {
+  const shown = (child) => (typeof child.className === "string" && child.className.split(/\s+/).includes("visually-hidden") ? "" : child.children ? child.children.map(shown).join("") : child.textContent);
+  return byClass(node, "weather-line-text").children.filter((child) => child.className !== "visually-hidden").map((part) => plain(shown(part)));
+}
 
 test("Home shows it right under the command field, for members as for admins", () => {
   atTime(local("08:00"));
@@ -319,14 +324,20 @@ test("Home shows it right under the command field, for members as for admins", (
       const index = screen.findIndex((node) => node.dataset?.key === "home-weather");
       assert.ok(index > 0, member ? "member" : "admin");
       assert.equal(screen[index - 1].className, "command", "under the command field");
-      assert.equal(spoken(screen[index]), "Clear, Now 27° · Today 23°–30° · rain 14% · sunset 18:13", "the sky read out first");
+      assert.equal(spoken(screen[index]), "Clear, Now 27°, Today 23°–30°, rain 14%, sunset 18:13", "the sky read out first, a comma after each part");
+      // Set apart by a gap, no dots: nothing to dangle where the line wraps.
+      assert.deepEqual(shownParts(screen[index]), ["Now 27°", "Today 23°–30°", "rain 14%", "sunset 18:13"]);
+      assert.ok(!screen[index].textContent.includes("·"), "no dots on Home");
+      assert.equal(byClass(screen[index], "weather-line-part").className, "weather-line-part is-now", "\"Now 27°\" stands out");
       // "Now" can go on the narrowest phones (styles.css), the data stays.
       assert.equal(byClass(screen[index], "weather-line-now").textContent, "Now ");
-      assert.equal(homeWeatherText(), "Now ⁦27°⁩ · Today ⁦23°–30°⁩ · rain ⁦14%⁩ · sunset 18:13");
+      assert.equal(homeWeatherText(), "Now \u206627°\u2069 · Today \u206623°–30°\u2069 · rain \u206614%\u2069 · sunset 18:13");
     }
     const css = readFileSync(new URL("../../app/styles.css", import.meta.url), "utf8");
     assert.match(css, /@media \(max-width: 359\.98px\) \{\s*\.weather-line-now \{\s*display: none;/);
     assert.match(css, /\.weather-line-part \{\s*white-space: nowrap;/, "each part stays on one line");
+    assert.match(css, /\.weather-line-text \{\s*display: flex;\s*flex-wrap: wrap;\s*column-gap: 0\.75em;/, "the parts set apart by a gap");
+    assert.match(css, /\.weather-line-part\.is-now \{\s*color: var\(--ink\);\s*font-weight: 600;/, "\"Now\" in bold");
     // No weather: no line.
     state.weather = { ...weather(), status: "no_location", current: null };
     assert.equal(homeLine(), null);
@@ -362,7 +373,7 @@ test("read when Home opens and every 10 minutes while it stays open, not elsewhe
     let asked = controller();
     await enterHomeWeather();
     assert.equal(asked(), 1, "opening Home reads it");
-    assert.equal(spoken(homeLine()), "Clear, Now 27° · Today 23°–30° · rain 14% · sunset 18:13");
+    assert.equal(spoken(homeLine()), "Clear, Now 27°, Today 23°–30°, rain 14%, sunset 18:13");
     asked = controller();
     await enterHomeWeather();
     await keepHomeWeather();

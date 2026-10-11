@@ -4986,8 +4986,9 @@ a.scene-name:hover {
   color: var(--onText);
 }
 
-/* Home's weather line (1.12.1, views/home.js): under the command field. Each part keeps to one line
-   when it wraps; the narrowest phones drop "Now" before any of the weather. */
+/* Home's weather line (1.12.1, views/home.js): under the command field. Its parts are set apart by a
+   gap, no dots (a dot would dangle at the end or start of a wrapped line), each kept whole; the
+   narrowest phones drop "Now" before any of the weather. */
 .weather-line {
   display: flex;
   align-items: flex-start;
@@ -5006,6 +5007,9 @@ a.scene-name:hover {
 }
 
 .weather-line-text {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75em;
   min-width: 0;
 }
 
@@ -5016,11 +5020,6 @@ a.scene-name:hover {
 .weather-line-part.is-now {
   color: var(--ink);
   font-weight: 600;
-}
-
-.weather-line-dot {
-  color: var(--muted);
-  font-weight: 400;
 }
 
 /* With the Hebrew date under it, the two read as one block. */

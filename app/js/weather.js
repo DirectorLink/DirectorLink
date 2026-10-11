@@ -173,7 +173,8 @@ export function homeWeather(weather, now = new Date()) {
   return { sky, icon: night && icons[1] ? icons[1] : icons[0], now: formatTemperature(temperature), parts };
 }
 
-// The whole line as text, "Now 27° · Today 23°–30° · rain 14% · sunset 18:13", or "".
+// The whole line as plain text, "Now 27° · Today 23°–30° · rain 14% · sunset 18:13", or "" (Home
+// draws the parts apart by a gap instead of the dots: views/home.js).
 export function homeWeatherText(weather = state.weather, now = new Date()) {
   const line = homeWeather(weather, now);
   return line ? [`${t("home.weather.now")} ${line.now}`, ...line.parts].join(" · ") : "";

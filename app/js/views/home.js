@@ -94,9 +94,11 @@ export function homeView({ openCamera, openFavoritesPicker }) {
 
 // ---- the weather ---------------------------------------------------------------------------
 
-// "Now 27° · Today 23°–30° · rain 14% · sunset 18:13" with the sky's icon (weather.js), from the
-// controller's forecast; nothing without weather, or for a key that can't read it. Each part stays on
-// one line when the line wraps, its dot at its end; the narrowest phones drop "Now" (styles.css).
+// "Now 27°  Today 23°–30°  rain 14%  sunset 18:13" with the sky's icon (weather.js), from the
+// controller's forecast; nothing without weather, or for a key that can't read it. The parts are set
+// apart by a gap, not dots, so that nothing dangles where the line wraps; each part stays whole, and
+// the narrowest phones drop "Now" (styles.css). Screen readers hear the sky first and a comma after
+// each part.
 function weatherLine() {
   const line = homeWeather(state.weather);
   if (!line) return null;
@@ -109,7 +111,14 @@ function weatherLine() {
       "span",
       { class: "weather-line-text" },
       line.sky ? h("span", { class: "visually-hidden" }, `${t(`home.weather.sky.${line.sky}`)}, `) : null,
-      items.map((item, index) => [index ? " " : null, h("span", { class: index ? "weather-line-part" : "weather-line-part is-now" }, item, index < items.length - 1 ? h("span", { class: "weather-line-dot" }, "\u00a0·") : null)])
+      items.map((item, index) =>
+        h(
+          "span",
+          { class: index ? "weather-line-part" : "weather-line-part is-now" },
+          item,
+          index < items.length - 1 ? h("span", { class: "visually-hidden" }, ", ") : null
+        )
+      )
     )
   );
 }

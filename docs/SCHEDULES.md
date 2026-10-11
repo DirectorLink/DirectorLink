@@ -248,9 +248,9 @@ device will both run; these properties are how to find the DirectorLink side.
 ## The app
 
 - **Home** (1.12.1, ADR-084), for every user: one line under the command field, *Now 27° · Today
-  23°–30° · rain 14% · sunset 18:13*, in whole degrees of the project's scale, with the sky's icon:
-  today's low and high until 15:00 and tomorrow's after, the chance of rain from 10%, and only the
-  next sunrise or sunset. Hidden without weather. Read when Home opens and every 10 minutes while it
+  23°–30° · rain 14% · sunset 18:13* (on screen the parts are set apart by a gap, not dots), in
+  whole degrees of the project's scale, with the sky's icon: today's low and high until 15:00 and
+  tomorrow's after, the chance of rain from 10%, and only the next sunrise or sunset. Hidden without weather. Read when Home opens and every 10 minutes while it
   stays open (`app/README.md`, The weather on Home).
 - **Scenes → Schedules**: the weather at home (with the Open-Meteo credit; since 1.10.0 "Forecast
   for 14:20, updated today 08:00") and every schedule in a sentence — "Sun–Thu at 06:45 · Runs
