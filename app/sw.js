@@ -35,6 +35,7 @@ const ASSETS = [
   "/js/qr.js",
   "/js/remote.js",
   "/js/reorder.js",
+  "/js/sortable.js",
   "/js/vendor/qrcodegen.js",
   "/js/views/join.js",
   "/js/home-screen.js",

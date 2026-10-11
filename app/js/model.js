@@ -130,6 +130,19 @@ export function otherDevices(roomId) {
   );
 }
 
+// Doorbells in the home's camera order (1.12.1), as the controller lists them: each at its camera's
+// place among the cameras, so that a room shows them in the order just saved before the doorbells
+// are read again. One whose picture this user does not see keeps its place after them. Before
+// 1.12.1, as listed (by name).
+export function inCameraOrder(doorbells) {
+  if (state.system?.features?.camera_order !== true) return doorbells;
+  const rank = new Map(state.cameras.map((camera, index) => [camera.id, index]));
+  return doorbells
+    .map((doorbell, index) => ({ doorbell, index, rank: rank.get(doorbell.camera?.id) ?? state.cameras.length }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.doorbell);
+}
+
 export function devicesInRoom(roomId) {
   const id = Number(roomId);
   const pick = (list) => list.filter((device) => deviceRoomId(device) === id);
@@ -140,7 +153,7 @@ export function devicesInRoom(roomId) {
     blinds: pick(state.blinds),
     cameras: pick(state.cameras),
     relays: pick(state.relays),
-    doorbells: pick(state.doorbells),
+    doorbells: inCameraOrder(pick(state.doorbells)),
     refrigerators: pick(state.refrigerators || []),
     music: pick(musicDevices()),
     // Devices this app cannot control, and does not show otherwise.
@@ -184,7 +197,7 @@ export function visibleRooms() {
     blinds: state.blinds.filter(orphan),
     cameras: state.cameras.filter(orphan),
     relays: state.relays.filter(orphan),
-    doorbells: state.doorbells.filter(orphan),
+    doorbells: inCameraOrder(state.doorbells.filter(orphan)),
     refrigerators: (state.refrigerators || []).filter(orphan),
     // A Sonos room whose name matches no room, until an admin picks one.
     music: musicDevices().filter(orphan),

@@ -666,3 +666,23 @@ test("a route the controller lacks says to update DirectorLink", async () => {
   assert.equal(message(), "Backups need DirectorLink 1.4.0 or newer on the controller. Update DirectorLink in Composer.");
   controller.old = false;
 });
+
+// The home's camera order (1.12.1): counted when the backup has it, and a camera it names that is not
+// in this project is listed with it.
+test("the camera order is counted when the backup has one, and a camera gone is listed with it", async () => {
+  await connect();
+  const withOrder = {
+    ...PREVIEW,
+    counts: { ...PREVIEW.counts, camera_order: 4 },
+    references: {
+      ...PREVIEW.references,
+      unmatched: [{ kind: "camera", id: 60, name: "Driveway", room: "Kitchen", now: null, used_in: [{ section: "camera_order", name: null }] }],
+    },
+  };
+  await toPreview(withOrder);
+  assert.ok(panelText().includes("Cameras in the home’s order4"), panelText());
+  assert.ok(panelText().includes("Camera Driveway (Kitchen) — the camera order"), panelText());
+  await click("backup-cancel");
+  await toPreview({ ...PREVIEW, counts: { ...PREVIEW.counts, camera_order: null } });
+  assert.ok(!panelText().includes("Cameras in the home’s order"), "a backup before 1.12.1 has none: the order here stays");
+});

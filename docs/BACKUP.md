@@ -1,7 +1,8 @@
 # Backup and restore
 
 **Status: built in DirectorLink 1.4.0 (ADR-042); automatic backups to the account and the Sonos
-room choices in 1.6.0 (ADR-048); users' roles and permissions in 1.8.0 (ADR-054).**
+room choices in 1.6.0 (ADR-048); users' roles and permissions in 1.8.0 (ADR-054); the camera order
+in 1.12.1.**
 
 Updating the driver keeps everything DirectorLink knows. Removing the driver from the project (by
 accident), replacing the controller or rebuilding the project loses it all: Control4 deletes a
@@ -21,6 +22,7 @@ says to update DirectorLink.
 | Profiles | Each user's language, theme, palette, favorites and hidden rooms. | As they were, favorites and hidden rooms matched to the project. With the keys kept, only the profiles today's keys use. |
 | People (1.8.0) | Each user's role, admin or member, and a member's permissions (rooms, kinds of devices, cameras, doors and gates, the alarm, scenes); the home's owner; the rooms hidden from members. | With the keys: when the backup's keys come back, as they were, rooms matched to the project and only the scenes that come back; otherwise as they are now. A backup made before 1.8.0 has none (below). Since 1.9.0 (ADR-061) a restore gives no user a sixth device: the backup's users come back as they were, and the restoring device takes the place of one of the backup's keys or stays a user of its own. Which keys share an account, and when each key was last used, are not in backups: the account service says the first again at the next connection. |
 | Room names, the room order | Every room's names in every language, and the home's order. | Matched to the project. |
+| The camera order (1.12.1) | The home's camera order, by camera id. | Matched to the project, as a favorite camera. A backup made before 1.12.1 has none: the order on the controller stays as it is. |
 | Scenes | Every scene with its steps, ids and versions. | Steps matched to the project. |
 | Schedules | Every schedule's definition. Not what it ran. | They start as if saved at the restore (below). A schedule whose scene is not in the backup stays out. |
 | The calendar's settings | Candle lighting and havdalah minutes, Israel or abroad. | As they were. |
@@ -91,7 +93,8 @@ Composer. A file must never switch a safety setting on.
     "sonos_rooms": { "version": 1, "rooms": { "RINCON_…": { "room_id": 10, "name": "Kitchen" } } },
     "scene_links": { "version": 1, "links": [{ "id": "…", "scene_id": "…", "alg": "sha256", "hash": "…", "home": "…", "by": "…" }] },
     "people": { "version": 1, "people": { "…": { "role": "member", "all_rooms": false, "rooms": [10], "...": "..." } }, "owner": "…", "hidden_rooms": [] },
-    "doorbell_doors": { "version": 1, "links": { "68": [70] } }
+    "doorbell_doors": { "version": 1, "links": { "68": [70] } },
+    "camera_order": { "version": 1, "order": [67, 92, 60] }
   }
 }
 ```
@@ -123,6 +126,13 @@ as every door (below): a gate is never shown at another doorbell, nor another do
 What matches nothing is left out and listed (`used_in` `doorbell_doors`, with the doorbell's name).
 The preview counts the doors that stay (`counts.doorbell_doors`); a backup made before 1.11.0 has
 none (null), and the links on the controller stay as they are.
+
+`camera_order` (1.12.1) holds the home's camera order (camera ids, the store
+`directorlink_camera_order`), as `room_order` holds the rooms'. Each camera is matched to the project
+as a favorite camera is (below): the same id with the same name, else the one other camera of that
+name in the same room; one that matches nothing is left out and listed (`used_in` `camera_order`).
+The preview counts the cameras in the order after the restore (`counts.camera_order`); a backup made
+before 1.12.1 has none (null), and the order on the controller stays as it is.
 
 `people` (1.8.0, ADR-054) holds each user's role and permissions by profile id, the home's owner
 and the rooms hidden from members. It follows the keys too: when the backup's keys come back, its
@@ -195,8 +205,9 @@ characters, 10 languages a room) and preferences it would refuse are left out.
 
 ### Rooms and devices
 
-Scene steps, favorites, hidden rooms, room names, the room order, the Sonos room choices, and (1.8.0)
-members' rooms and the rooms hidden from members refer to Control4 ids. For each:
+Scene steps, favorites, hidden rooms, room names, the room order, the camera order (1.12.1), the
+Sonos room choices, and (1.8.0) members' rooms and the rooms hidden from members refer to Control4
+ids. For each:
 
 1. The same id, still a room, or a device of the same kind (a lights step needs a light), with the
    same name: kept.

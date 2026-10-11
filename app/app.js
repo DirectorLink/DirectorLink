@@ -141,6 +141,8 @@ window.addEventListener("hashchange", () => {
   if (previous.name === "sceneLink" && (route.name !== "sceneLink" || route.id !== previous.id)) leaveSceneLink();
   if (previous.name === "askLink" && (route.name !== "askLink" || route.id !== previous.id)) leaveAskLink();
   if (previous.name === "openRequest" && route.name !== "openRequest") leaveOpenRequest();
+  // Cameras → Order (1.12.1): leaving the Cameras tab closes the list, as Cancel does.
+  if (previous.name === "cameras" && route.name !== "cameras") ui.cameraOrder = null;
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
@@ -319,6 +321,8 @@ function signature() {
     ui.roomMessages,
     ui.controllerMessage,
     ui.featuredCamera,
+    // Cameras → Order (1.12.1): the order being set, saving, what went wrong.
+    ui.cameraOrder,
     ui.homeBusy,
     ui.homeMessage,
     ui.homeInvitation,

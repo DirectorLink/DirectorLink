@@ -510,7 +510,8 @@ img {
 }
 
 /* Settings → Rooms: shown or hidden (personal), and the home's order (admins): a room is dragged
-   by its handle (views/settings.js), the others make room, and it glides into its place. */
+   by its handle (sortable.js), the others make room, and it glides into its place. Cameras → Order
+   (1.12.1, views/cameras.js) lists the cameras the same way. */
 .room-order-list {
   position: relative;
   list-style: none;
@@ -575,7 +576,8 @@ img {
   overflow-wrap: anywhere;
 }
 
-.room-order-hidden {
+.room-order-hidden,
+.camera-order-room {
   color: var(--muted);
   font-size: 0.8125rem;
 }

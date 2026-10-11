@@ -92,8 +92,11 @@ export const ui = {
   doorbellLinks: null, // a doorbell's screen, an admin linking doors (1.11.0): { id, busy, message, choice }
   ringCamera: null, // a ring's screen opened by its notification: { doorbell, camera } asked for before the doorbells are read
   featuredCamera: null, // Cameras tab: id of the large picture
+  // Cameras tab, an admin setting the home's camera order (1.12.1, views/cameras.js): { ids, busy,
+  // message } until Save or Cancel; null otherwise.
+  cameraOrder: null,
   dragging: false, // a slider thumb is held: redraws wait
-  reordering: false, // Settings → Rooms: a room is being moved (views/settings.js): redraws wait
+  reordering: false, // a room (Settings → Rooms) or a camera (Cameras → Order) is being moved (sortable.js): redraws wait
   tick: 0, // bumped by timers that need a redraw
 };
 

@@ -2338,11 +2338,14 @@ paths:
       operationId: listCameras
       x-directorlink-role: member
       summary: List cameras
+      description: |
+        In the home's camera order (`PUT /v1/cameras/order`, 1.12.1); cameras not in it follow, sorted by
+        name. Before 1.12.1, sorted by name.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
         "200":
-          description: Cameras sorted by name.
+          description: Cameras in the home's order.
           content:
             application/json:
               schema:
@@ -2351,6 +2354,38 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/cameras/order:
+    put:
+      tags: [Cameras]
+      operationId: setCameraOrder
+      x-directorlink-role: admin
+      summary: Set the home's camera order
+      description: |
+        One order for everyone (1.12.1, `features.camera_order`), as the room order. Cameras left
+        out (new ones too) follow the listed ones, sorted by name; a camera no longer in the project
+        is passed over. `GET /v1/doorbells` follows it too: each doorbell at its camera's place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CameraOrder"
+            example:
+              camera_ids: [67, 92, 60]
+      responses:
+        "200":
+          description: All cameras in the new order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CameraList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/cameras/{cameraId}:
     parameters:
@@ -2571,7 +2606,7 @@ paths:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
         "200":
-          description: Doorbells with their camera and what happened last, sorted by name.
+          description: Doorbells with their camera and what happened last, in the home's camera order (1.12.1, `PUT /v1/cameras/order`), each at its camera's place; sorted by name before 1.12.1.
           content:
             application/json:
               schema:
@@ -4194,6 +4229,9 @@ components:
             user_names:
               type: boolean
               description: "Always true since 1.12.0: an invitation names the new user (`name`), a user names themself (`PATCH /v1/profile` `name`, and `name_from_device` in `GET /v1/profile`) and renames their own devices (`PATCH /v1/api-keys/{keyId}` by a member), and a device moves to another device of the same user (a move invitation) (ADR-083). Missing before 1.12.0."
+            camera_order:
+              type: boolean
+              description: "Always true since 1.12.1: the home's camera order, set by admins (`PUT /v1/cameras/order`), which `GET /v1/cameras` and `GET /v1/doorbells` follow. Missing before 1.12.1, whose cameras are sorted by name."
 
     PairRequest:
       oneOf:
@@ -5698,6 +5736,19 @@ components:
           type: array
           maxItems: 1000
           uniqueItems: true
+          items:
+            type: integer
+
+    CameraOrder:
+      type: object
+      required: [camera_ids]
+      additionalProperties: false
+      properties:
+        camera_ids:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          description: Cameras' ids (a doorbell is ordered by its camera's).
           items:
             type: integer
 
@@ -7815,6 +7866,10 @@ components:
                     type: array
                     items:
                       type: integer
+            camera_order:
+              allOf:
+                - $ref: "#/components/schemas/BackupList"
+              description: The home's camera order (1.12.1), camera ids under `order`, matched to the project as favorites are. A backup without it (before 1.12.1) leaves the order on the controller as it is.
 
     AutomaticBackupKey:
       type: object
@@ -7900,7 +7955,7 @@ components:
 
     BackupList:
       type: object
-      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids), scenes or schedules."
+      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids, or camera ids in camera_order), scenes or schedules."
       required: [version]
       minProperties: 2
       maxProperties: 2
@@ -8054,6 +8109,9 @@ components:
             doorbell_doors:
               type: [integer, "null"]
               description: Doors linked to doorbells after the restore (1.11.0, ADR-078); null when the backup has none, and the links stay as they are.
+            camera_order:
+              type: [integer, "null"]
+              description: Cameras in the home's order after the restore (1.12.1); null when the backup has none, and the order stays as it is.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).
@@ -8207,7 +8265,7 @@ components:
                       properties:
                         section:
                           type: string
-                          enum: [scenes, profiles, room_names, room_order, sonos_rooms, doorbell_doors]
+                          enum: [scenes, profiles, room_names, room_order, sonos_rooms, doorbell_doors, camera_order]
                         name:
                           type: [string, "null"]
                           description: The scene's or profile's name, the Sonos player's, or the doorbell's (doorbell_doors, 1.11.0).
