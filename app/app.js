@@ -41,6 +41,7 @@ import { askLinkView, leaveAskLink, leaveOpenRequest, openRequestView } from "./
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
+import { enterHomeWeather, homeWeatherText, keepHomeWeather } from "./js/weather.js";
 
 const view = document.querySelector("#view");
 const tabbar = document.querySelector("#tabbar");
@@ -141,12 +142,17 @@ window.addEventListener("hashchange", () => {
   if (previous.name === "sceneLink" && (route.name !== "sceneLink" || route.id !== previous.id)) leaveSceneLink();
   if (previous.name === "askLink" && (route.name !== "askLink" || route.id !== previous.id)) leaveAskLink();
   if (previous.name === "openRequest" && route.name !== "openRequest") leaveOpenRequest();
+  // Cameras → Order (1.12.1): leaving the Cameras tab closes the list, as Cancel does.
+  if (previous.name === "cameras" && route.name !== "cameras") ui.cameraOrder = null;
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
-  // The Hebrew date on Home (Schedules reads the calendar too).
-  if (route.name === "home" && previous.name !== "home") loadCalendar();
+  // The Hebrew date on Home (Schedules reads the calendar too), and the weather (1.12.1).
+  if (route.name === "home" && previous.name !== "home") {
+    loadCalendar();
+    enterHomeWeather();
+  }
   // A ring's screen opened before the doorbells are read: its picture at once.
   if (route.name === "doorbell" && (previous.name !== "doorbell" || previous.id !== route.id)) enterDoorbell(route.id);
   // Sonos: Home and a room are read every 5 s while shown.
@@ -319,6 +325,8 @@ function signature() {
     ui.roomMessages,
     ui.controllerMessage,
     ui.featuredCamera,
+    // Cameras → Order (1.12.1): the order being set, saving, what went wrong.
+    ui.cameraOrder,
     ui.homeBusy,
     ui.homeMessage,
     ui.homeInvitation,
@@ -343,6 +351,8 @@ function signature() {
     state.schedulesPaused,
     state.schedulesUnsupported,
     state.weather,
+    // Home's weather line moves on with the clock too: tomorrow from 15:00, the next sunrise or sunset.
+    route.name === "home" ? homeWeatherText() : 0,
     state.calendar,
     ui.schedulesMessage,
     // Times being typed are left out: the editor does not rebuild a time field while it is used.
@@ -544,6 +554,8 @@ whenConnected(keepCalendar);
 whenConnected(() => startMusic(route));
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
+// Home's weather line (1.12.1): read once connected on Home, then every 10 minutes while it is open.
+whenConnected(keepHomeWeather);
 // Opened on Schedules (a reload): the weather once connected.
 whenConnected(() => {
   if (route.name === "schedules" || route.name === "schedule") keepWeatherFresh();

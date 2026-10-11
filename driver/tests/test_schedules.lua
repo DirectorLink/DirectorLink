@@ -688,6 +688,74 @@ function tests.the_weather_now_is_the_forecasts_hour_and_the_api_says_so()
     T.eq(weatherRequests(mock), 1)
 end
 
+-- Tomorrow too (1.12.1, ADR-084), for the app's line on Home: the next day's high, low and chance
+-- of rain from the saved forecast, and its sunrise and sunset, worked out on the controller as
+-- today's. Its forecast is null where the saved forecast does not reach it, and without weather;
+-- its sun is there without the internet too. Members read it as admins do.
+function tests.the_weather_says_tomorrow_too()
+    local ten = at(1, 10, 0)
+    local mock, admin, clock, Scheduler = start(ten)
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = admin, body = { name = "Guest", role = "viewer" } }).json.key
+    local function hhmm(minute)
+        return string.format("%02d:%02d", math.floor(minute / 60), minute % 60)
+    end
+    -- The controller's sunrise and sunset `days` after the day of `time`.
+    local function sun(time, days)
+        local fields = os.date("*t", time)
+        local sunrise, sunset = Scheduler.sunTimes(Scheduler.localTime(os.time({ year = fields.year, month = fields.month, day = fields.day + days, hour = 12, min = 0, sec = 0 })))
+        return hhmm(sunrise), hhmm(sunset)
+    end
+    local function sameDay(view, time, days)
+        local sunrise, sunset = sun(time, days)
+        T.eq(view.sunrise, sunrise, "sunrise " .. days .. " days on")
+        T.eq(view.sunset, sunset, "sunset " .. days .. " days on")
+    end
+
+    -- No forecast yet: tomorrow's sun all the same, nothing of its weather.
+    local view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "unreachable")
+    sameDay(view.today, ten, 0)
+    sameDay(view.tomorrow, ten, 1)
+    T.same({ view.tomorrow.max_temperature, view.tomorrow.min_temperature, view.tomorrow.rain_chance }, { Json.null, Json.null, Json.null })
+
+    -- Each day its own: n days after the first, a high of 30+n, a low of 20+n and a 10n% chance.
+    local first = os.time({ year = os.date("*t", ten).year, month = os.date("*t", ten).month, day = os.date("*t", ten).day, hour = 0, min = 0, sec = 0 })
+    mock.weather = WeatherFake.forecast(function()
+        return 25
+    end, function(start)
+        local n = math.floor((start - first) / 86400 + 0.5)
+        return { max = 30 + n, min = 20 + n, chance = 10 * n }
+    end)
+    clock.set(ten + 31 * 60)
+    for _, key in ipairs({ admin, member }) do
+        view = T.http(mock, "GET", "/v1/weather", { key = key }).json
+        T.eq(view.status, "ok")
+        T.same({ view.today.max_temperature, view.today.min_temperature, view.today.rain_chance }, { 30, 20, 0 })
+        T.same({ view.tomorrow.max_temperature, view.tomorrow.min_temperature, view.tomorrow.rain_chance }, { 31, 21, 10 }, "tomorrow's forecast")
+        sameDay(view.tomorrow, ten, 1)
+    end
+    -- Just before midnight tomorrow is still the next day; just after it, the one after.
+    clock.set(at(1, 23, 59))
+    view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.same({ view.today.max_temperature, view.tomorrow.max_temperature }, { 30, 31 })
+    sameDay(view.tomorrow, ten, 1)
+    clock.set(at(2, 0, 1))
+    view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.same({ view.today.max_temperature, view.tomorrow.max_temperature, view.tomorrow.rain_chance }, { 31, 32, 20 })
+    sameDay(view.today, ten, 1)
+    sameDay(view.tomorrow, ten, 2)
+
+    -- Without the internet since (the forecast was read again at 23:59): on the last day it holds,
+    -- it has no next day.
+    mock.weather = nil
+    clock.set(at(6, 9, 0))
+    view = T.http(mock, "GET", "/v1/weather", { key = admin }).json
+    T.eq(view.status, "ok", "the saved forecast holds until 23:59")
+    T.eq(view.today.max_temperature, 35)
+    T.same({ view.tomorrow.max_temperature, view.tomorrow.min_temperature, view.tomorrow.rain_chance }, { Json.null, Json.null, Json.null }, "not in the forecast")
+    sameDay(view.tomorrow, at(6, 9, 0), 1)
+end
+
 -- "Only if" counts its threshold itself, as weather rules do (1.10.1, ADR-074): `hotter_than` 23
 -- is 23° or warmer, `wind_below` 20 is 20 km/h or less. With the forecast's hours interpolated and
 -- rounded to 0.1, exactly 23.0 is common. Just past them, it is skipped.

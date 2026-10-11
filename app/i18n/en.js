@@ -193,6 +193,28 @@ export default {
     noMatch: "No rooms match right now.",
     noDevicesTitle: "Nothing to control yet",
     noDevicesText: "DirectorLink did not find lights, climate, blinds or cameras in this Control4 project.",
+    // The weather line under the command field (1.12.1, ADR-084): "Now 27°", "Today 23°–30°", "rain
+    // 14%", "sunset 18:13", set apart by a gap. {range} is "23°–30°", {percent} "14%", {time}
+    // "18:13". "Now" is left out on the narrowest phones. The sky names are read out with the line's
+    // icon.
+    weather: {
+      label: "Weather at home",
+      now: "Now",
+      today: "Today {range}",
+      tomorrow: "Tomorrow {range}",
+      rain: "rain {percent}",
+      sunrise: "sunrise {time}",
+      sunset: "sunset {time}",
+      sky: {
+        clear: "Clear",
+        partly: "Partly cloudy",
+        cloudy: "Cloudy",
+        fog: "Fog",
+        rain: "Rain",
+        snow: "Snow",
+        thunder: "Thunderstorm",
+      },
+    },
   },
   favorites: {
     title: "Favorites",
@@ -1313,6 +1335,21 @@ export default {
     fullHint: "Tap the picture for full screen.",
     emptyTitle: "No cameras",
     emptyText: "DirectorLink did not find cameras in this project.",
+    // Order (1.12.1, views/cameras.js): admins set the order everyone sees the cameras in.
+    order: {
+      button: "Order",
+      title: "Camera order",
+      help: "Everyone in the home sees the cameras in this order. Drag a camera by its handle (on a phone, touch and hold the handle first), or use the arrows, then tap Save.",
+      moveUp: "Move {name} up",
+      moveDown: "Move {name} down",
+      move: "Move {name}",
+      moveKeys: "Space or Enter picks the camera up. Then the arrow keys move it, Space or Enter puts it down, and Escape puts it back.",
+      lifted: "Moving {name}: position {position} of {count}.",
+      position: "{name}: position {position} of {count}",
+      dropped: "{name} is now at position {position} of {count}.",
+      cancelled: "Move cancelled. {name} is back at position {position} of {count}.",
+      updateDriver: "Update DirectorLink on your controller to set the camera order.",
+    },
   },
   // Alerts on this device (js/alerts.js, ADR-047, ADR-050). The service worker shows these with
   // {time} and the names the controller sealed for this device filled in; the home itself is never
@@ -2035,6 +2072,7 @@ export default {
       sonosRooms: "Sonos players with a room chosen",
       sceneLinks: "Scenes with a link for automations",
       doorbellDoors: "Doors and gates added to doorbells",
+      cameraOrder: "Cameras in the home’s order",
       yoursAdded: "This device keeps its access (it was paired after the backup was made).",
       keysKept: "Keys: kept as they are now. Every device keeps the access it has now, and none of the backup’s keys comes back, so a device removed since stays out.",
       keysBack: "Keys that come back",
@@ -2096,6 +2134,7 @@ export default {
       roomOrder: "the room order",
       sonosRoom: "the Sonos player “{name}”",
       doorbellDoors: "the doors at the doorbell “{name}”",
+      cameraOrder: "the camera order",
       personRooms: "{name}’s rooms",
       hiddenRooms: "the rooms hidden from members",
     },

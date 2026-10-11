@@ -66,6 +66,13 @@ const PATHS = {
   history: '<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6L3.5 8.5"/><path d="M3.5 4v4.5H8"/><path d="M12 7.5V12l3 2"/>',
   wind: '<path d="M3 8h11a3 3 0 1 0-3-3"/><path d="M3 12h16a3 3 0 1 1-3 3"/><path d="M3 16h7"/>',
   rain: '<path d="M7 15a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 8a3.5 3.5 0 0 1 .5 7Z"/><path d="m8 18-1 2.5M12 18l-1 2.5M16 18l-1 2.5"/>',
+  // The sky on Home's weather line (1.12.1): with sun, moon, rain and snowflake.
+  cloud: '<path d="M7 18.5a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 11.5a3.5 3.5 0 0 1 .5 7Z"/>',
+  cloudSun:
+    '<circle cx="8" cy="8" r="3"/><path d="M8 2v1.5M2 8h1.5M3.8 3.8l1.1 1.1M12.2 3.8l-1.1 1.1M3.8 12.2l1.1-1.1"/><path d="M10.5 20.5a3.5 3.5 0 0 1-.5-7A4.8 4.8 0 0 1 19 14.5a3 3 0 0 1 .3 6Z"/>',
+  cloudMoon: '<path d="M10.5 7.5A3.8 3.8 0 0 1 5.5 2.5a4.6 4.6 0 1 0 5 5Z"/><path d="M10.5 20.5a3.5 3.5 0 0 1-.5-7A4.8 4.8 0 0 1 19 14.5a3 3 0 0 1 .3 6Z"/>',
+  fog: '<path d="M5.5 12.5a4 4 0 0 1 1.3-6A5.5 5.5 0 0 1 17 7a3.5 3.5 0 0 1 2 5.5"/><path d="M3.5 16h17M6 19.5h12"/>',
+  thunder: '<path d="M7 15a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 8a3.5 3.5 0 0 1 .5 7Z"/><path d="m13 16-2.5 3h3.5l-2.5 3"/>',
   // Shabbat and holidays (the Jewish calendar): two candles.
   candles:
     '<path d="M4 21h16"/><path d="M6.5 21V11h3v10M14.5 21V11h3v10"/><path d="M8 3.5c.9 1 1.5 1.9 1.5 2.8a1.5 1.5 0 0 1-3 0c0-.9.6-1.8 1.5-2.8ZM16 3.5c.9 1 1.5 1.9 1.5 2.8a1.5 1.5 0 0 1-3 0c0-.9.6-1.8 1.5-2.8Z"/>',

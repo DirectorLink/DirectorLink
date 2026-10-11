@@ -1,6 +1,6 @@
 # Roadmap
 
-What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.12.0](releases/v1.12.0.md). This page lists only what is still to come.
+What is done is in the release notes: [`docs/releases/`](releases/), newest [v1.12.1](releases/v1.12.1.md). This page lists only what is still to come.
 
 ## Next
 

@@ -468,6 +468,21 @@ def scenario(client, bridge):
     client.check("GET", "/v1/cameras/61/snapshot?width=320", 200)
     client.check("GET", "/v1/cameras/60/snapshot?width=500", 400)
     client.check("GET", "/v1/cameras/99/snapshot", 404)
+    # The home's camera order (1.12.1): set by admins, the cameras left out after it by name; then
+    # back to by name for what follows.
+    if client.check("GET", "/v1/system", 200)["features"].get("camera_order") is not True:
+        fail("GET /v1/system should say features.camera_order (1.12.1)")
+    by_name = [item["id"] for item in client.check("GET", "/v1/cameras", 200)["items"]]
+    ordered = [item["id"] for item in client.check("PUT", "/v1/cameras/order", 200, body={"camera_ids": [by_name[-1], by_name[0]]})["items"]]
+    if ordered != [by_name[-1], by_name[0], *by_name[1:-1]]:
+        fail(f"PUT /v1/cameras/order should answer the cameras in the new order, the rest by name: {ordered}")
+    if [item["id"] for item in client.check("GET", "/v1/cameras", 200)["items"]] != ordered:
+        fail("GET /v1/cameras should list the cameras in the home's order")
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [999]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [20]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [by_name[0], by_name[0]]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"room_ids": [10]})
+    client.check("PUT", "/v1/cameras/order", 200, body={"camera_ids": []})
 
     client.check("GET", "/v1/relays", 200)
     client.check("GET", "/v1/relays/70", 200)
@@ -675,7 +690,14 @@ def scenario(client, bridge):
     client.check("GET", "/v1/scenes", 401, auth=False)
 
     # Schedules run scenes by time, sun and weather; the weather view works without the internet.
-    client.check("GET", "/v1/weather", 200)
+    weather = client.check("GET", "/v1/weather", 200)
+    # Tomorrow too (1.12.1, ADR-084), for the app's line on Home: its sunrise and sunset from the
+    # controller, and with a forecast (the fake Open-Meteo's) its high, low and chance of rain.
+    tomorrow = weather["tomorrow"]
+    if not all(re.fullmatch(r"\d\d:\d\d", tomorrow[name] or "") for name in ("sunrise", "sunset")):
+        fail(f"GET /v1/weather should give tomorrow's sunrise and sunset: {tomorrow}")
+    if weather["status"] == "ok" and None in (tomorrow["max_temperature"], tomorrow["min_temperature"], tomorrow["rain_chance"]):
+        fail(f"GET /v1/weather should give tomorrow's forecast: {tomorrow}")
     timed = client.check("POST", "/v1/schedules", 201, body={
         "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0, 1, 2, 3, 4], "only_if": {"not_raining": True},
     })
@@ -826,6 +848,7 @@ def scenario(client, bridge):
     client.check("GET", f"/v1/profiles/{person}/access", 403)
     client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
+    client.check("PUT", "/v1/cameras/order", 403, body={"camera_ids": [60]})
     client.check("PATCH", "/v1/rooms/10", 403, body={"hidden_from_members": True})
     client.check("GET", "/v1/profile", 200)
     # 1.12.0 (ADR-083): a member names themself, and renames their own devices, no one else's.

@@ -1,7 +1,7 @@
 // Schedules (docs/SCHEDULES.md): scenes the controller runs at a time, at sunrise or sunset, when
 // the weather turns, or when Shabbat and holidays begin or end (views/schedules.js). The controller
-// keeps and runs them; this reads them, says each in a sentence, and reads the weather at home
-// (GET /v1/weather) while the Schedules screen is open.
+// keeps and runs them; this reads them and says each in a sentence. The weather at home
+// (GET /v1/weather) is read by weather.js, while Schedules or Home is open.
 
 import { currentLanguage, formatClock, formatTemperature, t } from "./i18n.js";
 import { api, errorText } from "./session.js";
@@ -51,25 +51,6 @@ export async function loadSchedules() {
     }
   }
   notify();
-}
-
-const WEATHER_RETRY_MS = 3000;
-const WEATHER_RETRIES = 5;
-let weatherRetry = null;
-
-// While the Schedules screen is open: the controller then keeps the weather fresh. While it is
-// still reading it (just asked, or after a restart), ask again a few seconds later.
-export async function loadWeather(retries = WEATHER_RETRIES) {
-  window.clearTimeout(weatherRetry);
-  try {
-    state.weather = await api("/v1/weather");
-  } catch {
-    // Kept as it was; the screen says nothing new.
-  }
-  notify();
-  if (state.weather?.status === "waiting" && retries > 0 && window.location.hash.startsWith("#/schedule")) {
-    weatherRetry = window.setTimeout(() => loadWeather(retries - 1), WEATHER_RETRY_MS);
-  }
 }
 
 export function findSchedule(id) {

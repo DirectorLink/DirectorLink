@@ -1850,8 +1850,9 @@ paths:
       x-directorlink-role: member
       summary: The weather at home
       description: |
-        The weather now and today's forecast for the project's location (Composer project
-        properties), and today's sunrise and sunset, worked out on the controller. Since 1.10.0
+        The weather now and today's and tomorrow's forecast for the project's location (Composer
+        project properties), and today's and tomorrow's sunrise and sunset, worked out on the
+        controller (`tomorrow` since 1.12.1, ADR-084, for the app's line on Home). Since 1.10.0
         (ADR-071) the weather now is the hour for now of Open-Meteo's hourly forecast, which the
         controller reads every 6 hours while a schedule needs the weather, and for an hour after this
         is asked, and keeps for 5 days: with or without the internet, schedules and this answer use
@@ -2338,11 +2339,14 @@ paths:
       operationId: listCameras
       x-directorlink-role: member
       summary: List cameras
+      description: |
+        In the home's camera order (`PUT /v1/cameras/order`, 1.12.1); cameras not in it follow, sorted by
+        name. Before 1.12.1, sorted by name.
       parameters:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
         "200":
-          description: Cameras sorted by name.
+          description: Cameras in the home's order.
           content:
             application/json:
               schema:
@@ -2351,6 +2355,38 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /v1/cameras/order:
+    put:
+      tags: [Cameras]
+      operationId: setCameraOrder
+      x-directorlink-role: admin
+      summary: Set the home's camera order
+      description: |
+        One order for everyone (1.12.1, `features.camera_order`), as the room order. Cameras left
+        out (new ones too) follow the listed ones, sorted by name; a camera no longer in the project
+        is passed over. `GET /v1/doorbells` follows it too: each doorbell at its camera's place.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CameraOrder"
+            example:
+              camera_ids: [67, 92, 60]
+      responses:
+        "200":
+          description: All cameras in the new order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CameraList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /v1/cameras/{cameraId}:
     parameters:
@@ -2571,7 +2607,7 @@ paths:
         - $ref: "#/components/parameters/RoomIdQuery"
       responses:
         "200":
-          description: Doorbells with their camera and what happened last, sorted by name.
+          description: Doorbells with their camera and what happened last, in the home's camera order (1.12.1, `PUT /v1/cameras/order`), each at its camera's place; sorted by name before 1.12.1.
           content:
             application/json:
               schema:
@@ -4194,6 +4230,9 @@ components:
             user_names:
               type: boolean
               description: "Always true since 1.12.0: an invitation names the new user (`name`), a user names themself (`PATCH /v1/profile` `name`, and `name_from_device` in `GET /v1/profile`) and renames their own devices (`PATCH /v1/api-keys/{keyId}` by a member), and a device moves to another device of the same user (a move invitation) (ADR-083). Missing before 1.12.0."
+            camera_order:
+              type: boolean
+              description: "Always true since 1.12.1: the home's camera order, set by admins (`PUT /v1/cameras/order`), which `GET /v1/cameras` and `GET /v1/doorbells` follow. Missing before 1.12.1, whose cameras are sorted by name."
 
     PairRequest:
       oneOf:
@@ -5371,7 +5410,7 @@ components:
 
     Weather:
       type: object
-      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, attribution]
+      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, tomorrow, attribution]
       properties:
         status:
           type: string
@@ -5426,22 +5465,34 @@ components:
               type: [integer, "null"]
               description: WMO weather code.
         today:
-          type: object
-          properties:
-            max_temperature:
-              type: [number, "null"]
-            min_temperature:
-              type: [number, "null"]
-            rain_chance:
-              type: [number, "null"]
-              description: Percent.
-            sunrise:
-              type: [string, "null"]
-              description: Local time, "HH:MM".
-            sunset:
-              type: [string, "null"]
+          $ref: "#/components/schemas/WeatherDay"
+          description: Today (the controller's local date) and the forecast's day that holds now.
+        tomorrow:
+          $ref: "#/components/schemas/WeatherDay"
+          description: "1.12.1 (ADR-084): the next day, as `today`. Its high, low and chance of rain are null when the saved forecast does not reach it (or there is no weather); its sunrise and sunset are worked out on the controller, as today's. The app's line on Home shows it from 15:00, and its sunrise after today's sunset."
         attribution:
           type: string
+
+    WeatherDay:
+      type: object
+      description: A day's forecast and the controller's sunrise and sunset for it.
+      required: [max_temperature, min_temperature, rain_chance, sunrise, sunset]
+      properties:
+        max_temperature:
+          type: [number, "null"]
+          description: °C; null without weather.
+        min_temperature:
+          type: [number, "null"]
+          description: °C; null without weather.
+        rain_chance:
+          type: [number, "null"]
+          description: Percent; null without weather.
+        sunrise:
+          type: [string, "null"]
+          description: Local time, "HH:MM"; null without a location, or with no sunrise that day (polar day or night).
+        sunset:
+          type: [string, "null"]
+          description: Local time, "HH:MM"; null as `sunrise`.
 
     Calendar:
       type: object
@@ -5698,6 +5749,19 @@ components:
           type: array
           maxItems: 1000
           uniqueItems: true
+          items:
+            type: integer
+
+    CameraOrder:
+      type: object
+      required: [camera_ids]
+      additionalProperties: false
+      properties:
+        camera_ids:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          description: Cameras' ids (a doorbell is ordered by its camera's).
           items:
             type: integer
 
@@ -7815,6 +7879,10 @@ components:
                     type: array
                     items:
                       type: integer
+            camera_order:
+              allOf:
+                - $ref: "#/components/schemas/BackupList"
+              description: The home's camera order (1.12.1), camera ids under `order`, matched to the project as favorites are. A backup without it (before 1.12.1) leaves the order on the controller as it is.
 
     AutomaticBackupKey:
       type: object
@@ -7900,7 +7968,7 @@ components:
 
     BackupList:
       type: object
-      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids), scenes or schedules."
+      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids, or camera ids in camera_order), scenes or schedules."
       required: [version]
       minProperties: 2
       maxProperties: 2
@@ -8054,6 +8122,9 @@ components:
             doorbell_doors:
               type: [integer, "null"]
               description: Doors linked to doorbells after the restore (1.11.0, ADR-078); null when the backup has none, and the links stay as they are.
+            camera_order:
+              type: [integer, "null"]
+              description: Cameras in the home's order after the restore (1.12.1); null when the backup has none, and the order stays as it is.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).
@@ -8207,7 +8278,7 @@ components:
                       properties:
                         section:
                           type: string
-                          enum: [scenes, profiles, room_names, room_order, sonos_rooms, doorbell_doors]
+                          enum: [scenes, profiles, room_names, room_order, sonos_rooms, doorbell_doors, camera_order]
                         name:
                           type: [string, "null"]
                           description: The scene's or profile's name, the Sonos player's, or the doorbell's (doorbell_doors, 1.11.0).

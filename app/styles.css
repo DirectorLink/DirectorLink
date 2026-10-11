@@ -510,7 +510,8 @@ img {
 }
 
 /* Settings → Rooms: shown or hidden (personal), and the home's order (admins): a room is dragged
-   by its handle (views/settings.js), the others make room, and it glides into its place. */
+   by its handle (sortable.js), the others make room, and it glides into its place. Cameras → Order
+   (1.12.1, views/cameras.js) lists the cameras the same way. */
 .room-order-list {
   position: relative;
   list-style: none;
@@ -575,7 +576,8 @@ img {
   overflow-wrap: anywhere;
 }
 
-.room-order-hidden {
+.room-order-hidden,
+.camera-order-room {
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -4984,6 +4986,53 @@ a.scene-name:hover {
   height: 18px;
   flex: none;
   color: var(--onText);
+}
+
+/* Home's weather line (1.12.1, views/home.js): under the command field. Its parts are set apart by a
+   gap, no dots (a dot would dangle at the end or start of a wrapped line), each kept whole; the
+   narrowest phones drop "Now" before any of the weather. */
+.weather-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.weather-line .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-block-start: 1px;
+  color: var(--ink);
+}
+
+.weather-line-text {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75em;
+  min-width: 0;
+}
+
+.weather-line-part {
+  white-space: nowrap;
+}
+
+.weather-line-part.is-now {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* With the Hebrew date under it, the two read as one block. */
+.weather-line + .calendar-line {
+  margin-block-start: -12px;
+}
+
+@media (max-width: 359.98px) {
+  .weather-line-now {
+    display: none;
+  }
 }
 
 .schedule-candles {
