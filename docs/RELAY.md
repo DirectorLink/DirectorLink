@@ -512,8 +512,9 @@ address (`C4:GetControllerNetworkAddress`, private IPv4 only). Its key never lea
   home in D1 (`https_names`): names are public in Certificate Transparency logs, so no other home may
   ask for one. The object keeps a copy.
 - **The order** runs in steps from the object's alarm, which it shares with the alerts
-  (`alarms.js`): a new order (the ACME account is registered with `ACME_ACCOUNT_KEY` at its first use,
-  and its URL kept), the dns-01 challenge's TXT record `_acme-challenge.<name>` (TTL 60), 20 s, the
+  (`alarms.js`): a new order (`newAccount` first, which registers the ACME account of
+  `ACME_ACCOUNT_KEY` the first time and answers its URL; since 1.13.0 D1 keeps it for `dlhome.cc`'s
+  CAA record, ADR-087), the dns-01 challenge's TXT record `_acme-challenge.<name>` (TTL 60), 20 s, the
   challenge answered, its authorization polled, the finalize with the controller's CSR, the order
   polled, the certificate downloaded. Then the TXT record goes, the certificate is kept (its text,
   chain, dates, issuer and its key's SHA-256), the A record `<name>` → the address is written (DNS
@@ -523,10 +524,17 @@ address (`C4:GetControllerNetworkAddress`, private IPv4 only). Its key never lea
 - **The address.** `https` writes the A record only while the home has a certificate that has not
   expired, and only when the address differs from what it last wrote, so a connection costs no call
   to Cloudflare. `name` null deletes the name's A and TXT records and the order in progress.
+- **Names nobody uses** (1.13.0, ADR-087; no message changes): every day the name of a home no
+  longer in D1 goes for good (its records, its row, the object's copy: its controller is then
+  `NOT_CLAIMED`), and a name whose controller said off, or has not sent `https` or
+  `https_certificate` for it for 30 days, loses its A record unless the controller is connected and
+  sent one of them on that connection. The name stays the home's: its next `https` writes the A
+  record again. So a driver keeps sending `https` after each `relay_features`, as it does.
 - **Logs:** `https_certificate_requested` (`renewal`), `https_certificate_issued` (`name`,
   `not_after`), `https_certificate_failed` (`code`, the step and why), `https_dns_updated`,
-  `https_dns_deleted`, `https_refused` (`code`), `https_step_retried`; never a key, a CSR, a
-  certificate's text or an address.
+  `https_dns_deleted`, `https_refused` (`code`), `https_step_retried`; since 1.13.0 `acme_account`
+  (the account's URL, once) and `https_names_cleaned` (counts); never a key, a CSR, a certificate's
+  text or an address.
 
 ## What a relayed request may do
 

@@ -1,7 +1,7 @@
 // Cloudflare Worker + Durable Object: the DirectorLink relay on https://api.directorlink.io.
 // Protocol: docs/RELAY.md. One Durable Object per home (HomeRelay, SQLite-backed, named by
 // home_id) holds the driver's WebSocket. Deployed by hand for now (see README.md):
-//   npx wrangler@4.143.0 d1 migrations apply directorlink --remote   (first; 1.12.0: 0011_https_names)
+//   npx wrangler@4.143.0 d1 migrations apply directorlink --remote   (first; 1.13.0: 0012_https_cleanup)
 //   npx wrangler@4.143.0 deploy
 //   npx wrangler@4.143.0 secret put TEST_TOKEN      (the version 0 test endpoints)
 // `wrangler dev` reads TEST_TOKEN, and optionally REQUEST_TIMEOUT_MS, from cloud/.dev.vars.
@@ -44,7 +44,8 @@
   // https://acme-staging-v02.api.letsencrypt.org/directory, to try it). Two secrets go with them:
   // DLHOME_DNS_TOKEN (a Cloudflare API token that may edit DNS of dlhome.cc only) and
   // ACME_ACCOUNT_KEY (the ACME account's key, PKCS #8 PEM, P-256), set with `secret put`
-  // (README.md); without them the controllers are answered HTTPS_UNAVAILABLE.
+  // (README.md); without them the controllers are answered HTTPS_UNAVAILABLE. Since 1.13.0
+  // dlhome.cc's CAA record names that account: a new key needs the record changed first (README.md).
   "vars": {
     "VAPID_PUBLIC_KEY": "BMvqqdAc8jZJwC-v7ZrwEeuMDZaPEaIt-sl4DFOykkz1ZBq7EY1xx8HBP0_NlDYT67Z1eADNnBFatwdjASvuH6w",
     "GOOGLE_CLIENT_ID": "1034749624411-vfj1im8dc42utkvl6lfiv3hs49mcna2s.apps.googleusercontent.com",

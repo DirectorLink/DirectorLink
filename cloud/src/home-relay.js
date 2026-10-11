@@ -194,6 +194,9 @@ export class HomeRelay extends DurableObject {
         // Which account uses which key changed in D1 (a join, a member removed: homes.js).
         await this.queueKeyWork(() => this.sendAccounts(), homeId);
         return json({ ok: true });
+      case "/https-clean":
+        // The daily cleanup of Direct HTTPS names nobody uses (1.13.0, https.js cleanNames).
+        return json(await this.https.clean(homeId, await request.json()));
       default:
         return problem(404, "NOT_FOUND", "Unknown relay operation");
     }
