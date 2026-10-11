@@ -33,7 +33,7 @@ const ICONS = { scene: "scene", door: "door", composer: "controller", access: "k
 // A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
 // An ask-to-open link's question (1.8.0) is a door entry with a bell; its links are access entries.
 const ACTION_ICONS = { left_open: "fridge", asked: "bell", ask_link_created: "link", ask_link_replaced: "link", ask_link_removed: "link" };
-const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
+const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus", direct_https: "home" };
 
 let generation = 0;
 let refreshTimer = null;
@@ -305,6 +305,10 @@ function title(entry) {
       return entry.to ? t("history.system.updateRequiredTo", { to: entry.to }) : t("history.system.updateRequired");
     case "system.driver_added":
       return t("history.system.added");
+    // Direct connection at home turned on or off (1.12.0, ADR-082): by the owner's key in 1.12.0 and
+    // 1.12.1, by Composer since 1.12.2.
+    case "system.direct_https":
+      return t(entry.to === "off" ? "history.system.directOff" : "history.system.directOn");
     default:
       return t("history.other");
   }

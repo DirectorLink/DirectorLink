@@ -349,9 +349,17 @@ local services = {
         local taken = Accounts.update(keys, Keys.exists)
         if taken then
             Users.suggest()
+            -- A home claimed before 1.8.0 counts as linked once an account uses one of its keys:
+            -- Direct HTTPS asks for its certificate now (ADR-082).
+            DirectHttps.refresh("accounts")
         else
             Log.warn("auth", "ignored an accounts message that is not a list of key ids and tags")
         end
+    end,
+    -- The home was claimed for an account (src/cloud/remote.lua): Direct HTTPS, on in Composer,
+    -- asks for its certificate now rather than at its next look (ADR-082, 1.12.2).
+    onLinked = function()
+        DirectHttps.refresh("linked")
     end,
     -- A restore from a backup replaced every store (ADR-042, src/core/backup.lua).
     onRestored = function(restore)
@@ -376,6 +384,31 @@ local services = {
         end
     end,
 }
+
+-- Composer's Direct HTTPS says On (ADR-082; since 1.12.2 the only switch), or "Allowed", which is
+-- what 1.12.0 and 1.12.1 called On.
+local function directHttpsOn()
+    local value = Properties ~= nil and Properties[DirectHttps.PROPERTY] or nil
+    return value == DirectHttps.ON or value == DirectHttps.OLD_ON
+end
+
+-- The value DirectorLink gave Direct HTTPS itself (Allowed, from 1.12.0 or 1.12.1, shown as On),
+-- until Director reports it to OnPropertyChanged, if it does: that is no change of the installer's.
+local httpsRenamed = nil
+
+-- Director keeps a list property's value across a driver update even when the new list no longer
+-- has it (docs/RESEARCH.md, "A list property's value across a driver update"): 1.12.1's "Allowed"
+-- stays. It is read as On, always, and set to On at every start (never in OnDriverInit, where
+-- Director takes no C4:UpdateProperty), so that Composer shows it. Never "Allowed" back: a
+-- downgrade to 1.12.1 reads On as Off (safe: it stops, and the name's record is deleted).
+local function renameDirectHttps()
+    if Properties == nil or Properties[DirectHttps.PROPERTY] ~= DirectHttps.OLD_ON then
+        return
+    end
+    httpsRenamed = DirectHttps.ON
+    updateProperty(DirectHttps.PROPERTY, DirectHttps.ON)
+    Log.info("https", "direct https: Composer's Allowed (1.12.0 and 1.12.1) is On from now on")
+end
 
 local function readControllerVersion()
     local ok, info = pcall(function()
@@ -625,13 +658,13 @@ function OnDriverLateInit(driverInitType)
     Api.init(services)
     local started = Api.start()
     updateProperty("API Status", started and "Starting..." or "Failed to start")
-    -- Direct HTTPS (ADR-082): nothing unless the installer allowed it in Composer and the home's
-    -- owner turned it on; the certificate comes over the relay's connection.
+    -- Direct HTTPS (ADR-082): nothing unless the installer turned it on in Composer (1.12.2: the
+    -- only switch); the certificate comes over the relay's connection. 1.12.0 and 1.12.1 called On
+    -- "Allowed": still On, and shown as On from now on.
+    renameDirectHttps()
     local httpsStored = DirectHttps.configure({
         log = Log,
-        allowed = function()
-            return Properties ~= nil and Properties[DirectHttps.PROPERTY] == DirectHttps.ALLOWED
-        end,
+        on = directHttpsOn,
         -- Remote Access on, and the home in an account: claimed since 1.8.0 (its owner recorded),
         -- or an account uses one of its keys (a home claimed before).
         remote = function()
@@ -863,6 +896,23 @@ local HISTORY_SETTINGS = {
 }
 
 function OnPropertyChanged(name)
+    if name == DirectHttps.PROPERTY and httpsRenamed ~= nil then
+        -- Director reporting back the On that DirectorLink set for 1.12.1's Allowed (its documents
+        -- say it does not): nothing changed.
+        local echo = Properties ~= nil and Properties[name] == httpsRenamed
+        httpsRenamed = nil
+        if echo then
+            Log.debug("https", "Composer shows Direct HTTPS On")
+            return
+        end
+    end
+    if name == DirectHttps.PROPERTY and Properties and Properties[name] == DirectHttps.OLD_ON then
+        -- "Allowed" is no longer in the list, so no installer chose it: a Composer that still had
+        -- 1.12.1's value sent it back. On all the same, shown as On again, and no setting changed.
+        renameDirectHttps()
+        DirectHttps.apply()
+        return
+    end
     if HISTORY_SETTINGS[name] and Properties then
         Activity.record("composer", "setting", { what = name, to = Properties[name] })
     end

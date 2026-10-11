@@ -156,12 +156,13 @@ tags:
       Direct HTTPS (1.12.0, ADR-082): the same API over TLS on port 28443, under a name of the home's
       own (`<20 letters and digits>.dlhome.cc`, whose public DNS record points at the controller's
       LAN address) with a publicly trusted certificate (Let's Encrypt), so that iPhones and iPads
-      reach the controller from app.directorlink.io at home. Two switches: the installer sets
-      DirectorLink's **Direct HTTPS** property to Allowed in Composer, then the home's owner turns it
-      on (`PUT /v1/https`). It needs Remote Access and a home linked to an account: the controller
-      makes its own key and asks DirectorLink's servers for the certificate, which also keep the
-      name's DNS record. The private key never leaves the controller. Where to reach it is
-      `direct_https` in `GET /v1/system`.
+      reach the controller from app.directorlink.io at home. One switch since 1.12.2 (ADR-085): the
+      installer sets DirectorLink's **Direct HTTPS** property to On in Composer (1.12.0 and 1.12.1
+      called it Allowed, which still means On, and also had the home's owner turn it on with
+      `PUT /v1/https`, which now answers `409 SET_IN_COMPOSER`). It needs Remote Access and a home
+      linked to an account: the controller makes its own key and asks DirectorLink's servers for the
+      certificate, which also keep the name's DNS record. The private key never leaves the
+      controller. Where to reach it is `direct_https` in `GET /v1/system`.
 
 paths:
   /v1/health:
@@ -519,9 +520,9 @@ paths:
       x-directorlink-role: admin
       summary: Direct HTTPS's state
       description: |
-        Whether the installer allowed it (`allowed`), whether the home's owner turned it on
-        (`enabled`), whether what it needs is there (`remote`), the home's name, the state and the
-        certificate in use. Never the private key, nor the certificate request. Requests on port
+        Whether Composer's Direct HTTPS is On (`allowed` and `enabled`, both, since 1.12.2), whether
+        what it needs is there (`remote`), the home's name, the state and the certificate in use.
+        Never the private key, nor the certificate request. Requests on port
         28443 go through the same Host check, CORS, keys, sealing and routes as on 41999; the Host may
         also be exactly the home's name there.
       responses:
@@ -539,40 +540,34 @@ paths:
       tags: [HTTPS]
       operationId: setDirectHttps
       x-directorlink-role: admin
-      summary: The home's owner turns Direct HTTPS on or off
+      summary: Refused since 1.12.2, as Direct HTTPS is switched in Composer only
       description: |
-        Only the home's owner (ADR-064; `403 OWNER_ONLY` for anyone else), once the installer has
-        allowed it in Composer (`409 HTTPS_NOT_ALLOWED` while the property says Off). On needs Remote
-        Access on and the home linked to an account (`409 REMOTE_ACCESS_NEEDED`): the controller then
-        makes its name and key once, asks DirectorLink's servers for a certificate (`state`
-        `requesting`) and serves the API on port 28443 once it has one (`listening`, tens of seconds
-        later). Off stops the TLS server (2 s after this answer, which may go over it), forgets the
-        certificate and has DirectorLink's servers delete the name's DNS record; the name and the key
-        stay for the next time. In the history
-        (`system` `direct_https`, `to` `on` or `off`). The same switch again changes nothing.
+        Since 1.12.2 (ADR-085) Direct HTTPS is turned on and off only in Composer (DirectorLink's
+        **Direct HTTPS** property: On or Off). This route stays so that the 1.12.0 and 1.12.1 apps,
+        which offered the home's owner a switch, get a clear answer: `409 SET_IN_COMPOSER` ("Direct
+        HTTPS is turned on and off in Composer: DirectorLink → Direct HTTPS.") for every admin and
+        whatever the body, and nothing changes. Members get `403`. In 1.12.0 and 1.12.1 it was the
+        owner's switch (`{"enabled": true | false}`; `403 OWNER_ONLY`, `409 HTTPS_NOT_ALLOWED`,
+        `409 REMOTE_ACCESS_NEEDED`), recorded in the history.
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               $ref: "#/components/schemas/DirectHttpsSwitch"
       responses:
         "200":
-          description: Switched; the state.
+          description: Never since 1.12.2. In 1.12.0 and 1.12.1, switched by the owner; the state.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/DirectHttps"
-        "400":
-          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
         "409":
           $ref: "#/components/responses/Conflict"
-        "503":
-          $ref: "#/components/responses/Unavailable"
 
   /v1/remote:
     get:
@@ -3911,7 +3906,7 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off; `HTTPS_NOT_ALLOWED`, while its Direct HTTPS property is Off), or Direct HTTPS needs Remote Access on and the home linked to an account (`REMOTE_ACCESS_NEEDED`, 1.12.0).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off; `HTTPS_NOT_ALLOWED`, while its Direct HTTPS property is Off, 1.12.0 and 1.12.1), or Direct HTTPS needs Remote Access on and the home linked to an account (`REMOTE_ACCESS_NEEDED`, 1.12.0 and 1.12.1), or is switched in Composer only (`SET_IN_COMPOSER`, `PUT /v1/https` since 1.12.2).
       content:
         application/problem+json:
           schema:
@@ -6883,17 +6878,17 @@ components:
       properties:
         allowed:
           type: boolean
-          description: The installer set DirectorLink's Direct HTTPS property to Allowed in Composer.
+          description: Composer's Direct HTTPS is On (or 1.12.1's Allowed). Since 1.12.2 always the same as `enabled`; in 1.12.0 and 1.12.1, the installer allowed it.
         enabled:
           type: boolean
-          description: The home's owner turned it on (`PUT /v1/https`); false while it is not allowed.
+          description: Composer's Direct HTTPS is On, since 1.12.2 the only switch (ADR-085); in 1.12.0 and 1.12.1, the home's owner turned it on.
         remote:
           type: boolean
           description: Remote Access is on in Composer and the home is linked to an account, which turning it on needs (the certificate comes through DirectorLink's servers).
         name:
           type: [string, "null"]
           pattern: "^[a-z2-7]{20}[.]dlhome[.]cc$"
-          description: The home's name, made the first time it is turned on and kept from then on; null before.
+          description: The home's name, made the first time it is turned on and kept from then on (also while off); null before.
         port:
           type: integer
           const: 28443
@@ -6901,10 +6896,12 @@ components:
           type: string
           enum: [not_allowed, "off", requesting, listening, error]
           description: |
-            `not_allowed`: the Composer property is Off. `off`: allowed, and the owner has not turned it
-            on. `requesting`: on, and the controller is asking DirectorLink's servers for a certificate
-            (or waits for its connection, or for Director to start the TLS server). `listening`: the
-            TLS server on port 28443 is online with a certificate valid now. `error`: see `error`.
+            `off`: the Composer property is Off (since 1.12.2). `requesting`: on, and the controller is
+            asking DirectorLink's servers for a certificate (or waits for its connection, or for
+            Director to start the TLS server). `listening`: the TLS server on port 28443 is online
+            with a certificate valid now. `error`: see `error`; also while it waits for Remote Access
+            and a home linked to an account. 1.12.0 and 1.12.1 only: `not_allowed` (the Composer
+            property was Off), and `off` meant allowed but not turned on by the owner.
         certificate:
           description: The certificate the controller has (while on), or null.
           oneOf:
@@ -6921,19 +6918,19 @@ components:
         error:
           type: [string, "null"]
           description: |
-            What keeps it from working, for the owner word for word: a short sentence or two in
-            English, never a code alone (for example "Let's Encrypt didn't issue the certificate.
-            Trying again in 15 minutes."); also while `listening`, when the next certificate could not
-            be had yet. Null otherwise.
+            What keeps it from working, for admins word for word (and in Composer's Direct HTTPS
+            Status): a short sentence or two in English, never a code alone (for example "Let's
+            Encrypt didn't issue the certificate. Trying again in 15 minutes.", or "It needs Remote
+            Access and the home linked to an account."); also while `listening`, when the next
+            certificate could not be had yet. Null otherwise.
 
     DirectHttpsSwitch:
       type: object
-      additionalProperties: false
-      required: [enabled]
+      description: What the 1.12.0 and 1.12.1 apps send; since 1.12.2 refused whatever it says (`409 SET_IN_COMPOSER`).
       properties:
         enabled:
           type: boolean
-          description: true turns Direct HTTPS on, false off.
+          description: In 1.12.0 and 1.12.1, true turned Direct HTTPS on, false off.
 
     DirectHttpsEndpoint:
       type: object
@@ -7506,7 +7503,9 @@ components:
           driver restarted), `driver_added`, `remote_update_required` (1.8.0: the account service no
           longer takes this version of DirectorLink for remote access; `from` this version, `to` the
           oldest it takes when it said; once until a connection opens again), `direct_https` (1.12.0,
-          ADR-082: the home's owner turned Direct HTTPS `to` `on` or `off`; `who` is their key).
+          ADR-082: Direct HTTPS turned `to` `on` or `off`; since 1.12.2, ADR-085, in Composer, `who`
+          Composer, also for a change seen at the driver's start; in 1.12.0 and 1.12.1 by the home's
+          owner in the app, `who` their key).
       required: [id, at, kind, action, who]
       properties:
         id:

@@ -1,20 +1,21 @@
-// Settings → Controller → Direct connection at home (1.12.0, ADR-082; js/direct.js). The home's
-// owner decides, never DirectorLink by itself: turned on, the controller gets a random name under
-// dlhome.cc that points to its address on the home network, and a certificate for it, so every
-// device, iPhones and iPads included, reaches it directly at home. Before it is on, the card says
-// what that means (the name in public certificate logs; DirectorLink's servers learn the name and
-// the address). The installer allows it first in Composer (Direct HTTPS → Allowed), and it needs
-// Remote Access with the home linked. Other admins see how it is; members see nothing. While the
-// controller gets its certificate the card asks it again every few seconds; once it serves the
-// name, this device reads GET /v1/system again, so it goes that way (session.js).
+// Settings → Controller → Direct connection at home (1.12.0, ADR-082; js/direct.js). Turned on,
+// the controller gets a random name under dlhome.cc that points to its address on the home network,
+// and a certificate for it, so every device, iPhones and iPads included, reaches it directly at
+// home. Since 1.12.2 the installer turns it on and off in Composer (DirectorLink → Direct HTTPS),
+// the only switch: the card says how it is and what it means (the name in public certificate logs;
+// DirectorLink's servers learn the name and the address), and, while it is off, where it is turned
+// on. Admins see it; members see nothing. While the controller gets its certificate the card asks
+// it again every few seconds; once it serves the name, this device reads GET /v1/system again, so
+// it goes that way (session.js).
 //
-// GET /v1/https (admins): { allowed, enabled, remote, name, port, state, certificate, error };
-// PUT /v1/https { enabled } (the owner only): the same answer, or 403, 409 HTTPS_NOT_ALLOWED,
-// 409 REMOTE_ACCESS_NEEDED.
+// GET /v1/https (admins): { allowed, enabled, remote, name, port, state, certificate, error }; from
+// 1.12.2 `allowed` and `enabled` are both Composer's On. A 1.12.0 or 1.12.1 controller may say
+// allowed and not enabled (its owner's switch off), which only updating it turns on now.
 
 import { h } from "../dom.js";
 import { formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
+import { isolate } from "../scenes.js";
 import { api, errorText, keyGeneration, keyInUse, readSystem, whenForgotten } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 
@@ -34,7 +35,7 @@ whenForgotten(() => {
 });
 
 // ui.directHttps: { status (GET /v1/https), at, loading, failed (why it could not be read),
-// missing (an older DirectorLink), busy (a change on its way), message }.
+// missing (an older DirectorLink) }.
 function section() {
   ui.directHttps ??= {};
   return ui.directHttps;
@@ -43,11 +44,6 @@ function section() {
 // The controller has Direct HTTPS (1.12.0): its GET /v1/system says `direct_https`, null or not.
 export function directSupported() {
   return Boolean(state.system && typeof state.system === "object" && Object.hasOwn(state.system, "direct_https"));
-}
-
-// This device's user is the home's owner (1.8.0, ADR-054: `access.owner`).
-function isOwner() {
-  return state.access?.owner === true;
 }
 
 export function loadDirect() {
@@ -104,47 +100,10 @@ function watch() {
   next();
 }
 
-// Why the owner's change was refused, or did not get through.
-function changeError(error) {
-  if (error?.code === "HTTPS_NOT_ALLOWED") return t("directHttps.notAllowed");
-  if (error?.code === "REMOTE_ACCESS_NEEDED") return t("directHttps.remoteNeeded");
-  if (error?.status === 403) return t("directHttps.ownerOnly");
-  return errorText(error);
-}
-
-async function setEnabled(enabled) {
-  const current = section();
-  if (current.busy || !keyInUse()) return;
-  const since = keyGeneration();
-  current.busy = true;
-  current.message = null;
-  notify();
-  try {
-    const status = await api("/v1/https", { method: "PUT", body: { enabled } });
-    if (since !== keyGeneration()) return;
-    Object.assign(section(), { status: status && typeof status === "object" ? status : section().status, failed: null, at: Date.now() });
-    if (status?.state === "requesting") watch();
-    // On or off: this device learns the name, or that it is gone, and goes the way there is now.
-    else readSystem().catch(() => {});
-  } catch (error) {
-    if (since !== keyGeneration()) return;
-    section().message = { kind: "error", text: changeError(error) };
-    // Without an answer it may have changed anyway: how it is now.
-    if (!error?.status) loadDirect();
-  } finally {
-    if (since === keyGeneration()) {
-      section().busy = false;
-      notify();
-    }
-  }
-}
-
-// How it is, in words: Off, Getting a certificate…, On until <date>, Didn't work: <why>, or (the
-// installer did not allow it) Not allowed in Composer.
+// How it is, in words: Off, Getting a certificate…, On until <date>, or Didn't work: <why>. A
+// 1.12.0 or 1.12.1 controller's `not_allowed` (Composer Off) is Off too.
 export function directStateText(status) {
   switch (status?.state) {
-    case "not_allowed":
-      return t("directHttps.state.notAllowed");
     case "requesting":
       return t("directHttps.state.requesting");
     case "listening": {
@@ -168,35 +127,7 @@ function stateLine(status) {
   );
 }
 
-// The owner's switch. Off while it cannot be turned on (Composer, Remote Access) or a change is on
-// its way, but focusable (aria-disabled), as Alerts' switch.
-function ownerSwitch(on, off) {
-  return h(
-    "div",
-    { class: "toggle-row" },
-    h("span", { class: "toggle-text" }, h("span", { class: "toggle-title", id: "direct-switch-label" }, t("directHttps.label"))),
-    h(
-      "button",
-      {
-        type: "button",
-        role: "switch",
-        class: "switch",
-        "aria-checked": String(on),
-        "aria-labelledby": "direct-switch-label",
-        "aria-describedby": "direct-state",
-        "aria-busy": section().busy ? "true" : null,
-        "aria-disabled": off ? "true" : null,
-        dataset: { key: "direct-switch" },
-        onclick: () => {
-          if (!off) setEnabled(!on);
-        },
-      },
-      h("span", { class: "switch-thumb" })
-    )
-  );
-}
-
-// What turning it on means, said before it is on.
+// What it means: what it does, what becomes public, what DirectorLink's servers learn.
 function explanation() {
   return h(
     "div",
@@ -217,6 +148,9 @@ function remoteNotice() {
   );
 }
 
+// The path in Composer, the same words in every language (Composer's own), kept left to right.
+const COMPOSER_PATH = "DirectorLink → Direct HTTPS → On";
+
 function body(current) {
   const status = current.status;
   if (!status) {
@@ -228,30 +162,19 @@ function body(current) {
     }
     return h("p", { class: "field-help", role: "status" }, t("common.loading"));
   }
-  const allowed = status.allowed === true && status.state !== "not_allowed";
-  const enabled = status.enabled === true;
-  const remote = status.remote === true;
-  const message = current.message ? h("p", { class: `notice notice-${current.message.kind}`, role: "alert", dataset: { key: "direct-message" } }, current.message.text) : null;
-  if (!isOwner()) {
-    // Other admins: how it is, and who decides.
-    return [
-      stateLine(status),
-      allowed ? null : h("p", { class: "notice notice-info", dataset: { key: "direct-composer" } }, t("directHttps.notAllowed")),
-      h("p", { class: "field-help", dataset: { key: "direct-owner-only" } }, t("directHttps.ownerOnly")),
-    ];
+  const on = status.enabled === true;
+  // A 1.12.0 or 1.12.1 controller: allowed in Composer, its owner's switch off.
+  const olderOff = !on && status.allowed === true;
+  let note = null;
+  if (olderOff) {
+    note = h("p", { class: "notice notice-info", dataset: { key: "direct-update" } }, t("directHttps.updateDriver"));
+  } else if (!on) {
+    note = h("p", { class: "notice notice-info", dataset: { key: "direct-composer" } }, t("directHttps.installer", { path: isolate(COMPOSER_PATH) }));
+  } else if (status.remote !== true) {
+    // On, waiting for Remote Access and the home linked: where to link it.
+    note = remoteNotice();
   }
-  if (!allowed) {
-    return [stateLine(status), h("p", { class: "notice notice-info", dataset: { key: "direct-composer" } }, t("directHttps.notAllowed")), message];
-  }
-  // Turning it on needs Remote Access and the home linked; once on, the switch still turns it off.
-  const canTurnOn = remote;
-  return [
-    enabled ? null : explanation(),
-    ownerSwitch(enabled, Boolean(current.busy) || (!enabled && !canTurnOn)),
-    stateLine(status),
-    remote ? null : remoteNotice(),
-    message,
-  ];
+  return [stateLine(status), explanation(), note];
 }
 
 // The card, for admins, with a DirectorLink that has Direct HTTPS; null otherwise (members, older
@@ -261,7 +184,7 @@ export function directCard() {
   const current = section();
   if (current.missing) return null;
   const stale = current.status && Date.now() - (current.at || 0) > FRESH_MS;
-  if (!loading && !polling && !current.busy && ((!current.status && !current.failed) || stale)) loadDirect();
+  if (!loading && !polling && ((!current.status && !current.failed) || stale)) loadDirect();
   return h(
     "section",
     { class: "card settings-card", id: "settings-direct", "aria-labelledby": "settings-direct-title" },

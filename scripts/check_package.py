@@ -81,6 +81,10 @@ SECURITY_CONTRACT = {
         "C4:DestroyServer(DirectHttps.PORT)",
         'return host == name or host == name .. ":" .. DirectHttps.PORT',
     ),
+    # Since 1.12.2 (ADR-085) Direct HTTPS is turned on and off in Composer only: the API refuses.
+    "src/api/handlers/https.lua": (
+        'return Problem.new(409, "SET_IN_COMPOSER", Https.SET_IN_COMPOSER)',
+    ),
     "src/auth/keys.lua": (
         # Only hashes are stored, never the keys themselves.
         "local ok = Store.write(STORE_KEY, { version = 4, keys = records }, false)",

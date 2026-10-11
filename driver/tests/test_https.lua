@@ -1,6 +1,7 @@
--- Direct HTTPS (1.12.0, ADR-082): the installer allows it in Composer, the home's owner turns it on
--- (PUT /v1/https); the controller then makes its name and key once, asks DirectorLink's servers for
--- a certificate over the relay's connection (docs/RELAY.md: https_certificate, https), keeps one
+-- Direct HTTPS (1.12.0, ADR-082): the installer turns it on in Composer, the only switch since
+-- 1.12.2 (Direct HTTPS: Off or On; 1.12.1's "Allowed" is On, and PUT /v1/https answers 409
+-- SET_IN_COMPOSER); the controller then makes its name and key once, asks DirectorLink's servers
+-- for a certificate over the relay's connection (docs/RELAY.md: https_certificate, https), keeps one
 -- only for its own key and name, and serves the API over TLS on port 28443 exactly as on 41999. It
 -- asks again when a third of the certificate's lifetime is left, tells the Worker its address when
 -- it changes, and has the name's record deleted when it is turned off. The key never leaves the
@@ -64,21 +65,39 @@ local function claim(s)
     T.eq(answer.ok, true, "the home is claimed")
 end
 
--- A driver with Direct HTTPS Allowed (options.allowed false: Off), paired (the owner's key), with
--- Remote Access on and connected to the fake relay (options.remote false: off), the home claimed
--- (options.claimed false: not), and the relay saying it issues certificates (options.features: its
--- list; false: it says nothing yet).
+-- Claims the home on a connection whose relay issues certificates; returns the Direct HTTPS
+-- messages the driver sent after its answer.
+local function claimAndWatch(s)
+    local made = T.http(s.mock, "POST", "/v1/remote/claim", { key = s.key })
+    T.eq(made.status, 201, made.body)
+    s.connection.sent = ""
+    relaySays(s, { type = "claim", id = "claim-1", token = made.json.claim_token })
+    local claimed, out = false, {}
+    for _, message in ipairs(sentMessages(s)) do
+        if message.type == "claim_result" then
+            claimed = message.ok == true
+        elseif message.type == "https_certificate" or message.type == "https" then
+            out[#out + 1] = message
+        end
+    end
+    T.eq(claimed, true, "the home is claimed")
+    return out
+end
+
+-- A driver with Composer's Direct HTTPS Off at its start (options.composer: the value it has then,
+-- such as "On", or 1.12.1's "Allowed"), paired (the owner's key), with Remote Access on and
+-- connected to the fake relay (options.remote false: off), the home claimed (options.claimed false:
+-- not), and the relay saying it issues certificates (options.features: its list; false: it says
+-- nothing yet). s.early: the Direct HTTPS messages the driver sent while it got there.
 local function home(options)
     options = options or {}
     local mock = Mock.startDriver(nil, nil, options.initType, function(m)
-        if options.allowed ~= false then
-            Properties["Direct HTTPS"] = "Allowed"
-        end
+        Properties["Direct HTTPS"] = options.composer or "Off"
         if options.prepare then
             options.prepare(m)
         end
     end)
-    local s = { mock = mock }
+    local s = { mock = mock, early = {} }
     s.key = options.key or T.pair(mock, "Owner's laptop")
     if options.remote ~= false then
         local _, connection = Harness.connected({ mock = mock })
@@ -89,7 +108,7 @@ local function home(options)
         if options.features ~= false then
             relayFeatures(s, options.features or nil)
         end
-        s.connection.sent = ""
+        s.early = httpsMessages(s)
     end
     return s
 end
@@ -100,6 +119,7 @@ local function status(s, key)
     return answer.json
 end
 
+-- The 1.12.0 and 1.12.1 apps' switch: refused since 1.12.2.
 local function switch(s, on, key)
     return T.http(s.mock, "PUT", "/v1/https", { key = key or s.key, body = { enabled = on } })
 end
@@ -107,6 +127,11 @@ end
 local function setProperty(name, value)
     Properties[name] = value
     OnPropertyChanged(name)
+end
+
+-- The installer sets Direct HTTPS in Composer.
+local function composer(value)
+    setProperty("Direct HTTPS", value)
 end
 
 -- The SubjectPublicKeyInfo of a PEM CSR, for a certificate issued for it.
@@ -131,14 +156,13 @@ local function certificateFor(asked, options)
     }), "CERTIFICATE"), iso(to)
 end
 
--- Turns it on as the owner and returns the request for a certificate the driver sent.
+-- Turns it on in Composer and returns the request for a certificate the driver sent, and the state.
 local function turnOn(s)
-    local answer = switch(s, true)
-    T.eq(answer.status, 200, answer.body)
+    composer("On")
     local sent = httpsMessages(s)
     T.eq(#sent, 1, "one request for a certificate")
     T.eq(sent[1].type, "https_certificate")
-    return sent[1], answer.json
+    return sent[1], status(s)
 end
 
 local function issued(s, asked, options)
@@ -230,6 +254,23 @@ local function stored(mock)
     return Json.decode((mock.persist.directorlink_https:gsub("^json:", "")))
 end
 
+-- The history's Direct HTTPS entries, the newest first (since the last driver update with
+-- `sinceUpdate`).
+local function directEntries(mock, key, sinceUpdate)
+    local answer = T.http(mock, "GET", "/v1/activity?limit=200", { key = key })
+    T.eq(answer.status, 200, answer.body)
+    local found = {}
+    for _, item in ipairs(answer.json.items) do
+        if sinceUpdate and item.kind == "system" and item.action == "driver_updated" then
+            break
+        end
+        if item.kind == "system" and item.action == "direct_https" then
+            found[#found + 1] = item
+        end
+    end
+    return found
+end
+
 -- A driver update in Composer: the stored data and the Composer properties stay.
 local function reload(previous, prepare)
     local properties = {}
@@ -250,105 +291,109 @@ local function reload(previous, prepare)
     end)
 end
 
--- ---- off, allowed, and who switches it --------------------------------------------------------------
+-- ---- Composer, the only switch (1.12.2) -------------------------------------------------------------
 
-function tests.off_by_default_makes_nothing_and_refuses_the_switch()
-    local s = home({ allowed = false })
+function tests.off_by_default_makes_nothing()
+    local s = home()
     T.same(status(s), {
-        allowed = false, enabled = false, remote = true, name = Json.null, port = PORT, state = "not_allowed",
+        allowed = false, enabled = false, remote = true, name = Json.null, port = PORT, state = "off",
         certificate = Json.null, error = Json.null,
     })
     T.eq(s.mock.properties["Direct HTTPS Status"], "Off")
-    local refused = switch(s, true)
-    T.eq(refused.status, 409)
-    T.eq(refused.json.code, "HTTPS_NOT_ALLOWED")
-    T.eq(switch(s, false).json.code, "HTTPS_NOT_ALLOWED")
     T.eq(#s.mock.csrCalls, 0, "no key")
     T.eq(#s.mock.tlsCalls, 0, "no TLS server")
     T.eq(s.mock.persist.directorlink_https, nil)
-    T.eq(#httpsMessages(s), 0, "nothing told to the relay")
+    T.eq(#s.early, 0, "nothing told to the relay")
+    T.eq(#httpsMessages(s), 0)
     T.eq(T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.direct_https, Json.null)
     T.truthy(s.mock.servers[41999], "the API's own server is there as always")
+    T.eq(#directEntries(s.mock, s.key), 0, "nothing in the history")
 end
 
-function tests.allowed_alone_turns_nothing_on()
-    local s = home()
-    local current = status(s)
-    T.eq(current.allowed, true)
-    T.eq(current.enabled, false)
-    T.eq(current.remote, true)
-    T.eq(current.state, "off")
-    T.eq(current.name, Json.null)
-    T.eq(#s.mock.csrCalls, 0, "no key until the owner turns it on")
-    T.eq(#httpsMessages(s), 0)
-    T.eq(s.mock.properties["Direct HTTPS Status"], "Allowed: the home's owner turns it on in the app")
-    -- Off again: still nothing.
-    setProperty("Direct HTTPS", "Off")
-    T.eq(status(s).state, "not_allowed")
-    T.eq(#httpsMessages(s), 0)
-end
-
-function tests.only_the_homes_owner_switches_it()
+function tests.the_apps_switch_says_it_is_set_in_composer()
     local s = home()
     local admin = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Partner's phone", role = "admin" } })
     T.eq(admin.status, 201, admin.body)
     local member = T.http(s.mock, "POST", "/v1/api-keys", { key = s.key, body = { name = "Kid's phone", role = "member" } })
     T.eq(member.status, 201, member.body)
-    local byAdmin = switch(s, true, admin.json.key)
-    T.eq(byAdmin.status, 403)
-    T.eq(byAdmin.json.code, "OWNER_ONLY")
-    T.eq(status(s, admin.json.key).state, "off", "another admin sees it")
-    local byMember = switch(s, true, member.json.key)
-    T.eq(byMember.status, 403)
-    T.eq(byMember.json.code, "FORBIDDEN")
+    -- The home's owner, another admin, any body: 409, and nothing changes.
+    for _, request in ipairs({ { s.key, { enabled = true } }, { s.key, { enabled = false } }, { admin.json.key, { enabled = true } },
+        { s.key, {} }, { s.key, { enabled = "yes" } } }) do
+        local answer = T.http(s.mock, "PUT", "/v1/https", { key = request[1], body = request[2] })
+        T.eq(answer.status, 409, answer.body)
+        T.eq(answer.json.code, "SET_IN_COMPOSER")
+        T.eq(answer.json.detail, "Direct HTTPS is turned on and off in Composer: DirectorLink → Direct HTTPS.")
+    end
+    T.eq(status(s).state, "off")
+    T.eq(#s.mock.csrCalls, 0)
+    T.eq(#httpsMessages(s), 0)
+    T.eq(s.mock.persist.directorlink_https, nil)
+    -- Members neither read nor switch it; without a key, nothing.
+    T.eq(switch(s, true, member.json.key).status, 403)
     T.eq(T.http(s.mock, "GET", "/v1/https", { key = member.json.key }).status, 403)
     T.eq(T.http(s.mock, "GET", "/v1/https").status, 401)
     T.eq(T.http(s.mock, "PUT", "/v1/https", { body = { enabled = true } }).status, 401)
-    for _, body in ipairs({ { enabled = "true" }, { enabled = 1 }, {}, { enabled = true, name = "x" }, "true" }) do
-        local answer = T.http(s.mock, "PUT", "/v1/https", { key = s.key, body = body })
-        T.eq(answer.status, 400, Json.encode(body))
-    end
-    T.eq(#s.mock.csrCalls, 0)
-    T.eq(#httpsMessages(s), 0)
-    T.eq(switch(s, true).status, 200, "the owner")
+    -- On in Composer, the owner's Off changes nothing either.
+    local on = listening()
+    local refused = switch(on, false)
+    T.eq(refused.status, 409)
+    T.eq(refused.json.code, "SET_IN_COMPOSER")
+    T.eq(status(on).state, "listening")
+    T.truthy(on.mock.tlsServers[PORT], "the TLS server stays")
+    T.eq(#httpsMessages(on), 0, "the name's record stays")
+    T.eq(#directEntries(on.mock, on.key), 1, "only Composer's On in the history")
 end
 
 function tests.it_needs_remote_access_and_a_linked_home()
+    -- Remote Access off: on in Composer, and it says what it needs.
     local off = home({ remote = false })
-    T.eq(status(off).remote, false)
-    local refused = switch(off, true)
-    T.eq(refused.status, 409)
-    T.eq(refused.json.code, "REMOTE_ACCESS_NEEDED")
-    T.eq(#off.mock.csrCalls, 0)
+    composer("On")
+    local current = status(off)
+    T.eq(current.allowed, true)
+    T.eq(current.enabled, true)
+    T.eq(current.remote, false)
+    T.eq(current.state, "error")
+    T.eq(current.error, "It needs Remote Access and the home linked to an account.")
+    T.eq(off.mock.properties["Direct HTTPS Status"], "Error: It needs Remote Access and the home linked to an account")
+    T.eq(#off.mock.tlsCalls, 0)
 
-    -- Connected, but no account has the home.
+    -- Connected, but no account has the home: it waits.
     local unclaimed = home({ claimed = false })
+    composer("On")
+    T.eq(#httpsMessages(unclaimed), 0)
     T.eq(status(unclaimed).remote, false)
-    T.eq(switch(unclaimed, true).json.code, "REMOTE_ACCESS_NEEDED")
-    -- Claimed: it may.
-    claim(unclaimed)
+    T.eq(status(unclaimed).error, "It needs Remote Access and the home linked to an account.")
+    -- Claimed: the certificate is asked for at once, not at the next look 10 minutes later.
+    local asked = claimAndWatch(unclaimed)
     T.eq(status(unclaimed).remote, true)
-    T.eq(switch(unclaimed, true).status, 200)
+    T.eq(#asked, 1, "asked once the home is linked")
+    T.eq(asked[1].type, "https_certificate")
+    T.eq(status(unclaimed).state, "requesting")
 
     -- A home claimed before 1.8.0 recorded no owner: an account using one of its keys says it is in one.
     local older = home({ claimed = false })
+    composer("On")
+    T.eq(#httpsMessages(older), 0)
     local me = T.http(older.mock, "GET", "/v1/api-keys/current", { key = older.key }).json
     relaySays(older, { type = "accounts", id = "a1", keys = { [me.id] = { "0123456789abcdef" } } })
     T.eq(status(older).remote, true)
+    T.eq(#httpsMessages(older), 1, "asked at once")
 
     -- Turning off needs neither.
     local s = listening()
     setProperty("Remote Access", "Off")
-    local current = status(s)
+    current = status(s)
     T.eq(current.remote, false)
     T.eq(current.state, "listening", "the certificate keeps working until it is due")
     T.eq(current.error, Json.null)
-    T.eq(switch(s, false).status, 200)
+    composer("Off")
+    T.eq(status(s).state, "off")
+    T.eq(s.mock.tlsServers[PORT], nil)
 end
 
 -- ---- a certificate --------------------------------------------------------------------------------
 
-function tests.the_owner_turns_it_on_and_the_certificate_comes_through_the_relay()
+function tests.on_in_composer_starts_it_with_nobody_else_to_ask()
     local s = home()
     local asked, answer = turnOn(s)
     T.eq(#s.mock.csrCalls, 1, "a key and CSR, once")
@@ -362,6 +407,7 @@ function tests.the_owner_turns_it_on_and_the_certificate_comes_through_the_relay
     T.contains(asked.csr, "-----BEGIN CERTIFICATE REQUEST-----")
     T.eq(asked.ip, "192.168.1.10", "the controller's LAN address, for the A record")
     T.truthy(type(asked.id) == "string" and #asked.id > 0)
+    T.eq(answer.allowed, true, "a 1.12.0 or 1.12.1 app sees it on")
     T.eq(answer.enabled, true)
     T.eq(answer.state, "requesting")
     T.eq(answer.name, asked.name)
@@ -400,19 +446,23 @@ function tests.the_owner_turns_it_on_and_the_certificate_comes_through_the_relay
     T.same(T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.direct_https, { name = asked.name, port = PORT, not_after = notAfter })
     T.eq(#httpsMessages(s), 0, "nothing more asked")
 
-    -- In the history, by the owner's key.
-    local history = T.http(s.mock, "GET", "/v1/activity", { key = s.key })
-    T.contains(history.body, '"action":"direct_https"')
-    T.contains(history.body, '"to":"on"')
+    -- In the history, by Composer.
+    local entries = directEntries(s.mock, s.key)
+    T.eq(#entries, 1)
+    T.eq(entries[1].to, "on")
+    T.eq(entries[1].who.type, "composer")
     local log = logText(s.mock)
     T.contains(log, "certificate asked for")
     T.contains(log, "certificate installed")
     T.contains(log, "TLS server started")
+    T.contains(log, "Direct HTTPS turned on in Composer")
     T.notContains(log, "BEGIN CERTIFICATE", "never a certificate's text in the log")
 
-    -- Switched on again: nothing new.
-    T.eq(switch(s, true).json.state, "listening")
+    -- On again in Composer: nothing new.
+    composer("On")
+    T.eq(status(s).state, "listening")
     T.eq(#httpsMessages(s), 0)
+    T.eq(#directEntries(s.mock, s.key), 1)
 end
 
 function tests.a_member_sees_where_to_reach_it_in_the_system()
@@ -660,7 +710,7 @@ function tests.the_worker_hears_of_a_new_address()
     local public = home({ prepare = function(m)
         m.controllerAddress = "203.0.113.9"
     end })
-    T.eq(switch(public, true).status, 200)
+    composer("On")
     T.eq(#httpsMessages(public), 0)
     T.contains(status(public).error, "The controller's address isn't a home network address.")
 end
@@ -684,31 +734,31 @@ end
 
 function tests.a_relay_that_issues_no_certificates_is_said()
     local s = home({ features = { "alert_acks" } })
-    T.eq(switch(s, true).status, 200)
+    composer("On")
     T.eq(#httpsMessages(s), 0, "nothing asked of a relay that does not say https")
     local current = status(s)
     T.eq(current.state, "error")
     T.eq(current.error, "DirectorLink's servers can't issue certificates yet.")
     -- Not connected: it waits, without an error.
     local down = home({ features = false })
-    T.eq(switch(down, true).status, 200)
+    composer("On")
     T.eq(status(down).state, "requesting")
     T.eq(status(down).error, Json.null)
 end
 
 -- ---- off ------------------------------------------------------------------------------------------
 
-function tests.turned_off_the_server_stops_the_certificate_goes_and_the_record_is_deleted()
+function tests.off_in_composer_stops_the_server_and_the_record_is_deleted()
     local s, asked = listening()
-    local answer = switch(s, false)
-    T.eq(answer.status, 200, answer.body)
-    T.eq(answer.json.enabled, false)
-    T.eq(answer.json.state, "off")
-    T.eq(answer.json.certificate, Json.null)
-    T.eq(answer.json.name, asked.name, "the name stays")
-    T.truthy(s.mock.tlsServers[PORT], "not before its answer has gone")
-    fire(s.mock, 2)
-    T.eq(s.mock.tlsServers[PORT], nil)
+    composer("Off")
+    local answer = status(s)
+    T.eq(answer.allowed, false)
+    T.eq(answer.enabled, false)
+    T.eq(answer.state, "off")
+    T.eq(answer.certificate, Json.null)
+    T.eq(answer.name, asked.name, "the name stays")
+    T.eq(s.mock.properties["Direct HTTPS Status"], "Off")
+    T.eq(s.mock.tlsServers[PORT], nil, "stopped at once")
     T.eq(s.mock.destroyedServers[#s.mock.destroyedServers], PORT)
     T.truthy(s.mock.servers[41999], "the API's own server stays")
     T.eq(T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.direct_https, Json.null)
@@ -726,22 +776,34 @@ function tests.turned_off_the_server_stops_the_certificate_goes_and_the_record_i
     T.eq(stored(s.mock).dns_off, nil)
     tick(s.mock)
     T.eq(#httpsMessages(s), 0, "told once")
-    local history = T.http(s.mock, "GET", "/v1/activity", { key = s.key }).body
-    T.contains(history, '"to":"off"')
     T.contains(logText(s.mock), "TLS server stopped")
+    T.contains(logText(s.mock), "Direct HTTPS turned off in Composer")
     OnServerStatusChanged(PORT, "OFFLINE", "https")
     T.eq(status(s).state, "off")
+
+    -- In the history, by Composer: on, then off (and Composer's own setting entries as before).
+    local entries = directEntries(s.mock, s.key)
+    T.eq(#entries, 2)
+    T.eq(entries[1].to, "off")
+    T.eq(entries[1].who.type, "composer")
+    T.eq(entries[2].to, "on")
+    T.contains(T.http(s.mock, "GET", "/v1/activity", { key = s.key }).body, "Direct HTTPS")
 
     -- On again: the same key, a certificate asked for again (the Worker has it already).
     local again = turnOn(s)
     T.eq(again.csr, asked.csr)
     T.eq(#s.mock.csrCalls, 1)
+    T.eq(#directEntries(s.mock, s.key), 3)
+    -- Off twice: one entry.
+    composer("Off")
+    composer("Off")
+    T.eq(#directEntries(s.mock, s.key), 4)
 end
 
 function tests.turned_off_while_away_the_record_goes_at_the_next_connection_even_after_a_restart()
     local s = listening()
     OnConnectionStatusChanged(Harness.BINDING, 443, "OFFLINE")
-    T.eq(switch(s, false).status, 200)
+    composer("Off")
     T.eq(#httpsMessages(s), 0, "not connected")
     T.eq(stored(s.mock).dns_off, true, "kept until the Worker answers")
     local again = reload(s.mock)
@@ -764,22 +826,6 @@ function tests.turned_off_while_away_the_record_goes_at_the_next_connection_even
     T.eq(#httpsMessages(after), 0, "once deleted, never again")
 end
 
-function tests.composer_back_to_off_turns_it_off_and_allowed_again_does_not_turn_it_on()
-    local s = listening()
-    setProperty("Direct HTTPS", "Off")
-    T.eq(s.mock.tlsServers[PORT], nil)
-    T.eq(status(s).state, "not_allowed")
-    T.eq(status(s).enabled, false)
-    T.eq(s.mock.properties["Direct HTTPS Status"], "Off")
-    local off = httpsMessages(s)
-    T.eq(#off, 1)
-    T.eq(off[1].name, Json.null)
-    setProperty("Direct HTTPS", "Allowed")
-    T.eq(status(s).state, "off", "the owner turns it on again")
-    T.eq(#s.mock.tlsCalls, 1)
-    T.contains(T.http(s.mock, "GET", "/v1/activity", { key = s.key }).body, "Direct HTTPS")
-end
-
 function tests.a_new_remote_identity_forgets_the_name()
     local s, asked = listening()
     ExecuteCommand("LUA_ACTION", { ACTION = "RESET_REMOTE_IDENTITY" })
@@ -790,14 +836,14 @@ function tests.a_new_remote_identity_forgets_the_name()
     local current = status(s)
     T.truthy(current.name ~= asked.name, "a new name for the new home")
     T.eq(current.certificate, Json.null)
-    T.eq(current.enabled, true, "the owner's switch stays")
+    T.eq(current.enabled, true, "Composer still says On")
     T.eq(current.remote, false, "until the new home is connected")
     T.eq(#httpsMessages(s), 0, "nothing asked on the old connection")
 end
 
--- ---- what is kept ---------------------------------------------------------------------------------
+-- ---- what is kept, and the update from 1.12.1 -------------------------------------------------------
 
-function tests.a_certificate_and_the_switch_survive_a_reload()
+function tests.a_certificate_survives_a_reload()
     local s, asked = listening()
     local again = reload(s.mock)
     T.eq(#again.csrCalls, 0)
@@ -805,15 +851,131 @@ function tests.a_certificate_and_the_switch_survive_a_reload()
     T.eq(again.tlsCalls[1].certificate, s.mock.tlsCalls[1].certificate)
     T.eq(again.tlsCalls[1].privateKey, s.mock.privateKeys[1])
     OnServerStatusChanged(PORT, "ONLINE", "https")
-    local key = T.pair(again, "Again")
-    local current = status({ mock = again, key = key })
+    local current = status({ mock = again, key = s.key })
     T.eq(current.state, "listening")
     T.eq(current.enabled, true)
     T.eq(current.name, asked.name)
     T.eq(T.http(again, "GET", "/v1/health", { tls = true, host = asked.name .. ":28443" }).status, 200)
+    T.eq(#directEntries(again, s.key, true), 0, "nothing turned on or off by the reload")
 end
 
-function tests.the_test_builds_key_stays_and_its_allowed_turns_nothing_on()
+-- How many entries of Composer's settings the history has.
+local function settingEntries(mock, key)
+    local _, count = T.http(mock, "GET", "/v1/activity?limit=200", { key = key }).body:gsub('"action":"setting"', "")
+    return count
+end
+
+-- The owner's controller on 2026-10-11: 1.12.1 with Composer's Direct HTTPS on "Allowed", the
+-- owner's switch on, a certificate, the TLS server listening. Director keeps "Allowed" across the
+-- update, although 1.12.2's list is Off and On.
+function tests.a_stored_allowed_keeps_it_on_after_the_update_and_composer_shows_on()
+    local s, asked = listening()
+    local record = stored(s.mock)
+    T.eq(record.version, 2)
+    T.eq(record.enabled, true, "as 1.12.1 stores the owner's switch")
+    Properties["Direct HTTPS"] = "Allowed"
+    local tlsBefore = #s.mock.tlsCalls
+    local again = reload(s.mock)
+    T.eq(again.properties["Direct HTTPS"], "On", "Composer shows On from now on")
+    T.contains(logText(again), "Composer's Allowed (1.12.0 and 1.12.1) is On from now on")
+    T.eq(#again.csrCalls, 0, "the same key")
+    T.eq(#again.tlsCalls, 1, "the TLS server starts again at load")
+    T.eq(again.tlsCalls[1].certificate, s.mock.tlsCalls[tlsBefore].certificate, "with the same certificate")
+    OnServerStatusChanged(PORT, "ONLINE", "https")
+    local current = status({ mock = again, key = s.key })
+    T.eq(current.state, "listening")
+    T.eq(current.allowed, true)
+    T.eq(current.enabled, true)
+    T.eq(current.name, asked.name)
+    T.same(T.http(again, "GET", "/v1/system", { key = s.key }).json.direct_https, { name = asked.name, port = PORT, not_after = record.not_after })
+    T.eq(#directEntries(again, s.key, true), 0, "not turned off and on again")
+    T.eq(stored(again).dns_off, nil, "the name's record stays")
+    -- Connected again: only the address is told, no new certificate and no delete.
+    local after = { mock = again }
+    local _, connection = Harness.connected({ mock = again })
+    after.connection = connection
+    relayFeatures(after)
+    local told = httpsMessages(after)
+    T.eq(#told, 1)
+    T.eq(told[1].type, "https")
+    T.eq(told[1].name, asked.name)
+    -- Director reports DirectorLink's own On back: no change of the installer's, nothing recorded.
+    local settingsBefore = settingEntries(again, s.key)
+    Properties["Direct HTTPS"] = "On"
+    OnPropertyChanged("Direct HTTPS")
+    T.eq(settingEntries(again, s.key), settingsBefore, "not a Composer change")
+    T.eq(status({ mock = again, key = s.key }).state, "listening")
+    -- A Composer still open from before sends 1.12.1's Allowed back: On all the same, shown as On
+    -- again, and no installer's change.
+    Properties["Direct HTTPS"] = "Allowed"
+    again.properties["Direct HTTPS"] = "Allowed"
+    OnPropertyChanged("Direct HTTPS")
+    T.eq(again.properties["Direct HTTPS"], "On")
+    T.eq(settingEntries(again, s.key), settingsBefore)
+    T.eq(#directEntries(again, s.key, true), 0)
+    T.eq(status({ mock = again, key = s.key }).state, "listening")
+    T.truthy(again.tlsServers[PORT])
+    -- The installer's Off afterwards is one.
+    composer("Off")
+    T.eq(status({ mock = again, key = s.key }).state, "off")
+    T.eq(settingEntries(again, s.key), settingsBefore + 1)
+    T.eq(directEntries(again, s.key)[1].to, "off")
+end
+
+-- 1.12.1 with "Allowed" whose owner had not turned it on (or turned it off): Composer decides.
+function tests.a_stored_owners_off_does_not_keep_it_off()
+    for _, enabled in ipairs({ false, Json.null }) do
+        local s = home({ composer = "Allowed", prepare = function(m)
+            m.persist.directorlink_https = "json:" .. Json.encode({
+                version = 2, name = "abcdefghijabcdefghij.dlhome.cc", created_at = "2026-10-10T19:00:00Z", enabled = enabled, dns_off = true,
+                key = X509Fake.privateKey(1), csr = X509Fake.pem(X509Fake.request("abcdefghijabcdefghij.dlhome.cc", X509Fake.point(1)), "CERTIFICATE REQUEST"),
+            })
+        end })
+        T.eq(s.mock.properties["Direct HTTPS"], "On")
+        local current = status(s)
+        T.eq(current.enabled, true, "on: Composer says so")
+        T.eq(current.state, "requesting")
+        T.eq(current.name, "abcdefghijabcdefghij.dlhome.cc")
+        T.eq(#s.mock.csrCalls, 0, "its key")
+        T.eq(#s.early, 1, "a certificate asked for once connected")
+        T.eq(s.early[1].type, "https_certificate")
+        T.eq(s.early[1].name, "abcdefghijabcdefghij.dlhome.cc")
+        local record = stored(s.mock)
+        T.eq(record.enabled, true)
+        T.eq(record.dns_off, nil, "no delete pending")
+        local entries = directEntries(s.mock, s.key)
+        T.eq(#entries, 1)
+        T.eq(entries[1].to, "on")
+        T.eq(entries[1].who.type, "composer")
+    end
+end
+
+-- Composer changed while the driver did not run (or Director gave a list property its default):
+-- seen at the start, as a change in Composer.
+function tests.composer_off_at_the_start_turns_off_what_was_on()
+    local s, asked = listening()
+    Properties["Direct HTTPS"] = "Off"
+    local again = reload(s.mock)
+    T.eq(#again.tlsCalls, 0, "no TLS server")
+    local record = stored(again)
+    T.eq(record.enabled, nil)
+    T.eq(record.dns_off, true)
+    T.eq(record.certificate, nil)
+    T.eq(record.name, asked.name)
+    local after = { mock = again }
+    local _, connection = Harness.connected({ mock = again })
+    after.connection = connection
+    relayFeatures(after)
+    local off = httpsMessages(after)
+    T.eq(#off, 1)
+    T.eq(off[1].name, Json.null, "the name's record is deleted")
+    local entries = directEntries(again, s.key, true)
+    T.eq(#entries, 1)
+    T.eq(entries[1].to, "off")
+    T.eq(entries[1].who.type, "composer")
+end
+
+function tests.the_test_builds_key_is_used_once_composer_says_on()
     local s = home({ prepare = function(m)
         m.persist.directorlink_https = Json.encode({
             version = 1, name = "abcdefghijabcdefghij.dlhome.cc", created_at = "2026-10-10T19:00:00Z",
@@ -837,8 +999,8 @@ function tests.the_private_key_never_leaves_the_store()
     for _, frame in ipairs(Harness.clientFrames(s.connection.sent)) do
         relayFrames[#relayFrames + 1] = frame.payload
     end
-    switch(s, false)
-    switch(s, true)
+    composer("Off")
+    composer("On")
     for _, frame in ipairs(Harness.clientFrames(s.connection.sent)) do
         relayFrames[#relayFrames + 1] = frame.payload
     end
@@ -877,10 +1039,10 @@ function tests.an_os_without_the_private_key_says_it_is_not_supported()
     local s = home({ prepare = function(m)
         m.csrMode = "csr_only"
     end })
-    local answer = switch(s, true)
-    T.eq(answer.status, 200)
-    T.eq(answer.json.state, "error")
-    T.eq(answer.json.error, "This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later.")
+    composer("On")
+    local answer = status(s)
+    T.eq(answer.state, "error")
+    T.eq(answer.error, "This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later.")
     T.eq(s.mock.properties["Direct HTTPS Status"], "Error: This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later")
     T.contains(logText(s.mock), "gave no private key", "what Director did, in the log")
     T.eq(#httpsMessages(s), 0, "nothing asked without a key")
@@ -889,17 +1051,20 @@ function tests.an_os_without_the_private_key_says_it_is_not_supported()
     local missing = home({ prepare = function()
         C4.GenerateCSR_ECC = nil
     end })
-    T.eq(switch(missing, true).json.error, "This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later.")
+    composer("On")
+    T.eq(status(missing).error, "This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later.")
 
     local failing = home({ prepare = function(m)
         m.csrMode = "fail"
     end })
-    T.eq(switch(failing, true).json.error, "The controller couldn't make its key.")
+    composer("On")
+    T.eq(status(failing).error, "The controller couldn't make its key.")
     T.contains(logText(failing.mock), "EC key generation failed")
-    -- Off and on again tries again.
+    -- Off and on again in Composer tries again.
     failing.mock.csrMode = nil
-    switch(failing, false)
-    T.eq(switch(failing, true).json.state, "requesting")
+    composer("Off")
+    composer("On")
+    T.eq(status(failing).state, "requesting")
 end
 
 function tests.a_tls_server_that_fails_to_start_says_why()
@@ -973,7 +1138,7 @@ end
 -- ---- what the app relies on (1.12.0 app) ----------------------------------------------------------
 
 function tests.the_system_always_says_direct_https()
-    local off = home({ allowed = false, remote = false })
+    local off = home({ remote = false })
     local body = T.http(off.mock, "GET", "/v1/system", { key = off.key }).body
     T.contains(body, '"direct_https":null', "the key is there, null, while off")
     -- Whatever the module offers, the key stays.
@@ -1015,27 +1180,19 @@ function tests.sealed_requests_on_the_tls_server_get_cors_for_the_app()
     T.eq(Json.decode(answer.body).state, "listening")
 end
 
-function tests.turned_off_over_the_tls_server_its_answer_goes_whole_before_the_server_stops()
+function tests.the_apps_switch_over_the_tls_server_changes_nothing()
     local s, asked = listening()
     local host = asked.name .. ":28443"
     local answer = T.http(s.mock, "PUT", "/v1/https", { key = s.key, tls = true, host = host, body = { enabled = false } })
-    T.eq(answer.status, 200, answer.body)
-    T.eq(answer.json.state, "off")
+    T.eq(answer.status, 409, answer.body)
+    T.eq(answer.json.code, "SET_IN_COMPOSER")
     T.eq(answer.closed, true, "the whole answer, then the connection closed")
-    T.truthy(s.mock.tlsServers[PORT], "the TLS server still runs when the answer is sent")
-    T.eq(s.mock.destroyedServers[#s.mock.destroyedServers] == PORT, false)
-    fire(s.mock, 2)
-    T.eq(s.mock.tlsServers[PORT], nil, "stopped 2 s later")
-    -- On again within the 2 s: it is not stopped.
-    local again = listening()
-    local againHost = status(again).name .. ":28443"
-    T.eq(T.http(again.mock, "PUT", "/v1/https", { key = again.key, tls = true, host = againHost, body = { enabled = false } }).status, 200)
-    T.eq(T.http(again.mock, "PUT", "/v1/https", { key = again.key, tls = true, host = againHost, body = { enabled = true } }).status, 200)
-    T.eq(hasTimer(again.mock, 2), false, "the stop was called off")
-    T.truthy(again.mock.tlsServers[PORT])
-    -- Composer's Off stops it at once (no request of the app's is on it).
-    setProperty("Direct HTTPS", "Off")
-    T.eq(again.mock.tlsServers[PORT], nil)
+    T.truthy(s.mock.tlsServers[PORT], "the TLS server still runs")
+    T.eq(#httpsTimers(s.mock, false) > 0 and hasTimer(s.mock, 2), false, "no stop on its way")
+    T.eq(status(s).state, "listening")
+    -- Composer's Off stops it at once.
+    composer("Off")
+    T.eq(s.mock.tlsServers[PORT], nil)
 end
 
 function tests.not_after_is_iso_8601_everywhere()
@@ -1066,7 +1223,7 @@ function tests.errors_are_short_sentences_for_the_owner()
     local oldOs = home({ prepare = function(m)
         m.csrMode = "csr_only"
     end })
-    switch(oldOs, true)
+    composer("On")
     collect(oldOs)
     local noRemote = listening({ from = os.time() - 80 * DAY, to = os.time() + 10 * DAY })
     setProperty("Remote Access", "Off")
@@ -1140,8 +1297,7 @@ function tests.a_tls_server_that_goes_offline_is_started_again()
     T.truthy(hasTimer(s.mock, 30), "started again after the next wait")
     T.eq(status(s).error, "The controller couldn't start its HTTPS server. Trying again in a minute.")
     -- Off: nothing is started again.
-    switch(s, false)
-    fire(s.mock, 2)
+    composer("Off")
     T.eq(#httpsTimers(s.mock, false), 0)
 end
 
@@ -1176,7 +1332,7 @@ function tests.a_new_certificate_that_cannot_start_the_server_leaves_the_old_one
 end
 
 function tests.the_host_check_takes_no_name_before_there_is_one()
-    local s = home({ allowed = false })
+    local s = home()
     T.eq(T.http(s.mock, "GET", "/v1/health", { tls = true, host = "abcdefghijabcdefghij.dlhome.cc" }).status, 421)
 end
 

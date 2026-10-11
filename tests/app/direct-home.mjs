@@ -21,7 +21,7 @@ export function json(status, body) {
   return new Response(body === null ? null : JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-// GET /v1/https as the driver answers it (ADR-082): on, with its certificate.
+// GET /v1/https as the driver answers it (ADR-082): on in Composer, with its certificate.
 export function httpsStatus(changes = {}) {
   return {
     allowed: true,
@@ -50,7 +50,8 @@ export function fakeHome() {
     // This key's access (GET /v1/api-keys/current).
     access: { role: "admin", owner: true },
     status: httpsStatus(),
-    // PUT /v1/https: [status, body], or null to change `status` as the driver does.
+    // PUT /v1/https: [status, body], or null to answer as the driver does since 1.12.2 (409
+    // SET_IN_COMPOSER: switched in Composer only).
     put: null,
   };
 
@@ -64,8 +65,7 @@ export function fakeHome() {
     if (path === "/v1/https" && method === "GET") return [200, net.status];
     if (path === "/v1/https" && method === "PUT") {
       if (net.put) return net.put;
-      net.status = { ...net.status, enabled: body.enabled, state: body.enabled ? "requesting" : "off", certificate: body.enabled ? net.status.certificate : null };
-      return [200, net.status];
+      return [409, { status: 409, code: "SET_IN_COMPOSER", detail: "Direct HTTPS is turned on and off in Composer: DirectorLink → Direct HTTPS." }];
     }
     if (path === "/v1/lights/1" && method === "PATCH") return [200, { id: 1, name: "Island", on: Boolean(body?.on) }];
     if (method === "GET") return [200, { items: [] }];

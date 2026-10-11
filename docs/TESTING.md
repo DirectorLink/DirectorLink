@@ -2,6 +2,21 @@
 
 ## Current release
 
+`v1.12.2` — Direct HTTPS switched in Composer only (1122a). No Worker change; no D1 migration.
+
+## 1122a. Direct HTTPS switched in Composer only (1.12.2)
+
+1. Before updating: Composer → DirectorLink shows Direct HTTPS = Allowed and Status "Listening on <name>:28443, certificate until <date>"; note the name and date. On the iPhone, Settings → Controller says "On the home network, direct (HTTPS)".
+2. Update the driver with Composer open, then reopen DirectorLink's properties: Direct HTTPS shows **On** (not Allowed or blank); Status "Listening…" with the same name and date. The log says Allowed is On from now on and the TLS server started, with no new key or certificate request and no name deleted.
+3. History: only "DirectorLink updated from 1.12.1 to 1.12.2" (a "Composer: Direct HTTPS → On" entry would mean Director echoes the property update: note it).
+4. iPhone and iPad at home: the card shows the state and the explanation, no switch; still direct (HTTPS). An Android member sees no card and works at home. Open the gate and switch a KNX light from the iPhone.
+5. Close Composer completely, reopen the project, restart the controller: Direct HTTPS still On and listening.
+6. Composer → Off: Status Off at once; the iPhone goes through DirectorLink's servers; the card says the installer turns it on in Composer; History "…turned off, Composer"; after a minute `nslookup <name>.dlhome.cc` gives nothing.
+7. Composer → On: the certificate for the same name, then Listening within about a minute; History "…turned on, Composer"; the iPhone direct again within a minute.
+8. In Hebrew, with it Off, the installer's sentence reads "DirectorLink → Direct HTTPS → On" left to right.
+
+## Previous release
+
 `v1.12.1` — Cameras in your order (1121b), the weather on Home (1121a). No Worker change; no D1 migration.
 
 ## 1121b. Cameras in your order (1.12.1)
