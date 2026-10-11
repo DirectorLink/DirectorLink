@@ -1,5 +1,6 @@
-// Home: the Hebrew date (with the Jewish calendar on), summary chips, the favorites strip and the
-// room cards; a list a chip filters can turn off what it shows (turn-off.js).
+// Home: the weather at home in one line (1.12.1), the Hebrew date (with the Jewish calendar on),
+// summary chips, the favorites strip and the room cards; a list a chip filters can turn off what it
+// shows (turn-off.js).
 
 import { calendarOn, homeLine } from "../calendar.js";
 import { cameraPicture, doorbellBanner, emptyState, favoriteStar, relayButton, skeletonCards } from "../components.js";
@@ -35,6 +36,7 @@ import { isDual } from "../setpoints.js";
 import { can, notify, state, ui } from "../state.js";
 import { isSensor } from "../temperature.js";
 import { cancelTurnOff, heaterNames, keptHeaters, offTargets, pressTurnOff, resetTurnOff } from "../turn-off.js";
+import { homeWeather } from "../weather.js";
 import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
 import { musicHomeSection } from "./music.js";
@@ -76,6 +78,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     updateBanner(),
     // Say or type a command (1.9.0, ADR-063).
     commandBar(),
+    // The weather at home (1.12.1, ADR-084).
+    weatherLine(),
     calendarLine(),
     // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
     alarmSection(),
@@ -86,6 +90,28 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     favoritesSection({ openCamera, openFavoritesPicker }),
     roomsSection(),
   ];
+}
+
+// ---- the weather ---------------------------------------------------------------------------
+
+// "Now 27° · Today 23°–30° · rain 14% · sunset 18:13" with the sky's icon (weather.js), from the
+// controller's forecast; nothing without weather, or for a key that can't read it. Each part stays on
+// one line when the line wraps, its dot at its end; the narrowest phones drop "Now" (styles.css).
+function weatherLine() {
+  const line = homeWeather(state.weather);
+  if (!line) return null;
+  const items = [[h("span", { class: "weather-line-now" }, `${t("home.weather.now")} `), line.now], ...line.parts.map((part) => [part])];
+  return h(
+    "p",
+    { class: "weather-line", dataset: { key: "home-weather" } },
+    icon(line.icon),
+    h(
+      "span",
+      { class: "weather-line-text" },
+      line.sky ? h("span", { class: "visually-hidden" }, `${t(`home.weather.sky.${line.sky}`)}, `) : null,
+      items.map((item, index) => [index ? " " : null, h("span", { class: index ? "weather-line-part" : "weather-line-part is-now" }, item, index < items.length - 1 ? h("span", { class: "weather-line-dot" }, "\u00a0·") : null)])
+    )
+  );
 }
 
 // ---- the Hebrew date -----------------------------------------------------------------------

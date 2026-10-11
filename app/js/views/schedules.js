@@ -22,7 +22,6 @@ import {
   formatOffset,
   homeZone,
   loadSchedules,
-  loadWeather,
   membersHaveNoSchedules,
   outside,
   outsideScale,
@@ -37,6 +36,7 @@ import { loadScenes } from "../scenes.js";
 import { api, errorText, noteForbidden, roleLabel } from "../session.js";
 import { can, notify, state, ui } from "../state.js";
 import { cooledTo, fromCelsius, thresholdToCelsius } from "../temperature.js";
+import { loadWeather } from "../weather.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
 const MAX_SCHEDULES = 50;

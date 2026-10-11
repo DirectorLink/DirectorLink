@@ -193,6 +193,27 @@ export default {
     noMatch: "No rooms match right now.",
     noDevicesTitle: "Nothing to control yet",
     noDevicesText: "DirectorLink did not find lights, climate, blinds or cameras in this Control4 project.",
+    // The weather line under the command field (1.12.1, ADR-084): "Now 27° · Today 23°–30° · rain
+    // 14% · sunset 18:13". {range} is "23°–30°", {percent} "14%", {time} "18:13". "Now" is left out
+    // on the narrowest phones. The sky names are read out with the line's icon.
+    weather: {
+      label: "Weather at home",
+      now: "Now",
+      today: "Today {range}",
+      tomorrow: "Tomorrow {range}",
+      rain: "rain {percent}",
+      sunrise: "sunrise {time}",
+      sunset: "sunset {time}",
+      sky: {
+        clear: "Clear",
+        partly: "Partly cloudy",
+        cloudy: "Cloudy",
+        fog: "Fog",
+        rain: "Rain",
+        snow: "Snow",
+        thunder: "Thunderstorm",
+      },
+    },
   },
   favorites: {
     title: "Favorites",

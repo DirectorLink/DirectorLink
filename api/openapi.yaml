@@ -1850,8 +1850,9 @@ paths:
       x-directorlink-role: member
       summary: The weather at home
       description: |
-        The weather now and today's forecast for the project's location (Composer project
-        properties), and today's sunrise and sunset, worked out on the controller. Since 1.10.0
+        The weather now and today's and tomorrow's forecast for the project's location (Composer
+        project properties), and today's and tomorrow's sunrise and sunset, worked out on the
+        controller (`tomorrow` since 1.12.1, ADR-084, for the app's line on Home). Since 1.10.0
         (ADR-071) the weather now is the hour for now of Open-Meteo's hourly forecast, which the
         controller reads every 6 hours while a schedule needs the weather, and for an hour after this
         is asked, and keeps for 5 days: with or without the internet, schedules and this answer use
@@ -5371,7 +5372,7 @@ components:
 
     Weather:
       type: object
-      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, attribution]
+      required: [status, location, fetched_at, source, forecast_for, forecast_until, current, today, tomorrow, attribution]
       properties:
         status:
           type: string
@@ -5426,22 +5427,34 @@ components:
               type: [integer, "null"]
               description: WMO weather code.
         today:
-          type: object
-          properties:
-            max_temperature:
-              type: [number, "null"]
-            min_temperature:
-              type: [number, "null"]
-            rain_chance:
-              type: [number, "null"]
-              description: Percent.
-            sunrise:
-              type: [string, "null"]
-              description: Local time, "HH:MM".
-            sunset:
-              type: [string, "null"]
+          $ref: "#/components/schemas/WeatherDay"
+          description: Today (the controller's local date) and the forecast's day that holds now.
+        tomorrow:
+          $ref: "#/components/schemas/WeatherDay"
+          description: "1.12.1 (ADR-084): the next day, as `today`. Its high, low and chance of rain are null when the saved forecast does not reach it (or there is no weather); its sunrise and sunset are worked out on the controller, as today's. The app's line on Home shows it from 15:00, and its sunrise after today's sunset."
         attribution:
           type: string
+
+    WeatherDay:
+      type: object
+      description: A day's forecast and the controller's sunrise and sunset for it.
+      required: [max_temperature, min_temperature, rain_chance, sunrise, sunset]
+      properties:
+        max_temperature:
+          type: [number, "null"]
+          description: °C; null without weather.
+        min_temperature:
+          type: [number, "null"]
+          description: °C; null without weather.
+        rain_chance:
+          type: [number, "null"]
+          description: Percent; null without weather.
+        sunrise:
+          type: [string, "null"]
+          description: Local time, "HH:MM"; null without a location, or with no sunrise that day (polar day or night).
+        sunset:
+          type: [string, "null"]
+          description: Local time, "HH:MM"; null as `sunrise`.
 
     Calendar:
       type: object

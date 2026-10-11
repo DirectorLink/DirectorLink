@@ -114,7 +114,10 @@ new by it.
 (about a kilometre), and Open-Meteo sees the home's internet address, as with any request. Since
 1.10.0 (ADR-071) it asks for a 5-day forecast every 6 hours at most (4 times a day; every 15 minutes
 before), and only while a schedule uses the weather or for an hour after an app showed it; the
-forecast stays on the controller.
+forecast stays on the controller. Since 1.12.1 (ADR-084) the app shows it on Home, so a home whose
+app is in use asks Open-Meteo too, still at most 4 times a day. Through the account the app reads it
+from the controller sealed, as every other request (when Home opens and every 10 minutes while it
+stays open): the cloud learns nothing new.
 
 ## Keys
 

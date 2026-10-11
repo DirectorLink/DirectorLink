@@ -51,6 +51,7 @@ const ASSETS = [
   "/js/views/schedules.js",
   "/js/schedules.js",
   "/js/calendar.js",
+  "/js/weather.js",
   "/js/profile.js",
   "/js/camera-feed.js",
   "/js/components.js",
