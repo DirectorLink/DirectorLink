@@ -4,13 +4,13 @@
 `docs/SCHEDULES.md`) follow the same rules. Users' roles and permissions: 1.8.0 (ADR-054, *Users:
 admins and members* below). Users and their devices: 1.9.0 (ADR-061, *Users and their devices*
 below). Settings → Appearance and language, the text size, Spanish and Italian: 1.10.0 (ADR-067,
-*Appearance and language* below).
+*Appearance and language* below). The camera order: 1.12.1 (*Cameras* below).
 
 ## Where each setting lives
 
 | Whose | Examples | Where | Who changes it |
 | --- | --- | --- | --- |
-| The home's | room names per language, the room order, rooms hidden from members, scenes, schedules, users' roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
+| The home's | room names per language, the room order, the camera order, rooms hidden from members, scenes, schedules, users' roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
 | A user's | language, theme, palette (colours), favorites, hidden rooms | the controller, in their **profile** | that user, from any of their devices |
 | This device's | the controller's address, the access key, the browser's notification permission, the text size | the browser | this device |
 
@@ -191,6 +191,24 @@ documentation and the website are in English.
   (`PATCH /v1/rooms/{roomId}` `{"hidden_from_members": true}`), and it and its devices disappear
   for every member, whatever rooms they were given. Admins still see it, marked
   (`hidden_from_members` in `GET /v1/rooms`). Personal hiding stays as it is, on top, for anyone.
+
+## Cameras (1.12.1)
+
+- **The order is the home's**, one for everyone, as the room order: admins tap **Order** on the
+  Cameras tab, which lists every camera (doorbell cameras too) with its room; a camera moves by its
+  handle (on a touch screen, held first), with the keyboard, or one place at a time with the arrows,
+  as in Settings → Rooms; **Save** sends the whole order in one `PUT /v1/cameras/order`
+  (`{"camera_ids": [...]}`), **Cancel** (or leaving the tab) sends nothing. It is kept on the
+  controller (`directorlink_camera_order`) and in backups (`docs/BACKUP.md`).
+- **Everyone sees it.** `GET /v1/cameras` answers in that order, and the Cameras tab shows the
+  cameras so (the first one large); a room's cameras follow it, and `GET /v1/doorbells` puts each
+  doorbell at its camera's place (a DoorBird at its camera's, a doorbell camera at its own), so a
+  room's doorbells follow it too. Members see the order and no Order button.
+- Cameras not in the order (added in Composer since) follow, sorted by name; a camera removed is
+  passed over, and comes back to its place if it comes back with the same id. A camera no longer in
+  the project cannot be put in the order (`400`).
+- A controller before 1.12.1 has none (no `features.camera_order`): the app shows no Order, and the
+  cameras are sorted by name.
 
 ## Favorites of removed devices (1.8.0, ADR-059)
 

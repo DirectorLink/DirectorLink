@@ -5,6 +5,7 @@ local Views = require("src.api.views")
 local Activity = require("src.core.activity")
 local Access = require("src.auth.access")
 local DoorbellDoors = require("src.core.doorbell_doors")
+local CameraLayout = require("src.core.camera_layout")
 local RelayController = require("src.adapters.relay_controller")
 
 local Doorbells = {}
@@ -79,7 +80,8 @@ function Doorbells.list(ctx)
     end
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(Access.filter(ctx.apiKey, registry.doorbellList())) do
+    -- In the home's camera order (1.12.1), each at its camera's place.
+    for _, device in ipairs(CameraLayout.sortDoorbells(Access.filter(ctx.apiKey, registry.doorbellList()))) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = view(ctx, device)
         end

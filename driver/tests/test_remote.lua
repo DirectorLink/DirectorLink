@@ -112,6 +112,24 @@ function tests.the_room_order_is_set_through_the_account_by_admins_only()
     T.eq(T.http(s.mock, "GET", "/v1/rooms", { key = s.key }).json.items[1].id, 11, "unchanged")
 end
 
+-- The camera order (1.12.1) goes the same way: sealed, by admins only.
+function tests.the_camera_order_is_set_through_the_account_by_admins_only()
+    local s = session()
+    local answer = e2e(s, { method = "PUT", path = "/v1/cameras/order", body = { camera_ids = { 92, 61 } } })
+    T.eq(answer.status, 200, answer.body)
+    local items = Json.decode(answer.body).items
+    T.eq(items[1].id, 92)
+    T.eq(items[2].id, 61)
+    T.eq(items[3].id, 60, "the rest by name")
+    T.eq(T.http(s.mock, "GET", "/v1/cameras", { key = s.key }).json.items[1].id, 92, "the home's order was saved")
+
+    local member, memberId = createKey(s, "member")
+    local refused = e2e(s, { method = "PUT", path = "/v1/cameras/order", body = { camera_ids = { 60 } } }, { apiKey = member, keyId = memberId })
+    T.eq(refused.status, 403)
+    T.eq(Json.decode(refused.body).code, "FORBIDDEN")
+    T.eq(T.http(s.mock, "GET", "/v1/cameras", { key = s.key }).json.items[1].id, 92, "unchanged")
+end
+
 -- Through the account, a relay is held closed only with Relay Hold allowed, as on the home
 -- network (1.1.1).
 function tests.a_remote_request_holds_a_relay_closed_only_with_relay_hold()

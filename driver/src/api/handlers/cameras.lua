@@ -4,6 +4,7 @@ local Response = require("src.api.response")
 local Validate = require("src.api.validate")
 local Views = require("src.api.views")
 local CameraClient = require("src.control4.camera")
+local CameraLayout = require("src.core.camera_layout")
 local Access = require("src.auth.access")
 
 local Cameras = {}
@@ -43,19 +44,57 @@ local function findCamera(ctx)
     return device
 end
 
-function Cameras.list(ctx)
-    local roomId, problem = Validate.optionalInteger(ctx.query.room_id, "room_id", 1)
-    if problem then
-        return problem
-    end
+-- The cameras the caller sees, in the home's order (PUT /v1/cameras/order; 1.12.1), those of
+-- `roomId` only when given.
+local function listed(ctx, roomId)
     local registry = ctx.services.registry
     local items = Json.array()
-    for _, device in ipairs(Access.filter(ctx.apiKey, registry.cameraList())) do
+    for _, device in ipairs(CameraLayout.sort(Access.filter(ctx.apiKey, registry.cameraList()))) do
         if roomId == nil or tonumber(device.room_id) == roomId then
             items[#items + 1] = Views.camera(registry, device)
         end
     end
     return 200, { items = items }
+end
+
+function Cameras.list(ctx)
+    local roomId, problem = Validate.optionalInteger(ctx.query.room_id, "room_id", 1)
+    if problem then
+        return problem
+    end
+    return listed(ctx, roomId)
+end
+
+-- PUT {"camera_ids": [67, 60, 68]}: the home's camera order, for everyone (admins, 1.12.1), as the
+-- room order (rooms.lua). Cameras left out follow, by name. Doorbells follow their cameras.
+function Cameras.order(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { camera_ids = true }, true)
+    if problem then
+        return problem
+    end
+    local ids = body.camera_ids
+    if type(ids) ~= "table" or ids == Json.null or (not Json.isArray(ids) and next(ids) ~= nil) or #ids > CameraLayout.MAX_CAMERAS then
+        return Problem.invalidField("camera_ids", "camera_ids must be a list of camera ids")
+    end
+    local registry = ctx.services.registry
+    local seen, order = {}, {}
+    for _, id in ipairs(ids) do
+        local device = type(id) == "number" and id == math.floor(id) and registry.getDevice(id) or nil
+        if not device or device.kind ~= "camera" or device.supported ~= true then
+            return Problem.invalidField("camera_ids", "Unknown camera: " .. tostring(id))
+        end
+        if seen[id] then
+            return Problem.invalidField("camera_ids", "Camera " .. id .. " is listed twice")
+        end
+        seen[id] = true
+        order[#order + 1] = id
+    end
+    if not CameraLayout.setOrder(order) then
+        return Problem.internal("The camera order could not be saved")
+    end
+    ctx.services.log.info("cameras", "camera order changed", { cameras = #order, by = ctx.apiKey.id })
+    return listed(ctx, nil)
 end
 
 function Cameras.get(ctx)

@@ -110,6 +110,8 @@ return {
     { method = "POST", path = "/v1/blinds/{blindId}/stop", handler = "blinds.stop", role = "member" },
 
     { method = "GET", path = "/v1/cameras", handler = "cameras.list", role = "member" },
+    -- The home's camera order (1.12.1), as the room order.
+    { method = "PUT", path = "/v1/cameras/order", handler = "cameras.order", role = "admin" },
     { method = "GET", path = "/v1/cameras/{cameraId}", handler = "cameras.get", role = "member" },
     { method = "GET", path = "/v1/cameras/{cameraId}/snapshot", handler = "cameras.snapshot", role = "member" },
 
