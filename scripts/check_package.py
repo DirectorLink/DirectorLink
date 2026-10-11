@@ -677,6 +677,37 @@ def check_door_controllers_open_only(files):
         fail(f"{DOOR_CONTROLLER} must never send a door controller {found.group(0)}: only its Open")
 
 
+# DirectorLink's notification agreement (ADR-086): DirectorLink sends whatever driver says it is a
+# screen (its variable DIRECTORLINK_NOTIFY) the agreement's command, and nothing else. Only
+# src/control4/notify_targets.lua sends it, in one call, by the name NotifyTargets.COMMAND, which is
+# DIRECTORLINK_NOTIFY; no other packaged Lua names the command.
+NOTIFY_TARGETS = "src/control4/notify_targets.lua"
+NOTIFY_SEND = "C4:SendToDevice(targetId, NotifyTargets.COMMAND, params)"
+NOTIFY_COMMAND = 'NotifyTargets.COMMAND = "DIRECTORLINK_NOTIFY"'
+
+
+def check_notify_targets(files):
+    text = files.get(NOTIFY_TARGETS)
+    if text is None:
+        fail(f"{NOTIFY_TARGETS} is missing")
+    code = lua_code(text)
+    if NOTIFY_COMMAND not in code:
+        fail(f"{NOTIFY_TARGETS} must name the agreement's command: {NOTIFY_COMMAND}")
+    sends = 0
+    for match in re.finditer(r"\bC4\s*[:.]\s*(\w+)", code):
+        if match.group(1) not in DOOR_CONTROLLER_SENDS:
+            continue
+        line = code[match.start():].split("\n", 1)[0].strip()
+        if line != NOTIFY_SEND:
+            fail(f"{NOTIFY_TARGETS} may only send a screen the agreement's command ({NOTIFY_SEND}); found {line!r}")
+        sends += 1
+    if sends != 1:
+        fail(f"{NOTIFY_TARGETS} must send the agreement's command in one place ({NOTIFY_SEND})")
+    for name, other in sorted(files.items()):
+        if name.endswith(".lua") and name != NOTIFY_TARGETS and "DIRECTORLINK_NOTIFY\"" in lua_code(other):
+            fail(f"{name} names DIRECTORLINK_NOTIFY: only {NOTIFY_TARGETS} speaks to a screen")
+
+
 def check_ask_links_open_nothing(files):
     for name in ASK_LINK_MODULES:
         text = files.get(name)
@@ -847,6 +878,7 @@ def main():
     check_alarm_read_only(files)
     check_ask_links_open_nothing(files)
     check_door_controllers_open_only(files)
+    check_notify_targets(files)
     check_sonos(files)
     check_calendar_privacy(files)
     check_remote_methods(files)

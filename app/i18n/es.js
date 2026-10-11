@@ -1441,6 +1441,21 @@ export default {
       signIn: "Vuelve a iniciar sesión para activar las alertas.",
       failed: "No se pudieron activar las alertas. Revisa la conexión e inténtalo de nuevo.",
     },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086).
+    screens: {
+      title: "En televisores",
+      help: "Estos televisores muestran las alertas de la casa como avisos emergentes, con imagen para timbres y cámaras. Tu instalador los añade en Composer y elige qué muestra cada uno.",
+      shows: "Muestra: {kinds}",
+      nothing: "No muestra nada",
+      language: "Idioma: {language}, el que ve el propietario de la casa en la app.",
+      kinds: {
+        doorbell: "Timbre",
+        camera: "Cámaras",
+        door: "Puertas",
+        alarm: "Alarmas",
+        other: "Otras",
+      },
+    },
   },
   roles: {
     viewer: "Solo ver",

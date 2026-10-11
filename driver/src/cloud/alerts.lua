@@ -8,6 +8,10 @@
 -- servers can deliver it to the browsers of those keys (Web Push) without being able to read it.
 -- Only the device of that key can open its part.
 --
+-- Since 1.13.0 (ADR-086) every alert is also told, before any of this, to the home's screens of
+-- DirectorLink's notification agreement (Alerts.onRaised, src/core/notify.lua): on the controller,
+-- whether or not a phone gets it.
+--
 -- Who gets what is decided here: a key whose person may get the kind (src/auth/access.lua, ADR-054:
 -- a doorbell's ring whoever sees that doorbell, the refrigerator's door whoever sees that
 -- refrigerator, a camera's alert whoever may see that camera's pictures, doors opened and schedules
@@ -599,6 +603,32 @@ local function send(detail, now, brief, at, only, allowed, also)
     return count, ids, told == "kept"
 end
 
+-- Told of every alert the controller raises (1.13.0, ADR-086): the home's screens of DirectorLink's
+-- notification agreement (src/core/notify.lua). Before the phones' limits and whoever gets it on a
+-- phone, and whether or not the relay is there: listener(detail, camera, at, now), `detail` as it is
+-- sealed for a phone (without `v` and `at`), `camera` the id of the camera whose picture goes with
+-- it, `at` when it happened (seconds or an ISO time). What the listener does, or fails to do, never
+-- reaches the alert.
+local raisedListener = nil
+
+function Alerts.onRaised(listener)
+    raisedListener = listener
+end
+
+local function raised(detail, camera, at, now)
+    if not raisedListener then
+        return
+    end
+    local copy = {}
+    for field, value in pairs(detail) do
+        copy[field] = value
+    end
+    local ok, err = pcall(raisedListener, copy, camera, at, now)
+    if not ok then
+        Log.warn("notify", "the screens were not told of an alert", { kind = detail.kind, error = tostring(err) })
+    end
+end
+
 -- `kept`: it was only kept for the next connection (1.10.1, ADR-073); it may never go.
 local function sent(kind, count, why, kept)
     if count then
@@ -633,11 +663,14 @@ end
 -- the doorbell's own (its last_ring_at), so that the app knows the alert's ring.
 function Alerts.ring(device, now)
     now = now or Clock.now()
+    local last = device.state and device.state.last and device.state.last.doorbell
+    last = type(last) == "string" and last or nil
+    -- The screens (1.13.0), with the doorbell's camera's picture.
+    raised(deviceDetail("doorbell", device), type(device.linked) == "table" and tonumber(device.linked.camera) or nil, last or now, now)
     if tooSoon("doorbell:" .. tostring(device.id), Alerts.RING_SECONDS, now) then
         return sent("doorbell", nil, "too soon")
     end
-    local last = device.state and device.state.last and device.state.last.doorbell
-    return sent("doorbell", send(deviceDetail("doorbell", device), now, true, type(last) == "string" and last or nil))
+    return sent("doorbell", send(deviceDetail("doorbell", device), now, true, last))
 end
 
 -- A camera raised an alert (its driver's Alert event, DirectorLink's camera agreement, ADR-065; the
@@ -656,6 +689,10 @@ function Alerts.camera(device, now)
     local alert = type(device.state) == "table" and device.state.alert or nil
     local what = type(alert) == "table" and type(alert.what) == "string" and alert.what or "other"
     local urgent = Alerts.URGENT[what] == true
+    -- The screens (1.13.0), with the camera's picture; a smoke or CO alarm is an alarm there.
+    local told = deviceDetail("camera", device)
+    told.what = what
+    raised(told, tonumber(device.id), now, now)
     local slot = "camera:" .. tostring(device.id) .. (urgent and (":" .. what) or "")
     if tooSoon(slot, Alerts.CAMERA_SECONDS, now) then
         return sent("camera", nil, "too soon")
@@ -678,9 +715,6 @@ end
 function Alerts.doorOpened(entry, now)
     now = now or Clock.now()
     local ids = entry.ids or {}
-    if tooSoon("door_opened:" .. tostring(ids.device_id), Alerts.DOOR_SECONDS, now) then
-        return sent("door_opened", nil, "too soon")
-    end
     local who = entry.who or {}
     local detail = {
         kind = "door_opened",
@@ -697,6 +731,11 @@ function Alerts.doorOpened(entry, now)
             remote = who.remote == true or nil,
         },
     }
+    -- The screens (1.13.0): every opening the history has.
+    raised(detail, nil, now, now)
+    if tooSoon("door_opened:" .. tostring(ids.device_id), Alerts.DOOR_SECONDS, now) then
+        return sent("door_opened", nil, "too soon")
+    end
     return sent("door_opened", send(detail, now))
 end
 
@@ -710,12 +749,14 @@ function Alerts.fridgeDoor(device, seconds, now)
     if type(device) ~= "table" then
         return nil, "no refrigerator"
     end
-    if tooSoon("fridge_door:" .. tostring(device.id), Alerts.FRIDGE_SECONDS, now) then
-        return sent("fridge_door", nil, "too soon")
-    end
     local detail = deviceDetail("fridge_door", device)
     if type(seconds) == "number" and seconds >= 60 then
         detail.minutes = math.floor(seconds / 60)
+    end
+    -- The screens (1.13.0): a door left open.
+    raised(detail, nil, now, now)
+    if tooSoon("fridge_door:" .. tostring(device.id), Alerts.FRIDGE_SECONDS, now) then
+        return sent("fridge_door", nil, "too soon")
     end
     return sent("fridge_door", send(detail, now))
 end
@@ -724,6 +765,8 @@ end
 -- admins who chose it, at most SCHEDULE_PER_HOUR an hour.
 function Alerts.scheduleFailed(at, info, now)
     now = now or Clock.now()
+    -- The screens (1.13.0), as "other", at the run's own time.
+    raised({ kind = "schedule_failed", name = cut(info and info.what, Alerts.MAX_NAME) }, nil, at or now, now)
     state.schedules = lastHour(state.schedules, now)
     if #state.schedules >= Alerts.SCHEDULE_PER_HOUR then
         return sent("schedule_failed", nil, "limit")

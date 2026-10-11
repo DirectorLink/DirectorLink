@@ -1445,6 +1445,22 @@ export default {
       signIn: "Sign in again to switch alerts on.",
       failed: "Alerts could not be switched on. Check the connection and try again.",
     },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086): the screens whose driver follows DirectorLink's
+    // notification agreement, read only; Composer sets them up.
+    screens: {
+      title: "On TVs",
+      help: "These TVs show the home’s alerts as pop-ups, with a picture for doorbells and cameras. Your installer adds them in Composer and chooses what each one shows.",
+      shows: "Shows: {kinds}",
+      nothing: "Shows nothing",
+      language: "Language: {language}, the one the home’s owner sees in the app.",
+      kinds: {
+        doorbell: "Doorbell",
+        camera: "Cameras",
+        door: "Doors",
+        alarm: "Alarms",
+        other: "Other",
+      },
+    },
   },
   roles: {
     viewer: "View only",
