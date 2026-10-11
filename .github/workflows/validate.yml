@@ -10,7 +10,7 @@ permissions:
 
 # The work runs in parallel jobs (about 3 to 4 minutes). "changes" first says whether anything
 # but the website and the docs changed: if not, the driver, time-zone, app and cloud tests are
-# skipped and only "checks" runs (about 2 minutes). A push to main always runs everything: a
+# skipped and only "checks" runs (about 2 to 3 minutes). A push to main always runs everything: a
 # release starts only once Validate has passed on its commit (release.yml, ADR-075). The last
 # job, "validate", passes only when every job passed, or was skipped because nothing it tests
 # changed: it is the one check to require. Lua 5.1 comes from lua.org, checked and built by

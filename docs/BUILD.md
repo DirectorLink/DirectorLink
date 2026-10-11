@@ -30,7 +30,7 @@ From the repository root. CI (`.github/workflows/validate.yml`) runs the same in
   changed. A job that failed or was cancelled fails it.
 
 A pull request that changes code takes about 3 to 4 minutes (was about 6), the longest of the
-driver parts and the app and cloud tests; one that changes only the website or the docs about 2
+driver parts and the app and cloud tests; one that changes only the website or the docs about 2 to 3
 (the build and checks). Lua 5.1 comes from `scripts/install_lua.sh`, not from Ubuntu's package
 mirror (one hung until a job was cancelled after 25 minutes): lua.org's `lua-5.1.5.tar.gz` (or
 Debian's copy of the same file when lua.org does not answer), checked against the SHA-256 lua.org

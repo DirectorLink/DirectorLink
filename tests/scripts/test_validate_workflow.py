@@ -1,4 +1,4 @@
-"""Validate DirectorLink's own scripts (.github/workflows/validate.yml, ADR-075, 2026-10-10), run
+"""Validate DirectorLink's own scripts (.github/workflows/validate.yml, ADR-075, 2026-10-11), run
 here as GitHub runs them: "changes" skips the driver, time-zone, app and cloud tests only when a
 pull request (or a push to a dev/ branch) changes nothing but the website and the docs, never on a
 push to main, and runs everything when in doubt; the last job, "validate", passes only when every
@@ -41,7 +41,8 @@ STEP_SHELL = ["-e"]
 @unittest.skipUnless(BASH and GIT, "bash and git are needed")
 class ChangesDecidesWhetherTheTestsRun(unittest.TestCase):
     def setUp(self):
-        folder = tempfile.TemporaryDirectory()
+        # On Windows a virus scanner may still hold a file of a repository made here.
+        folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
         self.env = {

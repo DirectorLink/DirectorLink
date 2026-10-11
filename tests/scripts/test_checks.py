@@ -745,7 +745,7 @@ class DeployApproval(unittest.TestCase):
         self.assertIn("app/.assetsignore must not keep build.json", self.refused(ignores={"app": self.ignores["app"] + "*.json\n"}))
         self.assertIn("site/build.json must not be committed", self.refused(tracked={"site/build.json"}))
 
-    # Faster checks (ADR-075, 2026-10-10): the tests are skipped only for the website and the docs,
+    # Faster checks (ADR-075, 2026-10-11): the tests are skipped only for the website and the docs,
     # never on a push to main, and "validate" fails unless each job passed or was skipped on purpose.
     def test_validate_runs_every_test_on_main_and_skips_only_on_purpose(self):
         tests_if = "    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.tests == 'true'\n"

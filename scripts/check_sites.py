@@ -678,7 +678,7 @@ RELEASE_GATE = (
 # A job whose if has one of these runs even when a job it needs failed or was skipped.
 STATUS_OVERRIDE = re.compile(r"\b(always|cancelled|failure)\s*\(")
 
-# Faster checks (ADR-075, 2026-10-10). Validate's first job, "changes", says whether anything but
+# Faster checks (ADR-075, 2026-10-11). Validate's first job, "changes", says whether anything but
 # the website and the docs changed; when not, the driver, time-zone, app and cloud tests are
 # skipped, never on a push to main (a release relies on a full run of its commit): each job that
 # may be skipped has exactly TESTS_IF. The last job, "validate" (the one check to require), runs
