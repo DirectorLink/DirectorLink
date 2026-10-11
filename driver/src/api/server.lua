@@ -42,6 +42,7 @@ local HANDLERS = {
     activity = require("src.api.handlers.activity"),
     alerts = require("src.api.handlers.alerts"),
     https = require("src.api.handlers.https"),
+    notify = require("src.api.handlers.notify"),
 }
 
 local Server = {}
@@ -211,6 +212,9 @@ local function encode(status, payload)
 end
 
 
+-- A notification's picture is named by its key (1.13.0, ADR-086): the log never says it.
+local PICTURES = "/v1/notify-pictures/"
+
 local function logAccess(request, route, status, client, started, apiKey)
     local level = "debug"
     if status >= 500 then
@@ -218,7 +222,11 @@ local function logAccess(request, route, status, client, started, apiKey)
     elseif status >= 400 then
         level = "info"
     end
-    services.log.write(level, "api", request.method .. " " .. request.path .. " -> " .. tostring(status), {
+    local path = request.path
+    if path:sub(1, #PICTURES) == PICTURES then
+        path = PICTURES .. "…"
+    end
+    services.log.write(level, "api", request.method .. " " .. path .. " -> " .. tostring(status), {
         client = client and client.ip or Json.null,
         duration_ms = Clock.millis() - started,
         key_id = apiKey and apiKey.id or Json.null,

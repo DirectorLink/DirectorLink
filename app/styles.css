@@ -4965,6 +4965,29 @@ a.scene-name:hover {
   border-block-start: 1px solid var(--line);
 }
 
+/* Settings → Alerts → On TVs (1.13.0): each screen, its room and what it shows. */
+.alert-screens {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-block-end: 10px;
+  border-block-end: 1px solid var(--line);
+}
+
+.alert-screen-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 .schedule-summary .add-summary {
   font-size: 0.9375rem;
 }

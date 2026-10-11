@@ -1441,6 +1441,21 @@ export default {
       signIn: "Accedi di nuovo per attivare gli avvisi.",
       failed: "Impossibile attivare gli avvisi. Controlla la connessione e riprova.",
     },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086).
+    screens: {
+      title: "Sui televisori",
+      help: "Questi televisori mostrano gli avvisi della casa come pop-up, con un’immagine per campanelli e telecamere. Il tuo installatore li aggiunge in Composer e sceglie cosa mostra ciascuno.",
+      shows: "Mostra: {kinds}",
+      nothing: "Non mostra nulla",
+      language: "Lingua: {language}, quella scelta dal proprietario della casa in Aspetto e lingua (con Automatica, inglese).",
+      kinds: {
+        doorbell: "Campanello",
+        camera: "Telecamere",
+        door: "Porte",
+        alarm: "Allarmi",
+        other: "Altro",
+      },
+    },
   },
   roles: {
     viewer: "Solo visualizzazione",

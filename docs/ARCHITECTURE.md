@@ -54,7 +54,9 @@ driver/     the DriverWorks driver
                   again without a restart) and device events; drivers updated in Composer (their
                   devices set up again, ADR-059); camera snapshots; DirectorLink's camera agreement
                   (camera_drivers.lua: a camera driver's marker, alerts and rings, ADR-065); what a
-                  light's driver declares, dimmer or switch (light_capabilities.lua, ADR-077)
+                  light's driver declares, dimmer or switch (light_capabilities.lua, ADR-077);
+                  DirectorLink's notification agreement (notify_targets.lua: the screens that show
+                  its alerts, found by their marker, and the one command they get, ADR-086)
   src/core/       json, log, store, registry, version; random (secrets) and x25519 (pairing);
                   scenes, scene links (a private link per scene for the phone's automations,
                   ADR-051), ask-to-open links (a door's link that asks its person, ADR-058), schedules, scheduler, sun, weather, installer view; room names and layout;
@@ -62,7 +64,9 @@ driver/     the DriverWorks driver
                   activity (the history admins read, ADR-046; docs/HISTORY.md);
                   favorites of devices removed in Composer (ADR-059; docs/PREFERENCES.md);
                   the Jewish calendar (jewish_calendar, the service, and its pure engine: hebrew_date,
-                  holidays, parasha, holy_times; docs/CALENDAR.md)
+                  holidays, parasha, holy_times; docs/CALENDAR.md);
+                  the alerts on the home's screens, with their pictures, and their words in the
+                  owner's language (notify, notify_words; ADR-086; docs/NOTIFY_DRIVERS.md)
   tests/          driver tests against a fake Director
 app/        the app (PWA), deployed to app.directorlink.io
 console/    API console, debugging and logs, deployed to console.directorlink.io

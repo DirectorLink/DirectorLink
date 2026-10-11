@@ -543,6 +543,7 @@ def scenario(client, bridge):
     # A camera that is a doorbell (1.10.0, ADR-065: the dev bridge's agreement cameras, 68 Entrance
     # on driver 158): listed with the doorbells, ringing by its driver's event named Ring; it opens
     # nothing.
+    bridge.notified()  # the doors opened above went to the screens too
     if bridge.camera_ring(158) != 1:
         fail("a doorbell camera's Ring should be watched by its name")
     entrance = client.check("GET", "/v1/doorbells/68", 200)
@@ -553,6 +554,21 @@ def scenario(client, bridge):
     if {"id": 68, "type": "doorbell"} not in [{"id": item["id"], "type": item["type"]} for item in client.check("GET", "/v1/devices?type=doorbell", 200)["items"]]:
         fail("GET /v1/devices?type=doorbell should list the doorbell camera as a doorbell")
     client.check("POST", "/v1/doorbells/68/open", 409)
+    # The ring went to the screens of DirectorLink's notification agreement (1.13.0, ADR-086: the dev
+    # bridge's 301 Living Room TV and 302 Kitchen TV), each with a picture its driver fetches without
+    # a key; Settings → Alerts lists them for admins.
+    told = bridge.notified()
+    if sorted(item["screen"] for item in told) != [301, 302] or any(item["params"].get("KIND") != "doorbell" for item in told):
+        fail(f"the ring should go to both screens as a doorbell: {told}")
+    picture = told[0]["params"].get("PICTURE", "")
+    match = re.match(r"^http://127\.0\.0\.1:41999(/v1/notify-pictures/[0-9a-f]{32}\.jpg)$", picture)
+    if not match:
+        fail(f"a ring's picture should be at the controller's address: {picture!r}")
+    client.check("GET", match.group(1), 200, auth=False)
+    client.check("GET", "/v1/notify-pictures/" + "0" * 32 + ".jpg", 404, auth=False)
+    screens = client.check("GET", "/v1/alerts/screens", 200)
+    if [(item["id"], item["kinds"]) for item in screens["items"]] != [(302, ["doorbell", "alarm"]), (301, ["doorbell", "camera", "door", "alarm", "other"])]:
+        fail(f"GET /v1/alerts/screens should list the two screens by name with their kinds: {screens}")
     # The doorbell's gate (1.11.0, ADR-078): the dev bridge's 76 Entrance Gate, a Relay Gate Controller
     # whose Open relay is bound to the doorbell camera's driver 158, is its door by itself, opened with
     # its own Open; an admin links the KNX relay 70 besides, and takes it away again.
@@ -868,6 +884,7 @@ def scenario(client, bridge):
     client.check("POST", "/v1/scenes/try", 403, body={"steps": []})
     client.check("POST", "/v1/off", 400, body={"type": "lights", "device_ids": [20]})
     client.check("GET", "/v1/schedules", 403)
+    client.check("GET", "/v1/alerts/screens", 403)
     client.check("GET", "/v1/weather", 200)
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
@@ -1201,7 +1218,7 @@ def main():
         players.terminate()
         fail(f"the fake Sonos players did not start: {started!r}")
     spec_json = ROOT / "dist" / "openapi.json"
-    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True, doors=True, control4_sonos=True)
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True, doors=True, control4_sonos=True, notify=True)
     server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

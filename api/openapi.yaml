@@ -144,6 +144,9 @@ tags:
       DirectorLink's camera agreement (ADR-065). The controller sends them through
       DirectorLink's servers sealed to each device's own key, so the servers learn only which key
       ids an alert is for and when (docs/RELAY.md, `notify`). Each key reads and sets its own choices.
+      Since 1.13.0 (ADR-086) every alert also goes, on the controller, to the home's screens of
+      DirectorLink's notification agreement (docs/NOTIFY_DRIVERS.md): their list, and a
+      notification's picture.
   - name: Logs
     description: The bridge's own recent log, for debugging.
   - name: Remote
@@ -3548,6 +3551,69 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/alerts/screens:
+    get:
+      tags: [Alerts]
+      operationId: listAlertScreens
+      x-directorlink-role: admin
+      summary: The screens that show the home's alerts
+      description: |
+        Since 1.13.0 (ADR-086): the drivers of the project that follow DirectorLink's notification
+        agreement (docs/NOTIFY_DRIVERS.md: their variable `DIRECTORLINK_NOTIFY` is `1`), sorted by
+        name, each with its room and the kinds it shows (`DIRECTORLINK_NOTIFY_KINDS`). Every alert
+        the controller raises of one of those kinds goes to it, on the controller, whether or not a
+        phone gets it. `language`: the language the words are in, the home owner's (English while
+        it is Auto). Admins only: a screen shows the home's alerts to whoever is in its room,
+        whatever a member may see, and Composer sets it up. Read only.
+      responses:
+        "200":
+          description: The screens, and their language.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertScreens"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /v1/notify-pictures/{picture}:
+    parameters:
+      - name: picture
+        in: path
+        required: true
+        description: The picture's name as its `PICTURE` address gives it, 32 lowercase hex digits (128 random bits) and `.jpg`.
+        schema:
+          type: string
+          pattern: '^[0-9a-f]{32}\.jpg$'
+    get:
+      tags: [Alerts]
+      operationId: getNotifyPicture
+      summary: A screen's notification picture
+      description: |
+        Since 1.13.0 (ADR-086): the picture of a doorbell's or a camera's notification to a screen
+        of DirectorLink's notification agreement, at the address its `PICTURE` gave
+        (`http://<the controller's LAN address>:41999/v1/notify-pictures/<name>.jpg`). No key: the
+        random name is the key, and only the screen's driver gets it. It works for 60 seconds after
+        the alert and three times at most; then, and for any other name, `404`. The camera's
+        picture now, 640 pixels wide where the camera scales, fetched as
+        `GET /v1/cameras/{cameraId}/snapshot` fetches it. The log never says the name.
+      security: []
+      responses:
+        "200":
+          description: The picture.
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+        "503":
+          $ref: "#/components/responses/Busy"
+
   /v1/backup/automatic:
     get:
       tags: [Backup]
@@ -4228,6 +4294,9 @@ components:
             camera_order:
               type: boolean
               description: "Always true since 1.12.1: the home's camera order, set by admins (`PUT /v1/cameras/order`), which `GET /v1/cameras` and `GET /v1/doorbells` follow. Missing before 1.12.1, whose cameras are sorted by name."
+            alert_screens:
+              type: boolean
+              description: "Always true since 1.13.0: the home's screens of DirectorLink's notification agreement get its alerts, and admins see them in `GET /v1/alerts/screens` (ADR-086). Missing before 1.13.0."
 
     PairRequest:
       oneOf:
@@ -7407,6 +7476,40 @@ components:
             schedule_failed:
               type: boolean
           additionalProperties: false
+
+    AlertScreens:
+      type: object
+      required: [items, language]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AlertScreen"
+        language:
+          type: string
+          enum: [en, he, es, it]
+          description: The language of the screens' words, the home owner's (their profile's); `en` while it is Auto or unknown.
+
+    AlertScreen:
+      type: object
+      required: [id, name, room_id, room, kinds]
+      properties:
+        id:
+          type: integer
+          description: The screen's driver (its device id in the project), which DirectorLink sends `DIRECTORLINK_NOTIFY`.
+        name:
+          type: string
+        room_id:
+          type: [integer, "null"]
+        room:
+          type: [string, "null"]
+          description: The room's name in Composer.
+        kinds:
+          type: array
+          description: What it shows, in this order; empty when it shows nothing.
+          items:
+            type: string
+            enum: [doorbell, camera, door, alarm, other]
 
     AlertChoicesUpdate:
       type: object

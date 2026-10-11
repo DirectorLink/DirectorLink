@@ -26,6 +26,8 @@
 --        event named Ring); out: "RANG <times delivered>\n"
 --   in:  "scene_links unreadable\n" / "scene_links readable\n": the scene links' store cannot be read
 --        (and is read again at once), or has what it had back; out: "SCENE_LINKS <complete>\n"
+--   in:  "notified\n" what the fake screens (argument "notify") got since the last ask; out:
+--        "NOTIFIED <hex JSON [{ screen, params }]>\n"
 -- With an argument "agreement" (scripts/dev_server.py --agreement-cameras), two cameras whose
 -- drivers follow DirectorLink's camera agreement (1.10.0, ADR-065) join the project: 67 "Porch" (a
 -- camera, driver 157) and 68 "Entrance" (a doorbell, driver 158), Mock.withAgreementCameras.
@@ -37,6 +39,11 @@
 -- With both (scripts/dev_server.py --agreement-cameras --door-controllers), the doorbell camera 68
 -- "Entrance" has its gate (1.11.0, ADR-078): 76 "Entrance Gate", a Relay Gate Controller (driver
 -- 166) on the relay of the doorbell's driver 158, Mock.withDoorbellGate.
+-- With an argument "notify" (scripts/dev_server.py --notify-targets), two screens of DirectorLink's
+-- notification agreement (1.13.0, ADR-086) join the project, Mock.withNotifyTargets: 301 "Living
+-- Room TV" (every kind) and 302 "Kitchen TV" (doorbell and alarm). What they get is printed on
+-- stderr (the dev server's console), its PICTURE at 127.0.0.1, which the dev server answers on its
+-- port (41999 by default).
 -- With an argument "c4sonos" (scripts/dev_server.py --control4-sonos), Control4's own Sonos drivers
 -- join the project (1.11.0, ADR-080), Mock.withControl4Sonos: 84 "Sonos Network" and 85 "Kitchen
 -- Sonos" in the Kitchen, 86 "Living Room Sonos" and 87 "Sonos Line In" in the Living Room, and 88
@@ -73,6 +80,7 @@ local sonosForwarding = false
 local agreementCameras = false
 local doorControllers = false
 local control4Sonos = false
+local notifyTargets = false
 local fahrenheit = false
 local fakeCameras = 0
 for index = 2, #(arg or {}) do
@@ -82,6 +90,7 @@ for index = 2, #(arg or {}) do
     agreementCameras = agreementCameras or arg[index] == "agreement"
     doorControllers = doorControllers or arg[index] == "doors"
     control4Sonos = control4Sonos or arg[index] == "c4sonos"
+    notifyTargets = notifyTargets or arg[index] == "notify"
     fahrenheit = fahrenheit or arg[index] == "fahrenheit"
     fakeCameras = tonumber((arg[index] or ""):match("^cameras=(%d+)$")) or fakeCameras
 end
@@ -127,7 +136,27 @@ end
 if control4Sonos then
     Mock.withControl4Sonos(project)
 end
-local mock = Mock.startDriver(project, specText, nil, function()
+-- What the fake screens got, for "notified", and on the console.
+local notified = {}
+if notifyTargets then
+    Mock.withNotifyTargets(project, {
+        { id = 301, name = "Living Room TV", room = 11, kinds = "doorbell,camera,door,alarm,other" },
+        { id = 302, name = "Kitchen TV", room = 10, kinds = "doorbell,alarm" },
+    })
+    for id, screen in pairs(project.notifyTargets) do
+        screen.onNotify = function(params)
+            notified[#notified + 1] = { screen = id, params = params }
+            io.stderr:write(string.format("[screen %d %s] %s: %s | %s%s\n", id, project.devices[id].deviceName, tostring(params.KIND),
+                tostring(params.TITLE), tostring(params.MESSAGE), params.PICTURE and (" | " .. params.PICTURE) or ""))
+            io.stderr:flush()
+        end
+    end
+end
+local mock = Mock.startDriver(project, specText, nil, function(started)
+    -- A screen's picture is at the controller's address: here, this computer (the dev server).
+    if notifyTargets then
+        started.controllerAddress = "127.0.0.1"
+    end
     Properties["Alarm Status"] = "On"
     local Relay = require("src.cloud.relay")
     local connected, tell, mayAlert, alert = Relay.connected, Relay.tell, Relay.mayAlert, Relay.alert
@@ -504,6 +533,11 @@ local function command(line)
     local ringing = line:match("^ring (%d+)$")
     if ringing then
         return "RANG " .. Mock.cameraRing(mock, tonumber(ringing))
+    end
+    if line == "notified" then
+        local list = Json.array(notified)
+        notified = {}
+        return "NOTIFIED " .. toHex(Json.encode(list))
     end
     local answered, answerHex = line:match("^CAMERA_ANSWER (%d+) (%x*)$")
     if answered then

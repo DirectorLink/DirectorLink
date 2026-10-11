@@ -167,6 +167,12 @@ return {
     -- Which alerts this device gets (ADR-050): each key its own.
     { method = "GET", path = "/v1/alerts/choices", handler = "alerts.get", role = "member" },
     { method = "PUT", path = "/v1/alerts/choices", handler = "alerts.put", role = "member" },
+    -- The home's screens of DirectorLink's notification agreement (1.13.0, ADR-086): admins only,
+    -- since a screen shows the home's alerts whatever a member may see; Composer sets them up.
+    { method = "GET", path = "/v1/alerts/screens", handler = "notify.screens", role = "admin" },
+    -- A notification's picture, for the screen's driver: no key, its random name is the key, for 60
+    -- seconds and a few uses (src/core/notify.lua).
+    { method = "GET", path = "/v1/notify-pictures/{picture}", handler = "notify.picture", public = true },
 
     -- What the controller did and noticed (ADR-046), for admins; in the clear too, like the log.
     { method = "GET", path = "/v1/activity", handler = "activity.list", role = "admin" },
