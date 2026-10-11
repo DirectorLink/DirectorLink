@@ -475,14 +475,14 @@ end)
 
 -- The home's screens of DirectorLink's notification agreement (1.13.0, ADR-086): every alert the
 -- controller raises goes to the screens that show its kind (src/core/notify.lua), in the home
--- owner's language (their profile's; English when it is Auto or unknown), with a picture from the
--- controller's own API at its LAN address.
+-- owner's language (the one they chose, else, with Auto, the one their app last showed; English
+-- when neither is known), with a picture from the controller's own API at its LAN address.
 Notify.configure({
     targets = NotifyTargets,
     language = function()
         local owner = Access.owner()
-        local profile = owner and Profiles.find(owner)
-        return profile and profile.prefs and profile.prefs.language or nil
+        local prefs = owner and (Profiles.find(owner) or {}).prefs or {}
+        return prefs.language, prefs.shown_language
     end,
     address = function()
         return C4:GetControllerNetworkAddress()

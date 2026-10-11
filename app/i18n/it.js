@@ -1447,7 +1447,7 @@ export default {
       help: "Questi televisori mostrano gli avvisi della casa come pop-up, con un’immagine per campanelli e telecamere. Il tuo installatore li aggiunge in Composer e sceglie cosa mostra ciascuno.",
       shows: "Mostra: {kinds}",
       nothing: "Non mostra nulla",
-      language: "Lingua: {language}, quella scelta dal proprietario della casa in Aspetto e lingua (con Automatica, inglese).",
+      language: "Lingua: {language}, quella che il proprietario della casa vede nell’app.",
       kinds: {
         doorbell: "Campanello",
         camera: "Telecamere",

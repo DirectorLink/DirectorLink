@@ -1452,7 +1452,7 @@ export default {
       help: "These TVs show the home’s alerts as pop-ups, with a picture for doorbells and cameras. Your installer adds them in Composer and chooses what each one shows.",
       shows: "Shows: {kinds}",
       nothing: "Shows nothing",
-      language: "Language: {language}, as the home’s owner chose it in Appearance and language (Auto shows English).",
+      language: "Language: {language}, the one the home’s owner sees in the app.",
       kinds: {
         doorbell: "Doorbell",
         camera: "Cameras",

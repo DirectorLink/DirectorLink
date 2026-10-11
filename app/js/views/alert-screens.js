@@ -1,6 +1,7 @@
 // Settings → Alerts → On TVs (1.13.0, ADR-086): the home's screens of DirectorLink's notification
 // agreement (docs/NOTIFY_DRIVERS.md), which show its alerts as pop-ups. Each with its room and what
-// it shows, then the language the pop-ups are in (the home owner's). Read only: the installer adds a
+// it shows, then the language the pop-ups are in (the one the home's owner sees in the app: their
+// choice, or with Auto what their app shows). Read only: the installer adds a
 // screen and chooses what it shows in Composer, in the screen's own driver. For admins, with a
 // controller that has them (`features.alert_screens`); nothing when the home has none, for members
 // (a screen shows the home's alerts whatever a member may see), or before connecting.

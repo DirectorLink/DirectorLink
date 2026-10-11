@@ -1447,7 +1447,7 @@ export default {
       help: "Estos televisores muestran las alertas de la casa como avisos emergentes, con imagen para timbres y cámaras. Tu instalador los añade en Composer y elige qué muestra cada uno.",
       shows: "Muestra: {kinds}",
       nothing: "No muestra nada",
-      language: "Idioma: {language}, el que eligió el propietario de la casa en Apariencia e idioma (con Automático, inglés).",
+      language: "Idioma: {language}, el que ve el propietario de la casa en la app.",
       kinds: {
         doorbell: "Timbre",
         camera: "Cámaras",

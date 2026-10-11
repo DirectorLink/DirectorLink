@@ -41,6 +41,13 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
   (`auto` or a tag), `theme` (`auto`, `light`, `dark`), `palette`, `favorites` (`"kind:id"`, in
   order) and `hidden_rooms` (room ids). `null` clears one. `version` goes up with every change; sent
   back, it makes the change conditional (409 `VERSION_CONFLICT` if another device changed it).
+- `shown_language` (1.13.0, ADR-086): the language the user's app last showed, its own choice or,
+  with Auto, the device's (`en`, `he`, `es`, `it`); null until an app says. Reported, not chosen:
+  the app sends it on its profile sync when the controller's differs (only to a controller whose
+  profile has the field, once a start for each language, so two devices of one user that show
+  different languages do not take turns), and setting it alone does not change `version`. The
+  home's screens speak the owner's language: their `language`, else this, else English
+  (docs/NOTIFY_DRIVERS.md). Kept in backups.
   Since 1.8.0 `GET /v1/profile` also has `access`: what the caller may see and do (below).
 
 ## Users: admins and members (1.8.0, ADR-054)

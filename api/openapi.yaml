@@ -3562,8 +3562,8 @@ paths:
         agreement (docs/NOTIFY_DRIVERS.md: their variable `DIRECTORLINK_NOTIFY` is `1`), sorted by
         name, each with its room and the kinds it shows (`DIRECTORLINK_NOTIFY_KINDS`). Every alert
         the controller raises of one of those kinds goes to it, on the controller, whether or not a
-        phone gets it. `language`: the language the words are in, the home owner's (English while
-        it is Auto). Admins only: a screen shows the home's alerts to whoever is in its room,
+        phone gets it. `language`: the language the words are in, the home owner's (with Auto, the
+        one their app shows; English when neither is known). Admins only: a screen shows the home's alerts to whoever is in its room,
         whatever a member may see, and Composer sets it up. Read only.
       responses:
         "200":
@@ -5831,11 +5831,14 @@ components:
 
     ProfilePrefs:
       type: object
-      required: [language, theme, palette, favorites, hidden_rooms]
+      required: [language, shown_language, theme, palette, favorites, hidden_rooms]
       properties:
         language:
           type: [string, "null"]
           description: '"auto" or a language tag such as "en" or "he".'
+        shown_language:
+          type: [string, "null"]
+          description: "Since 1.13.0 (ADR-086): the language this user's app last showed (its `language`, or with `auto` the device's), as the app reports it; null until one does. Setting it alone does not change `version`. The home's screens speak the owner's `language`, else this, else English."
         theme:
           type: [string, "null"]
           enum: [auto, light, dark, null]
@@ -5941,6 +5944,9 @@ components:
           properties:
             language:
               type: [string, "null"]
+            shown_language:
+              type: [string, "null"]
+              description: "Since 1.13.0: the language the app shows now, a language tag (never `auto`). The app sends it only to a controller whose profile has the field."
             theme:
               type: [string, "null"]
               enum: [auto, light, dark, null]
@@ -7488,7 +7494,7 @@ components:
         language:
           type: string
           enum: [en, he, es, it]
-          description: The language of the screens' words, the home owner's (their profile's); `en` while it is Auto or unknown.
+          description: "The language of the screens' words: the home owner's `language`, else, with Auto, the language their app last showed (`shown_language`), else `en`."
 
     AlertScreen:
       type: object

@@ -55,21 +55,26 @@ local state = {
 }
 
 -- options: targets (src/control4/notify_targets.lua: list, send), language() (the owner's profile
--- language, or nil), address() (the controller's LAN address, or nil), port (the API's).
+-- language and the language their app last showed, either nil), address() (the controller's LAN
+-- address, or nil), port (the API's).
 function Notify.configure(options)
     state.options = options
     state.last = {}
     state.pictures = {}
 end
 
--- The owner's language (options.language), or nil when it cannot be known now.
+-- The screens' language: the owner's choice, else what their app shows, else English
+-- (Words.choose).
 local function ownersLanguage()
     local options = state.options
     if not options or not options.language then
-        return nil
+        return "en"
     end
-    local ok, language = pcall(options.language)
-    return ok and language or nil
+    local ok, chosen, shown = pcall(options.language)
+    if not ok then
+        return "en"
+    end
+    return Words.choose(chosen, shown)
 end
 
 -- The agreement's kind of a controller's alert (its sealed detail), or nil: it goes to no screen.

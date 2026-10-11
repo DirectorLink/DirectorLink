@@ -1,7 +1,7 @@
 -- The words of DirectorLink's alerts on a screen (1.13.0, ADR-086, docs/NOTIFY_DRIVERS.md): the
 -- title and the message a TV of DirectorLink's notification agreement shows (src/core/notify.lua),
--- made on the controller in the home owner's language (their profile's, docs/PREFERENCES.md;
--- English when it is Auto or unknown). They are the app's own sentences for the same alert on a
+-- made on the controller in the home owner's language (docs/PREFERENCES.md: the one they chose in
+-- the app, else, with Auto, the one their app last showed; English when neither is known). They are the app's own sentences for the same alert on a
 -- phone (app/sw.js sealedNotice, with the words app/js/alerts.js alertTexts gives it), copied here
 -- under the app's keys: driver/tests/test_notify.lua fails when one here is not the app's, in any of
 -- the four languages, so the two never drift. Change a sentence in app/i18n/*.js and here together.
@@ -212,6 +212,16 @@ function NotifyWords.language(code)
         return code
     end
     return "en"
+end
+
+-- The screens' language for an owner whose profile says `chosen` (their language: a code, "auto" or
+-- nil) and `shown` (what their app last showed, 1.13.0; nil from an app before it): the one they
+-- chose, else the one their app shows (Auto: the device's), else English.
+function NotifyWords.choose(chosen, shown)
+    if type(chosen) == "string" and NotifyWords.WORDS[chosen] then
+        return chosen
+    end
+    return NotifyWords.language(shown)
 end
 
 -- A name worth saying: text with something in it, else nil (as the service worker's `text`).

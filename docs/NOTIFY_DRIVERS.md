@@ -44,9 +44,11 @@ Every value is a string.
 | `MESSAGE` | The sentence: `Entrance rang at 21:14.` |
 | `PICTURE` | Only for a doorbell and a camera's alert: an address on the controller that gives a JPEG for 60 seconds, `http://<the controller's address>:41999/v1/notify-pictures/<32 hex digits>.jpg`. Missing when there is no picture. |
 
-`TITLE` and `MESSAGE` are final: show them as they are. They are in the language of the home's owner
-(as the owner chose it in DirectorLink's app, Settings → Appearance and language: English, Hebrew,
-Spanish or Italian; English while it is Auto), in the same words as on the family's phones. A time
+`TITLE` and `MESSAGE` are final: show them as they are. They are in the language of the home's owner,
+in the same words as on the family's phones: the one the owner chose in DirectorLink's app
+(Settings → Appearance and language: English, Hebrew, Spanish or Italian); with Auto, the one the
+owner's app last showed (the phone's language, which the app tells the controller); English when
+neither is known (an app before 1.13.0, or a language DirectorLink does not speak). A time
 in them is the controller's, 24-hour. Hebrew text begins with U+200F (RIGHT-TO-LEFT MARK), so that a
 screen that takes the direction from the first letter lays it out right to left even when it starts
 with a name in Latin letters.

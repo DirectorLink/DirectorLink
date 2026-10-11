@@ -644,6 +644,12 @@ def scenario(client, bridge):
     client.check("PUT", "/v1/rooms/order", 200, body={"room_ids": [11, 10]})
     client.check("PUT", "/v1/rooms/order", 400, body={"room_ids": [999]})
     client.check("PATCH", "/v1/profile", 200, body={"prefs": {"hidden_rooms": [11]}})
+    # The language the app shows (1.13.0, ADR-086): kept, without a new version.
+    before = client.check("GET", "/v1/profile", 200)
+    shown = client.check("PATCH", "/v1/profile", 200, body={"prefs": {"shown_language": "he"}})
+    if shown["prefs"]["shown_language"] != "he" or shown["version"] != before["version"]:
+        fail(f"PATCH /v1/profile shown_language should be kept without a new version: {shown}")
+    client.check("PATCH", "/v1/profile", 400, body={"prefs": {"shown_language": "auto"}})
 
     # Scenes: made by admins, run by members; a door in a scene runs with door access.
     night = {

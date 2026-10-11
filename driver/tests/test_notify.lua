@@ -530,11 +530,66 @@ function tests.a_hebrew_owner_gets_hebrew()
     T.eq(told.TITLE, RLM .. "התראת מצלמה")
     T.eq(told.MESSAGE, RLM .. "אדם ב-Porch ב-" .. hhmm(home.clock.now) .. ".")
     T.eq(T.http(mock, "GET", "/v1/alerts/screens", { key = home.admin }).json.language, "he")
-    -- Auto is English: the controller does not know the owner's browser.
+    -- Auto, and no app said what it shows (an app before 1.13.0): English.
     T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { language = "auto" } } }).status, 200)
     home.clock.now = home.clock.now + 60
     Mock.cameraAlert(mock, 157, "Person")
     T.eq(only(mock, 301).TITLE, "Camera alert")
+end
+
+-- With Auto the screens speak what the owner's app shows (the device's language), as the app
+-- reports it on its profile (shown_language); a language the owner chose wins; without a report,
+-- English. Only the owner's own report counts, and it changes no profile version.
+function tests.with_auto_the_screens_speak_what_the_owners_app_shows()
+    local home = home()
+    local mock = home.mock
+    local profile = T.http(mock, "GET", "/v1/profile", { key = home.admin }).json
+    T.eq(profile.prefs.shown_language, Json.null, "null until the app says")
+    T.contains(T.http(mock, "GET", "/v1/profile", { key = home.admin }).body, '"shown_language":null', "there, for the app to know it may tell")
+
+    -- The owner's app shows Hebrew with Auto (a Hebrew phone).
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { language = "auto" } } }).status, 200)
+    local before = T.http(mock, "GET", "/v1/profile", { key = home.admin }).json.version
+    local reported = T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { shown_language = "he" } } })
+    T.eq(reported.status, 200, reported.body)
+    T.eq(reported.json.prefs.shown_language, "he")
+    T.eq(reported.json.prefs.language, "auto", "the choice stays Auto")
+    T.eq(reported.json.version, before, "a report is no choice: the version stays")
+    Mock.cameraAlert(mock, 157, "Person")
+    T.eq(only(mock, 301).TITLE, RLM .. "התראת מצלמה")
+    T.eq(T.http(mock, "GET", "/v1/alerts/screens", { key = home.admin }).json.language, "he")
+
+    -- A member's app says Italian: not the home's.
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = home.admin, body = { name = "Kids phone", role = "member" } }).json.key
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = member, body = { prefs = { shown_language = "it" } } }).status, 200)
+    home.clock.now = home.clock.now + 60
+    Mock.cameraAlert(mock, 157, "Person")
+    T.eq(only(mock, 301).TITLE, RLM .. "התראת מצלמה")
+
+    -- The owner chooses Spanish: it wins over what the app showed.
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { language = "es" } } }).status, 200)
+    home.clock.now = home.clock.now + 60
+    Mock.cameraAlert(mock, 157, "Person")
+    T.eq(only(mock, 301).TITLE, "Alerta de cámara")
+
+    -- What a profile cannot say, and a report kept across a restart.
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { shown_language = "auto" } } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { shown_language = 7 } } }).json.code, "INVALID_FIELD")
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { language = "auto" } } }).status, 200)
+    local restarted = Mock.updateDriver(mock, mock.project)
+    T.eq(T.http(restarted, "GET", "/v1/profile", { key = home.admin }).json.prefs.shown_language, "he")
+    T.eq(T.http(restarted, "GET", "/v1/alerts/screens", { key = home.admin }).json.language, "he")
+    -- A language the screens do not speak: English.
+    T.eq(T.http(restarted, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { shown_language = "fr" } } }).status, 200)
+    T.eq(T.http(restarted, "GET", "/v1/alerts/screens", { key = home.admin }).json.language, "en")
+
+    local Words = require("src.core.notify_words")
+    T.eq(Words.choose("es", "he"), "es")
+    T.eq(Words.choose("auto", "he"), "he")
+    T.eq(Words.choose(nil, "it"), "it")
+    T.eq(Words.choose("auto", nil), "en")
+    T.eq(Words.choose("fr", "he"), "he", "a choice the screens cannot speak: what the app shows")
+    T.eq(Words.choose(nil, "fr"), "en")
 end
 
 function tests.screens_are_told_without_phones_or_the_relay_and_nothing_goes_into_the_history()

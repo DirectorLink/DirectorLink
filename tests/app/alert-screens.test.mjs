@@ -173,7 +173,7 @@ test("an admin sees each screen with its room and what it shows, read from the c
     ["Quiet TV", "Shows nothing"],
   ]);
   assert.deepEqual(rows(view).map((row) => row.dataset.key), ["alert-screen:302", "alert-screen:301", "alert-screen:306"]);
-  assert.equal(byKey(view, "alert-screens-language").textContent, "Language: עברית, as the home’s owner chose it in Appearance and language (Auto shows English).");
+  assert.equal(byKey(view, "alert-screens-language").textContent, "Language: עברית, the one the home’s owner sees in the app.");
   // No switch, no button: read only.
   assert.equal(findAll(view, (node) => node.tagName === "BUTTON" || node.attributes.role === "switch").length, 0);
 
