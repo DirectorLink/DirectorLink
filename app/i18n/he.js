@@ -1528,6 +1528,8 @@ export default {
       added: "הוספת DirectorLink לפרויקט",
       updateRequired: "הגישה מרחוק הופסקה: עדכנו את DirectorLink, הגרסה הזו כבר לא יכולה להתחבר",
       updateRequiredTo: "הגישה מרחוק הופסקה: עדכנו את DirectorLink לגרסה {to} ומעלה, הגרסה הזו כבר לא יכולה להתחבר",
+      directOn: "החיבור הישיר בבית הופעל",
+      directOff: "החיבור הישיר בבית כובה",
     },
     counts: {
       ran: { one: "הופעל במכשיר אחד", two: "הופעל בשני מכשירים", many: "הופעל ב-{count} מכשירים", other: "הופעל ב-{count} מכשירים" },
@@ -2186,7 +2188,6 @@ export default {
   // Settings → Controller → Direct connection at home (1.12.0, ADR-082; js/views/direct.js).
   directHttps: {
     title: "חיבור ישיר בבית",
-    label: "חיבור ישיר בבית",
     intro: "כשזה פועל, כל מכשיר, גם iPhone ו-iPad, מתחבר לבקר ישירות ברשת הביתית: מהר יותר, ובלי השרתים של DirectorLink.",
     how: "לשם כך הבקר מקבל שם אקראי תחת dlhome.cc שמפנה לכתובת שלו ברשת הביתית, שרק מכשירים בבית יכולים להגיע אליה. השם מופיע בפומבי ביומני התעודות, והשרתים של DirectorLink יודעים את השם ואת הכתובת הזו.",
     chrome: "ב-Android ובמחשבים, Chrome עשוי לבקש גישה למכשירים ברשת המקומית: אשרו.",
@@ -2198,12 +2199,11 @@ export default {
       on: "פועל",
       error: "לא הצליח: {error}",
       errorUnknown: "לא הצליח",
-      notAllowed: "לא מאושר ב-Composer",
     },
-    notAllowed: "המתקין צריך לאשר את זה קודם: ב-Composer, הגדירו את המאפיין Direct HTTPS של DirectorLink ל-Allowed.",
+    installer: "המתקין מפעיל את זה ב-Composer: {path}.",
+    updateDriver: "המתקין אישר את זה ב-Composer. כדי להפעיל את זה, עדכנו את DirectorLink בבקר.",
     remoteNeeded: "צריך ש-Remote Access יהיה מופעל ב-Composer, ושהבית יהיה מקושר לחשבון שלכם.",
     remoteLink: "קשרו אותו בהגדרות ← חשבון",
-    ownerOnly: "רק בעל הבית יכול להפעיל או לכבות את זה.",
   },
   settings: {
     title: "הגדרות",

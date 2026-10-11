@@ -1561,6 +1561,8 @@ export default {
       added: "DirectorLink aggiunto al progetto",
       updateRequired: "Accesso remoto interrotto: aggiorna DirectorLink, questa versione non può più connettersi",
       updateRequiredTo: "Accesso remoto interrotto: aggiorna DirectorLink alla versione {to} o successiva, questa versione non può più connettersi",
+      directOn: "Connessione diretta a casa attivata",
+      directOff: "Connessione diretta a casa disattivata",
     },
     counts: {
       ran: { one: "Eseguito su 1 dispositivo", other: "Eseguito su {count} dispositivi" },
@@ -2215,7 +2217,6 @@ export default {
   // Settings → Controller → Direct connection at home (1.12.0, ADR-082; js/views/direct.js).
   directHttps: {
     title: "Connessione diretta a casa",
-    label: "Connessione diretta a casa",
     intro: "Quando è attiva, ogni dispositivo, anche iPhone e iPad, raggiunge il controller direttamente sulla rete di casa: più veloce e senza i server di DirectorLink.",
     how: "Per questo il controller riceve un nome casuale sotto dlhome.cc che punta al suo indirizzo nella rete di casa, raggiungibile solo dai dispositivi che sono in casa. Il nome compare pubblicamente nei registri dei certificati, e i server di DirectorLink conoscono il nome e quell’indirizzo.",
     chrome: "Su Android e sul computer, Chrome potrebbe chiedere di accedere ai dispositivi sulla rete locale: consenti l’accesso.",
@@ -2227,12 +2228,11 @@ export default {
       on: "Attiva",
       error: "Non ha funzionato: {error}",
       errorUnknown: "Non ha funzionato",
-      notAllowed: "Non consentita in Composer",
     },
-    notAllowed: "Prima l’installatore deve consentirla: in Composer, imposta la proprietà Direct HTTPS di DirectorLink su Allowed.",
+    installer: "L’installatore la attiva in Composer: {path}.",
+    updateDriver: "L’installatore l’ha consentita in Composer. Per attivarla, aggiorna DirectorLink sul controller.",
     remoteNeeded: "Serve Remote Access attivo in Composer e questa casa collegata al tuo account.",
     remoteLink: "Collegala in Impostazioni → Account",
-    ownerOnly: "Solo il proprietario della casa può attivarla o disattivarla.",
   },
   settings: {
     title: "Impostazioni",

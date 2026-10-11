@@ -610,6 +610,31 @@ test("the home's owner changed, in both languages", async () => {
   }
 });
 
+// Direct connection at home turned on or off (ADR-082): by Composer since 1.12.2, by the owner's key
+// in 1.12.0 and 1.12.1.
+test("Direct connection at home turned on or off, in both languages", async () => {
+  home("admin");
+  controller({
+    items: [
+      { id: 3, at: iso(NOW - 30 * 1000), kind: "system", action: "direct_https", who: { type: "composer" }, to: "off" },
+      { id: 2, at: iso(NOW - 60 * 1000), kind: "system", action: "direct_https", who: { type: "composer" }, to: "on" },
+      { id: 1, at: iso(NOW - 90 * 1000), kind: "system", action: "direct_https", who: dana, to: "on" },
+    ],
+  });
+  let rows = items(await open());
+  assert.equal(line(rows[0]), "Direct connection at home turned off, Composer");
+  assert.equal(line(rows[1]), "Direct connection at home turned on, Composer");
+  assert.match(line(rows[2]), /^Direct connection at home turned on, Dana/);
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.equal(line(rows[0]), "החיבור הישיר בבית כובה, Composer");
+    assert.equal(line(rows[1]), "החיבור הישיר בבית הופעל, Composer");
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

@@ -4,9 +4,11 @@
 -- then reaches the controller from https://app.directorlink.io at home, which WebKit refuses over
 -- plain HTTP (mixed content).
 --
--- Two switches: the installer allows it in Composer (the property Direct HTTPS: Off, the default,
--- or Allowed), then the home's owner turns it on in the app (PUT /v1/https). It needs Remote Access
--- and a home linked to an account: the certificate comes through DirectorLink's servers.
+-- One switch, Composer's (1.12.2, ADR-082 as changed then): the property Direct HTTPS, Off (the
+-- default) or On. 1.12.0 and 1.12.1 called On "Allowed" and had the home's owner turn it on in the
+-- app as well; "Allowed" still means On, and the app no longer switches it (PUT /v1/https answers
+-- 409 SET_IN_COMPOSER). It needs Remote Access and a home linked to an account: the certificate
+-- comes through DirectorLink's servers.
 --
 -- Once on, the controller makes its name, a P-256 key and its certificate request (CSR) once, and
 -- asks DirectorLink's servers for a certificate over the relay's connection (docs/RELAY.md,
@@ -15,8 +17,8 @@
 -- and when it changes. The answer comes later (`https_certificate_result`, tens of seconds); the
 -- certificate is kept only when it is for this key and name and valid, then the TLS server starts
 -- with it. Asked again when less than a third of its lifetime is left (looked at every 10 minutes),
--- with a backoff after a refusal. Turned off (by the owner, or Composer back to Off): the TLS server
--- stops, the certificate is forgotten (it expires by itself) and the Worker deletes the A record.
+-- with a backoff after a refusal. Turned off in Composer: the TLS server stops, the certificate is
+-- forgotten (it expires by itself) and the Worker deletes the A record.
 --
 -- Requests on the TLS server go through exactly what port 41999 does (src/api/server.lua); the Host
 -- check also takes the name there. The private key is stored with the driver's data
@@ -37,7 +39,9 @@ DirectHttps.PORT = 28443
 DirectHttps.IDENTIFIER = "https"
 DirectHttps.PROPERTY = "Direct HTTPS"
 DirectHttps.STATUS_PROPERTY = "Direct HTTPS Status"
-DirectHttps.ALLOWED = "Allowed"
+DirectHttps.ON = "On"
+-- What 1.12.0 and 1.12.1 called On (their items were Off and Allowed): still On.
+DirectHttps.OLD_ON = "Allowed"
 DirectHttps.DOMAIN = "dlhome.cc"
 DirectHttps.LABEL_LENGTH = 20
 DirectHttps.STORE_KEY = "directorlink_https"
@@ -78,13 +82,10 @@ DirectHttps.SAME_WAIT_SECONDS = 6 * 3600
 -- online within SERVER_WATCH_SECONDS counts as not started.
 DirectHttps.SERVER_RETRY_SECONDS = { 10, 30, 60, 300, 900 }
 DirectHttps.SERVER_WATCH_SECONDS = 30
--- The owner turned it off: the TLS server stops this long after, so that the answer to that request
--- (it may have come over the TLS server itself) has gone out whole first.
-DirectHttps.STOP_DELAY_SECONDS = 2
 
 local BASE32 = "abcdefghijklmnopqrstuvwxyz234567"
 
--- `error` in GET /v1/https, which the app shows the owner word for word, and Composer's status: short
+-- `error` in GET /v1/https, which the app shows admins word for word, and Composer's status: short
 -- sentences. What Director said goes to the log.
 local WORDS = {
     OLD_OS = "This controller's OS is too old for Direct HTTPS. It needs OS 3.3.1 or later.",
@@ -119,7 +120,8 @@ local REFUSALS = {
 local state = {
     configured = false,
     log = nil,
-    allowed = function()
+    -- Composer's Direct HTTPS says On (or 1.12.1's Allowed): main.lua.
+    on = function()
         return false
     end,
     -- Remote Access is on and the home linked to an account (main.lua).
@@ -135,7 +137,10 @@ local state = {
     activity = nil,
     onStatus = nil,
     -- The stored record: { version, name, key, csr, created_at, enabled, dns_off, certificate,
-    -- chain, not_before, not_after, issuer_cn, installed_at }; nil when there is none.
+    -- chain, not_before, not_after, issuer_cn, installed_at }; nil when there is none. `enabled`
+    -- (1.12.0 and 1.12.1: the owner's switch) only says whether it was on when Composer was last
+    -- applied, so that a change made while the driver did not run is seen at its start (and 1.12.1,
+    -- after a downgrade, finds it as it was); it never turns anything on or off by itself.
     stored = nil,
     -- The certificate's times, read from it: { from, to } (Unix seconds), false when unreadable.
     times = nil,
@@ -152,9 +157,6 @@ local state = {
     serverTimer = nil,
     serverFailures = 0,
     serverWatch = nil,
-    -- The owner turned it off: the TLS server stops when this timer fires (STOP_DELAY_SECONDS).
-    stopTimer = nil,
-    deferStop = false,
     -- The Worker's last refusal (or no answer), { code, retry_at }, and how many in a row.
     failure = nil,
     failures = 0,
@@ -202,8 +204,9 @@ local function call(fn, ...)
     return nil
 end
 
-local function allowed()
-    return call(state.allowed) == true
+-- Composer says On: the only switch (1.12.2).
+local function isOn()
+    return call(state.on) == true
 end
 
 local function remoteReady()
@@ -240,14 +243,15 @@ local function load()
     local data, form = Store.read(DirectHttps.STORE_KEY, false)
     state.stored, state.times = nil, nil
     if form == "unreadable" then
-        -- Nothing can be known of it, the owner's switch neither: off, until the owner turns it on
-        -- again, which writes a new record (the Worker gives the home's name back: NAME_MISMATCH).
-        log("error", "the stored key could not be read; Direct HTTPS is off until the home's owner turns it on again")
+        -- Nothing can be known of it: with Composer On a new key is made, and the Worker gives the
+        -- home's name back (NAME_MISMATCH).
+        log("error", "the stored key could not be read; a new one is made while Composer says On")
         return form
     end
     if type(data) == "table" and validName(data.name) then
         local record = { version = DirectHttps.STORE_VERSION, name = data.name, created_at = data.created_at }
-        -- The owner's switch (version 2). The test build's record (version 1) had none: off.
+        -- Whether it was on (version 2; 1.12.1's owner's switch). The test build's record (version 1)
+        -- had none: it was off.
         record.enabled = data.version == DirectHttps.STORE_VERSION and data.enabled == true or nil
         record.dns_off = data.dns_off == true or nil
         if isText(data.key) and isText(data.csr) then
@@ -298,12 +302,9 @@ local function hasCertificate()
     return hasKey() and state.stored.certificate ~= nil
 end
 
-local function switchedOn()
+-- It was on when Composer was last applied (the stored `enabled`).
+local function wasOn()
     return state.stored ~= nil and state.stored.enabled == true
-end
-
-local function isOn()
-    return allowed() and switchedOn()
 end
 
 -- The certificate's times, { from, to } in Unix seconds, or nil.
@@ -403,7 +404,8 @@ local function retryWords(at)
     return days == 1 and "Trying again in a day." or ("Trying again in " .. days .. " days.")
 end
 
--- What GET /v1/https says in `error`, or nil: a sentence or two, for the owner.
+-- What GET /v1/https says in `error`, or nil: a sentence or two, for the home's admins (and in
+-- Composer's status, for the installer).
 local function errorText()
     if not isOn() then
         return nil
@@ -435,10 +437,9 @@ local function errorText()
     return nil
 end
 
+-- `not_allowed` was 1.12.0's and 1.12.1's (Composer Off while the owner had a switch): Off is `off`.
 function DirectHttps.state()
-    if not allowed() then
-        return "not_allowed"
-    elseif not switchedOn() then
+    if not isOn() then
         return "off"
     elseif state.listening and validNow() then
         return "listening"
@@ -451,10 +452,8 @@ end
 local function statusText()
     local current = DirectHttps.state()
     local name = state.stored and state.stored.name
-    if current == "not_allowed" then
+    if current == "off" then
         return "Off"
-    elseif current == "off" then
-        return "Allowed: the home's owner turns it on in the app"
     elseif current == "error" then
         return "Error: " .. tostring(errorText()):gsub("%.$", "")
     elseif current == "requesting" then
@@ -536,7 +535,7 @@ local function createServer()
     return true
 end
 
--- The TLS server should listen and does not (`words`: why, for the owner): started again after the
+-- The TLS server should listen and does not (`words`: why, for admins): started again after the
 -- next step of SERVER_RETRY_SECONDS, while it still should then.
 serverTrouble = function(words)
     state.serverError = words
@@ -849,27 +848,15 @@ local function tellOff()
     end
 end
 
--- What is to be done now, from the switches, the certificate and the relay's connection: called at
--- every change (Composer, the owner's switch, the relay, an answer) and every TICK_SECONDS.
+-- What is to be done now, from Composer, the certificate and the relay's connection: called at
+-- every change (Composer, Remote Access, the home linked, the relay, an answer) and every
+-- TICK_SECONDS.
 sync = function(_reason)
     if not state.configured then
         return
     end
     if not isOn() then
-        if state.deferStop and state.created then
-            -- The owner's request may be on this server: stopped once its answer has gone.
-            if not state.stopTimer then
-                state.stopTimer = after(DirectHttps.STOP_DELAY_SECONDS, function()
-                    state.stopTimer, state.deferStop = nil, false
-                    if not isOn() then
-                        destroyServer("turned off")
-                        publish()
-                    end
-                end)
-            end
-        else
-            destroyServer("off")
-        end
+        destroyServer("off")
         stopServerRetry()
         clearAsking()
         stopRetry()
@@ -880,12 +867,6 @@ sync = function(_reason)
         publish()
         return
     end
-    if state.stopTimer then
-        -- On again before the server stopped: it stays.
-        cancel(state.stopTimer)
-        state.stopTimer = nil
-    end
-    state.deferStop = false
     if not hasKey() and not state.hardError then
         makeKey()
     end
@@ -1011,7 +992,7 @@ local function onResult(message)
     if state.offAsking and message.id == state.offAsking then
         state.offAsking = nil
         if message.ok == true then
-            if state.stored and state.stored.dns_off and not switchedOn() then
+            if state.stored and state.stored.dns_off and not isOn() then
                 state.stored.dns_off = nil
                 save()
             end
@@ -1058,11 +1039,12 @@ end
 
 -- ---- the driver -----------------------------------------------------------------------------------
 
--- Wires the module to the driver; nothing happens until apply(). options: { log, allowed(),
--- remote(), relay = { features(), tell(message), connection() }, address(), activity, onStatus }.
+-- Wires the module to the driver; nothing happens until apply(). options: { log, on() (Composer
+-- says On), remote(), relay = { features(), tell(message), connection() }, address(), activity,
+-- onStatus }.
 function DirectHttps.configure(options)
     state.log = options.log
-    state.allowed = options.allowed or state.allowed
+    state.on = options.on or state.on
     state.remote = options.remote or state.remote
     state.relay = options.relay
     state.address = options.address
@@ -1075,8 +1057,6 @@ function DirectHttps.configure(options)
     stopRetry()
     stopServerRetry()
     cancelWatch()
-    cancel(state.stopTimer)
-    state.stopTimer, state.deferStop = nil, false
     cancel(state.tick)
     state.tick = nil
     pcall(function()
@@ -1087,36 +1067,28 @@ function DirectHttps.configure(options)
     return load()
 end
 
--- Composer's Direct HTTPS now (at start, or when the installer changed it), or Remote Access: Off
--- also turns the owner's switch off, and the Worker deletes the name's record.
+-- Turned on or off in Composer: in the log, and in the history (`system` `direct_https`, by
+-- Composer).
+local function changed(to)
+    log("info", to == "on" and "Direct HTTPS turned on in Composer" or "Direct HTTPS turned off in Composer",
+        { name = state.stored and state.stored.name or Json.null })
+    if state.activity then
+        pcall(state.activity.record, "system", "direct_https", { who = { type = "composer" }, to = to })
+    end
+end
+
+-- Composer's Direct HTTPS now: at start, when the installer changed it, or Remote Access. On turns
+-- it on, with nobody else to ask; it works once Remote Access is on and the home linked to an
+-- account (the status says so until then). Off turns it off: the TLS server stops, the certificate
+-- is forgotten and the Worker deletes the name's record. A change from how it was when Composer was
+-- last applied, also one made while the driver did not run, goes into the history. A record of
+-- 1.12.1 whose owner's switch was off (`enabled` false) does not keep it off: Composer decides.
 function DirectHttps.apply()
     if not state.configured then
         return
     end
-    if not allowed() and switchedOn() then
-        state.stored.enabled = nil
-        state.stored.dns_off = true
-        forgetCertificate("not allowed")
-        save()
-        log("info", "Direct HTTPS turned off: Composer no longer allows it", { name = state.stored.name })
-    end
-    sync("apply")
-end
-
--- The owner's switch (PUT /v1/https). Returns the status, or nil and a refusal { status, code,
--- detail }. `actor`: the key that asked, for the history.
-function DirectHttps.setEnabled(on, actor)
-    if not allowed() then
-        return nil, { status = 409, code = "HTTPS_NOT_ALLOWED", detail = "Direct HTTPS is not allowed: the installer sets Direct HTTPS to Allowed in Composer (DirectorLink properties) first" }
-    end
-    if on and not remoteReady() then
-        return nil, { status = 409, code = "REMOTE_ACCESS_NEEDED", detail = "Direct HTTPS needs Remote Access on in Composer and the home linked to an account: the certificate comes through DirectorLink's servers" }
-    end
-    local before = switchedOn()
-    if on == before then
-        return DirectHttps.status()
-    end
-    if on then
+    local on, was = isOn(), wasOn()
+    if on and not was then
         -- What failed before is tried again (a key, the TLS server).
         state.hardError = nil
         if not state.stored then
@@ -1124,37 +1096,39 @@ function DirectHttps.setEnabled(on, actor)
             makeKey()
         end
         if not state.stored then
-            -- No key could be made: switched on all the same, to say why.
+            -- No key could be made: on all the same, to say why.
             state.stored = { version = DirectHttps.STORE_VERSION, name = newName() }
         end
         state.stored.enabled = true
         state.stored.dns_off = nil
         state.failure, state.failures, state.remakes = nil, 0, 0
         stopRetry()
-    else
+        if not save() then
+            log("warn", "Direct HTTPS is on, but the controller could not save it")
+        end
+        changed("on")
+    elseif was and not on then
         state.stored.enabled = nil
         state.stored.dns_off = true
-        -- The TLS server stops a moment later (sync), after this answer, which may go over it.
-        state.deferStop = true
-        forgetCertificate("turned off", true)
+        forgetCertificate("turned off")
+        if not save() then
+            log("warn", "Direct HTTPS is off, but the controller could not save it")
+        end
+        changed("off")
     end
-    if not save() then
-        state.stored.enabled = before and true or nil
-        return nil, { status = 503, code = "UNAVAILABLE", detail = "The switch could not be saved on the controller; try again" }
-    end
-    log("info", on and "Direct HTTPS turned on by the home's owner" or "Direct HTTPS turned off by the home's owner",
-        { name = state.stored.name, key_id = actor and actor.id or Json.null })
-    if state.activity then
-        pcall(state.activity.record, "system", "direct_https", { by = actor, to = on and "on" or "off" })
-    end
-    sync("switch")
-    return DirectHttps.status()
+    sync("apply")
+end
+
+-- Something it needs may have come (the home linked to an account): asked at once rather than at
+-- the next tick.
+function DirectHttps.refresh(reason)
+    sync(reason or "refresh")
 end
 
 -- The home's remote identity is being reset (Composer: Reset Remote Identity): the name belongs to
 -- the old home at DirectorLink's servers. Its record goes now, on the old connection, and the
--- controller forgets the name, key and certificate; the owner's switch stays, and a new name is
--- made once the new home is linked to an account.
+-- controller forgets the name, key and certificate; with Composer On, a new name is made once the
+-- new home is linked to an account.
 function DirectHttps.identityReset()
     if not state.configured or not state.stored then
         return
@@ -1165,8 +1139,7 @@ function DirectHttps.identityReset()
     destroyServer("new remote identity")
     clearAsking()
     stopRetry()
-    local enabled = state.stored.enabled
-    state.stored = enabled and { version = DirectHttps.STORE_VERSION, name = newName(), enabled = true } or nil
+    state.stored = isOn() and { version = DirectHttps.STORE_VERSION, name = newName(), enabled = true } or nil
     state.times, state.told, state.telling, state.offAsking = nil, nil, nil, nil
     state.failure, state.failures = nil, 0
     if state.stored then
@@ -1185,8 +1158,6 @@ function DirectHttps.stop()
     clearAsking()
     stopRetry()
     stopServerRetry()
-    cancel(state.stopTimer)
-    state.stopTimer, state.deferStop = nil, false
     cancel(state.tick)
     state.tick = nil
 end
@@ -1209,7 +1180,7 @@ function DirectHttps.onStatusChanged(port, status)
     if state.listening then
         cancelWatch()
         stopServerRetry()
-    elseif isOn() and hasCertificate() and validNow() and not state.deferStop then
+    elseif isOn() and hasCertificate() and validNow() then
         -- Director stopped it while it should listen: started again, with a backoff.
         serverTrouble(WORDS.SERVER_STOPPED)
     end
@@ -1227,12 +1198,15 @@ function DirectHttps.hostAllowed(host)
     return host == name or host == name .. ":" .. DirectHttps.PORT
 end
 
--- GET /v1/https, for admins: never the key, nor the CSR.
+-- GET /v1/https, for admins: never the key, nor the CSR. `allowed` and `enabled` are both Composer's
+-- On (1.12.2): 1.12.0 and 1.12.1 apps, which read them as the installer's and the owner's switches,
+-- show how it is.
 function DirectHttps.status()
     local stored = state.stored
+    local on = isOn()
     local body = {
-        allowed = allowed(),
-        enabled = isOn(),
+        allowed = on,
+        enabled = on,
         remote = remoteReady(),
         name = stored and stored.name or Json.null,
         port = DirectHttps.PORT,
@@ -1240,7 +1214,7 @@ function DirectHttps.status()
         certificate = Json.null,
         error = errorText() or Json.null,
     }
-    if isOn() and hasCertificate() then
+    if on and hasCertificate() then
         body.certificate = { not_after = stored.not_after or Json.null, issuer_cn = stored.issuer_cn or Json.null }
     end
     return body

@@ -536,6 +536,10 @@ local function handleClaim(message, send)
     end
     log(ok and "info" or "warn", ok and "the home was claimed for an account" or "refused a claim")
     send({ type = "claim_result", id = message.id, ok = ok, code = (not ok) and "INVALID_CLAIM" or nil })
+    -- What waited for a home linked to an account (Direct HTTPS, 1.12.2) goes on now.
+    if ok and state.services and state.services.onLinked then
+        pcall(state.services.onLinked)
+    end
 end
 
 -- True when `message` was one of the account messages (handled, or refused with a code).
