@@ -3,7 +3,7 @@
 // in the fake Cloudflare zone (fake-cloudflare.mjs), the finalize with a CSR, and a certificate chain
 // (a leaf for the CSR's key, "YE1", issued by "Root YE"), with every JWS's ES256 signature checked.
 // `faults` steer it: { badNonce, serverError, rateLimited, failChallenge, processing } (counts of the
-// next requests to answer so, or flags).
+// next requests to answer so, or flags). `log.lookups`: newAccount with onlyReturnExisting (1.13.0).
 
 import { createHash, createPublicKey, randomBytes, verify } from "node:crypto";
 import { createServer } from "node:http";
@@ -29,7 +29,7 @@ export async function startFakeAcme({ dns }) {
   const accounts = new Map(); // kid -> jwk
   const orders = new Map(); // id -> order
   const faults = { badNonce: 0, serverError: 0, rateLimited: false, failChallenge: false, processing: 0 };
-  const log = { orders: 0, accounts: 0, issued: [], requests: [] };
+  const log = { orders: 0, accounts: 0, lookups: 0, issued: [], requests: [] };
 
   const root = { name: "Root YE", ...keyPair() };
   const now = Date.now();
@@ -105,8 +105,13 @@ export async function startFakeAcme({ dns }) {
     }
 
     if (path === "/new-account") {
-      if (payload?.termsOfServiceAgreed !== true) return problem(400, "malformed", "agree to the terms");
       const existing = [...accounts.entries()].find(([, known]) => thumbprint(known) === thumbprint(jwk));
+      // Only the key's account, never a new one (RFC 8555 7.3.1).
+      if (payload?.onlyReturnExisting === true) {
+        log.lookups += 1;
+        return existing ? send(200, { status: "valid" }, { Location: existing[0] }) : problem(400, "accountDoesNotExist", "no account for this key");
+      }
+      if (payload?.termsOfServiceAgreed !== true) return problem(400, "malformed", "agree to the terms");
       if (existing) return send(200, { status: "valid" }, { Location: existing[0] });
       const kid = `${url}/acct/${accounts.size + 1}`;
       accounts.set(kid, jwk);

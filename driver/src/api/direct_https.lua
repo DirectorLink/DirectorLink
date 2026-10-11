@@ -82,6 +82,12 @@ DirectHttps.SAME_WAIT_SECONDS = 6 * 3600
 -- online within SERVER_WATCH_SECONDS counts as not started.
 DirectHttps.SERVER_RETRY_SECONDS = { 10, 30, 60, 300, 900 }
 DirectHttps.SERVER_WATCH_SECONDS = 30
+-- Director stops and starts every driver's servers once at late init, just after ours started: an
+-- OFFLINE, then ONLINE a few milliseconds later (the API's server on 41999 too). An OFFLINE within
+-- this long of our own CreateTLSServer is part of the start (the start's watch decides), and any
+-- other is a failure only if the server is still offline when the retry acts (1.13.0): logged at
+-- Info until then, with no failure counted.
+DirectHttps.START_GRACE_SECONDS = 2
 
 local BASE32 = "abcdefghijklmnopqrstuvwxyz234567"
 
@@ -144,9 +150,11 @@ local state = {
     stored = nil,
     -- The certificate's times, read from it: { from, to } (Unix seconds), false when unreadable.
     times = nil,
-    -- C4:CreateTLSServer was called and the server not destroyed since; ONLINE seen since then.
+    -- C4:CreateTLSServer was called and the server not destroyed since; ONLINE seen since then;
+    -- when it was called (Clock.millis).
     created = false,
     listening = false,
+    startedAt = nil,
     -- Why it cannot work without help: no key could be made, an OS without the TLS server.
     hardError = nil,
     -- The TLS server is not running while it should (it could not be started, or went offline):
@@ -498,6 +506,24 @@ end
 
 local serverTrouble
 
+-- The start's watch: a server Director has not said is ONLINE within SERVER_WATCH_SECONDS (of its
+-- start, or of an OFFLINE that was part of it) counts as not started.
+local function watchStart()
+    cancelWatch()
+    local watch
+    watch = after(DirectHttps.SERVER_WATCH_SECONDS, function()
+        if state.serverWatch == watch then
+            state.serverWatch = nil
+            if state.created and not state.listening and isOn() then
+                log("warn", "TLS server not online " .. DirectHttps.SERVER_WATCH_SECONDS .. " s after it was started", { port = DirectHttps.PORT })
+                serverTrouble(WORDS.SERVER_FAILED)
+                publish()
+            end
+        end
+    end)
+    state.serverWatch = watch
+end
+
 -- The TLS server with the stored certificate and key. Returns true, or false and what Director
 -- said (for the log). Director says ONLINE once it listens; without that within
 -- SERVER_WATCH_SECONDS it counts as not started.
@@ -517,33 +543,27 @@ local function createServer()
         log("error", "TLS server failed", { port = DirectHttps.PORT, name = stored.name, detail = detail })
         return false, detail
     end
-    state.created, state.listening = true, false
-    cancelWatch()
-    local watch
-    watch = after(DirectHttps.SERVER_WATCH_SECONDS, function()
-        if state.serverWatch == watch then
-            state.serverWatch = nil
-            if state.created and not state.listening and isOn() then
-                log("warn", "TLS server not online " .. DirectHttps.SERVER_WATCH_SECONDS .. " s after it was started", { port = DirectHttps.PORT })
-                serverTrouble(WORDS.SERVER_FAILED)
-                publish()
-            end
-        end
-    end)
-    state.serverWatch = watch
+    state.created, state.listening, state.startedAt = true, false, Clock.millis()
+    watchStart()
     log("info", "TLS server started", { port = DirectHttps.PORT, name = stored.name, not_after = stored.not_after or Json.null })
     return true
 end
 
 -- The TLS server should listen and does not (`words`: why, for admins): started again after the
--- next step of SERVER_RETRY_SECONDS, while it still should then.
-serverTrouble = function(words)
+-- next step of SERVER_RETRY_SECONDS, while it still should then. `offline` (1.13.0): Director said
+-- OFFLINE, which is not yet a failure (Director stops and starts drivers' servers at times, and its
+-- ONLINE before the retry acts cancels it): logged at Info, and counted and warned about only if the
+-- server is still offline when the retry acts.
+serverTrouble = function(words, offline)
     state.serverError = words
     if state.serverTimer then
         return
     end
-    state.serverFailures = state.serverFailures + 1
-    local wait = DirectHttps.SERVER_RETRY_SECONDS[math.min(state.serverFailures, #DirectHttps.SERVER_RETRY_SECONDS)]
+    if not offline then
+        state.serverFailures = state.serverFailures + 1
+    end
+    local step = offline and state.serverFailures + 1 or state.serverFailures
+    local wait = DirectHttps.SERVER_RETRY_SECONDS[math.min(step, #DirectHttps.SERVER_RETRY_SECONDS)]
     state.serverRetryAt = Clock.now() + wait
     local timer
     timer = after(wait, function()
@@ -555,7 +575,12 @@ serverTrouble = function(words)
             publish()
             return
         end
-        log("info", "TLS server started again", { port = DirectHttps.PORT, tries = state.serverFailures })
+        if offline then
+            state.serverFailures = state.serverFailures + 1
+            log("warn", "TLS server still offline " .. wait .. " s later; started again", { port = DirectHttps.PORT, failures = state.serverFailures })
+        else
+            log("info", "TLS server started again", { port = DirectHttps.PORT, tries = state.serverFailures })
+        end
         destroyServer("started again")
         if not createServer() then
             serverTrouble(WORDS.SERVER_FAILED)
@@ -563,7 +588,11 @@ serverTrouble = function(words)
         publish()
     end)
     state.serverTimer = timer
-    log("warn", "TLS server not running; started again later", { port = DirectHttps.PORT, retry_s = wait, failures = state.serverFailures })
+    if offline then
+        log("info", "TLS server offline; started again in " .. wait .. " s unless it comes back", { port = DirectHttps.PORT, retry_s = wait })
+    else
+        log("warn", "TLS server not running; started again later", { port = DirectHttps.PORT, retry_s = wait, failures = state.serverFailures })
+    end
 end
 
 -- A key and CSR for `name` (the stored name, or a new one the first time). Returns true, or false
@@ -1051,7 +1080,7 @@ function DirectHttps.configure(options)
     state.activity = options.activity
     state.onStatus = options.onStatus
     state.configured = true
-    state.created, state.listening, state.hardError, state.shown = false, false, nil, nil
+    state.created, state.listening, state.startedAt, state.hardError, state.shown = false, false, nil, nil, nil
     state.failure, state.failures, state.remakes = nil, 0, 0
     clearAsking()
     stopRetry()
@@ -1181,8 +1210,16 @@ function DirectHttps.onStatusChanged(port, status)
         cancelWatch()
         stopServerRetry()
     elseif isOn() and hasCertificate() and validNow() then
-        -- Director stopped it while it should listen: started again, with a backoff.
-        serverTrouble(WORDS.SERVER_STOPPED)
+        local since = state.startedAt and Clock.millis() - state.startedAt
+        if since and since >= 0 and since <= DirectHttps.START_GRACE_SECONDS * 1000 and not state.serverTimer then
+            -- Director's own stop and start at late init, right after ours (1.13.0): part of the start.
+            log("info", "TLS server offline right after it was started; the start goes on", { port = DirectHttps.PORT, after_ms = since })
+            watchStart()
+        else
+            -- Director stopped it while it should listen: started again, with a backoff, unless
+            -- Director brings it back first.
+            serverTrouble(WORDS.SERVER_STOPPED, true)
+        end
     end
     publish()
 end
@@ -1233,7 +1270,7 @@ end
 function DirectHttps.reset()
     DirectHttps.stop()
     state.configured, state.stored, state.times = false, nil, nil
-    state.created, state.listening, state.hardError, state.shown = false, false, nil, nil
+    state.created, state.listening, state.startedAt, state.hardError, state.shown = false, false, nil, nil, nil
     state.failure, state.failures, state.remakes, state.asked = nil, 0, 0, 0
     state.told, state.telling, state.offAsking = nil, nil, nil
 end

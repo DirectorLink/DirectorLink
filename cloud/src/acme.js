@@ -6,7 +6,8 @@
 //
 // Settings: ACME_ACCOUNT_KEY (a secret: the account's private key, PKCS #8 PEM, P-256; registered at
 // the first use, terms of service agreed) and ACME_DIRECTORY (a var: Let's Encrypt's production
-// directory by default; its staging one, or the tests' fake, otherwise).
+// directory by default; its staging one, or the tests' fake, otherwise). The account's URL is no
+// secret: dlhome.cc's CAA record names it (1.13.0, https.js keeps it in D1).
 
 import { base64url } from "./http.js";
 
@@ -182,6 +183,22 @@ export class AcmeClient {
       this.kid = location;
     }
     return this.kid;
+  }
+
+  // The key's account URL without registering one (1.13.0: newAccount with onlyReturnExisting,
+  // RFC 8555 7.3.1), or null when the key has no account there yet.
+  async findAccount() {
+    const { newAccount } = await this.directory();
+    let location;
+    try {
+      ({ location } = await this.json(newAccount, { onlyReturnExisting: true }, { jwk: true }));
+    } catch (error) {
+      if (error instanceof AcmeError && error.kind === "accountDoesNotExist") return null;
+      throw error;
+    }
+    if (!location) throw new AcmeError("network", "newAccount gave no account URL");
+    this.kid = location;
+    return location;
   }
 
   // A new order for one DNS name: { url, order }.

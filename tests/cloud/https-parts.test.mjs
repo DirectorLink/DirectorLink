@@ -1,7 +1,8 @@
 // Direct HTTPS's parts (1.12.0, ADR-082) in Node, without the Worker: what the Worker reads of a
 // certificate request and a certificate (cloud/src/x509.js), which requests and addresses it takes
 // (https.js), the object's one alarm shared by the alerts and the orders (alarms.js), and the ACME
-// client (acme.js) through a whole order against the fake ACME server and the fake Cloudflare zone.
+// client (acme.js) through a whole order against the fake ACME server and the fake Cloudflare zone,
+// and finding its account's URL without registering one (1.13.0, for the CAA record).
 //   node --test tests/cloud/https-parts.test.mjs
 
 import assert from "node:assert/strict";
@@ -207,4 +208,23 @@ test("the ACME client through a whole order: account, dns-01, finalize, certific
   await assert.rejects(client.newOrder(NAME), (error) => error instanceof AcmeError && error.transient);
   await assert.rejects(new AcmeClient({ directoryUrl: acme.directory, accountKey: "nonsense" }).account(), (error) => error instanceof AcmeError && error.kind === "accountKey");
   await assert.rejects(new AcmeClient({ directoryUrl: "http://127.0.0.1:1/directory", accountKey: client.accountKeyPem }).account(), (error) => error.transient);
+});
+
+test("the account's URL found without registering one (onlyReturnExisting), for the CAA record", async () => {
+  const key = accountKeyLine();
+  const accounts = acme.log.accounts;
+  // A key without an account: none, and none is made.
+  assert.equal(await new AcmeClient({ directoryUrl: acme.directory, accountKey: key }).findAccount(), null);
+  assert.equal(acme.log.accounts, accounts);
+  // Registered by an order's first step: the same URL found afterwards.
+  const registering = new AcmeClient({ directoryUrl: acme.directory, accountKey: key });
+  await registering.account();
+  assert.equal(acme.log.accounts, accounts + 1);
+  const finder = new AcmeClient({ directoryUrl: acme.directory, accountKey: key });
+  assert.equal(await finder.findAccount(), registering.kid);
+  assert.equal(finder.kid, registering.kid);
+  assert.equal(acme.log.accounts, accounts + 1, "nothing registered");
+  // A server error is not "no account".
+  acme.faults.serverError = 1;
+  await assert.rejects(new AcmeClient({ directoryUrl: acme.directory, accountKey: key }).findAccount(), (error) => error instanceof AcmeError && error.transient);
 });
