@@ -2,6 +2,27 @@
 
 ## Current release
 
+`v1.13.0` — Direct HTTPS hardened (1130b), alerts on the home's TVs (1130a). A Worker change with a D1 migration (`0012_https_cleanup`).
+
+## 1130b. Direct HTTPS hardened (1.13.0)
+
+1. After the Worker deploy and the driver update: the driver's start log shows the TLS server started and online, with no `[WARN][https]` line; Direct HTTPS Status "Listening on …"; the iPhone and iPad at home still go direct, and `<name>.dlhome.cc` still resolves to 192.168.1.201.
+2. Within the hour, D1 `acme_accounts` has the production account URL (`wrangler d1 execute directorlink --remote --command "SELECT directory, url FROM acme_accounts"`). Turn Universal SSL off for dlhome.cc, add the two CAA records, and `dig CAA dlhome.cc +short` shows exactly them.
+3. After the next daily run (03:17 UTC), the Worker log has `https_names_cleaned` with counts, and the owner's record is still there.
+
+## 1130a. Alerts on the home's TVs (1.13.0)
+
+Until the LG driver exists, with the dev server's fake screens:
+1. `python scripts/dev_server.py --agreement-cameras --notify-targets`, serve app/ and pair at localhost. `ring 158`: the console prints the doorbell text and a picture link for both fake screens; the link works three times, then 404 (also after 60 s).
+2. `alert 157 Person`: only the Living Room TV; again within 5 s: nothing ("too soon"). `alert 157 Smoke Alarm`: both screens get `alarm`.
+3. With the app (and the browser) in Hebrew, `ring 158` prints Hebrew. Settings → Alerts → On TVs lists both screens for an admin, nothing for a member.
+
+On the owner's controller:
+4. After updating, the log says how many screens it found (none until the LG driver), and the DoorBird, Hikvision and KNX work as before.
+5. Once the LG driver is installed: the log finds the screen with its kinds; a DoorBird ring pops up on the TV with the camera picture, in Hebrew; a Hikvision alert and a gate opened from the app pop up; with the internet unplugged, a ring still pops up. The iPhone (admin) shows On TVs, Android members don't.
+
+## Previous release
+
 `v1.12.2` — Direct HTTPS switched in Composer only (1122a). No Worker change; no D1 migration.
 
 ## 1122a. Direct HTTPS switched in Composer only (1.12.2)
