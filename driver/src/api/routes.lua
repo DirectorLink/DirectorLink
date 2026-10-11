@@ -16,7 +16,8 @@ return {
     { method = "POST", path = "/v1/api-keys", handler = "auth.create_key", role = "admin" },
     { method = "GET", path = "/v1/api-keys/current", handler = "auth.current_key", role = "member" },
     { method = "DELETE", path = "/v1/api-keys/current", handler = "auth.revoke_current_key", role = "member" },
-    { method = "PATCH", path = "/v1/api-keys/{keyId}", handler = "auth.update_key", role = "admin" },
+    -- Since 1.12.0 (ADR-083) a member renames their own user's devices (only `name`; the handler checks).
+    { method = "PATCH", path = "/v1/api-keys/{keyId}", handler = "auth.update_key", role = "member" },
     -- Since 1.9.0 (ADR-061) a member removes their own user's other devices (Access.mayRemoveDevice).
     { method = "DELETE", path = "/v1/api-keys/{keyId}", handler = "auth.delete_key", role = "member" },
 
@@ -35,6 +36,11 @@ return {
     { method = "POST", path = "/v1/users/owner", handler = "users.make_owner", role = "admin" },
     { method = "POST", path = "/v1/pairing-code", handler = "users.create_code", role = "admin" },
     { method = "DELETE", path = "/v1/pairing-code", handler = "users.delete_code", role = "admin" },
+
+    -- Direct HTTPS (1.12.0, ADR-082): the API over TLS on port 28443 under the home's own name; its
+    -- status for admins, and the owner's switch (only the owner: the handler checks).
+    { method = "GET", path = "/v1/https", handler = "https.status", role = "admin" },
+    { method = "PUT", path = "/v1/https", handler = "https.set", role = "admin" },
 
     { method = "GET", path = "/v1/remote", handler = "remote.status", role = "member" },
     { method = "POST", path = "/v1/remote/claim", handler = "remote.claim", role = "admin" },
@@ -104,6 +110,8 @@ return {
     { method = "POST", path = "/v1/blinds/{blindId}/stop", handler = "blinds.stop", role = "member" },
 
     { method = "GET", path = "/v1/cameras", handler = "cameras.list", role = "member" },
+    -- The home's camera order (1.12.1), as the room order.
+    { method = "PUT", path = "/v1/cameras/order", handler = "cameras.order", role = "admin" },
     { method = "GET", path = "/v1/cameras/{cameraId}", handler = "cameras.get", role = "member" },
     { method = "GET", path = "/v1/cameras/{cameraId}/snapshot", handler = "cameras.snapshot", role = "member" },
 
@@ -115,6 +123,9 @@ return {
     { method = "GET", path = "/v1/doorbells", handler = "doorbells.list", role = "member" },
     { method = "GET", path = "/v1/doorbells/{doorbellId}", handler = "doorbells.get", role = "member" },
     { method = "POST", path = "/v1/doorbells/{doorbellId}/open", handler = "doorbells.open", role = "member" },
+    -- The doors and gates an admin links to a doorbell (1.11.0, ADR-078); each still opened with
+    -- its own Open, by those who may open it.
+    { method = "PUT", path = "/v1/doorbells/{doorbellId}/doors", handler = "doorbells.set_doors", role = "admin" },
 
     -- Samsung refrigerators (ADR-049): read and switched by those given refrigerators (ADR-054).
     { method = "GET", path = "/v1/refrigerators", handler = "refrigerators.list", role = "member" },

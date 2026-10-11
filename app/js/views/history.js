@@ -33,7 +33,7 @@ const ICONS = { scene: "scene", door: "door", composer: "controller", access: "k
 // A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
 // An ask-to-open link's question (1.8.0) is a door entry with a bell; its links are access entries.
 const ACTION_ICONS = { left_open: "fridge", asked: "bell", ask_link_created: "link", ask_link_replaced: "link", ask_link_removed: "link" };
-const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus" };
+const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus", direct_https: "home" };
 
 let generation = 0;
 let refreshTimer = null;
@@ -276,6 +276,9 @@ function title(entry) {
     // The owner made another admin the owner (1.9.0, ADR-064).
     case "access.owner_changed":
       return withName("history.access.owner_changed", what, { from: isolate(entry.from) });
+    // A device moved to another of the same user, Safari to the Home Screen app (1.12.0, ADR-083).
+    case "access.moved":
+      return withName("history.access.moved", what, { from: isolate(entry.from) });
     case "composer.project": {
       const changes = entry.changes || [];
       const count = changes.length + (entry.more || 0);
@@ -302,6 +305,10 @@ function title(entry) {
       return entry.to ? t("history.system.updateRequiredTo", { to: entry.to }) : t("history.system.updateRequired");
     case "system.driver_added":
       return t("history.system.added");
+    // Direct connection at home turned on or off (1.12.0, ADR-082): by the owner's key in 1.12.0 and
+    // 1.12.1, by Composer since 1.12.2.
+    case "system.direct_https":
+      return t(entry.to === "off" ? "history.system.directOff" : "history.system.directOn");
     default:
       return t("history.other");
   }
@@ -360,11 +367,16 @@ export function outcomeText(entry) {
   const parts = [];
   if (counts) {
     const total = (counts.ran || 0) + (counts.skipped || 0) + (counts.failed || 0);
+    // Switches a level for a room or the whole home left as they are, as meant: said apart from
+    // the skipped (ADR-077, 2026-10-09).
+    const switches = counts.on_off_only || 0;
+    const skipped = (counts.skipped || 0) - switches;
     if (counts.failed) parts.push(t("history.counts.failed", { count: counts.failed, total }));
     else if (counts.ran) parts.push(t("history.counts.ran", { count: counts.ran }));
-    if (counts.skipped) parts.push(t("history.counts.skipped", { count: counts.skipped }));
+    if (skipped > 0) parts.push(t("history.counts.skipped", { count: skipped }));
     // ACs a scene left off, their last mode not known yet (1.10.0, ADR-070).
     if (counts.no_last_mode) parts.push(t("history.counts.noLastMode", { count: counts.no_last_mode }));
+    if (switches > 0) parts.push(t("history.counts.switchesLeft", { count: switches }));
     if (!total) parts.push(t("history.counts.none"));
   }
   if (entry.kind === "schedule" && entry.note === "late") parts.push(t("history.note.late"));
@@ -372,6 +384,8 @@ export function outcomeText(entry) {
   if (entry.via) parts.push(t("history.via", { scene: isolate(entry.via) }));
   // A door opened in answer to an ask-to-open link (1.8.0).
   if (entry.kind === "door" && entry.ids?.link_id) parts.push(entry.note ? t("history.answered", { label: isolate(entry.note) }) : t("history.answeredUnnamed"));
+  // Opened from a doorbell's ring screen or banner (1.11.0, ADR-078).
+  else if (entry.kind === "door" && entry.ids?.doorbell_id && entry.note) parts.push(t("history.fromDoorbell", { name: isolate(entry.note) }));
   return parts.join(" · ");
 }
 

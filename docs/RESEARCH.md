@@ -29,6 +29,22 @@ References:
 snap-one/docs-driverworks-api, `source/includes/7_event/` (RegisterSystemEvent, OnSystemEvent, Registering for System Events)
 https://raw.githubusercontent.com/snap-one/drivers-common-public/master/global/handlers.lua
 
+## A list property's value across a driver update (1.12.2)
+
+1.12.2 changed the items of the Composer property **Direct HTTPS** from Off and Allowed to Off and On (ADR-082, changed in 1.12.2). No document says what Director does with a stored LIST value that the new `<items>` no longer has. What was found on 2026-10-11 (nothing run on a controller):
+- Snap One's *DriverWorks Fundamentals*, "Driver Update Limitations and Considerations": "With a driver update, all configuration remains intact", and properties are "generally … safe across driver update. You may add and remove; but be careful about retyping properties." Nothing about changed items.
+- The owner's own project file (`.c4p`, saved by Composer) keeps each property as a name and a value only (`<lua_gen_persisting><properties><property><name>…<value>…`), without its items. Of 694 stored LIST values, 3 are not among their driver's items (Control4's own KNX Contact/Relay driver, "Relay 1 Status Value" = its `<default>`, which its list does not have): kept word for word. So Director stores a LIST value without checking it against the items.
+- Other drivers that removed items rely on the old text surviving the update and rewrite it in `OnDriverLateInit` with `C4:UpdateProperty` (13mralex/c4-pyatv-remote, commit cec8ee2: `["Dashboard (Hold TV Button)"] = "Dashboard"`); another notes that "Composer properties persist across updates".
+- The API reference: `C4:UpdateProperty` is how a driver changes a property's value, never in `OnDriverInit`; `OnPropertyChanged` "is not called when the Property has been changed by the driver calling the UpdateProperty command". Snap One's own samples set writable LIST properties this way (`C4:UpdateProperty('Debug Mode', 'Off')`). `C4:UpdatePropertyList` is documented for dynamic lists; what it does to a static list's value is not.
+- One unconfirmed report: a Composer left open while a driver restarted sent its cached values back, undoing such a rewrite.
+
+So DirectorLink reads both On and Allowed as On, for good; sets Allowed to On with `C4:UpdateProperty` at every `OnDriverLateInit` (so that Composer shows On); and treats an Allowed that comes back through `OnPropertyChanged` as On, setting it to On again, without a history entry (no installer can choose it any more). Not yet seen on a controller: what Composer shows for a value its list does not have, whether `Properties` changes at once after `C4:UpdateProperty`, and Composer sending a cached value back (docs/TESTING.md, 1.12.2).
+
+References:
+https://snap-one.github.io/docs-driverworks-fundamentals/#updating-released-drivers-driver-update-limitations-and-considerations
+https://snap-one.github.io/docs-driverworks-api/#properties-interface-properties-table
+https://github.com/13mralex/c4-pyatv-remote/commit/cec8ee2fd40e535f802a3d8076e5013e45f3677c
+
 ## Blind proxy (1.1.0)
 
 On Director 3.4.3 with KNX blinds (the "KNX Blinds (2.9+)" driver behind `blind.c4i`) the proxy's variables are 1000 Open, 1001 Fully Closed, 1002 Stopped, 1003 Fully Open, 1004 Level, 1005 Target Level, 1006 Type, 1007 Movement, 1008 Opening and 1009 Closing. Level is set when a move starts (the proxy's estimate), when it ends (the driver's timer) and whenever the actuator reports; values outside 0–100 are unknown (-155 when the actuator reports 255, -255 after a restart). Control4's own UI reads the proxy's setup with a UI request (Director logs `UIRequest returned: <blind_setup><has_level>True</has_level><level_discrete_control>True</level_discrete_control><can_stop>True</can_stop>...<movement>1</movement>...<levels minimum="0" maximum="100" resolution="1" unknown="-1"><level name="Closed" ... level="0" .../><level name="Open" ... level="100" .../>...`); `level_discrete_control` is False on shades that only open and close fully, whose KNX driver sends up for any target above 0. DirectorLink sends `GET_SETUP` with `C4:SendUIRequest` (the return value is not documented) and logs the answer once per shade at debug level.

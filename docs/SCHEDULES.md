@@ -1,7 +1,8 @@
 # Schedules and the weather
 
 **Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0; the weather from a saved
-forecast in 1.10.0 (ADR-071); a threshold itself counts, everywhere, in 1.10.1 (ADR-074).**
+forecast in 1.10.0 (ADR-071); a threshold itself counts, everywhere, in 1.10.1 (ADR-074); the
+weather on Home, with tomorrow's forecast, in 1.12.1 (ADR-084).**
 
 A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, when the
 weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
@@ -106,7 +107,8 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   is the one at the start of the hour now. The hour without rain that a rain rule waits for is the
   forecast's too.
 - **Every 6 hours** the **controller** asks `api.open-meteo.com` itself for a new forecast, while an
-  enabled schedule needs the weather, and for an hour after an app shows it: 4 requests a day. It
+  enabled schedule needs the weather, and for an hour after an app shows it (since 1.12.1 Home shows
+  it, so whenever the app is used): 4 requests a day. It
   replaces the saved one. Nothing goes through DirectorLink's servers. It sends the project's
   location rounded to two decimals (about a kilometre), as before.
 - **Without the internet** nothing changes for 5 days: the saved forecast (kept across restarts,
@@ -130,6 +132,10 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   installer offering this commercially should check Open-Meteo's terms (they have paid plans).
 - `GET /v1/weather` also gives today's sunrise and sunset. Its `location` is given to admin keys
   only, rounded to two decimals; other roles get `null` (1.0.0).
+- **Tomorrow** (1.12.1, ADR-084): `GET /v1/weather` also says `tomorrow`, as `today`: the next day's
+  high, low and chance of rain from the saved forecast (null when it does not reach that day, and
+  without weather) and its sunrise and sunset, worked out on the controller as today's (there
+  without the internet too). Additive: older clients ignore it.
 
 ## Shabbat and holidays
 
@@ -241,6 +247,11 @@ device will both run; these properties are how to find the DirectorLink side.
 
 ## The app
 
+- **Home** (1.12.1, ADR-084), for every user: one line under the command field, *Now 27° · Today
+  23°–30° · rain 14% · sunset 18:13* (on screen the parts are set apart by a gap, not dots), in
+  whole degrees of the project's scale, with the sky's icon: today's low and high until 15:00 and
+  tomorrow's after, the chance of rain from 10%, and only the next sunrise or sunset. Hidden without weather. Read when Home opens and every 10 minutes while it
+  stays open (`app/README.md`, The weather on Home).
 - **Scenes → Schedules**: the weather at home (with the Open-Meteo credit; since 1.10.0 "Forecast
   for 14:20, updated today 08:00") and every schedule in a sentence — "Sun–Thu at 06:45 · Runs
   Good morning · Only if it isn’t raining · Next: tomorrow 06:45" — with an on/off switch for

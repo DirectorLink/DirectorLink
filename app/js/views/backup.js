@@ -269,6 +269,10 @@ function kindText(kind) {
 function whereText(use) {
   if (use.section === "scenes") return t("backup.where.scene", { name: use.name || "" });
   if (use.section === "sonos_rooms") return t("backup.where.sonosRoom", { name: use.name || "" });
+  // The doors an admin added to a doorbell (1.11.0, ADR-078).
+  if (use.section === "doorbell_doors") return t("backup.where.doorbellDoors", { name: use.name || "" });
+  // The home's camera order (1.12.1).
+  if (use.section === "camera_order") return t("backup.where.cameraOrder");
   if (use.section === "profiles") return t("backup.where.profile", { name: use.name || "" });
   // A member's rooms, or the rooms hidden from members (1.8.0, ADR-054).
   if (use.section === "people") return use.name ? t("backup.where.personRooms", { name: use.name }) : t("backup.where.hiddenRooms");
@@ -328,6 +332,10 @@ function summary(preview, { result = false } = {}) {
     ...(Number.isInteger(counts.sonos_rooms) ? [["sonosRooms", counts.sonos_rooms]] : []),
     // Scene links (1.7.0): only from a controller that has them.
     ...(Number.isInteger(counts.scene_links) ? [["sceneLinks", counts.scene_links]] : []),
+    // Doors added to doorbells (1.11.0): only from a backup that has them.
+    ...(Number.isInteger(counts.doorbell_doors) ? [["doorbellDoors", counts.doorbell_doors]] : []),
+    // The camera order (1.12.1): only from a backup that has it.
+    ...(Number.isInteger(counts.camera_order) ? [["cameraOrder", counts.camera_order]] : []),
   ];
   const back = Array.isArray(keys.items) ? keys.items : [];
   const unmatched = references.unmatched || [];

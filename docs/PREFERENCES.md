@@ -4,13 +4,13 @@
 `docs/SCHEDULES.md`) follow the same rules. Users' roles and permissions: 1.8.0 (ADR-054, *Users:
 admins and members* below). Users and their devices: 1.9.0 (ADR-061, *Users and their devices*
 below). Settings → Appearance and language, the text size, Spanish and Italian: 1.10.0 (ADR-067,
-*Appearance and language* below).
+*Appearance and language* below). The camera order: 1.12.1 (*Cameras* below).
 
 ## Where each setting lives
 
 | Whose | Examples | Where | Who changes it |
 | --- | --- | --- | --- |
-| The home's | room names per language, the room order, rooms hidden from members, scenes, schedules, users' roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
+| The home's | room names per language, the room order, the camera order, rooms hidden from members, scenes, schedules, users' roles and permissions | the controller | admins (members run the scenes an admin chose for them) |
 | A user's | language, theme, palette (colours), favorites, hidden rooms | the controller, in their **profile** | that user, from any of their devices |
 | This device's | the controller's address, the access key, the browser's notification permission, the text size | the browser | this device |
 
@@ -23,14 +23,19 @@ away from home, and from the app on the home network too (1.0.0). The cloud neve
 - A profile is a user (until 1.9.0 the docs said a person). **Every API key belongs to one profile**
   (`profile_id` on the key): the key is one of that user's devices.
 - Composer's pairing code, an admin creating a key, and an invitation for someone else each make a
-  new profile, named after the key (a key created with `profile_id` joins that user instead, 1.8.0).
+  new profile, named after the key (a key created with `profile_id` joins that user instead, 1.8.0);
+  since 1.12.0 (ADR-083) an invitation from Add a user, like a pairing code made for a new user,
+  names the profile as the admin chose.
   **Add my other device** (an invitation with `for_me`) puts the new key in the inviter's profile,
   so a user's phone starts with their language, theme and favorites. Since 1.9.0 a pairing code an
   admin makes in the app is for a user they choose, or a new one (*Users and their devices*).
 - An admin can move a key to another profile (`PATCH /v1/api-keys/{id}` `profile_id`, or Settings →
   Users → User) — for two devices of one user that were paired separately; since 1.8.0 the key then
-  has that user's permissions — and rename a profile (`PATCH /v1/profiles/{id}`). A profile goes
-  with its last key.
+  has that user's permissions — and rename a profile (`PATCH /v1/profiles/{id}`). Since 1.12.0 every
+  user names their own profile (`PATCH /v1/profile` `name`) and renames their own devices
+  (`PATCH /v1/api-keys/{id}` `name`); `GET /v1/profile` says `name_from_device` while the name is
+  still one of their devices', and the app then asks once for their name. A profile goes with its
+  last key.
 - Keys from before 0.12.0 get a profile each at the first start; an admin can then merge them.
 - `GET /v1/profile` / `PATCH /v1/profile` are the caller's own (any role): `prefs` with `language`
   (`auto` or a tag), `theme` (`auto`, `light`, `dark`), `palette`, `favorites` (`"kind:id"`, in
@@ -126,8 +131,9 @@ own devices (`GET /v1/users`).
   History. A device used by several accounts (a shared tablet) stays where it is.
 - **A user goes with their last device**, with their name, permissions and preferences, and so do
   the invitations and the pairing code made for them.
-- **Pairing at home is for a chosen user.** An admin taps **Pair a device** on a user (or **New user
-  at home**, with a name and access): the app shows a pairing code (8 digits, 15 minutes, works
+- **Pairing at home is for a chosen user.** An admin taps **Pair a device** on a user (or **Add a
+  user**, with a name and access, then Pairing code; New user at home before 1.12.0, which added
+  Send a link there too, ADR-083): the app shows a pairing code (8 digits, 15 minutes, works
   once, also shown in Composer). The device that pairs with it joins that user, with their access;
   the device never chooses. Composer's New Pairing Code still makes a new admin user.
 - **Members add and remove their own devices:** Remove on their other devices, Add my other device in
@@ -185,6 +191,24 @@ documentation and the website are in English.
   (`PATCH /v1/rooms/{roomId}` `{"hidden_from_members": true}`), and it and its devices disappear
   for every member, whatever rooms they were given. Admins still see it, marked
   (`hidden_from_members` in `GET /v1/rooms`). Personal hiding stays as it is, on top, for anyone.
+
+## Cameras (1.12.1)
+
+- **The order is the home's**, one for everyone, as the room order: admins tap **Order** on the
+  Cameras tab, which lists every camera (doorbell cameras too) with its room; a camera moves by its
+  handle (on a touch screen, held first), with the keyboard, or one place at a time with the arrows,
+  as in Settings → Rooms; **Save** sends the whole order in one `PUT /v1/cameras/order`
+  (`{"camera_ids": [...]}`), **Cancel** (or leaving the tab) sends nothing. It is kept on the
+  controller (`directorlink_camera_order`) and in backups (`docs/BACKUP.md`).
+- **Everyone sees it.** `GET /v1/cameras` answers in that order, and the Cameras tab shows the
+  cameras so (the first one large); a room's cameras follow it, and `GET /v1/doorbells` puts each
+  doorbell at its camera's place (a DoorBird at its camera's, a doorbell camera at its own), so a
+  room's doorbells follow it too. Members see the order and no Order button.
+- Cameras not in the order (added in Composer since) follow, sorted by name; a camera removed is
+  passed over, and comes back to its place if it comes back with the same id. A camera no longer in
+  the project cannot be put in the order (`400`).
+- A controller before 1.12.1 has none (no `features.camera_order`): the app shows no Order, and the
+  cameras are sorted by name.
 
 ## Favorites of removed devices (1.8.0, ADR-059)
 

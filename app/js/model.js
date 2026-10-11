@@ -112,14 +112,35 @@ function shownIds() {
 }
 
 // A device this app cannot control, unless it is shown already: part of a device shown (1.10.1,
-// `part_of`: a door controller's button shown as the KNX relay it drives, a DoorBird's button), or
-// an alarm partition shown on Home. A driver before 1.10.1 says no `part_of`.
+// `part_of`: a door controller's button shown as the KNX relay it drives, a DoorBird's button), an
+// alarm partition shown on Home, or (1.11.0, ADR-080, `part_of_music`) a proxy of Control4's own
+// Sonos driver while DirectorLink plays those players itself (Music). A driver before 1.10.1 says no
+// `part_of`, one before 1.11.0 no `part_of_music`.
 export function otherDevices(roomId) {
   const id = Number(roomId);
   const shown = shownIds();
+  const music = state.system?.features?.sonos === true;
   return state.devices.filter(
-    (device) => !device.supported && deviceRoomId(device) === id && !shown.has(device.id) && !(device.part_of != null && shown.has(device.part_of))
+    (device) =>
+      !device.supported &&
+      deviceRoomId(device) === id &&
+      !shown.has(device.id) &&
+      !(device.part_of != null && shown.has(device.part_of)) &&
+      !(music && device.part_of_music === true)
   );
+}
+
+// Doorbells in the home's camera order (1.12.1), as the controller lists them: each at its camera's
+// place among the cameras, so that a room shows them in the order just saved before the doorbells
+// are read again. One whose picture this user does not see keeps its place after them. Before
+// 1.12.1, as listed (by name).
+export function inCameraOrder(doorbells) {
+  if (state.system?.features?.camera_order !== true) return doorbells;
+  const rank = new Map(state.cameras.map((camera, index) => [camera.id, index]));
+  return doorbells
+    .map((doorbell, index) => ({ doorbell, index, rank: rank.get(doorbell.camera?.id) ?? state.cameras.length }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.doorbell);
 }
 
 export function devicesInRoom(roomId) {
@@ -132,7 +153,7 @@ export function devicesInRoom(roomId) {
     blinds: pick(state.blinds),
     cameras: pick(state.cameras),
     relays: pick(state.relays),
-    doorbells: pick(state.doorbells),
+    doorbells: inCameraOrder(pick(state.doorbells)),
     refrigerators: pick(state.refrigerators || []),
     music: pick(musicDevices()),
     // Devices this app cannot control, and does not show otherwise.
@@ -176,7 +197,7 @@ export function visibleRooms() {
     blinds: state.blinds.filter(orphan),
     cameras: state.cameras.filter(orphan),
     relays: state.relays.filter(orphan),
-    doorbells: state.doorbells.filter(orphan),
+    doorbells: inCameraOrder(state.doorbells.filter(orphan)),
     refrigerators: (state.refrigerators || []).filter(orphan),
     // A Sonos room whose name matches no room, until an admin picks one.
     music: musicDevices().filter(orphan),

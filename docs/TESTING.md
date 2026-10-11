@@ -2,6 +2,124 @@
 
 ## Current release
 
+`v1.12.2` — Direct HTTPS switched in Composer only (1122a). No Worker change; no D1 migration.
+
+## 1122a. Direct HTTPS switched in Composer only (1.12.2)
+
+1. Before updating: Composer → DirectorLink shows Direct HTTPS = Allowed and Status "Listening on <name>:28443, certificate until <date>"; note the name and date. On the iPhone, Settings → Controller says "On the home network, direct (HTTPS)".
+2. Update the driver with Composer open, then reopen DirectorLink's properties: Direct HTTPS shows **On** (not Allowed or blank); Status "Listening…" with the same name and date. The log says Allowed is On from now on and the TLS server started, with no new key or certificate request and no name deleted.
+3. History: only "DirectorLink updated from 1.12.1 to 1.12.2" (a "Composer: Direct HTTPS → On" entry would mean Director echoes the property update: note it).
+4. iPhone and iPad at home: the card shows the state and the explanation, no switch; still direct (HTTPS). An Android member sees no card and works at home. Open the gate and switch a KNX light from the iPhone.
+5. Close Composer completely, reopen the project, restart the controller: Direct HTTPS still On and listening.
+6. Composer → Off: Status Off at once; the iPhone goes through DirectorLink's servers; the card says the installer turns it on in Composer; History "…turned off, Composer"; after a minute `nslookup <name>.dlhome.cc` gives nothing.
+7. Composer → On: the certificate for the same name, then Listening within about a minute; History "…turned on, Composer"; the iPhone direct again within a minute.
+8. In Hebrew, with it Off, the installer's sentence reads "DirectorLink → Direct HTTPS → On" left to right.
+
+## Previous release
+
+`v1.12.1` — Cameras in your order (1121b), the weather on Home (1121a). No Worker change; no D1 migration.
+
+## 1121b. Cameras in your order (1.12.1)
+
+1. On the iPhone (admin), Cameras: an **Order** button. Tap it: every camera, the DoorBird's and the doorbell camera too, with its room.
+2. Drag a camera by its handle (touch and hold), and use the arrows; Save. The tab shows the new order and the first camera large. A room with the doorbell shows its cameras and doorbell in the same order.
+3. The same order on the iPad and on an Android member's phone, which has no Order button.
+4. Order, move a camera, Cancel (or switch tab): nothing changes. In Hebrew the list reads right to left.
+5. A camera added in Composer comes last; after a controller restart the order stays. A backup made now, the order changed, then restored: the preview counts the camera order, and it comes back.
+
+## 1121a. The weather on Home (1.12.1)
+
+1. On the iPhone's Home Screen app, Home shows the line under "Say or type a command"; "Now" and "Today" match the Schedules card, rounded.
+2. Before 15:00 it says Today, from 15:00 Tomorrow (compare `tomorrow` in the console's `GET /v1/weather`). After sunset it shows tomorrow's sunrise and a moon; before sunrise today's sunrise.
+3. Hebrew on the iPhone and on a narrow screen: 27° and 22°–31° read correctly and the line wraps cleanly, with no dots.
+4. An Android member's phone shows the line too; Settings → About shows "Weather by Open-Meteo". Away from home, through the account, it shows and updates; left open 10+ minutes, "Now" moves. The controller's log shows Open-Meteo read no more than every 6 hours.
+
+## Previous release
+
+`v1.12.0` — Pairing codes on 32-bit controllers (1120c), adding users and their devices (1120b), Direct HTTPS at home (1120a). A Worker change with a D1 migration (`0011_https_names`) and two secrets (`DLHOME_DNS_TOKEN`, `ACME_ACCOUNT_KEY`).
+
+## 1120c. Pairing codes (1.12.0)
+
+1. Composer → New Pairing Code three times: three different codes (on the owner's 64-bit CORE-1 they always differed; the fix matters on 32-bit controllers).
+
+## 1120b. Adding users and their devices (1.12.0)
+
+1. **Names.** On the iPad's Home Screen app, Settings asks "What's your name?" once ("Safari on iPad"); save it and Settings → Users shows it. The owner ("Chrome on Windows") is asked once on the PC.
+2. **Add a user by link.** iPhone: Settings → Users → Add a user, "Test", Member with a door, Next, Send a link to a spare Google or Apple account. Open it in Safari on the iPad: the Home Screen app is recommended. Copy link, open the Home Screen app, sign in, Join with an invitation, Paste: "You joined <home> as Test.", the user "Test" with the device "DirectorLink app on iPad". The controller log's `invitation` message to the relay doesn't contain "Test".
+3. **Add a user by pairing code** on the PC: Add a user → Pairing code; an Android phone pairs with it and joins that user.
+4. **Move.** On an iPad Safari tab with a key: Settings → Account → Move to the Home Screen app, Copy link, paste it in the Home Screen app. Safari says "Moved to the Home Screen app…"; the user has as many devices as before; History says the Safari device moved. Also with five devices.
+5. **Renames and old devices.** A member renames one of their own devices; Ort's Samsung shows "Not used since 30 Sept 2026" by Remove.
+
+## 1120a. Direct HTTPS at home (1.12.0)
+
+1. Deploy the Worker (migration, then the secrets), then update the driver. Composer still says Direct HTTPS = Allowed (from the test build); Status: "Allowed: the home's owner turns it on in the app". The test build's name and key are kept.
+2. Owner's iPhone: Settings → Controller → Direct connection at home: read the explanation, turn it on. "Getting a certificate…", then "On until <date>" (about 90 days) within about a minute. Worker logs: `https_certificate_requested`, `https_certificate_issued`, `https_dns_updated`; Cloudflare: the A record to 192.168.1.201, DNS only.
+3. iPhone and iPad on home Wi-Fi, Safari tab and Home Screen app: Settings → Controller → This device says "On the home network, direct (HTTPS)". Switch a KNX light, open the DoorBird picture, open the gate once; the controller's log shows the requests at home and none through the relay.
+4. iPhone on cellular: through DirectorLink's servers within about 2.5 s; back on Wi-Fi, direct again within a minute.
+5. Android members (Chrome): direct (HTTPS) after allowing Chrome's local network prompt; with it denied in site settings the phone still works through the servers.
+6. A non-owner admin sees the card read-only (and a `PUT` gets 403); a member sees no card. Composer back to Off: the card says the installer has to allow it.
+7. Owner turns it off: the A record goes (`https_dns_deleted`), iPhones go back to the servers, Android to the plain address.
+8. Load: several phones on camera pages over HTTPS; the controller stays responsive (each request is a new TLS connection).
+
+## Previous release
+
+`v1.11.0` — Smaller Worker logs (1110e), Control4's Sonos drivers (1110d), camera sounds by name (1110c), commands that do even more (1110b), open the gate from the ring (1110a). A Worker change (logs only); no D1 migration.
+
+## 1110e. Smaller Worker logs (1.11.0)
+
+1. After the Worker deploy, open the app away from home (or on the iPhone) and use it a minute. Workers Observability for `directorlink-api` shows no line per request or WebSocket message, and no `message_relayed` for quick taps.
+2. The rare lines still come: unplug the controller's network cable for a minute and plug it back in: `driver_disconnected`, then `driver_connected`. Signing in shows `signed_in`; a doorbell ring shows `notify_sent`.
+
+## 1110d. Control4's Sonos drivers (1.11.0)
+
+1. Owner's controller (no Control4 Sonos driver): every room shows the same "other devices" as on 1.10.3; in the console, `GET /v1/devices` shows `part_of_music: false` on every device.
+2. Dev server: `node tests/sonos/fake-sonos.mjs --port 8212`, then `python -u scripts/dev_server.py --sonos 8212 --control4-sonos`, serve app/ and pair. The Kitchen shows its Music card, and its other devices list Front Door but not Sonos Network or Kitchen Sonos; the Living Room lists Sonance Amp but not Living Room Sonos or Sonos Line In. Type `sonos off` and reload: they are listed again.
+
+## 1110c. Camera sounds by name (1.11.0)
+
+1. Owner's controller: a Hikvision alert (person, vehicle) arrives as before, at most one a camera a minute. Settings → Alerts shows the new line under the camera switch, in each language.
+2. With the next UniFi Protect driver (sounds as `Alert`): a camera hearing a smoke alarm right after a motion alert sends "Smoke alarm at <camera> at <time>" within seconds, as a separate notification; a dog barking within a minute of another alert from that camera is dropped.
+
+## 1110b. Commands that do even more (1.11.0)
+
+On the iPhone's Home Screen app:
+1. **Blinds a step.** *תפתחו קצת את התריס בסלון*: "סלון: פתיחת התריסים בעוד 20%", and the shade moves 20 points from where it was (its slider before and after). Then *תסגרו עוד קצת את התריס בסלון* and *תפתח את התריס בסלון ב-20% יותר*. *תעלו את התריס בסלון ב-20%* is not understood, as expected (to or by?).
+2. **Doors.** *תפתחו קצת את שער החניה*: "לא הבנתי", and the gate's button does not even show "tap again".
+3. **Levels.** *אורות בסלון לחצי*, then *תעמעמו את האור בסלון לרבע*: the dimmers go to 50% and 25%, the reply says only dimmers get a percentage, and the KNX switches, heaters and the door lock stay as they were. *תגבירו את האור בסלון ל-80%* sets 80%.
+4. **Warmer without the AC.** In a room with one AC that is on, *יותר חם בחדר שינה*: +1°. In a room with two thermostats, *יותר קר בסלון*: "איזה מהם?" with both. *יותר חם לי*, *נהיה קר בסלון*, *יותר קר פה*: nothing happens.
+5. **Five things.** *כבו את האור במטבח, תסגרו את התריס במטבח, תדליקו את האור בסלון, תכוונו את המזגן בסלון ל-23 ותפעילו לילה טוב*: five lines, each done. A sixth part: "עד 5 דברים בכל פעם, בבקשה." and nothing runs. A fifth part *…ותפתחו את שער החניה מחר*: "לא הבנתי", and nothing runs.
+6. **Fans** (dev server, or a home with fans): *תגבירו את המאוורר בסלון*: one speed up; *המאוורר לאט יותר*: one down; an off fan goes to its lowest speed on "faster".
+7. **Spanish and Italian:** *abre un poco la persiana del salón*, *más calor en el salón*; *alza un po' la tapparella del soggiorno*, *metti la luce del soggiorno a un quarto*.
+
+## 1110a. Open the gate from the ring (1.11.0)
+
+The owner's DoorBird (driver 761, doorbell camera 763) and gate (controller 530, button 531):
+1. After updating the driver and reloading the app, in the API console `GET /v1/doorbells/763` includes `doors: [{"id":531,"link":"automatic","can_open":true}]`. If `doors` is empty, the log line `door controller set up` for 531 says whether the bindings were read; add 531 by hand (step 6) meanwhile.
+2. Close the iPhone's Home Screen app. Ring the DoorBird and tap the alert: the app opens on the DoorBird's screen, the live picture loading at once, with a big "Open שער כניסה". Open, then "Tap again to open": "Sent", and the gate opens once.
+3. The same with the app in the background: the tap brings it to the front on the same screen.
+4. The same with the app open on Home: the ring banner shows "Open שער כניסה" under the picture, and the two taps open the gate.
+5. Settings → Controller → History: "Opened שער כניסה …", the iPhone, "From the doorbell <763's name>".
+6. On the doorbell's screen, as admin: "Doors and gates at this doorbell" lists שער כניסה as on the doorbell's relay, without Remove. Add a KNX door: its Open appears; remove it: it goes. Backup's restore preview counts "Doors and gates added to doorbells".
+7. An Android member's phone with doors and the gate's room: the ring notification shows "Open שער כניסה…", which opens the screen, not the gate; Open there works. Without doors or the gate's room: the picture and no Open ("Opening the gate needs door access.").
+8. Door Control Disabled in Composer: no Open buttons, and the screen says Door Control is off. Set it back to Enabled.
+
+## Previous release
+
+`v1.10.3` — A member's requests (1103b), a room's level goes to dimmers only (1103a). No Worker change; no D1 migration.
+
+## 1103b. A member's requests (1.10.3)
+
+1. On a member's device, go through Home, Scenes, Climate and Settings and leave the app open two minutes: DirectorLink's log shows no `GET /v1/schedules -> 403` for that key.
+2. On an admin's device, Scenes → Schedules still lists the schedules and shows the weather card.
+
+## 1103a. A room's level goes to dimmers only (1.10.3)
+
+1. Add a lights action for a room with KNX switches and a dimmer, choose Dim: the editor says "Only dimmers get a percentage; switches stay as they are", and the summary reads "All dimmers (Room): 50%". Pick lights one by one (a dimmer and a switch): the note goes.
+2. Run a scene "Whole home lights 30%": the dimmers go to 30%; no switch changes (heaters, a lock on a switch). The result says "Done — only dimmers get a percentage; N switches stayed as they were".
+3. History: "N switches left as they were". A step naming one switch at 50% turns it on. Off, On and 0% for a room still reach the switches.
+
+## Previous release
+
 `v1.10.2` — Light switches and KNX dimmers (1102b), thermostats in their own scale (1102a). No Worker change; no D1 migration.
 
 ## 1102b. Light switches and KNX dimmers (1.10.2)
@@ -53,7 +171,7 @@
 1. Deploy the Worker, then update DirectorLink in Composer. Remote Status reads *Connected since …*. In Workers Observability the home's `driver_hello` has `interval_s: 5`.
 2. **A blink on purpose.** Away from home (the phone on mobile data), open a room through the account, with a light someone at home can see. On the router, reconnect the internet connection (for PPPoE: Disconnect, then Connect; the home gets a new public address, which ends the controller's open connection as a route change does; not a router reboot), with the router's status page open. Tap the light once **just as the router shows the internet connected again** (or in the last 2–3 s before it, if you know how long a reconnect takes): the relay still sends into the old connection, which is dead, and a request goes again only if the driver is back within 10 s of the tap (it finds the cut at its next ping, within 5 s, and is back about 1–2 s later). Within about 10 s of the tap the light changes, once, and the app shows it done, not "home offline". A tap earlier in a longer outage is not this case and may say the home is offline, as before 1.10.0.
    - The driver's relay log (`GET /v1/logs?category=relay`): `relay connection closed` (`connection lost`, `heard_s` about the outage's length, `retry_s` 1), then `connected to the relay` with `attempts: 1`; and `a request the relay sent again` with `outcome` `new` (the tap never reached the controller before the cut) or `answered again` (it had, and its answer was lost).
-   - Workers Observability: `request_resent` for the home with `count: 1`, then `message_relayed` for the tap.
+   - Workers Observability: `request_resent` for the home with `count: 1`, then (up to 1.10.3) `message_relayed` for the tap; from 1.11.0 a quick tap leaves no line (ADR-081).
    - If the relay log says `no answer` instead, the internet was away longer than the driver's silence rule (about 15 s): the driver dropped the connection itself, and the tap may say the home is offline, as before. Try again with a quicker reconnect.
 3. **A door opens once.** Repeat 2 with a gate's Open (its second tap while the internet reconnects): it opens once, and History has one opening.
 4. **Turn off all AC** (the case that was lost): repeat 2 with Home's Turn off all for the ACs. Every AC goes off, once, and the result names them.

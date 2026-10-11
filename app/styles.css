@@ -510,7 +510,8 @@ img {
 }
 
 /* Settings → Rooms: shown or hidden (personal), and the home's order (admins): a room is dragged
-   by its handle (views/settings.js), the others make room, and it glides into its place. */
+   by its handle (sortable.js), the others make room, and it glides into its place. Cameras → Order
+   (1.12.1, views/cameras.js) lists the cameras the same way. */
 .room-order-list {
   position: relative;
   list-style: none;
@@ -575,7 +576,8 @@ img {
   overflow-wrap: anywhere;
 }
 
-.room-order-hidden {
+.room-order-hidden,
+.camera-order-room {
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -2359,6 +2361,128 @@ select:disabled {
   }
 }
 
+/* A doorbell's own screen (1.11.0, ADR-078): where its ring's notification opens. Its live picture,
+   then a big Open for each door at it; in the ring's colour while someone is at the door. */
+.doorbell-screen {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.doorbell-screen.is-ringing {
+  background: var(--onBg);
+  border-color: transparent;
+  color: var(--onText);
+}
+
+.doorbell-screen .doorbell-picture .cam {
+  border-radius: var(--radius);
+  aspect-ratio: 4 / 3;
+}
+
+.doorbell-screen-meta {
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.doorbell-screen-actions {
+  flex-direction: column;
+  align-items: stretch;
+  margin-block-start: 0;
+}
+
+.doorbell-screen.is-ringing .relay-button:not(.is-confirm):not(.is-sent) {
+  background: var(--card);
+  border-color: transparent;
+}
+
+.doorbell-screen.is-ringing .doorbell-event-type,
+.doorbell-screen.is-ringing .doorbell-event-time {
+  color: inherit;
+}
+
+.doorbell-screen-skeleton {
+  height: 52px;
+}
+
+.relay-button.doorbell-door span {
+  overflow-wrap: anywhere;
+}
+
+/* On Home's ring banner each door's Open has a row of its own; Dismiss and the others share the last. */
+.ring-banner .relay-actions .doorbell-door {
+  flex: 1 1 100%;
+}
+
+@media (min-width: 760px) {
+  .doorbell-screen {
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    align-items: start;
+    column-gap: 20px;
+  }
+  .doorbell-screen > .doorbell-picture,
+  .doorbell-screen > .skeleton-camera-large {
+    grid-column: 1;
+    grid-row: 1 / span 6;
+  }
+  .doorbell-screen > :not(.doorbell-picture):not(.skeleton-camera-large) {
+    grid-column: 2;
+  }
+}
+
+/* An admin's doors at the doorbell. */
+.doorbell-link-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.doorbell-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.doorbell-link-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.doorbell-link-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.doorbell-link-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The picker keeps room for a door's whole name: on a narrow phone the button goes under it. */
+.doorbell-link-add .input-row {
+  flex-wrap: wrap;
+}
+
+.doorbell-link-add select {
+  flex: 1 1 14rem;
+  min-width: 0;
+}
+
+.doorbell-screen-link {
+  align-self: flex-start;
+}
+
 /* Other screens: one line that leads to the banner. */
 .banner-ring {
   background: var(--onBg);
@@ -3255,6 +3379,51 @@ input[type="text"].command-input:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
+}
+
+/* Adding users and their devices (1.12.0, ADR-083): Add a user's two ways, the Home Screen app's
+   steps (join page, Move to the Home Screen app), the name card, a device not used for a while. */
+.add-user-choice,
+.move-home-screen,
+.join-home-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.add-user-choice {
+  padding-block-start: 12px;
+  border-block-start: 1px solid var(--line);
+}
+
+.move-home-screen {
+  margin-block-start: 6px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--line);
+}
+
+.home-screen-steps {
+  margin: 0;
+  padding-inline-start: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9375rem;
+}
+
+.name-card {
+  border: 2px solid var(--primary);
+}
+
+.joined-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.access-stale {
+  color: var(--errText);
 }
 
 .connect-signed-in {
@@ -4817,6 +4986,53 @@ a.scene-name:hover {
   height: 18px;
   flex: none;
   color: var(--onText);
+}
+
+/* Home's weather line (1.12.1, views/home.js): under the command field. Its parts are set apart by a
+   gap, no dots (a dot would dangle at the end or start of a wrapped line), each kept whole; the
+   narrowest phones drop "Now" before any of the weather. */
+.weather-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.weather-line .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  margin-block-start: 1px;
+  color: var(--ink);
+}
+
+.weather-line-text {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 0.75em;
+  min-width: 0;
+}
+
+.weather-line-part {
+  white-space: nowrap;
+}
+
+.weather-line-part.is-now {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* With the Hebrew date under it, the two read as one block. */
+.weather-line + .calendar-line {
+  margin-block-start: -12px;
+}
+
+@media (max-width: 359.98px) {
+  .weather-line-now {
+    display: none;
+  }
 }
 
 .schedule-candles {

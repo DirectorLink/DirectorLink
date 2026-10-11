@@ -181,16 +181,26 @@ local function rounded(value)
     return value and math.floor(value * 10 + 0.5) / 10 or nil
 end
 
--- The day of the forecast that holds `now` (the location's midnight to midnight).
-local function today(forecast, now)
-    local found
-    for _, day in ipairs(forecast.days) do
+local function dayValues(day)
+    day = day or {}
+    return { max_temperature = day.max_temperature, min_temperature = day.min_temperature, rain_chance = day.rain_chance }
+end
+
+-- The day of the forecast that holds `now` (the location's midnight to midnight), and the day after
+-- it (1.12.1), empty when the forecast does not reach it.
+local function days(forecast, now)
+    local found, index
+    for position, day in ipairs(forecast.days) do
         if day.start <= now and now < day.start + 26 * 3600 then
-            found = day
+            found, index = day, position
         end
     end
-    found = found or {}
-    return { max_temperature = found.max_temperature, min_temperature = found.min_temperature, rain_chance = found.rain_chance }
+    local after = index and forecast.days[index + 1] or nil
+    -- The next day only: 23 to 25 hours later (a daylight saving change), never one further on.
+    if after and (after.start <= found.start + 22 * 3600 or after.start > found.start + 26 * 3600) then
+        after = nil
+    end
+    return dayValues(found), dayValues(after)
 end
 
 -- The weather at `now` from a forecast for `place`, or nil when it does not hold now. The
@@ -216,6 +226,7 @@ local function readingAt(forecast, place, now)
         return nil
     end
     local precipitation = forecast.precipitation[slot + 1] or 0
+    local today, tomorrow = days(forecast, now)
     return {
         temperature = temperature,
         wind_speed = between(forecast.wind_speed),
@@ -223,7 +234,8 @@ local function readingAt(forecast, place, now)
         -- The code at the hour's start (an instant value, as the temperature).
         weather_code = forecast.weather_code[slot],
         raining = precipitation > 0,
-        today = today(forecast, now),
+        today = today,
+        tomorrow = tomorrow,
         source = "forecast",
         saved_at = forecast.saved_at,
         forecast_until = untilOf(forecast),

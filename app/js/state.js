@@ -8,6 +8,9 @@ export const state = {
   status: "setup",
   // How requests travel: "lan" (the home network) or "remote" (sealed, through the account).
   transport: "lan",
+  // Which way on the home network (session.js): "https", the controller's Direct HTTPS name (1.12.0,
+  // direct.js), or "http", its address on port 41999.
+  lanRoute: "http",
   // GET /v1/remote from the controller, for Settings → Account (null until asked).
   remoteInfo: null,
   // This person's profile (profile.js): null until read, and with drivers before 0.12.0.
@@ -86,9 +89,14 @@ export const ui = {
   find: null, // Find my controller on the pairing screen (views/find.js): { stage, range, controllers }
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
+  doorbellLinks: null, // a doorbell's screen, an admin linking doors (1.11.0): { id, busy, message, choice }
+  ringCamera: null, // a ring's screen opened by its notification: { doorbell, camera } asked for before the doorbells are read
   featuredCamera: null, // Cameras tab: id of the large picture
+  // Cameras tab, an admin setting the home's camera order (1.12.1, views/cameras.js): { ids, busy,
+  // message } until Save or Cancel; null otherwise.
+  cameraOrder: null,
   dragging: false, // a slider thumb is held: redraws wait
-  reordering: false, // Settings → Rooms: a room is being moved (views/settings.js): redraws wait
+  reordering: false, // a room (Settings → Rooms) or a camera (Cameras → Order) is being moved (sortable.js): redraws wait
   tick: 0, // bumped by timers that need a redraw
 };
 

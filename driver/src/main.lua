@@ -11,6 +11,7 @@ local Refrigerator = require("src.adapters.refrigerator")
 local Keys = require("src.auth.keys")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
+local CameraLayout = require("src.core.camera_layout")
 local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local Scheduler = require("src.core.scheduler")
@@ -30,6 +31,7 @@ local Users = require("src.auth.users")
 local FavoritesGone = require("src.core.favorites_gone")
 local Pairing = require("src.auth.pairing")
 local Api = require("src.api.server")
+local DirectHttps = require("src.api.direct_https")
 local Relay = require("src.cloud.relay")
 local Remote = require("src.cloud.remote")
 local Invitations = require("src.auth.invitations")
@@ -39,6 +41,7 @@ local SonosRooms = require("src.sonos.rooms")
 local Activity = require("src.core.activity")
 local AutoBackup = require("src.cloud.auto_backup")
 local Alerts = require("src.cloud.alerts")
+local DoorbellDoors = require("src.core.doorbell_doors")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -262,6 +265,8 @@ local services = {
     invitations = Invitations,
     pairing = Pairing,
     log = Log,
+    -- Direct HTTPS (1.12.0, ADR-082): the API over TLS on port 28443.
+    https = DirectHttps,
     -- Remote access with accounts (src/cloud/remote.lua, src/api/handlers/remote.lua).
     remote = {
         enabled = function()
@@ -344,9 +349,17 @@ local services = {
         local taken = Accounts.update(keys, Keys.exists)
         if taken then
             Users.suggest()
+            -- A home claimed before 1.8.0 counts as linked once an account uses one of its keys:
+            -- Direct HTTPS asks for its certificate now (ADR-082).
+            DirectHttps.refresh("accounts")
         else
             Log.warn("auth", "ignored an accounts message that is not a list of key ids and tags")
         end
+    end,
+    -- The home was claimed for an account (src/cloud/remote.lua): Direct HTTPS, on in Composer,
+    -- asks for its certificate now rather than at its next look (ADR-082, 1.12.2).
+    onLinked = function()
+        DirectHttps.refresh("linked")
     end,
     -- A restore from a backup replaced every store (ADR-042, src/core/backup.lua).
     onRestored = function(restore)
@@ -371,6 +384,31 @@ local services = {
         end
     end,
 }
+
+-- Composer's Direct HTTPS says On (ADR-082; since 1.12.2 the only switch), or "Allowed", which is
+-- what 1.12.0 and 1.12.1 called On.
+local function directHttpsOn()
+    local value = Properties ~= nil and Properties[DirectHttps.PROPERTY] or nil
+    return value == DirectHttps.ON or value == DirectHttps.OLD_ON
+end
+
+-- The value DirectorLink gave Direct HTTPS itself (Allowed, from 1.12.0 or 1.12.1, shown as On),
+-- until Director reports it to OnPropertyChanged, if it does: that is no change of the installer's.
+local httpsRenamed = nil
+
+-- Director keeps a list property's value across a driver update even when the new list no longer
+-- has it (docs/RESEARCH.md, "A list property's value across a driver update"): 1.12.1's "Allowed"
+-- stays. It is read as On, always, and set to On at every start (never in OnDriverInit, where
+-- Director takes no C4:UpdateProperty), so that Composer shows it. Never "Allowed" back: a
+-- downgrade to 1.12.1 reads On as Off (safe: it stops, and the name's record is deleted).
+local function renameDirectHttps()
+    if Properties == nil or Properties[DirectHttps.PROPERTY] ~= DirectHttps.OLD_ON then
+        return
+    end
+    httpsRenamed = DirectHttps.ON
+    updateProperty(DirectHttps.PROPERTY, DirectHttps.ON)
+    Log.info("https", "direct https: Composer's Allowed (1.12.0 and 1.12.1) is On from now on")
+end
 
 local function readControllerVersion()
     local ok, info = pcall(function()
@@ -560,6 +598,7 @@ function OnDriverLateInit(driverInitType)
     Invitations.load()
     RoomNames.load()
     RoomLayout.load()
+    CameraLayout.load()
     local sceneCount, scenesStoredAs = Scenes.load()
     Log.info("scenes", "scenes loaded", { count = sceneCount, stored_as = scenesStoredAs })
     -- Scene links (ADR-051): a scene changed to open doors meanwhile (by an older DirectorLink)
@@ -580,6 +619,8 @@ function OnDriverLateInit(driverInitType)
     Log.info("auth", "accounts of the keys loaded", { keys = Accounts.load() })
     FavoritesGone.load()
     SonosRooms.load()
+    -- The doors an admin linked to a doorbell (1.11.0, ADR-078).
+    Log.info("doorbell", "doors linked to doorbells loaded", { doorbells = DoorbellDoors.load() })
     AutoBackup.load()
     -- Only with a key store read in full: after a failed read, keys may come back at the next start.
     if Keys.complete() then
@@ -617,6 +658,39 @@ function OnDriverLateInit(driverInitType)
     Api.init(services)
     local started = Api.start()
     updateProperty("API Status", started and "Starting..." or "Failed to start")
+    -- Direct HTTPS (ADR-082): nothing unless the installer turned it on in Composer (1.12.2: the
+    -- only switch); the certificate comes over the relay's connection. 1.12.0 and 1.12.1 called On
+    -- "Allowed": still On, and shown as On from now on.
+    renameDirectHttps()
+    local httpsStored = DirectHttps.configure({
+        log = Log,
+        on = directHttpsOn,
+        -- Remote Access on, and the home in an account: claimed since 1.8.0 (its owner recorded),
+        -- or an account uses one of its keys (a home claimed before).
+        remote = function()
+            return services.remote.enabled() and services.remote.linked() and (People.claimedBy() ~= nil or Accounts.any())
+        end,
+        relay = {
+            features = Relay.features,
+            tell = Relay.tell,
+            connection = Relay.connectionNumber,
+        },
+        address = function()
+            local ok, value = pcall(function()
+                return C4:GetControllerNetworkAddress()
+            end)
+            return ok and value or nil
+        end,
+        activity = Activity,
+        onStatus = function(text)
+            updateProperty(DirectHttps.STATUS_PROPERTY, text)
+        end,
+    })
+    Relay.onFeatures(DirectHttps.relayReady)
+    Relay.on("https_certificate_result", DirectHttps.onRelayMessage)
+    Relay.on("https_result", DirectHttps.onRelayMessage)
+    Log.debug("https", "direct https loaded", { stored_as = httpsStored })
+    DirectHttps.apply()
 
     Log.info("lifecycle", "late init", { init_type = tostring(driverInitType) })
     if discover() then
@@ -764,6 +838,8 @@ function ExecuteCommand(command, params)
         -- The last resort when the home's connection cannot be trusted and its secret cannot be
         -- replaced by the owner (someone else holds it, or took the home over): a new home id.
         -- Invitations and claim tokens were for the old one. The owner links the home again.
+        -- Direct HTTPS's name is the old home's (ADR-082): its record goes on the old connection.
+        DirectHttps.identityReset()
         local ok, code = Relay.resetIdentity()
         if ok then
             local invitations = Invitations.revokeAll()
@@ -816,9 +892,27 @@ local HISTORY_SETTINGS = {
     ["Relay Hold"] = true,
     [Alarm.PROPERTY] = true,
     [Sonos.PROPERTY] = true,
+    [DirectHttps.PROPERTY] = true,
 }
 
 function OnPropertyChanged(name)
+    if name == DirectHttps.PROPERTY and httpsRenamed ~= nil then
+        -- Director reporting back the On that DirectorLink set for 1.12.1's Allowed (its documents
+        -- say it does not): nothing changed.
+        local echo = Properties ~= nil and Properties[name] == httpsRenamed
+        httpsRenamed = nil
+        if echo then
+            Log.debug("https", "Composer shows Direct HTTPS On")
+            return
+        end
+    end
+    if name == DirectHttps.PROPERTY and Properties and Properties[name] == DirectHttps.OLD_ON then
+        -- "Allowed" is no longer in the list, so no installer chose it: a Composer that still had
+        -- 1.12.1's value sent it back. On all the same, shown as On again, and no setting changed.
+        renameDirectHttps()
+        DirectHttps.apply()
+        return
+    end
     if HISTORY_SETTINGS[name] and Properties then
         Activity.record("composer", "setting", { what = name, to = Properties[name] })
     end
@@ -828,6 +922,8 @@ function OnPropertyChanged(name)
         else
             Relay.stop()
         end
+        -- Direct HTTPS's certificate comes over the relay (ADR-082).
+        DirectHttps.apply()
     end
     if name == "Schedules" and Properties then
         Log.info("schedules", schedulesPaused() and "schedules paused in Composer" or "schedules resumed in Composer")
@@ -858,6 +954,10 @@ function OnPropertyChanged(name)
     end
     if (name == Sonos.PROPERTY or name == Sonos.ADDRESS_PROPERTY) and Properties and STATE.supported then
         Sonos.apply(name)
+    end
+    if name == DirectHttps.PROPERTY and Properties and STATE.supported then
+        Log.info("https", "direct https " .. string.lower(tostring(Properties[name])) .. " in Composer")
+        DirectHttps.apply()
     end
     if name == "Log Level" and Properties then
         if Log.setLevel(Properties[name]) then
@@ -901,16 +1001,23 @@ function OnPoll(idBinding, nPort)
     Relay.onPoll(idBinding, nPort)
 end
 
-function OnServerStatusChanged(port, status)
+-- The API's server on 41999 (C4:CreateServer, no identifier) and, with Direct HTTPS, its TLS server
+-- on 28443 (identifier "https", ADR-082): Director calls the same callbacks for both, with the
+-- server's identifier last (OS 3.3.1 and newer). The data callback's port is the client's.
+function OnServerStatusChanged(port, status, identifier)
+    if DirectHttps.owns(port, identifier) then
+        DirectHttps.onStatusChanged(port, status)
+        return
+    end
     Api.onStatusChanged(port, status)
 end
 
-function OnServerConnectionStatusChanged(handle, port, status)
-    Api.onConnectionStatusChanged(handle, port, status)
+function OnServerConnectionStatusChanged(handle, port, status, _address, identifier)
+    Api.onConnectionStatusChanged(handle, port, status, DirectHttps.owns(port, identifier))
 end
 
-function OnServerDataIn(handle, data, clientAddress, clientPort)
-    Api.onData(handle, data, clientAddress, clientPort)
+function OnServerDataIn(handle, data, clientAddress, clientPort, identifier)
+    Api.onData(handle, data, clientAddress, clientPort, identifier == DirectHttps.IDENTIFIER)
 end
 
 function OnDriverDestroyed(driverInitType)
@@ -922,6 +1029,7 @@ function OnDriverDestroyed(driverInitType)
     Activity.flush()
     Relay.stop()
     Sonos.shutdown()
+    DirectHttps.stop()
     Api.stop()
     AdapterManager.shutdown()
 end

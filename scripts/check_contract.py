@@ -258,6 +258,12 @@ class Client:
 KITCHEN, LIVING, BEDROOM, TV = "RINCON_000E58A0000101400", "RINCON_000E58A0000201400", "RINCON_000E58A0000301400", "RINCON_000E58A0000401400"
 
 
+# Control4's own Sonos drivers (1.11.0, ADR-080, the dev bridge's "c4sonos"): 84 to 87 are Sonos
+# drivers' devices, 88 Sonance's.
+def music_parts(client):
+    return {item["id"]: item["part_of_music"] for item in client.check("GET", "/v1/devices", 200)["items"] if 84 <= item["id"] <= 88}
+
+
 def sonos(client, bridge):
     """Sonos (1.5.0, ADR-044) with the fake players of tests/sonos/fake-sonos.mjs (Kitchen leads
     Living Room and plays a track, Bedroom plays the radio, TV Room is paused in Spotify Connect):
@@ -270,10 +276,16 @@ def sonos(client, bridge):
     if client.check("POST", f"/v1/music/{KITCHEN}/play", 409)["code"] != "SONOS_OFF":
         fail("a command with Sonos Off should be refused with SONOS_OFF")
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "music", "room_id": None, "set": {"action": "pause"}}]})
+    if music_parts(client) != {84: False, 85: False, 86: False, 87: False, 88: False}:
+        fail(f"with Sonos Off, Control4's Sonos drivers' devices should be devices of their own: {music_parts(client)}")
 
     bridge.set_property("Sonos", "On")
     if client.check("GET", "/v1/system", 200)["features"]["sonos"] is not True:
         fail("GET /v1/system should say that Sonos is on")
+    if music_parts(client) != {84: True, 85: True, 86: True, 87: True, 88: False}:
+        fail(f"with Sonos On, Control4's Sonos drivers' devices should be part of Music: {music_parts(client)}")
+    if not client.check("GET", "/v1/devices/85", 200)["part_of_music"]:
+        fail("GET /v1/devices/85 should be part of Music")
     music = client.check("GET", "/v1/music", 200)
     rooms = {item["id"]: item for item in music["items"]}
     if music["status"] != "ok" or sorted(rooms) != sorted([KITCHEN, LIVING, BEDROOM, TV]):
@@ -456,6 +468,21 @@ def scenario(client, bridge):
     client.check("GET", "/v1/cameras/61/snapshot?width=320", 200)
     client.check("GET", "/v1/cameras/60/snapshot?width=500", 400)
     client.check("GET", "/v1/cameras/99/snapshot", 404)
+    # The home's camera order (1.12.1): set by admins, the cameras left out after it by name; then
+    # back to by name for what follows.
+    if client.check("GET", "/v1/system", 200)["features"].get("camera_order") is not True:
+        fail("GET /v1/system should say features.camera_order (1.12.1)")
+    by_name = [item["id"] for item in client.check("GET", "/v1/cameras", 200)["items"]]
+    ordered = [item["id"] for item in client.check("PUT", "/v1/cameras/order", 200, body={"camera_ids": [by_name[-1], by_name[0]]})["items"]]
+    if ordered != [by_name[-1], by_name[0], *by_name[1:-1]]:
+        fail(f"PUT /v1/cameras/order should answer the cameras in the new order, the rest by name: {ordered}")
+    if [item["id"] for item in client.check("GET", "/v1/cameras", 200)["items"]] != ordered:
+        fail("GET /v1/cameras should list the cameras in the home's order")
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [999]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [20]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"camera_ids": [by_name[0], by_name[0]]})
+    client.check("PUT", "/v1/cameras/order", 400, body={"room_ids": [10]})
+    client.check("PUT", "/v1/cameras/order", 200, body={"camera_ids": []})
 
     client.check("GET", "/v1/relays", 200)
     client.check("GET", "/v1/relays/70", 200)
@@ -526,6 +553,21 @@ def scenario(client, bridge):
     if {"id": 68, "type": "doorbell"} not in [{"id": item["id"], "type": item["type"]} for item in client.check("GET", "/v1/devices?type=doorbell", 200)["items"]]:
         fail("GET /v1/devices?type=doorbell should list the doorbell camera as a doorbell")
     client.check("POST", "/v1/doorbells/68/open", 409)
+    # The doorbell's gate (1.11.0, ADR-078): the dev bridge's 76 Entrance Gate, a Relay Gate Controller
+    # whose Open relay is bound to the doorbell camera's driver 158, is its door by itself, opened with
+    # its own Open; an admin links the KNX relay 70 besides, and takes it away again.
+    if entrance["doors"] != [{"id": 76, "link": "automatic", "can_open": True}]:
+        fail(f"GET /v1/doorbells/68 should list the gate on its driver's relay: {entrance['doors']}")
+    linked = client.check("PUT", "/v1/doorbells/68/doors", 200, body={"door_ids": [70, 76]})
+    if [(door["id"], door["link"]) for door in linked["doors"]] != [(76, "automatic"), (70, "manual")]:
+        fail(f"PUT /v1/doorbells/68/doors should link the KNX relay once, the gate staying automatic: {linked['doors']}")
+    client.check("PUT", "/v1/doorbells/68/doors", 400, body={"door_ids": [20]})
+    client.check("PUT", "/v1/doorbells/68/doors", 400, body={"doors": [70]})
+    client.check("PUT", "/v1/doorbells/99/doors", 404, body={"door_ids": []})
+    client.check("POST", "/v1/relays/76/pulse", 202, body={"doorbell": 68})
+    if client.check("GET", "/v1/activity?kind=door", 200)["items"][0]["ids"].get("doorbell_id") != 68:
+        fail("an opening from the doorbell should say so in the history")
+    client.check("PUT", "/v1/doorbells/68/doors", 200, body={"door_ids": []})
     if bridge.camera_alert(157, "Animal") != 1:
         fail("an agreement camera's Alert should be watched by its name")
 
@@ -565,6 +607,11 @@ def scenario(client, bridge):
     client.check("GET", "/v1/invitations", 200)
     client.check("POST", "/v1/invitations", 409, body={"role": "member"})
     client.check("POST", "/v1/invitations", 400, body={"role": "owner"})
+    # 1.12.0 (ADR-083): a new user's name, and a move invitation, are checked before remote access.
+    client.check("POST", "/v1/invitations", 400, body={"role": "member", "name": ""})
+    client.check("POST", "/v1/invitations", 400, body={"for_me": True, "name": "Me"})
+    client.check("POST", "/v1/invitations", 400, body={"move": True})
+    client.check("POST", "/v1/invitations", 409, body={"role": "member", "name": "Dana"})
     client.check("DELETE", "/v1/invitations/0123abcd", 404)
 
     # Profiles: the caller's own, and the admin's list; the home's room order.
@@ -611,6 +658,13 @@ def scenario(client, bridge):
     client.check("POST", f"/v1/scenes/{scene['id']}/run", 202)
     client.check("POST", "/v1/scenes/deadbeef/run", 404)
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "device_ids": [20], "set": {"on": True}}]})
+    # A level for a room goes to its dimmers only; the KNX switch there stays as it is (ADR-077).
+    dimmed = client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "lights", "room_id": 11, "set": {"brightness": 50}}]})
+    switches = [problem["device_id"] for problem in dimmed["problems"] if problem["code"] == "ON_OFF_ONLY"]
+    if 21 not in switches or dimmed.get("on_off_only") != len(switches) or dimmed["failed"] != 0:
+        fail(f"POST /v1/scenes/try: a level for the Living Room should leave its switches as they are: {dimmed}")
+    if client.check("GET", "/v1/system", 200)["features"].get("scene_levels_dimmers_only") is not True:
+        fail("GET /v1/system should say features.scene_levels_dimmers_only")
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "speakers", "set": {}}]})
     client.check("POST", "/v1/scenes/try", 202, body={"steps": [{"type": "fans", "set": {"on": True}}]})
     client.check("POST", "/v1/scenes/try", 400, body={"steps": [{"type": "fans", "set": {"speed": 0}}]})
@@ -636,7 +690,14 @@ def scenario(client, bridge):
     client.check("GET", "/v1/scenes", 401, auth=False)
 
     # Schedules run scenes by time, sun and weather; the weather view works without the internet.
-    client.check("GET", "/v1/weather", 200)
+    weather = client.check("GET", "/v1/weather", 200)
+    # Tomorrow too (1.12.1, ADR-084), for the app's line on Home: its sunrise and sunset from the
+    # controller, and with a forecast (the fake Open-Meteo's) its high, low and chance of rain.
+    tomorrow = weather["tomorrow"]
+    if not all(re.fullmatch(r"\d\d:\d\d", tomorrow[name] or "") for name in ("sunrise", "sunset")):
+        fail(f"GET /v1/weather should give tomorrow's sunrise and sunset: {tomorrow}")
+    if weather["status"] == "ok" and None in (tomorrow["max_temperature"], tomorrow["min_temperature"], tomorrow["rain_chance"]):
+        fail(f"GET /v1/weather should give tomorrow's forecast: {tomorrow}")
     timed = client.check("POST", "/v1/schedules", 201, body={
         "scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0, 1, 2, 3, 4], "only_if": {"not_raining": True},
     })
@@ -714,6 +775,8 @@ def scenario(client, bridge):
         fail("GET /v1/system should say features.people_permissions")
     # Users and their devices (1.9.0, ADR-061): Settings → Users, five devices a user, a pairing
     # code for a chosen user, a suggestion that is not there.
+    if client.check("GET", "/v1/system", 200)["features"].get("user_names") is not True:
+        fail("GET /v1/system should say features.user_names (1.12.0)")
     if client.check("GET", "/v1/system", 200)["features"].get("users") is not True:
         fail("GET /v1/system should say features.users")
     users = client.check("GET", "/v1/users", 200)
@@ -785,8 +848,17 @@ def scenario(client, bridge):
     client.check("GET", f"/v1/profiles/{person}/access", 403)
     client.check("GET", "/v1/activity", 403)
     client.check("PUT", "/v1/rooms/order", 403, body={"room_ids": [10]})
+    client.check("PUT", "/v1/cameras/order", 403, body={"camera_ids": [60]})
     client.check("PATCH", "/v1/rooms/10", 403, body={"hidden_from_members": True})
     client.check("GET", "/v1/profile", 200)
+    # 1.12.0 (ADR-083): a member names themself, and renames their own devices, no one else's.
+    named = client.check("PATCH", "/v1/profile", 200, body={"name": "Second"})
+    if named["name"] != "Second" or named.get("name_from_device") is not False:
+        fail(f"a member names themself: {named}")
+    client.check("PATCH", "/v1/profile", 400, body={"name": ""})
+    client.check("PATCH", f"/v1/api-keys/{created['id']}", 200, body={"name": "Second phone"})
+    client.check("PATCH", f"/v1/api-keys/{me['id']}", 404, body={"name": "Not mine"})
+    client.check("PATCH", f"/v1/api-keys/{created['id']}", 403, body={"role": "admin"})
     if client.check("GET", "/v1/scenes", 200)["items"]:
         fail("a member lists only the scenes chosen for them")
     client.check("POST", f"/v1/scenes/{scene['id']}/run", 404)
@@ -1017,6 +1089,7 @@ def scenario(client, bridge):
         fail("the owner stays the owner when the account service did not agree")
     client.check("DELETE", f"/v1/api-keys/{partner['id']}", 204)
     bridge.set_property("Remote Access", "Off")
+    direct_https(client, bridge)
 
     # Sealed requests on the home network: what sealing needs, and refusals (the driver's own tests
     # open real ones). Pairing with a key exchange answers sealed.
@@ -1055,6 +1128,36 @@ def scenario(client, bridge):
     for _ in range(4):
         client.check("POST", "/v1/auth/pair", 403, body={"pairing_code": "00000000"})
     client.check("POST", "/v1/auth/pair", 429, body={"pairing_code": "00000000"})
+
+
+def direct_https(client, bridge):
+    """Direct HTTPS (1.12.0, ADR-082; since 1.12.2 switched in Composer only): off as it ships; On in
+    Composer turns it on, and without Remote Access and a home linked to an account (the dev bridge
+    has no relay) it says what it needs; 1.12.1's Allowed is On; PUT /v1/https, the switch of the
+    1.12.0 and 1.12.1 apps, is always 409 SET_IN_COMPOSER and changes nothing."""
+    off = client.check("GET", "/v1/https", 200)
+    if off["state"] != "off" or off["allowed"] is not False or off["enabled"] is not False or off["name"] is not None:
+        fail(f"GET /v1/https should be off as DirectorLink ships: {off}")
+    for body in ({"enabled": True}, {"enabled": False}, {"enabled": "yes"}, {}):
+        refused = client.check("PUT", "/v1/https", 409, body=body)
+        if refused["code"] != "SET_IN_COMPOSER" or "Composer" not in refused.get("detail", ""):
+            fail(f"PUT /v1/https should be 409 SET_IN_COMPOSER, saying where it is set: {refused}")
+    if client.check("GET", "/v1/https", 200)["state"] != "off":
+        fail("PUT /v1/https should change nothing")
+    for value in ("On", "Allowed"):
+        bridge.set_property("Direct HTTPS", value)
+        on = client.check("GET", "/v1/https", 200)
+        if on["allowed"] is not True or on["enabled"] is not True or on["remote"] is not False or on["state"] != "error":
+            fail(f"GET /v1/https with Direct HTTPS {value} should be on, waiting for Remote Access: {on}")
+        if not isinstance(on["error"], str) or "Remote Access" not in on["error"]:
+            fail(f"GET /v1/https should say that it needs Remote Access: {on}")
+        if client.check("PUT", "/v1/https", 409, body={"enabled": False})["code"] != "SET_IN_COMPOSER":
+            fail("PUT /v1/https while on should be 409 SET_IN_COMPOSER")
+        if client.check("GET", "/v1/system", 200).get("direct_https", "missing") is not None:
+            fail("GET /v1/system should say direct_https null while nothing listens")
+    bridge.set_property("Direct HTTPS", "Off")
+    if client.check("GET", "/v1/https", 200)["state"] != "off":
+        fail("GET /v1/https should be off again once Composer says Off")
 
 
 def fahrenheit_scenario(client, bridge):
@@ -1098,7 +1201,7 @@ def main():
         players.terminate()
         fail(f"the fake Sonos players did not start: {started!r}")
     spec_json = ROOT / "dist" / "openapi.json"
-    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True, doors=True)
+    bridge = dev_server.Bridge(lua, spec_json if spec_json.is_file() else None, int(started.split()[-1]), agreement=True, doors=True, control4_sonos=True)
     server = dev_server.Server(("127.0.0.1", 0), dev_server.make_handler(bridge))
     threading.Thread(target=server.serve_forever, daemon=True).start()
 

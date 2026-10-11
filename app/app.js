@@ -16,7 +16,8 @@ import { notificationSupport, notificationsOn, ringingDoorbells } from "./js/doo
 import { currentLanguage, setLanguage, t } from "./js/i18n.js";
 import { icon } from "./js/icons.js";
 import { startPwa } from "./js/pwa.js";
-import { joinView, storeInvitation } from "./js/views/join.js";
+import { joinView, joinedNotice, storeInvitation } from "./js/views/join.js";
+import { moveSignature } from "./js/views/move.js";
 import { deviceJoinSignature, deviceRequestNotice, watchDeviceRequests } from "./js/views/device-join.js";
 import { musicRouteChanged, musicSignature, startMusic } from "./js/music.js";
 import { accessView, resetAccess } from "./js/views/access.js";
@@ -33,12 +34,14 @@ import { commandRouteChanged, commandSignature } from "./js/views/command.js";
 import { climateView } from "./js/views/climate.js";
 import { favoritesPicker, homeView } from "./js/views/home.js";
 import { roomView } from "./js/views/room.js";
+import { doorbellView, enterDoorbell } from "./js/views/doorbell.js";
 import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from "./js/views/scenes.js";
 import { leaveSceneLink, sceneLinksView, sceneLinkView } from "./js/views/scene-links.js";
 import { askLinkView, leaveAskLink, leaveOpenRequest, openRequestView } from "./js/views/ask-links.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
+import { enterHomeWeather, homeWeatherText, keepHomeWeather } from "./js/weather.js";
 
 const view = document.querySelector("#view");
 const tabbar = document.querySelector("#tabbar");
@@ -64,6 +67,10 @@ function parseRoute() {
   }
   if (parts[0] === "room" && /^\d+$/.test(parts[1] || "")) {
     return { name: "room", id: Number(parts[1]), tab: "home" };
+  }
+  // A doorbell's screen (1.11.0, ADR-078): where its ring's notification opens the app.
+  if (parts[0] === "doorbell" && /^\d+$/.test(parts[1] || "")) {
+    return { name: "doorbell", id: Number(parts[1]), tab: "home" };
   }
   // A scene's link for the phone's own automations, and the list of them (ADR-051).
   if (parts[0] === "scene" && /^[0-9a-f]{8}$/.test(parts[1] || "") && parts[2] === "link") {
@@ -135,12 +142,19 @@ window.addEventListener("hashchange", () => {
   if (previous.name === "sceneLink" && (route.name !== "sceneLink" || route.id !== previous.id)) leaveSceneLink();
   if (previous.name === "askLink" && (route.name !== "askLink" || route.id !== previous.id)) leaveAskLink();
   if (previous.name === "openRequest" && route.name !== "openRequest") leaveOpenRequest();
+  // Cameras → Order (1.12.1): leaving the Cameras tab closes the list, as Cancel does.
+  if (previous.name === "cameras" && route.name !== "cameras") ui.cameraOrder = null;
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
   if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
-  // The Hebrew date on Home (Schedules reads the calendar too).
-  if (route.name === "home" && previous.name !== "home") loadCalendar();
+  // The Hebrew date on Home (Schedules reads the calendar too), and the weather (1.12.1).
+  if (route.name === "home" && previous.name !== "home") {
+    loadCalendar();
+    enterHomeWeather();
+  }
+  // A ring's screen opened before the doorbells are read: its picture at once.
+  if (route.name === "doorbell" && (previous.name !== "doorbell" || previous.id !== route.id)) enterDoorbell(route.id);
   // Sonos: Home and a room are read every 5 s while shown.
   musicRouteChanged(route);
   // Say or type a command: away from Home, Home's microphone stops, and nothing it heard is done.
@@ -280,9 +294,11 @@ function signature() {
     // The sign-ins the account server has set up (account.js), once asked.
     signInProviders(),
     providersStatus(),
-    // Remote access (remote.js): the connection in use, the controller's answer, and whether this
-    // device is linked (kept in localStorage, so it is read here).
+    // Remote access (remote.js): the connection in use (at home: the Direct HTTPS name or the
+    // address, 1.12.0), the controller's answer, and whether this device is linked (kept in
+    // localStorage, so it is read here).
     state.transport,
+    state.lanRoute,
     state.remoteInfo,
     savedRemote(),
     // Alerts on this device (js/alerts.js): on, possible, being switched, what it said.
@@ -303,10 +319,14 @@ function signature() {
     ui.editFavorites,
     ui.relayStage,
     ui.doorbellStage,
+    // A doorbell's screen (1.11.0): an admin linking doors, its picture asked for early.
+    route.name === "doorbell" ? [ui.doorbellLinks, ui.ringCamera] : 0,
     ui.tick,
     ui.roomMessages,
     ui.controllerMessage,
     ui.featuredCamera,
+    // Cameras → Order (1.12.1): the order being set, saving, what went wrong.
+    ui.cameraOrder,
     ui.homeBusy,
     ui.homeMessage,
     ui.homeInvitation,
@@ -315,6 +335,12 @@ function signature() {
     ui.joinBusy,
     ui.joinMessage,
     ui.joinWait,
+    // Joining in the Home Screen app, whom this device joined as, a name asked for, a move (1.12.0).
+    ui.joinHere,
+    ui.joinCopied,
+    ui.joined,
+    ui.nameCard ? { ...ui.nameCard, draft: undefined } : null,
+    moveSignature(),
     state.profile,
     ui.roomOrderMessage,
     state.scenes,
@@ -325,6 +351,8 @@ function signature() {
     state.schedulesPaused,
     state.schedulesUnsupported,
     state.weather,
+    // Home's weather line moves on with the clock too: tomorrow from 15:00, the next sunrise or sunset.
+    route.name === "home" ? homeWeatherText() : 0,
     state.calendar,
     ui.schedulesMessage,
     // Times being typed are left out: the editor does not rebuild a time field while it is used.
@@ -345,6 +373,8 @@ function signature() {
     route.name === "settings" ? ui.backup : 0,
     // Its automatic backups to the account (passwords in views/cloud-backup.js, not in `ui`).
     route.name === "settings" ? ui.autoBackup : 0,
+    // Direct connection at home (1.12.0, views/direct.js).
+    route.name === "settings" ? ui.directHttps : 0,
     // "Last update", on Settings → Controller only: the other pages are not redrawn by every poll.
     route.name === "settings" && route.page === "controller" ? state.lastUpdated?.getTime() : 0,
     route.name === "settings" ? [notificationSupport(), notificationsOn()] : 0,
@@ -356,6 +386,8 @@ function screen() {
   switch (route.name) {
     case "room":
       return roomView(route.id, actions);
+    case "doorbell":
+      return doorbellView(route.id, actions);
     case "scenes":
       return scenesView(actions);
     case "schedules":
@@ -457,14 +489,18 @@ function render(force = false) {
 
   const saved = captureUi();
   const content = [screen()].flat(Infinity).filter(Boolean);
-  // Away from Home, a ring still shows: one line under the header that leads to the banner.
-  if (route.name !== "home" && state.apiKey) {
+  // Away from Home, a ring still shows: one line under the header that leads to the banner (not on
+  // the doorbell's own screen, which shows it).
+  if (route.name !== "home" && route.name !== "doorbell" && state.apiKey) {
     const notice = ringNotice(ringingDoorbells());
     if (notice) content.splice(1, 0, notice);
   }
   // A new device of the account asks to join this home (ADR-053): under the header, on every screen.
   const request = deviceRequestNotice();
   if (request) content.splice(1, 0, request);
+  // "You joined <home> as <user>." (1.12.0), from the home's sealed answer, until dismissed.
+  const joined = route.name === "join" ? null : joinedNotice();
+  if (joined) content.splice(1, 0, joined);
   // What stays the same element (Home's command field) stays in the page.
   replaceKeeping(view, content);
   restoreUi(saved);
@@ -518,6 +554,8 @@ whenConnected(keepCalendar);
 whenConnected(() => startMusic(route));
 // Admins: whether a newer DirectorLink is out (GitHub, at most every 12 hours; js/updates.js).
 whenConnected(checkUpdates);
+// Home's weather line (1.12.1): read once connected on Home, then every 10 minutes while it is open.
+whenConnected(keepHomeWeather);
 // Opened on Schedules (a reload): the weather once connected.
 whenConnected(() => {
   if (route.name === "schedules" || route.name === "schedule") keepWeatherFresh();
@@ -535,6 +573,8 @@ async function start() {
   watchDeviceRequests();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
   if (reachable()) {
+    // Opened on a doorbell's screen (a ring's notification): its picture is asked for with the rest.
+    if (route.name === "doorbell") enterDoorbell(route.id);
     connect();
   }
 }
