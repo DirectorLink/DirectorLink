@@ -1369,6 +1369,9 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – la porta è aperta da almeno {minutes} min ({time}).",
     fridgeDoorNow: "{name} – la porta è rimasta aperta ({time}).",
+    // The home's alarm going off (1.13.0, ADR-086): only on the home's TVs, never on a phone.
+    alarmTriggered: "L’allarme è scattato presso {name} alle {time}.",
+    alarmTriggeredOf: "Allarme {type} presso {name} alle {time}.",
     // 1.8.0: the account service's own push, to admins' devices (it names nothing).
     deviceRequest: "Un nuovo dispositivo chiede di unirsi alla tua casa. Apri DirectorLink per approvarlo o rifiutarlo.",
     openRequestTitle: "Aprire {name}?",
@@ -1440,6 +1443,21 @@ export default {
       notAvailable: "Gli avvisi non sono ancora disponibili. Riprova più tardi.",
       signIn: "Accedi di nuovo per attivare gli avvisi.",
       failed: "Impossibile attivare gli avvisi. Controlla la connessione e riprova.",
+    },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086).
+    screens: {
+      title: "Sui televisori",
+      help: "Questi televisori mostrano gli avvisi della casa come pop-up, con un’immagine per campanelli e telecamere. Il tuo installatore li aggiunge in Composer e sceglie cosa mostra ciascuno.",
+      shows: "Mostra: {kinds}",
+      nothing: "Non mostra nulla",
+      language: "Lingua: {language}, quella che il proprietario della casa vede nell’app.",
+      kinds: {
+        doorbell: "Campanello",
+        camera: "Telecamere",
+        door: "Porte",
+        alarm: "Allarmi",
+        other: "Altro",
+      },
     },
   },
   roles: {

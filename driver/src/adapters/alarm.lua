@@ -10,6 +10,11 @@
 -- logged, at any level: GET /v1/logs can be read without a seal, and the state is only ever sent
 -- sealed. scripts/check_package.py fails the build if this file asks Director for anything but
 -- reading and watching variables.
+--
+-- One thing goes further (1.13.0, the owner's decision of 2026-10-12, ADR-086): a partition that
+-- goes into alarm is told to Alarm.onTriggered's listener (main.lua: the home's screens, on the
+-- controller), once each time it goes into alarm. Nothing else of its state: not armed, disarmed,
+-- ready, a delay or trouble.
 local Alarm = {}
 
 Alarm.PROPERTY = "Alarm Status"
@@ -47,8 +52,12 @@ for _, variableId in ipairs(WATCHED) do
     IS_WATCHED[variableId] = true
 end
 
--- device id -> { raw = variable id -> value, watched = variable ids with a listener }
+-- device id -> { raw = variable id -> value, watched = variable ids with a listener, alarming =
+-- whether it was in alarm when last seen }
 local tracked = {}
+
+-- listener(device): a partition went into alarm (Alarm.onTriggered).
+local triggeredListener = nil
 
 -- Read at every discovery and whenever Composer changes it (Manager.onPropertyChanged).
 function Alarm.enabled()
@@ -114,6 +123,38 @@ local function update(device, raw)
     }
 end
 
+-- In alarm, as the app reads it (Views.alarmPartition): the panel says so, or the partition's state
+-- is ALARM.
+local function inAlarm(state)
+    if not state then
+        return false
+    end
+    return state.alarm == true or (string.lower(state.partition_state or ""):gsub("%W", "")) == "alarm"
+end
+
+-- Told, at the moment a partition goes into alarm: `listener(device)`, the partition's device with
+-- its state (its name, and the alarm's type when the panel gives one). Once each time it goes into
+-- alarm, not again until it is out of it; only while Alarm Status is On and the panel uses the
+-- partition. Never for a partition already in alarm when DirectorLink starts watching it (the driver
+-- starts, Alarm Status is turned On, the project is read again). What the listener does, or fails
+-- to do, never reaches the partition's state.
+function Alarm.onTriggered(listener)
+    triggeredListener = listener
+end
+
+local function triggered(device, info)
+    -- The alarm's type as Director has it now: a panel may set it with the alarm, a moment before
+    -- its change reaches the driver.
+    local alarmType = read(device.id, ALARM_TYPE)
+    if alarmType ~= nil and alarmType ~= info.raw[ALARM_TYPE] then
+        info.raw[ALARM_TYPE] = alarmType
+        update(device, info.raw)
+    end
+    if triggeredListener and device.state.active and Alarm.enabled() then
+        pcall(triggeredListener, device)
+    end
+end
+
 -- Stops watching the partition and forgets its state (Alarm Status turned Off, or a failed start).
 function Alarm.release(device)
     local info = tracked[device.id]
@@ -146,6 +187,7 @@ function Alarm.initialize(device)
     device.capabilities = { read_only = true }
     device.actions = {}
     update(device, raw)
+    info.alarming = inAlarm(device.state)
 
     for _, variableId in ipairs(WATCHED) do
         if raw[variableId] ~= nil then
@@ -170,6 +212,11 @@ function Alarm.onVariableChanged(device, variableId, value)
     end
     info.raw[variableId] = value
     update(device, info.raw)
+    local alarming = inAlarm(device.state)
+    if alarming and not info.alarming then
+        triggered(device, info)
+    end
+    info.alarming = alarming
     return true
 end
 

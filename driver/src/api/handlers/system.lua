@@ -194,6 +194,8 @@ function System.info(ctx)
         -- move invitation) (1.12.0, ADR-083); always there.
         -- camera_order: the home's camera order, set by admins (PUT /v1/cameras/order), which
         -- GET /v1/cameras and GET /v1/doorbells follow (1.12.1); always there.
+        -- alert_screens: the home's screens of DirectorLink's notification agreement get its alerts,
+        -- and admins see them in GET /v1/alerts/screens (1.13.0, ADR-086); always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -212,6 +214,7 @@ function System.info(ctx)
             scene_levels_dimmers_only = true,
             user_names = true,
             camera_order = true,
+            alert_screens = true,
         },
     }
 end

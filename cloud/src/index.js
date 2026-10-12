@@ -31,6 +31,8 @@ import { purgeInvitations } from "./invitations.js";
 // The oldest DirectorLink the relay takes (ADR-059): refused here, before the home's object.
 import { refusal, updateRequired } from "./min-version.js";
 import { STATS_CRON, countStats, handleStats } from "./stats.js";
+// Direct HTTPS (1.13.0): names nobody uses, daily; the ACME account's URL, hourly while unknown.
+import { cleanNames, rememberAccount } from "./https.js";
 import { bearerToken, json, methodNotAllowed, problem, sameSecret } from "./http.js";
 
 export { HomeRelay };
@@ -44,6 +46,8 @@ export default {
   async scheduled(event, env, ctx) {
     if (event.cron === STATS_CRON) {
       ctx.waitUntil(countStats(env));
+      // The ACME account's URL in D1, for dlhome.cc's CAA record (one D1 read once it is kept).
+      ctx.waitUntil(rememberAccount(env));
       return;
     }
     ctx.waitUntil(purgeInvitations(env));
@@ -51,6 +55,7 @@ export default {
     ctx.waitUntil(purgeAccountsWithoutSignIn(env));
     ctx.waitUntil(purgeBackupUploads(env));
     ctx.waitUntil(purgeDeviceRequests(env));
+    ctx.waitUntil(cleanNames(env));
   },
 
   async fetch(request, env, ctx) {

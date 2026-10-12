@@ -67,6 +67,7 @@ local suites = {
     "test_door_controllers",
     "test_doorbell_doors",
     "test_https",
+    "test_notify",
 }
 
 -- About how many seconds each suite takes (each alone, on one of a PC's fast cores, 2026-10-11;
@@ -96,6 +97,7 @@ local SECONDS = {
     test_door_controllers = 9,
     test_doorbell_doors = 4,
     test_https = 24,
+    test_notify = 8,
     test_lock = 1,
     test_remote = 20,
     test_profiles = 4,

@@ -32,17 +32,32 @@
 // ACME_ACCOUNT_KEY (a secret: acme.js), DLHOME_ZONE_ID (a var: dlhome.cc's zone), ACME_DIRECTORY (a
 // var, acme.js). Without the secrets and the zone every request is answered HTTPS_UNAVAILABLE and
 // nothing else changes. Tests only: DLHOME_DNS_API (a fake Cloudflare API), HTTPS_DNS_WAIT_MS,
-// HTTPS_POLL_MS, HTTPS_RETRY_MS.
+// HTTPS_POLL_MS, HTTPS_RETRY_MS, HTTPS_UNUSED_DAYS, HTTPS_CLEAN_MAX.
+//
+// The ACME account (1.13.0): each order starts with newAccount, which answers the key's account URL
+// (registering it the first time); D1 keeps it (`acme_accounts`, migrations/0012) for dlhome.cc's CAA
+// record, which names it (cloud/README.md), and the log says it once (`acme_account`). The hourly
+// trigger looks it up (newAccount with onlyReturnExisting) while D1 has none for the key in use.
+//
+// Names nobody uses (1.13.0): every day (cleanNames, index.js) the name of a home no longer in D1
+// goes for good (its A record, its row, the home's object's copy), and a home whose controller has
+// not said it serves its name for UNUSED_DAYS, or said off, loses the name's A record unless its
+// controller is connected and serving it now; the name stays the home's, and the A record comes back
+// at its next `https`. D1 says which names to look at (`https_names`: seen_at, off_at, dns_at), at
+// most CLEAN_MAX deletions a run.
 //
 // Its storage:
 //   https      { name, ip, dns: { ip } (the A record as last written), cert: { certificate, chain,
-//              not_before, not_after, spki, issuer_cn }, orders: [ms…] (the last week's), kid }
-//   https_job  the order in progress: { home, step, name, csr, spki, ip, request, renewal, order,
-//              authz, challenge, finalize, certificate_url, txt, tries, polls, started }
+//              not_before, not_after, spki, issuer_cn }, orders: [ms…] (the last week's), seen (ms:
+//              when the controller last said it serves the name), seen_db (ms: when D1's seen_at was
+//              last written), off (it said off since) }; `kid`, kept by 1.12.x, is no longer read
+//   https_job  the order in progress: { home, step, name, csr, spki, ip, request, renewal, kid,
+//              order, authz, challenge, finalize, certificate_url, txt, tries, polls, started }
 //
 // Logs: https_certificate_requested, https_certificate_issued (name, not_after),
 // https_certificate_failed (code), https_dns_updated, https_dns_deleted, https_refused (code),
-// https_step_retried; never a key, a CSR, a certificate's text or an address.
+// https_step_retried, acme_account (its URL, once), acme_account_failed, https_names_cleaned
+// (counts); never a key, a CSR, a certificate's text or an address.
 
 import { AcmeClient, AcmeError, DEFAULT_DIRECTORY } from "./acme.js";
 import { base64url } from "./http.js";
@@ -65,6 +80,15 @@ const MIN_RSA_BITS = 2048;
 const A_TTL = 3600;
 const TXT_TTL = 60;
 const DEFAULT_DNS_API = "https://api.cloudflare.com/client/v4";
+// Names nobody uses (1.13.0): unused after this many days without the controller saying it serves
+// the name; at most this many names cleaned a day; D1's seen_at written at most this often a home.
+const UNUSED_DAYS = 30;
+const CLEAN_MAX = 50;
+const SEEN_WRITE_MS = 12 * 3600 * 1000;
+const ACCOUNT_UPSERT =
+  "INSERT INTO acme_accounts (directory, url, key, found_at) VALUES (?1, ?2, ?3, ?4) " +
+  "ON CONFLICT (directory) DO UPDATE SET url = excluded.url, key = excluded.key, found_at = excluded.found_at " +
+  "WHERE acme_accounts.url <> excluded.url OR acme_accounts.key <> excluded.key";
 
 function log(event, fields) {
   console.log(JSON.stringify({ event, ...fields }));
@@ -211,6 +235,90 @@ async function removeChallenge(env, job) {
   job.txt = null;
 }
 
+// ---- the ACME account's URL, for dlhome.cc's CAA record (1.13.0) ---------------------------------
+
+function directoryOf(env) {
+  return env.ACME_DIRECTORY || DEFAULT_DIRECTORY;
+}
+
+// `acme` (an AcmeClient that knows its account's URL): kept in D1, and said in the log when D1 did
+// not have it for this key and directory. Never fails the order it comes from.
+export async function keepAccount(env, acme) {
+  try {
+    const key = await acme.thumbprint();
+    const result = await env.DB.prepare(ACCOUNT_UPSERT).bind(acme.directoryUrl, acme.kid, key, new Date().toISOString()).run();
+    if (result.meta?.changes) log("acme_account", { account: acme.kid, directory: acme.directoryUrl });
+  } catch (error) {
+    log("acme_account_failed", { error: String(error?.message ?? error).slice(0, 200) });
+  }
+}
+
+// Hourly (index.js): while D1 has no account URL for the key in use, it is looked up at Let's
+// Encrypt without registering one (onlyReturnExisting): one D1 read an hour once it is kept.
+export async function rememberAccount(env) {
+  if (!httpsConfigured(env)) return;
+  try {
+    const acme = new AcmeClient({ directoryUrl: directoryOf(env), accountKey: env.ACME_ACCOUNT_KEY });
+    const key = await acme.thumbprint();
+    const row = await env.DB.prepare("SELECT key FROM acme_accounts WHERE directory = ?").bind(acme.directoryUrl).first();
+    if (row?.key === key) return;
+    // None yet (no order since the key was set): the first order registers it.
+    if (await acme.findAccount()) await keepAccount(env, acme);
+  } catch (error) {
+    log("acme_account_failed", { error: String(error?.message ?? error).slice(0, 200) });
+  }
+}
+
+// ---- names nobody uses (1.13.0) ---------------------------------------------------------------------
+
+// Daily (index.js): the names to look at, from D1: those of homes no longer there, and those with an
+// A record whose controller said off or has not said it serves the name for UNUSED_DAYS. Each goes to
+// its home's object (HomeHttps.clean), which knows whether its controller serves it now. At most
+// CLEAN_MAX names are cleaned; logged with counts only.
+export async function cleanNames(env, now = Date.now()) {
+  if (!httpsConfigured(env)) return;
+  const days = number(env.HTTPS_UNUSED_DAYS, UNUSED_DAYS);
+  const max = number(env.HTTPS_CLEAN_MAX, CLEAN_MAX);
+  const before = new Date(now - days * DAY_MS).toISOString();
+  let results;
+  try {
+    ({ results = [] } = await env.DB.prepare(
+      "SELECT n.name, n.home_id, h.id IS NULL AS gone FROM https_names AS n LEFT JOIN homes AS h ON h.id = n.home_id " +
+        "WHERE h.id IS NULL OR (n.dns_at IS NOT NULL AND (n.off_at IS NOT NULL OR n.seen_at IS NULL OR n.seen_at < ?1)) " +
+        "ORDER BY n.seen_at LIMIT ?2"
+    )
+      .bind(before, max * 2)
+      .all());
+  } catch (error) {
+    log("https_clean_failed", { error: String(error?.message ?? error).slice(0, 200) });
+    return;
+  }
+  const counts = { names_deleted: 0, records_deleted: 0, kept: 0, failed: 0, left: 0 };
+  for (const row of results) {
+    if (counts.names_deleted + counts.records_deleted >= max) {
+      counts.left += 1;
+      continue;
+    }
+    try {
+      const relay = env.HOME_RELAY.get(env.HOME_RELAY.idFromName(row.home_id));
+      const response = await relay.fetch("https://home-relay/https-clean", {
+        method: "POST",
+        headers: { "X-DirectorLink-Home": row.home_id, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: row.name, gone: Boolean(row.gone) }),
+      });
+      const { outcome } = await response.json();
+      if (outcome === "name_deleted") counts.names_deleted += 1;
+      else if (outcome === "record_deleted") counts.records_deleted += 1;
+      else if (outcome === "kept") counts.kept += 1;
+      else counts.failed += 1;
+    } catch (error) {
+      counts.failed += 1;
+      log("https_clean_failed", { home: row.home_id, error: String(error?.message ?? error).slice(0, 200) });
+    }
+  }
+  log("https_names_cleaned", counts);
+}
+
 // ---- the home's object ----------------------------------------------------------------------------
 
 export class HomeHttps {
@@ -259,7 +367,8 @@ export class HomeHttps {
       return record.name === name ? { ok: true } : { ok: false, code: "NAME_MISMATCH", name: record.name };
     }
     const db = this.env.DB;
-    await db.prepare("INSERT OR IGNORE INTO https_names (name, home_id, created_at) VALUES (?1, ?2, ?3)").bind(name, homeId, new Date().toISOString()).run();
+    const now = new Date().toISOString();
+    await db.prepare("INSERT OR IGNORE INTO https_names (name, home_id, created_at, seen_at) VALUES (?1, ?2, ?3, ?3)").bind(name, homeId, now).run();
     const rows = (await db.prepare("SELECT name, home_id FROM https_names WHERE name = ?1 OR home_id = ?2").bind(name, homeId).all()).results ?? [];
     const own = rows.find((row) => row.home_id === homeId);
     if (own) {
@@ -280,11 +389,22 @@ export class HomeHttps {
     const record = await this.record();
     if (data.name === null) {
       await this.cancelJob();
-      if (record.name) {
-        const count = await deleteName(this.env, record.name);
-        log("https_dns_deleted", { home: homeId, name: record.name, records: count });
-      }
+      // Off from now on, even if the record cannot be deleted yet (1.13.0: the daily cleanup sees it).
       record.ip = null;
+      record.off = true;
+      await this.save(record);
+      if (record.name) {
+        let count;
+        try {
+          count = await deleteName(this.env, record.name);
+        } catch (error) {
+          // The controller asks again; meanwhile the daily cleanup knows that it said off.
+          await this.noteName(homeId, "UPDATE https_names SET off_at = ?1 WHERE home_id = ?2", new Date().toISOString());
+          throw error;
+        }
+        log("https_dns_deleted", { home: homeId, name: record.name, records: count });
+        await this.noteName(homeId, "UPDATE https_names SET off_at = ?1, dns_at = NULL WHERE home_id = ?2", new Date().toISOString());
+      }
       record.dns = null;
       await this.save(record);
       return { ok: true };
@@ -295,7 +415,7 @@ export class HomeHttps {
     const bound = await this.bind(homeId, data.name, record);
     if (!bound.ok) return bound;
     record.ip = data.ip;
-    await this.save(record);
+    await this.seen(homeId, record);
     if (record.cert && Date.parse(record.cert.not_after) > Date.now()) {
       await this.writeAddress(homeId, record);
     }
@@ -307,8 +427,80 @@ export class HomeHttps {
     if (!record.name || !privateAddress(record.ip) || record.dns?.ip === record.ip) return;
     const changed = await setAddress(this.env, record.name, record.ip);
     record.dns = { ip: record.ip };
+    const now = Date.now();
+    if (await this.noteName(homeId, "UPDATE https_names SET dns_at = ?1, seen_at = ?1, off_at = NULL WHERE home_id = ?2", new Date(now).toISOString())) {
+      record.seen_db = now;
+    }
     await this.save(record);
     if (changed) log("https_dns_updated", { home: homeId, name: record.name });
+  }
+
+  // What D1 knows of the home's name for the daily cleanup (1.13.0): `sql`, an UPDATE of its row
+  // bound with `at` (?1) and the home (?2). Bookkeeping never fails the controller's request: a
+  // failure is logged, and the answer is false.
+  async noteName(homeId, sql, at) {
+    try {
+      await this.env.DB.prepare(sql).bind(at, homeId).run();
+      return true;
+    } catch (error) {
+      log("https_failed", { home: homeId, what: "names", error: String(error?.message ?? error) });
+      return false;
+    }
+  }
+
+  // The controller said, over its connection, that it serves the name (an `https` with its address,
+  // or a certificate asked for): kept (`seen`), and D1's seen_at follows at most every SEEN_WRITE_MS,
+  // at once after an off, so that a connection costs no D1 write most of the time. Saves `record`.
+  async seen(homeId, record) {
+    const now = Date.now();
+    const write = record.off === true || !(now - (record.seen_db ?? 0) < SEEN_WRITE_MS);
+    record.seen = now;
+    delete record.off;
+    if (write && (await this.noteName(homeId, "UPDATE https_names SET seen_at = ?1, off_at = NULL WHERE home_id = ?2", new Date(now).toISOString()))) {
+      record.seen_db = now;
+    }
+    await this.save(record);
+  }
+
+  // Whether the controller serves the name now: connected and heard, and it said so on this very
+  // connection (it does after each `relay_features`), not off since.
+  serving(record) {
+    const ws = this.relay.heardDriverSocket();
+    if (!ws || !record.name || !record.ip || record.off) return false;
+    const { connectedAt } = ws.deserializeAttachment() ?? {};
+    return Number.isFinite(connectedAt) && (record.seen ?? 0) >= connectedAt;
+  }
+
+  // The daily cleanup's question about this home's name (cleanNames): `name`, the home's in D1;
+  // `gone`, the home is no longer in D1. A gone home's name goes for good: its A and TXT records, its
+  // row, and this object's record of it (its address, certificate and A record), as if it had never
+  // had one; only its orders stay, for the limits. Otherwise, unless the controller serves it now or
+  // an order runs, its A record goes and the name stays the home's: the next `https` writes it
+  // again. Answers { outcome: "name_deleted" | "record_deleted" | "kept" | "skipped", records }.
+  async clean(homeId, input) {
+    const name = typeof input?.name === "string" && NAME.test(input.name) ? input.name : null;
+    if (!httpsConfigured(this.env) || !name) return { outcome: "skipped" };
+    const record = await this.record();
+    if (input.gone === true && !(await this.claimed(homeId))) {
+      await this.cancelJob();
+      const records = await deleteName(this.env, name);
+      await this.save({ orders: record.orders ?? [] });
+      await this.env.DB.prepare("DELETE FROM https_names WHERE home_id = ?1 AND name = ?2 AND NOT EXISTS (SELECT 1 FROM homes WHERE id = ?1)").bind(homeId, name).run();
+      return { outcome: "name_deleted", records };
+    }
+    if (this.serving(record) || (await this.storage.get("https_job"))) {
+      const now = Date.now();
+      if (await this.noteName(homeId, "UPDATE https_names SET seen_at = ?1, off_at = NULL WHERE home_id = ?2", new Date(now).toISOString())) {
+        record.seen_db = now;
+        await this.save(record);
+      }
+      return { outcome: "kept" };
+    }
+    const records = await deleteName(this.env, name);
+    record.dns = null;
+    await this.save(record);
+    await this.env.DB.prepare("UPDATE https_names SET dns_at = NULL WHERE home_id = ?1 AND name = ?2").bind(homeId, name).run();
+    return { outcome: "record_deleted", records };
   }
 
   // `https_certificate`: the answer now; a new order runs from the alarm.
@@ -323,7 +515,7 @@ export class HomeHttps {
     const bound = await this.bind(homeId, data.name, record);
     if (!bound.ok) return bound;
     record.ip = data.ip;
-    await this.save(record);
+    await this.seen(homeId, record);
     // While the home has a certificate, the A record follows the address the request gives.
     if (record.cert && Date.parse(record.cert.not_after) > Date.now()) {
       try {
@@ -400,17 +592,17 @@ export class HomeHttps {
     await this.relay.alarms.clear("https");
   }
 
-  async client(record) {
-    const acme = new AcmeClient({ directoryUrl: this.env.ACME_DIRECTORY || DEFAULT_DIRECTORY, accountKey: this.env.ACME_ACCOUNT_KEY, kid: record.kid ?? null });
-    return acme;
+  // The order's ACME client: its account's URL is the one its first step got (1.13.0: each order
+  // asks newAccount once, so that a new ACME_ACCOUNT_KEY is never sent with the old key's URL).
+  client(job) {
+    return new AcmeClient({ directoryUrl: directoryOf(this.env), accountKey: this.env.ACME_ACCOUNT_KEY, kid: job.kid ?? null });
   }
 
   // The alarm: the order's next steps, until one has to wait.
   async alarm() {
     let job = await this.storage.get("https_job");
     if (!job) return;
-    const record = await this.record();
-    const acme = await this.client(record);
+    const acme = this.client(job);
     for (let steps = 0; steps < 8 && job; steps += 1) {
       if (Date.now() - job.started > JOB_MS) {
         await this.fail(job, "ACME_FAILED", null, "the order took longer than 10 minutes");
@@ -422,12 +614,6 @@ export class HomeHttps {
       } catch (error) {
         await this.stepFailed(job, error);
         return;
-      }
-      if (acme.kid && acme.kid !== record.kid) {
-        const latest = await this.record();
-        latest.kid = acme.kid;
-        await this.save(latest);
-        record.kid = acme.kid;
       }
       job = await this.storage.get("https_job");
       if (!job) return; // done (issued) or given up
@@ -457,6 +643,11 @@ export class HomeHttps {
     switch (job.step) {
       case "order": {
         const { url, order } = await acme.newOrder(job.name);
+        if (acme.kid !== job.kid) {
+          // The account's URL, as newAccount gave it: for the order's next steps, and D1 (the CAA).
+          job.kid = acme.kid;
+          await keepAccount(this.env, acme);
+        }
         job.order = url;
         job.finalize = order.finalize;
         job.authz = Array.isArray(order.authorizations) ? order.authorizations[0] : null;

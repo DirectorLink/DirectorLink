@@ -42,6 +42,9 @@ local Activity = require("src.core.activity")
 local AutoBackup = require("src.cloud.auto_backup")
 local Alerts = require("src.cloud.alerts")
 local DoorbellDoors = require("src.core.doorbell_doors")
+local NotifyTargets = require("src.control4.notify_targets")
+local Notify = require("src.core.notify")
+local Access = require("src.auth.access")
 
 local LIFECYCLE_KEYS = {
     reload_count = "directorlink_reload_count",
@@ -470,6 +473,33 @@ Refrigerator.onDoorLeftOpen(function(device, seconds)
     end
 end)
 
+-- The home's screens of DirectorLink's notification agreement (1.13.0, ADR-086): every alert the
+-- controller raises goes to the screens that show its kind (src/core/notify.lua), in the home
+-- owner's language (the one they chose, else, with Auto, the one their app last showed; English
+-- when neither is known), with a picture from the controller's own API at its LAN address.
+Notify.configure({
+    targets = NotifyTargets,
+    language = function()
+        local owner = Access.owner()
+        local prefs = owner and (Profiles.find(owner) or {}).prefs or {}
+        return prefs.language, prefs.shown_language
+    end,
+    address = function()
+        return C4:GetControllerNetworkAddress()
+    end,
+    port = Api.PORT,
+})
+Alerts.onRaised(Notify.alert)
+-- And the home's alarm going off (1.13.0, the owner's decision of 2026-10-12): a partition that goes
+-- into alarm, while Alarm Status is On, goes to the screens that show alarms, on the controller only;
+-- never to a phone or the cloud, and nothing of its state in the log (ADR-038).
+Alarm.onTriggered(function(partition)
+    local ok, err = pcall(Notify.alarmTriggered, partition)
+    if not ok then
+        Log.warn("notify", "the screens were not told of an alert", { kind = "alarm", error = tostring(err) })
+    end
+end)
+
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
 -- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps
 -- answering throughout (Lua runs one thing at a time), and keys, pairing, scenes, schedules, room
@@ -501,6 +531,12 @@ local function discover(reason)
     local tracked, trackError = pcall(DriverUpdates.track, AdapterManager)
     if not tracked then
         Log.warn("adapters", "driver versions not read", { error = tostring(trackError) })
+    end
+    -- The screens of DirectorLink's notification agreement (ADR-086): after the adapters, which let
+    -- go of every variable listener first.
+    local surveyed, surveyError = pcall(NotifyTargets.survey, Registry)
+    if not surveyed then
+        Log.warn("notify", "the project's screens not read", { error = tostring(surveyError) })
     end
     -- Favorites of devices no longer in the project: marked, and dropped after some days (ADR-059).
     local looked, lookError = pcall(FavoritesGone.projectRead, Registry.devices, previousDevices)
@@ -752,6 +788,9 @@ function OnDriverLateInit(driverInitType)
             -- A few cameras' marker of DirectorLink's camera agreement, which may come after their
             -- driver started: such a camera is set up again (ADR-065).
             pcall(AdapterManager.lookAgain)
+            -- A few drivers' marker of DirectorLink's notification agreement, which may come after
+            -- the project was read (ADR-086).
+            pcall(NotifyTargets.lookAgain)
             pcall(FavoritesGone.prune, now)
             -- Which keys share an account, when a change waited to be written (ADR-061).
             pcall(Accounts.flush)
@@ -967,6 +1006,8 @@ function OnPropertyChanged(name)
 end
 
 function OnWatchedVariableChanged(idDevice, idVariable, strValue)
+    -- A screen's marker or kinds (ADR-086); its driver may be a device's too.
+    pcall(NotifyTargets.onVariableChanged, idDevice, idVariable, strValue)
     AdapterManager.onVariableChanged(idDevice, idVariable, strValue)
 end
 
@@ -1032,4 +1073,5 @@ function OnDriverDestroyed(driverInitType)
     DirectHttps.stop()
     Api.stop()
     AdapterManager.shutdown()
+    NotifyTargets.reset()
 end

@@ -1270,18 +1270,44 @@ function tests.a_handle_reused_after_a_tls_connection_never_takes_the_name_on_41
     T.eq(request("https"), 200)
 end
 
+-- Director's clock (C4:GetTime) `seconds` on (5 by default): an OFFLINE then is no longer part of
+-- the TLS server's start.
+local function afterStart(mock, seconds)
+    mock.clock = mock.clock + (seconds or 5) * 1000
+end
+
+-- The log's warnings about the TLS server.
+local function serverWarnings(mock)
+    local found = {}
+    for _, line in ipairs(mock.debugLog) do
+        if line:find("[WARN][https] TLS server", 1, true) then
+            found[#found + 1] = line
+        end
+    end
+    return found
+end
+
 function tests.a_tls_server_that_goes_offline_is_started_again()
     local s = listening()
     local calls = #s.mock.tlsCalls
+    afterStart(s.mock)
     OnServerStatusChanged(PORT, "OFFLINE", "https")
     local current = status(s)
     T.eq(current.state, "error")
     T.eq(current.error, "The controller's HTTPS server stopped. Trying again in a minute.")
     T.eq(T.http(s.mock, "GET", "/v1/system", { key = s.key }).json.direct_https, Json.null)
+    -- Not a failure yet (Director may bring it back first): no warning until the retry acts.
+    T.eq(#serverWarnings(s.mock), 0)
+    T.contains(logText(s.mock), "TLS server offline; started again in 10 s unless it comes back")
     s.mock.tlsFails = "address in use"
     fire(s.mock, 10)
     T.eq(#s.mock.tlsCalls, calls + 1, "started again after 10 s")
     T.eq(s.mock.destroyedServers[#s.mock.destroyedServers], PORT, "the old one by its port first")
+    -- Still offline when the retry acted: an outage, warned about and counted; then it could not start.
+    T.contains(serverWarnings(s.mock)[1], "TLS server still offline 10 s later; started again")
+    T.contains(serverWarnings(s.mock)[1], '"failures":1')
+    T.contains(serverWarnings(s.mock)[2], "TLS server not running; started again later")
+    T.contains(serverWarnings(s.mock)[2], '"failures":2')
     T.eq(status(s).error, "The controller couldn't start its HTTPS server. Trying again in a minute.")
     s.mock.tlsFails = nil
     fire(s.mock, 30)
@@ -1290,6 +1316,7 @@ function tests.a_tls_server_that_goes_offline_is_started_again()
     T.eq(status(s).state, "listening")
     T.eq(status(s).error, Json.null)
     -- Started, and Director never says it is online: counts as not started.
+    afterStart(s.mock)
     OnServerStatusChanged(PORT, "OFFLINE", "https")
     fire(s.mock, 10)
     T.eq(status(s).state, "error")
@@ -1299,6 +1326,67 @@ function tests.a_tls_server_that_goes_offline_is_started_again()
     -- Off: nothing is started again.
     composer("Off")
     T.eq(#httpsTimers(s.mock, false), 0)
+end
+
+-- The owner's controller at the 1.12.2 update: the TLS server started at late init, then Director
+-- stopped and started every driver's servers (OFFLINE, ONLINE 5 ms later), the API's on 41999 too.
+-- 1.12.2 warned "TLS server not running; started again later" for it (1.13.0).
+function tests.director_stopping_and_starting_the_server_at_start_is_no_failure()
+    local s = home()
+    local asked = turnOn(s)
+    relaySays(s, { type = "https_certificate_result", id = asked.id, ok = true, status = "pending" })
+    issued(s, asked)
+    local calls = #s.mock.tlsCalls
+    T.eq(s.mock.tlsServers[PORT] ~= nil, true, "started")
+    -- Director's OFFLINE a moment after our CreateTLSServer: part of the start.
+    OnServerStatusChanged(PORT, "OFFLINE", "https")
+    T.eq(hasTimer(s.mock, 10), false, "no retry")
+    T.eq(status(s).state, "requesting", "starting, not an error")
+    T.contains(logText(s.mock), "TLS server offline right after it was started; the start goes on")
+    OnServerStatusChanged(PORT, "ONLINE", "https")
+    T.eq(status(s).state, "listening")
+    T.eq(#serverWarnings(s.mock), 0, "no warning")
+    T.eq(#s.mock.tlsCalls, calls, "not started again")
+    T.eq(#httpsTimers(s.mock, false) > 0 and hasTimer(s.mock, 30), false, "its watch ended too")
+
+    -- The same once it has been listening a while: OFFLINE, and ONLINE before the retry acts.
+    afterStart(s.mock)
+    OnServerStatusChanged(PORT, "OFFLINE", "https")
+    T.truthy(hasTimer(s.mock, 10), "a retry, should it stay offline")
+    T.eq(status(s).state, "error", "offline meanwhile")
+    OnServerStatusChanged(PORT, "ONLINE", "https")
+    T.eq(hasTimer(s.mock, 10), false, "the retry is off")
+    T.eq(status(s).state, "listening")
+    T.eq(status(s).error, Json.null)
+    T.eq(#serverWarnings(s.mock), 0, "still no warning")
+    T.eq(#s.mock.tlsCalls, calls)
+    T.contains(logText(s.mock), '"retry_s":10')
+    -- Again: still the first step of the backoff (nothing was counted).
+    afterStart(s.mock)
+    OnServerStatusChanged(PORT, "OFFLINE", "https")
+    T.truthy(hasTimer(s.mock, 10))
+    OnServerStatusChanged(PORT, "ONLINE", "https")
+    T.eq(#serverWarnings(s.mock), 0)
+end
+
+-- An OFFLINE right after the start that Director never follows with ONLINE is still an outage: the
+-- start's watch warns and the server is started again.
+function tests.an_offline_at_start_without_online_is_still_started_again()
+    local s = home()
+    local asked = turnOn(s)
+    issued(s, asked)
+    local calls = #s.mock.tlsCalls
+    OnServerStatusChanged(PORT, "OFFLINE", "https")
+    T.eq(#serverWarnings(s.mock), 0)
+    fire(s.mock, 30)
+    T.eq(#serverWarnings(s.mock), 2, "not online 30 s after the start, and started again later")
+    T.contains(serverWarnings(s.mock)[1], "TLS server not online 30 s after it was started")
+    T.eq(status(s).state, "error")
+    T.eq(status(s).error, "The controller couldn't start its HTTPS server. Trying again in a minute.")
+    fire(s.mock, 10)
+    T.eq(#s.mock.tlsCalls, calls + 1, "started again")
+    OnServerStatusChanged(PORT, "ONLINE", "https")
+    T.eq(status(s).state, "listening")
 end
 
 function tests.a_new_certificate_that_cannot_start_the_server_leaves_the_old_one_running()

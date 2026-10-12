@@ -61,6 +61,8 @@ local function view(profile, keyIds)
         version = profile.version,
         prefs = {
             language = nullable(prefs.language),
+            -- The language the user's app last showed (1.13.0, ADR-086), null until it says.
+            shown_language = nullable(prefs.shown_language),
             theme = nullable(prefs.theme),
             palette = nullable(prefs.palette),
             favorites = prefs.favorites or Json.array(),
@@ -122,6 +124,16 @@ local function validatePrefs(prefs, maxFavorites)
                 changes.language = value
             else
                 return nil, Problem.invalidField("prefs.language", 'language must be "auto" or a language tag such as "en" or "he"')
+            end
+        elseif field == "shown_language" then
+            -- What the app shows (its language, with Auto the device's; 1.13.0, ADR-086): a language
+            -- tag, never "auto".
+            if value == Json.null then
+                changes.shown_language = false
+            elseif RoomNames.validLanguage(value) then
+                changes.shown_language = value
+            else
+                return nil, Problem.invalidField("prefs.shown_language", 'shown_language must be a language tag such as "en" or "he"')
             end
         elseif field == "theme" then
             if value == Json.null then

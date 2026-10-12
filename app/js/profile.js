@@ -4,7 +4,7 @@
 // controller, and works as before with drivers that have no profiles (before 0.12.0).
 
 import { api } from "./session.js";
-import { languagePreference, setLanguage } from "./i18n.js";
+import { currentLanguage, languagePreference, setLanguage } from "./i18n.js";
 import { palettePreference, setPalette, setTheme, themePreference } from "./theme.js";
 import { notify, state } from "./state.js";
 
@@ -85,7 +85,25 @@ export async function syncProfile(onLanguage) {
   }
   state.profile = profile;
   await applyPrefs(profile.prefs || {}, onLanguage);
+  reportShownLanguage();
   notify();
+}
+
+// The language this app shows (1.13.0, ADR-086): its own, or with Auto the device's. The controller
+// keeps the last one each user's app showed (`shown_language`), so that the home's screens speak the
+// owner's language when they chose Auto. Told only to a controller that keeps it (its profile has
+// `shown_language`, null until told; an older one would refuse the field), when it says another,
+// once a start for each language: two devices of one user that show different languages do not
+// take turns every minute.
+let reported = null;
+function reportShownLanguage() {
+  const prefs = state.profile?.prefs;
+  if (!prefs || !Object.hasOwn(prefs, "shown_language")) return;
+  const shown = currentLanguage();
+  const mark = `${state.host || ""}|${state.profile.id || ""}|${shown}`;
+  if (prefs.shown_language === shown || reported === mark) return;
+  reported = mark;
+  saveProfilePrefs({ shown_language: shown });
 }
 
 // Rooms this person hides from their lists.

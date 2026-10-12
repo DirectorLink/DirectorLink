@@ -821,6 +821,8 @@ local function cleanPrefs(prefs)
     local palette = prefs.palette
     return {
         language = (prefs.language == "auto" or RoomNames.validLanguage(prefs.language)) and prefs.language or nil,
+        -- What the user's app last showed (1.13.0, ADR-086).
+        shown_language = RoomNames.validLanguage(prefs.shown_language) and prefs.shown_language or nil,
         theme = Profiles.THEMES[prefs.theme] and prefs.theme or nil,
         palette = type(palette) == "string" and #palette <= 20 and palette:match(PALETTE) and palette or nil,
     }

@@ -1338,6 +1338,9 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – הדלת פתוחה כבר לפחות {minutes} דק׳ ({time}).",
     fridgeDoorNow: "{name} – הדלת נשארה פתוחה ({time}).",
+    // האזעקה של הבית (1.13.0, ADR-086): רק בטלוויזיות של הבית, אף פעם לא בטלפון.
+    alarmTriggered: "אזעקה ב-{name} ב-{time}.",
+    alarmTriggeredOf: "אזעקת {type} ב-{name} ב-{time}.",
     deviceRequest: "מכשיר חדש מבקש להצטרף לבית שלכם. פתחו את DirectorLink כדי לאשר או לדחות.",
     openRequestTitle: "לפתוח את {name}?",
     openRequest: "הקישור „{via}” שאל ב-{time}. הקישו כדי לענות.",
@@ -1407,6 +1410,21 @@ export default {
       notAvailable: "התראות עדיין לא זמינות. נסו שוב מאוחר יותר.",
       signIn: "התחברו שוב כדי להפעיל התראות.",
       failed: "לא ניתן היה להפעיל התראות. בדקו את החיבור ונסו שוב.",
+    },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086).
+    screens: {
+      title: "בטלוויזיות",
+      help: "הטלוויזיות האלה מציגות את התראות הבית כהודעות קופצות, עם תמונה לפעמונים ולמצלמות. המתקין מוסיף אותן ב-Composer ובוחר מה כל אחת מציגה.",
+      shows: "מציגה: {kinds}",
+      nothing: "לא מציגה כלום",
+      language: "שפה: {language}, השפה שבעל הבית רואה באפליקציה.",
+      kinds: {
+        doorbell: "פעמון",
+        camera: "מצלמות",
+        door: "דלתות",
+        alarm: "אזעקות",
+        other: "אחר",
+      },
     },
   },
   roles: {

@@ -780,6 +780,52 @@ function Mock.withAgreementCameras(project, list)
     return project
 end
 
+-- Screens whose drivers follow DirectorLink's notification agreement (1.13.0, ADR-086; made up, as
+-- the DirectorLink · LG TV Notifications driver would be): each a driver without proxies, in its
+-- room, with its variables ONLINE, then (with `marker`, "1" by default; false: not yet)
+-- DIRECTORLINK_NOTIFY, then (with `kinds`, unless false) DIRECTORLINK_NOTIFY_KINDS. It takes the
+-- command DIRECTORLINK_NOTIFY and keeps what it got (Mock.notifications); with `fails` (a text),
+-- every command to it fails with that error, as a driver that throws. `list`: { { id, name, room
+-- (10 or 11), kinds, marker, fails } }; by default 301 "Living Room TV" (Living Room, every kind).
+Mock.NOTIFY_FILE = "DirectorLink-LG-TV-Notifications.c4z"
+
+function Mock.withNotifyTargets(project, list)
+    list = list or { { id = 301, name = "Living Room TV", room = 11, kinds = "doorbell,camera,door,alarm,other" } }
+    project.notifyTargets = project.notifyTargets or {}
+    for _, screen in ipairs(list) do
+        local room = screen.room or 11
+        project.devices[screen.id] = {
+            deviceName = screen.name, driverFileName = screen.file or Mock.NOTIFY_FILE, roomId = room,
+            roomName = room == 10 and "Kitchen" or "Living Room",
+        }
+        local names, values = { "ONLINE" }, { ONLINE = "1" }
+        if screen.marker ~= false then
+            names[#names + 1] = "DIRECTORLINK_NOTIFY"
+            values.DIRECTORLINK_NOTIFY = screen.marker or "1"
+        end
+        if screen.kinds ~= false and screen.kinds ~= nil then
+            names[#names + 1] = "DIRECTORLINK_NOTIFY_KINDS"
+            values.DIRECTORLINK_NOTIFY_KINDS = screen.kinds
+        end
+        project.variables[screen.id] = {}
+        project.variableNames[screen.id] = {}
+        for index, name in ipairs(names) do
+            project.variables[screen.id][1000 + index] = values[name]
+            project.variableNames[screen.id][1000 + index] = name
+        end
+        project.notifyTargets[screen.id] = { received = {}, fails = screen.fails }
+    end
+    return project
+end
+
+-- What the screen `id` got (the params of each DIRECTORLINK_NOTIFY) since the last look.
+function Mock.notifications(mock, id)
+    local target = mock.project.notifyTargets[id]
+    local received = target.received
+    target.received = {}
+    return received
+end
+
 -- The id of the event `name` among the driver's events (as Director gives its driver.xml), or nil.
 local function eventNamed(mock, deviceId, name)
     local data = (mock.project.deviceData or {})[deviceId]
@@ -1233,6 +1279,23 @@ function Mock.install(project)
 
     function C4:SendToDevice(deviceId, command, params)
         mock.commands[#mock.commands + 1] = { device = deviceId, command = command, params = params }
+        -- A screen of DirectorLink's notification agreement (Mock.withNotifyTargets) takes it.
+        local target = (project.notifyTargets or {})[deviceId]
+        if target then
+            if target.fails then
+                error(target.fails)
+            end
+            if command == "DIRECTORLINK_NOTIFY" then
+                local copy = {}
+                for name, value in pairs(params or {}) do
+                    copy[name] = value
+                end
+                target.received[#target.received + 1] = copy
+                if target.onNotify then
+                    target.onNotify(copy)
+                end
+            end
+        end
     end
 
     function C4:SendUIRequest(deviceId, request, params)
@@ -1667,14 +1730,18 @@ function Mock.startDriver(project, specText, initType, prepare)
 end
 
 -- A driver update in Composer: the driver reloads in place and keeps its persistent data (Director
--- keeps it in state.db, encrypted values included).
-function Mock.updateDriver(previous, project)
+-- keeps it in state.db, encrypted values included). `prepare(mock)`, optional, runs before the
+-- start, as Mock.startDriver's (Composer's properties, which a test sets again there).
+function Mock.updateDriver(previous, project, prepare)
     return Mock.startDriver(project, nil, "DIT_UPDATING", function(mock)
         -- Random values must not repeat, or a lost identity would be regenerated unnoticed.
         mock.uuidCount = previous.uuidCount
         for name, value in pairs(previous.persist) do
             mock.persist[name] = value
             mock.persistEncrypted[name] = previous.persistEncrypted[name]
+        end
+        if prepare then
+            prepare(mock)
         end
     end)
 end

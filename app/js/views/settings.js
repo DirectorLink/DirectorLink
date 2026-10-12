@@ -27,6 +27,7 @@ import { PALETTES, TEXT_SIZES, THEMES, palettePreference, textSizePreference, th
 import { can, notify, state, ui } from "../state.js";
 import { alarmFact } from "./alarm.js";
 import { alertsPage, alertsStatus } from "./alerts.js";
+import { screensCard } from "./alert-screens.js";
 import { makeInvitation, pasteInvitationPanel } from "./device-join.js";
 import { movePanel } from "./move.js";
 import { deviceLimitOf, deviceLimitPanel } from "./device-limit.js";
@@ -56,7 +57,7 @@ export function settingsView({ page = null, onPalette, onTheme, onLanguage, onTe
     case "account":
       return subpage(t("settings.account.title"), accountSection());
     case "alerts":
-      return subpage(t("alerts.settings.title"), alertsPage());
+      return subpage(t("alerts.settings.title"), alertsPage(), screensCard());
     case "appearance":
       return subpage(t("settings.appearance.title"), followsNote(), languageSection(onLanguage), appearanceSection(onPalette, onTheme), textSizeSection(onTextSize));
     case "app":

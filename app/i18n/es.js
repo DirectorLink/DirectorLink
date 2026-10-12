@@ -1369,6 +1369,9 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – la puerta lleva abierta al menos {minutes} min ({time}).",
     fridgeDoorNow: "{name} – la puerta se quedó abierta ({time}).",
+    // The home's alarm going off (1.13.0, ADR-086): only on the home's TVs, never on a phone.
+    alarmTriggered: "La alarma saltó en {name} a las {time}.",
+    alarmTriggeredOf: "Alarma de {type} en {name} a las {time}.",
     // 1.8.0: the account service's own push, to admins' devices (it names nothing).
     deviceRequest: "Un nuevo dispositivo pide unirse a tu casa. Abre DirectorLink para aprobarlo o rechazarlo.",
     openRequestTitle: "¿Abrir {name}?",
@@ -1440,6 +1443,21 @@ export default {
       notAvailable: "Las alertas aún no están disponibles. Inténtalo más tarde.",
       signIn: "Vuelve a iniciar sesión para activar las alertas.",
       failed: "No se pudieron activar las alertas. Revisa la conexión e inténtalo de nuevo.",
+    },
+    // Settings → Alerts → On TVs (1.13.0, ADR-086).
+    screens: {
+      title: "En televisores",
+      help: "Estos televisores muestran las alertas de la casa como avisos emergentes, con imagen para timbres y cámaras. Tu instalador los añade en Composer y elige qué muestra cada uno.",
+      shows: "Muestra: {kinds}",
+      nothing: "No muestra nada",
+      language: "Idioma: {language}, el que ve el propietario de la casa en la app.",
+      kinds: {
+        doorbell: "Timbre",
+        camera: "Cámaras",
+        door: "Puertas",
+        alarm: "Alarmas",
+        other: "Otras",
+      },
     },
   },
   roles: {

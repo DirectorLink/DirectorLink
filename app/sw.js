@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also shows alerts (push), and opens the app where a notification's tap leads.
 
-const CACHE_NAME = "directorlink-shell-v50";
+const CACHE_NAME = "directorlink-shell-v51";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -19,6 +19,7 @@ const ASSETS = [
   "/js/account.js",
   "/js/alerts.js",
   "/js/views/alerts.js",
+  "/js/views/alert-screens.js",
   "/js/alarm.js",
   "/js/music.js",
   "/js/views/music.js",

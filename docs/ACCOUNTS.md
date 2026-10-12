@@ -72,9 +72,9 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | An alert sent again after a lost connection (1.10.1, ADR-073) | — | a random id per alert, kept 10 minutes (at most 200) so that it pushes each once, and whether an alert came again (that a connection ended while it was on its way: it saw each connection end already); never more of what it is about | its own sealed alerts not yet answered, in memory for up to 2 minutes |
 | Scene links (1.7.0): a link's id and secret | shown once, when an admin makes it; then only on the phones and tags it was given to | **its id and secret in transit, each time a phone uses it**, with the home, when, and whether it ran, partly ran, failed or found nothing to run; it keeps no secret, and logs each run (the home, the link's id, the status, the result word, how long) in Workers Logs for some days; which scene it runs, **never** | the link's id, a hash of its secret, its scene and the key that made it; every run in History |
 | Ask-before-opening links (1.8.0): a door's link that asks its person | shown once, when its person makes it; the question opened with the device's alert key | as a scene link's run: **its id and secret in transit**, when, and the result word (asked, waiting, nobody, doors_off, not_asked), so that it is an ask link; then a brief sealed `notify` for its person's key ids, so which keys a link asks; which door, and the question, **never** | the link's id, a hash of its secret, its door and the key that made it; every question and the opening that answered it in History |
-| Direct HTTPS (1.12.0, ADR-082; since 1.12.2 on whenever the installer sets it On in Composer, ADR-085): the home's own name (`<20 random letters and digits>.dlhome.cc`) | its home's, in `GET /v1/system` while it listens, and admins in `GET /v1/https` | yes, from the first certificate the controller asks for: bound to the home in D1 for good (`https_names`), with when its first certificate was issued; **and it is public**: Certificate Transparency logs list every certificate issued for it, with their dates, and anyone may look up its DNS record | yes |
-| Direct HTTPS: the controller's LAN address (a private IPv4 address such as 192.168.1.201) | — | yes, while Direct HTTPS is on: the controller sends it with each request and when it changes, and the Worker writes it as the name's public DNS record (DNS only), deleted when it is turned off. Anyone who knows the name can read it: a private address, which says nothing outside the home | yes |
-| Direct HTTPS: the certificate and its key | the certificate, as any browser that connects | the certificates (public anyway) and its ACME account's key; the controller's CSR in transit; **never** the controller's private key | the key (in its store, never sent, logged or backed up) and the certificate |
+| Direct HTTPS (1.12.0, ADR-082; since 1.12.2 on whenever the installer sets it On in Composer, ADR-085): the home's own name (`<20 random letters and digits>.dlhome.cc`) | its home's, in `GET /v1/system` while it listens, and admins in `GET /v1/https` | yes, from the first certificate the controller asks for: bound to the home in D1 for as long as the home is there (`https_names`; since 1.13.0, ADR-087, forgotten within a day once the home is gone), with when its first certificate was issued and, since 1.13.0, when the controller last said it uses the name (to the half-day), when it said off and whether the name has an A record; **and it is public**: Certificate Transparency logs list every certificate issued for it, with their dates, and anyone may look up its DNS record | yes |
+| Direct HTTPS: the controller's LAN address (a private IPv4 address such as 192.168.1.201) | — | yes, while Direct HTTPS is on: the controller sends it with each request and when it changes, and the Worker writes it as the name's public DNS record (DNS only), deleted when it is turned off and, since 1.13.0, when the controller has not said it uses the name for 30 days (written again when it does). Anyone who knows the name can read it: a private address, which says nothing outside the home | yes |
+| Direct HTTPS: the certificate and its key | the certificate, as any browser that connects | the certificates (public anyway), its ACME account's key and (1.13.0) that account's URL, which `dlhome.cc`'s public CAA record names; the controller's CSR in transit; **never** the controller's private key | the key (in its store, never sent, logged or backed up) and the certificate |
 | Requests on port 28443 at home (Direct HTTPS) | yes | **never**: they go from the device to the controller on the home network | yes |
 | When, and how much data, flows | yes | yes | yes |
 
@@ -710,10 +710,17 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   the controller last listed, and when it last notified (60 an hour at most).
 - `stats` (1.7.0, ADR-052, `migrations/0010`): three totals and when each was last counted (below).
 - `https_names` (1.12.0, ADR-082, `migrations/0011`): each home's Direct HTTPS name, which home it
-  belongs to (for good, so that no other home can ask for it), when it was first asked for and when
-  its first certificate was issued. The home's Durable Object keeps the controller's LAN address
-  while Direct HTTPS is on, the name's certificates (public anyway), when it last ordered one (the
-  last week's, for the limits) and the ACME account's URL; Cloudflare's DNS has the name's A record.
+  belongs to (while the home is there, so that no other home can ask for it), when it was first asked
+  for and when its first certificate was issued; since 1.13.0 (ADR-087, `migrations/0012`) when the
+  controller last said it uses the name (at most every 12 hours), when it said off and when the A
+  record was written. The home's Durable Object keeps the controller's LAN address while Direct
+  HTTPS is on, the name's certificates (public anyway), when it last ordered one (the last week's,
+  for the limits) and when it last said it uses the name; Cloudflare's DNS has the name's A record.
+  Every day a name whose home is gone is forgotten (row, records, the object's copy), and a name not
+  used for 30 days, or turned off, loses its A record (ADR-087).
+- `acme_accounts` (1.13.0, ADR-087, `migrations/0012`): the URL of the Worker's ACME account at
+  Let's Encrypt and its key's thumbprint, for `dlhome.cc`'s CAA record, which publishes the URL. No
+  home's data.
 - No device data, no keys and no message contents. The hash of each home's connection secret is
   in the relay's Durable Object storage.
 

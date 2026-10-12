@@ -2,7 +2,9 @@
 -- devices. Every API key belongs to one profile (keys.lua `profile`): pairing and an invitation for
 -- someone else make a new one, "Add my other device" puts the new key in the inviter's profile.
 -- The preferences are what the app keeps per person: language, theme, palette, favorites and the
--- rooms they hide from their lists.
+-- rooms they hide from their lists. Since 1.13.0 (ADR-086) also `shown_language`, the language the
+-- person's app last showed (its own, with Auto the device's): reported by the app, not chosen, so
+-- it does not change the profile's version; the home's screens speak the owner's (src/core/notify.lua).
 -- A profile goes when its last key does.
 --
 -- A store Director could not read at start may still hold the profiles (they come back at the
@@ -41,7 +43,7 @@ local function copyPrefs(prefs)
     for _, id in ipairs(prefs.hidden_rooms or {}) do
         hidden[#hidden + 1] = id
     end
-    return { language = prefs.language, theme = prefs.theme, palette = prefs.palette, favorites = favorites, hidden_rooms = hidden }
+    return { language = prefs.language, shown_language = prefs.shown_language, theme = prefs.theme, palette = prefs.palette, favorites = favorites, hidden_rooms = hidden }
 end
 
 local function copy(profile)
@@ -80,6 +82,7 @@ function Profiles.read(data)
                 version = tonumber(item.version) or 0,
                 prefs = {
                     language = type(prefs.language) == "string" and prefs.language or nil,
+                    shown_language = type(prefs.shown_language) == "string" and prefs.shown_language or nil,
                     theme = type(prefs.theme) == "string" and prefs.theme or nil,
                     palette = type(prefs.palette) == "string" and prefs.palette or nil,
                     favorites = Store.items(prefs.favorites),
@@ -176,6 +179,8 @@ end
 
 -- Applies `changes` (validated by the API: language, theme, palette, favorites; false clears a
 -- field) to the profile's preferences. `expected`: the version the caller saw, or nil to not check.
+-- `shown_language` alone (what the app reports it shows, 1.13.0) is saved without a new version:
+-- nobody chose it, and another device's choices made meanwhile still count.
 -- Returns the profile, or nil and NOT_FOUND / VERSION_CONFLICT.
 function Profiles.updatePrefs(id, changes, expected)
     local profile = findRecord(id)
@@ -185,18 +190,24 @@ function Profiles.updatePrefs(id, changes, expected)
     if expected ~= nil and expected ~= profile.version then
         return nil, "VERSION_CONFLICT"
     end
-    for _, field in ipairs({ "language", "theme", "palette" }) do
+    local chosen = false
+    for _, field in ipairs({ "language", "theme", "palette", "shown_language" }) do
         if changes[field] ~= nil then
             profile.prefs[field] = changes[field] ~= false and changes[field] or nil
+            chosen = chosen or field ~= "shown_language"
         end
     end
     if changes.favorites ~= nil then
         profile.prefs.favorites = changes.favorites
+        chosen = true
     end
     if changes.hidden_rooms ~= nil then
         profile.prefs.hidden_rooms = changes.hidden_rooms
+        chosen = true
     end
-    profile.version = profile.version + 1
+    if chosen then
+        profile.version = profile.version + 1
+    end
     save()
     return copy(profile)
 end
