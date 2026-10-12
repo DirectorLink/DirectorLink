@@ -168,6 +168,8 @@ jobs:
     needs: [gate, build]
     if: github.ref == 'refs/heads/main' && needs.gate.outputs.release == 'true'
     runs-on: ubuntu-24.04
+    # From the owner's approval on: the wait for it does not count.
+    timeout-minutes: 15
     environment: production
     permissions:
       contents: write

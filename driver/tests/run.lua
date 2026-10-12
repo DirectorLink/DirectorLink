@@ -1,8 +1,9 @@
 -- Runs the driver test suites under plain Lua 5.1. From the repository root:
 --   lua5.1 driver/tests/run.lua                             (every suite)
 --   lua5.1 driver/tests/run.lua test_sun test_holy_times    (only these, in this order)
---   lua5.1 driver/tests/run.lua --shard 2/3                 (the second of three parts, as CI runs them)
---   lua5.1 driver/tests/run.lua --shard 2/3 --list          (which suites that part runs)
+--   lua5.1 driver/tests/run.lua --shard 2/6                 (the second of six parts, as CI runs them)
+--   lua5.1 driver/tests/run.lua --shard 2/6 --list          (which suites that part runs)
+-- In a part, test_backup:1/2 is the first of the two pieces test_backup is cut into (below).
 
 package.path = "./driver/?.lua;./driver/tests/?.lua;" .. package.path
 
@@ -68,40 +69,40 @@ local suites = {
     "test_https",
 }
 
--- About how many seconds each suite takes (all of them in one run on a PC, 2026-10-03; CI takes
--- about 1.7 times as long),
--- for --shard to split them into parts of about equal time. A suite not listed counts as
+-- About how many seconds each suite takes (each alone, on one of a PC's fast cores, 2026-10-11;
+-- test_backup takes 115 to 150 from run to run; CI takes about 1.3 to 1.7 times as long), for
+-- --shard to split them into parts of about equal time. A suite not listed counts as
 -- DEFAULT_SECONDS: add it here once measured (lua5.1 driver/tests/run.lua <suite>).
 local SECONDS = {
     test_json = 1,
     test_access = 1,
-    test_people = 16,
-    test_users = 20,
-    test_add_user = 8,
-    test_owner = 10,
+    test_people = 17,
+    test_users = 22,
+    test_add_user = 9,
+    test_owner = 7,
     test_http = 1,
     test_router = 1,
     test_api = 16,
     test_discovery = 5,
-    test_shades = 25,
+    test_shades = 13,
     test_relay = 9,
-    test_resend = 30,
-    test_activity = 7,
-    test_auto_backup = 7,
-    test_alerts = 7,
+    test_resend = 26,
+    test_activity = 9,
+    test_auto_backup = 20,
+    test_alerts = 49,
     test_cameras = 4,
-    test_camera_drivers = 5,
+    test_camera_drivers = 10,
     test_camera_order = 3,
-    test_door_controllers = 13,
-    test_doorbell_doors = 5,
-    test_https = 8,
+    test_door_controllers = 9,
+    test_doorbell_doors = 4,
+    test_https = 24,
     test_lock = 1,
-    test_remote = 18,
-    test_profiles = 3,
-    test_scenes = 8,
-    test_scene_links = 16,
-    test_ask_links = 15,
-    test_schedules = 8,
+    test_remote = 20,
+    test_profiles = 4,
+    test_scenes = 9,
+    test_scene_links = 13,
+    test_ask_links = 12,
+    test_schedules = 16,
     test_calendar = 16,
     test_hebrew_date = 1,
     test_holidays = 1,
@@ -112,60 +113,94 @@ local SECONDS = {
     test_cpace = 1,
     test_cpace_pairing = 12,
     test_key_expiry = 5,
-    test_security = 7,
-    test_light_v1 = 1,
-    test_light_v2 = 3,
-    test_thermostat_v2_heat = 6,
+    test_security = 13,
+    test_light_v1 = 2,
+    test_light_v2 = 4,
+    test_thermostat_v2_heat = 7,
     test_thermostat_proxy = 1,
     test_dual_thermostat = 6,
-    test_fahrenheit = 5,
-    test_last_modes = 3,
+    test_fahrenheit = 4,
+    test_last_modes = 4,
     test_fans = 6,
-    test_refrigerators = 9,
-    test_driver_updates = 3,
+    test_refrigerators = 8,
+    test_driver_updates = 2,
     test_alarm = 41,
-    test_backup = 93,
-    test_sonos = 14,
-    test_sonos_groups = 8,
+    test_backup = 135,
+    test_sonos = 17,
+    test_sonos_groups = 10,
 }
 local DEFAULT_SECONDS = 5
 
--- The suites of part `index` of `count`: longest first, each goes to the part with the least time
--- so far (the first of equals), so every suite is in exactly one part. Each part keeps the order.
+-- The suites of part `index` of `count`. A suite that alone takes longer than a part should (all
+-- the seconds over `count`) is first cut into as many pieces as that takes, its tests dealt out in
+-- turn: with six parts, test_backup into two. Then the suites and pieces, longest first, each go
+-- to the part with the least time so far (the first of equals), so every test is in exactly one
+-- part. Each part keeps the order. Returns the suites, and for each suite cut into pieces the
+-- pieces this part runs: { [name] = { count = pieces, [piece] = true } }.
 local function shard(list, index, count)
+    local total = 0
+    for _, suiteName in ipairs(list) do
+        total = total + (SECONDS[suiteName] or DEFAULT_SECONDS)
+    end
     local order = {}
     for position, suiteName in ipairs(list) do
-        order[#order + 1] = { name = suiteName, position = position, seconds = SECONDS[suiteName] or DEFAULT_SECONDS }
+        local seconds = SECONDS[suiteName] or DEFAULT_SECONDS
+        local pieces = math.max(1, math.ceil(seconds * count / total))
+        for piece = 1, pieces do
+            order[#order + 1] = { name = suiteName, position = position, piece = piece, pieces = pieces, seconds = seconds / pieces }
+        end
     end
     table.sort(order, function(a, b)
         if a.seconds ~= b.seconds then
             return a.seconds > b.seconds
         end
-        return a.position < b.position
+        if a.position ~= b.position then
+            return a.position < b.position
+        end
+        return a.piece < b.piece
     end)
     local totals, mine = {}, {}
     for part = 1, count do
         totals[part] = 0
     end
-    for _, suite in ipairs(order) do
+    for _, unit in ipairs(order) do
         local least = 1
         for part = 2, count do
             if totals[part] < totals[least] then
                 least = part
             end
         end
-        totals[least] = totals[least] + suite.seconds
+        totals[least] = totals[least] + unit.seconds
         if least == index then
-            mine[suite.name] = true
+            mine[unit.name] = mine[unit.name] or { count = unit.pieces }
+            mine[unit.name][unit.piece] = true
         end
     end
-    local result = {}
+    local result, cut = {}, {}
     for _, suiteName in ipairs(list) do
-        if mine[suiteName] then
+        local pieces = mine[suiteName]
+        if pieces then
             result[#result + 1] = suiteName
+            if pieces.count > 1 then
+                cut[suiteName] = pieces
+            end
         end
     end
-    return result
+    return result, cut
+end
+
+-- How a part names a suite: test_backup:1/2 for the first of its two pieces.
+local function label(suiteName, pieces)
+    if not pieces then
+        return suiteName
+    end
+    local names = {}
+    for piece = 1, pieces.count do
+        if pieces[piece] then
+            names[#names + 1] = suiteName .. ":" .. piece .. "/" .. pieces.count
+        end
+    end
+    return table.concat(names, " ")
 end
 
 local named, shardIndex, shardCount, listOnly = {}, nil, nil, false
@@ -203,16 +238,21 @@ if #named > 0 then
     suites = named
 end
 
+local cut = {}
 if shardIndex then
-    suites = shard(suites, shardIndex, shardCount)
+    suites, cut = shard(suites, shardIndex, shardCount)
     if not listOnly then
-        print(string.format("part %d/%d: %s", shardIndex, shardCount, table.concat(suites, " ")))
+        local labels = {}
+        for _, suiteName in ipairs(suites) do
+            labels[#labels + 1] = label(suiteName, cut[suiteName])
+        end
+        print(string.format("part %d/%d: %s", shardIndex, shardCount, table.concat(labels, " ")))
     end
 end
 
 if listOnly then
     for _, suiteName in ipairs(suites) do
-        print(suiteName)
+        print(label(suiteName, cut[suiteName]))
     end
     os.exit(0)
 end
@@ -226,8 +266,16 @@ for _, suiteName in ipairs(suites) do
         names[#names + 1] = name
     end
     table.sort(names)
+    -- A piece of a suite: its tests dealt out in turn, the first to piece 1, the second to 2, ...
+    local pieces = cut[suiteName]
+    local mine = {}
+    for position, name in ipairs(names) do
+        if not pieces or pieces[(position - 1) % pieces.count + 1] then
+            mine[#mine + 1] = name
+        end
+    end
 
-    for _, name in ipairs(names) do
+    for _, name in ipairs(mine) do
         local ok, err = pcall(suite[name])
         if ok then
             passed = passed + 1

@@ -14,7 +14,9 @@ code use the short link: the repository's long address appears only where a mach
 Nothing reaches production without the owner's approval (ADR-075): the workflows that deploy the
 sites and publish the driver do it only in the "production" environment, each site gets a
 build.json that the hourly watch compares with the source, and a release starts only once
-Validate DirectorLink has passed on its commit of main.
+Validate DirectorLink has passed on its commit of main, where it always runs every test. Every
+workflow job has a time limit and uses only actions pinned to a commit, and none uses Ubuntu's
+package mirror.
 """
 
 from fnmatch import fnmatch
@@ -676,6 +678,18 @@ RELEASE_GATE = (
 # A job whose if has one of these runs even when a job it needs failed or was skipped.
 STATUS_OVERRIDE = re.compile(r"\b(always|cancelled|failure)\s*\(")
 
+# Faster checks (ADR-075, 2026-10-11). Validate's first job, "changes", says whether anything but
+# the website and the docs changed; when not, the driver, time-zone, app and cloud tests are
+# skipped, never on a push to main (a release relies on a full run of its commit): each job that
+# may be skipped has exactly TESTS_IF. The last job, "validate" (the one check to require), runs
+# always(), needs every other job and fails unless each passed, or was skipped when TESTS_IF did
+# not hold. Every job of every workflow has a time limit, uses only actions pinned to a full
+# commit, and none uses Ubuntu's package mirror: once it hung, and a job waited 25 minutes.
+TESTS_IF = "(github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.tests == 'true'"
+AGGREGATE = "validate"
+PINNED_ACTION = re.compile(r"^(\./|[\w.-]+/[\w.-]+(/[\w./-]+)?@[0-9a-f]{40}$)")
+APT = re.compile(r"\bapt(-get)?\s+(update|install|upgrade)\b")
+
 
 def workflow(name, text):
     data = yaml.safe_load(text)
@@ -731,11 +745,21 @@ def check_workflows(workflows, ignores, tracked):
                 fail(f"{where} may write to the repository outside the production environment")
             if production and "refs/heads/main" not in str(job.get("if", "")):
                 fail(f"{where} runs in production: only from main (if: ... github.ref == 'refs/heads/main')")
+            if not isinstance(job.get("timeout-minutes"), int) or isinstance(job.get("timeout-minutes"), bool):
+                fail(f"{where} needs timeout-minutes: a job that hangs must fail within minutes, not after GitHub's 6 hours")
+            if APT.search(runs):
+                fail(f"{where} uses Ubuntu's package mirror (apt-get), which once hung a job for 25 minutes; "
+                     "Lua 5.1 comes from scripts/install_lua.sh")
+            for step in job.get("steps", []):
+                uses = step.get("uses") if isinstance(step, dict) else None
+                if uses and not PINNED_ACTION.match(str(uses)):
+                    fail(f"{where} uses {uses}: pin every action to a full commit (dependabot keeps them up to date)")
         if name in ("deploy.yml", "release.yml") and data.get("permissions") != {"contents": "read"}:
             fail(f".github/workflows/{name}: the workflow's permissions must be contents: read (the job that publishes asks for more)")
     if not deploys or not releases:
         fail("the sites' deploy (wrangler deploy) and the driver's release (gh release create) must each be in a workflow job")
     check_release(workflows)
+    check_validate(workflows)
 
     if "watch-live.yml" not in workflows:
         fail(".github/workflows/watch-live.yml must compare the live sites with the source every hour (ADR-075)")
@@ -807,6 +831,47 @@ def check_release(workflows):
     if not asks:
         fail(f"{where} must ask GitHub, before anything is built, whether Validate DirectorLink passed on the commit "
              "(actions/workflows/validate.yml/runs?head_sha=$SHA)")
+
+
+def check_validate(workflows):
+    """validate.yml runs every test on each push to main, skips them only when "changes" found
+    nothing but the website and the docs changed, and its last job passes only when every job
+    passed or was skipped on purpose (TESTS_IF above)."""
+    validate = workflow(VALIDATE, workflows[VALIDATE])
+    where = f".github/workflows/{VALIDATE}"
+    triggers = validate["on"] if isinstance(validate["on"], dict) else {}
+    if "main" not in ((triggers.get("push") or {}).get("branches") or []) or "pull_request" not in triggers:
+        fail(f"{where} must run on every push to main (a release starts only once it passed there) and on pull requests")
+    if validate.get("permissions") != {"contents": "read"} or any(job.get("permissions") for job in validate["jobs"].values()):
+        fail(f"{where} only reads: permissions: contents: read, and no job asks for more")
+    jobs = validate["jobs"]
+    aggregate = jobs.get(AGGREGATE)
+    if not isinstance(aggregate, dict):
+        fail(f"{where} must end with the job {AGGREGATE}, the one check to require")
+    others = set(jobs) - {AGGREGATE}
+    needs = aggregate.get("needs")
+    needs = [needs] if isinstance(needs, str) else needs or []
+    if " ".join(str(aggregate.get("if", "")).split()) != "always()" or set(needs) != others:
+        fail(f"{where} job {AGGREGATE} must run if: always() and need every other job ({', '.join(sorted(others))}): "
+             "a check that is merely skipped counts as passed")
+    env = {}
+    for step in aggregate.get("steps", []):
+        if isinstance(step, dict):
+            env.update(step.get("env") or {})
+    if " ".join(str(env.get("RUN_TESTS", "")).split()) != f"${{{{ {TESTS_IF} }}}}":
+        fail(f"{where} job {AGGREGATE} must expect the tests to have passed whenever they run: RUN_TESTS: ${{{{ {TESTS_IF} }}}}")
+    for name in sorted(others):
+        job = jobs[name]
+        condition = " ".join(str(job.get("if", "")).split())
+        job_needs = job.get("needs")
+        job_needs = [job_needs] if isinstance(job_needs, str) else job_needs or []
+        if condition and (condition != TESTS_IF or "changes" not in job_needs):
+            fail(f"{where} job {name} may be skipped only when nothing it tests changed, never on a push to main: "
+                 f"needs: changes, if: {TESTS_IF}")
+        group = "TESTS" if condition else "ALWAYS"
+        if f"{name}=${{{{ needs.{name}.result }}}}" not in str(env.get(group, "")):
+            fail(f"{where} job {AGGREGATE} must check {name}'s result with the jobs that "
+                 + ("may be skipped (TESTS)" if condition else "always run (ALWAYS)"))
 
 
 def check_deploy_workflows():
