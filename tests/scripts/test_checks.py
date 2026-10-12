@@ -731,7 +731,7 @@ class DeployApproval(unittest.TestCase):
         self.assertIn("job build must check out the commit Validate passed", self.refused(main_latest))
 
     def test_no_other_job_reads_a_secret_or_gets_a_preview(self):
-        secret = "        run: lua5.1 driver/tests/run.lua --shard ${{ matrix.part }}/3\n"
+        secret = "        run: lua5.1 driver/tests/run.lua --shard ${{ matrix.part }}/6\n"
         leaked = self.edited("validate.yml", secret, secret + "        env:\n          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}\n")
         self.assertIn("reads a secret outside the production environment", self.refused(leaked))
         preview = self.edited("deploy.yml", "deploy --dry-run)", "versions upload --preview-alias pr)")
@@ -744,6 +744,39 @@ class DeployApproval(unittest.TestCase):
         self.assertIn("must write each site's build.json", self.refused(unstamped))
         self.assertIn("app/.assetsignore must not keep build.json", self.refused(ignores={"app": self.ignores["app"] + "*.json\n"}))
         self.assertIn("site/build.json must not be committed", self.refused(tracked={"site/build.json"}))
+
+    # Faster checks (ADR-075, 2026-10-11): the tests are skipped only for the website and the docs,
+    # never on a push to main, and "validate" fails unless each job passed or was skipped on purpose.
+    def test_validate_runs_every_test_on_main_and_skips_only_on_purpose(self):
+        tests_if = "    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.tests == 'true'\n"
+        self.assertEqual(self.workflows["validate.yml"].count(tests_if), 3)
+        skipped_on_main = self.edited("validate.yml", tests_if, "    if: needs.changes.outputs.tests == 'true'\n")
+        self.assertIn("never on a push to main", self.refused(skipped_on_main))
+        self.assertIn("never on a push to main", self.refused(self.edited("validate.yml", "    needs: changes\n", "")))
+        checks = "  checks:\n    name: Build and checks\n"
+        self.assertIn("job validate must check checks's result with the jobs that may be skipped",
+                      self.refused(self.edited("validate.yml", checks, checks + tests_if.replace("    if", "    needs: changes\n    if"))))
+        # A job left out of the last one's needs, or a last job that does not run when one failed.
+        needs = "    needs: [changes, driver-tests, time-zones, checks, app-and-cloud]\n"
+        self.assertIn("need every other job", self.refused(self.edited("validate.yml", needs, needs.replace(", time-zones", ""))))
+        self.assertIn("must run if: always()", self.refused(self.edited("validate.yml", "  validate:\n    if: always()\n", "  validate:\n")))
+        run_tests = "          RUN_TESTS: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.changes.outputs.tests == 'true' }}\n"
+        self.assertIn("RUN_TESTS:", self.refused(self.edited("validate.yml", run_tests, "          RUN_TESTS: ${{ needs.changes.outputs.tests == 'true' }}\n")))
+        result = "time-zones=${{ needs.time-zones.result }} "
+        self.assertIn("must check time-zones's result", self.refused(self.edited("validate.yml", result, "")))
+        on_main = "  push:\n    branches: [\"main\", \"dev/**\"]\n"
+        self.assertIn("must run on every push to main", self.refused(self.edited("validate.yml", on_main, "  push:\n    branches: [\"dev/**\"]\n")))
+        self.assertIn("only reads", self.refused(self.edited("validate.yml", "permissions:\n  contents: read\n", "permissions:\n  contents: read\n  actions: read\n")))
+
+    def test_every_job_has_a_time_limit_pinned_actions_and_no_package_mirror(self):
+        self.assertIn("job changes needs timeout-minutes", self.refused(self.edited("validate.yml", "    name: What changed\n    runs-on: ubuntu-24.04\n    timeout-minutes: 5\n", "    name: What changed\n    runs-on: ubuntu-24.04\n")))
+        self.assertIn("job publish needs timeout-minutes", self.refused(self.edited("release.yml", "    timeout-minutes: 15\n    environment: production\n", "    environment: production\n")))
+        install = "        run: bash scripts/install_lua.sh\n"
+        apt = "        run: |\n          sudo apt-get update\n          sudo apt-get install -y lua5.1\n"
+        self.assertIn("uses Ubuntu's package mirror", self.refused(self.edited("validate.yml", install, apt)))
+        cache = "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0"
+        self.assertIn("pin every action to a full commit", self.refused(self.edited("validate.yml", cache, "actions/cache@v6")))
+        self.assertIn("pin every action to a full commit", self.refused(self.edited("validate.yml", cache, "someone/setup-lua@main")))
 
     def test_the_watch_runs_every_hour_and_only_reads_and_writes_issues(self):
         wider = self.edited("watch-live.yml", "permissions:\n  contents: read\n  issues: write\n", "permissions:\n  contents: write\n  issues: write\n")
