@@ -1730,14 +1730,18 @@ function Mock.startDriver(project, specText, initType, prepare)
 end
 
 -- A driver update in Composer: the driver reloads in place and keeps its persistent data (Director
--- keeps it in state.db, encrypted values included).
-function Mock.updateDriver(previous, project)
+-- keeps it in state.db, encrypted values included). `prepare(mock)`, optional, runs before the
+-- start, as Mock.startDriver's (Composer's properties, which a test sets again there).
+function Mock.updateDriver(previous, project, prepare)
     return Mock.startDriver(project, nil, "DIT_UPDATING", function(mock)
         -- Random values must not repeat, or a lost identity would be regenerated unnoticed.
         mock.uuidCount = previous.uuidCount
         for name, value in pairs(previous.persist) do
             mock.persist[name] = value
             mock.persistEncrypted[name] = previous.persistEncrypted[name]
+        end
+        if prepare then
+            prepare(mock)
         end
     end)
 end

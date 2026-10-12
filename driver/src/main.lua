@@ -490,6 +490,15 @@ Notify.configure({
     port = Api.PORT,
 })
 Alerts.onRaised(Notify.alert)
+-- And the home's alarm going off (1.13.0, the owner's decision of 2026-10-12): a partition that goes
+-- into alarm, while Alarm Status is On, goes to the screens that show alarms, on the controller only;
+-- never to a phone or the cloud, and nothing of its state in the log (ADR-038).
+Alarm.onTriggered(function(partition)
+    local ok, err = pcall(Notify.alarmTriggered, partition)
+    if not ok then
+        Log.warn("notify", "the screens were not told of an alert", { kind = "alarm", error = tostring(err) })
+    end
+end)
 
 -- Reads the project from Director and (re)starts the adapters. `reason` is set for a refresh while
 -- the driver runs (src/control4/project_events.lua, or the action Refresh Project): the API keeps

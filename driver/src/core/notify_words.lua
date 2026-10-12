@@ -5,8 +5,32 @@
 -- phone (app/sw.js sealedNotice, with the words app/js/alerts.js alertTexts gives it), copied here
 -- under the app's keys: driver/tests/test_notify.lua fails when one here is not the app's, in any of
 -- the four languages, so the two never drift. Change a sentence in app/i18n/*.js and here together.
+-- The home's alarm going off is said only on a screen (no phone gets it): its two sentences are in
+-- the app's dictionary all the same (alerts.alarmTriggered and alerts.alarmTriggeredOf), with the
+-- app's own words for the alarm and its types (alarm.title, alarm.types), translated in one place.
 
 local NotifyWords = {}
+
+-- The alarm's types with a word of their own (alarm.types.<word>), by what a panel writes (without
+-- case or spaces around): app/js/alarm.js ALARM_TYPES, which the test compares. Another type is not
+-- said: the panel's own words never reach a screen.
+NotifyWords.ALARM_TYPES = {
+    fire = "fire",
+    smoke = "fire",
+    burglary = "burglary",
+    intrusion = "burglary",
+    panic = "panic",
+    medical = "medical",
+    police = "police",
+    emergency = "emergency",
+    duress = "duress",
+    co = "carbonMonoxide",
+    ["carbon monoxide"] = "carbonMonoxide",
+    water = "water",
+    flood = "water",
+    gas = "gas",
+    tamper = "tamper",
+}
 
 -- Hebrew reads right to left: its title and message begin with U+200F RIGHT-TO-LEFT MARK, so that a
 -- screen that takes the direction from the first letter (a name in Latin letters: "Gate", "Control4")
@@ -62,6 +86,21 @@ NotifyWords.WORDS = {
         ["alerts.cameraSaw.car_horn"] = "Car horn",
         ["alerts.cameraSaw.glass_break"] = "Glass breaking",
         ["alerts.cameraSaw.other"] = "Alert",
+        -- The home's alarm going off (1.13.0): said only on a screen, in the app's words for it.
+        ["alarm.title"] = "Alarm",
+        ["alerts.alarmTriggered"] = "The alarm went off at {name} at {time}.",
+        ["alerts.alarmTriggeredOf"] = "{type} alarm at {name} at {time}.",
+        ["alarm.types.fire"] = "fire",
+        ["alarm.types.burglary"] = "burglary",
+        ["alarm.types.panic"] = "panic",
+        ["alarm.types.medical"] = "medical",
+        ["alarm.types.police"] = "police",
+        ["alarm.types.emergency"] = "emergency",
+        ["alarm.types.duress"] = "duress",
+        ["alarm.types.carbonMonoxide"] = "carbon monoxide",
+        ["alarm.types.water"] = "water leak",
+        ["alarm.types.gas"] = "gas",
+        ["alarm.types.tamper"] = "tamper",
     },
     -- Hebrew: app/i18n/he.js
     he = {
@@ -109,6 +148,20 @@ NotifyWords.WORDS = {
         ["alerts.cameraSaw.car_horn"] = "צופר רכב",
         ["alerts.cameraSaw.glass_break"] = "שבירת זכוכית",
         ["alerts.cameraSaw.other"] = "התראה",
+        ["alarm.title"] = "אזעקה",
+        ["alerts.alarmTriggered"] = "אזעקה ב-{name} ב-{time}.",
+        ["alerts.alarmTriggeredOf"] = "אזעקת {type} ב-{name} ב-{time}.",
+        ["alarm.types.fire"] = "שריפה",
+        ["alarm.types.burglary"] = "פריצה",
+        ["alarm.types.panic"] = "מצוקה",
+        ["alarm.types.medical"] = "חירום רפואי",
+        ["alarm.types.police"] = "משטרה",
+        ["alarm.types.emergency"] = "חירום",
+        ["alarm.types.duress"] = "כפייה",
+        ["alarm.types.carbonMonoxide"] = "פחמן חד־חמצני",
+        ["alarm.types.water"] = "נזילת מים",
+        ["alarm.types.gas"] = "גז",
+        ["alarm.types.tamper"] = "חבלה",
     },
     -- Spanish: app/i18n/es.js
     es = {
@@ -156,6 +209,20 @@ NotifyWords.WORDS = {
         ["alerts.cameraSaw.burglar_alarm"] = "Alarma antirrobo",
         ["alerts.cameraSaw.car_horn"] = "Claxon",
         ["alerts.cameraSaw.glass_break"] = "Rotura de cristal",
+        ["alarm.title"] = "Alarma",
+        ["alerts.alarmTriggered"] = "La alarma saltó en {name} a las {time}.",
+        ["alerts.alarmTriggeredOf"] = "Alarma de {type} en {name} a las {time}.",
+        ["alarm.types.fire"] = "incendio",
+        ["alarm.types.burglary"] = "intrusión",
+        ["alarm.types.panic"] = "pánico",
+        ["alarm.types.medical"] = "emergencia médica",
+        ["alarm.types.police"] = "policía",
+        ["alarm.types.emergency"] = "emergencia",
+        ["alarm.types.duress"] = "coacción",
+        ["alarm.types.carbonMonoxide"] = "monóxido de carbono",
+        ["alarm.types.water"] = "fuga de agua",
+        ["alarm.types.gas"] = "gas",
+        ["alarm.types.tamper"] = "sabotaje",
     },
     -- Italian: app/i18n/it.js
     it = {
@@ -203,6 +270,20 @@ NotifyWords.WORDS = {
         ["alerts.cameraSaw.burglar_alarm"] = "Allarme antifurto",
         ["alerts.cameraSaw.car_horn"] = "Clacson",
         ["alerts.cameraSaw.glass_break"] = "Vetro rotto",
+        ["alarm.title"] = "Allarme",
+        ["alerts.alarmTriggered"] = "L’allarme è scattato presso {name} alle {time}.",
+        ["alerts.alarmTriggeredOf"] = "Allarme {type} presso {name} alle {time}.",
+        ["alarm.types.fire"] = "incendio",
+        ["alarm.types.burglary"] = "intrusione",
+        ["alarm.types.panic"] = "panico",
+        ["alarm.types.medical"] = "soccorso medico",
+        ["alarm.types.police"] = "polizia",
+        ["alarm.types.emergency"] = "emergenza",
+        ["alarm.types.duress"] = "coercizione",
+        ["alarm.types.carbonMonoxide"] = "monossido di carbonio",
+        ["alarm.types.water"] = "perdita d’acqua",
+        ["alarm.types.gas"] = "gas",
+        ["alarm.types.tamper"] = "manomissione",
     },
 }
 
@@ -251,7 +332,8 @@ local function whoText(who, word)
 end
 
 -- What a screen shows for `detail`, an alert as the controller seals it for a phone
--- (src/cloud/alerts.lua: its kind, name, what, action, via, who, minutes), raised at `at` (seconds,
+-- (src/cloud/alerts.lua: its kind, name, what, action, via, who, minutes) or the home's alarm going
+-- off (kind alarm_triggered: the partition's name, and the panel's type as `what`), raised at `at` (seconds,
 -- shown in the controller's time, 24-hour, as a phone shows it in its own): the title and the
 -- message in `language` (NotifyWords.language). An alert without the name it needs gets the
 -- general words, as on a phone.
@@ -287,6 +369,19 @@ function NotifyWords.say(detail, language, at)
         local minutes = type(detail.minutes) == "number" and detail.minutes >= 1 and math.floor(detail.minutes) or nil
         title = word("alerts.title")
         message = fill(word(minutes and "alerts.fridgeDoor" or "alerts.fridgeDoorNow"), { name = name, minutes = minutes, time = time })
+    elseif detail.kind == "alarm_triggered" and name then
+        -- A partition of the home's alarm went into alarm (Notify.alarmTriggered): its type when
+        -- DirectorLink has a word for it ("Fire alarm at House at 21:14."), else without one.
+        local panel = type(detail.what) == "string" and string.lower((detail.what:gsub("^%s+", ""):gsub("%s+$", ""))) or ""
+        local alarmType = NotifyWords.ALARM_TYPES[panel]
+        title = word("alarm.title")
+        if alarmType then
+            message = fill(word("alerts.alarmTriggeredOf"), { type = word("alarm.types." .. alarmType), name = name, time = time })
+            -- A sentence begins with a capital letter: English puts the type first ("fire" -> "Fire").
+            message = (message:gsub("^%l", string.upper))
+        else
+            message = fill(word("alerts.alarmTriggered"), { name = name, time = time })
+        end
     elseif detail.kind == "schedule_failed" then
         title = word("alerts.title")
         message = fill(word(name and "alerts.scheduleFailedNamed" or "alerts.scheduleFailed"), { home = home, name = name, time = time })

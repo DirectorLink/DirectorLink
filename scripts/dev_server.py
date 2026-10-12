@@ -63,7 +63,8 @@ agreement join the project, as the DirectorLink · LG TV Notifications driver wi
 TV" (every kind) and 302 "Kitchen TV" (doorbell and alarm). Each notification they get is printed
 here ("[screen 301 Living Room TV] doorbell: Someone is at the door | Entrance rang at 21:14. |
 http://127.0.0.1:41999/v1/notify-pictures/....jpg"); open the picture's address in a browser within
-60 seconds. With --agreement-cameras, "ring 158" and "alert 157 Person" make some;
+60 seconds. With --agreement-cameras, "ring 158" and "alert 157 Person" make some; with or without,
+"var 80 1003 1" makes one (the House partition goes into alarm; "var 80 1003 0" ends it);
 "var 301 1003 doorbell" changes what the Living Room TV shows, as its Composer properties would.
 
 With --control4-sonos (1.11.0, ADR-080), Control4's own Sonos drivers join the project: 84 "Sonos

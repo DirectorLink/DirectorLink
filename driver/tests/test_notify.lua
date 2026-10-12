@@ -18,9 +18,10 @@ local tests = {}
 local RLM = "\226\128\143"
 
 -- A connected driver with the clock in the test's hands: { mock, connection, clock, admin }.
--- `screens`: Mock.withNotifyTargets' list; `setup` runs before the start.
-local function home(screens, setup, connected)
-    local project = Mock.withNotifyTargets(Mock.withAgreementCameras(Mock.project()), screens)
+-- `screens`: Mock.withNotifyTargets' list; `setup` runs before the start; `project` instead of the
+-- default one with the agreement's cameras.
+local function home(screens, setup, connected, project)
+    project = Mock.withNotifyTargets(project or Mock.withAgreementCameras(Mock.project()), screens)
     local mock = Mock.startDriver(project, nil, nil, setup)
     local connection
     if connected ~= false then
@@ -650,6 +651,241 @@ function tests.a_screen_that_fails_holds_up_nothing()
     T.eq(Alerts.ring(require("src.core.registry").getDoorbell(68)), 1, "the phone's alert")
     T.eq(#logged(mock, "the screens were not told of an alert"), 1)
     T.truthy(alert)
+end
+
+-- ---- the home's alarm going off (the owner's decision of 2026-10-12) ---------------------------
+
+-- The default project with the alarm's partitions (Mock.withPartitions: 80 "House", disarmed with a
+-- zone open; 81 "Garage", armed away; 82 "Partition 3", which the panel does not use) and the
+-- screens; Alarm Status On unless `off`.
+local function alarmHome(screens, off, setup, connected)
+    return home(screens, function(mock)
+        if not off then
+            Properties["Alarm Status"] = "On"
+        end
+        if setup then
+            setup(mock)
+        end
+    end, connected, Mock.withPartitions(Mock.project()))
+end
+
+local function switchAlarm(value)
+    Properties["Alarm Status"] = value
+    OnPropertyChanged("Alarm Status")
+end
+
+function tests.a_partition_going_into_alarm_tells_the_screens_once_until_it_clears()
+    local home = alarmHome({ { id = 301, name = "Living Room TV", room = 11 }, { id = 302, name = "Kitchen TV", room = 10, kinds = "doorbell" } })
+    local mock = home.mock
+    -- The panel names the type first: still no alarm.
+    Mock.setPartition(mock, 80, { ALARM_TYPE = "Fire" })
+    T.eq(#Mock.notifications(mock, 301), 0, "a type is no alarm")
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    local told = only(mock, 301)
+    T.eq(told.VERSION, "1")
+    T.eq(told.KIND, "alarm")
+    T.eq(told.TITLE, "Alarm")
+    T.eq(told.MESSAGE, "Fire alarm at House at " .. hhmm(home.clock.now) .. ".")
+    T.eq(told.PICTURE, nil, "no picture")
+    T.truthy(told.ID:match("^%x+$") and #told.ID >= 16, "a random id")
+    T.eq(#Mock.notifications(mock, 302), 0, "the Kitchen TV shows no alarms")
+
+    -- The same alarm going on: told once.
+    home.clock.now = home.clock.now + 30
+    Mock.setPartition(mock, 80, { PARTITION_STATE = "ALARM" })
+    Mock.setPartition(mock, 80, { ALARM_TYPE = "Burglary" })
+    Mock.setPartition(mock, 80, { OPEN_ZONE_COUNT = "3" })
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "one alarm, one notification")
+
+    -- It clears: nothing. It goes off again: told again.
+    Mock.setPartition(mock, 80, { ALARM_STATE = "0" })
+    Mock.setPartition(mock, 80, { PARTITION_STATE = "DISARMED_READY" })
+    T.eq(#Mock.notifications(mock, 301), 0, "nothing when it clears")
+    home.clock.now = home.clock.now + 60
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(only(mock, 301).MESSAGE, "Burglary alarm at House at " .. hhmm(home.clock.now) .. ".")
+
+    -- A panel that says it only by the partition's state, as the app reads it too.
+    Mock.setPartition(mock, 80, { ALARM_STATE = "0" })
+    Mock.setPartition(mock, 80, { ALARM_TYPE = "" })
+    Mock.setPartition(mock, 80, { PARTITION_STATE = "ALARM" })
+    T.eq(only(mock, 301).MESSAGE, "The alarm went off at House at " .. hhmm(home.clock.now) .. ".", "without a type")
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "the same alarm")
+
+    -- Another partition in the same second: alarms are never too soon.
+    Mock.setPartition(mock, 81, { ALARM_STATE = "1" })
+    T.eq(only(mock, 301).MESSAGE, "The alarm went off at Garage at " .. hhmm(home.clock.now) .. ".")
+    T.eq(#logged(mock, "too soon"), 0)
+    T.eq(#Mock.notifications(mock, 302), 0)
+end
+
+function tests.the_alarm_tells_nothing_of_armed_disarmed_or_trouble()
+    local home = alarmHome()
+    local mock = home.mock
+    local changes = {
+        { 80, { PARTITION_STATE = "EXIT_DELAY", DISARMED_STATE = "0", DELAY_TIME_TOTAL = "30", DELAY_TIME_REMAINING = "30" } },
+        { 80, { PARTITION_STATE = "ARMED", HOME_STATE = "1", ARMED_TYPE = "Stay", DELAY_TIME_REMAINING = "0" } },
+        { 80, { PARTITION_STATE = "ENTRY_DELAY", DELAY_TIME_TOTAL = "20", DELAY_TIME_REMAINING = "12" } },
+        { 80, { PARTITION_STATE = "DISARMED_READY", HOME_STATE = "0", DISARMED_STATE = "1", OPEN_ZONE_COUNT = "0" } },
+        { 81, { TROUBLE_TEXT = "AC power lost" } },
+        { 81, { TROUBLE_TEXT = "" } },
+        { 81, { PARTITION_STATE = "DISARMED_NOT_READY", AWAY_STATE = "0", DISARMED_STATE = "1", OPEN_ZONE_COUNT = "2" } },
+        { 81, { PARTITION_STATE = "ARMED", AWAY_STATE = "1", ARMED_TYPE = "Away" } },
+        { 81, { ALARM_TYPE = "Fire" } },
+        { 82, { IS_ACTIVE = "1" } },
+        { 82, { IS_ACTIVE = "0" } },
+    }
+    for _, change in ipairs(changes) do
+        Mock.setPartition(mock, change[1], change[2])
+        home.clock.now = home.clock.now + 10
+    end
+    T.eq(#Mock.notifications(mock, 301), 0, "no notification but the alarm going off")
+    Mock.setPartition(mock, 81, { ALARM_STATE = "1" })
+    T.eq(only(mock, 301).MESSAGE, "Fire alarm at Garage at " .. hhmm(home.clock.now) .. ".")
+    -- A partition the panel does not use is not told.
+    Mock.setPartition(mock, 82, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "an unused partition")
+end
+
+function tests.the_alarm_goes_to_the_screens_only_while_alarm_status_is_on()
+    local home = alarmHome(nil, true)
+    local mock = home.mock
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "Alarm Status Off: the alarm is not even watched")
+
+    -- Turned On while House is in alarm: it was already, so nothing; the next time it goes off, told.
+    switchAlarm("On")
+    Mock.setPartition(mock, 80, { OPEN_ZONE_COUNT = "2" })
+    T.eq(#Mock.notifications(mock, 301), 0, "in alarm before it was watched")
+    Mock.setPartition(mock, 80, { ALARM_STATE = "0" })
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(only(mock, 301).KIND, "alarm")
+
+    -- Turned Off: nothing, whatever the partitions do.
+    switchAlarm("Off")
+    Mock.setPartition(mock, 80, { ALARM_STATE = "0" })
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    Mock.setPartition(mock, 81, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "Alarm Status Off")
+
+    -- Off in the properties before Director says it changed: nothing either.
+    switchAlarm("On")
+    Mock.setPartition(mock, 81, { ALARM_STATE = "0" })
+    Properties["Alarm Status"] = "Off"
+    Mock.setPartition(mock, 81, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(mock, 301), 0, "Off, before OnPropertyChanged")
+    Properties["Alarm Status"] = "On"
+
+    -- A driver update during an alarm, or Refresh Project, tells it no second time.
+    ExecuteCommand("LUA_ACTION", { ACTION = "REFRESH_PROJECT" })
+    Mock.setPartition(mock, 81, { OPEN_ZONE_COUNT = "2" })
+    T.eq(#Mock.notifications(mock, 301), 0, "a refresh")
+    local updated = Mock.updateDriver(mock, mock.project, function()
+        Properties["Alarm Status"] = "On"
+    end)
+    Mock.setPartition(updated, 81, { OPEN_ZONE_COUNT = "3" })
+    T.eq(#Mock.notifications(updated, 301), 0, "a driver update")
+    Mock.setPartition(updated, 81, { ALARM_STATE = "0" })
+    Mock.setPartition(updated, 81, { ALARM_STATE = "1" })
+    T.eq(#Mock.notifications(updated, 301), 1, "the next alarm after the update")
+end
+
+function tests.the_alarm_says_its_type_in_every_language()
+    local Words = require("src.core.notify_words")
+    local at = os.time({ year = 2026, month = 10, day = 12, hour = 21, min = 14, sec = 5 })
+    local function said(what, language, name)
+        return { Words.say({ kind = "alarm_triggered", name = name or "House", what = what }, language, at) }
+    end
+    T.same(said("Fire"), { "Alarm", "Fire alarm at House at 21:14." })
+    T.same(said(" BURGLARY "), { "Alarm", "Burglary alarm at House at 21:14." }, "without case or spaces")
+    T.same(said("Smoke"), { "Alarm", "Fire alarm at House at 21:14." })
+    T.same(said("carbon monoxide"), { "Alarm", "Carbon monoxide alarm at House at 21:14." })
+    T.same(said(nil), { "Alarm", "The alarm went off at House at 21:14." })
+    T.same(said("Zone 7 AUX"), { "Alarm", "The alarm went off at House at 21:14." }, "the panel's own words never")
+    T.same(said("Fire", "en", ""), { "DirectorLink", "Your home – something needs your attention. Open the app to see what happened." }, "no name")
+    T.same(said("Fire", "he"), { RLM .. "אזעקה", RLM .. "אזעקת שריפה ב-House ב-21:14." })
+    T.same(said(nil, "he"), { RLM .. "אזעקה", RLM .. "אזעקה ב-House ב-21:14." })
+    T.same(said("fire", "es"), { "Alarma", "Alarma de incendio en House a las 21:14." })
+    T.same(said(nil, "es"), { "Alarma", "La alarma saltó en House a las 21:14." })
+    T.same(said("intrusion", "it"), { "Allarme", "Allarme intrusione presso House alle 21:14." })
+    T.same(said(nil, "it"), { "Allarme", "L’allarme è scattato presso House alle 21:14." })
+
+    -- The types are the app's (app/js/alarm.js ALARM_TYPES), each with its word in every language.
+    local file = assert(io.open("app/js/alarm.js", "rb"))
+    local source = file:read("*a")
+    file:close()
+    local block = assert(source:match("const ALARM_TYPES = (%b{})"), "ALARM_TYPES in app/js/alarm.js")
+    local app = {}
+    for line in block:gmatch("[^\n]+") do
+        local key, value = line:match('^%s*"?([%w ]-)"?%s*:%s*"(%w+)",?%s*$')
+        if key then
+            app[key] = value
+        end
+    end
+    T.truthy(next(app) ~= nil, "read the app's types")
+    T.same(Words.ALARM_TYPES, app, "the app's types")
+    for _, code in ipairs({ "en", "he", "es", "it" }) do
+        for _, word in pairs(Words.ALARM_TYPES) do
+            T.truthy(Words.WORDS[code]["alarm.types." .. word], code .. " says " .. word)
+        end
+    end
+end
+
+function tests.a_hebrew_owner_hears_the_alarm_in_hebrew()
+    local home = alarmHome()
+    local mock = home.mock
+    T.eq(T.http(mock, "PATCH", "/v1/profile", { key = home.admin, body = { prefs = { language = "he" } } }).status, 200)
+    Mock.setPartition(mock, 80, { ALARM_TYPE = "FIRE" })
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    local told = only(mock, 301)
+    T.eq(told.TITLE, RLM .. "אזעקה")
+    T.eq(told.MESSAGE, RLM .. "אזעקת שריפה ב-House ב-" .. hhmm(home.clock.now) .. ".")
+end
+
+function tests.the_alarm_going_off_is_never_logged_nor_sent_to_a_phone_or_the_cloud()
+    local home = alarmHome(nil, false, function()
+        Properties["Log Level"] = "Debug"
+    end)
+    local mock = home.mock
+    -- A phone with every alert on.
+    T.eq(T.http(mock, "PUT", "/v1/alerts/choices", { key = home.admin, body = { on = true } }).status, 200)
+    local history = #T.http(mock, "GET", "/v1/activity", { key = home.admin }).json.items
+    home.connection.sent = ""
+    local before = #mock.debugLog
+
+    -- Director has the type a moment before its change reaches the driver.
+    mock.project.variables[80][1011] = "Burglary"
+    Mock.setPartition(mock, 80, { ALARM_STATE = "1" })
+    T.eq(only(mock, 301).MESSAGE, "Burglary alarm at House at " .. hhmm(home.clock.now) .. ".", "the type Director has")
+    Mock.setPartition(mock, 80, { ALARM_TYPE = "Burglary" })
+    Mock.setPartition(mock, 80, { PARTITION_STATE = "ALARM", TROUBLE_TEXT = "Siren tamper" })
+    T.eq(#Mock.notifications(mock, 301), 0)
+
+    -- The log: one line, the screen and the kind; nothing of the partition or its state.
+    local lines = {}
+    for index = before + 1, #mock.debugLog do
+        lines[#lines + 1] = mock.debugLog[index]
+    end
+    local sentLines = logged(mock, "notification sent to a screen")
+    T.eq(#sentLines, 1, table.concat(lines, "\n"))
+    T.contains(sentLines[1], '"driver_id":301')
+    T.contains(sentLines[1], '"kind":"alarm"')
+    local logs = T.http(mock, "GET", "/v1/logs?limit=500", { key = home.admin })
+    T.eq(logs.status, 200)
+    for _, text in ipairs({ table.concat(lines, "\n"), logs.body }) do
+        for _, word in ipairs({ "House", "Burglary", "ALARM", "Siren tamper", "alarm at", "went off", '"device_id":80' }) do
+            T.notContains(text, word, "nothing of the alarm in the log")
+        end
+    end
+
+    -- No phone and no cloud: nothing to the relay; nothing in the history.
+    for _, frame in ipairs(Harness.clientFrames(home.connection.sent)) do
+        local message = Json.decode(frame.payload)
+        T.truthy(not (type(message) == "table" and message.type == "notify"), "no alert to a phone: " .. tostring(frame.payload))
+    end
+    T.eq(#T.http(mock, "GET", "/v1/activity", { key = home.admin }).json.items, history, "no history entry")
 end
 
 return tests

@@ -5,7 +5,8 @@
 DirectorLink raises alerts on the controller: a doorbell rang, a camera saw someone or heard a smoke
 alarm, a door or gate was opened, the refrigerator's door was left open, a schedule had a problem.
 Phones and computers get them through the family's DirectorLink accounts. A driver for a TV, or any
-other screen, can show them too, as pop-ups. This page is the **DirectorLink notification agreement,
+other screen, can show them too, as pop-ups, and also the home's alarm going off, which only screens
+get. This page is the **DirectorLink notification agreement,
 version 1**: what a Control4 driver does so that DirectorLink 1.13.0 and later tells it every alert
 of the kinds it shows, without any code of its own for that driver. The **DirectorLink · LG TV
 Notifications** driver for LG webOS TVs ([DirectorLink Drivers](https://directorlink.io/drivers)) is
@@ -40,7 +41,7 @@ Every value is a string.
 | `VERSION` | `1` |
 | `ID` | Unique to the alert (16 hex digits). Every screen gets the same `ID` for the same alert. Ignore an `ID` you got in the last 10 minutes. |
 | `KIND` | `doorbell`, `camera`, `door`, `alarm` or `other` (below). |
-| `TITLE` | Short: `Someone is at the door`, `Camera alert`, `DirectorLink`. |
+| `TITLE` | Short: `Someone is at the door`, `Camera alert`, `Alarm`, `DirectorLink`. |
 | `MESSAGE` | The sentence: `Entrance rang at 21:14.` |
 | `PICTURE` | Only for a doorbell and a camera's alert: an address on the controller that gives a JPEG for 60 seconds, `http://<the controller's address>:41999/v1/notify-pictures/<32 hex digits>.jpg`. Missing when there is no picture. |
 
@@ -60,13 +61,16 @@ with a name in Latin letters.
 | `doorbell` | A doorbell rang: a DoorBird, or a doorbell camera of the [camera agreement](CAMERA_DRIVERS.md) | Someone is at the door | Entrance rang at 21:14. | The doorbell's camera |
 | `camera` | A camera's alert, by its label | Camera alert | Person at Porch at 21:14. | The camera |
 | `alarm` | A smoke or CO alarm a camera heard | Camera alert | Smoke alarm at Garden at 21:14. | The camera |
+| `alarm` | The home's alarm went off: a partition of the alarm system went into alarm (only while Alarm Status is On in DirectorLink's Composer properties) | Alarm | Fire alarm at House at 21:14. Without a type DirectorLink knows: The alarm went off at House at 21:14. | None |
 | `door` | A door or gate opened (by a user, a scene, or in Control4), a relay held open, a refrigerator's door left open | DirectorLink | Main Gate was opened by Dana (iPhone) at 21:14. | None |
 | `other` | A schedule had a problem | DirectorLink | Your home – the schedule for Morning blinds had a problem at 21:14. Open the app to see what happened. | None |
 
 A camera's labels are the camera agreement's (Person, Vehicle, License plate, Smoke alarm, …); one
-DirectorLink does not know is "Alert". The home's alarm system: DirectorLink only shows its status
-(Alarm Status in Composer) and raises no alert for it, so it is no `alarm` here. Kinds may get more
-alerts in later DirectorLink versions; a new kind would be a new version of the agreement.
+DirectorLink does not know is "Alert". The home's alarm system: only its going off is told, once
+each time a partition goes into alarm (whatever the type: fire, burglary, …), and only to screens,
+never to phones; never armed, disarmed, ready or trouble. Nothing of it while the installer leaves
+Alarm Status Off, as it ships. Kinds may get more alerts in later DirectorLink versions; a new kind
+would be a new version of the agreement.
 
 ### The picture
 
@@ -181,9 +185,10 @@ end
   driver threw). Refresh Project reads the screens again at once.
 - Without a controller: `python scripts/dev_server.py --agreement-cameras --notify-targets` runs
   DirectorLink against a fake Director with two made-up screens, 301 "Living Room TV" (every kind) and
-  302 "Kitchen TV" (doorbell and alarm). Type `ring 158` (a doorbell camera rings) or
-  `alert 157 Person` (a camera's alert): the console prints what each screen got, and the picture's
-  address works in a browser for 60 seconds. `var 301 1003 doorbell` changes what the Living Room TV
+  302 "Kitchen TV" (doorbell and alarm). Type `ring 158` (a doorbell camera rings),
+  `alert 157 Person` (a camera's alert) or `var 80 1003 1` (the House partition goes into alarm):
+  the console prints what each screen got, and the picture's address works in a browser for 60
+  seconds. `var 301 1003 doorbell` changes what the Living Room TV
   shows, as its properties would.
 
 The decision and its details are ADR-086 in [`DECISIONS.md`](DECISIONS.md).

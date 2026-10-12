@@ -1369,6 +1369,9 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – la puerta lleva abierta al menos {minutes} min ({time}).",
     fridgeDoorNow: "{name} – la puerta se quedó abierta ({time}).",
+    // The home's alarm going off (1.13.0, ADR-086): only on the home's TVs, never on a phone.
+    alarmTriggered: "La alarma saltó en {name} a las {time}.",
+    alarmTriggeredOf: "Alarma de {type} en {name} a las {time}.",
     // 1.8.0: the account service's own push, to admins' devices (it names nothing).
     deviceRequest: "Un nuevo dispositivo pide unirse a tu casa. Abre DirectorLink para aprobarlo o rechazarlo.",
     openRequestTitle: "¿Abrir {name}?",

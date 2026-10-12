@@ -1338,6 +1338,9 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – הדלת פתוחה כבר לפחות {minutes} דק׳ ({time}).",
     fridgeDoorNow: "{name} – הדלת נשארה פתוחה ({time}).",
+    // האזעקה של הבית (1.13.0, ADR-086): רק בטלוויזיות של הבית, אף פעם לא בטלפון.
+    alarmTriggered: "אזעקה ב-{name} ב-{time}.",
+    alarmTriggeredOf: "אזעקת {type} ב-{name} ב-{time}.",
     deviceRequest: "מכשיר חדש מבקש להצטרף לבית שלכם. פתחו את DirectorLink כדי לאשר או לדחות.",
     openRequestTitle: "לפתוח את {name}?",
     openRequest: "הקישור „{via}” שאל ב-{time}. הקישו כדי לענות.",

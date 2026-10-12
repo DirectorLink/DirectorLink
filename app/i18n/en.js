@@ -1371,6 +1371,11 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – the door has been open for at least {minutes} min ({time}).",
     fridgeDoorNow: "{name} – the door was left open ({time}).",
+    // The home's alarm going off (1.13.0, ADR-086): said only on the home's TVs, never on a phone;
+    // the controller copies these (driver/src/core/notify_words.lua). {type} is one of alarm.types,
+    // with a capital letter where it begins the sentence.
+    alarmTriggered: "The alarm went off at {name} at {time}.",
+    alarmTriggeredOf: "{type} alarm at {name} at {time}.",
     // 1.8.0: the account service's own push, to admins' devices (it names nothing).
     deviceRequest: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
     openRequestTitle: "Open {name}?",

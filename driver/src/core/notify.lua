@@ -3,7 +3,8 @@
 -- opened, the refrigerator's door left open, a schedule that failed) goes to each screen of
 -- DirectorLink's notification agreement that shows its kind (src/control4/notify_targets.lua), as
 -- the command DIRECTORLINK_NOTIFY with the words a phone would show, in the home owner's language
--- (src/core/notify_words.lua).
+-- (src/core/notify_words.lua). So does a partition of the home's alarm that goes into alarm
+-- (Notify.alarmTriggered, the owner's decision of 2026-10-12): to the screens only, never a phone.
 --
 -- All of it happens on the controller, apart from the phones' alerts: a screen is told whether or
 -- not any phone switched alerts on, whatever the phones' limits, and while the relay is away. It is
@@ -33,9 +34,13 @@ local Notify = {}
 Notify.SECONDS = 5
 Notify.UNLIMITED = { doorbell = true, alarm = true }
 -- What each of the controller's alerts is on a screen (the agreement's kinds); a camera's smoke or CO
--- alarm (ADR-080) is an alarm. An ask-to-open link's question (ADR-058) is for its user's devices
--- only, and goes to no screen.
-Notify.KINDS = { doorbell = "doorbell", camera = "camera", door_opened = "door", fridge_door = "door", schedule_failed = "other" }
+-- alarm (ADR-080) is an alarm, and so is the home's alarm going off (alarm_triggered, which only the
+-- screens get). An ask-to-open link's question (ADR-058) is for its user's devices only, and goes to
+-- no screen.
+Notify.KINDS = {
+    doorbell = "doorbell", camera = "camera", door_opened = "door", fridge_door = "door", schedule_failed = "other",
+    alarm_triggered = "alarm",
+}
 Notify.ALARMS = { smoke_alarm = true, co_alarm = true }
 -- A notification's picture.
 Notify.PICTURE_SECONDS = 60
@@ -184,6 +189,20 @@ function Notify.alert(detail, camera, at, now)
         end
     end
     return told
+end
+
+-- A partition of the home's alarm went into alarm (src/adapters/alarm.lua, Alarm.onTriggered: once
+-- each time, only while Alarm Status is On; ADR-038, ADR-086): the screens that show alarms are told
+-- "Fire alarm at House at 21:14.", on the controller. Not the phones, nor the cloud, nor the
+-- history; the log has only its line for each screen (the screen and the kind). `partition` is the
+-- partition's device; `now` the controller's time. Returns how many screens were told.
+function Notify.alarmTriggered(partition, now)
+    if type(partition) ~= "table" then
+        return 0
+    end
+    local state = type(partition.state) == "table" and partition.state or {}
+    now = now or Clock.now()
+    return Notify.alert({ kind = "alarm_triggered", name = partition.name, what = state.alarm_type }, nil, now, now)
 end
 
 -- The screens, as GET /v1/alerts/screens lists them, and the language they are told in.

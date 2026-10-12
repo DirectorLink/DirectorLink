@@ -16,10 +16,11 @@ Until the LG driver exists, with the dev server's fake screens:
 1. `python scripts/dev_server.py --agreement-cameras --notify-targets`, serve app/ and pair at localhost. `ring 158`: the console prints the doorbell text and a picture link for both fake screens; the link works three times, then 404 (also after 60 s).
 2. `alert 157 Person`: only the Living Room TV; again within 5 s: nothing ("too soon"). `alert 157 Smoke Alarm`: both screens get `alarm`.
 3. With the app (and the browser) in Hebrew, `ring 158` prints Hebrew. Settings → Alerts → On TVs lists both screens for an admin, nothing for a member.
+4. The home's alarm going off: `var 80 1011 Fire`, then `var 80 1003 1`: both screens get `alarm` "Fire alarm at House at …" (Hebrew with the app in Hebrew), once; `var 80 1010 3` nothing more; `var 80 1003 0` and `var 80 1003 1` again: told again. `var 81 1007 DISARMED_READY` (and other states), nothing; `alarm off`, then House going off again, nothing. (The owner's home has no alarm panel, so there is nothing to see of it on the controller.)
 
 On the owner's controller:
-4. After updating, the log says how many screens it found (none until the LG driver), and the DoorBird, Hikvision and KNX work as before.
-5. Once the LG driver is installed: the log finds the screen with its kinds; a DoorBird ring pops up on the TV with the camera picture, in Hebrew; a Hikvision alert and a gate opened from the app pop up; with the internet unplugged, a ring still pops up. The iPhone (admin) shows On TVs, Android members don't.
+5. After updating, the log says how many screens it found (none until the LG driver), and the DoorBird, Hikvision and KNX work as before.
+6. Once the LG driver is installed: the log finds the screen with its kinds; a DoorBird ring pops up on the TV with the camera picture, in Hebrew; a Hikvision alert and a gate opened from the app pop up; with the internet unplugged, a ring still pops up. The iPhone (admin) shows On TVs, Android members don't.
 
 ## Previous release
 
