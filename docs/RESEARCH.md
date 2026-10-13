@@ -2,6 +2,16 @@
 
 These notes capture external findings that informed the architecture.
 
+## Outside the public guides
+
+Checked on 2026-10-13 against Snap One's public DriverWorks API reference (https://snap-one.github.io/docs-driverworks-api/) and its proxy guides: every DriverWorks function DirectorLink's driver calls (46, and 5 methods of the objects they return), every callback it implements (14) and the globals it uses (`Properties`, `C4SystemEvents`) are documented there. Since 1.13.1 it also reads no file outside its own (ADR-088) and listens only to the four documented system events (`OnPIP`, `OnItemAdded`, `OnItemRemoved`, `OnItemNameChanged`). What the public guides don't spell out, and where DirectorLink's values come from:
+
+- **The legacy Light proxy** (`light.c4i`): `ON`, `OFF` and `SET_LEVEL {LEVEL}`, and variables 1000 and 1001 (`src/adapters/light_v1.lua`). Only Light V2 is documented; these were read from a real installation (*Light (legacy) proxy*, below; ADR-033).
+- **Blinds:** the `STOP` command and the `GET_SETUP` UI request (`src/adapters/blind.lua`). The Blind proxy guide documents `can_stop` and the other commands; `GET_SETUP` is documented for the Fan and Light V2 proxies (*Blind proxy*, below).
+- **Thermostats:** the parameters of `SET_MODE_HVAC`, `SET_MODE_FAN` (`MODE`), `SET_SETPOINT_SINGLE` (`CELSIUS` or `FAHRENHEIT`), `SET_SETPOINT_HEAT` and `SET_SETPOINT_COOL`. The guide names the commands without parameters; the parameters are those Control4's own clients send (*Thermostat setpoint variables*, below).
+- **The alarm's partition variables:** the guide names them; their numbers (1000–1012) were read on a live Director and follow the guide's order (`src/adapters/alarm.lua`). Read only.
+- **Other drivers' own commands and events**, reached with documented calls (`C4:SendToDevice`, `C4:RegisterDeviceEvent`): Control4's Relay Door, Gate and Garage Door Controllers (`OPEN`, the variable `STATE`, events 1–4; ADR-069), the KNX Contact/Relay driver (`Open Relay`, `Close Relay`, its events), and DoorBird's events 100–106.
+
 ## DriverWorks discovery
 
 Control4 documents `C4:GetDevices(tFilter, locationFilter)` from OS 2.10. Passing an empty filter table returns all devices. Returned data varies by driver type and explicitly represents combo, proxy/protocol, and multi-proxy relationships.
@@ -120,7 +130,7 @@ References:
 
 DriverWorks `C4:CreateServer(port, delimiter, useUDP)` is available from OS 2.10 and can accept multiple TCP clients. DirectorLink alpha.2 uses it as a small HTTP/1.1 server with header delimiter `\r\n\r\n`.
 
-DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`. (Superseded: keys are stored as hashes since 0.9.2, ADR-028, and every secret comes from the driver's own random pool since 1.0.0, `src/core/random.lua`, ADR-032, because how Director makes its UUIDs is not documented.)
+DirectorLink minimum OS remains 3.3.0, so it can also generate a random UUID4 token with `C4:UUID("RANDOM")` and persist that token encrypted using `C4:PersistSetValue(..., true)`. (Superseded: keys are stored as hashes since 0.9.2, ADR-028, and every secret comes from the driver's own random pool since 1.0.0, `src/core/random.lua`, ADR-032, because how Director makes its UUIDs was not known then; Snap One's `C4:UUID` reference now says `RANDOM` uses the operating system's entropy, /dev/urandom, and since 1.13.1 the pool reads no file of its own, ADR-088.)
 
 **Finding (0.9.1, OS 3.4.3):** `C4:PersistGetValue` returns a stored string that is JSON decoded, as a Lua table; strings that are not JSON come back as written. Other drivers' typed values are stored the same way (`{":boolean:":true}` in `state.db`). The values themselves survive driver updates in `state.db` (`item_state`, one row per name and device). DirectorLink therefore stores `json:` plus JSON and accepts decoded tables (`src/core/store.lua`, ADR-028).
 

@@ -15,7 +15,6 @@ Each release keeps its own `DirectorLink.c4z`, `openapi.json`, release notes, an
 DirectorLink is installed like any other Control4 driver: with Composer Pro, on a Windows computer on the same network as your controller.
 
 - **You need an active Control4 account with access to Composer Pro.** Composer asks you to sign in with it, and it can't connect to your controller without it. Control4 gives these accounts to its dealers and installers.
-- **Download Composer Pro from https://composer.directorlink.io.** It lists the Composer installers on Control4's own servers, newest first. Choose the newest **Composer Pro** release and install it.
 - **No Composer Pro account?** Ask your Control4 installer to add DirectorLink for you and to set what you want on (Remote Access, Sonos and the others in step 3). It takes a few minutes and needs no reboot.
 
 ## 3. Add the driver to Composer

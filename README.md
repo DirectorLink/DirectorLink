@@ -28,7 +28,7 @@ It needs Control4 OS 3.3.0 or newer, works on the home network first, and keeps 
 You need **Composer Pro** to add DirectorLink to your project and to update it; after that the app, scenes and schedules never need Composer. Every step, property and action is in **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 1. **Download** `DirectorLink.c4z` from **[GitHub Releases](https://github.directorlink.io/releases)**.
-2. **Get Composer Pro** (a Control4 account with Composer access) from **https://composer.directorlink.io**, or ask your installer to add DirectorLink.
+2. **Get Composer Pro** (a Control4 account with Composer access), or ask your Control4 installer to add DirectorLink.
 3. **Add the driver:** in Composer, Driver → Add or Update Driver → `DirectorLink.c4z`, then drag **DirectorLink** into any room. Its Properties show `Ready` and a **Pairing Code**.
 4. **Pair:** open **https://app.directorlink.io** on a computer or an Android phone at home, and enter the controller's address and the pairing code. iPhones and iPads join through the account afterwards ([`docs/INSTALL.md`](docs/INSTALL.md#4-pair-the-owners-device)).
 
@@ -60,6 +60,16 @@ docs/        specification, decisions, research, releases
 ```
 
 See **[`docs/BUILD.md`](docs/BUILD.md)** for building, testing and releasing, **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** for how the pieces fit, and **[`SECURITY.md`](SECURITY.md)** for reporting a security problem.
+
+## Built on Control4's DriverWorks API
+
+DirectorLink is a Lua driver for Control4's DriverWorks platform. It runs inside Director like any other driver and is added and updated with Composer Pro.
+
+- Every DriverWorks function it calls is described in Snap One's public [DriverWorks API reference](https://snap-one.github.io/docs-driverworks-api/), and devices are controlled through their Control4 proxies. The few details not in the public guides are listed in [`docs/RESEARCH.md`](docs/RESEARCH.md#outside-the-public-guides).
+- It changes nothing in Control4's software, licensing or Composer programming, and does not use Control4's cloud services.
+- It is not certified, reviewed or endorsed by Control4 or Snap One.
+
+DirectorLink is an independent project, not affiliated with Control4 or Snap One. Control4 and DriverWorks are trademarks of Snap One, LLC, named here only to describe compatibility.
 
 ## Status
 
