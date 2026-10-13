@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · Android TV Notifications for Control4: a free, open-source driver that shows pop-ups with a picture on Google TV and Android TV: who is at the door, a camera alert, a door or gate opened, the alarm. Local network, no cloud."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · Android TV Notifications for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · Android TV Notifications <span>for Control4</span></h1>
+        <p class="lead">
+          A free, open-source Control4 driver that shows notifications as a pop-up with a picture on TVs
+          that run Google TV or Android TV: a doorbell ring with who is at the door, a camera alert, a door
+          or gate opened, the alarm. It talks straight to PiPup, a free app on the TV: no cloud, no account
+          and no extra hardware.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/android-tv/download">Download the driver</a>
+          <a class="button button-secondary" href="/drivers/android-tv/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/android-tv/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required, and Composer programming can show pop-ups too.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">On the TV</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">A pop-up on the TV</th>
+                <td>Over whatever is on, in the corner you choose or the center, for 15 seconds or as long as you set</td>
+                <td>Show Notification, with a title, a message and a picture's address</td>
+              </tr>
+              <tr>
+                <th scope="row">The picture</th>
+                <td>Who is at the door or the gate, in the pop-up: the picture DirectorLink sends with a ring, or any camera's snapshot</td>
+                <td>Picture URL, for example a camera's snapshot address</td>
+              </tr>
+              <tr>
+                <th scope="row">DirectorLink's alerts</th>
+                <td>Doorbell rings, camera alerts, doors and gates opened, the alarm and others, with DirectorLink 1.13 and newer</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Your choice for each TV</th>
+                <td>Doorbell, Camera Alerts, Doors and Gates, Alarm and Other, each on or off (Doorbell and Alarm are on)</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Quiet Hours</th>
+                <td>No pop-ups on this TV at night, or whenever you set</td>
+                <td>Show Notification keeps to them too</td>
+              </tr>
+              <tr>
+                <th scope="row">Several TVs</th>
+                <td>One copy of the driver for each TV, with its own kinds, Quiet Hours and look; DirectorLink's alerts show on every TV that is on, at the same moment</td>
+                <td>Show Notification with Send To All TVs: one command reaches every TV</td>
+              </tr>
+              <tr>
+                <th scope="row">What happened</th>
+                <td>–</td>
+                <td>Notification Shown and Notification Failed events, the last notification's text</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Just before each pop-up the driver asks PiPup whether the screen is on: off, or no answer within
+          3 seconds, and the pop-up is dropped. The driver never turns the TV on or changes its channel,
+          input or volume. At most one pop-up every 5 seconds on each TV, a doorbell or the alarm first; a
+          new one replaces the one still showing. The text shows as it was sent, Hebrew and other
+          right-to-left languages included. The controller fetches the picture and sends it inside the
+          pop-up, so the TV never has to reach the camera.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="app-title">
+        <h2 id="app-title">The app on the TV</h2>
+        <p>
+          The TV runs <strong>PiPup — TV Notifications</strong> by Alexander Savin, free on
+          <a href="https://play.google.com/store/apps/details?id=nyc.savin.pipup" rel="noreferrer">Google Play</a>.
+          It shows a pop-up when a device on the home network asks, with no cloud and no account, and starts
+          by itself when the TV starts. Only this PiPup: other apps called PiPup take other requests and do
+          not work with the driver.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="tvs-title">
+        <h2 id="tvs-title">Which TVs</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">TVs</th>
+                <th scope="col">With this driver</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Google TV and Android TV</th>
+                <td>Work: Sony Bravia (all since 2021), TCL (most countries), Hisense (US Google TV models), Sharp (Europe, Japan), Xiaomi, Panasonic (2026 Google TV models), Philips (2021-2025 upper range only), Nokia, Thomson, Motorola, OnePlus, Skyworth, Haier, iFFALCON, Kogan, Metz Blue, some Grundig and JVC</td>
+              </tr>
+              <tr>
+                <th scope="row">Boxes, on any TV</th>
+                <td>Work: Google TV Streamer, Chromecast with Google TV, Nvidia Shield, Xiaomi TV Box S, onn. 4K, Nokia Streaming Box</td>
+              </tr>
+              <tr>
+                <th scope="row">Fire TV (Fire OS 7 and 8)</th>
+                <td>Not tested: no Google Play, but PiPup's APK can be installed by hand</td>
+              </tr>
+              <tr>
+                <th scope="row">LG (webOS)</th>
+                <td>Use <a href="/drivers/lg-tv">DirectorLink · LG TV Notifications</a>: pop-ups without a picture</td>
+              </tr>
+              <tr>
+                <th scope="row">Samsung (Tizen), Vizio, Roku TVs, Hisense and Toshiba with VIDAA, Philips 2026 (Titan OS), Loewe, Bang &amp; Olufsen</th>
+                <td>Do not work: not Android</td>
+              </tr>
+              <tr>
+                <th scope="row">The newest Fire TV sticks (Vega OS)</th>
+                <td>Do not work: no Android apps</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          The same brand often ships different systems in different countries: look in the TV's own Settings →
+          About. Composer lists the driver as <strong>DirectorLink · Android TV Notifications</strong>; the file
+          is <code>DirectorLink-Android-TV.c4z</code>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Control4 controller on OS 3.3.0 or newer, and Composer Pro.</li>
+          <li>A TV or box with Google TV or Android TV, Android 7 or newer, with Google Play and PiPup. Tested on a Sony XR-77A95L (Google TV) with PiPup 0.3.4; reports from other TVs are welcome.</li>
+          <li>A fixed IP address for the TV in the router. The controller reaches PiPup on port 7979, or the port set in PiPup.</li>
+          <li>For DirectorLink's alerts, DirectorLink 1.13 or newer.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in four steps</h2>
+        <ol class="steps steps-4">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>PiPup on the TV</h3>
+            <p>On the TV, install <strong>PiPup — TV Notifications</strong> from Google Play. Open it once, select Grant display permission, and press its test button: a pop-up shows.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Add the driver</h3>
+            <p>In Composer Pro, add <strong>DirectorLink · Android TV Notifications</strong> to the room of the TV, once for each TV.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Pick the TV</h3>
+            <p>Pick the TV in TVs Found, where PiPup's TVs come first, marked <em>PiPup answers</em>, or type its IP address. Status says <em>Ready</em>.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">4</span>
+            <h3>Test and choose</h3>
+            <p>Run Test Notification. Then choose what this TV shows, Quiet Hours, and the look: Position, Seconds On Screen and Pictures.</p>
+          </li>
+        </ol>
+        <p class="note">
+          Leave PiPup's token and IP allowlist off, or enter the same token in PiPup Token and add the
+          controller's address to the allowlist: Status says when PiPup wants either. Every setting and what
+          each Status means are on the driver's Documentation tab in Composer and in the
+          <a href="/drivers/android-tv/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="dl-title">
+        <h2 id="dl-title">With DirectorLink</h2>
+        <p>
+          <a href="/">DirectorLink</a> 1.13 and newer sends its alerts to this driver as soon as both are in
+          the project, with nothing to set up: the doorbell with the picture of who is at the door, camera
+          alerts with the camera's picture, doors and gates opened, and, with Alarm Status on in DirectorLink,
+          the alarm going off, as each TV's choices allow. They are in the home owner's language, in the same
+          words as on the family's phones, and they come straight from the controller: no phone needs alerts
+          switched on, and the internet can be down. The driver follows DirectorLink's
+          <a href="https://github.directorlink.io/blob/main/docs/NOTIFY_DRIVERS.md" rel="noreferrer">notification agreement</a>,
+          the same as DirectorLink · LG TV Notifications.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>The gate on every TV</h3>
+            <p>When the gate opens, Show Notification: <em>Gate</em>, <em>Opened</em>, the gate camera's snapshot address, Send To All TVs.</p>
+          </li>
+          <li>
+            <h3>A camera with a login</h3>
+            <p>Write the login in the snapshot address, <code>http://user:password@…</code>: the controller sends it as a login and never logs it.</p>
+          </li>
+          <li>
+            <h3>A fallback</h3>
+            <p>On Notification Failed, send the text as a push notification instead.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to PiPup on the TV, to the picture's address it is given (the controller, a camera), and, for Find TVs, to the casting devices that answer the search on the home network. It sends nothing to DirectorLink, Google, the app's maker or anyone else, and collects no usage data. PiPup's token and a login in a picture's address are never written to the log.</li>
+          <li>Keep the exact file name: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. An update keeps the settings and the programming.</li>
+          <li>Community-supported, best effort. <a href="/drivers/android-tv/issues" rel="noreferrer">Report a problem</a> with the TV model and its Android or Google TV version, PiPup's version (the TV property), your Control4 OS version, the driver's Print Diagnostics and its log at Debug.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by Google, Amazon or the makers of the TV apps it works with. Android TV, Google TV and Fire TV are trademarks of their owners.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

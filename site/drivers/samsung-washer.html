@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · Samsung Washer for Control4 (beta): a free, open-source driver for Samsung Wi-Fi washing machines, through SmartThings. State, programme, time left and finish time on a tile, cycle events, and safe Pause, Resume, Stop and Start."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · Samsung Washer for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · Samsung Washer <span>for Control4</span></h1>
+        <p class="lead">
+          A free, open-source Control4 driver for Samsung Wi-Fi washing machines: the washer's state,
+          programme, time left and finish time on a Washer tile, events when a cycle starts, pauses and
+          finishes, and safe Pause, Resume, Stop and Start. It works through Samsung's SmartThings cloud,
+          with no extra hardware and no subscription.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/samsung-washer/download">Download the beta</a>
+          <a class="button button-secondary" href="/drivers/samsung-washer/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/samsung-washer/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required.
+        </p>
+        <p class="note">
+          <strong>Beta: field reports wanted.</strong> 1.0.0-beta.1 passes its tests against recorded
+          SmartThings answers from real Samsung washers, but it has not run on a real washer yet. The first
+          model to test is the WW90CGC04DAH (Series 5 ecobubble, 9 kg). If you install it, please
+          <a href="/drivers/samsung-washer/issues" rel="noreferrer">send its Print Diagnostics</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">Control4 app</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Washer tile</th>
+                <td>Its icon shows off, ready, running, paused, finished or an error; a tap reads the washer again</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">State, programme, time left, finish time, progress</th>
+                <td>The tile's text, for example <em>Washing - Eco 40-60, 1 h 40 min left, done 14:32</em></td>
+                <td>Variables, State conditional</td>
+              </tr>
+              <tr>
+                <th scope="row">Spin, temperature, rinses, kids lock, delay end, power</th>
+                <td>–</td>
+                <td>Variables, Composer properties</td>
+              </tr>
+              <tr>
+                <th scope="row">Cycle Started, Paused and Finished; Error</th>
+                <td>–</td>
+                <td>Events (Cycle Finished once per cycle)</td>
+              </tr>
+              <tr>
+                <th scope="row">Smart Control (remote control) on or off</th>
+                <td>–</td>
+                <td>Events, variable, conditional</td>
+              </tr>
+              <tr>
+                <th scope="row">Pause, Resume, Stop</th>
+                <td>–</td>
+                <td>Commands and Composer actions</td>
+              </tr>
+              <tr>
+                <th scope="row">Start</th>
+                <td>–</td>
+                <td>Command, only while Smart Control is on at the washer</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          A tap on the tile only reads the washer again: it never pauses, starts or stops it, so a child or
+          a pocket can't stop a wash. Start and Resume are sent only when the washer itself says Smart Control
+          is on, read just before sending; otherwise they are refused with a clear reason, and the driver
+          never retries by itself. The driver never changes the programme, temperature or spin.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Samsung washing machine on Wi-Fi, added to the SmartThings app.</li>
+          <li>A Control4 controller with internet access, on OS 3.3 or newer, and Composer Pro.</li>
+          <li>For setup: the login of the Samsung account the washer is registered to, and about 10 minutes.</li>
+          <li>Tested offline against recorded SmartThings answers from a DA_WM_TP1_21_COMMON washer (the platform of the WW5000C series, which includes the WW90CGC04DAH), a TP2 front-loader, an A51 washer-dryer and two older TP6X washers. Not yet on a real washer: that is what the beta is for.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in four steps</h2>
+        <ol class="steps steps-4">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Add the driver</h3>
+            <p>In Composer Pro: Driver → Add or Update Driver or Agent, and select <code>DirectorLink-Samsung-Washer.c4z</code>. On the Search tab, tick Local, search for <strong>DirectorLink</strong> and add <strong>DirectorLink · Samsung Washer</strong> to the room.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Give it a token, once</h3>
+            <p>Make a Personal Access Token at <a href="https://account.smartthings.com/tokens" rel="noreferrer">account.smartthings.com/tokens</a> with the washer's Samsung account and every box under Devices, Locations and Apps ticked, and paste it into the driver. It is used only to set up the driver's own sign-in.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Sign in once</h3>
+            <p>Run the actions Create OAuth App and Show Authorization URL, sign in with the washer's Samsung account, and paste the whole address you land on into Authorization Code. The driver renews its access from then on.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">4</span>
+            <h3>Show the tile</h3>
+            <p>One washer is picked by itself; with more, choose it in Select Washer. Make the Washer tile visible in the room's Navigator settings.</p>
+          </li>
+        </ol>
+        <p class="note">
+          The steps are the same as for <a href="/drivers/samsung-refrigerator">DirectorLink · Samsung Refrigerator</a>:
+          a project that has it still makes a token and signs in once for the washer. Save the OAuth Client ID
+          and Secret the driver fills in: SmartThings never shows the secret again. Each step, and what each
+          message means, is on the driver's Documentation tab in Composer and in the
+          <a href="/drivers/samsung-washer/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Laundry's done</h3>
+            <p>On Cycle Finished, send a push notification, or flash the hall lights.</p>
+          </li>
+          <li>
+            <h3>Forgotten laundry</h3>
+            <p>On Cycle Finished, start a 30-minute timer; if State is Finished when it ends, notify again.</p>
+          </li>
+          <li>
+            <h3>Quiet hours</h3>
+            <p>A scheduled event at 22:00 runs Pause if State is Running.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to Samsung's SmartThings service, with the access you grant it. It sends nothing to DirectorLink and collects no usage data. The sign-in happens in your browser, which lands on httpbin.org to show you the one-time code. Tokens stay in Control4's encrypted driver storage and are never written to the log or shown, Print Diagnostics included.</li>
+          <li>Keep the exact file name: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. An update keeps the settings and the sign-in.</li>
+          <li>Testing the beta: with Debug Mode on, run Print Diagnostics with the washer on, and once more during a cycle, and check that the tile, State, Programme, Time Remaining and Finish Time match the washer's display. Try Start once with Smart Control off: it must be refused.</li>
+          <li>Community-supported, best effort. <a href="/drivers/samsung-washer/issues" rel="noreferrer">Report a problem</a> or how the beta went with the Print Diagnostics outputs, the washer's model number (on the label inside the door) and your Control4 OS version. Never post tokens or the Client Secret.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by Samsung. Samsung and SmartThings are trademarks of their owner.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

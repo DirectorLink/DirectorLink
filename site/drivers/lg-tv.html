@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · LG TV Notifications for Control4: a free, open-source driver that shows pop-ups on LG webOS TVs: a doorbell ring, a camera alert, a door or gate opened, the alarm. Local network, no cloud, no LG account."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · LG TV Notifications for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · LG TV Notifications <span>for Control4</span></h1>
+        <p class="lead">
+          A free, open-source Control4 driver that shows notifications as a pop-up on LG webOS TVs: a
+          doorbell ring, a camera alert, a door or gate opened, the alarm. It talks straight to the TV with
+          LG's local API, the one LG's own phone app uses: no cloud, no LG account, no ThinQ and no extra
+          hardware.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/lg-tv/download">Download the driver</a>
+          <a class="button button-secondary" href="/drivers/lg-tv/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/lg-tv/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required, and Composer programming can show pop-ups too.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">On the TV</th>
+                <th scope="col">Programming</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">A pop-up on the TV</th>
+                <td>The TV's own notification at the bottom of the screen, for about 5 seconds, over whatever is on</td>
+                <td>Show Notification, with a title and a message, for anything you want on the TV</td>
+              </tr>
+              <tr>
+                <th scope="row">DirectorLink's alerts</th>
+                <td>Doorbell rings, camera alerts, doors and gates opened, the alarm and others, with DirectorLink 1.13 and newer</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Your choice for each TV</th>
+                <td>Doorbell, Camera Alerts, Doors and Gates, Alarm and Other, each on or off (Doorbell and Alarm are on)</td>
+                <td>–</td>
+              </tr>
+              <tr>
+                <th scope="row">Quiet Hours</th>
+                <td>No pop-ups on this TV at night, or whenever you set</td>
+                <td>Show Notification keeps to them too</td>
+              </tr>
+              <tr>
+                <th scope="row">Several TVs</th>
+                <td>One driver for each TV, with its own kinds and Quiet Hours; a notification shows on every TV that is on, at the same moment</td>
+                <td>Show Notification for each TV in the same When</td>
+              </tr>
+              <tr>
+                <th scope="row">What happened</th>
+                <td>–</td>
+                <td>Notification Shown and Notification Failed events, the last notification's text</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          Pop-ups show only while the TV is on: off, in standby or with no answer within 3 seconds, a
+          pop-up is dropped. The driver never turns the TV on, changes its channel, input or volume, or
+          keeps anything off its screen. At most one pop-up every 5 seconds on each TV, a doorbell or the
+          alarm first. The text shows as it was sent, Hebrew and other right-to-left languages included.
+          No picture: on many LG TVs a pop-up that carries one is not shown at all, so the driver never
+          sends one.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Control4 controller on OS 3.3.0 or newer, and Composer Pro.</li>
+          <li>An LG TV with webOS (2014 and newer), including webOS 26 and its 2026 firmware. Confirmed on a real LG TV in an installer's project; reports from other models and webOS versions are welcome.</li>
+          <li>A fixed IP address for the TV in the router, and the TV on the same home network as the controller: the controller reaches it on port 3001 (port 3000 on TVs before 2018).</li>
+          <li>For DirectorLink's alerts, DirectorLink 1.13 or newer. Without it, the driver shows what Composer programming sends.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in three steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Add the driver</h3>
+            <p>In Composer Pro, add <strong>DirectorLink · LG TV Notifications</strong> to the room of the TV, once for each TV. Turn the TV on: on, not in standby.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Pick the TV and accept</h3>
+            <p>Pick the TV in TVs Found, or type its IP address in TV IP Address. Within a few seconds the TV asks whether to allow a new device: accept it with the TV's remote. Status says <em>Paired</em>.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Test and choose</h3>
+            <p>Run Test Notification: the TV shows a pop-up. Then choose what this TV shows: Doorbell, Camera Alerts, Doors and Gates, Alarm, Other, and Quiet Hours if you want them.</p>
+          </li>
+        </ol>
+        <p class="note">
+          The words of the TV's question are the TV's own: they may not name DirectorLink. The TV asks for
+          about two minutes; if nobody accepts, run Pair Again with the TV on. The TV remembers the driver,
+          so it asks once. Every setting and what each Status means are on the driver's Documentation tab in
+          Composer and in the <a href="/drivers/lg-tv/source" rel="noreferrer">full guide</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="dl-title">
+        <h2 id="dl-title">With DirectorLink</h2>
+        <p>
+          <a href="/">DirectorLink</a> 1.13 and newer sends its alerts to this driver as soon as both are in
+          the project, with nothing to set up: the doorbell, camera alerts, doors and gates opened, and,
+          with Alarm Status on in DirectorLink, the alarm going off, as each TV's choices allow. They are in
+          the home owner's language, in the same
+          words as on the family's phones, and they come straight from the controller: no phone needs alerts
+          switched on, and the internet can be down. The driver follows DirectorLink's
+          <a href="https://github.directorlink.io/blob/main/docs/NOTIFY_DRIVERS.md" rel="noreferrer">notification agreement</a>,
+          which any screen driver may follow.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>The garage is still open</h3>
+            <p>When the garage door has been open for 10 minutes, Show Notification: <em>Garage</em>, <em>The garage door is still open</em>.</p>
+          </li>
+          <li>
+            <h3>Every TV at once</h3>
+            <p>Add Show Notification for each TV in the same When: they run one after the other at once, so the TVs show it together.</p>
+          </li>
+          <li>
+            <h3>A fallback</h3>
+            <p>On Notification Failed, send the text as a push notification instead.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to the TV on your home network, and, for Find TVs, to the LG TVs that answer the search there. It sends nothing to DirectorLink, LG or anyone else, and collects no usage data. The TV's key stays in your Control4 project and never appears in a log, a property or Print Diagnostics. The driver asks the TV only to show pop-ups and to say whether it is on: the key cannot change channels, inputs, volume, settings or power.</li>
+          <li>Keep the exact file name: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. An update keeps the settings, the TV's key (the TV does not ask again) and the programming.</li>
+          <li>Community-supported, best effort. <a href="/drivers/lg-tv/issues" rel="noreferrer">Report a problem</a> with the TV model and webOS version (the TV property), your Control4 OS version, the driver's Print Diagnostics and its log at Debug. Reports that a TV works are welcome too.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by LG Electronics. webOS is a trademark of its owner.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>
