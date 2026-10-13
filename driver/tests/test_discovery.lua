@@ -159,6 +159,8 @@ function tests.a_room_removed_in_composer_goes_and_scenes_follow_by_id()
     T.eq(require("src.core.room_names").get(10).he, "מטבח", "its names stay stored, should the room come back")
 end
 
+-- Only the four events Snap One's DriverWorks reference documents for project changes (1.13.1,
+-- ADR-088): not OnItemMoved, OnDriverAdded or OnProjectLoaded, which it lists as internal.
 function tests.project_events_are_registered_for_every_device()
     local mock = start()
     local registered = {}
@@ -166,43 +168,80 @@ function tests.project_events_are_registered_for_every_device()
         T.eq(event[2], 0, "on every device")
         registered[event[1]] = true
     end
-    for _, name in ipairs({ "OnItemAdded", "OnItemRemoved", "OnItemNameChanged", "OnItemMoved", "OnPIP", "OnDriverAdded", "OnProjectLoaded" }) do
+    for _, name in ipairs({ "OnItemAdded", "OnItemRemoved", "OnItemNameChanged", "OnPIP" }) do
         T.truthy(registered[Mock.SYSTEM_EVENTS[name]], name)
+    end
+    for _, name in ipairs({ "OnItemMoved", "OnDriverAdded", "OnProjectLoaded" }) do
+        T.truthy(not registered[Mock.SYSTEM_EVENTS[name]], "not " .. name .. ", an internal event")
     end
     T.truthy(not registered[Mock.SYSTEM_EVENTS.OnProjectChanged], "not the deprecated one")
     T.truthy(not registered[Mock.SYSTEM_EVENTS.OnItemDataChanged], "not data changes, which may come all the time")
-    T.eq(#mock.systemEvents, 7)
+    T.eq(#mock.systemEvents, 4)
     refresh()
-    T.eq(#mock.systemEvents, 7, "registered once")
+    T.eq(#mock.systemEvents, 4, "registered once")
+end
+
+function tests.the_log_says_what_is_watched_and_that_a_move_needs_refresh_project()
+    start()
+    local watching = logged("watching the project for Composer changes")
+    T.eq(#watching, 1)
+    T.eq(watching[1].data.events, "OnItemAdded, OnItemRemoved, OnItemNameChanged, OnPIP")
+    T.eq(watching[1].data.device_moved, "shows after Refresh Project")
 end
 
 function tests.composer_changes_are_read_five_seconds_after_the_last_event()
     local mock, key = start(function()
         Properties["Log Level"] = "Debug"
     end)
-    Mock.moveDevice(mock.project, 51, 11)
-    local first = event(mock, "OnItemMoved", { iditem = 51, idparent = 11 })
-    T.eq(first.delay, 5000)
-    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 10, "not yet")
     Mock.renameDevice(mock.project, 51, "Terrace Shutter")
-    local second = event(mock, "OnItemNameChanged", { iditem = 51 })
+    local first = event(mock, "OnItemNameChanged", { iditem = 51 })
+    T.eq(first.delay, 5000)
+    T.eq(get(mock, key, "/v1/blinds/51").json.name, "Kitchen Shutter", "not yet")
+    Mock.moveDevice(mock.project, 51, 11)
+    local second = event(mock, "OnItemAdded", { iditem = 200 })
     T.truthy(first.cancelled, "each event starts the wait again")
-    event(mock, "OnItemMoved", { iditem = 52 })
+    event(mock, "OnItemRemoved", { iditem = 201 })
     T.truthy(second.cancelled)
     local last = mock.timers[#mock.timers]
     fire(last)
 
     local blind = get(mock, key, "/v1/blinds/51").json
-    T.eq(blind.room.id, 11)
     T.eq(blind.name, "Terrace Shutter")
+    T.eq(blind.room.id, 11, "a move is read with the rest of the project")
     local done = logged("project rediscovered")
     T.eq(#done, 1, "one refresh for the burst")
-    T.eq(done[1].data.reason, "Composer changes (OnItemMoved, OnItemNameChanged)")
+    T.eq(done[1].data.reason, "Composer changes (OnItemNameChanged, OnItemAdded, OnItemRemoved)")
     T.eq(done[1].data.moved, 1)
     T.eq(done[1].data.renamed, 1)
     local raw = logged("project event")
     T.eq(#raw, 3, "every payload is logged at debug level")
     T.contains(raw[1].data.data, '<param name="iditem" type="ulong">51</param>')
+end
+
+-- Director documents no event for a device moved to another room (ADR-088): the move shows after
+-- Refresh Project, or with the next read that one of the four events starts.
+function tests.a_device_moved_to_another_room_shows_after_refresh_project()
+    local mock, key = start()
+    Mock.moveDevice(mock.project, 51, 11)
+    local waiting = waitingTimers(mock)
+    T.eq(Mock.systemEvent(mock, "OnItemMoved", { iditem = 51, idparent = 11 }), false, "not registered")
+    T.eq(waitingTimers(mock), waiting, "nothing waits for it")
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 10, "the room read before")
+    refresh()
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 11)
+    local done = logged("project rediscovered")
+    T.eq(#done, 1)
+    T.eq(done[1].data.reason, "Composer action")
+    T.eq(done[1].data.moved, 1)
+end
+
+function tests.a_device_moved_also_shows_with_the_next_read_by_an_event()
+    local mock, key = start()
+    Mock.moveDevice(mock.project, 51, 11)
+    Mock.renameDevice(mock.project, 22, "Reading Lamp")
+    fire(event(mock, "OnItemNameChanged", { iditem = 22 }))
+    T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 11)
+    T.eq(logged("project rediscovered")[1].data.moved, 1)
 end
 
 function tests.a_stream_of_events_waits_at_most_thirty_seconds()
@@ -225,8 +264,8 @@ end
 function tests.events_about_directorlink_itself_are_ignored()
     local mock = start()
     T.eq(event(mock, "OnItemNameChanged", { iditem = 572 }), nil, "DirectorLink renamed: nothing to read")
-    T.eq(event(mock, "OnItemMoved", { iditem = 572, idparent = 11 }), nil)
-    T.truthy(event(mock, "OnItemMoved", { iditem = 51, idparent = 11 }), "any other device counts")
+    T.eq(event(mock, "OnItemAdded", { iditem = 572, idparent = 11 }), nil)
+    T.truthy(event(mock, "OnItemNameChanged", { iditem = 51 }), "any other device counts")
     T.truthy(event(mock, "OnPIP", {}), "Refresh Navigators always counts")
     OnSystemEvent("not an event at all")
     OnSystemEvent(nil)
@@ -269,12 +308,12 @@ function tests.a_refresh_after_events_that_fails_is_tried_again_once()
     function C4:GetDevices()
         error("Director is busy")
     end
-    fire(event(mock, "OnItemMoved", { iditem = 51, idparent = 11 }))
+    fire(event(mock, "OnItemNameChanged", { iditem = 51 }))
     T.eq(#logged("project refresh failed; the project read before stays in use"), 1)
     local retry = mock.timers[#mock.timers]
     T.truthy(not retry.fired and not retry.cancelled, "a second try waits")
     T.eq(retry.delay, 60000)
-    T.eq(logged("the project refresh is tried again")[1].data.events, "OnItemMoved")
+    T.eq(logged("the project refresh is tried again")[1].data.events, "OnItemNameChanged")
     T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 10, "the project read before stays in use")
 
     -- It fails too: no third try (the next change, or the action, reads the project).
@@ -322,11 +361,11 @@ function tests.refresh_navigators_alone_reads_the_project_at_most_every_two_minu
     mock.clock = mock.clock + 1000
     local held = event(mock, "OnPIP", {})
     T.truthy(held.delay > 100000)
-    local moved = event(mock, "OnItemMoved", { iditem = 51 })
-    T.eq(moved.delay, 5000, "an item event is not held back")
+    local added = event(mock, "OnItemAdded", { iditem = 200 })
+    T.eq(added.delay, 5000, "an item event is not held back")
     T.truthy(held.cancelled)
-    fire(moved)
-    T.eq(logged("project rediscovered")[3].data.reason, "Composer changes (OnPIP, OnItemMoved)")
+    fire(added)
+    T.eq(logged("project rediscovered")[3].data.reason, "Composer changes (OnPIP, OnItemAdded)")
     refresh()
     T.eq(#logged("project rediscovered"), 4, "nor the action")
 
@@ -363,7 +402,7 @@ end
 function tests.the_action_reads_the_project_now_instead_of_waiting()
     local mock, key = start()
     Mock.moveDevice(mock.project, 51, 11)
-    local waiting = event(mock, "OnItemMoved", { iditem = 51 })
+    local waiting = event(mock, "OnItemNameChanged", { iditem = 51 })
     refresh()
     T.eq(get(mock, key, "/v1/blinds/51").json.room.id, 11)
     T.truthy(waiting.cancelled, "the refresh the event waited for is not needed any more")
@@ -517,7 +556,7 @@ function tests.a_failed_start_is_mended_by_the_action()
     refresh()
     T.eq(mock.properties["Status"], "Ready")
     T.contains(mock.properties["Inventory"], "2 blinds")
-    T.eq(#mock.systemEvents, 7)
+    T.eq(#mock.systemEvents, 4)
 end
 
 function tests.a_door_pulse_across_a_refresh_still_releases()

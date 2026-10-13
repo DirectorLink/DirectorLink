@@ -1,15 +1,21 @@
 -- Composer changes to the project, as Director announces them to drivers (DriverWorks system
--- events, C4:RegisterSystemEvent): an item (a device, a proxy, a room) added, removed, renamed or
--- moved, a driver added, a project loaded, and OnPIP (Composer's Refresh Navigators; Director also
--- sends it when bindings, device names or media change). An event is only a sign that the project
+-- events, C4:RegisterSystemEvent): an item (a device, a proxy, a room) added, removed or renamed,
+-- and OnPIP (Composer's Refresh Navigators; Director also sends it when bindings, device names or
+-- media change). Only the four events Snap One's DriverWorks reference documents for this
+-- (event interface, "Registering for System Events"); since 1.13.1 not OnItemMoved, OnDriverAdded or
+-- OnProjectLoaded, which it lists among Director's internal events (ADR-088). A new driver's
+-- devices come with OnItemAdded, and a project loaded starts the driver again (OnDriverInit's
+-- DIT_STARTUP, as documented; its late init reads the project). Nothing documented says a device
+-- moved to another room: it shows after Refresh Project or the next read, by one of these events
+-- or a restart. An event is only a sign that the project
 -- changed: the project is read again from Director (main.lua), once no event has come for QUIET_MS
 -- (Composer sends bursts: a new device brings its proxies) and at the latest MAX_WAIT_MS after the
 -- first one. OnPIP alone does it at most once every PIP_INTERVAL_MS, with one more read at the end
 -- of that time for the OnPIP that came meanwhile: it may come often, and one read of a large
 -- project is over a thousand Director calls. A read that fails (Director busy loading a project)
--- is tried once more RETRY_MS later. The payloads are not documented, OnItemMoved's least of all;
--- each one is logged at debug level so it can be read on a real controller, and one without a name
--- known here still counts: Director sends only the events registered here.
+-- is tried once more RETRY_MS later. The payloads are not documented; each one is logged at debug
+-- level so it can be read on a real controller, and one without a name known here still counts:
+-- Director sends only the events registered here.
 -- Without system events (no C4SystemEvents, or Director refuses them) the Composer action Refresh
 -- Project does the same by hand.
 
@@ -22,16 +28,14 @@ ProjectEvents.QUIET_MS = 5000
 ProjectEvents.MAX_WAIT_MS = 30000
 ProjectEvents.PIP_INTERVAL_MS = 120000
 ProjectEvents.RETRY_MS = 60000
--- Not OnProjectChanged (deprecated since OS 2.10), nor OnItemDataChanged or OnDeviceDataChanged,
--- which may come with any driver's data write.
+-- The documented ones only (scripts/check_package.py fails the build otherwise). Not
+-- OnProjectChanged (deprecated since OS 2.10), nor OnItemDataChanged or OnDeviceDataChanged, which
+-- may come with any driver's data write.
 ProjectEvents.NAMES = {
     "OnItemAdded",
     "OnItemRemoved",
     "OnItemNameChanged",
-    "OnItemMoved",
     "OnPIP",
-    "OnDriverAdded",
-    "OnProjectLoaded",
 }
 
 -- What an event whose name is not known here is called in the log and a refresh's reason.
@@ -63,7 +67,7 @@ local function cancelTimer()
     end
 end
 
--- options: onChange(events) runs the refresh (events: the names, e.g. "OnItemMoved, OnPIP") and
+-- options: onChange(events) runs the refresh (events: the names, e.g. "OnItemAdded, OnPIP") and
 -- returns false when it failed; ownIds: DirectorLink's own device ids. Registers once per driver
 -- run; a later call only takes the new options. Returns how many events are watched.
 function ProjectEvents.start(options)
@@ -97,7 +101,11 @@ function ProjectEvents.start(options)
     if #watched == 0 then
         Log.warn("discovery", "Director does not announce Composer changes to DirectorLink; after changing the project, run the action Refresh Project")
     else
-        Log.info("discovery", "watching the project for Composer changes", { events = table.concat(watched, ", ") })
+        -- Director documents no event for a device moved to another room (ADR-088).
+        Log.info("discovery", "watching the project for Composer changes", {
+            events = table.concat(watched, ", "),
+            device_moved = "shows after Refresh Project",
+        })
     end
     return state.count
 end
