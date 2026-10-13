@@ -262,6 +262,20 @@ owner runs **Revoke All API Keys** in Composer, which ends every key and every l
 (its hello lists no `scene_links`), so phones get 404. A scene changed there to open doors or gates
 loses its link at the next start of 1.7.0.
 
+### Step by step: run a scene when you arrive or leave
+
+DirectorLink does not track your phone; your phone's own automations do the geofencing and call a scene's private link. Your location never leaves the phone: DirectorLink only gets the run. Links go through your account, so the home needs **Remote Access** on in Composer and to be linked to an account (Settings → Account).
+
+1. **Make a link.** In the app, open a scene that opens no doors or gates (for example *Arriving Home*: entrance lights, AC, blinds up), then **Link for automations → Make a link**. The app shows the link once, with **Copy address**, **Copy secret**, **Copy link** and a QR code. Keep the secret private: whoever has it can run that scene.
+2. **iPhone (Shortcuts).** Automation → New Automation → **Arrive**, choose your home's location, and **Run Immediately**. Add the action **Get Contents of URL**: paste the address, then Method **POST**, Request Body **JSON**, Add new field → **Text**, key `secret`, value the secret. Make a second automation with **Leave** for a *Leaving Home* scene.
+3. **Android.** In MacroDroid, Tasker or HTTP Shortcuts, use a location (geofence) trigger, entering or leaving, with an HTTP request: method **POST** to the address, with the secret as the body (as plain text, or as a form field `secret`).
+4. **NFC tag.** Write the whole link (**Copy link**, the secret after `#`) to a tag with an NFC app: tapping it opens a page with one Run button. On iPhone, a Shortcuts **NFC** automation with the same Get Contents of URL step runs the scene without the page.
+5. **Siri and Google Assistant.** Make a shortcut (not an automation) with the same Get Contents of URL step, name it like the scene, and say "Hey Siri, Good night". On Android, a Google Assistant routine that starts when you say the scene's name can start the automation app's request.
+
+**Doors and gates: ask before opening (1.8.0).** A link never opens a door or gate. Instead, a door's **Ask** (in its room) makes a link that asks you: when your phone's Arrive automation, or Siri, runs it, DirectorLink sends your own devices with alerts on an encrypted notification, "Open the main gate?", and only your tap on **Open** opens it, from that device with its own key, within two minutes. A leaked link can only make your phone ask. It needs Door Control on in Composer and alerts on your phone (Settings → Alerts); every question and opening is in History.
+
+Good to know: a scene with a door or gate step can never have a link, and adding one removes it. Every run is in History by the link's name. **Replace** gives a new secret and **Remove** ends the link at once, for example when a phone is lost; a link also ends with the key of the device that made it, and with Composer's **Revoke All API Keys** or **Remove All Scene Links**.
+
 ## Ask before opening (1.8.0, ADR-058)
 
 A scene link never opens a door or gate. For arriving at the gate, a door has a link of another
