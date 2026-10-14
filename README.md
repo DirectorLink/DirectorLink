@@ -69,17 +69,13 @@ DirectorLink is a Lua driver for Control4's DriverWorks platform. It runs inside
 - It changes nothing in Control4's software, licensing or Composer programming, and does not use Control4's cloud services.
 - It is not certified, reviewed or endorsed by Control4 or Snap One.
 
-DirectorLink is an independent project, not affiliated with Control4 or Snap One. Control4 and DriverWorks are trademarks of Snap One, LLC, named here only to describe compatibility.
-
 ## Status
 
 Used every day in a real home. The API is versioned: 1.x releases add to `/v1` without breaking existing clients. The roadmap is [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Disclaimer
 
-DirectorLink is an independent project, not affiliated with Control4 or Snap One. It is open source and is not endorsed by Control4 or Snap One.
-
-Installing third-party drivers or modifying a Control4 project can introduce compatibility, support, warranty, or recovery risks. Users are responsible for understanding those risks and should keep appropriate backups of their Control4 project.
+DirectorLink is an independent project, not affiliated with Control4 or Snap One. It is open source and is not endorsed by Control4 or Snap One. Control4 and DriverWorks are trademarks of Snap One, LLC, named here only to describe compatibility.
 
 ## License
 
