@@ -601,11 +601,18 @@ def check_security_contract(files):
 
 
 LUA_LONG_BRACKET = re.compile(r"\[(=*)\[")
+LUA_SPECIAL = re.compile(r"--|[\"'\[]")
 
 
-def lua_code(text):
+def blank(text):
+    """Spaces for every character of `text` but its newlines."""
+    return re.sub(r"[^\n]", " ", text)
+
+
+def lua_code(text, strings=True):
     """Lua source without its comments (each replaced by a space, newlines kept), so that a check
-    reads only what runs. Strings, long strings included, are kept."""
+    reads only what runs. Strings, long strings included, are kept; with strings=False their
+    contents are blanked too (the quotes stay), so that only names in the code itself count."""
     out, i, n = [], 0, len(text)
     while i < n:
         if text.startswith("--", i):
@@ -622,17 +629,20 @@ def lua_code(text):
             quote, j = text[i], i + 1
             while j < n and text[j] != quote and text[j] != "\n":
                 j += 2 if text[j] == "\\" else 1
-            out.append(text[i:j + 1])
+            out.append(text[i:j + 1] if strings else quote + blank(text[i + 1:j]) + text[j:j + 1])
             i = j + 1
         elif text[i] == "[" and LUA_LONG_BRACKET.match(text, i):
             level = LUA_LONG_BRACKET.match(text, i).group(1)
             end = text.find("]" + level + "]", i + len(level) + 2)
             end = n if end < 0 else end + len(level) + 2
-            out.append(text[i:end])
+            out.append(text[i:end] if strings else blank(text[i:end]))
             i = end
         else:
-            out.append(text[i])
-            i += 1
+            # Up to the next comment, string or bracket, at once.
+            special = LUA_SPECIAL.search(text, i + 1)
+            end = n if special is None else special.start()
+            out.append(text[i:end])
+            i = end
     return "".join(out)
 
 
@@ -844,6 +854,183 @@ def check_calendar_privacy(files):
                 fail(f"{name} uses {call}: the Jewish calendar is worked out on the controller and never goes to the network")
 
 
+# Only Control4's documented DriverWorks API (1.13.1, ADR-088). Every C4 function the packaged Lua
+# names, with the page of Snap One's public DriverWorks API reference that documents it
+# (https://github.com/snap-one/docs-driverworks-api, under source/includes/; the published
+# reference is https://snap-one.github.io/docs-driverworks-api/). A name not listed here fails the
+# build: add one only with its page there.
+DOCUMENTED_C4 = {
+    "Base64Encode": "22_miscellaneous/_3-Base64Encode.md",
+    "CreateNetworkConnection": "32_serial_network_device/_1-CreateNetworkConnection.md",
+    "CreateServer": "33_server_sockets/_2-CreateServer.md",
+    "CreateTLSServer": "33_server_sockets/_2.5-createtlsserver.md",
+    "DebugLog": "13_log/_1-Debuglog.md",
+    "Decrypt": "6_encryption/_4-Decrypt.md",
+    "DestroyServer": "33_server_sockets/_3-DestroyServer.md",
+    "Encrypt": "6_encryption/_2-Encrypt.md",
+    "GenerateCSR_ECC": "6_encryption/_5-GenerateCSR_ECC.md",
+    "GetBootID": "9_helper/_5.7-GETBOOTID.md",
+    "GetBoundProviderDevice": "32_serial_network_device/_4-GetBoundProviderDevice.md",
+    "GetControllerNetworkAddress": "32_serial_network_device/_5-GetControllerNetworkAddress.md",
+    "GetDeviceData": "22_miscellaneous/_8-GetDeviceData.md",
+    "GetDeviceID": "22_miscellaneous/_11-GetDeviceID.md",
+    "GetDeviceVariables": "22_miscellaneous/_12-GetDeviceVariables.md",
+    "GetDevices": "22_miscellaneous/_9-GetDevices.md",
+    "GetProjectHierarchy": "22_miscellaneous/_15-GetProjectHierarchy.md",
+    "GetProjectProperty": "24_properties/_2-GetProjectProperty.md",
+    "GetSystemType": "22_miscellaneous/_18-GetSystemType.md",
+    "GetTime": "34_timer/_2-GetTime.md",
+    "GetTimeZone": "9_helper/_10.1-GetTimeZone.md",
+    "GetUniqueMAC": "22_miscellaneous/_20-GetUniqueMAC.md",
+    "GetVariable": "36_variable/_4-GetVariable.md",
+    "GetVersionInfo": "5_director_command/_2-GetVersionInfo.md",
+    "HMAC": "6_encryption/_10-HMAC.md",
+    "Hash": "6_encryption/_9-Hash.md",
+    "NetConnect": "32_serial_network_device/_23-NetConnect.md",
+    "NetDisconnect": "32_serial_network_device/_24-NetDisconnect.md",
+    "NetPortOptions": "32_serial_network_device/_25-NetPortOptions.md",
+    "PersistGetValue": "26.5_persistence/_3-PersistGetValue.md",
+    "PersistSetValue": "26.5_persistence/_4-PersistSetValue.md",
+    "RegisterDeviceEvent": "7_event/_5-RegisterDeviceEvent.md",
+    "RegisterSystemEvent": "7_event/_5.5-RegisterSystemEvent.md",
+    "RegisterVariableListener": "36_variable/_10-RegisterVariableListener.md",
+    "SendToDevice": "32_serial_network_device/_19-SendToDevice.md",
+    "SendToNetwork": "32_serial_network_device/_20-SendToNetwork.md",
+    "SendUIRequest": "22_miscellaneous/_36-SendUIRequest.md",
+    "ServerCloseClient": "33_server_sockets/_7-ServerCloseClient.md",
+    "ServerSend": "33_server_sockets/_6-ServerSend.md",
+    "SetTimer": "34_timer/_1-SetTimer.md",
+    "UUID": "9_helper/_19.5-uuid.md",
+    "UnregisterAllSystemEvents": "7_event/_6-UnRegisterAllSystemEvents.md",
+    "UnregisterAllVariableListeners": "36_variable/_10.5-UnRegisterAllVariableListeners.md",
+    "UnregisterVariableListener": "36_variable/_11-UnregisterVariableListener.md",
+    "UpdateProperty": "24_properties/_5-UpdateProperty.md",
+    "url": "35_url/_0-Header.md",
+}
+# The system events the reference documents for changes to the project (7_event/
+# _1-RegisteringforSystemEvents.md): OnPIP, and the item events for add, remove and rename. It lists
+# OnItemMoved, OnDriverAdded, OnProjectLoaded and most others as "Internal System Events". It
+# documents a few more (network bindings, devices online and offline, the location, the locale,
+# Director's address), which DirectorLink does not need.
+DOCUMENTED_SYSTEM_EVENTS = {"OnPIP", "OnItemAdded", "OnItemRemoved", "OnItemNameChanged"}
+PROJECT_EVENTS = "src/control4/project_events.lua"
+SYSTEM_EVENT_REGISTER = "C4:RegisterSystemEvent(id, 0)"
+# Of Lua's os library, only the clocks and dates: no running programs, no files.
+LUA_OS = {"time", "date", "clock", "difftime"}
+# Lua's ways around the sandbox and the documented API: files and programs (io), code from strings
+# or files, the environment and the debug and package libraries.
+LUA_FORBIDDEN = {
+    "io": "read or write files (io): the driver reads no file itself",
+    "loadstring": "run code from a string (loadstring)",
+    "loadfile": "run code from a file (loadfile)",
+    "dofile": "run code from a file (dofile)",
+    "debug": "use Lua's debug library",
+    "package": "use Lua's package library (package.loadlib loads C code)",
+    "_G": "reach globals through _G",
+    "getfenv": "reach an environment (getfenv)",
+    "setfenv": "change an environment (setfenv)",
+}
+# A module loaded by a name the code holds (pcall(require, path)): only the Jewish calendar's engine,
+# from its table of the package's own module names.
+DYNAMIC_REQUIRES = {"src/core/jewish_calendar.lua": (r"^local ENGINE_MODULES = \{([^}]*)\}", "pcall(require, path)")}
+# Every name the checks below look at, in one pass.
+LUA_LIBRARY = re.compile(r"\b(" + "|".join(sorted(set(LUA_FORBIDDEN) | {"os", "load", "require"})) + r")\b")
+LUA_FIELD = re.compile(r"\s*\.\s*(\w+)")
+# A table's key or an assignment ({ debug = 1 }), not a use of the library of that name.
+LUA_KEY = re.compile(r"\s*=(?!=)")
+LUA_C4_NAME = re.compile(r"C4\s*[:.]\s*(\w+)")
+# require("src.x"), require "src.x", or pcall(require, "src.x").
+LUA_REQUIRE_OWN = re.compile(r"""require\s*[(,]?\s*(["'])src\.[\w.]+\1""")
+
+
+def lua_name(code, start):
+    """Whether the name at `start` is one of the code itself: not a field (t.io) or a method
+    (t:load); after .. (concatenation) it is one again."""
+    before = code[start - 1:start] if start else ""
+    if before == ":":
+        return False
+    return before != "." or code[start - 2:start] == ".."
+
+
+def check_documented_api(files):
+    """Every C4 function the packaged Lua names is documented in Snap One's DriverWorks reference,
+    system events only the documented ones, and nothing reaches past the API: no io, no os but its
+    clocks, no code loaded from strings or files, no module but the package's own (ADR-088)."""
+    for name, text in sorted(files.items()):
+        if not name.endswith(".lua"):
+            continue
+        code = lua_code(text, strings=False)
+        # C4 by a documented name only: C4:Name(...), C4.Name, and C4 as the self argument of
+        # pcall(C4.Name, C4, ...). Never C4[...] (a name made at run time) or C4 handed elsewhere.
+        for match in re.finditer(r"\bC4\b", code):
+            found = LUA_C4_NAME.match(code, match.start())
+            if found:
+                if found.group(1) not in DOCUMENTED_C4:
+                    fail(f"{name} names C4:{found.group(1)}, which is not among the documented functions (DOCUMENTED_C4 in scripts/check_package.py): only Control4's documented DriverWorks API, each with its page in Snap One's reference (ADR-088)")
+                continue
+            if re.search(r"\bC4\s*\.\s*\w+\s*,\s*$", code[max(match.start() - 80, 0):match.start()]):
+                continue
+            snippet = code[match.start():match.start() + 40].split("\n", 1)[0]
+            fail(f"{name} uses C4 other than by a documented function's name: {snippet!r}")
+        # The offsets are the same in both: lua_code keeps every string's length.
+        with_strings = lua_code(text)
+        declared = False  # a local of the name load, which is then not Lua's
+        for found in LUA_LIBRARY.finditer(code):
+            word, start = found.group(1), found.start()
+            if not lua_name(code, start):
+                continue
+            snippet = with_strings[start:start + 40].split("\n", 1)[0]
+            if word == "os":
+                field = LUA_FIELD.match(code, found.end())
+                if field is None and LUA_KEY.match(code, found.end()):
+                    continue
+                if field is None or field.group(1) not in LUA_OS:
+                    fail(f"{name} uses Lua's os other than {', '.join(sorted('os.' + f for f in LUA_OS))}: {snippet!r}")
+            elif word == "load":
+                # Lua's load runs code from a function or a string.
+                if re.search(r"\b(?:local\s+function|local|function)\s+$", code[max(start - 40, 0):start]):
+                    declared = True
+                elif not declared:
+                    fail(f"{name} must not run code from a string or a function (load)")
+            elif word == "require":
+                # Only the package's own modules, by a plain string: never openssl, socket or lfs.
+                if LUA_REQUIRE_OWN.match(with_strings, start):
+                    continue
+                dynamic = DYNAMIC_REQUIRES.get(name)
+                table = dynamic and re.search(dynamic[0], with_strings, re.M)
+                if (
+                    table
+                    and with_strings.startswith(dynamic[1], max(start - 6, 0))
+                    and all(re.fullmatch(r"src\.[\w.]+", module) for module in re.findall(r'=\s*"([^"]*)"', table.group(1)))
+                    and not re.search(r"[^\s\w=\",.]", table.group(1))
+                ):
+                    continue
+                fail(f"{name} requires something other than the package's own modules: {snippet!r}")
+            elif not LUA_KEY.match(code, found.end()):
+                fail(f"{name} must not {LUA_FORBIDDEN[word]}")
+        if name != PROJECT_EVENTS and re.search(r"\b(?:RegisterSystemEvent|C4SystemEvents)\b", code):
+            fail(f"{name} registers system events: only {PROJECT_EVENTS} does, with the documented ones")
+
+    text = files.get(PROJECT_EVENTS)
+    if text is None:
+        fail(f"{PROJECT_EVENTS} is missing")
+    code = lua_code(text)
+    registers = [line.strip() for line in code.split("\n") if re.search(r"\bRegisterSystemEvent\b", line)]
+    if registers != [SYSTEM_EVENT_REGISTER]:
+        fail(f"{PROJECT_EVENTS} must register its events in one place, as {SYSTEM_EVENT_REGISTER} (found {registers})")
+    if re.search(r"\bC4SystemEvents\s*[.\[]", code):
+        fail(f"{PROJECT_EVENTS} must look events up only by ProjectEvents.NAMES, not C4SystemEvents.<name>")
+    match = re.search(r"^ProjectEvents\.NAMES = \{([^}]*)\}", code, re.M)
+    if not match:
+        fail(f"could not read ProjectEvents.NAMES in {PROJECT_EVENTS}")
+    names = re.findall(r'"([^"]*)"', match.group(1))
+    if not names:
+        fail(f"{PROJECT_EVENTS}: ProjectEvents.NAMES is empty")
+    for event in sorted(set(re.findall(r"""["'](On[A-Z]\w*)["']""", code)) | set(names)):
+        if event not in DOCUMENTED_SYSTEM_EVENTS:
+            fail(f"{PROJECT_EVENTS} names the system event {event}, which Snap One's DriverWorks reference lists as internal or does not document: only {', '.join(sorted(DOCUMENTED_SYSTEM_EVENTS))}")
+
+
 def check_documentation(xml, documentation):
     """Composer's Documentation tab: declared, packaged, and opening with the owner's disclaimer."""
     disclaimer = "DirectorLink is an independent project, not affiliated with Control4 or Snap One."
@@ -881,6 +1068,7 @@ def main():
     check_notify_targets(files)
     check_sonos(files)
     check_calendar_privacy(files)
+    check_documented_api(files)
     check_remote_methods(files)
     check_relay_roots(files)
     check_documentation(files["driver.xml"], documentation)

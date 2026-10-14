@@ -5,8 +5,9 @@ what is staged, the door switches, the Jewish calendar, the alarm's status and S
 ship off, the alarm stays read-only, one file talks to the Sonos players, the app names every
 month, holiday and weekly reading the calendar API can send, every language has exactly English's
 strings, placeholders and the disclaimer (1.10.0), Say or type a command has a parser without
-imports and opens no door from the words, and the website's one script asks only for DirectorLink
-in numbers (check_sites.py).
+imports and opens no door from the words, the website's one script asks only for DirectorLink
+in numbers (check_sites.py), and the driver names only Control4's documented DriverWorks API, reads
+no file and watches only the documented system events (1.13.1).
 
     python -m unittest discover -s tests/scripts
 """
@@ -367,6 +368,134 @@ class AlarmReadOnly(unittest.TestCase):
                 self.assertIn(old, files[name])
                 printed = self.refused({**files, name: files[name].replace(old, new, 1)})
                 self.assertIn("scene steps must never reach the alarm", printed or "")
+
+
+class DocumentedApi(unittest.TestCase):
+    """Only Control4's documented DriverWorks API (1.13.1, ADR-088): every C4 function the packaged
+    Lua names is listed with its page in Snap One's reference, system events are only the four
+    documented ones, and nothing reads files, runs programs, loads code from strings or loads a
+    module from outside the package."""
+
+    RANDOM = "src/core/random.lua"
+    EVENTS = "src/control4/project_events.lua"
+    CALENDAR = "src/core/jewish_calendar.lua"
+
+    def files(self):
+        files = driver_sources()
+        files["driver.lua"] = (ROOT / "driver" / "driver.lua").read_text(encoding="utf-8")
+        return files
+
+    def refused(self, files):
+        return refusal(check_package.check_documented_api, files)
+
+    def planted(self, *lines, name=RANDOM):
+        """The driver with `lines` in a function of random.lua (or of `name`)."""
+        files = self.files()
+        text = files[name]
+        end = text.rfind("\nreturn ")
+        end = len(text) if end < 0 else end
+        files[name] = text[:end] + "\nlocal function planted()\n    " + "\n    ".join(lines) + "\nend\n" + text[end:]
+        return files
+
+    def test_the_driver_passes(self):
+        self.assertIsNone(self.refused(self.files()))
+
+    def test_the_list_is_what_the_driver_calls_each_with_its_page(self):
+        named = set()
+        for text in self.files().values():
+            named |= set(re.findall(r"\bC4\s*[:.]\s*(\w+)", check_package.lua_code(text, strings=False)))
+        self.assertEqual(named, set(check_package.DOCUMENTED_C4), "a function listed that the driver no longer calls: take it out")
+        for function, page in check_package.DOCUMENTED_C4.items():
+            with self.subTest(function=function):
+                self.assertRegex(page, r"^\d+(\.\d+)?_[a-z0-9_]+/_[\w.-]+\.md$")
+
+    def test_an_undocumented_function_fails(self):
+        for line, function in (
+            ('C4:ReadSystemFile("/etc/shadow")', "ReadSystemFile"),
+            ("local items = C4.GetInternalItems", "GetInternalItems"),
+            ('C4 : SendToShell("reboot")', "SendToShell"),
+            ('_ = pcall(C4.Spawn, C4, "x")', "Spawn"),
+        ):
+            with self.subTest(line=line):
+                self.assertIn(f"C4:{function}, which is not among the documented functions", self.refused(self.planted(line)) or "")
+        self.assertIsNone(self.refused(self.planted('local ok, value = pcall(C4.Hash, C4, "SHA256", "x", {})')), "C4 as the self argument")
+
+    def test_c4_by_a_name_made_at_run_time_fails(self):
+        for line in ('return C4["Get" .. "Devices"]()', "return C4[name]", "local director = C4", "return call(C4)"):
+            with self.subTest(line=line):
+                self.assertIn("uses C4 other than by a documented function's name", self.refused(self.planted(line)) or "")
+
+    def test_files_programs_and_code_from_strings_fail(self):
+        for line, words in (
+            ('local file = io.open("/dev/urandom", "rb")', "read or write files"),
+            ('local pipe = io.popen("ls")', "read or write files"),
+            ('local text = "x" ..io.read()', "read or write files"),
+            ('os.execute("reboot")', "os other than"),
+            ('os.remove("/tmp/x")', "os other than"),
+            ('os.rename("a", "b")', "os other than"),
+            ('local home = os.getenv("HOME")', "os other than"),
+            ("local lib = os", "os other than"),
+            ('loadstring("return 1")()', "loadstring"),
+            ('local f = load("return 1")', "(load)"),
+            ("local f = load(function() return nil end)", "(load)"),
+            ('dofile("x.lua")', "dofile"),
+            ('loadfile("x.lua")', "loadfile"),
+            ('local ssl = require("openssl")', "own modules"),
+            ('local socket = require "socket"', "own modules"),
+            ('local lib = "lfs"; local mod = require(lib)', "own modules"),
+            ('_G.print("x")', "_G"),
+            ("local info = debug.getinfo(1)", "debug library"),
+            ('package.loadlib("x.so", "open")', "package library"),
+            ("setfenv(1, {})", "setfenv"),
+        ):
+            with self.subTest(line=line):
+                self.assertIn(words, self.refused(self.planted(line)) or "")
+
+    def test_comments_strings_fields_and_locals_do_not_count(self):
+        self.assertIsNone(self.refused(self.planted(
+            '-- io.open("/dev/urandom") and C4:Unlisted() and os.execute("x")',
+            '--[[ require("openssl") ]]',
+            'local text = "C4:Unlisted(), io.open, loadstring and _G"',
+            "local state = { io = 1, debug = true, os = \"linux\", package = 2 }",
+            "state.io, state.package = 2, 3",
+            "local now, today, spent = os.time(), os.date(\"%Y\"), os.clock()",
+            "Store.load()",
+        )))
+        # A file's own local load is not Lua's.
+        self.assertIsNone(self.refused(self.planted("local function load()", "    return 1", "end", "return load()")))
+
+    def test_only_the_documented_system_events(self):
+        files = self.files()
+        events = files[self.EVENTS]
+        self.assertIn('    "OnPIP",\n}', events)
+        for internal in ("OnItemMoved", "OnDriverAdded", "OnProjectLoaded", "OnItemDataChanged"):
+            with self.subTest(event=internal):
+                changed = events.replace('    "OnPIP",\n}', f'    "OnPIP",\n    "{internal}",\n}}', 1)
+                self.assertIn(f"names the system event {internal}", self.refused({**files, self.EVENTS: changed}) or "")
+        register = "C4:RegisterSystemEvent(id, 0)"
+        self.assertIn(register, events)
+        for changed, words in (
+            (events.replace(register, "C4:RegisterSystemEvent(12, 0)"), "in one place"),
+            (events.replace(register, register + "\n                C4:RegisterSystemEvent(id, 0)"), "in one place"),
+            (events.replace(register, "C4:RegisterSystemEvent(C4SystemEvents.OnItemMoved, 0)"), "in one place"),
+            (events.replace('    "OnPIP",\n}', '    "OnPIP",\n}\nlocal moved = C4SystemEvents["OnItemMoved"]', 1), "not C4SystemEvents"),
+            (events.replace('    "OnItemAdded",\n    "OnItemRemoved",\n    "OnItemNameChanged",\n    "OnPIP",\n', "", 1), "NAMES is empty"),
+        ):
+            with self.subTest(words=words):
+                self.assertNotEqual(changed, events)
+                self.assertIn(words, self.refused({**files, self.EVENTS: changed}) or "")
+        printed = self.refused(self.planted("C4:RegisterSystemEvent(C4SystemEvents.OnItemMoved, 0)", name="src/main.lua"))
+        self.assertIn("src/main.lua registers system events", printed or "")
+
+    def test_the_calendar_loads_only_its_own_engine(self):
+        files = self.files()
+        calendar = files[self.CALENDAR]
+        self.assertIn('    Sun = "src.core.sun",\n', calendar)
+        self.assertIn("pcall(require, path)", calendar)
+        printed = self.refused({**files, self.CALENDAR: calendar.replace('    Sun = "src.core.sun",\n', '    Sun = "openssl",\n', 1)})
+        self.assertIn("own modules", printed or "")
+        printed = self.refused(self.planted('local path = "src.core.sun"', "local ok, module = pcall(require, path)"))
+        self.assertIn("own modules", printed or "", "only the calendar loads a module by a name it holds")
 
 
 class CalendarNames(unittest.TestCase):

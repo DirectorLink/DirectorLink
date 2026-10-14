@@ -43,7 +43,7 @@ li { margin-bottom: 4px; }
 <h2>Actions</h2>
 <ul>
 <li><b>New Pairing Code</b>, <b>Revoke All API Keys</b> (every key, invitation and scene link), <b>Remove All Scene Links</b>.</li>
-<li><b>Print Schedules and Scenes</b> (to the Lua tab), <b>Refresh Project</b> (read the project again).</li>
+<li><b>Print Schedules and Scenes</b> (to the Lua tab), <b>Refresh Project</b> (read the project again). DirectorLink reads it again by itself a few seconds after a device is added, removed or renamed, and after Refresh Navigators. Control4's documented driver API announces no move between rooms: a device moved to another room shows after Refresh Project or the next automatic read.</li>
 <li><b>Reset Remote Identity</b>: a last resort; the homeowner links the home again.</li>
 </ul>
 

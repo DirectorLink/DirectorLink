@@ -2,6 +2,17 @@
 
 ## Current release
 
+`v1.13.1` — Only Control4's documented driver API (1131a). No Worker change; no D1 migration.
+
+## 1131a. Only Control4's documented driver API (1.13.1)
+
+1. After updating, `GET /v1/logs?category=discovery` shows *watching the project for Composer changes* with `events` "OnItemAdded, OnItemRemoved, OnItemNameChanged, OnPIP" (four, no OnItemMoved, OnDriverAdded or OnProjectLoaded) and `device_moved` "shows after Refresh Project". Status `Ready`, Inventory as before.
+2. In Composer, rename a light, then add a device and remove it (or add and remove a room): within about 5 seconds the log shows *project rediscovered* with `renamed`, `added` and `removed`, and the iPhone app shows the new name at its next refresh (about 10 s).
+3. Move a shade (or a light) to another room. Note whether *project rediscovered* follows by itself (with Log Level Debug, keep any *project event* lines: they would say what Director sends for a move). If not: Actions → **Refresh Project**, then *project rediscovered* with `moved` 1 and `reason` "Composer action", and the app shows the device in its new room.
+4. Nothing else changes: pairing a device (a new pairing code works), the app at home and away on the iPhone, iPad and an Android member, the DoorBird ring, opening the gate, a KNX light and a shade, Direct HTTPS still listening. History lists "DirectorLink updated from 1.13.0 to 1.13.1" and the Composer changes above, nothing else new.
+
+## Previous release
+
 `v1.13.0` — Direct HTTPS hardened (1130b), alerts on the home's TVs (1130a). A Worker change with a D1 migration (`0012_https_cleanup`).
 
 ## 1130b. Direct HTTPS hardened (1.13.0)

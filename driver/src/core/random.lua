@@ -1,11 +1,13 @@
 -- Random values for secrets (API keys, the home secret, invitation secrets, claim tokens, pairing
--- codes, lock IVs, key exchange keys). Director's C4:UUID("RANDOM") is the source, but how Director
--- makes it is not documented, so it is never used alone: every output is a SHA-256 over a pool
--- that keeps what it has seen (earlier outputs' state, the arrival times of requests, the clock,
--- and /dev/urandom where the sandbox lets the driver read it) together with fresh UUIDs. The pool
--- changes after every output, so one weak source is not enough to predict a secret. What is kept
--- across restarts is a hash of the pool, never the pool itself: a copy of the driver's data does
--- not tell the outputs that follow it.
+-- codes, lock IVs, key exchange keys). The source is Director's C4:UUID("RANDOM"), a version 4 UUID
+-- that Snap One's DriverWorks reference says "utilizes entropy provided by the operating system"
+-- (/dev/urandom; helper interface, UUID): 122 random bits each. It is still never used alone:
+-- every output is a SHA-256 over a pool that keeps what it has seen (earlier outputs' state, the
+-- arrival times of requests, the clock) together with fresh UUIDs. The pool changes after every
+-- output, so one weak source is not enough to predict a secret. What is kept across restarts is a
+-- hash of the pool, never the pool itself: a copy of the driver's data does not tell the outputs
+-- that follow it. The driver reads no file itself: up to 1.13.0 it also read /dev/urandom with
+-- io.open, which is outside the documented DriverWorks API (1.13.1, ADR-088).
 
 local Clock = require("src.core.clock")
 local Store = require("src.core.store")
@@ -49,27 +51,6 @@ local function hash(data)
     error("hashing failed", 0)
 end
 
-local function urandom()
-    local ok, bytes = pcall(function()
-        if type(io) ~= "table" or type(io.open) ~= "function" then
-            return nil
-        end
-        local file = io.open("/dev/urandom", "rb")
-        if not file then
-            return nil
-        end
-        local data = file:read(32)
-        file:close()
-        return data
-    end)
-    if ok and type(bytes) == "string" and #bytes > 0 then
-        return (bytes:gsub(".", function(char)
-            return string.format("%02x", char:byte())
-        end))
-    end
-    return ""
-end
-
 -- Everything that may be unpredictable, now.
 local function sources()
     return table.concat({
@@ -80,7 +61,6 @@ local function sources()
         tostring(Clock.millis()),
         tostring(state.counter),
         tostring({}),
-        urandom(),
     }, "|")
 end
 

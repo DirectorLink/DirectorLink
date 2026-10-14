@@ -564,10 +564,11 @@ local function discover(reason)
     return true
 end
 
--- Composer changes (a device moved to another room, renamed, added or removed) without restarting
--- the driver: the action Refresh Project, and Director's project events a few seconds after the
--- last one (a refresh they started that fails is tried once more). The events are watched once a
--- project was read.
+-- Composer changes without restarting the driver: the action Refresh Project, and Director's project
+-- events a few seconds after the last one (a device added, removed or renamed, Refresh Navigators;
+-- a refresh they started that fails is tried once more). A device moved to another room has no
+-- documented event (ADR-088): it shows after Refresh Project or the next read. The events are
+-- watched once a project was read.
 local refreshProject
 
 local function watchProject()

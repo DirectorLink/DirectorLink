@@ -193,11 +193,10 @@ local function short(value)
     return (tostring(value or ""):gsub("%s+", " "):sub(1, 200))
 end
 
--- Whether Director offers C4:<name> (an older OS may not).
-local function has(name)
-    local ok, value = pcall(function()
-        return C4[name]
-    end)
+-- Whether Director offers a function (an older OS may not): `read` returns it by its name, as in
+-- function() return C4.CreateTLSServer end (scripts/check_package.py reads every C4 name; ADR-088).
+local function has(read)
+    local ok, value = pcall(read)
     return ok and type(value) == "function"
 end
 
@@ -529,7 +528,9 @@ end
 -- SERVER_WATCH_SECONDS it counts as not started.
 local function createServer()
     local stored = state.stored
-    if not has("CreateTLSServer") then
+    if not has(function()
+        return C4.CreateTLSServer
+    end) then
         state.hardError = WORDS.OLD_OS
         log("error", "TLS server failed", { port = DirectHttps.PORT, name = stored.name, detail = "C4:CreateTLSServer is missing" })
         return false, "C4:CreateTLSServer is missing"
@@ -600,7 +601,9 @@ end
 -- with the old key.
 local function makeKey(name)
     name = name or (state.stored and state.stored.name) or newName()
-    if not has("GenerateCSR_ECC") then
+    if not has(function()
+        return C4.GenerateCSR_ECC
+    end) then
         state.hardError = WORDS.OLD_OS
         log("error", "no key made", { name = name, detail = "C4:GenerateCSR_ECC is missing" })
         return false

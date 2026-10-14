@@ -203,6 +203,55 @@ function tests.secrets_differ_even_if_directors_uuids_do_not()
     T.truthy(mock.persist.directorlink_entropy, "the pool is kept across restarts")
 end
 
+-- Only Control4's documented API (1.13.1, ADR-088): the pool takes Director's C4:UUID("RANDOM"),
+-- which its reference says draws on the operating system's entropy, and opens no file itself (up
+-- to 1.13.0 it also read /dev/urandom with io.open).
+function tests.the_random_pool_reads_no_file_and_takes_fresh_uuids()
+    local mock = Mock.startDriver()
+    local Random = require("src.core.random")
+    local realIo = io
+    local touched = {}
+    io = setmetatable({}, {
+        __index = function(_, name)
+            touched[#touched + 1] = name
+            return function()
+                error("io." .. tostring(name) .. " used", 0)
+            end
+        end,
+    })
+    local ok, failure = pcall(function()
+        Random.reset()
+        local before = mock.uuidCount
+        local first, second = Random.hex(64), Random.hex(64)
+        T.eq(#first, 64)
+        T.truthy(first ~= second)
+        T.truthy(mock.uuidCount >= before + 4, "fresh UUIDs from Director for every value")
+    end)
+    io = realIo
+    if not ok then
+        error(failure, 0)
+    end
+    T.eq(table.concat(touched, ", "), "", "no file is opened")
+end
+
+-- A fresh pool (nothing kept from before) still gives different values while Director's UUIDs
+-- repeat: the clocks, the counter and the outputs before move it on.
+function tests.a_fresh_pool_differs_even_if_directors_uuids_do_not()
+    local mock = Mock.startDriver()
+    function C4:UUID()
+        return "00000000-0000-4000-8000-000000000000"
+    end
+    mock.persist.directorlink_entropy = nil
+    local Random = require("src.core.random")
+    Random.reset()
+    local seen = {}
+    for _ = 1, 50 do
+        local value = Random.hex(64)
+        T.truthy(not seen[value], "no value repeats")
+        seen[value] = true
+    end
+end
+
 -- On a 32-bit controller C's unsigned long has 32 bits, and Lua 5.1's tonumber(hex, 16) caps
 -- every number above it at 4294967295: up to 1.11.0 every pairing code there was 9496 7295.
 function tests.pairing_codes_vary_where_tonumber_caps_hex_at_32_bits()
