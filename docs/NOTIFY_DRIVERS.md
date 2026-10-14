@@ -8,9 +8,11 @@ Phones and computers get them through the family's DirectorLink accounts. A driv
 other screen, can show them too, as pop-ups, and also the home's alarm going off, which only screens
 get. This page is the **DirectorLink notification agreement,
 version 1**: what a Control4 driver does so that DirectorLink 1.13.0 and later tells it every alert
-of the kinds it shows, without any code of its own for that driver. The **DirectorLink · LG TV
-Notifications** driver for LG webOS TVs ([DirectorLink Drivers](https://directorlink.io/drivers)) is
-built on it; any driver may follow it.
+of the kinds it shows, without any code of its own for that driver. Two of
+[DirectorLink Drivers](https://directorlink.io/drivers) are built on it:
+[DirectorLink · LG TV Notifications](https://directorlink.io/drivers/lg-tv) for LG webOS TVs (text
+only), and [DirectorLink · Android TV Notifications](https://directorlink.io/drivers/android-tv) for
+Google TV and Android TV (with the picture). Any driver may follow it.
 
 The agreement is two variables and one command, all by name. A driver that follows it works the same
 without DirectorLink: nothing here depends on DirectorLink being in the project.

@@ -646,7 +646,8 @@ main {
   font-weight: 500;
 }
 
-.tags .tag-soon {
+.tags .tag-soon,
+.tags .tag-beta {
   border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
   color: var(--accent);
 }

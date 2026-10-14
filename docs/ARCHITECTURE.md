@@ -6,6 +6,25 @@ DirectorLink is a homeowner-facing local management layer for Control4 Director 
 
 DirectorLink assumes `DirectorLink.c4z` is already installed. Installation method is out of scope.
 
+## Scope and limits
+
+- Control4 Director OS **3.3.0+**
+- `DirectorLink.c4z` is assumed to already be installed in the Control4 project
+- Installation method is outside the scope of this project
+- A standard REST API on the local LAN, described by OpenAPI 3.1, protected by API keys
+- An app (PWA) hosted on Cloudflare; the browser connects directly to DirectorLink over the LAN, and seals every request with its own lock key, so its API key does not cross the network
+- LAN-first, with no port forwarding; remote access with a Google or Apple account through `api.directorlink.io`, locked end to end so that DirectorLink's servers cannot read it (off by default; [`ACCOUNTS.md`](ACCOUNTS.md))
+- One owner and invited family members, with a separate named API key per browser, app or script; each user is an admin or a member, with the rooms, devices and scenes an admin chose (1.8.0), and every key of theirs has their permissions; the devices of one Google or Apple account become one user when an admin confirms it (1.9.0)
+- Device adapters: lights (Light V2 and the older Light proxy), HVAC/climate (Thermostat V2, including floor heating set through its heat setpoint, and Control4 thermostats with heat and cool setpoints), fans (the Control4 fan proxy: on, off and four speeds), blinds, cameras (snapshots, several at once; alerts and doorbell rings from camera drivers of DirectorLink's camera agreement, [`CAMERA_DRIVERS.md`](CAMERA_DRIVERS.md), and from the DirectorLink · Hikvision Camera driver), KNX relays and Control4's Relay Door, Gate and Garage Door Controllers (doors and gates, opened with a pulse or the controller's own Open; open or closed when the controller has a contact), DoorBird doorbells, Samsung refrigerators (through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, Power Cool, Power Freeze, Sabbath Mode and the ice maker), the alarm's status (security partitions: read-only, off by default), and Sonos speakers on the home network (off by default; DirectorLink talks to them itself, [`SONOS.md`](SONOS.md))
+- Room names in several languages
+- Unknown devices are exposed as unsupported
+- DirectorLink owns its own scenes, schedules, and automations
+- No import of Composer programming, scenes, or schedules
+- Schedules by time and weekday, at sunrise or sunset with offsets, and by the weather (heat, wind and rain from Open-Meteo), with "only if" weather conditions; with the Jewish calendar on, also at candle lighting and havdalah, or never or only on Shabbat and holidays (worked out on the controller)
+- Director location/timezone used for solar scheduling
+- A private link per scene for the phone's own automations (iPhone Shortcuts, Android apps, an NFC tag), through the account; never for scenes that open doors or gates, and every run in History ([`SCENES.md`](SCENES.md))
+- No automatic `.c4z` self-update: updates go through Composer (ADR-035)
+
 ## Runtime
 
 ```text
