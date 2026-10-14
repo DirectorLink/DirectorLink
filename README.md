@@ -12,7 +12,7 @@ DirectorLink is an open-source, local-first management layer for Control4 homeow
 
 - **Every device in one app:** lights and dimmers, AC and floor heating, fans, blinds, cameras, doorbells, doors and gates (a second tap to open), Sonos, Samsung refrigerators and the alarm's status (read only).
 - **At home and away:** at home the app talks to the controller directly; away it goes through your Google or Apple account, locked end to end so DirectorLink's servers can't read it ([`docs/ACCOUNTS.md`](docs/ACCOUNTS.md)).
-- **Scenes and schedules:** one tap for many devices; by the clock, sunrise and sunset, the weather, and Shabbat and holiday times. The controller runs them on its own ([`docs/SCENES.md`](docs/SCENES.md), [`docs/SCHEDULES.md`](docs/SCHEDULES.md)).
+- **Scenes and schedules:** one tap for many devices; by the clock, sunrise and sunset, and the weather. The controller runs them on its own ([`docs/SCENES.md`](docs/SCENES.md), [`docs/SCHEDULES.md`](docs/SCHEDULES.md)).
 - **Say or type a command:** *kitchen lights off*, *living room AC to 23*, in English, Hebrew, Spanish or Italian, understood on your phone without AI.
 - **Geofencing and Siri:** a private link per scene for iPhone Shortcuts, Android automation apps and NFC tags ([`docs/SCENES.md`](docs/SCENES.md#links-for-automations-170-adr-051)).
 - **Alerts:** doorbell rings, camera detections, doors opened, the home offline and more, on phones, computers and the home's TVs ([`docs/NOTIFY_DRIVERS.md`](docs/NOTIFY_DRIVERS.md)).
