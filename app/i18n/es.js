@@ -38,6 +38,12 @@ export default {
   offline: {
     banner: "Sin internet. La app sigue funcionando en la red de tu casa.",
   },
+  signedOut: {
+    notice: "Se cerró la sesión de tu cuenta, así que la app no puede conectar con tu casa cuando estás fuera.",
+    title: "Sesión cerrada",
+    chip: "Sesión cerrada",
+    dismiss: "Ocultar por ahora",
+  },
   connect: {
     title: "Conéctate a tu casa",
     intro: "Introduce la dirección de tu controlador Control4 y un código de emparejamiento. Solo tienes que hacerlo una vez en cada dispositivo.",
@@ -130,7 +136,7 @@ export default {
     misdirected: "Como dirección del controlador, usa su dirección IP o un nombre local (como director.local): DirectorLink no responde a otros nombres.",
     sealing: "El controlador de esta dirección no respondió a este dispositivo de forma segura. Si DirectorLink se reinstaló o volvió a una versión anterior, vuelve a emparejar este dispositivo (Ajustes → Controlador).",
     remote: {
-      signIn: "Vuelve a iniciar sesión en tu cuenta (Ajustes → Cuenta) para acceder a tu casa desde aquí.",
+      signIn: "Se cerró la sesión de tu cuenta, así que la app no puede conectar con tu casa desde aquí. Vuelve a iniciar sesión (Ajustes → Cuenta).",
       homeOffline: "Tu casa no está conectada a DirectorLink en este momento. Comprueba que el controlador esté en línea y que Remote Access esté activado.",
       updateRequired: "Actualiza DirectorLink: la versión de tu controlador ya no puede conectarse al acceso remoto. Actualízala en Composer; en casa, la app funciona como siempre.",
       notMember: "Esta cuenta ya no pertenece a esta casa.",

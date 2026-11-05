@@ -1032,6 +1032,37 @@ select:disabled {
   color: inherit;
 }
 
+/* Signed out of the account with a linked home (1.13.2, js/views/common.js): on Home the reason, the
+   same sign-in buttons as Settings → Account under it, and a button that hides it until the next
+   start. */
+.banner-signed-out {
+  align-items: flex-start;
+  padding-inline-end: 2px;
+}
+
+.banner-signed-out > .icon {
+  flex: none;
+  margin-block-start: 10px;
+}
+
+.banner-signed-out-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-block: 8px;
+}
+
+.banner-signed-out-outcome {
+  font-weight: 600;
+}
+
+.banner-signed-out .icon-button {
+  flex: none;
+  color: inherit;
+}
+
 /* Settings → Controller: how to update, under the Updates line. */
 .update-panel {
   display: flex;

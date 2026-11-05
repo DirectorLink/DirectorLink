@@ -38,6 +38,12 @@ export default {
   offline: {
     banner: "Nessuna connessione a Internet. L’app funziona comunque sulla rete di casa.",
   },
+  signedOut: {
+    notice: "Non hai effettuato l’accesso al tuo account, quindi l’app non può raggiungere la tua casa quando sei fuori.",
+    title: "Accesso non effettuato",
+    chip: "Accesso non effettuato",
+    dismiss: "Nascondi per ora",
+  },
   connect: {
     title: "Connettiti alla tua casa",
     intro: "Inserisci l’indirizzo del tuo controller Control4 e un codice di associazione. Basta farlo una volta su ogni dispositivo.",
@@ -130,7 +136,7 @@ export default {
     misdirected: "Come indirizzo usa l’indirizzo IP del controller o un nome locale (ad esempio director.local): DirectorLink non risponde ad altri nomi.",
     sealing: "Il controller a questo indirizzo non ha risposto in modo sicuro a questo dispositivo. Se DirectorLink è stato reinstallato o è tornato a una versione precedente, associa di nuovo (Impostazioni → Controller).",
     remote: {
-      signIn: "Accedi di nuovo al tuo account (Impostazioni → Account) per raggiungere la tua casa da qui.",
+      signIn: "Non hai effettuato l’accesso al tuo account, quindi l’app non può raggiungere la tua casa da qui. Accedi di nuovo (Impostazioni → Account).",
       homeOffline: "Al momento la tua casa non è connessa a DirectorLink. Verifica che il controller sia online e che Remote Access sia attivo.",
       updateRequired: "Aggiorna DirectorLink: la versione sul tuo controller non può più connettersi all’accesso remoto. Aggiornalo in Composer; a casa l’app funziona come prima.",
       notMember: "Questo account non fa più parte di questa casa.",

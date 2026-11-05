@@ -36,7 +36,7 @@ import { accessBody, newMemberAccess, peopleSupported, permissionsEditor } from 
 import { loadScenes } from "../scenes.js";
 import { backupPanel } from "./backup.js";
 import { historyRow } from "./history.js";
-import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { notReadyState, offlineBanner, pageHeader, signInButtons, signedOutAway } from "./common.js";
 import { musicRoomsSection } from "./music.js";
 import { chip, stepper } from "./schedules.js";
 import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./updates.js";
@@ -1445,7 +1445,10 @@ function accountSection() {
     body = [h("p", { class: "field-help", role: "status" }, t("common.loading"))];
   } else {
     body = [
-      h("p", { class: "field-help" }, t("settings.account.intro")),
+      // Signed out with a linked home (1.13.2): why the home can't be reached away from it.
+      signedOutAway()
+        ? h("p", { class: "notice notice-info", id: "account-signed-out", dataset: { key: "account-signed-out" } }, t("signedOut.notice"))
+        : h("p", { class: "field-help" }, t("settings.account.intro")),
       account.status === "unavailable" ? h("p", { class: "notice notice-error", role: "status" }, t("settings.account.unavailable")) : null,
       h(
         "div",

@@ -262,6 +262,8 @@ The migrations go before the Worker that uses them. After the 1.13.0 deploy, `dl
 | `POST /auth/logout` | 204; this session ends |
 | `POST /auth/logout?everywhere=1` | 204; every session of the account ends, on every device, with its browsers' alerts and its new devices' requests to join |
 
+The session (`__Host-dl_session`) lasts 30 days from its last use (1.13.2, ADR-089): any request that reads it (these routes and the home routes below) a day or more after its last renewal moves `sessions.expires_at` to 30 days from then, at most a year after the sign-in (`sessions.created_at`), and its answer sends the same cookie again with the new `Max-Age`. One D1 write a session a day: the `UPDATE` changes it only if its end is still the one read, so of requests at once only one renews it and sends the cookie. An expired session is never renewed; Sign out everywhere and Delete account end renewed ones as before. Tests: `sessions.test.mjs` (in Node on `node:sqlite`), `accounts.test.mjs`.
+
 ## Homes
 
 | Request | Answer |

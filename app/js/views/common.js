@@ -1,12 +1,13 @@
 // Page header, connection chip and the states every screen shares (not connected, loading,
-// controller unreachable).
+// controller unreachable, signed out of the account).
 
 import { loadProviders, providersStatus, refreshProviders, signIn, signInProviders } from "../account.js";
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
+import { savedRemote } from "../remote.js";
 import { connect } from "../session.js";
-import { state } from "../state.js";
+import { notify, state, ui } from "../state.js";
 import { emptyState } from "../components.js";
 import { commandButton } from "./command.js";
 
@@ -14,8 +15,14 @@ export function connectionChip() {
   const status = state.status;
   const kind =
     status === "connected" ? "ok" : status === "unreachable" ? "error" : status === "connecting" ? "busy" : "idle";
-  // Through the account (away from home, or on iPhone) the chip says so.
-  const label = status === "connected" && state.transport === "remote" ? t("status.connectedRemote") : t(`status.${status}`);
+  // Through the account (away from home, or on iPhone) the chip says so; and that the home can't be
+  // reached because the account is signed out (1.13.2).
+  const label =
+    status === "connected" && state.transport === "remote"
+      ? t("status.connectedRemote")
+      : failedSignedOut()
+        ? t("signedOut.chip")
+        : t(`status.${status}`);
   return h(
     "a",
     {
@@ -106,6 +113,50 @@ export function signInButtons({ hash, key, style = "button-primary", size = "", 
   );
 }
 
+// Signed out of the account on a device that reaches its home through it (1.13.2, ADR-089): away
+// from the home network the app can't reach the home. At home it still works directly, so this
+// never stands in the way.
+export function signedOutAway() {
+  return Boolean(state.apiKey && savedRemote() && state.account.status === "signed-out");
+}
+
+// The connection failed because the account is signed out (session.js connectionNotice).
+function failedSignedOut() {
+  return state.status === "unreachable" && Boolean(state.notice?.signedOut) && signedOutAway();
+}
+
+// Home, while signed out with a linked home: why the home can't be reached away from it, and the
+// same sign-in as Settings → Account, back to Home. Not while a banner or the unreachable screen
+// already says it.
+export function signedOutNotice() {
+  // Dismissed (ui.signedOutDismissed), it shows again at the next start of the app, until signed in.
+  if (!signedOutAway() || ui.signedOutDismissed || failedSignedOut()) return null;
+  return h(
+    "div",
+    { class: "banner banner-info banner-signed-out", dataset: { key: "signed-out-notice" } },
+    icon("user"),
+    h(
+      "div",
+      { class: "banner-signed-out-body" },
+      h("p", { id: "signed-out-text" }, t("signedOut.notice")),
+      // A sign-in that did not work comes back here: say so.
+      ["cancelled", "expired", "failed", "unverified"].includes(state.account.notice)
+        ? h("p", { class: "banner-signed-out-outcome" }, t(`settings.account.notice.${state.account.notice}`))
+        : null,
+      h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/", key: "signed-out-sign-in", style: "", size: "button-small" }))
+    ),
+    iconButton("close", t("signedOut.dismiss"), {
+      dataset: { key: "signed-out-dismiss" },
+      onclick: () => {
+        ui.signedOutDismissed = true;
+        notify();
+        // The button goes with the notice: keep the keyboard on this screen.
+        window.requestAnimationFrame(() => document.querySelector(".page-title")?.focus({ preventScroll: true }));
+      },
+    })
+  );
+}
+
 // Data is shown from the last successful read while the controller cannot be reached.
 export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
@@ -143,6 +194,20 @@ export function notReadyState() {
 }
 
 export function unreachableState() {
+  // Signed out of the account (1.13.2): said as such, with the sign-in; Retry for when back home.
+  if (failedSignedOut()) {
+    return emptyState(
+      "user",
+      t("signedOut.title"),
+      state.notice.text,
+      h(
+        "div",
+        { class: "button-row" },
+        h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/", key: "unreachable-sign-in" })),
+        h("button", { type: "button", class: "button button-secondary", dataset: { key: "retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry"))
+      )
+    );
+  }
   return emptyState(
     "wifiOff",
     t("status.unreachableTitle"),

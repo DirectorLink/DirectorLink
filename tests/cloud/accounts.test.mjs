@@ -1,8 +1,12 @@
 // Accounts (cloud/src/accounts.js) end to end: the Worker under `wrangler dev` (worker.mjs) with its
-// D1 database, and a fake Google that signs ID tokens with a test key.
+// D1 database, and a fake Google that signs ID tokens with a test key. Sessions that renew while
+// used (1.13.2, ADR-089) here once, with D1 changed and read as the integrator reads production's;
+// every case in tests/cloud/sessions.test.mjs.
 //   node --test tests/cloud/accounts.test.mjs
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { after, before, test } from "node:test";
 
 import { CLIENT_ID, PERSON, cookiesOf, googleVars, startFakeGoogle } from "./fake-google.mjs";
@@ -67,6 +71,22 @@ async function me(cookie) {
   const response = await get("/v1/me", { cookie, origin: APP });
   return { status: response.status, headers: response.headers, json: await response.json().catch(() => null) };
 }
+
+// The Worker's D1, as the integrator reads production's (cloud/README.md), --local for --remote.
+function d1(sql) {
+  const run = spawnSync(`npx --yes wrangler@4.143.0 d1 execute directorlink --local --json --command "${sql}"`, {
+    cwd: worker.dir,
+    shell: true,
+    windowsHide: true,
+    encoding: "utf8",
+    env: { ...process.env, WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", FORCE_COLOR: "0", CI: "1" },
+    timeout: STARTUP_MS,
+  });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  return JSON.parse(run.stdout)[0].results;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
 
 // --- Tests -----------------------------------------------------------------------------------------
 
@@ -210,6 +230,48 @@ test("deleting the account removes it and every session", TEST, async () => {
   assert.equal((await me(two.cookie)).status, 401, "the other device's session is gone too");
   const fresh = await me((await signIn({ person })).cookie);
   assert.notEqual(fresh.json.id, before.json.id, "signing in again starts a new account");
+});
+
+test("a session used near its end is renewed: 30 days from then, its cookie sent again, once a day; an expired one is not", { timeout: 180_000 }, async () => {
+  const signedIn = await signIn({ person: { sub: "google-user-renew", email: "renew@example.com", name: "Renew" } });
+  const hash = createHash("sha256").update(signedIn.session.value).digest("hex");
+  const endInD1 = () => Date.parse(d1(`SELECT expires_at FROM sessions WHERE token_sha256 = '${hash}'`)[0].expires_at);
+  // As if signed in 25 days ago: 5 days left.
+  d1(`UPDATE sessions SET expires_at = '${new Date(Date.now() + 5 * DAY_MS).toISOString()}' WHERE token_sha256 = '${hash}'`);
+  const before = Date.now();
+  const renewed = await me(signedIn.cookie);
+  const after = Date.now();
+  assert.equal(renewed.status, 200);
+  const cookie = cookiesOf({ headers: renewed.headers })["__Host-dl_session"];
+  assert.equal(cookie?.value, signedIn.session.value, "the same token, sent again");
+  for (const attribute of ["path=/", "secure", "httponly", "samesite=strict", "max-age=2592000"]) {
+    assert.ok(cookie.attributes.includes(attribute), `renewed cookie: ${attribute}`);
+  }
+  assert.equal(renewed.headers.get("access-control-allow-credentials"), "true", "so the browser keeps it");
+  const end = endInD1();
+  assert.ok(end >= before + 30 * DAY_MS - 1000 && end <= after + 30 * DAY_MS, `D1: 30 days from now, not ${new Date(end).toISOString()}`);
+
+  // Again the same day: nothing changes.
+  const again = await me(signedIn.cookie);
+  assert.equal(again.status, 200);
+  assert.equal(cookiesOf({ headers: again.headers })["__Host-dl_session"], undefined);
+  assert.equal(endInD1(), end);
+
+  // The home routes renew it as well.
+  d1(`UPDATE sessions SET expires_at = '${new Date(Date.now() + 2 * DAY_MS).toISOString()}' WHERE token_sha256 = '${hash}'`);
+  const homes = await get("/v1/homes", { cookie: signedIn.cookie, origin: APP });
+  assert.equal(homes.status, 200);
+  assert.equal(cookiesOf(homes)["__Host-dl_session"]?.value, signedIn.session.value);
+  assert.equal(homes.headers.get("access-control-allow-credentials"), "true");
+  assert.ok(endInD1() > Date.now() + 29 * DAY_MS);
+
+  // An expired session stays expired.
+  const ended = new Date(Date.now() - 60_000).toISOString();
+  d1(`UPDATE sessions SET expires_at = '${ended}' WHERE token_sha256 = '${hash}'`);
+  const expired = await me(signedIn.cookie);
+  assert.equal(expired.status, 401);
+  assert.equal(cookiesOf({ headers: expired.headers })["__Host-dl_session"], undefined);
+  assert.equal(endInD1(), Date.parse(ended));
 });
 
 test("/v1/me without a session is 401", TEST, async () => {

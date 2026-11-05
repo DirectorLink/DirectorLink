@@ -41,7 +41,7 @@ import { connectScreen } from "./connect.js";
 import { alarmSection } from "./alarm.js";
 import { musicHomeSection } from "./music.js";
 import { commandBar } from "./command.js";
-import { isLoading, offlineBanner, pageHeader, staleBanner, unreachableState } from "./common.js";
+import { isLoading, offlineBanner, pageHeader, signedOutNotice, staleBanner, unreachableState } from "./common.js";
 import { updateBanner } from "./updates.js";
 
 export function homeView({ openCamera, openFavoritesPicker }) {
@@ -66,7 +66,7 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     ];
   }
   if (!state.loaded) {
-    return [header, offlineBanner(), unreachableState()];
+    return [header, offlineBanner(), signedOutNotice(), unreachableState()];
   }
   return [
     header,
@@ -74,6 +74,9 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     ringingDoorbells().map((doorbell) => doorbellBanner(doorbell, { openCamera })),
     offlineBanner(),
     staleBanner(),
+    // Signed out of the account with a linked home (1.13.2): the home can't be reached away from
+    // it. Until dismissed, once per start of the app.
+    signedOutNotice(),
     // Admins: a newer DirectorLink is out, until dismissed for that version.
     updateBanner(),
     // Say or type a command (1.9.0, ADR-063).
