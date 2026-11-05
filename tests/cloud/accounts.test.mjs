@@ -36,11 +36,18 @@ after(async () => {
 
 // --- Helpers ---------------------------------------------------------------------------------------
 
+// Every request to the Worker on a connection of its own. d1() holds this process while `wrangler d1
+// execute` runs (seconds): a kept-alive connection that `wrangler dev` closed meanwhile still looks
+// open, and the next request sent on it fails ("fetch failed", seen on Linux CI).
+function call(path, init = {}) {
+  return fetch(`${worker.http}${path}`, { ...init, headers: { ...init.headers, Connection: "close" } });
+}
+
 function get(path, { cookie, origin, method = "GET" } = {}) {
   const headers = {};
   if (cookie) headers.Cookie = cookie;
   if (origin) headers.Origin = origin;
-  return fetch(`${worker.http}${path}`, { method, headers, redirect: "manual" });
+  return call(path, { method, headers, redirect: "manual" });
 }
 
 async function start(returnTo = `${APP}/#/settings`) {
@@ -206,7 +213,7 @@ test("only the app's own pages may sign out or delete an account", TEST, async (
   }
   assert.equal((await me(cookie)).status, 200, "still signed in");
 
-  const preflight = await fetch(`${worker.http}/v1/me`, {
+  const preflight = await call("/v1/me", {
     method: "OPTIONS",
     headers: { Origin: APP, "Access-Control-Request-Method": "DELETE" },
   });
@@ -214,7 +221,7 @@ test("only the app's own pages may sign out or delete an account", TEST, async (
   assert.equal(preflight.headers.get("access-control-allow-origin"), APP);
   assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
   assert.match(preflight.headers.get("access-control-allow-methods"), /DELETE/);
-  const foreignPreflight = await fetch(`${worker.http}/v1/me`, { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
+  const foreignPreflight = await call("/v1/me", { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
   assert.equal(foreignPreflight.status, 403);
 });
 
@@ -305,7 +312,7 @@ test("the app is told only the sign-ins that are set up, so Apple's button stays
 });
 
 test("Apple's notifications answer 503 until the App ID is set", TEST, async () => {
-  const response = await fetch(`${worker.http}/auth/apple/notifications`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: "x.y.z" }) });
+  const response = await call("/auth/apple/notifications", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: "x.y.z" }) });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "NOTIFICATIONS_NOT_CONFIGURED");
 });
