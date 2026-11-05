@@ -253,12 +253,16 @@ test("a session used near its end is renewed: 30 days from then, its cookie sent
   assert.ok(end >= before + 30 * DAY_MS - 2000 && end <= after + 30 * DAY_MS + 2000, `D1: 30 days from now, not ${new Date(end).toISOString()}`);
 
   // Again the same day: nothing written, and the answer sends the cookie with the time it has left.
+  const asked = Date.now();
   const again = await me(signedIn.cookie);
+  const answered = Date.now();
   assert.equal(again.status, 200);
   const resent = cookiesOf({ headers: again.headers })["__Host-dl_session"];
   assert.equal(resent?.value, signedIn.session.value);
   const left = Number(resent.attributes.find((attribute) => attribute.startsWith("max-age=")).slice(8));
-  assert.ok(Math.abs(left * 1000 - (end - Date.now())) <= 3000, `max-age ${left}`);
+  // The Worker's clock read the time between `asked` and `answered`, give or take the same 2 s; its
+  // Max-Age is rounded down to the second.
+  assert.ok(left * 1000 >= end - answered - 2000 - 1000 && left * 1000 <= end - asked + 2000, `max-age ${left}`);
   assert.equal(endInD1(), end);
 
   // The home routes renew it as well.

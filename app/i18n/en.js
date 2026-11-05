@@ -139,6 +139,8 @@ export default {
     sealing: "The controller at this address did not answer this device securely. If DirectorLink was reinstalled or went back to an older version, pair again (Settings → Controller).",
     remote: {
       signIn: "You’re signed out of your account, so the app can’t reach your home from here. Sign in again (Settings → Account).",
+      // The same, after Delete account on this device: signing in again would not bring the home back.
+      accountDeleted: "Your account was deleted, so the app can’t reach your home from here.",
       homeOffline: "Your home is not connected to DirectorLink right now. Check that the controller is online and Remote Access is on.",
       updateRequired: "Update DirectorLink: the version on your controller can no longer connect to remote access. Update it in Composer; at home the app works as before.",
       notMember: "This account does not belong to this home any more.",

@@ -3,7 +3,9 @@
 // A session used a day or more after its last renewal lasts 30 days from then, and from then on every
 // answer that uses it sends its cookie again (the same token, the time it has left), so a lost answer
 // costs nothing; D1 is written at most once a day, also for requests at once, and a write D1 refuses
-// is skipped; the Worker's error answer still sends the cookie; a session nobody uses for 30 days
+// is skipped; when D1 fails during a renewal (the write, or the read after a lost race) the answer
+// sends no cookie, since D1 may hold a later end; the Worker's error answer still sends the cookie;
+// a session ended while a request renewed it is not signed in; a session nobody uses for 30 days
 // ends, and an expired one stays expired; Sign out everywhere and Delete account still end a renewed
 // one; never past a year from the sign-in. The same end to end under `wrangler dev`:
 // tests/cloud/accounts.test.mjs.
@@ -46,31 +48,29 @@ const iso = (ms) => new Date(ms).toISOString();
 
 // D1 as the Worker uses it (prepare, bind, first, all, run, batch), on SQLite with the migrations.
 // `renewals`: the UPDATEs of a session's end sent, and how many rows they changed. `failRenewals`:
-// those UPDATEs throw, as when D1 cannot write; `beforeRenewal()`: runs once just before the next
-// one (another request's work at that moment); `failing`: the queries that throw (a RegExp), as
-// when D1 fails in the middle of a request.
+// those UPDATEs throw, as when D1 cannot write; `failAfterRenewals`: they are written, then throw,
+// as when D1 reports an error for a write it made; `beforeRenewal()`: runs once just before the
+// next one, and is waited for (another request's work at that moment); `failing`: the queries that
+// throw (a RegExp), as when D1 fails in the middle of a request.
+const RENEWAL = /^\s*UPDATE sessions SET expires_at\b/i;
 function fakeD1() {
   const db = new DatabaseSync(":memory:");
   for (const name of readdirSync(MIGRATIONS).filter((file) => file.endsWith(".sql")).sort()) {
     db.exec(readFileSync(new URL(name, MIGRATIONS), "utf8"));
   }
-  const d1 = { db, renewals: { sent: 0, changed: 0 }, failRenewals: false, beforeRenewal: null, failing: null };
+  const d1 = { db, renewals: { sent: 0, changed: 0 }, failRenewals: false, failAfterRenewals: false, beforeRenewal: null, failing: null };
   const execute = (sql, values) => {
     if (d1.failing?.test(sql)) throw new Error("D1_ERROR: internal error");
-    if (/^\s*UPDATE sessions SET expires_at\b/i.test(sql)) {
-      const before = d1.beforeRenewal;
-      d1.beforeRenewal = null;
-      before?.();
-      if (d1.failRenewals) throw new Error("D1_ERROR: database is read only");
-    }
+    if (RENEWAL.test(sql) && d1.failRenewals) throw new Error("D1_ERROR: database is read only");
     const statement = db.prepare(sql);
     if (/^\s*SELECT\b/i.test(sql) || /\bRETURNING\b/i.test(sql)) {
       return { results: statement.all(...values), meta: { changes: 0 } };
     }
     const changes = Number(statement.run(...values).changes);
-    if (/^\s*UPDATE sessions SET expires_at\b/i.test(sql)) {
+    if (RENEWAL.test(sql)) {
       d1.renewals.sent += 1;
       d1.renewals.changed += changes;
+      if (d1.failAfterRenewals) throw new Error("D1_ERROR: Network connection lost.");
     }
     return { results: [], meta: { changes } };
   };
@@ -89,6 +89,11 @@ function fakeD1() {
     },
     run: async () => {
       await new Promise((resolve) => setImmediate(resolve));
+      if (RENEWAL.test(sql)) {
+        const before = d1.beforeRenewal;
+        d1.beforeRenewal = null;
+        await before?.();
+      }
       return execute(sql, values);
     },
   });
@@ -273,6 +278,7 @@ test("a renewal D1 cannot write is skipped: the request is answered, the log say
   const logged = lines.map((line) => JSON.parse(line)).filter((line) => line.event === "session_not_renewed");
   assert.equal(logged.length, 2, lines.join("\n"));
   assert.match(logged[0].error, /read only/);
+  assert.equal(logged[0].step, "write");
   for (const secret of [session.token, session.hash, "@example.com"]) {
     assert.ok(!lines.join("\n").includes(secret), "no token, no email");
   }
@@ -282,6 +288,77 @@ test("a renewal D1 cannot write is skipped: the request is answered, the log say
   now += HOUR;
   assert.equal(maxAgeOf(await call(env, "/v1/me", session)), SESSION_SECONDS);
   assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000));
+});
+
+// Runs `work` with the Worker's log lines caught: { result, events } (each line's JSON).
+async function logged(work) {
+  const lines = [];
+  const consoleLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    const result = await work();
+    return { result, events: lines.map((line) => JSON.parse(line)) };
+  } finally {
+    console.log = consoleLog;
+  }
+}
+
+// A session renewed once (its answers send the cookie from then on), then left unused until 2 hours
+// before its end: a phone in a drawer for 29 days and 22 hours.
+async function renewedThenLeft(DB, env) {
+  const session = account(DB).signIn();
+  now = START + 2 * DAY;
+  assert.equal(maxAgeOf(await call(env, "/v1/me", session)), SESSION_SECONDS, "renewed once");
+  now = Date.parse(endOf(DB, session)) - 2 * HOUR;
+  return session;
+}
+
+test("a renewed session whose next renewal D1 refuses: answered, and no cookie, since D1's end is not known", async () => {
+  const { DB, env } = setup();
+  const session = await renewedThenLeft(DB, env);
+  DB.failRenewals = true;
+  const { result: answer, events } = await logged(() => call(env, "/v1/me", session));
+  assert.equal(answer.status, 200, "signed in as before");
+  // Not with the 2 hours it read: the Worker cannot tell a write D1 refused from one it made but
+  // reported as failed (below). The browser keeps the cookie it has.
+  assert.equal(sessionCookie(answer), undefined);
+  assert.deepEqual(events.map((line) => [line.event, line.step]), [["session_not_renewed", "write"]]);
+});
+
+test("a renewal D1 writes but reports as failed: that answer sends no cookie, the next one the new end", async () => {
+  const { DB, env } = setup();
+  const session = await renewedThenLeft(DB, env);
+  DB.failAfterRenewals = true;
+  const { result: answer } = await logged(() => call(env, "/v1/me", session));
+  assert.equal(answer.status, 200);
+  assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000), "written all the same");
+  assert.equal(sessionCookie(answer), undefined, "not the 2 hours it had: D1 has 30 days");
+  DB.failAfterRenewals = false;
+  now += MINUTE;
+  const sent = DB.renewals.sent;
+  assert.equal(maxAgeOf(await call(env, "/v1/homes", session)), SESSION_SECONDS - 60, "the next answer carries it");
+  assert.equal(DB.renewals.sent, sent, "without writing");
+});
+
+test("a request that lost the race to renew, whose read of the new end fails: no cookie; the winner's answer has the new end", async () => {
+  const { DB, env } = setup();
+  const session = await renewedThenLeft(DB, env);
+  // Started away from home: this request read the session, and another one, sent at the same
+  // moment, renews it first and is answered; this one's write then changes nothing, and D1 fails as
+  // it reads the end the other one wrote.
+  let winner;
+  DB.beforeRenewal = async () => {
+    winner = await call(env, "/v1/homes", session);
+  };
+  DB.failing = /^SELECT expires_at FROM sessions\b/;
+  const { result: answer, events } = await logged(() => call(env, "/v1/me", session));
+  DB.failing = null;
+  assert.equal(winner.status, 200);
+  assert.equal(maxAgeOf(winner), SESSION_SECONDS, "the winner: 30 days");
+  assert.equal(answer.status, 200, "still signed in");
+  assert.equal(sessionCookie(answer), undefined, "not the 2 hours it read: whichever answer comes last, the browser keeps 30 days");
+  assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000));
+  assert.deepEqual(events.map((line) => [line.event, line.step]), [["session_not_renewed", "read"]]);
 });
 
 test("a request that fails after renewing its session: the Worker's error answer sends the cookie", async () => {
@@ -308,16 +385,22 @@ test("a request that fails after renewing its session: the Worker's error answer
   assert.ok(!lines.join("\n").includes(session.token), "no token in the log");
 });
 
-test("a session ended while a request renewed it: its answer sends no cookie", async () => {
+test("a session ended while a request renewed it: not signed in, and no cookie", async () => {
   const { DB, env } = setup();
-  const session = account(DB).signIn();
+  const dana = account(DB);
+  const sessions = { "/v1/me": dana.signIn(), "/v1/homes": dana.signIn() };
   now = START + 4 * DAY;
-  // Sign out everywhere on another device, between this request's read and its write.
-  DB.beforeRenewal = () => DB.db.prepare("DELETE FROM sessions WHERE token_sha256 = ?").run(session.hash);
-  const response = await call(env, "/v1/me", session);
-  assert.equal(sessionCookie(response), undefined);
-  assert.equal(endOf(DB, session), null);
-  assert.equal((await call(env, "/v1/me", session)).status, 401);
+  // Sign out everywhere on another device, between this request's read and its write: the request
+  // is not served (a lost phone's request through the account, say), whatever the route.
+  for (const [path, session] of Object.entries(sessions)) {
+    DB.beforeRenewal = () => DB.db.prepare("DELETE FROM sessions WHERE token_sha256 = ?").run(session.hash);
+    const response = await call(env, path, session);
+    assert.equal(response.status, 401, path);
+    assert.equal((await response.json()).code, "NOT_SIGNED_IN");
+    assert.equal(sessionCookie(response), undefined);
+    assert.equal(endOf(DB, session), null);
+    assert.equal((await call(env, "/v1/me", session)).status, 401);
+  }
 });
 
 test("used every few days it never ends; left unused for 30 days it does, and stays ended", async () => {

@@ -6,7 +6,7 @@
 // except on iPhone and iPad, its plain http:// address. Through the account they are sealed too
 // (remote.js), when the home network cannot be reached.
 
-import { loadAccount } from "./account.js";
+import { accountDeleted, loadAccount } from "./account.js";
 import {
   ApiError,
   apiCall,
@@ -645,8 +645,10 @@ function remoteErrorText(error) {
     case "UNREACHABLE":
     case "TIMEOUT":
       return t("errors.remote.unreachable");
+    // After Delete account on this device signing in again would not bring the home back: it is
+    // not asked for (1.13.2).
     case "NOT_SIGNED_IN":
-      return t("errors.remote.signIn");
+      return accountDeleted() ? t("errors.remote.accountDeleted") : t("errors.remote.signIn");
     case "HOME_OFFLINE":
     case "HOME_TIMEOUT":
     case "HOME_DISCONNECTED":

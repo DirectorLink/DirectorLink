@@ -265,14 +265,19 @@ it, runs it as that key (with that key's role), locks the answer and sends it ba
 
 The account's session lasts 30 days from the last time the app used it, at home or away (since
 1.13.2, ADR-089; 30 days from the sign-in before). Signed out (a device not used for 30 days, Sign
-out everywhere, a year after signing in), the app still works at home, except on iPhone and iPad
-without Direct HTTPS, which reach the home only through the account; and it says why it can't reach
-the home: Home shows "You're signed out of your account, so the app can't reach your home away from
-it." ("from here" on such an iPhone or iPad) with the sign-in buttons, until hidden for that start
-of the app, and so does Settings → Account; a request through the account says "You're signed out",
-not that the home can't be reached. Sign out counts only once the account service has ended the
-session; until then the device stays signed in, says so, and sends the sign-out again at its next
-start. After Delete account nothing asks to sign in again, which would not bring the home back.
+out everywhere, a year after signing in), the app still works at home, except on a device with no
+way to the controller on the home network (neither its Direct HTTPS name nor, except on iPhone and
+iPad, its address), which reaches the home only through the account, at home too: an iPhone or iPad
+without Direct HTTPS, or, on a home without Direct HTTPS, a device that joined with an invitation
+and so has no controller address (as Safari on Mac and Firefox do: they cannot use `http://`). And
+the app says why it can't reach the home: Home shows "You're signed out of your account, so the app
+can't reach your home away from it." ("from here" on a device with no way to it on the home
+network) with the sign-in buttons, until hidden for that start of the app, and so does Settings →
+Account; a request through the account says "You're signed out", not that the home can't be
+reached. Sign out counts only once the account service has ended the session; until then the device
+stays signed in, says so, and sends the sign-out again once a request through the account works,
+and at its next start. After Delete account nothing asks to sign in again, which would not bring the
+home back: a request through the account says the account was deleted.
 
 ### 3. Invitations: family, and the owner's own other devices
 

@@ -114,10 +114,10 @@ export function signInButtons({ hash, key, style = "button-primary", size = "", 
 }
 
 // Signed out of the account on a device that reaches its home through it (1.13.2, ADR-089): away
-// from the home network the app can't reach the home (on iPhone and iPad without Direct HTTPS, not
-// even at home: signedOutText). Never while requests through the account work, whatever the app last
-// heard (account.js asks again then), nor once this device deleted its account: signing in again
-// would not bring the home back.
+// from the home network the app can't reach the home (without a way to it on the home network, as
+// on iPhone and iPad without Direct HTTPS, not even at home: signedOutText). Never while requests
+// through the account work, whatever the app last heard (account.js asks again then), nor once this
+// device deleted its account: signing in again would not bring the home back.
 export function signedOutAway() {
   return Boolean(
     state.apiKey &&
@@ -129,16 +129,21 @@ export function signedOutAway() {
 }
 
 // What being signed out means on this device: no way to the home away from it; or, without a way to
-// it on the home network (an iPhone or iPad without Direct HTTPS), none from here.
+// it on the home network (session.js homeRoutes: no Direct HTTPS name of this home, nor an address
+// it may use: iPhone and iPad never use one, a device that joined by an invitation has none), none
+// from here.
 export function signedOutText() {
   return homeRoutes().length ? t("signedOut.notice") : t("signedOut.noticeHere");
 }
 
 // A sign-in that did not work and came back here (cancelled, took too long, failed, no verified
-// email): said where its button was, as Settings → Account does. `tag`: "span" inside a line.
+// email): said where its button was, as Settings → Account does, and read out (role status: these
+// screens show up after the focus went to the page's title). `tag`: "span" inside a line whose
+// banner is read out already.
 export function signInOutcome(tag = "p") {
   const notice = state.account.notice;
-  return ["cancelled", "expired", "failed", "unverified"].includes(notice) ? h(tag, { class: "sign-in-outcome", dataset: { key: "sign-in-outcome" } }, t(`settings.account.notice.${notice}`)) : null;
+  if (!["cancelled", "expired", "failed", "unverified"].includes(notice)) return null;
+  return h(tag, { class: "sign-in-outcome", role: tag === "span" ? null : "status", dataset: { key: "sign-in-outcome" } }, t(`settings.account.notice.${notice}`));
 }
 
 // The connection failed because the account is signed out (session.js connectionNotice).
@@ -179,9 +184,10 @@ export function signedOutNotice() {
 export function staleBanner() {
   if (state.status !== "unreachable" || !state.loaded) return null;
   // Through the account the reason is known (signed out, home offline, …); signed out, the banner
-  // offers to sign in again.
+  // offers to sign in again, unless this device deleted its account (its text says so; a sign-in
+  // would not bring the home back).
   const remote = Boolean(state.notice?.remote);
-  const signedOut = remote && state.account.status === "signed-out";
+  const signedOut = remote && state.account.status === "signed-out" && !accountDeleted();
   return h(
     "div",
     { class: "banner banner-error", role: "status" },

@@ -342,7 +342,9 @@ const renewed = new WeakMap();
 // sends its cookie again with the time it has left, without writing anything: an answer that was
 // lost (a dropped connection, an error after this) costs nothing, the next one carries it. Not
 // before its first renewal: the sign-in's own cookie came with a page load, and stays as it is
-// (ADR-089: WebKit may keep a cookie a request's answer sets for 7 days only).
+// (ADR-089: WebKit may keep a cookie a request's answer sets for 7 days only). Nor when D1 failed
+// while renewing it: it may hold a later end than this request knows, and the browser keeps the
+// cookie it has.
 export async function currentUser(request, env) {
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) {
@@ -359,7 +361,12 @@ export async function currentUser(request, env) {
     return null;
   }
   const end = await renewSession(env, hash, row, now);
-  if (end > now && end > Date.parse(row.session_created_at) + SESSION_SECONDS * 1000) {
+  if (end === null) {
+    // It ended while this request renewed it (Sign out, Sign out everywhere, Delete account, Apple's
+    // notification): not signed in.
+    return null;
+  }
+  if (end !== undefined && end > now && end > Date.parse(row.session_created_at) + SESSION_SECONDS * 1000) {
     renewed.set(request, setCookie(SESSION_COOKIE, token, { maxAge: Math.floor((end - now) / 1000) }));
   }
   return { id: row.id, email: row.email, name: row.name, created_at: row.created_at, token };
@@ -368,9 +375,10 @@ export async function currentUser(request, env) {
 // Moves the end of a session used a day or more after its last renewal to 30 days from `now`, and
 // never past a year from its sign-in (the last renewal reaches that day exactly). At most one D1
 // write a session a day: the write changes it only if nobody renewed it meanwhile; a request whose
-// write changed nothing reads the end the other one wrote. Best effort: when D1 cannot write, the
-// request goes on with the session as it was, renewed at its next use. Returns the session's end
-// (ms) after this request, or null when it has ended meanwhile.
+// write changed nothing reads the end the other one wrote. Best effort: when D1 fails, the write or
+// that read, the request goes on with the session, renewed at its next use if it was not. Returns
+// the session's end (ms) after this request; undefined when D1 failed, so its end is not known (it
+// may have written it, or another request may have); null when it has ended meanwhile.
 async function renewSession(env, hash, row, now) {
   const current = Date.parse(row.expires_at);
   const created = Date.parse(row.session_created_at);
@@ -379,18 +387,22 @@ async function renewSession(env, hash, row, now) {
   if (!(end > current) || (end - current < SESSION_RENEW_SECONDS * 1000 && end < cap)) {
     return current;
   }
+  let step = "write";
   try {
     const result = await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_sha256 = ? AND expires_at = ?").bind(iso(end), hash, row.expires_at).run();
     if (result?.meta?.changes !== 0) {
       return end;
     }
     // Another request renewed it first (or it was ended): its end as it is now.
+    step = "read";
     const after = await env.DB.prepare("SELECT expires_at FROM sessions WHERE token_sha256 = ?").bind(hash).first();
     const ends = Date.parse(after?.expires_at ?? "");
     return Number.isFinite(ends) ? ends : null;
   } catch (error) {
-    log("session_not_renewed", { user: row.id, error: String(error?.message ?? error) });
-    return current;
+    // `step`: the write failed (D1 may have made it all the same), or the read after a write that
+    // changed nothing.
+    log("session_not_renewed", { user: row.id, step, error: String(error?.message ?? error) });
+    return undefined;
   }
 }
 

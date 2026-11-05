@@ -138,6 +138,7 @@ export default {
     sealing: "El controlador de esta dirección no respondió a este dispositivo de forma segura. Si DirectorLink se reinstaló o volvió a una versión anterior, vuelve a emparejar este dispositivo (Ajustes → Controlador).",
     remote: {
       signIn: "Se cerró la sesión de tu cuenta, así que la app no puede conectar con tu casa desde aquí. Vuelve a iniciar sesión (Ajustes → Cuenta).",
+      accountDeleted: "Se eliminó tu cuenta, así que la app no puede conectar con tu casa desde aquí.",
       homeOffline: "Tu casa no está conectada a DirectorLink en este momento. Comprueba que el controlador esté en línea y que Remote Access esté activado.",
       updateRequired: "Actualiza DirectorLink: la versión de tu controlador ya no puede conectarse al acceso remoto. Actualízala en Composer; en casa, la app funciona como siempre.",
       notMember: "Esta cuenta ya no pertenece a esta casa.",

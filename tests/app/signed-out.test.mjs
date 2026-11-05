@@ -3,10 +3,13 @@
 // → Account says it too ("from here" on a device with no way to its home on the home network); a
 // connection refused because the account's session ended says "signed out" (the text, the chip and
 // the screen), not that the home can't be reached, and a sign-in that did not work says so there
-// too; in Hebrew too. Signing out only once the account service ended the session (else still signed
-// in, with Retry, and sent again first at the next start); never "signed out" while requests through
-// the account work; a linked device asks at start rather than assume; after Delete account nothing
-// asks to sign in.
+// too, read out; in Hebrew too. Signing out only once the account service ended the session (else
+// still signed in, with Retry, and sent again once a request through the account works and first at
+// the next start; without its answer /v1/me says), and "still signed in" no longer once it has ended;
+// back from Google or Apple a sign-out still to send is dropped; never "signed out" while requests
+// through the account work, nor after a sign-in in another tab; a linked device asks at start rather
+// than assume; after Delete account nothing asks to sign in, through the account either, and the
+// link to the home stays.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -53,8 +56,19 @@ class FakeElement extends FakeNode {
 const assigned = [];
 globalThis.Node = FakeNode;
 globalThis.window = globalThis;
-globalThis.addEventListener = () => {};
+// The window's listeners (a storage event: another tab of this browser), run by `fire()`.
+const windowListeners = {};
+globalThis.addEventListener = (type, listener) => (windowListeners[type] ||= []).push(listener);
 globalThis.removeEventListener = () => {};
+const fire = (type, event) => {
+  for (const listener of windowListeners[type] || []) listener({ type, ...event });
+};
+// The clock, moved on by `aMinuteLater()`: an app that asks again after an answer through the
+// account does so at most once a minute.
+const realNow = Date.now;
+let shift = 0;
+Date.now = () => realNow() + shift;
+const aMinuteLater = () => (shift += 61_000);
 globalThis.matchMedia = () => ({ matches: false, addEventListener() {} });
 globalThis.location = {
   hostname: "app.directorlink.io",
@@ -101,14 +115,16 @@ globalThis.history = { state: null, replaceState() {}, back() {} };
 
 const { state, ui } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
-const { RemoteError, forgetRemote, listAccountHomes, saveRemote } = await import("../../app/js/remote.js");
-const { connect, errorText, homeRoutes, stopPolling } = await import("../../app/js/session.js");
-const { deleteAccount, signOut, startAccount } = await import("../../app/js/account.js");
+const { RemoteError, forgetRemote, listAccountHomes, saveRemote, savedRemote } = await import("../../app/js/remote.js");
+const { checkInThroughAccount, connect, errorText, homeRoutes, stopPolling } = await import("../../app/js/session.js");
+const { deleteAccount, loadAccount, signOut, startAccount } = await import("../../app/js/account.js");
 const { homeView } = await import("../../app/js/views/home.js");
 const { settingsView } = await import("../../app/js/views/settings.js");
 const { connectionChip } = await import("../../app/js/views/common.js");
 const { default: en } = await import("../../app/i18n/en.js");
 const { default: he } = await import("../../app/i18n/he.js");
+const { default: es } = await import("../../app/i18n/es.js");
+const { default: it } = await import("../../app/i18n/it.js");
 
 // ---- what a screen holds -----------------------------------------------------------------------
 
@@ -452,10 +468,13 @@ test("after Delete account nothing asks to sign in (it would not bring the home 
   assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out"), null);
   assert.ok(byKey(settingsView({ page: "account" }), "account-sign-in"), "signing in stays possible");
 
+  // The next start: still linked, but nothing is asked (no account to ask about).
   answer = route({ "GET /v1/me": { status: 401, body: { code: "NOT_SIGNED_IN" } } });
+  asked.length = 0;
   state.account = { ...FRESH };
   startAccount({ linked: true });
   await settle();
+  assert.deepEqual(asked, [], "no GET /v1/me");
   assert.equal(state.account.status, "signed-out");
   assert.equal(notice(), null, "the next start");
 
@@ -518,4 +537,234 @@ test("without a way to its home on the home network (iPhone or iPad without Dire
   assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out")?.textContent, en.signedOut.noticeHere);
   state.host = "192.0.2.10";
   assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out")?.textContent, en.signedOut.notice);
+});
+
+// ---- a sign-out the app is not sure of, another tab, after Delete account ------------------------
+
+test("\"You're still signed in\" goes once the app learns the session has ended; a sign-in's outcome stays", async () => {
+  home();
+  state.account = { ...SIGNED_IN };
+  stored.set("directorlink.account", "1");
+  // On the iPad in airplane mode: neither the sign-out nor /v1/me gets an answer.
+  answer = offline;
+  await signOut();
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(state.account.notice, "signOutFailed");
+  // Online again, at home: Sign out everywhere on the iPhone ended the session meanwhile. The daily
+  // check-in through the account is refused, and the account, asked again, says so.
+  const refused = { status: 401, body: { code: "NOT_SIGNED_IN" } };
+  answer = route({ [`POST /v1/homes/${HOME}/e2e`]: refused, "GET /v1/me": refused });
+  assert.equal(await checkInThroughAccount(true), false);
+  await settle();
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(state.account.notice, null);
+  assert.equal(stored.has("directorlink.signOut"), false);
+  const page = settingsView({ page: "account" });
+  assert.equal(find(page, (node) => node.textContent === en.settings.account.notice.signOutFailed), null, "not next to You're signed out");
+  assert.equal(byKey(page, "account-signed-out")?.textContent, en.signedOut.notice);
+
+  // A sign-in that did not work is still said.
+  state.account = { status: "unavailable", user: null, notice: "cancelled", busy: false };
+  await loadAccount();
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(state.account.notice, "cancelled");
+  answer = offline;
+});
+
+test("Sign out without the account service's word asks /v1/me, as at start: ended (401), signed out; going on (200), still signed in with Retry", async () => {
+  home();
+  state.account = { ...SIGNED_IN };
+  stored.set("directorlink.account", "1");
+  // The service ended the session, but the logout's answer was lost on the way back.
+  answer = route({ "POST /auth/logout": new TypeError("Failed to fetch"), "GET /v1/me": { status: 401, body: { code: "NOT_SIGNED_IN" } } });
+  asked.length = 0;
+  await signOut();
+  assert.deepEqual(asked, ["POST /auth/logout", "GET /v1/me"]);
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(state.account.notice, null);
+  assert.equal(stored.has("directorlink.signOut"), false);
+  assert.equal(stored.has("directorlink.account"), false);
+
+  // An error answer, and the session goes on.
+  state.account = { ...SIGNED_IN };
+  stored.set("directorlink.account", "1");
+  answer = route({ "POST /auth/logout": { status: 500, body: { code: "INTERNAL_ERROR" } }, "GET /v1/me": { status: 200, body: ME } });
+  await signOut();
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(state.account.user?.email, ME.email);
+  assert.equal(state.account.notice, "signOutFailed");
+  assert.equal(stored.get("directorlink.signOut"), "1");
+  assert.ok(byKey(settingsView({ page: "account" }), "account-sign-out-retry"));
+  stored.delete("directorlink.signOut");
+  answer = offline;
+});
+
+test("a sign-out still to send when nothing answers at start: Settings → Account offers its Retry, not the sign-in; an answer through the account sends it, at most once a minute", async () => {
+  home();
+  stored.set("directorlink.account", "1");
+  stored.set("directorlink.signOut", "1");
+  answer = offline;
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.equal(state.account.status, "unavailable");
+  assert.equal(state.account.notice, "signOutFailed");
+  const page = settingsView({ page: "account" });
+  assert.ok(find(page, (node) => node.textContent === en.settings.account.notice.signOutFailed));
+  assert.ok(byKey(page, "account-sign-out-retry"), "the sign-out's Retry");
+  for (const key of ["account-sign-in", "account-sign-in-apple", "account-retry"]) {
+    assert.equal(byKey(page, key), null, `no ${key}: not as if signed out`);
+  }
+
+  // The connection is back: a request through the account is answered, so the sign-out goes now.
+  // The service fails it this time; /v1/me says the session goes on.
+  aMinuteLater();
+  const homes = { status: 200, body: { items: [] } };
+  answer = route({ "GET /v1/homes": homes, "POST /auth/logout": { status: 503, body: { code: "UNAVAILABLE" } }, "GET /v1/me": { status: 200, body: ME } });
+  asked.length = 0;
+  await listAccountHomes();
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/homes", "POST /auth/logout", "GET /v1/me"]);
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(state.account.notice, "signOutFailed");
+  // Within the minute, more answers send nothing more.
+  asked.length = 0;
+  await listAccountHomes();
+  await listAccountHomes();
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/homes", "GET /v1/homes"]);
+  // A minute later, again: the service ends it.
+  aMinuteLater();
+  answer = route({ "GET /v1/homes": homes, "POST /auth/logout": { status: 204 } });
+  asked.length = 0;
+  await listAccountHomes();
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/homes", "POST /auth/logout"]);
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(stored.has("directorlink.signOut"), false);
+  answer = offline;
+});
+
+test("back from Google or Apple, whatever came of it, a sign-out still to send is dropped: the person went on using the account", async () => {
+  for (const outcome of ["linked", "cancelled"]) {
+    home();
+    state.account = { ...SIGNED_IN };
+    stored.set("directorlink.account", "1");
+    answer = offline;
+    await signOut();
+    assert.equal(stored.get("directorlink.signOut"), "1");
+    // Online again, Add Apple (Settings → Account) rather than Retry, and back with its outcome.
+    location.href = `https://app.directorlink.io/?signin=${outcome}#/settings/account`;
+    answer = route({ "GET /v1/me": { status: 200, body: ME }, "POST /auth/logout": { status: 204 } });
+    asked.length = 0;
+    try {
+      state.account = { ...FRESH };
+      startAccount({ linked: true });
+      await settle();
+    } finally {
+      location.href = "https://app.directorlink.io/#/";
+    }
+    assert.deepEqual(asked, ["GET /v1/me"], `${outcome}: no sign-out`);
+    assert.equal(state.account.status, "signed-in");
+    assert.equal(state.account.notice, outcome, "its outcome, as usual");
+    assert.equal(stored.has("directorlink.signOut"), false);
+  }
+  answer = offline;
+});
+
+test("a sign-in in another tab of this browser: this one asks too, at home where no request through the account would tell it", async () => {
+  home();
+  stored.delete("directorlink.account");
+  answer = route({ "GET /v1/me": { status: 401, body: { code: "NOT_SIGNED_IN" } } });
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.equal(state.account.status, "signed-out");
+  assert.ok(notice());
+
+  // Signed in again in the other tab: its mark comes here as a storage event.
+  answer = route({ "GET /v1/me": { status: 200, body: ME } });
+  asked.length = 0;
+  fire("storage", { key: "directorlink.providers", oldValue: null, newValue: JSON.stringify(["google"]) });
+  await settle();
+  assert.deepEqual(asked, [], "only the signed-in mark");
+  stored.set("directorlink.account", "1");
+  fire("storage", { key: "directorlink.account", oldValue: null, newValue: "1" });
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/me"]);
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(notice(), null);
+  answer = offline;
+});
+
+test("a sign-in's outcome on Home's notice and on the signed-out screen is read out (role status), as in Settings → Account", () => {
+  home();
+  state.account = { ...SIGNED_OUT, notice: "cancelled" };
+  assert.equal(byKey(notice(), "sign-in-outcome")?.attributes.role, "status", "Home's notice");
+  Object.assign(state, {
+    status: "unreachable",
+    loaded: false,
+    transport: "remote",
+    notice: { kind: "error", text: en.errors.remote.signIn, remote: true, signedOut: true },
+  });
+  assert.equal(byKey(homeView({}), "sign-in-outcome")?.attributes.role, "status", "the signed-out screen");
+  // The banner over the last state is read out itself: its outcome is not, twice.
+  state.loaded = true;
+  const banner = find(homeView({}), (node) => node.className === "banner banner-error");
+  assert.equal(banner.attributes.role, "status");
+  assert.ok(byKey(banner, "sign-in-outcome"));
+  assert.equal(byKey(banner, "sign-in-outcome").attributes.role, undefined);
+});
+
+test("after Delete account, through the account too, nothing asks to sign in: it says the account was deleted; the link to the home stays", async () => {
+  home();
+  state.account = { ...SIGNED_IN };
+  answer = route({ "DELETE /v1/me": { status: 204 } });
+  assert.equal(await deleteAccount(), true);
+  // Sealing on the home network takes its key id from the link (iPhone and iPad with Direct HTTPS).
+  assert.deepEqual(savedRemote(), { home: HOME, keyId: "0badc0de" }, "directorlink.remote kept");
+
+  // Away from home, every request through the account is refused: the account and its session are gone.
+  Object.assign(state, { host: "", transport: "remote", status: "connecting", loaded: false });
+  answer = () => new Response(JSON.stringify({ code: "NOT_SIGNED_IN", detail: "Sign in first" }), { status: 401, headers: { "content-type": "application/problem+json" } });
+  asked.length = 0;
+  const consoleError = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(await connect(), false);
+    await settle();
+  } finally {
+    console.error = consoleError;
+    stopPolling();
+  }
+  assert.ok(asked.includes(`POST /v1/homes/${HOME}/e2e`));
+  assert.equal(state.notice.text, en.errors.remote.accountDeleted);
+  assert.doesNotMatch(en.errors.remote.accountDeleted, /sign in/i);
+  const screen = homeView({});
+  assert.ok(find(screen, (node) => node.textContent === en.errors.remote.accountDeleted), "the screen");
+  assert.equal(byKey(screen, "unreachable-sign-in"), null);
+
+  // The banner over the last state: the same words, and Retry rather than Sign in.
+  state.loaded = true;
+  const banner = find(homeView({}), (node) => node.className === "banner banner-error");
+  assert.ok(banner.textContent.includes(en.errors.remote.accountDeleted));
+  assert.equal(byKey(banner, "stale-sign-in"), null);
+  assert.ok(byKey(banner, "stale-retry"));
+  // Settings → Controller.
+  const controller = settingsView({ page: "controller" });
+  assert.ok(find(controller, (node) => node.textContent === en.errors.remote.accountDeleted));
+  assert.equal(find(controller, (node) => node.textContent === en.errors.remote.signIn), null);
+  // In Hebrew, Spanish and Italian too.
+  try {
+    for (const [code, dictionary] of Object.entries({ he, es, it })) {
+      await setLanguage(code);
+      assert.equal(errorText(new RemoteError("NOT_SIGNED_IN", "Sign in first", 401)), dictionary.errors.remote.accountDeleted, code);
+      assert.notEqual(dictionary.errors.remote.accountDeleted, en.errors.remote.accountDeleted, `${code}: translated`);
+    }
+  } finally {
+    await setLanguage("en");
+  }
+  stored.delete("directorlink.accountDeleted");
+  assert.equal(errorText(new RemoteError("NOT_SIGNED_IN", "Sign in first", 401)), en.errors.remote.signIn, "signed in again, the usual words");
+  answer = offline;
 });
