@@ -2,6 +2,24 @@
 
 ## Current release
 
+`v1.13.2` — Signed in stays signed in while you use the app (1132a). A Worker change; no D1 migration. The driver changes only its version.
+
+## 1132a. Sign-ins that renew while used, and the notice when signed out (1.13.2)
+
+Deploy the Worker first (`cloud/`: `npx wrangler@4.143.0 deploy`; no migration); the app comes with the merge. Your session in D1, before and after (`--remote`, your account's email):
+`npx wrangler@4.143.0 d1 execute directorlink --remote --command "SELECT sessions.created_at, sessions.expires_at FROM sessions JOIN users ON users.id = sessions.user_id WHERE users.email = '<your email>' ORDER BY sessions.created_at"`
+
+1. **Signed out, at home.** On the iPhone (Home Screen app), still signed out: Home shows "You're signed out of your account, so the app can't reach your home away from it." with Sign in with Google and Sign in with Apple; everything else on Home works as before (a KNX light, a shade, the DoorBird ring, the gate). Hide it: it stays hidden; close the app (swipe it away) and open it again: it is back. Settings → Account says the same above its buttons. In Hebrew too (Settings → Appearance and language).
+2. **Signed out, away.** Wi-Fi off: Home (or its banner, if the last state is shown) says "You're signed out of your account, so the app can't reach your home from here…" with the sign-in, the chip says "Signed out", not "Can't reach your controller".
+3. **Sign in** with the notice's Google button: back on Home, no notice; with Wi-Fi off the chip says Connected · via account. The query shows a new session: `created_at` now, `expires_at` 30 days later.
+4. **Renewed after a day of use.** A day or more later, open the app once (at home is enough). The query shows that session's `expires_at` moved to 30 days from then; open it again the same day: it does not move. Every day you open the app it moves at most once.
+5. **The iPhone keeps the renewed cookie.** With a Mac at hand: Safari → Develop → the iPhone → DirectorLink → Storage → Cookies: `__Host-dl_session` expires 30 days after the last renewal. If it shows 7 days, WebKit capped it (ADR-089): the phone then stays signed in only while the app is opened at least once a week; tell us.
+6. **A device left unused.** Sign in on the iPad (Home Screen app) too, then leave it unopened for 8 to 10 days and open it away from home: still signed in (if it says signed out while the query still lists its session ending later, WebKit capped the cookie, as in 5: tell us). A device left for more than 30 days is signed out, and its Home says so.
+7. **Sign out everywhere** on the iPhone (Settings → Account): the query lists no session; the iPad's next start shows the notice. Sign in again on both.
+8. Android members' accounts need nothing; one whose app was not used for 30 days sees the notice and signs in. Nothing else changes: pairing, Direct HTTPS on the iPhone at home, the DoorBird, the gate, KNX. The driver's History says "DirectorLink updated from 1.13.1 to 1.13.2" once it is updated in Composer, nothing else new.
+
+## Previous release
+
 `v1.13.1` — Only Control4's documented driver API (1131a). No Worker change; no D1 migration.
 
 ## 1131a. Only Control4's documented driver API (1.13.1)
