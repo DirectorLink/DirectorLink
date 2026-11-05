@@ -18,8 +18,8 @@
 // only its SHA-256. The app calls /v1/me and /auth/logout with `credentials: "include"`; only the
 // app's own origins (APP_ORIGINS) get CORS answers, and changes are refused from any other origin.
 // A session lasts 30 days from its last use (1.13.2, ADR-089): a request that uses it a day or more
-// after its last renewal moves its end to 30 days from then, and its answer sends the cookie again
-// (keepSession); never past a year from the sign-in.
+// after its last renewal moves its end to 30 days from then, and from then on the answers that use it
+// send the cookie again (keepSession); never past a year from the sign-in.
 
 import { homesChanged } from "./alerts.js";
 import { apple } from "./apple.js";
@@ -334,12 +334,15 @@ async function finishSignIn(request, env, provider) {
   return backToApp(returnTo, "ok", [clearSignIn, ["Set-Cookie", setCookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS })]], status);
 }
 
-// The cookie of each session a request renewed (currentUser), which its answer sends again
-// (keepSession).
+// The cookie each request's answer sends again (keepSession): the session it used, once renewed.
 const renewed = new WeakMap();
 
 // The account of this request's session, or null. A session used a day or more after its last
-// renewal is renewed (renewSession).
+// renewal is renewed (renewSession). Once a session has been renewed, every answer that uses it
+// sends its cookie again with the time it has left, without writing anything: an answer that was
+// lost (a dropped connection, an error after this) costs nothing, the next one carries it. Not
+// before its first renewal: the sign-in's own cookie came with a page load, and stays as it is
+// (ADR-089: WebKit may keep a cookie a request's answer sets for 7 days only).
 export async function currentUser(request, env) {
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) {
@@ -355,34 +358,43 @@ export async function currentUser(request, env) {
   if (!row || row.expires_at < iso(now)) {
     return null;
   }
-  const cookie = await renewSession(env, hash, token, row, now);
-  if (cookie) {
-    renewed.set(request, cookie);
+  const end = await renewSession(env, hash, row, now);
+  if (end > now && end > Date.parse(row.session_created_at) + SESSION_SECONDS * 1000) {
+    renewed.set(request, setCookie(SESSION_COOKIE, token, { maxAge: Math.floor((end - now) / 1000) }));
   }
   return { id: row.id, email: row.email, name: row.name, created_at: row.created_at, token };
 }
 
 // Moves the end of a session used a day or more after its last renewal to 30 days from `now`, and
 // never past a year from its sign-in (the last renewal reaches that day exactly). At most one D1
-// write a session a day: the write changes it only if nobody renewed it meanwhile, so of the
-// requests that use it at once (the app sends several) only one renews it and sends the cookie
-// again. Returns that cookie (Set-Cookie), or null.
-async function renewSession(env, hash, token, row, now) {
+// write a session a day: the write changes it only if nobody renewed it meanwhile; a request whose
+// write changed nothing reads the end the other one wrote. Best effort: when D1 cannot write, the
+// request goes on with the session as it was, renewed at its next use. Returns the session's end
+// (ms) after this request, or null when it has ended meanwhile.
+async function renewSession(env, hash, row, now) {
   const current = Date.parse(row.expires_at);
   const created = Date.parse(row.session_created_at);
   const cap = Number.isFinite(created) ? created + SESSION_MAX_SECONDS * 1000 : Infinity;
   const end = Math.min(now + SESSION_SECONDS * 1000, cap);
   if (!(end > current) || (end - current < SESSION_RENEW_SECONDS * 1000 && end < cap)) {
-    return null;
+    return current;
   }
-  const result = await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_sha256 = ? AND expires_at = ?").bind(iso(end), hash, row.expires_at).run();
-  if (result?.meta?.changes === 0) {
-    return null;
+  try {
+    const result = await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_sha256 = ? AND expires_at = ?").bind(iso(end), hash, row.expires_at).run();
+    if (result?.meta?.changes !== 0) {
+      return end;
+    }
+    // Another request renewed it first (or it was ended): its end as it is now.
+    const after = await env.DB.prepare("SELECT expires_at FROM sessions WHERE token_sha256 = ?").bind(hash).first();
+    const ends = Date.parse(after?.expires_at ?? "");
+    return Number.isFinite(ends) ? ends : null;
+  } catch (error) {
+    log("session_not_renewed", { user: row.id, error: String(error?.message ?? error) });
+    return current;
   }
-  return setCookie(SESSION_COOKIE, token, { maxAge: Math.floor((end - now) / 1000) });
 }
 
-// The answer to a request whose session was renewed sends its cookie again, with the new Max-Age:
+// The answer to a request that used a renewed session sends its cookie again, with its Max-Age:
 // the same token, so nothing else changes. Not an answer that ends the session (it clears the
 // cookie). Returns `response`.
 export function keepSession(request, response) {

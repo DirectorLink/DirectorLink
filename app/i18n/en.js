@@ -40,6 +40,7 @@ export default {
   // Home until hidden, in Settings → Account, and when the home can't be reached because of it.
   signedOut: {
     notice: "You’re signed out of your account, so the app can’t reach your home away from it.",
+    noticeHere: "You’re signed out of your account, so the app can’t reach your home from here.",
     title: "You’re signed out",
     chip: "Signed out",
     dismiss: "Hide for now",
@@ -2454,6 +2455,7 @@ export default {
         signedOutEverywhere: "Signed out on every device.",
         signOutEverywhereExpired: "This session had already ended, so no device was signed out. Sign in again, then sign out everywhere.",
         signOutEverywhereFailed: "The other devices could not be signed out. Check the internet connection and try again.",
+        signOutFailed: "You’re still signed in: the sign-out didn’t reach DirectorLink’s servers. Check the internet connection and try again.",
         deleted: "Your account was deleted.",
         deleteFailed: "The account could not be deleted. Try again.",
       },

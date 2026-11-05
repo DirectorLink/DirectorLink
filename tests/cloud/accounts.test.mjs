@@ -232,7 +232,7 @@ test("deleting the account removes it and every session", TEST, async () => {
   assert.notEqual(fresh.json.id, before.json.id, "signing in again starts a new account");
 });
 
-test("a session used near its end is renewed: 30 days from then, its cookie sent again, once a day; an expired one is not", { timeout: 180_000 }, async () => {
+test("a session used near its end is renewed: 30 days from then, its cookie sent again; written once a day, also through an error; an expired one is not", { timeout: 180_000 }, async () => {
   const signedIn = await signIn({ person: { sub: "google-user-renew", email: "renew@example.com", name: "Renew" } });
   const hash = createHash("sha256").update(signedIn.session.value).digest("hex");
   const endInD1 = () => Date.parse(d1(`SELECT expires_at FROM sessions WHERE token_sha256 = '${hash}'`)[0].expires_at);
@@ -248,13 +248,17 @@ test("a session used near its end is renewed: 30 days from then, its cookie sent
     assert.ok(cookie.attributes.includes(attribute), `renewed cookie: ${attribute}`);
   }
   assert.equal(renewed.headers.get("access-control-allow-credentials"), "true", "so the browser keeps it");
+  // The Worker's clock (workerd) and this one may differ a little: 2 s either way.
   const end = endInD1();
-  assert.ok(end >= before + 30 * DAY_MS - 1000 && end <= after + 30 * DAY_MS, `D1: 30 days from now, not ${new Date(end).toISOString()}`);
+  assert.ok(end >= before + 30 * DAY_MS - 2000 && end <= after + 30 * DAY_MS + 2000, `D1: 30 days from now, not ${new Date(end).toISOString()}`);
 
-  // Again the same day: nothing changes.
+  // Again the same day: nothing written, and the answer sends the cookie with the time it has left.
   const again = await me(signedIn.cookie);
   assert.equal(again.status, 200);
-  assert.equal(cookiesOf({ headers: again.headers })["__Host-dl_session"], undefined);
+  const resent = cookiesOf({ headers: again.headers })["__Host-dl_session"];
+  assert.equal(resent?.value, signedIn.session.value);
+  const left = Number(resent.attributes.find((attribute) => attribute.startsWith("max-age=")).slice(8));
+  assert.ok(Math.abs(left * 1000 - (end - Date.now())) <= 3000, `max-age ${left}`);
   assert.equal(endInD1(), end);
 
   // The home routes renew it as well.
@@ -264,6 +268,19 @@ test("a session used near its end is renewed: 30 days from then, its cookie sent
   assert.equal(cookiesOf(homes)["__Host-dl_session"]?.value, signedIn.session.value);
   assert.equal(homes.headers.get("access-control-allow-credentials"), "true");
   assert.ok(endInD1() > Date.now() + 29 * DAY_MS);
+
+  // D1 fails while a request is answered (its members table moved away for a moment): the Worker's
+  // error answer still sends the cookie.
+  d1("ALTER TABLE members RENAME TO members_away");
+  let failed;
+  try {
+    failed = await get("/v1/homes", { cookie: signedIn.cookie, origin: APP });
+  } finally {
+    d1("ALTER TABLE members_away RENAME TO members");
+  }
+  assert.equal(failed.status, 500);
+  assert.equal((await failed.json()).code, "INTERNAL_ERROR");
+  assert.equal(cookiesOf(failed)["__Host-dl_session"]?.value, signedIn.session.value);
 
   // An expired session stays expired.
   const ended = new Date(Date.now() - 60_000).toISOString();

@@ -571,7 +571,8 @@ async function start() {
   restoreSaved();
   applyLanguage();
   startPwa();
-  startAccount();
+  // A device linked to its home through the account asks who is signed in at each start (1.13.2).
+  startAccount({ linked: Boolean(savedRemote()) });
   watchDeviceRequests();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
   if (reachable()) {

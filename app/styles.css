@@ -1054,7 +1054,9 @@ select:disabled {
   padding-block: 8px;
 }
 
-.banner-signed-out-outcome {
+/* A sign-in that did not work, said where its button was (Home's notice, the banner, the screen). */
+.sign-in-outcome {
+  display: block;
   font-weight: 600;
 }
 

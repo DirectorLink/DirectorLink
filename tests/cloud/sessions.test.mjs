@@ -1,10 +1,11 @@
 // Sign-ins that renew while used (cloud/src/accounts.js, 1.13.2, ADR-089), in Node: the account and
 // home routes on D1's SQL (node:sqlite with the Worker's own migrations) and a clock the tests move.
-// A session used a day or more after its last renewal lasts 30 days from then, and the answer sends
-// its cookie again (the same token); at most once a day, also for requests at once; a session nobody
-// uses for 30 days ends, and an expired one stays expired; Sign out everywhere and Delete account
-// still end a renewed one; never past a year from the sign-in. The same end to end under
-// `wrangler dev`: tests/cloud/accounts.test.mjs.
+// A session used a day or more after its last renewal lasts 30 days from then, and from then on every
+// answer that uses it sends its cookie again (the same token, the time it has left), so a lost answer
+// costs nothing; D1 is written at most once a day, also for requests at once, and a write D1 refuses
+// is skipped; a session nobody uses for 30 days ends, and an expired one stays expired; Sign out
+// everywhere and Delete account still end a renewed one; never past a year from the sign-in. The
+// same end to end under `wrangler dev`: tests/cloud/accounts.test.mjs.
 //   node --test tests/cloud/sessions.test.mjs
 
 import assert from "node:assert/strict";
@@ -34,14 +35,22 @@ after(() => {
 const iso = (ms) => new Date(ms).toISOString();
 
 // D1 as the Worker uses it (prepare, bind, first, all, run, batch), on SQLite with the migrations.
-// `renewals`: the UPDATEs of a session's end sent, and how many rows they changed.
+// `renewals`: the UPDATEs of a session's end sent, and how many rows they changed. `failRenewals`:
+// those UPDATEs throw, as when D1 cannot write; `beforeRenewal()`: runs once just before the next
+// one (another request's work at that moment).
 function fakeD1() {
   const db = new DatabaseSync(":memory:");
   for (const name of readdirSync(MIGRATIONS).filter((file) => file.endsWith(".sql")).sort()) {
     db.exec(readFileSync(new URL(name, MIGRATIONS), "utf8"));
   }
-  const d1 = { db, renewals: { sent: 0, changed: 0 } };
+  const d1 = { db, renewals: { sent: 0, changed: 0 }, failRenewals: false, beforeRenewal: null };
   const execute = (sql, values) => {
+    if (/^\s*UPDATE sessions SET expires_at\b/i.test(sql)) {
+      const before = d1.beforeRenewal;
+      d1.beforeRenewal = null;
+      before?.();
+      if (d1.failRenewals) throw new Error("D1_ERROR: database is read only");
+    }
     const statement = db.prepare(sql);
     if (/^\s*SELECT\b/i.test(sql) || /\bRETURNING\b/i.test(sql)) {
       return { results: statement.all(...values), meta: { changes: 0 } };
@@ -127,7 +136,7 @@ function setup() {
   return { DB, env: { DB, APP_ORIGINS: APP } };
 }
 
-test("a session used within a day of its last renewal is left as it is: no write, no cookie", async () => {
+test("a fresh sign-in is left as it is for a day: no write, and the cookie its page load set is not sent again", async () => {
   const { DB, env } = setup();
   const session = account(DB).signIn();
   for (const later of [MINUTE, 6 * HOUR, DAY - MINUTE]) {
@@ -179,31 +188,100 @@ test("the home routes renew it too, and every request to them sends the cookie a
   assert.equal(sessionCookie(refused)?.value, session.token);
 });
 
-test("renewed at most once a day, also when the app's requests come at once", async () => {
+const maxAgeOf = (response) => Number(sessionCookie(response)?.attributes.find((attribute) => attribute.startsWith("max-age="))?.slice(8));
+
+test("renewed at most once a day, also when the app's requests come at once; every answer has the new end", async () => {
   const { DB, env } = setup();
   const session = account(DB).signIn();
   now = START + DAY + MINUTE;
-  // Starting away from home the app sends a dozen requests together: one write changes the session,
-  // and only its answer sends the cookie.
+  // Starting away from home the app sends a dozen requests together: one write changes the session;
+  // the others' writes change nothing, and they read the end it wrote. Every answer sends it.
   const answers = await Promise.all(Array.from({ length: 6 }, (_, index) => call(env, index % 2 ? "/v1/me" : "/v1/homes", session)));
   assert.deepEqual(answers.map((answer) => answer.status), Array(6).fill(200));
-  assert.equal(answers.filter((answer) => sessionCookie(answer)).length, 1, "one answer sends the cookie");
   assert.equal(DB.renewals.changed, 1, "one D1 write changed it");
   assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000));
+  for (const answer of answers) {
+    assert.equal(sessionCookie(answer)?.value, session.token);
+    assert.equal(maxAgeOf(answer), SESSION_SECONDS, "the new end, never the old one");
+  }
 
-  // The rest of that day: nothing written, no cookie.
+  // The rest of that day: nothing written, and each answer sends the cookie with the time left.
   const sent = DB.renewals.sent;
   for (const later of [HOUR, 12 * HOUR, DAY - 2 * MINUTE]) {
     now = START + DAY + MINUTE + later;
-    assert.equal(sessionCookie(await call(env, "/v1/me", session)), undefined);
+    const answer = await call(env, "/v1/me", session);
+    assert.equal(sessionCookie(answer)?.value, session.token);
+    assert.equal(maxAgeOf(answer), SESSION_SECONDS - later / 1000);
   }
   assert.equal(DB.renewals.sent, sent, "no write at all within the day");
 
   // The next day, once.
   now = START + 2 * DAY + 2 * MINUTE;
-  assert.equal(sessionCookie(await call(env, "/v1/homes", session))?.value, session.token);
-  assert.equal(sessionCookie(await call(env, "/v1/homes", session)), undefined);
+  assert.equal(maxAgeOf(await call(env, "/v1/homes", session)), SESSION_SECONDS);
+  assert.equal(maxAgeOf(await call(env, "/v1/homes", session)), SESSION_SECONDS);
   assert.equal(DB.renewals.changed, 2);
+});
+
+test("an answer that was lost costs nothing: the next one that uses the session carries its cookie", async () => {
+  const { DB, env } = setup();
+  const session = account(DB).signIn();
+  // Renewed by a request whose answer never reached the browser (a dropped connection, an error).
+  now = START + 3 * DAY;
+  await call(env, "/v1/me", session);
+  const end = Date.parse(endOf(DB, session));
+  // Hours later the browser still holds the old cookie; the next answer sends the new end.
+  now += 5 * HOUR;
+  const sent = DB.renewals.sent;
+  const answer = await call(env, "/v1/homes", session);
+  assert.equal(sessionCookie(answer)?.value, session.token);
+  assert.equal(maxAgeOf(answer) * 1000, end - now, "the time the session has left");
+  assert.equal(DB.renewals.sent, sent, "without writing");
+});
+
+test("a renewal D1 cannot write is skipped: the request is answered, the log says so without the token, and the next use renews it", async () => {
+  const { DB, env } = setup();
+  const session = account(DB).signIn();
+  now = START + 20 * DAY;
+  DB.failRenewals = true;
+  const lines = [];
+  const consoleLog = console.log;
+  console.log = (line) => lines.push(String(line));
+  let response;
+  let homes;
+  try {
+    response = await call(env, "/v1/me", session);
+    homes = await call(env, "/v1/homes", session);
+  } finally {
+    console.log = consoleLog;
+  }
+  assert.equal(response.status, 200, "signed in as before");
+  assert.equal(homes.status, 200, "the home routes too");
+  assert.equal(sessionCookie(response), undefined, "nothing renewed, nothing to send");
+  assert.equal(endOf(DB, session), iso(START + SESSION_SECONDS * 1000));
+  const logged = lines.map((line) => JSON.parse(line)).filter((line) => line.event === "session_not_renewed");
+  assert.equal(logged.length, 2, lines.join("\n"));
+  assert.match(logged[0].error, /read only/);
+  for (const secret of [session.token, session.hash, "@example.com"]) {
+    assert.ok(!lines.join("\n").includes(secret), "no token, no email");
+  }
+
+  // D1 writes again: the next use renews it.
+  DB.failRenewals = false;
+  now += HOUR;
+  assert.equal(maxAgeOf(await call(env, "/v1/me", session)), SESSION_SECONDS);
+  assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000));
+});
+
+test("a session ended while a request renewed it: its answer sends no cookie", async () => {
+  const { DB, env } = setup();
+  const session = account(DB).signIn();
+  now = START + 4 * DAY;
+  // Sign out everywhere on another device, between this request's read and its write.
+  DB.beforeRenewal = () => DB.db.prepare("DELETE FROM sessions WHERE token_sha256 = ?").run(session.hash);
+  const response = await call(env, "/v1/me", session);
+  assert.equal(sessionCookie(response), undefined);
+  assert.equal(endOf(DB, session), null);
+  assert.equal((await call(env, "/v1/me", session)).status, 401);
 });
 
 test("used every few days it never ends; left unused for 30 days it does, and stays ended", async () => {
@@ -285,7 +363,7 @@ test("never past a year from the sign-in: the last renewal reaches that day, the
   // At the cap nothing more is written, and after it the session has ended.
   const sent = DB.renewals.sent;
   now = cap - HOUR;
-  assert.equal(sessionCookie(await call(env, "/v1/me", session)), undefined);
+  assert.equal(maxAgeOf(await call(env, "/v1/me", session)), HOUR / 1000, "the cookie ends with it");
   assert.equal(DB.renewals.sent, sent);
   now = cap + MINUTE;
   assert.equal((await call(env, "/v1/me", session)).status, 401);

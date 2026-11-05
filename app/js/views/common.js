@@ -1,12 +1,12 @@
 // Page header, connection chip and the states every screen shares (not connected, loading,
 // controller unreachable, signed out of the account).
 
-import { loadProviders, providersStatus, refreshProviders, signIn, signInProviders } from "../account.js";
+import { accountDeleted, loadProviders, providersStatus, refreshProviders, signIn, signInProviders } from "../account.js";
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { savedRemote } from "../remote.js";
-import { connect } from "../session.js";
+import { connect, homeRoutes } from "../session.js";
 import { notify, state, ui } from "../state.js";
 import { emptyState } from "../components.js";
 import { commandButton } from "./command.js";
@@ -114,10 +114,31 @@ export function signInButtons({ hash, key, style = "button-primary", size = "", 
 }
 
 // Signed out of the account on a device that reaches its home through it (1.13.2, ADR-089): away
-// from the home network the app can't reach the home. At home it still works directly, so this
-// never stands in the way.
+// from the home network the app can't reach the home (on iPhone and iPad without Direct HTTPS, not
+// even at home: signedOutText). Never while requests through the account work, whatever the app last
+// heard (account.js asks again then), nor once this device deleted its account: signing in again
+// would not bring the home back.
 export function signedOutAway() {
-  return Boolean(state.apiKey && savedRemote() && state.account.status === "signed-out");
+  return Boolean(
+    state.apiKey &&
+      savedRemote() &&
+      state.account.status === "signed-out" &&
+      !accountDeleted() &&
+      !(state.transport === "remote" && state.status === "connected")
+  );
+}
+
+// What being signed out means on this device: no way to the home away from it; or, without a way to
+// it on the home network (an iPhone or iPad without Direct HTTPS), none from here.
+export function signedOutText() {
+  return homeRoutes().length ? t("signedOut.notice") : t("signedOut.noticeHere");
+}
+
+// A sign-in that did not work and came back here (cancelled, took too long, failed, no verified
+// email): said where its button was, as Settings → Account does. `tag`: "span" inside a line.
+export function signInOutcome(tag = "p") {
+  const notice = state.account.notice;
+  return ["cancelled", "expired", "failed", "unverified"].includes(notice) ? h(tag, { class: "sign-in-outcome", dataset: { key: "sign-in-outcome" } }, t(`settings.account.notice.${notice}`)) : null;
 }
 
 // The connection failed because the account is signed out (session.js connectionNotice).
@@ -138,11 +159,8 @@ export function signedOutNotice() {
     h(
       "div",
       { class: "banner-signed-out-body" },
-      h("p", { id: "signed-out-text" }, t("signedOut.notice")),
-      // A sign-in that did not work comes back here: say so.
-      ["cancelled", "expired", "failed", "unverified"].includes(state.account.notice)
-        ? h("p", { class: "banner-signed-out-outcome" }, t(`settings.account.notice.${state.account.notice}`))
-        : null,
+      h("p", { id: "signed-out-text" }, signedOutText()),
+      signInOutcome(),
       h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/", key: "signed-out-sign-in", style: "", size: "button-small" }))
     ),
     iconButton("close", t("signedOut.dismiss"), {
@@ -168,7 +186,7 @@ export function staleBanner() {
     "div",
     { class: "banner banner-error", role: "status" },
     icon("wifiOff"),
-    h("span", {}, remote ? state.notice.text : t("status.staleBanner")),
+    h("span", {}, remote ? state.notice.text : t("status.staleBanner"), signedOut ? signInOutcome("span") : null),
     signedOut
       ? signInProviders()?.length === 1
         ? signInButtons({ hash: "#/", key: "stale-sign-in", style: "", size: "button-small" })
@@ -196,17 +214,15 @@ export function notReadyState() {
 export function unreachableState() {
   // Signed out of the account (1.13.2): said as such, with the sign-in; Retry for when back home.
   if (failedSignedOut()) {
-    return emptyState(
-      "user",
-      t("signedOut.title"),
-      state.notice.text,
+    return emptyState("user", t("signedOut.title"), state.notice.text, [
+      signInOutcome(),
       h(
         "div",
         { class: "button-row" },
         h("div", { class: "sign-in-buttons" }, signInButtons({ hash: "#/", key: "unreachable-sign-in" })),
         h("button", { type: "button", class: "button button-secondary", dataset: { key: "retry" }, onclick: () => connect() }, icon("refresh"), t("common.retry"))
-      )
-    );
+      ),
+    ]);
   }
   return emptyState(
     "wifiOff",

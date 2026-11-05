@@ -40,6 +40,7 @@ export default {
   },
   signedOut: {
     notice: "Non hai effettuato l’accesso al tuo account, quindi l’app non può raggiungere la tua casa quando sei fuori.",
+    noticeHere: "Non hai effettuato l’accesso al tuo account, quindi l’app non può raggiungere la tua casa da qui.",
     title: "Accesso non effettuato",
     chip: "Accesso non effettuato",
     dismiss: "Nascondi per ora",
@@ -2445,6 +2446,7 @@ export default {
         signedOutEverywhere: "Uscita effettuata su tutti i dispositivi.",
         signOutEverywhereExpired: "Questa sessione era già terminata, quindi nessun dispositivo è stato disconnesso. Accedi di nuovo, poi esci ovunque.",
         signOutEverywhereFailed: "Non è stato possibile disconnettere gli altri dispositivi. Controlla la connessione a internet e riprova.",
+        signOutFailed: "L’accesso all’account è ancora attivo: l’uscita non ha raggiunto i server di DirectorLink. Controlla la connessione a Internet e riprova.",
         deleted: "Il tuo account è stato eliminato.",
         deleteFailed: "Impossibile eliminare l’account. Riprova.",
       },

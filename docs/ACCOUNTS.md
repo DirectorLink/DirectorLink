@@ -265,11 +265,14 @@ it, runs it as that key (with that key's role), locks the answer and sends it ba
 
 The account's session lasts 30 days from the last time the app used it, at home or away (since
 1.13.2, ADR-089; 30 days from the sign-in before). Signed out (a device not used for 30 days, Sign
-out everywhere, a year after signing in), the app still works at home, and says why it can't reach
-the home away from it: Home shows "You're signed out of your account, so the app can't reach your
-home away from it." with the sign-in buttons, until hidden for that start of the app, and so does
-Settings → Account; a request through the account says "You're signed out", not that the home
-can't be reached.
+out everywhere, a year after signing in), the app still works at home, except on iPhone and iPad
+without Direct HTTPS, which reach the home only through the account; and it says why it can't reach
+the home: Home shows "You're signed out of your account, so the app can't reach your home away from
+it." ("from here" on such an iPhone or iPad) with the sign-in buttons, until hidden for that start
+of the app, and so does Settings → Account; a request through the account says "You're signed out",
+not that the home can't be reached. Sign out counts only once the account service has ended the
+session; until then the device stays signed in, says so, and sends the sign-out again at its next
+start. After Delete account nothing asks to sign in again, which would not bring the home back.
 
 ### 3. Invitations: family, and the owner's own other devices
 
@@ -738,8 +741,9 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie for
 `api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days from the last time the
 app used it: a request a day or more after the last renewal moves the session's end to 30 days
-from then and sends the cookie again, the same token (1.13.2, ADR-089); a year after the sign-in it
-ends all the same. It can be ended from the app, on this device or on every device. Expired
+from then and sends the cookie again, the same token, and from then on every answer that uses it
+sends the cookie with the time it has left (1.13.2, ADR-089); a year after the sign-in it ends all
+the same. It can be ended from the app, on this device or on every device. Expired
 sessions and unfinished sign-ins are deleted every day. Deleting the account deletes its sessions,
 memberships, owned homes, invitations and requests to join.
 

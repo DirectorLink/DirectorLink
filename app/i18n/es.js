@@ -40,6 +40,7 @@ export default {
   },
   signedOut: {
     notice: "Se cerró la sesión de tu cuenta, así que la app no puede conectar con tu casa cuando estás fuera.",
+    noticeHere: "Se cerró la sesión de tu cuenta, así que la app no puede conectar con tu casa desde aquí.",
     title: "Sesión cerrada",
     chip: "Sesión cerrada",
     dismiss: "Ocultar por ahora",
@@ -2445,6 +2446,7 @@ export default {
         signedOutEverywhere: "Sesión cerrada en todos los dispositivos.",
         signOutEverywhereExpired: "Esta sesión ya había terminado, así que no se cerró la sesión en ningún dispositivo. Vuelve a iniciar sesión y luego cierra sesión en todas partes.",
         signOutEverywhereFailed: "No se pudo cerrar la sesión en los otros dispositivos. Comprueba la conexión a internet y vuelve a intentarlo.",
+        signOutFailed: "Sigues con la sesión iniciada: el cierre de sesión no llegó a los servidores de DirectorLink. Comprueba la conexión a internet y vuelve a intentarlo.",
         deleted: "Se eliminó tu cuenta.",
         deleteFailed: "No se pudo eliminar la cuenta. Inténtalo de nuevo.",
       },

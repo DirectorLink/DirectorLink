@@ -1,7 +1,12 @@
 // Signed out of the account on a device linked to its home (1.13.2, ADR-089): Home says so with the
 // same sign-in as Settings → Account, until hidden for this start of the app, and only then; Settings
-// → Account says it too; a connection refused because the account's session ended says "signed out"
-// (the text, the chip and the screen), not that the home can't be reached; in Hebrew too.
+// → Account says it too ("from here" on a device with no way to its home on the home network); a
+// connection refused because the account's session ended says "signed out" (the text, the chip and
+// the screen), not that the home can't be reached, and a sign-in that did not work says so there
+// too; in Hebrew too. Signing out only once the account service ended the session (else still signed
+// in, with Retry, and sent again first at the next start); never "signed out" while requests through
+// the account work; a linked device asks at start rather than assume; after Delete account nothing
+// asks to sign in.
 //   node --test tests/app/
 
 import assert from "node:assert/strict";
@@ -96,8 +101,9 @@ globalThis.history = { state: null, replaceState() {}, back() {} };
 
 const { state, ui } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
-const { RemoteError, forgetRemote, saveRemote } = await import("../../app/js/remote.js");
-const { connect, errorText, stopPolling } = await import("../../app/js/session.js");
+const { RemoteError, forgetRemote, listAccountHomes, saveRemote } = await import("../../app/js/remote.js");
+const { connect, errorText, homeRoutes, stopPolling } = await import("../../app/js/session.js");
+const { deleteAccount, signOut, startAccount } = await import("../../app/js/account.js");
 const { homeView } = await import("../../app/js/views/home.js");
 const { settingsView } = await import("../../app/js/views/settings.js");
 const { connectionChip } = await import("../../app/js/views/common.js");
@@ -301,7 +307,215 @@ test("in Hebrew too", async () => {
     assert.match(he.errors.remote.signIn, /^אינכם מחוברים לחשבון/);
     Object.assign(state, { status: "unreachable", notice: { kind: "error", text: he.errors.remote.signIn, remote: true, signedOut: true } });
     assert.equal(byClass(connectionChip(), "status-text").textContent, he.signedOut.chip);
+    home();
+    state.host = "";
+    assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out")?.textContent, he.signedOut.noticeHere);
+    state.account = { ...SIGNED_IN, notice: "signOutFailed" };
+    assert.ok(find(settingsView({ page: "account" }), (node) => node.textContent === he.settings.account.notice.signOutFailed));
+    assert.match(he.settings.account.notice.signOutFailed, /^[א-ת]/);
   } finally {
     await setLanguage("en");
   }
+});
+
+// ---- signing out, starting, deleting the account ------------------------------------------------
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
+const ME = { id: "u1", email: "dana@example.com", name: "Dana", providers: ["google"], sign_in_providers: ["google", "apple"] };
+const FRESH = { status: "unknown", user: null, notice: null, busy: false };
+// The account service answers `routes` ("METHOD /path": { status, body } or an Error to throw);
+// anything else cannot be reached.
+const route = (routes) => (url, init = {}) => {
+  const key = `${init.method || "GET"} ${new URL(url).pathname}`;
+  const reply = routes[key];
+  if (!reply) throw new TypeError(`offline in this test: ${key}`);
+  if (reply instanceof Error) throw reply;
+  return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status, headers: { "content-type": "application/json" } });
+};
+const offline = () => {
+  throw new TypeError("offline in this test");
+};
+
+test("a sign-out that does not reach the account service keeps the device signed in, says so with Retry, and is sent first at the next start", async () => {
+  for (const failure of [new TypeError("Failed to fetch"), { status: 500, body: { code: "INTERNAL_ERROR" } }]) {
+    home();
+    state.account = { ...SIGNED_IN };
+    stored.set("directorlink.account", "1");
+    answer = route({ "POST /auth/logout": failure });
+    await signOut();
+    assert.equal(state.account.status, "signed-in", "the session goes on, so the device is still signed in");
+    assert.equal(state.account.notice, "signOutFailed");
+    assert.equal(stored.get("directorlink.account"), "1");
+    assert.equal(stored.get("directorlink.signOut"), "1", "sent again at the next start");
+    assert.equal(notice(), null, "Home does not say signed out");
+  }
+  const page = settingsView({ page: "account" });
+  assert.ok(find(page, (node) => node.textContent === en.settings.account.notice.signOutFailed));
+  assert.ok(byKey(page, "account-sign-out"), "Sign out is still there");
+
+  // Retry, as Sign out does: the account service ends it now.
+  answer = route({ "POST /auth/logout": { status: 204 } });
+  byKey(page, "account-sign-out-retry").dispatch("click");
+  await settle();
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(stored.has("directorlink.signOut"), false);
+
+  // A sign-out still to send goes first at the next start.
+  state.account = { ...SIGNED_IN };
+  stored.set("directorlink.account", "1");
+  answer = route({ "POST /auth/logout": new TypeError("Failed to fetch") });
+  await signOut();
+  answer = route({ "POST /auth/logout": { status: 204 }, "GET /v1/me": { status: 200, body: ME } });
+  asked.length = 0;
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.deepEqual(asked, ["POST /auth/logout"]);
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(stored.has("directorlink.signOut"), false);
+  assert.equal(stored.has("directorlink.account"), false);
+
+  // Still not reachable at the next start: as the account service says, with the notice again.
+  stored.set("directorlink.signOut", "1");
+  answer = route({ "POST /auth/logout": { status: 503, body: { code: "UNAVAILABLE" } }, "GET /v1/me": { status: 200, body: ME } });
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(state.account.notice, "signOutFailed");
+  assert.equal(stored.get("directorlink.signOut"), "1");
+  stored.delete("directorlink.signOut");
+  answer = offline;
+});
+
+test("a sign-out the account service confirms signs out: 204, or 401 when the session had ended", async () => {
+  for (const reply of [{ status: 204 }, { status: 401, body: { code: "NOT_SIGNED_IN" } }]) {
+    home();
+    state.account = { ...SIGNED_IN };
+    stored.set("directorlink.account", "1");
+    answer = route({ "POST /auth/logout": reply });
+    await signOut();
+    assert.equal(state.account.status, "signed-out", String(reply.status));
+    assert.equal(state.account.notice, null);
+    assert.equal(stored.has("directorlink.account"), false);
+    assert.equal(stored.has("directorlink.signOut"), false);
+  }
+  answer = offline;
+});
+
+test("while requests through the account work, the app never says signed out, and asks the account again", async () => {
+  home();
+  // The app thought it signed out (a start that assumed it, a sign-in in another tab), but this
+  // device's session works: connected through the account, nothing says signed out.
+  Object.assign(state, { transport: "remote", status: "connected" });
+  assert.equal(notice(), null);
+  assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out"), null);
+  state.transport = "lan";
+  answer = route({ "GET /v1/homes": { status: 200, body: { items: [] } }, "GET /v1/me": { status: 200, body: ME } });
+  asked.length = 0;
+  await listAccountHomes();
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/homes", "GET /v1/me"], "an answer through the account: asked again");
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(notice(), null);
+  answer = offline;
+});
+
+test("a sign-in that did not work says so on the screen and the banner that offer it, too", () => {
+  home();
+  Object.assign(state, {
+    status: "unreachable",
+    loaded: false,
+    transport: "remote",
+    notice: { kind: "error", text: en.errors.remote.signIn, remote: true, signedOut: true },
+    account: { ...SIGNED_OUT, notice: "failed" },
+  });
+  assert.equal(byKey(homeView({}), "sign-in-outcome")?.textContent, en.settings.account.notice.failed, "the screen");
+  state.loaded = true;
+  const screen = homeView({});
+  assert.equal(byKey(screen, "sign-in-outcome")?.textContent, en.settings.account.notice.failed, "the banner");
+  assert.equal(byKey(screen, "signed-out-notice"), null, "said once");
+  state.account = { ...SIGNED_OUT, notice: "unverified" };
+  assert.equal(byKey(homeView({}), "sign-in-outcome")?.textContent, en.settings.account.notice.unverified);
+  state.account = { ...SIGNED_OUT, notice: "deleted" };
+  assert.equal(byKey(homeView({}), "sign-in-outcome"), null, "only a sign-in's outcome");
+});
+
+test("after Delete account nothing asks to sign in (it would not bring the home back), at the next start either, until a sign-in", async () => {
+  home();
+  state.account = { ...SIGNED_IN };
+  answer = route({ "DELETE /v1/me": { status: 204 } });
+  assert.equal(await deleteAccount(), true);
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(state.account.notice, "deleted");
+  assert.equal(notice(), null);
+  assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out"), null);
+  assert.ok(byKey(settingsView({ page: "account" }), "account-sign-in"), "signing in stays possible");
+
+  answer = route({ "GET /v1/me": { status: 401, body: { code: "NOT_SIGNED_IN" } } });
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.equal(state.account.status, "signed-out");
+  assert.equal(notice(), null, "the next start");
+
+  // Signed in again: from then on, signed out means the notice again.
+  location.href = "https://app.directorlink.io/?signin=ok#/";
+  answer = route({ "GET /v1/me": { status: 200, body: ME } });
+  try {
+    startAccount({ linked: true });
+    await settle();
+  } finally {
+    location.href = "https://app.directorlink.io/#/";
+  }
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(stored.has("directorlink.accountDeleted"), false);
+  state.account = { ...SIGNED_OUT };
+  assert.ok(notice());
+  answer = offline;
+});
+
+test("a linked device asks the account at start rather than assume it signed out; back from a sign-in it is remembered at once", async () => {
+  home();
+  stored.delete("directorlink.account");
+  answer = route({ "GET /v1/me": { status: 200, body: ME } });
+  asked.length = 0;
+  state.account = { ...FRESH };
+  startAccount({ linked: true });
+  await settle();
+  assert.deepEqual(asked, ["GET /v1/me"]);
+  assert.equal(state.account.status, "signed-in");
+  assert.equal(notice(), null);
+
+  // Not linked and not signed in here: nothing is asked (a device that never signed in asks no server).
+  stored.delete("directorlink.account");
+  asked.length = 0;
+  state.account = { ...FRESH };
+  startAccount({ linked: false });
+  await settle();
+  assert.deepEqual(asked, []);
+  assert.equal(state.account.status, "signed-out");
+
+  // Back from a sign-in whose first look gets no answer: remembered, so the next start asks.
+  location.href = "https://app.directorlink.io/?signin=ok#/";
+  answer = offline;
+  try {
+    state.account = { ...FRESH };
+    startAccount({ linked: false });
+    await settle();
+  } finally {
+    location.href = "https://app.directorlink.io/#/";
+  }
+  assert.equal(state.account.status, "unavailable");
+  assert.equal(stored.get("directorlink.account"), "1");
+});
+
+test("without a way to its home on the home network (iPhone or iPad without Direct HTTPS), it says from here", () => {
+  home();
+  state.host = "";
+  assert.deepEqual(homeRoutes(), []);
+  assert.equal(byClass(notice(), "banner-signed-out-body").children[0].textContent, en.signedOut.noticeHere);
+  assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out")?.textContent, en.signedOut.noticeHere);
+  state.host = "192.0.2.10";
+  assert.equal(byKey(settingsView({ page: "account" }), "account-signed-out")?.textContent, en.signedOut.notice);
 });
