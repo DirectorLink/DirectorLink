@@ -3,19 +3,29 @@
 // A session used a day or more after its last renewal lasts 30 days from then, and from then on every
 // answer that uses it sends its cookie again (the same token, the time it has left), so a lost answer
 // costs nothing; D1 is written at most once a day, also for requests at once, and a write D1 refuses
-// is skipped; a session nobody uses for 30 days ends, and an expired one stays expired; Sign out
-// everywhere and Delete account still end a renewed one; never past a year from the sign-in. The
-// same end to end under `wrangler dev`: tests/cloud/accounts.test.mjs.
+// is skipped; the Worker's error answer still sends the cookie; a session nobody uses for 30 days
+// ends, and an expired one stays expired; Sign out everywhere and Delete account still end a renewed
+// one; never past a year from the sign-in. The same end to end under `wrangler dev`:
+// tests/cloud/accounts.test.mjs.
 //   node --test tests/cloud/sessions.test.mjs
 
 import assert from "node:assert/strict";
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import { after, test } from "node:test";
 
 import { SESSION_MAX_SECONDS, SESSION_SECONDS, handleAccounts } from "../../cloud/src/accounts.js";
 import { handleHomes } from "../../cloud/src/homes.js";
+
+// The Worker's entry (cloud/src/index.js) for its error answer. Its Durable Object's base class
+// comes from workerd's `cloudflare:workers`, which Node has not; nothing here uses it.
+registerHooks({
+  resolve: (specifier, context, nextResolve) =>
+    specifier === "cloudflare:workers" ? { url: "data:text/javascript,export class DurableObject {}", shortCircuit: true } : nextResolve(specifier, context),
+});
+const { default: worker } = await import("../../cloud/src/index.js");
 
 const APP = "https://app.directorlink.io";
 const API = "https://api.directorlink.io";
@@ -37,14 +47,16 @@ const iso = (ms) => new Date(ms).toISOString();
 // D1 as the Worker uses it (prepare, bind, first, all, run, batch), on SQLite with the migrations.
 // `renewals`: the UPDATEs of a session's end sent, and how many rows they changed. `failRenewals`:
 // those UPDATEs throw, as when D1 cannot write; `beforeRenewal()`: runs once just before the next
-// one (another request's work at that moment).
+// one (another request's work at that moment); `failing`: the queries that throw (a RegExp), as
+// when D1 fails in the middle of a request.
 function fakeD1() {
   const db = new DatabaseSync(":memory:");
   for (const name of readdirSync(MIGRATIONS).filter((file) => file.endsWith(".sql")).sort()) {
     db.exec(readFileSync(new URL(name, MIGRATIONS), "utf8"));
   }
-  const d1 = { db, renewals: { sent: 0, changed: 0 }, failRenewals: false, beforeRenewal: null };
+  const d1 = { db, renewals: { sent: 0, changed: 0 }, failRenewals: false, beforeRenewal: null, failing: null };
   const execute = (sql, values) => {
+    if (d1.failing?.test(sql)) throw new Error("D1_ERROR: internal error");
     if (/^\s*UPDATE sessions SET expires_at\b/i.test(sql)) {
       const before = d1.beforeRenewal;
       d1.beforeRenewal = null;
@@ -270,6 +282,30 @@ test("a renewal D1 cannot write is skipped: the request is answered, the log say
   now += HOUR;
   assert.equal(maxAgeOf(await call(env, "/v1/me", session)), SESSION_SECONDS);
   assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000));
+});
+
+test("a request that fails after renewing its session: the Worker's error answer sends the cookie", async () => {
+  const { DB, env } = setup();
+  const session = account(DB).signIn();
+  now = START + 20 * DAY;
+  // D1 fails on the home list, after the renewal was written.
+  DB.failing = /\bFROM members JOIN homes\b/;
+  const lines = [];
+  const consoleError = console.error;
+  console.error = (line) => lines.push(String(line));
+  let answer;
+  try {
+    answer = await worker.fetch(new Request(`${API}/v1/homes`, { headers: { Cookie: session.cookie, Origin: APP } }), env, { waitUntil() {} });
+  } finally {
+    console.error = consoleError;
+  }
+  assert.equal(answer.status, 500);
+  assert.equal((await answer.json()).code, "INTERNAL_ERROR");
+  assert.equal(endOf(DB, session), iso(now + SESSION_SECONDS * 1000), "renewed");
+  assert.equal(sessionCookie(answer)?.value, session.token, "its cookie, sent again");
+  assert.equal(maxAgeOf(answer), SESSION_SECONDS);
+  assert.deepEqual(lines.map((line) => JSON.parse(line).event), ["worker_error"]);
+  assert.ok(!lines.join("\n").includes(session.token), "no token in the log");
 });
 
 test("a session ended while a request renewed it: its answer sends no cookie", async () => {
