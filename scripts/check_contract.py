@@ -740,6 +740,37 @@ def scenario(client, bridge):
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 204)
     client.check("DELETE", f"/v1/schedules/{hot['id']}", 404)
 
+    # Planning schedules (1.14.0, ADR-090): dawn and dusk, the home's holidays, earliest and latest
+    # times, run late, a skipped next run, and the next seven days.
+    if not all(re.fullmatch(r"\d\d:\d\d", weather["today"][name] or "") for name in ("dawn", "dusk")):
+        fail(f"GET /v1/weather should give today's dawn and dusk: {weather['today']}")
+    holidays = client.check("PUT", "/v1/holidays", 200, body={
+        "items": [{"name": "Trip", "from": "2027-02-01", "to": "2027-02-07"}, {"name": "Independence Day", "from": "2026-04-22", "yearly": True}], "version": 0,
+    })
+    if holidays["version"] != 1 or holidays["items"][1] != {"name": "Independence Day", "from": "2026-04-22", "to": "2026-04-22", "yearly": True}:
+        fail(f"PUT /v1/holidays should keep the list, one day when `to` is left out: {holidays}")
+    client.check("PUT", "/v1/holidays", 409, body={"items": [], "version": 0})
+    client.check("PUT", "/v1/holidays", 400, body={"items": [{"name": "Trip", "from": "2027-02-30"}]})
+    client.check("GET", "/v1/holidays", 200)
+    dusk = client.check("POST", "/v1/schedules", 201, body={
+        "scene_id": scene["id"], "trigger": {"type": "sun", "event": "dusk", "offset": 0, "earliest": "17:30", "latest": "21:00"},
+        "days": [0, 1, 2, 3, 4, 5, 6], "on_holidays": "skip", "run_late": True,
+    })
+    if (dusk["trigger"].get("earliest"), dusk["trigger"].get("latest"), dusk["on_holidays"], dusk["run_late"], dusk["skip"]) != ("17:30", "21:00", "skip", True, None):
+        fail(f"a dusk schedule keeps its limits, holidays and run late: {dusk}")
+    client.check("POST", "/v1/schedules", 400, body={"scene_id": scene["id"], "trigger": {"type": "weather", "kind": "rain"}, "days": [0], "run_late": True})
+    skipped = client.check("POST", f"/v1/schedules/{dusk['id']}/skip", 200)
+    if not (skipped["skip"] and skipped["skip"]["at"]) or skipped["next_run"] == skipped["skip"]["at"]:
+        fail(f"POST /v1/schedules/{{id}}/skip should skip the next run and say the one after: {skipped}")
+    if client.check("DELETE", f"/v1/schedules/{dusk['id']}/skip", 200)["skip"] is not None:
+        fail("DELETE /v1/schedules/{id}/skip should take the skip back")
+    client.check("POST", f"/v1/schedules/{timed['id']}/skip", 409)
+    client.check("POST", "/v1/schedules/deadbeef/skip", 404)
+    client.check("DELETE", "/v1/schedules/nothex/skip", 400)
+    week = client.check("GET", "/v1/schedules/week", 200)
+    if len(week["days"]) != 7 or not any(run["schedule_id"] == dusk["id"] for run in week["days"][1]["runs"]):
+        fail(f"GET /v1/schedules/week should give seven days with tomorrow's dusk: {week['days'][1]}")
+
     # The Jewish calendar (1.2.0) ships off, and the API says so: nothing is worked out, and
     # nothing that uses it can be set. Ordinary schedules run as usual on Shabbat.
     features = client.check("GET", "/v1/system", 200)["features"]
@@ -895,6 +926,10 @@ def scenario(client, bridge):
     client.check("POST", "/v1/schedules", 403, body={"scene_id": scene["id"], "trigger": {"type": "time", "at": "06:45"}, "days": [0]})
     client.check("PATCH", f"/v1/schedules/{timed['id']}", 403, body={"enabled": True})
     client.check("DELETE", f"/v1/schedules/{timed['id']}", 403)
+    client.check("POST", f"/v1/schedules/{timed['id']}/skip", 403)
+    client.check("GET", "/v1/schedules/week", 403)
+    client.check("GET", "/v1/holidays", 403)
+    client.check("PUT", "/v1/holidays", 403, body={"items": []})
     client.check("GET", "/v1/calendar", 200)
     client.check("PATCH", "/v1/calendar/settings", 403, body={"havdalah_minutes": 50})
     # Each key its own alert choices (1.7.0, ADR-050): among what its person may get (ADR-054).

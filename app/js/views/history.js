@@ -352,7 +352,9 @@ export function outcomeText(entry) {
     return [reason, entry.note ? t("history.linkLabel", { label: isolate(entry.note) }) : null].filter(Boolean).join(" · ");
   }
   if (entry.kind === "schedule" && entry.outcome === "skipped") {
-    return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather"].includes(entry.reason) ? entry.reason : "other"}`);
+    // 1.14.0: a run a person skipped, and one on the home's holidays (with the holiday's name).
+    if (entry.reason === "holiday" && entry.note) return t("history.reason.holidayNamed", { name: isolate(entry.note) });
+    return t(`history.reason.${["shabbat", "paused", "calendar_off", "only_if", "no_weather", "skip", "holiday"].includes(entry.reason) ? entry.reason : "other"}`);
   }
   if (entry.kind === "system" && entry.action === "cloud_backup" && entry.outcome === "failed") {
     // Back up now refused for today: the account still takes the nightly backup.

@@ -26,7 +26,7 @@ import { savedRemote } from "./js/remote.js";
 import { connect, reachable, restoreSaved, whenConnected } from "./js/session.js";
 import { saveProfilePrefs, syncProfile } from "./js/profile.js";
 import { loadScenes } from "./js/scenes.js";
-import { loadSchedules } from "./js/schedules.js";
+import { loadHolidays, loadSchedules, loadWeek } from "./js/schedules.js";
 import { findDevice, state, subscribe, ui } from "./js/state.js";
 import { applyTheme, palettePreference, setPalette, setTextSize, setTheme, textSizePreference, themePreference, watchSystemTheme } from "./js/theme.js";
 import { camerasView } from "./js/views/cameras.js";
@@ -39,6 +39,8 @@ import { resetSceneEditor, sceneEditorView, sceneReturnKey, scenesView } from ".
 import { leaveSceneLink, sceneLinksView, sceneLinkView } from "./js/views/scene-links.js";
 import { askLinkView, leaveAskLink, leaveOpenRequest, openRequestView } from "./js/views/ask-links.js";
 import { enterSchedules, keepWeatherFresh, resetScheduleEditor, scheduleEditorView, schedulesView } from "./js/views/schedules.js";
+import { scheduleWeekView } from "./js/views/schedule-week.js";
+import { holidaysView, resetHolidays } from "./js/views/holidays.js";
 import { SETTINGS_PAGES, resetCalendarSettings, settingsRowKey, settingsView } from "./js/views/settings.js";
 import { checkUpdates, updatesSignature } from "./js/views/updates.js";
 import { enterHomeWeather, homeWeatherText, keepHomeWeather } from "./js/weather.js";
@@ -54,6 +56,9 @@ const TABS = [
 ];
 
 // ---- routing -------------------------------------------------------------------------------
+
+// The screens under Scenes → Schedules: the weather is read while one is open.
+const SCHEDULE_ROUTES = ["schedules", "schedule", "scheduleWeek", "holidays"];
 
 function parseRoute() {
   const parts = (window.location.hash.replace(/^#/, "") || "/").split("/").filter(Boolean);
@@ -92,6 +97,13 @@ function parseRoute() {
   }
   if (parts[0] === "schedule" && /^(new|[0-9a-f]{8})$/.test(parts[1] || "")) {
     return { name: "schedule", id: parts[1], tab: "scenes" };
+  }
+  // Schedules → Next 7 days and Holidays (1.14.0, ADR-090).
+  if (parts[0] === "schedules" && parts[1] === "week") {
+    return { name: "scheduleWeek", tab: "scenes" };
+  }
+  if (parts[0] === "schedules" && parts[1] === "holidays") {
+    return { name: "holidays", tab: "scenes" };
   }
   if (parts[0] === "schedules") {
     return { name: "schedules", tab: "scenes" };
@@ -147,7 +159,15 @@ window.addEventListener("hashchange", () => {
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
   // The weather is read while Schedules is open.
-  if ((route.name === "schedules" || route.name === "schedule") && previous.name !== "schedules" && previous.name !== "schedule") enterSchedules();
+  if (SCHEDULE_ROUTES.includes(route.name) && !SCHEDULE_ROUTES.includes(previous.name)) enterSchedules();
+  // Next 7 days is read each time it opens; Holidays opens with an empty new holiday (1.14.0).
+  if (route.name === "scheduleWeek" && previous.name !== "scheduleWeek") loadWeek();
+  if (route.name === "holidays" && previous.name !== "holidays") {
+    resetHolidays();
+    loadHolidays();
+  }
+  // The editor's "On your holidays" says how many there are.
+  if (route.name === "schedule" && previous.name !== "schedule" && previous.name !== "holidays") loadHolidays();
   // The Hebrew date on Home (Schedules reads the calendar too), and the weather (1.12.1).
   if (route.name === "home" && previous.name !== "home") {
     loadCalendar();
@@ -361,6 +381,9 @@ function signature() {
     route.name === "schedule" ? { ...ui.scheduleEditor, at: undefined, from: undefined, to: undefined } : 0,
     // "Ran today", "next: tomorrow" move on with the day.
     route.name === "schedules" ? Math.floor(Date.now() / 60000) : 0,
+    // Next 7 days and Holidays (1.14.0); a holiday's name and dates being typed are not in `ui`.
+    route.name === "scheduleWeek" ? [state.scheduleWeek, state.scheduleWeekError] : 0,
+    route.name === "holidays" || route.name === "schedule" ? [state.holidays, state.holidaysError, ui.holidays] : 0,
     // The scene's name is typed into a field: it is left out, so typing is never redrawn.
     route.name === "scene" ? { ...ui.sceneEditor, name: undefined } : 0,
     // Scene links (views/scene-links.js): on the scenes, a scene and its link (labels being typed
@@ -396,6 +419,10 @@ function screen() {
       return schedulesView(actions);
     case "schedule":
       return scheduleEditorView(route.id, actions);
+    case "scheduleWeek":
+      return scheduleWeekView(actions);
+    case "holidays":
+      return holidaysView(actions);
     case "scene":
       return sceneEditorView(route.id, route.adding, actions, route.editing);
     case "sceneLink":
@@ -560,7 +587,10 @@ whenConnected(checkUpdates);
 whenConnected(keepHomeWeather);
 // Opened on Schedules (a reload): the weather once connected.
 whenConnected(() => {
-  if (route.name === "schedules" || route.name === "schedule") keepWeatherFresh();
+  if (SCHEDULE_ROUTES.includes(route.name)) keepWeatherFresh();
+  // Opened there (a reload): what the screen shows, once connected (1.14.0).
+  if (route.name === "scheduleWeek") loadWeek();
+  if (route.name === "holidays" || route.name === "schedule") loadHolidays();
 });
 watchSystemTheme(() => render(true));
 window.addEventListener("pointerup", () => window.setTimeout(() => render(), 0));

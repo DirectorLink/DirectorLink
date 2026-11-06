@@ -108,4 +108,51 @@ function tests.a_sunset_after_midnight_is_a_later_moment()
     T.truthy(sunrise < day and sunrise > day - 86400, "the evening before in UTC")
 end
 
+-- Dawn and dusk (1.14.0) are civil twilight, the sun's centre 6° below the horizon. Checked against
+-- the astral library (Python, astral 3.2, `dawn`/`dusk` with depression 6, at sea level), worked
+-- out on 2026-11-06: astral adds a little refraction there, which NOAA's civil twilight does not,
+-- so the two are up to 45 seconds apart; each time here is within a minute of astral's (UTC).
+local TWILIGHT = {
+    { "tel-aviv", 32.0853, 34.7818, "2026-03-20", "03:20:16", "16:16:55" },
+    { "tel-aviv", 32.0853, 34.7818, "2026-06-21", "02:06:25", "17:18:55" },
+    { "tel-aviv", 32.0853, 34.7818, "2026-12-21", "04:10:04", "15:07:43" },
+    { "new-york", 40.7143, -74.006, "2026-03-20", "10:31:42", "23:35:49" },
+    { "new-york", 40.7143, -74.006, "2026-12-21", "11:45:15", "22:03:08" },
+    { "reykjavik", 64.1355, -21.8954, "2026-03-20", "06:40:13", "20:31:42" },
+    { "reykjavik", 64.1355, -21.8954, "2026-12-21", "10:02:00", "16:49:21" },
+}
+
+local function secondsOfDay(text)
+    local hour, minute, second = text:match("^(%d+):(%d+):(%d+)$")
+    return tonumber(hour) * 3600 + tonumber(minute) * 60 + tonumber(second)
+end
+
+function tests.dawn_and_dusk_are_civil_twilight_within_a_minute()
+    for _, row in ipairs(TWILIGHT) do
+        local city, latitude, longitude, date = row[1], row[2], row[3], row[4]
+        local year, month, day = ymd(date)
+        local midnight = (HebrewDate.fixedFromGregorian(year, month, day) - HebrewDate.UNIX_EPOCH) * 86400
+        local dawn, dusk = Sun.dawnEpoch(year, month, day, latitude, longitude), Sun.duskEpoch(year, month, day, latitude, longitude)
+        local sunrise, sunset = Sun.sunriseEpoch(year, month, day, latitude, longitude), Sun.sunsetEpoch(year, month, day, latitude, longitude)
+        T.truthy(math.abs(dawn - (midnight + secondsOfDay(row[5]))) <= 60, string.format("%s %s dawn %s", city, date, os.date("!%H:%M:%S", dawn)))
+        T.truthy(math.abs(dusk - (midnight + secondsOfDay(row[6]))) <= 60, string.format("%s %s dusk %s", city, date, os.date("!%H:%M:%S", dusk)))
+        T.truthy(dawn < sunrise and dusk > sunset, city .. " " .. date .. ": twilight around the day")
+    end
+    -- New York's dusk in June is after midnight UTC: a later moment, never wrapped.
+    local dusk = Sun.duskEpoch(2026, 6, 21, 40.7143, -74.006)
+    local june = (HebrewDate.fixedFromGregorian(2026, 6, 22) - HebrewDate.UNIX_EPOCH) * 86400
+    T.truthy(math.abs(dusk - (june + secondsOfDay("01:04:21"))) <= 60, "New York 2026-06-21 dusk " .. os.date("!%Y-%m-%d %H:%M:%S", dusk))
+    -- Reykjavik at midsummer: the sun never goes 6° below the horizon (white nights).
+    T.eq(Sun.dawnEpoch(2026, 6, 21, 64.1355, -21.8954), nil)
+    T.eq(Sun.duskEpoch(2026, 6, 21, 64.1355, -21.8954), nil)
+    local dawnMinute, duskMinute = Sun.twilight(2026, 6, 21, 64.1355, -21.8954, 0)
+    T.eq(dawnMinute, nil)
+    T.eq(duskMinute, nil)
+    -- Sun.times is as it was: the same sunrise and sunset as before dawn and dusk existed.
+    local sunriseMinute, sunsetMinute = Sun.times(2026, 3, 20, 32.0853, 34.7818, 120)
+    local dawnLocal, duskLocal = Sun.twilight(2026, 3, 20, 32.0853, 34.7818, 120)
+    T.truthy(sunriseMinute - dawnLocal >= 20 and sunriseMinute - dawnLocal <= 30, "Tel Aviv: about 23 minutes of dawn")
+    T.truthy(duskLocal - sunsetMinute >= 20 and duskLocal - sunsetMinute <= 30)
+end
+
 return tests

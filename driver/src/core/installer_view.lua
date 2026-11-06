@@ -3,6 +3,7 @@
 -- action "Print Schedules and Scenes" to the Lua output. Automation nobody can see is the hardest
 -- thing to troubleshoot; these texts say what runs, when and why. English, like Composer.
 
+local HomeHolidays = require("src.core.home_holidays")
 local Scenes = require("src.core.scenes")
 local Scheduler = require("src.core.scheduler")
 local Schedules = require("src.core.schedules")
@@ -56,8 +57,21 @@ end
 
 local SHABBAT_EVENTS = { candle_lighting = "candle lighting", havdalah = "havdalah" }
 
--- "Sun-Thu 06:45", "every day 30 min before sunset", "heat 30C or more outside, 12:00-20:00, once
--- a day", "30 min before candle lighting", "Sat: at havdalah".
+-- Since 1.14.0: ", not before 17:30", ", not after 22:00", ", 17:30-22:00".
+local function limitsText(trigger)
+    if trigger.earliest and trigger.latest then
+        return ", " .. trigger.earliest .. "-" .. trigger.latest
+    elseif trigger.earliest then
+        return ", not before " .. trigger.earliest
+    elseif trigger.latest then
+        return ", not after " .. trigger.latest
+    end
+    return ""
+end
+
+-- "Sun-Thu 06:45", "every day 30 min before sunset", "every day at dusk, not before 17:30" (1.14.0),
+-- "heat 30C or more outside, 12:00-20:00, once a day", "30 min before candle lighting", "Sat: at
+-- havdalah".
 function View.whenText(schedule)
     local trigger = schedule.trigger
     local days = View.daysText(schedule.days)
@@ -66,9 +80,9 @@ function View.whenText(schedule)
     elseif trigger.type == "sun" then
         local offset = trigger.offset or 0
         if offset == 0 then
-            return days .. " at " .. trigger.event
+            return days .. " at " .. trigger.event .. limitsText(trigger)
         end
-        return string.format("%s %d min %s %s", days, math.abs(offset), offset < 0 and "before" or "after", trigger.event)
+        return string.format("%s %d min %s %s", days, math.abs(offset), offset < 0 and "before" or "after", trigger.event) .. limitsText(trigger)
     elseif trigger.type == "shabbat" then
         -- When Shabbat and holidays begin or end; the days only when not every day.
         local offset, event = trigger.offset or 0, SHABBAT_EVENTS[trigger.event] or tostring(trigger.event)
@@ -97,8 +111,10 @@ function View.whenText(schedule)
 end
 
 local DURING_SHABBAT = { skip = "not on Shabbat and holidays", only = "only on Shabbat and holidays" }
+local ON_HOLIDAYS = { skip = "not on the home's holidays", only = "only on the home's holidays" }
 
--- "only if not raining and 28C or hotter", "not on Shabbat and holidays", or nil.
+-- "only if not raining and 28C or hotter", "not on Shabbat and holidays", "not on the home's
+-- holidays", "runs late after a restart (up to 6 h)", or nil.
 function View.conditionsText(schedule)
     local onlyIf = schedule.only_if or {}
     local parts = {}
@@ -119,6 +135,10 @@ function View.conditionsText(schedule)
         texts[1] = "only if " .. table.concat(parts, " and ") .. (schedule.if_no_weather == "skip" and " (skipped without weather data)" or "")
     end
     texts[#texts + 1] = DURING_SHABBAT[schedule.during_shabbat or "run"]
+    texts[#texts + 1] = ON_HOLIDAYS[schedule.on_holidays or "run"]
+    if schedule.run_late == true then
+        texts[#texts + 1] = "runs late after a restart (up to 6 h)"
+    end
     if #texts == 0 then
         return nil
     end
@@ -341,12 +361,25 @@ function View.printout(now, paused, registry, calendar)
     local schedules = Schedules.records()
     lines[#lines + 1] = string.format("DirectorLink schedules: %d%s (controller time %s)", #schedules, paused and ", PAUSED in Composer (Schedules property)" or "", os.date("%Y-%m-%d %H:%M", now))
     lines[#lines + 1] = "Jewish calendar: " .. (calendar and calendar.statusText(now) or "Off")
+    -- The home's own holidays (1.14.0), when it has any.
+    local holidays = HomeHolidays.view().items
+    if #holidays > 0 then
+        local names = {}
+        for _, holiday in ipairs(holidays) do
+            names[#names + 1] = holiday.name .. " " .. holiday.from .. (holiday.to ~= holiday.from and ("-" .. holiday.to) or "") .. (holiday.yearly and " every year" or "")
+        end
+        lines[#lines + 1] = "Home's holidays: " .. table.concat(names, "; ")
+    end
     for _, schedule in ipairs(schedules) do
         local runtime = Schedules.runtime(schedule.id)
         local parts = { string.format("  [%s] %s -> %s", schedule.enabled == false and "off" or "on", View.whenText(schedule), sceneName(schedule.scene_id)) }
         local conditions = View.conditionsText(schedule)
         if conditions then
             parts[#parts + 1] = conditions
+        end
+        -- A skipped next run (1.14.0).
+        if type(runtime.skip) == "table" then
+            parts[#parts + 1] = runtime.skip.at and ("skipping " .. when(runtime.skip.at, now)) or "skipping its next run"
         end
         local nextAt = Scheduler.nextRun(schedule, now)
         if nextAt then

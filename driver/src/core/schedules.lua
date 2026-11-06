@@ -1,9 +1,11 @@
--- DirectorLink schedules (docs/SCHEDULES.md): run a scene at a time of day, at sunrise or sunset,
--- when the weather turns (heat, wind, rain), or when Shabbat and holidays begin or end (the Jewish
--- calendar, ADR-037), on chosen days. Time and sun schedules may also say "only if" about the
--- weather, and time, sun and weather schedules what to do on Shabbat and holidays
--- ("during_shabbat"). They are the home's, kept in the driver's persistent data, and run by the
--- controller (src/core/scheduler.lua) whether or not an app is open.
+-- DirectorLink schedules (docs/SCHEDULES.md): run a scene at a time of day, at sunrise or sunset
+-- (since 1.14.0 also at dawn or dusk, and within earliest and latest times), when the weather turns
+-- (heat, wind, rain), or when Shabbat and holidays begin or end (the Jewish calendar, ADR-037), on
+-- chosen days. Time and sun schedules may also say "only if" about the weather, and run late after
+-- a restart ("run_late", 1.14.0); time, sun and weather schedules what to do on Shabbat and holidays
+-- ("during_shabbat") and on the home's own holidays ("on_holidays", 1.14.0, src/core/home_holidays.lua).
+-- They are the home's, kept in the driver's persistent data, and run by the controller
+-- (src/core/scheduler.lua) whether or not an app is open.
 -- The same rules check what the API receives and what is loaded from the store.
 
 local Clock = require("src.core.clock")
@@ -24,6 +26,8 @@ Schedules.LIMITS = {
     shabbat_offset = { -360, 360 }, -- minutes before or after candle lighting and havdalah
 }
 Schedules.DURING_SHABBAT = { run = true, skip = true, only = true }
+Schedules.ON_HOLIDAYS = { run = true, skip = true, only = true }
+Schedules.SUN_EVENTS = { sunrise = true, sunset = true, dawn = true, dusk = true }
 
 -- `complete` is false after the stored schedules could not be read: saving would overwrite them.
 -- `catchUpAfter`: after a restart, nothing due before this moment is caught up (src/core/scheduler.lua).
@@ -81,7 +85,7 @@ function Schedules.check(input)
     local kind = trigger.type
     local known = ({
         time = { type = true, at = true },
-        sun = { type = true, event = true, offset = true },
+        sun = { type = true, event = true, offset = true, earliest = true, latest = true },
         weather = { type = true, kind = true, above = true, from = true, to = true, once_a_day = true },
         shabbat = { type = true, event = true, offset = true },
     })[kind]
@@ -98,14 +102,27 @@ function Schedules.check(input)
         end
         record.trigger = { type = "time", at = trigger.at }
     elseif kind == "sun" then
-        if trigger.event ~= "sunrise" and trigger.event ~= "sunset" then
-            return nil, "trigger.event", "event must be sunrise or sunset"
+        if type(trigger.event) ~= "string" or not Schedules.SUN_EVENTS[trigger.event] then
+            return nil, "trigger.event", "event must be sunrise, sunset, dawn or dusk"
         end
         local offset = present(trigger.offset) and trigger.offset or 0
         if not isWhole(offset, Schedules.LIMITS.offset[1], Schedules.LIMITS.offset[2]) then
             return nil, "trigger.offset", "offset is minutes from -180 (before) to 180 (after)"
         end
         record.trigger = { type = "sun", event = trigger.event, offset = offset }
+        -- Not before `earliest`, not after `latest` (1.14.0): "at sunset, but not before 17:30".
+        for _, limit in ipairs({ "earliest", "latest" }) do
+            if present(trigger[limit]) then
+                if not Schedules.minutes(trigger[limit]) then
+                    return nil, "trigger." .. limit, limit .. ' is a time of day, "HH:MM"'
+                end
+                record.trigger[limit] = trigger[limit]
+            end
+        end
+        local earliest, latest = Schedules.minutes(record.trigger.earliest), Schedules.minutes(record.trigger.latest)
+        if earliest and latest and earliest >= latest then
+            return nil, "trigger.latest", "latest must be later in the day than earliest"
+        end
     elseif kind == "weather" then
         local weather = trigger.kind
         if weather ~= "heat" and weather ~= "wind" and weather ~= "rain" then
@@ -214,6 +231,24 @@ function Schedules.check(input)
         return nil, "during_shabbat", "A Shabbat schedule runs at Shabbat times; during_shabbat does not apply"
     end
     record.during_shabbat = during
+    -- On the home's own holidays (1.14.0): run as usual, skip, or run only then.
+    local onHolidays = present(input.on_holidays) and input.on_holidays or "run"
+    if type(onHolidays) ~= "string" or not Schedules.ON_HOLIDAYS[onHolidays] then
+        return nil, "on_holidays", 'on_holidays must be "run", "skip" or "only"'
+    end
+    if kind == "shabbat" and onHolidays ~= "run" then
+        return nil, "on_holidays", "A Shabbat schedule runs at Shabbat times; on_holidays does not apply"
+    end
+    record.on_holidays = onHolidays
+    -- Run late after a restart, up to 6 hours, when its time passed while the controller was off
+    -- (1.14.0). Shabbat schedules, and those only on Shabbat and holidays, always do.
+    if present(input.run_late) and type(input.run_late) ~= "boolean" then
+        return nil, "run_late", "run_late must be true or false"
+    end
+    if input.run_late == true and kind ~= "time" and kind ~= "sun" then
+        return nil, "run_late", "Only time and sun schedules run late; a weather rule reacts to the weather now"
+    end
+    record.run_late = input.run_late == true
     return record
 end
 
@@ -226,6 +261,11 @@ end
 -- than "run".
 function Schedules.usesCalendar(schedule)
     return schedule.trigger.type == "shabbat" or (schedule.during_shabbat or "run") ~= "run"
+end
+
+-- True when the home's own holidays decide whether it runs (1.14.0).
+function Schedules.usesHolidays(schedule)
+    return (schedule.on_holidays or "run") ~= "run"
 end
 
 local function copy(schedule)
@@ -462,6 +502,10 @@ function Schedules.replace(id, record, expected)
     local before, after = current.trigger, record.trigger
     if before.type ~= after.type or before.kind ~= after.kind or before.above ~= after.above then
         runtime.armed, runtime.dry_since = nil, nil
+    end
+    -- A skipped next run (1.14.0) is that run: changing when the schedule runs cancels it.
+    if runtime.skip and (Json.encode(before) ~= Json.encode(after) or table.concat(current.days, ",") ~= table.concat(record.days, ",")) then
+        runtime.skip = nil
     end
     state.runtime[id] = runtime
     saveRuntime()

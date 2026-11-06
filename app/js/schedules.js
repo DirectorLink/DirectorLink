@@ -1,7 +1,9 @@
-// Schedules (docs/SCHEDULES.md): scenes the controller runs at a time, at sunrise or sunset, when
-// the weather turns, or when Shabbat and holidays begin or end (views/schedules.js). The controller
-// keeps and runs them; this reads them and says each in a sentence. The weather at home
-// (GET /v1/weather) is read by weather.js, while Schedules or Home is open.
+// Schedules (docs/SCHEDULES.md): scenes the controller runs at a time, at sunrise or sunset (since
+// 1.14.0 also at dawn or dusk), when the weather turns, or when Shabbat and holidays begin or end
+// (views/schedules.js). The controller keeps and runs them; this reads them and says each in a
+// sentence. The weather at home (GET /v1/weather) is read by weather.js, while Schedules or Home is
+// open. Since 1.14.0 (ADR-090) also the next seven days (GET /v1/schedules/week) and the home's own
+// holidays (/v1/holidays).
 
 import { currentLanguage, formatClock, formatTemperature, t } from "./i18n.js";
 import { api, errorText } from "./session.js";
@@ -19,6 +21,12 @@ export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 // The Israeli week: Sunday to Thursday, and the weekend.
 export const WORK_DAYS = [0, 1, 2, 3, 4];
 export const WEEKEND = [5, 6];
+
+// DirectorLink 1.14.0 (ADR-090): skip a schedule's next run, dawn and dusk, earliest and latest
+// times, run late, the home's holidays and the next seven days. An older driver refuses the fields.
+export function schedulePlanning() {
+  return state.system?.features?.schedule_planning === true;
+}
 
 // With DirectorLink 1.8.0 schedules are the admins' (ADR-054): a member's app shows none. The
 // members of an older controller still see them.
@@ -49,6 +57,31 @@ export async function loadSchedules() {
     } else if (state.schedules === null) {
       state.schedulesError = errorText(error);
     }
+  }
+  notify();
+}
+
+// The next seven days (GET /v1/schedules/week, 1.14.0): read when Next 7 days opens and after a
+// change there; null until read.
+export async function loadWeek() {
+  if (!schedulesWanted() || !schedulePlanning()) return;
+  try {
+    state.scheduleWeek = await api("/v1/schedules/week");
+    state.scheduleWeekError = null;
+  } catch (error) {
+    if (!state.scheduleWeek) state.scheduleWeekError = errorText(error);
+  }
+  notify();
+}
+
+// The home's own holidays (GET /v1/holidays, 1.14.0): { items, version }, or null until read.
+export async function loadHolidays() {
+  if (!schedulesWanted() || !schedulePlanning()) return;
+  try {
+    state.holidays = await api("/v1/holidays");
+    state.holidaysError = null;
+  } catch (error) {
+    if (!state.holidays) state.holidaysError = errorText(error);
   }
   notify();
 }
@@ -90,8 +123,16 @@ export function formatOffset(minutes) {
   return t("schedules.offset.hoursMinutes", { hours: hoursText, minutes: t("schedules.offset.minutes", { count: rest }) });
 }
 
-// "Every day at 06:45", "Fri–Sat, 30 min before sunset", "When it’s 30° or hotter outside",
-// "30 min before candle lighting".
+// A sun schedule's earliest and latest times (1.14.0) after its sentence: "…, not before 17:30".
+function withLimits(text, trigger) {
+  if (trigger.earliest && trigger.latest) return t("schedules.when.limits.both", { when: text, from: trigger.earliest, to: trigger.latest });
+  if (trigger.earliest) return t("schedules.when.limits.earliest", { when: text, time: trigger.earliest });
+  if (trigger.latest) return t("schedules.when.limits.latest", { when: text, time: trigger.latest });
+  return text;
+}
+
+// "Every day at 06:45", "Fri–Sat, 30 min before sunset", "Every day at dusk, not before 17:30",
+// "When it’s 30° or hotter outside", "30 min before candle lighting".
 export function whenText(schedule) {
   const trigger = schedule.trigger || {};
   const days = daysText(schedule.days || []);
@@ -104,18 +145,26 @@ export function whenText(schedule) {
   }
   if (trigger.type === "sun") {
     const offset = trigger.offset || 0;
-    if (!offset) return t(`schedules.when.at.${trigger.event}`, { days });
-    return t(`schedules.when.${offset < 0 ? "before" : "after"}.${trigger.event}`, { days, minutes: Math.abs(offset) });
+    const event = ["sunrise", "dawn", "dusk"].includes(trigger.event) ? trigger.event : "sunset";
+    if (!offset) return withLimits(t(`schedules.when.at.${event}`, { days }), trigger);
+    return withLimits(t(`schedules.when.${offset < 0 ? "before" : "after"}.${event}`, { days, minutes: Math.abs(offset) }), trigger);
   }
   if (trigger.kind === "heat") return t("schedules.when.heat", { above: formatTemperature(outside(trigger.above)) });
   if (trigger.kind === "wind") return t("schedules.when.wind", { above: trigger.above });
   return t("schedules.when.rain");
 }
 
-// "Not on Shabbat and holidays", "Only on Shabbat and holidays" (during_shabbat), or "".
+// "Not on Shabbat and holidays", "Only on Shabbat and holidays" (during_shabbat), "Not on your
+// holidays", "Only on your holidays" (on_holidays, 1.14.0), and "Runs late if it was missed"
+// (run_late), or "".
 function duringText(schedule) {
+  const parts = [];
   const during = schedule.during_shabbat;
-  return during === "skip" || during === "only" ? t(`schedules.during.${during}`) : "";
+  if (during === "skip" || during === "only") parts.push(t(`schedules.during.${during}`));
+  const holidays = schedule.on_holidays;
+  if (holidays === "skip" || holidays === "only") parts.push(t(`schedules.onHolidays.${holidays}`));
+  if (schedule.run_late === true) parts.push(t("schedules.runLate"));
+  return parts.join(" · ");
 }
 
 // The limits of a weather schedule, or its "only if" conditions; and what it does on Shabbat and
@@ -191,7 +240,7 @@ export function dayAndTime(iso, now = new Date()) {
 function lastText(last, now) {
   if (!last?.at || now.getTime() - new Date(last.at).getTime() >= 24 * 3600 * 1000) return "";
   const when = dayAndTime(last.at, now);
-  if (last.skipped_by) return t(`schedules.skipped.${last.skipped_by}`, { when });
+  if (last.skipped_by) return t(`schedules.skipped.${["only_if", "no_weather", "shabbat", "skip", "holiday"].includes(last.skipped_by) ? last.skipped_by : "other"}`, { when });
   if (last.error) return t("schedules.ranError", { when });
   if (last.failed > 0) return t("schedules.ranFailed", { when, count: last.failed });
   if (last.ran === 0) return t("schedules.ranNothing", { when });
@@ -200,20 +249,27 @@ function lastText(last, now) {
   return t("schedules.ran", { when });
 }
 
+// The run a person skipped (1.14.0): "Skipping tomorrow 06:45", or a weather rule's next time.
+export function skipText(schedule, now = new Date()) {
+  const skip = schedule.skip;
+  if (!skip || typeof skip !== "object") return "";
+  return skip.at ? t("schedules.skipping", { when: dayAndTime(skip.at, now) }) : t("schedules.skippingNext");
+}
+
 // What happened last, and what comes next. While the Jewish calendar is off in Composer, or has no
 // location (calendar_status), a Shabbat trigger and an "only on Shabbat" schedule do not run, and a
 // "not on Shabbat" one runs every day.
 export function statusText(schedule, now = new Date()) {
   if (schedule.enabled === false) return t("schedules.off");
   if (state.schedulesPaused) return t("schedules.pausedShort");
-  const parts = [lastText(schedule.last_run, now)];
+  const parts = [lastText(schedule.last_run, now), skipText(schedule, now)];
   const calendar = { off: "calendarOff", no_location: "calendarNoLocation" }[schedule.calendar_status];
   if (calendar && (schedule.trigger?.type === "shabbat" || schedule.during_shabbat === "only")) {
     return [...parts, t(`schedules.${calendar}`)].filter(Boolean).join(" · ");
   }
   if (calendar && schedule.during_shabbat === "skip") parts.push(t(`schedules.${calendar}Skip`));
   if (schedule.next_run) parts.push(t("schedules.next", { when: dayAndTime(schedule.next_run, now) }));
-  else if (!parts[0]) parts.push(weatherNow(schedule.trigger?.kind));
+  else if (!parts[0] && !parts[1]) parts.push(weatherNow(schedule.trigger?.kind));
   return parts.filter(Boolean).join(" · ");
 }
 

@@ -25,6 +25,12 @@ export const state = {
   schedulesUnsupported: false,
   schedulesError: null,
   weather: null,
+  // Since 1.14.0 (ADR-090): the next seven days (GET /v1/schedules/week) and the home's own holidays
+  // (GET /v1/holidays), each null until read, with why the first read failed.
+  scheduleWeek: null,
+  scheduleWeekError: null,
+  holidays: null,
+  holidaysError: null,
   // GET /v1/calendar (calendar.js): null until read, and while the Jewish calendar is off.
   calendar: null,
   notice: null, // { kind: "error" | "info" | "success", text } shown on the connect screen
@@ -83,6 +89,7 @@ export const ui = {
   sceneIdea: null, // an idea to start a new scene from
   scenesMessage: null, // scenes list: saved or deleted
   scheduleEditor: null, // the schedule being edited (views/schedules.js)
+  holidays: null, // Schedules → Holidays: { yearly, busy, message } (views/holidays.js)
   cameFrom: null, // the screen before this one (app.js), so an editor can go back to its list
   schedulesMessage: null, // schedules list: saved, deleted or not switched
   calendarSettings: null, // Settings → Shabbat and holidays: the settings being changed (views/settings.js)

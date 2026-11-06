@@ -94,7 +94,8 @@ Composer. A file must never switch a safety setting on.
     "scene_links": { "version": 1, "links": [{ "id": "…", "scene_id": "…", "alg": "sha256", "hash": "…", "home": "…", "by": "…" }] },
     "people": { "version": 1, "people": { "…": { "role": "member", "all_rooms": false, "rooms": [10], "...": "..." } }, "owner": "…", "hidden_rooms": [] },
     "doorbell_doors": { "version": 1, "links": { "68": [70] } },
-    "camera_order": { "version": 1, "order": [67, 92, 60] }
+    "camera_order": { "version": 1, "order": [67, 92, 60] },
+    "holidays": { "version": 1, "items": [{ "name": "Winter break", "from": "2026-12-20", "to": "2027-01-03", "yearly": false }] }
   }
 }
 ```
@@ -133,6 +134,11 @@ as a favorite camera is (below): the same id with the same name, else the one ot
 name in the same room; one that matches nothing is left out and listed (`used_in` `camera_order`).
 The preview counts the cameras in the order after the restore (`counts.camera_order`); a backup made
 before 1.12.1 has none (null), and the order on the controller stays as it is.
+
+`holidays` (1.14.0, ADR-090) holds the home's own holidays as `GET /v1/holidays` gives them (the
+store `directorlink_holidays`, without its version counter). Nothing in them names the project, so
+they come back as they are, each checked again. The preview counts them (`counts.holidays`); a backup
+made before 1.14.0 has none (null), and the holidays on the controller stay as they are.
 
 `people` (1.8.0, ADR-054) holds each user's role and permissions by profile id, the home's owner
 and the rooms hidden from members. It follows the keys too: when the backup's keys come back, its

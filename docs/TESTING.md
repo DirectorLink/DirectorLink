@@ -2,6 +2,22 @@
 
 ## Current release
 
+`v1.14.0` — Schedules you can plan (1140a): skip the next run, dawn and dusk, earliest and latest times, run late if missed, the home's holidays, and the next 7 days. No Worker change; no D1 migration.
+
+## 1140a. Planning schedules (1.14.0)
+
+On the owner's controller, from the iPhone (admin), after updating DirectorLink in Composer:
+
+1. **Skip the next run.** Scenes → Schedules: under a daily time schedule, **Skip next run**. The card says "Skipping tomorrow HH:MM · Next: <the day after>"; History (Settings → Controller → History) shows nothing yet. Tap **Don't skip**: "Next: tomorrow". Skip it again and leave it: the next day the scene does not run, History says "Not run: someone skipped this run", and the run after it happens as usual. Composer → Print Schedules and Scenes says `skipping tomorrow HH:MM` while it is skipped.
+2. **Dawn and dusk.** New schedule → Sun: Dawn, Sunrise, Sunset and Dusk, each with today's time (dusk about 25 minutes after sunset in Israel). Choose Dusk, **Not before** 18:00 (in winter, after dusk): the sentence says "Every day at dusk, not before 18:00", and Next says today or tomorrow at 18:00. Save; in the evening it runs at 18:00.
+3. **Run late if missed.** A time schedule a few minutes from now with **Run late if missed** on, and a copy without it. Restart the controller (or update the driver) across their time and wait for it to come back (within 6 hours): only the one set to run late runs, and the list says "Ran … (late, after a restart)".
+4. **Holidays.** Schedules → **Holidays**: add "Trip" for tomorrow, and "Independence Day" with Every year. The list shows "Every year: …". On a daily schedule choose **On your holidays: Not on holidays**: Next skips tomorrow. On another, **Only on holidays**: Next is tomorrow. Tomorrow: History says "Not run: it skips the home's holidays (Trip)" for the first, and the second runs. Make a backup (Settings → Controller → Backup): its preview lists the holidays.
+5. **Next 7 days.** Schedules → **Next 7 days**: today first, each day with dawn, sunrise, sunset and dusk, Friday's and Saturday's Shabbat line (with the Jewish calendar on), tomorrow's "Holiday: Trip", and each run at its time: "Earlier today" for what has passed, "Skipped" for a skipped one, "Not on holidays", "Not on Shabbat and holidays", "Switched off" for one switched off, a weather rule with its hours. Tap a run: its schedule opens. With Schedules paused in Composer, future runs say "Paused in Composer".
+6. **Languages.** In Hebrew (ימי חופש, דמדומי ערב), Spanish and Italian, Schedules, the editor, Next 7 days and Holidays read naturally and right to left in Hebrew.
+7. Nothing else changes: the boiler's Shabbat schedules, the AC's weather rule, the DoorBird, the gate, KNX. History shows "DirectorLink updated from 1.13.2 to 1.14.0".
+
+## Previous release
+
 `v1.13.2` — Signed in stays signed in while you use the app (1132a). A Worker change; no D1 migration. The driver changes only its version.
 
 ## 1132a. Sign-ins that renew while used, and the notice when signed out (1.13.2)
