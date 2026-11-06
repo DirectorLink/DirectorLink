@@ -1774,7 +1774,9 @@ paths:
         holiday (`/v1/holidays`), Shabbat and holidays (with the Jewish calendar on), and every run
         of every schedule that day at its time, or why one of its days has none. A run is
         `planned`, `past` (its time today has passed; the schedule's `last_run` says how it went),
-        or `skipped` with a `reason`; a weather rule's day is `weather`, without a time. Days a
+        or `skipped` with a `reason`; a weather rule's day is `weather`, without a time (its
+        `during_shabbat` judged by its hours that day: `only` shows on the days they reach Shabbat
+        or a holiday, `skip` is `skipped` with `shabbat` on a day they are all within one). Days a
         schedule does not run on at all (not in its `days`; only on Shabbat or the home's holidays,
         and it is not) list nothing for it. What the weather will do is not known: a run with
         `conditions` (an `only_if`) runs if the weather then allows.

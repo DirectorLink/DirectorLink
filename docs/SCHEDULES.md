@@ -162,6 +162,10 @@ calendar on: when they begin or end that day), and every run at its time, or why
   went); `skipped` with `reason` `skip` (a person skipped it), `holiday`, `shabbat`, `off`
   (switched off), `paused` (in Composer) or `no_sun` (no sunrise, sunset, dawn or dusk that day, or
   an offset across midnight); or `weather` for a weather rule's day, with its hours and no time.
+  A weather rule's Shabbat setting is judged by its hours that day (the whole day without hours),
+  since it holds when the weather turns: only on Shabbat and holidays, it shows on the days its
+  hours reach them; keeping away from them, it is `skipped` with `shabbat` on a day its hours are
+  all within them.
 - `conditions: true` for a run with `only_if`: it runs if the weather then allows, which is not
   known yet. Days a schedule does not run on at all (not in its days; only on Shabbat or the home's
   holidays, and it is not one) list nothing for it.

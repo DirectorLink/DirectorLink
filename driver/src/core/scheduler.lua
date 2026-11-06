@@ -793,6 +793,40 @@ end
 -- weather will do is not known: a schedule with "only if" is planned, and runs if it holds.
 -- Days a schedule does not run on at all (not in its days; only on Shabbat or the home's holidays,
 -- and it is not) have nothing for it.
+-- A weather rule's Shabbat setting over a day's hours (the whole day without hours; hours across
+-- midnight end the next day), as the tick holds it to the moment the weather turns: "run" when it
+-- may run in some of them; "shabbat" when it keeps away from Shabbat and holidays and all of them
+-- are holy; nil when it runs only then and none of them is (nor while the calendar is off, as
+-- shabbatAllows).
+local function weatherShabbat(schedule, calendar, info)
+    local mode = schedule.during_shabbat or "run"
+    if mode == "run" then
+        return "run"
+    end
+    if not calendar or calendar.status() ~= "ok" then
+        return mode == "skip" and "run" or nil
+    end
+    local trigger = schedule.trigger
+    local from, to = 0, 24 * 60
+    if trigger.from then
+        from, to = Schedules.minutes(trigger.from), Schedules.minutes(trigger.to)
+        if from >= to then
+            to = to + 24 * 60
+        end
+    end
+    local first = os.time({ year = info.year, month = info.month, day = info.day, hour = 0, min = from, sec = 0 })
+    local last = os.time({ year = info.year, month = info.month, day = info.day, hour = 0, min = to, sec = 0 }) - 1
+    local periods = calendar.periodsBetween(first, last)
+    if mode == "only" then
+        return #periods > 0 and "run" or nil
+    end
+    -- One period over all of them: two would leave a gap between them.
+    if #periods == 1 and calendar.holyAt(first) and calendar.holyAt(last) then
+        return "shabbat"
+    end
+    return "run"
+end
+
 function Scheduler.week(now, count)
     local calendar = calendarService()
     local paused = state.services ~= nil and state.services.paused ~= nil and state.services.paused() == true
@@ -828,7 +862,10 @@ function Scheduler.week(now, count)
                     local onHoliday, holidayWhy = holidayAllows(schedule, info)
                     local entry
                     if trigger.type == "weather" then
-                        if onHoliday then
+                        local shabbat = onHoliday and weatherShabbat(schedule, calendar, info) or nil
+                        if shabbat == "shabbat" then
+                            entry = { schedule = schedule, status = "skipped", reason = "shabbat" }
+                        elseif shabbat then
                             local status, reason = "weather", nil
                             if schedule.enabled == false then
                                 status, reason = "skipped", "off"
@@ -836,7 +873,7 @@ function Scheduler.week(now, count)
                                 status, reason = "skipped", "paused"
                             end
                             entry = { schedule = schedule, status = status, reason = reason }
-                        elseif holidayWhy == "holiday" then
+                        elseif not onHoliday and holidayWhy == "holiday" then
                             entry = { schedule = schedule, status = "skipped", reason = "holiday" }
                         end
                     else

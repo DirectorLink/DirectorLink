@@ -552,6 +552,30 @@ function tests.the_week_shows_shabbat_and_what_keeps_away_from_it()
     T.eq(runOf(days[3], boiler).status, "planned")
 end
 
+-- A weather rule is held to its Shabbat setting when the weather turns, so the week judges its
+-- hours of each day: only on Shabbat, it shows on the days they touch holy time; keeping away from
+-- Shabbat, it is skipped on a day they are all holy. (Its hours from the local clock: the suite
+-- also runs in UTC.)
+function tests.the_week_holds_weather_rules_to_shabbat()
+    local mock, admin = start(Helpers.localAt(FRIDAY, 12, 0), { ["Jewish Calendar"] = "On" })
+    local sceneId = scene(mock, admin)
+    local onlyShabbat = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = EVERY, during_shabbat = "only" }).id
+    -- Saturday, from three hours to one hour before havdalah.
+    local holyHours = { type = "weather", kind = "rain", from = os.date("%H:%M", HAVDALAH - 3 * 3600), to = os.date("%H:%M", HAVDALAH - 3600) }
+    local notShabbat = schedule(mock, admin, { scene_id = sceneId, trigger = holyHours, days = EVERY, during_shabbat = "skip" }).id
+    local allDay = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "rain" }, days = EVERY, during_shabbat = "skip" }).id
+    local days = T.http(mock, "GET", "/v1/schedules/week", { key = admin }).json.days
+    T.eq(runOf(days[1], onlyShabbat).status, "weather", "Friday's hours reach candle lighting")
+    T.eq(runOf(days[2], onlyShabbat).status, "weather")
+    for index = 3, 7 do
+        T.eq(runOf(days[index], onlyShabbat), nil, "no holy time on " .. days[index].date)
+    end
+    T.eq(runOf(days[2], notShabbat).status, "skipped", "its hours are all in Shabbat")
+    T.eq(runOf(days[2], notShabbat).reason, "shabbat")
+    T.eq(runOf(days[3], notShabbat).status, "weather")
+    T.eq(runOf(days[2], allDay).status, "weather", "it may run after havdalah")
+end
+
 -- ---- Composer -------------------------------------------------------------------------------------
 
 function tests.composer_prints_the_new_choices()
