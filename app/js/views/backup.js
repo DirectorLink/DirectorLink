@@ -336,6 +336,8 @@ function summary(preview, { result = false } = {}) {
     ...(Number.isInteger(counts.doorbell_doors) ? [["doorbellDoors", counts.doorbell_doors]] : []),
     // The camera order (1.12.1): only from a backup that has it.
     ...(Number.isInteger(counts.camera_order) ? [["cameraOrder", counts.camera_order]] : []),
+    // The home's holidays (1.14.0): only from a backup that has them.
+    ...(Number.isInteger(counts.holidays) ? [["holidays", counts.holidays]] : []),
   ];
   const back = Array.isArray(keys.items) ? keys.items : [];
   const unmatched = references.unmatched || [];

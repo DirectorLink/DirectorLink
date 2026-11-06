@@ -2,10 +2,12 @@
 
 **Status: built in DirectorLink 0.14.0; Shabbat and holidays in 1.2.0; the weather from a saved
 forecast in 1.10.0 (ADR-071); a threshold itself counts, everywhere, in 1.10.1 (ADR-074); the
-weather on Home, with tomorrow's forecast, in 1.12.1 (ADR-084).**
+weather on Home, with tomorrow's forecast, in 1.12.1 (ADR-084); skipping the next run, dawn and dusk,
+earliest and latest times, running late after a restart, the home's own holidays and the next seven
+days in 1.14.0 (ADR-090).**
 
-A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise or sunset, when the
-weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
+A schedule runs a [scene](SCENES.md) by itself: at a time of day, at sunrise, sunset, dawn or dusk,
+when the weather turns, or when Shabbat and holidays begin or end. The controller keeps and runs them
 (`src/core/schedules.lua`, `src/core/scheduler.lua`), in its own local time, whether or not any app
 is open, and they survive driver updates. They are DirectorLink's own: Composer's scheduler is never
 read or changed.
@@ -30,9 +32,16 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
 - `enabled`: `false` switches it off.
 - `trigger`, one of:
   - **time**: `{"type": "time", "at": "06:45"}`.
-  - **sun**: `{"type": "sun", "event": "sunrise"|"sunset", "offset": -30}` — minutes before
-    (negative) or after, up to three hours. Sunrise and sunset are worked out on the controller
-    for the project's location, so they need no internet.
+  - **sun**: `{"type": "sun", "event": "sunrise"|"sunset"|"dawn"|"dusk", "offset": -30,
+    "earliest": "17:30", "latest": "22:00"}` — minutes before (negative) or after, up to three
+    hours. Sunrise and sunset are worked out on the controller for the project's location, so they
+    need no internet. **Dawn and dusk** (1.14.0) are civil twilight, the sun's centre 6° below the
+    horizon (in Tel Aviv about 22 to 28 minutes before sunrise and after sunset), worked out the
+    same way; where the sun does not go that low (the white nights, around midsummer far north)
+    that day has no run. **`earliest` and `latest`** (1.14.0, optional, "HH:MM", earliest before
+    latest) hold the time within them: "at sunset, but not before 17:30" runs at 17:30 while the
+    sun sets earlier, and an offset that would cross midnight runs at the limit before it. A day
+    without its event (no sunset at all) still has no run.
   - **weather**: `{"type": "weather", "kind": "heat"|"wind"|"rain", "above": 30, "from":
     "12:00", "to": "20:00", "once_a_day": true}`:
     - heat: `above` °C (15–45) or hotter (as since 0.14.0); it runs again only after it has
@@ -71,16 +80,25 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   default) or `skip`.
 - `during_shabbat` (1.2.0; time, sun and weather schedules): `run` (the default: as on any day),
   `skip` (not on Shabbat and holidays) or `only` (only then).
-- Read back with `next_run` (time, sun and Shabbat) and `last_run` (`ran`, `skipped`, `failed`, and
-  `note`: `no_weather`, `late`; or `skipped_by`: `only_if`, `no_weather`, `shabbat`), and, for a
-  schedule that uses the calendar, `calendar_status` (`ok`, `off`, `no_location`; otherwise `null`).
+- `on_holidays` (1.14.0; time, sun and weather schedules): `run` (the default), `skip` (not on the
+  home's own holidays) or `only` (only then); see [Your holidays](#your-holidays).
+- `run_late` (1.14.0; time and sun schedules): `true` to run late after a restart, up to 6 hours,
+  when the controller was off at its time; see [Running](#running). Default `false`.
+- Read back with `next_run` (time, sun and Shabbat), `skip` (1.14.0: the next run a person skipped,
+  `{ "at" }`, or `null`) and `last_run` (`ran`, `skipped`, `failed`, and `note`: `no_weather`,
+  `late`; or `skipped_by`: `only_if`, `no_weather`, `shabbat`, and since 1.14.0 `skip` and
+  `holiday`), and, for a schedule that uses the calendar, `calendar_status` (`ok`, `off`,
+  `no_location`; otherwise `null`).
 - At most 50. `version` works as for scenes (409 `VERSION_CONFLICT`).
 
 ## Running
 
 - Every minute the controller checks the schedules. A time or sun schedule runs at its minute —
   up to 5 minutes late after a restart, also across midnight — and once; a schedule changed after
-  its time starts with the next one. On the day clocks go forward, a time in the skipped hour runs
+  its time starts with the next one. With `run_late` (1.14.0) it runs in the first minute after the
+  driver starts when its time passed in the last 6 hours and it did not run (a power cut, a
+  restart, an update), oldest first, with `last_run.note: "late"`; never what was due while the
+  schedules were paused, as for Shabbat automation (below). On the day clocks go forward, a time in the skipped hour runs
   when it would have (e.g. 02:30 at 03:30). Shabbat schedules, and those only on Shabbat and
   holidays, are caught up for 6 hours after a restart (below).
 - Switching a schedule off and on, or changing it, does not make it run again the same day.
@@ -94,6 +112,64 @@ skipped, as in 1.7.0. Opening a door or gate needs a person.
   read at a start, nothing is caught up then (below), and the log says so.
 - Each run is logged (`GET /v1/logs?category=schedules`), since 1.10.0 with `forecast_from`: when
   the forecast that decided it was read, for a run the weather decided.
+
+## Skipping the next run
+
+**Status: built in DirectorLink 1.14.0 (ADR-090).** `POST /v1/schedules/{id}/skip` (admins) skips the
+run `next_run` says now: when it comes due it does not run, `last_run.skipped_by` says `skip`, and the
+history says a person skipped it; the schedule runs as usual after it. `skip.at` says when the skipped
+run was due, and `next_run` the one after it. A weather rule's next time it would run is skipped the
+same way (`skip.at` null): it counts as run (once a day, and waiting for the weather to turn back).
+
+- One at a time: asked again, the same run stays skipped. `DELETE /v1/schedules/{id}/skip` runs it
+  after all.
+- Switching the schedule off and on, or changing its scene, keeps the skip; changing its `trigger`
+  or `days` cancels it (the run it named may no longer be). A time or sun schedule's skip is the run
+  of that local date, so a sunset that moves a minute is still the same run.
+- A skipped run that never came due (switched off or paused over it) is forgotten 6 hours after its
+  time, so it never skips a later run.
+- Kept across restarts and updates (with what the schedules ran), not in backups. A switched-off
+  schedule cannot be skipped (409 `SCHEDULE_OFF`), nor one without a next run (409 `NO_NEXT_RUN`).
+
+## Your holidays
+
+**Status: built in DirectorLink 1.14.0 (ADR-090).** The home's own holidays are days an admin chooses
+(`/v1/holidays`, `src/core/home_holidays.lua`): public holidays, school breaks, a trip, once or every
+year. A schedule with `on_holidays: "skip"` does not run on them, one with `"only"` runs only on
+them. They are not the Jewish calendar's holidays, which are Shabbat automation's (`during_shabbat`).
+
+- A holiday is `{ "name", "from", "to", "yearly" }`: whole local days, from 00:00 on `from` to 24:00
+  on `to` (the first day when left out), in the controller's time zone. A one-off one lasts up to 366
+  days; one every year (`yearly`) up to 365, on the same days of the month each year, also across
+  New Year (24 December to 2 January). At most 100, a name of 1 to 60 characters.
+- `GET /v1/holidays` gives `{ items, version }`; `PUT /v1/holidays` replaces the whole list, with
+  `version` only if nobody changed it since (409 `VERSION_CONFLICT`). Admins only, like schedules.
+- Judged by the local date of the run: a time or sun schedule's day, a weather rule's by the day its
+  hours belong to. `skip` leaves `last_run.skipped_by: "holiday"` and a history entry with the
+  holiday's name; `only` on another day leaves nothing, like a day not in its days. A weather rule
+  held back on a holiday stays armed, and runs the next day if the weather still passes.
+- Kept across restarts and updates, and in backups (`holidays`, from 1.14.0; a backup made before has
+  none and the holidays here stay). Composer's printout lists them.
+
+## The next seven days
+
+**Status: built in DirectorLink 1.14.0 (ADR-090).** `GET /v1/schedules/week` (admins) says, for today
+and the six days after it, what each schedule does, as the controller works it out now: each day's
+dawn, sunrise, sunset and dusk, the home's holiday, Shabbat and holidays (`holy`, with the Jewish
+calendar on: when they begin or end that day), and every run at its time, or why it does not run.
+
+- `status`: `planned`; `past` (its time today has passed: the schedule's `last_run` says how it
+  went); `skipped` with `reason` `skip` (a person skipped it), `holiday`, `shabbat`, `off`
+  (switched off), `paused` (in Composer) or `no_sun` (no sunrise, sunset, dawn or dusk that day, or
+  an offset across midnight); or `weather` for a weather rule's day, with its hours and no time.
+  A weather rule's Shabbat setting is judged by its hours that day (the whole day without hours),
+  since it holds when the weather turns: only on Shabbat and holidays, it shows on the days its
+  hours reach them; keeping away from them, it is `skipped` with `shabbat` on a day its hours are
+  all within them.
+- `conditions: true` for a run with `only_if`: it runs if the weather then allows, which is not
+  known yet. Days a schedule does not run on at all (not in its days; only on Shabbat or the home's
+  holidays, and it is not one) list nothing for it.
+- The app shows it under Scenes → Schedules → Next 7 days.
 
 ## The weather
 
@@ -223,7 +299,11 @@ in Composer, on the DirectorLink device (0.15.0):
   1.10.0), or
   `28 Sep 22:25 Good night · run from Dana's iPhone · 24 devices`. Kept across driver updates.
 - **Print Schedules and Scenes** (action): prints every schedule (when, the scene, conditions, next
-  and last run) and every scene with its steps and device names and ids to the Lua output. Weather
+  and last run) and every scene with its steps and device names and ids to the Lua output. Since
+  1.14.0 also the home's holidays (`Home's holidays: Trip 2027-02-01-2027-02-07`), a skipped run
+  (`skipping tomorrow 06:45`), dawn and dusk with their limits (`every day 30 min after dusk,
+  18:00-22:00`), and `not on the home's holidays`, `only on the home's holidays` and `runs late
+  after a restart (up to 6 h)`. Weather
   thresholds read `heat 23C or more outside`, `wind 40 km/h or more`, `only if 28C or hotter and
   wind 20 km/h or less` (1.10.1; `heat above 23C outside`, `hotter than 28C` before).
 - **Jewish Calendar** (Off / On, 1.2.0): Shabbat and holiday times for schedules and the app. Off by
@@ -262,6 +342,14 @@ device will both run; these properties are how to find the DirectorLink side.
   then the whole schedule in one sentence, and Save. Under a threshold's number it says that the
   number itself counts (1.10.1): "or hotter" under 30°, "or more" under 40 km/h, and for only if
   "or warmer" and "or less".
+- **1.14.0** (ADR-090, `features.schedule_planning` in `GET /v1/system`): under each schedule,
+  **Skip next run** (then "Skipping tomorrow 06:45 · Next: …" and **Don't skip**); above the weather,
+  **Next 7 days** (each day's sun times, holiday and Shabbat, and every run or why not; a run opens
+  its schedule) and **Holidays** (add one by name, first and last day and Every year; delete one). In
+  the editor, Sun has Dawn, Sunrise, Sunset and Dusk (with today's times), and **Not before** and
+  **Not after**; time and sun schedules have **Run late if missed**; and time, sun and weather
+  schedules **On your holidays: Run as usual / Not on holidays / Only on holidays**, with how many
+  there are. An older controller gets none of it, and the app sends none of the new fields.
 - With the Jewish calendar on (1.2.0, `features.jewish_calendar` in `GET /v1/system`): a fourth
   "when", Shabbat and holidays (candle lighting or havdalah, and how long before or after; no days
   to pick), a row "On Shabbat and holidays: Run as usual / Not on Shabbat and holidays / Only on

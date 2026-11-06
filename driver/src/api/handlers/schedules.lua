@@ -1,8 +1,11 @@
 -- Schedules (docs/SCHEDULES.md, src/core/schedules.lua, src/core/scheduler.lua) and the weather
 -- they use (GET /v1/weather). Only admins see them (ADR-054), and make, change and delete them; the
--- weather is everyone's.
+-- weather is everyone's. Since 1.14.0 admins also skip a schedule's next run, see the next seven
+-- days (GET /v1/schedules/week), and keep the home's own holidays (/v1/holidays,
+-- src/core/home_holidays.lua).
 
 local Clock = require("src.core.clock")
+local HomeHolidays = require("src.core.home_holidays")
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
 local Validate = require("src.api.validate")
@@ -15,7 +18,10 @@ local Access = require("src.auth.access")
 
 local Handlers = {}
 
-local FIELDS = { enabled = true, scene_id = true, trigger = true, days = true, only_if = true, if_no_weather = true, during_shabbat = true }
+local FIELDS = { enabled = true, scene_id = true, trigger = true, days = true, only_if = true, if_no_weather = true, during_shabbat = true, on_holidays = true, run_late = true }
+
+-- The days GET /v1/schedules/week answers for: today and the six after it.
+local WEEK_DAYS = 7
 
 local function nullable(value)
     if value == nil then
@@ -35,6 +41,16 @@ local function calendarStatus(services, schedule)
     return calendar and calendar.status() or "off"
 end
 
+-- A skipped next run (1.14.0): when it was due ({ at }; null for a weather rule's next time), or
+-- null.
+local function skipView(runtime)
+    local skip = runtime.skip
+    if type(skip) ~= "table" then
+        return Json.null
+    end
+    return { at = skip.at and Clock.iso(skip.at) or Json.null }
+end
+
 local function view(schedule, now, services)
     local runtime = Schedules.runtime(schedule.id)
     local lastRun = runtime.last_run
@@ -48,14 +64,18 @@ local function view(schedule, now, services)
         only_if = schedule.only_if or {},
         if_no_weather = schedule.if_no_weather or "run",
         during_shabbat = schedule.during_shabbat or "run",
+        on_holidays = schedule.on_holidays or "run",
+        run_late = schedule.run_late == true,
         calendar_status = calendarStatus(services, schedule),
         next_run = nextRun and Clock.iso(nextRun) or Json.null,
+        skip = skipView(runtime),
         last_run = type(lastRun) == "table" and {
             at = lastRun.at,
             ran = nullable(lastRun.ran),
             skipped = nullable(lastRun.skipped),
             failed = nullable(lastRun.failed),
-            -- no_weather: ran without weather data; only_if / no_weather under skipped_by: did not run.
+            -- no_weather: ran without weather data; only_if / no_weather under skipped_by: did not
+            -- run; since 1.14.0 also skip (a person skipped it) and holiday (the home's).
             note = nullable(lastRun.note),
             skipped_by = nullable(lastRun.skipped_by),
             error = nullable(lastRun.error),
@@ -213,6 +233,41 @@ function Handlers.update(ctx)
     return 200, view(updated, Clock.now(), ctx.services)
 end
 
+-- POST /v1/schedules/{id}/skip (1.14.0): the schedule's next run does not run; asked again, the
+-- same run stays skipped. DELETE runs it after all.
+function Handlers.skip(ctx)
+    local schedule, problem = findSchedule(ctx)
+    if not schedule then
+        return problem
+    end
+    local skip, failure = Scheduler.skipNext(schedule, Clock.now())
+    if not skip then
+        if failure == "OFF" then
+            return Problem.new(409, "SCHEDULE_OFF", "This schedule is switched off: it has no next run to skip")
+        end
+        return Problem.new(409, "NO_NEXT_RUN", "This schedule has no next run to skip")
+    end
+    if ctx.services.onSchedulesChanged then
+        ctx.services.onSchedulesChanged()
+    end
+    ctx.services.log.info("schedules", "next run skipped", { schedule = schedule.id, due_at = skip.at and Clock.iso(skip.at) or Json.null, by = ctx.apiKey.id })
+    return 200, view(Schedules.find(schedule.id), Clock.now(), ctx.services)
+end
+
+function Handlers.unskip(ctx)
+    local schedule, problem = findSchedule(ctx)
+    if not schedule then
+        return problem
+    end
+    if Scheduler.cancelSkip(schedule) then
+        if ctx.services.onSchedulesChanged then
+            ctx.services.onSchedulesChanged()
+        end
+        ctx.services.log.info("schedules", "skipped run back on", { schedule = schedule.id, by = ctx.apiKey.id })
+    end
+    return 200, view(Schedules.find(schedule.id), Clock.now(), ctx.services)
+end
+
 function Handlers.delete(ctx)
     local schedule, problem = findSchedule(ctx)
     if not schedule then
@@ -236,14 +291,101 @@ local function clock(minute)
     return minute and string.format("%02d:%02d", math.floor(minute / 60), minute % 60) or Json.null
 end
 
+-- GET /v1/schedules/week (1.14.0): today and the next six days in the home's time zone, each with
+-- its sun times, the home's holiday, Shabbat and holidays (with the Jewish calendar on), and every
+-- run of every schedule that day, or why one of its days has none (Scheduler.week).
+function Handlers.week(ctx)
+    local now = Clock.now()
+    local days = Json.array()
+    for _, day in ipairs(Scheduler.week(now, WEEK_DAYS)) do
+        local info = day.info
+        local sunrise, sunset = Scheduler.sunTimes(info)
+        local dawn, dusk = Scheduler.twilight(info)
+        local holy = Scheduler.holyOn(info)
+        local runs = Json.array()
+        for _, run in ipairs(day.runs) do
+            local trigger = run.schedule.trigger
+            runs[#runs + 1] = {
+                schedule_id = run.schedule.id,
+                scene_id = run.schedule.scene_id,
+                at = run.at and Clock.iso(run.at) or Json.null,
+                status = run.status,
+                reason = nullable(run.reason),
+                -- Runs only if the weather then holds ("only if"), which is not known yet.
+                conditions = next(run.schedule.only_if or {}) ~= nil,
+                from = trigger.type == "weather" and nullable(trigger.from) or Json.null,
+                to = trigger.type == "weather" and nullable(trigger.to) or Json.null,
+            }
+        end
+        days[#days + 1] = {
+            date = info.date,
+            weekday = info.weekday,
+            sun = { dawn = clock(dawn), sunrise = clock(sunrise), sunset = clock(sunset), dusk = clock(dusk) },
+            holiday = day.holiday and { name = day.holiday.name } or Json.null,
+            holy = holy and { starts_at = holy.starts_at and Clock.iso(holy.starts_at) or Json.null, ends_at = holy.ends_at and Clock.iso(holy.ends_at) or Json.null } or Json.null,
+            runs = runs,
+        }
+    end
+    local paused = ctx.services.schedulesPaused and ctx.services.schedulesPaused() or false
+    return 200, { days = days, paused = paused }
+end
+
+-- GET /v1/holidays (1.14.0): the home's own holidays, for schedules that skip them or run only on
+-- them.
+function Handlers.holidays(ctx)
+    return 200, HomeHolidays.view()
+end
+
+-- PUT /v1/holidays: replaces the whole list; with `version`, only if nobody changed it since (409
+-- VERSION_CONFLICT).
+function Handlers.set_holidays(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { items = true, version = true }, false)
+    if problem then
+        return problem
+    end
+    if type(body.items) ~= "table" or body.items == Json.null or (not Json.isArray(body.items) and next(body.items) ~= nil) then
+        return Problem.invalidField("items", "items is the list of holidays")
+    end
+    if #body.items > HomeHolidays.MAX_ITEMS then
+        return Problem.invalidField("items", "At most " .. HomeHolidays.MAX_ITEMS .. " holidays")
+    end
+    if body.version ~= nil and (type(body.version) ~= "number" or body.version < 0 or body.version ~= math.floor(body.version)) then
+        return Problem.invalidField("version", "version must be the list's version, a whole number")
+    end
+    local items = {}
+    for index, input in ipairs(body.items) do
+        local item, field, message = HomeHolidays.check(input)
+        if not item then
+            return Problem.invalidField("items[" .. (index - 1) .. "]" .. (field ~= "" and ("." .. field) or ""), message)
+        end
+        items[#items + 1] = item
+    end
+    local updated, failure = HomeHolidays.replace(items, body.version)
+    if not updated then
+        if failure == "VERSION_CONFLICT" then
+            return Problem.new(409, failure, "The holidays were changed on another device; read them again", { version = HomeHolidays.view().version })
+        elseif failure == "STORE_UNREADABLE" then
+            return Problem.new(503, "UNAVAILABLE", "The saved holidays could not be read when DirectorLink started; restart the driver and try again")
+        end
+        return Problem.internal("The holidays could not be saved")
+    end
+    if ctx.services.onSchedulesChanged then
+        ctx.services.onSchedulesChanged()
+    end
+    ctx.services.log.info("schedules", "holidays changed", { holidays = #items, by = ctx.apiKey.id })
+    return 200, updated
+end
+
 local function rounded(value)
     return value and math.floor(value * 100 + 0.5) / 100 or Json.null
 end
 
 -- A day's high, low and chance of rain from the forecast (null without weather), and its sunrise and
--- sunset on the controller's local date `info`.
+-- sunset on the controller's local date `info`; since 1.14.0 its dawn and dusk (civil twilight).
 local function dayView(values, info)
     local sunrise, sunset = Scheduler.sunTimes(info)
+    local dawn, dusk = Scheduler.twilight(info)
     values = values or {}
     return {
         max_temperature = nullable(values.max_temperature),
@@ -251,6 +393,8 @@ local function dayView(values, info)
         rain_chance = nullable(values.rain_chance),
         sunrise = clock(sunrise),
         sunset = clock(sunset),
+        dawn = clock(dawn),
+        dusk = clock(dusk),
     }
 end
 

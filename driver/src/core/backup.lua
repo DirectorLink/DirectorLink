@@ -25,6 +25,7 @@ local People = require("src.auth.people")
 local RoomNames = require("src.core.room_names")
 local RoomLayout = require("src.core.room_layout")
 local CameraLayout = require("src.core.camera_layout")
+local HomeHolidays = require("src.core.home_holidays")
 local Scenes = require("src.core.scenes")
 local Schedules = require("src.core.schedules")
 local JewishCalendar = require("src.core.jewish_calendar")
@@ -74,6 +75,8 @@ local SECTIONS = {
     doorbell_doors = { version = DoorbellDoors.STORE_VERSION, object = "links", optional = true },
     -- The home's camera order (src/core/camera_layout.lua), from 1.12.1.
     camera_order = { version = 1, list = "order", optional = true },
+    -- The home's own holidays, for schedules (src/core/home_holidays.lua), from 1.14.0.
+    holidays = { version = 1, list = "items", optional = true },
 }
 
 -- Scene step types and favorites ("kind:id") name the kinds of the project's devices so.
@@ -308,6 +311,7 @@ function Backup.export(registry)
         people = People.backup(),
         doorbell_doors = DoorbellDoors.backup(),
         camera_order = CameraLayout.backup(),
+        holidays = HomeHolidays.backup(),
     }
     return {
         format = Backup.FORMAT,
@@ -1267,6 +1271,8 @@ local READ_AT_START = {
     { name = "scene_links", complete = SceneLinks.complete },
     -- Only written when the backup has them (1.11.0, ADR-078).
     { name = "doorbell_doors", complete = DoorbellDoors.complete, optional = true },
+    -- Only written when the backup has them (1.14.0).
+    { name = "holidays", complete = HomeHolidays.complete, optional = true },
 }
 
 -- Checks `document` against this controller and works out everything a restore writes, without
@@ -1363,6 +1369,11 @@ function Backup.plan(document, context)
         cameraOrder = matchOrder(m, CameraLayout.read(sections.camera_order), "camera", "camera_order")
     end
     local calendar = JewishCalendar.read(sections.calendar)
+    -- A backup made before 1.14.0 has no holidays: the ones here stay.
+    local holidays = nil
+    if sections.holidays ~= nil then
+        holidays = HomeHolidays.read(sections.holidays)
+    end
     -- A backup made before 1.6.0 has no Sonos rooms: the choices made here stay.
     local sonosRooms, sonosCount = nil, nil
     if sections.sonos_rooms ~= nil then
@@ -1443,6 +1454,7 @@ function Backup.plan(document, context)
             people = peopleCount,
             doorbell_doors = nullable(doorbellDoorsCount),
             camera_order = cameraOrder and #cameraOrder or Json.null,
+            holidays = holidays and #holidays or Json.null,
         },
         left_out = counts,
         keys = keyInfo,
@@ -1481,6 +1493,7 @@ function Backup.plan(document, context)
             people = people,
             doorbell_doors = doorbellDoors,
             camera_order = cameraOrder and { version = 1, order = cameraOrder } or nil,
+            holidays = holidays and { version = 1, items = holidays } or nil,
         },
     }
 end
@@ -1519,6 +1532,8 @@ local PARTS = {
     { name = "doorbell_doors", take = DoorbellDoors.backup, write = DoorbellDoors.restore, optional = true },
     -- Only when the backup has it (1.12.1).
     { name = "camera_order", take = CameraLayout.backup, write = CameraLayout.restore, optional = true },
+    -- Only when the backup has them (1.14.0).
+    { name = "holidays", take = HomeHolidays.snapshot, write = HomeHolidays.restore, putBack = HomeHolidays.putBack, optional = true },
 }
 
 local function write(part, data, now)

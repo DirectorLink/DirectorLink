@@ -245,6 +245,32 @@ curl -X POST http://<controller-ip>:41999/v1/schedules \
 
 Example answers: [`tests/vectors/calendar/api-examples.json`](../tests/vectors/calendar/api-examples.json).
 
+## Planning schedules
+
+Since 1.14.0 (ADR-090, `features.schedule_planning`; `docs/SCHEDULES.md`), for admins:
+
+```bash
+# Skip the next run (DELETE takes it back)
+curl -X POST http://<controller-ip>:41999/v1/schedules/1a2b3c4d/skip -H "Authorization: Bearer ak_..."
+
+# At dusk, but not before 17:30 nor after 21:00; not on the home's holidays; late after a restart
+curl -X POST http://<controller-ip>:41999/v1/schedules \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"scene_id": "0a1b2c3d", "trigger": {"type": "sun", "event": "dusk", "earliest": "17:30", "latest": "21:00"}, "days": [0, 1, 2, 3, 4, 5, 6], "on_holidays": "skip", "run_late": true}'
+
+# The home's holidays, replaced as a whole
+curl -X PUT http://<controller-ip>:41999/v1/holidays \
+  -H "Authorization: Bearer ak_..." -H "Content-Type: application/json" \
+  -d '{"items": [{"name": "Winter break", "from": "2026-12-20", "to": "2027-01-03"}, {"name": "Independence Day", "from": "2026-04-22", "yearly": true}], "version": 0}'
+
+# What runs on each of the next seven days, and why not
+curl http://<controller-ip>:41999/v1/schedules/week -H "Authorization: Bearer ak_..."
+```
+
+- A sun trigger's `event` may be `dawn` or `dusk` (civil twilight), and it may have `earliest` and `latest`; `GET /v1/weather` gives `dawn` and `dusk` for today and tomorrow.
+- Every schedule has `on_holidays` (`run`, `skip`, `only`), `run_late` and `skip` (`{ "at" }`, or `null`); `last_run.skipped_by` may be `skip` or `holiday`.
+- `GET /v1/schedules/week` gives seven `days`, each with `sun`, `holiday`, `holy` and `runs` (`planned`, `past`, `skipped` with a `reason`, or `weather`).
+
 ## Alarm
 
 `GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed. It is read-only: nothing in the API arms or disarms, which takes the user's alarm code (ADR-038).
@@ -322,7 +348,7 @@ curl -X PATCH http://<controller-ip>:41999/v1/music/RINCON_000E58A0000101400   -
 
 `GET /v1/backup` (since 1.4.0) gives everything DirectorLink keeps as one document, and `POST /v1/restore` puts it back (ADR-042, [`docs/BACKUP.md`](../docs/BACKUP.md)). For `admin` keys, and only in sealed requests (`POST /v1/sealed` at home, and through remote access): the document holds every key's hash and lock key and the home's remote identity, so with `Authorization: Bearer` the answer is `403 SEALED_REQUEST_REQUIRED`. The app encrypts it with a password before saving it; scripts and the API console, which do not seal, cannot make or restore one. `GET /v1/system` says the driver has backups (`"features": {"backup": true}`; drivers before 1.4.0 do not say it, and the app shows them no Backup).
 
-- The document: `format`, `format_version`, `driver_version`, `created_at`, `home`, `controller_id` (a hash of the controller's MAC address, null when Director does not give it), `composer` (how the Composer properties are set; listed, never restored), `references` (the rooms' and devices' names by id) and `sections`, one per store as it is kept, with its version: `keys`, `profiles`, `room_names`, `room_order`, `scenes`, `schedules`, `calendar`, `remote_identity` (only an identity the relay has accepted, with `linked: true`; otherwise `{"version": 1, "linked": false}`: none is made for a backup), since 1.8.0 `people` (each person's role and permissions, the owner, the rooms hidden from members), and since 1.12.1 `camera_order` (the home's camera order, `PUT /v1/cameras/order`; a backup without it leaves the order as it is).
+- The document: `format`, `format_version`, `driver_version`, `created_at`, `home`, `controller_id` (a hash of the controller's MAC address, null when Director does not give it), `composer` (how the Composer properties are set; listed, never restored), `references` (the rooms' and devices' names by id) and `sections`, one per store as it is kept, with its version: `keys`, `profiles`, `room_names`, `room_order`, `scenes`, `schedules`, `calendar`, `remote_identity` (only an identity the relay has accepted, with `linked: true`; otherwise `{"version": 1, "linked": false}`: none is made for a backup), since 1.8.0 `people` (each person's role and permissions, the owner, the rooms hidden from members), since 1.12.1 `camera_order` (the home's camera order, `PUT /v1/cameras/order`; a backup without it leaves the order as it is), and since 1.14.0 `holidays` (the home's own holidays; likewise).
 - Back, in parts: `POST /v1/restore/parts` with `{"index": 0, "count": 3, "text": "…"}`, then `{"upload": "<id>", "index": 1, …}` in order (at most 48 KiB of the JSON text each, 2 MiB and 100 parts in all; the upload is the key's, one per key and three in all, dropped 10 minutes after its last use). A sealed request at home is at most 64 KiB.
 - `POST /v1/restore {"upload": "<id>"}` checks it and changes nothing (`dry_run` is true unless sent false); `{"upload": "<id>", "dry_run": false}` replaces every store, or none (`500 RESTORE_FAILED`). A small document can go as `{"document": {...}}` instead of an upload. The answer, `restore`, says whether the backup looks like another home's (`origin`: `another_home` and its `reasons`), what there is after it (`counts`), what is left out (`left_out`), the keys (`keys.action`: `restore`, the backup's come back, listed in `items` by name and role, only when no key but the sender's is paired and the sender's is not in the backup; or `kept`, every key as it is now), the remote identity (`same`; `restore`: the backup's home from two seconds after the answer, unless the relay refuses it; `kept`: another home's, not moved; `none`: the backup has none; and `old_controller`), the rooms and devices found by id, by name (`by_name`), renamed and not found (`unmatched`, with `used_in`, and `now` for a door or gate that is not moved), and `composer` (the backup's value and the current one). With the restore, `replaces_key` makes the sending key take the place of one of the backup's keys (its profile and role; that key is not restored), and `move_remote: true` brings another home's remote identity here.
 - Refused: `422 BACKUP_INVALID` (not a backup, or a section missing or of the wrong shape, with `errors`), `409 BACKUP_TOO_NEW` (made by a newer DirectorLink), `409 UPLOAD_INCOMPLETE`, `409 KEYS_KEPT` (`replaces_key` while the keys are kept), `409 LAST_ADMIN` (it would leave no admin), `404 UPLOAD_NOT_FOUND`, `503 PROJECT_NOT_READY` (the project is not read yet), `503 UNAVAILABLE` (a store could not be read when DirectorLink started, with `store`: a restore would overwrite it; restart the driver).

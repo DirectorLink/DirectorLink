@@ -81,9 +81,16 @@ return {
     -- Schedules are the admins' (ADR-054): members never see them.
     { method = "GET", path = "/v1/schedules", handler = "schedules.list", role = "admin" },
     { method = "POST", path = "/v1/schedules", handler = "schedules.create", role = "admin" },
+    -- Since 1.14.0: the next seven days, before {scheduleId} (routes match in order).
+    { method = "GET", path = "/v1/schedules/week", handler = "schedules.week", role = "admin" },
     { method = "GET", path = "/v1/schedules/{scheduleId}", handler = "schedules.get", role = "admin" },
     { method = "PATCH", path = "/v1/schedules/{scheduleId}", handler = "schedules.update", role = "admin" },
     { method = "DELETE", path = "/v1/schedules/{scheduleId}", handler = "schedules.delete", role = "admin" },
+    { method = "POST", path = "/v1/schedules/{scheduleId}/skip", handler = "schedules.skip", role = "admin" },
+    { method = "DELETE", path = "/v1/schedules/{scheduleId}/skip", handler = "schedules.unskip", role = "admin" },
+    -- The home's own holidays, for schedules (1.14.0).
+    { method = "GET", path = "/v1/holidays", handler = "schedules.holidays", role = "admin" },
+    { method = "PUT", path = "/v1/holidays", handler = "schedules.set_holidays", role = "admin" },
     { method = "GET", path = "/v1/weather", handler = "schedules.weather", role = "member" },
 
     { method = "GET", path = "/v1/calendar", handler = "calendar.get", role = "member" },

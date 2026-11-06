@@ -1762,6 +1762,36 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/schedules/week:
+    get:
+      tags: [Schedules]
+      operationId: getScheduleWeek
+      x-directorlink-role: admin
+      summary: What runs on each of the next seven days
+      description: |
+        Since 1.14.0 (ADR-090). Today and the six days after it, in the controller's time zone, as
+        the controller works them out now: each day's dawn, sunrise, sunset and dusk, the home's
+        holiday (`/v1/holidays`), Shabbat and holidays (with the Jewish calendar on), and every run
+        of every schedule that day at its time, or why one of its days has none. A run is
+        `planned`, `past` (its time today has passed; the schedule's `last_run` says how it went),
+        or `skipped` with a `reason`; a weather rule's day is `weather`, without a time (its
+        `during_shabbat` judged by its hours that day: `only` shows on the days they reach Shabbat
+        or a holiday, `skip` is `skipped` with `shabbat` on a day they are all within one). Days a
+        schedule does not run on at all (not in its `days`; only on Shabbat or the home's holidays,
+        and it is not) list nothing for it. What the weather will do is not known: a run with
+        `conditions` (an `only_if`) runs if the weather then allows.
+      responses:
+        "200":
+          description: Seven days, today first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScheduleWeek"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /v1/schedules/{scheduleId}:
     parameters:
       - $ref: "#/components/parameters/ScheduleId"
@@ -1841,6 +1871,120 @@ paths:
         "503":
           $ref: "#/components/responses/Unavailable"
 
+  /v1/schedules/{scheduleId}/skip:
+    parameters:
+      - $ref: "#/components/parameters/ScheduleId"
+    post:
+      tags: [Schedules]
+      operationId: skipNextRun
+      x-directorlink-role: admin
+      summary: Skip the schedule's next run
+      description: |
+        Since 1.14.0 (ADR-090). The run `next_run` says now does not run: when it comes due it is
+        passed over (`last_run.skipped_by: skip`, and the history says a person skipped it), and
+        the schedule runs as usual after it. A weather rule's next time it would run is skipped
+        the same way (`skip.at` null). One at a time: asked again, the same run stays skipped.
+        Switching the schedule off and on, or changing its scene, keeps the skip; changing its
+        `trigger` or `days` cancels it. A skipped run that never came due (switched off or paused
+        over it) is forgotten 6 hours after its time. No body.
+      responses:
+        "200":
+          description: The schedule, with `skip` and the `next_run` after it.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: "`SCHEDULE_OFF`: the schedule is switched off; `NO_NEXT_RUN`: it has no next run (e.g. only on Shabbat while the calendar is off)."
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+    delete:
+      tags: [Schedules]
+      operationId: cancelSkip
+      x-directorlink-role: admin
+      summary: Run the skipped run after all
+      description: Since 1.14.0. Takes back a skip; without one, nothing changes.
+      responses:
+        "200":
+          description: The schedule, `skip` null.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /v1/holidays:
+    get:
+      tags: [Schedules]
+      operationId: getHolidays
+      x-directorlink-role: admin
+      summary: The home's own holidays
+      description: |
+        Since 1.14.0 (ADR-090). Days the home chooses (public holidays, school breaks, a trip),
+        once or every year, that a schedule may skip or run only on (`on_holidays`). Whole local
+        days in the controller's time zone. Not the Jewish calendar's holidays (`during_shabbat`).
+      responses:
+        "200":
+          description: The list and its version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomeHolidayList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Schedules]
+      operationId: setHolidays
+      x-directorlink-role: admin
+      summary: Replace the home's holidays
+      description: |
+        Replaces the whole list (at most 100). With `version`, only if nobody changed it since (409
+        `VERSION_CONFLICT`, with the `version` now). A one-off holiday lasts at most 366 days, one
+        every year at most 365; `to` left out is the first day. Kept across driver updates and in
+        backups.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HomeHolidayListUpdate"
+      responses:
+        "200":
+          description: The list as saved, with its new version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HomeHolidayList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+
   /v1/weather:
     get:
       tags: [Schedules]
@@ -1850,7 +1994,8 @@ paths:
       description: |
         The weather now and today's and tomorrow's forecast for the project's location (Composer
         project properties), and today's and tomorrow's sunrise and sunset, worked out on the
-        controller (`tomorrow` since 1.12.1, ADR-084, for the app's line on Home). Since 1.10.0
+        controller (`tomorrow` since 1.12.1, ADR-084, for the app's line on Home; dawn and dusk since
+        1.14.0). Since 1.10.0
         (ADR-071) the weather now is the hour for now of Open-Meteo's hourly forecast, which the
         controller reads every 6 hours while a schedule needs the weather, and for an hour after this
         is asked, and keeps for 5 days: with or without the internet, schedules and this answer use
@@ -4297,6 +4442,9 @@ components:
             alert_screens:
               type: boolean
               description: "Always true since 1.13.0: the home's screens of DirectorLink's notification agreement get its alerts, and admins see them in `GET /v1/alerts/screens` (ADR-086). Missing before 1.13.0."
+            schedule_planning:
+              type: boolean
+              description: "Always true since 1.14.0: a schedule's next run skipped (`POST /v1/schedules/{scheduleId}/skip`), dawn and dusk, a sun schedule's `earliest` and `latest`, `run_late`, `on_holidays` and the home's holidays (`/v1/holidays`), and the next seven days (`GET /v1/schedules/week`) (ADR-090). Missing before 1.14.0, whose schedules refuse the new fields."
 
     PairRequest:
       oneOf:
@@ -5258,8 +5406,13 @@ components:
 
     ScheduleTrigger:
       description: |
-        `time`: `at` ("HH:MM"). `sun`: `event` (sunrise, sunset) and `offset` in minutes (-180 to
-        180; negative is before). `weather`: `kind` heat (`above` °C or hotter, 15 to 45), wind
+        `time`: `at` ("HH:MM"). `sun`: `event` (sunrise, sunset; since 1.14.0 also dawn and dusk,
+        civil twilight: the sun 6° below the horizon) and `offset` in minutes (-180 to 180;
+        negative is before), and since 1.14.0 optional `earliest` and `latest` ("HH:MM", earliest
+        before latest): the time is held within them, so "sunset, earliest 17:30" runs at 17:30
+        while the sun sets earlier, and an offset that would cross midnight runs at the limit
+        before it. A day without that event (polar day or night; for dawn and dusk also the white
+        nights) has no run. `weather`: `kind` heat (`above` °C or hotter, 15 to 45), wind
         (`above` km/h or more, 10 to 150) or rain (starts raining), optional hours `from`–`to`
         ("HH:MM", may cross midnight), and `once_a_day` (default true). A weather schedule runs
         again only after it has cooled to 2° below the threshold or less, the wind has dropped to
@@ -5281,8 +5434,8 @@ components:
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
         event:
           type: string
-          enum: [sunrise, sunset, candle_lighting, havdalah]
-          description: sunrise and sunset for `sun`, candle_lighting and havdalah for `shabbat`.
+          enum: [sunrise, sunset, dawn, dusk, candle_lighting, havdalah]
+          description: sunrise, sunset, dawn and dusk (1.14.0) for `sun`, candle_lighting and havdalah for `shabbat`.
         offset:
           type: integer
           minimum: -360
@@ -5302,6 +5455,14 @@ components:
           pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
         once_a_day:
           type: boolean
+        earliest:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          description: "`sun` only (1.14.0): not before this time of day."
+        latest:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          description: "`sun` only (1.14.0): not after this time of day; later than `earliest`."
 
     ScheduleConditions:
       description: |
@@ -5347,9 +5508,28 @@ components:
         `run` for a `shabbat` trigger. While the Jewish calendar is off, or has no location, no
         moment counts as holy: `only` schedules do not run and `skip` schedules run as usual.
 
+    OnHolidays:
+      type: string
+      enum: [run, skip, only]
+      description: |
+        Since 1.14.0 (ADR-090). For time, sun and weather schedules, what to do on the home's own
+        holidays (`/v1/holidays`), whole local days: `run` as usual (the default), `skip` (a
+        skipped run says `last_run.skipped_by: holiday`), or run `only` on them. Judged by the
+        local date of the run (a weather rule: of the day its hours belong to). Always `run` for a
+        `shabbat` trigger.
+
+    RunLate:
+      type: boolean
+      description: |
+        Since 1.14.0 (ADR-090). Time and sun schedules only: when the controller was off at the
+        schedule's time (a power cut, a restart, an update), it runs in the first minute after the
+        driver starts, up to 6 hours late (`last_run.note: late`), oldest first; otherwise a run
+        missed by more than 5 minutes is not made up. Never what was due while the schedules were
+        paused. Shabbat schedules, and those only on Shabbat and holidays, always do. Default false.
+
     Schedule:
       type: object
-      required: [id, enabled, scene_id, trigger, days, only_if, if_no_weather, during_shabbat, calendar_status, next_run, last_run, version, created_at, updated_at]
+      required: [id, enabled, scene_id, trigger, days, only_if, if_no_weather, during_shabbat, on_holidays, run_late, calendar_status, next_run, skip, last_run, version, created_at, updated_at]
       properties:
         id:
           type: string
@@ -5371,6 +5551,10 @@ components:
           description: When `only_if` needs the weather and there is none.
         during_shabbat:
           $ref: "#/components/schemas/DuringShabbat"
+        on_holidays:
+          $ref: "#/components/schemas/OnHolidays"
+        run_late:
+          $ref: "#/components/schemas/RunLate"
         calendar_status:
           type: [string, "null"]
           enum: [ok, "off", no_location, null]
@@ -5381,7 +5565,16 @@ components:
         next_run:
           type: [string, "null"]
           format: date-time
-          description: For time, sun and Shabbat schedules that are on.
+          description: For time, sun and Shabbat schedules that are on; after a skipped run, the one after it.
+        skip:
+          type: [object, "null"]
+          description: The next run a person skipped (1.14.0, `POST /v1/schedules/{scheduleId}/skip`), or null.
+          required: [at]
+          properties:
+            at:
+              type: [string, "null"]
+              format: date-time
+              description: When the skipped run was due; null for a weather rule (its next time).
         last_run:
           type: [object, "null"]
           properties:
@@ -5396,11 +5589,11 @@ components:
               type: [integer, "null"]
             note:
               type: [string, "null"]
-              description: "`no_weather`: ran without weather data; `late`: ran late, after a restart (Shabbat automation, up to 6 hours); for weather schedules, the kind that made it run."
+              description: "`no_weather`: ran without weather data; `late`: ran late, after a restart (Shabbat automation, and since 1.14.0 `run_late`; up to 6 hours); for weather schedules, the kind that made it run."
             skipped_by:
               type: [string, "null"]
-              enum: [only_if, no_weather, shabbat, null]
-              description: "It was due but did not run (`shabbat`: on Shabbat or a holiday, with `during_shabbat: skip`)."
+              enum: [only_if, no_weather, shabbat, skip, holiday, null]
+              description: "It was due but did not run (`shabbat`: on Shabbat or a holiday, with `during_shabbat: skip`; since 1.14.0 `skip`: a person skipped it, `holiday`: the home's holiday, with `on_holidays: skip`)."
             error:
               type: [string, "null"]
         version:
@@ -5446,6 +5639,10 @@ components:
           enum: [run, skip]
         during_shabbat:
           $ref: "#/components/schemas/DuringShabbat"
+        on_holidays:
+          $ref: "#/components/schemas/OnHolidays"
+        run_late:
+          $ref: "#/components/schemas/RunLate"
 
     ScheduleUpdate:
       type: object
@@ -5468,9 +5665,156 @@ components:
           enum: [run, skip]
         during_shabbat:
           $ref: "#/components/schemas/DuringShabbat"
+        on_holidays:
+          $ref: "#/components/schemas/OnHolidays"
+        run_late:
+          $ref: "#/components/schemas/RunLate"
         version:
           type: integer
           minimum: 1
+
+    ScheduleWeek:
+      type: object
+      required: [days, paused]
+      properties:
+        days:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: "#/components/schemas/ScheduleWeekDay"
+        paused:
+          type: boolean
+          description: The installer paused all schedules in Composer; future runs say `paused`.
+
+    ScheduleWeekDay:
+      type: object
+      required: [date, weekday, sun, holiday, holy, runs]
+      properties:
+        date:
+          type: string
+          format: date
+          description: The local date.
+        weekday:
+          type: integer
+          minimum: 0
+          maximum: 6
+        sun:
+          type: object
+          required: [dawn, sunrise, sunset, dusk]
+          description: Local times, "HH:MM", worked out on the controller; null without a location or when the event does not happen that day.
+          properties:
+            dawn:
+              type: [string, "null"]
+            sunrise:
+              type: [string, "null"]
+            sunset:
+              type: [string, "null"]
+            dusk:
+              type: [string, "null"]
+        holiday:
+          type: [object, "null"]
+          description: The home's holiday that day (`/v1/holidays`), or null.
+          required: [name]
+          properties:
+            name:
+              type: string
+        holy:
+          type: [object, "null"]
+          description: With the Jewish calendar on, Shabbat and holidays that day, or null when none of it is holy. `starts_at` (candle lighting) and `ends_at` (havdalah) when they fall that day; both null when the whole day is holy.
+          required: [starts_at, ends_at]
+          properties:
+            starts_at:
+              type: [string, "null"]
+              format: date-time
+            ends_at:
+              type: [string, "null"]
+              format: date-time
+        runs:
+          type: array
+          description: By time; weather rules after the rest.
+          items:
+            $ref: "#/components/schemas/ScheduleWeekRun"
+
+    ScheduleWeekRun:
+      type: object
+      required: [schedule_id, scene_id, at, status, reason, conditions, from, to]
+      properties:
+        schedule_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        scene_id:
+          type: string
+          pattern: "^[0-9a-f]{8}$"
+        at:
+          type: [string, "null"]
+          format: date-time
+          description: When it runs that day; null for a weather rule, and for a day without its sun event.
+        status:
+          type: string
+          enum: [planned, past, skipped, weather]
+        reason:
+          type: [string, "null"]
+          enum: [skip, holiday, shabbat, "off", paused, no_sun, null]
+          description: "For `skipped`: a person skipped it, the home's holiday, Shabbat and holidays (`during_shabbat: skip`), switched off, paused in Composer, or no sunrise, sunset, dawn or dusk that day (or an offset across midnight)."
+        conditions:
+          type: boolean
+          description: It has `only_if`, so it runs only if the weather then allows.
+        from:
+          type: [string, "null"]
+          description: A weather rule's hours, "HH:MM", or null.
+        to:
+          type: [string, "null"]
+
+    HomeHoliday:
+      type: object
+      required: [name, from]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 60
+          description: 1 to 60 characters, trimmed.
+        from:
+          type: string
+          format: date
+          description: The first day, "YYYY-MM-DD".
+        to:
+          type: [string, "null"]
+          format: date
+          description: The last day, "YYYY-MM-DD", the first or later; left out or null for one day. Always given in answers.
+        yearly:
+          type: [boolean, "null"]
+          description: Every year on the same days of the month (also across New Year); default false. Always given in answers.
+
+    HomeHolidayList:
+      type: object
+      required: [items, version]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/HomeHoliday"
+        version:
+          type: integer
+          minimum: 0
+          description: Counts the changes; send it back to change the list only if nobody else did.
+
+    HomeHolidayListUpdate:
+      type: object
+      required: [items]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/HomeHoliday"
+        version:
+          type: integer
+          minimum: 0
 
     Weather:
       type: object
@@ -5539,8 +5883,8 @@ components:
 
     WeatherDay:
       type: object
-      description: A day's forecast and the controller's sunrise and sunset for it.
-      required: [max_temperature, min_temperature, rain_chance, sunrise, sunset]
+      description: A day's forecast and the controller's sunrise and sunset for it, and since 1.14.0 its dawn and dusk.
+      required: [max_temperature, min_temperature, rain_chance, sunrise, sunset, dawn, dusk]
       properties:
         max_temperature:
           type: [number, "null"]
@@ -5557,6 +5901,12 @@ components:
         sunset:
           type: [string, "null"]
           description: Local time, "HH:MM"; null as `sunrise`.
+        dawn:
+          type: [string, "null"]
+          description: Local time, "HH:MM" (1.14.0), civil twilight (the sun 6° below the horizon); null without a location, or when the sun does not go that low (the white nights).
+        dusk:
+          type: [string, "null"]
+          description: Local time, "HH:MM" (1.14.0); null as `dawn`.
 
     Calendar:
       type: object
@@ -7647,13 +7997,14 @@ components:
           description: For scenes, schedules and backups to the account (`cloud_backup`). A run that failed on a device is `failed`; one that sent nothing is `skipped`. Also `failed` for `links_removed` that the controller could not save (the links still work).
         reason:
           type: string
-          enum: [shabbat, paused, calendar_off, only_if, no_weather, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity, key_gone, keys_revoked, nobody, doors_off, not_sent, no_access, door_gone]
+          enum: [shabbat, paused, calendar_off, only_if, no_weather, skip, holiday, scene_gone, error, remote_off, account_unreachable, not_linked, too_large, limit, account_full, stopped, doors, other_home, new_identity, key_gone, keys_revoked, nobody, doors_off, not_sent, no_access, door_gone]
           description: |
             Why a schedule was skipped or failed: `shabbat` (it skips Shabbat and holidays),
             `paused` (the Schedules property in Composer), `calendar_off` (it runs only on Shabbat
             and holidays, and the Jewish calendar is off or has no location), `only_if` (its weather
-            conditions were not met), `no_weather` (no weather data, and it skips without),
-            `scene_gone`, `error`.
+            conditions were not met), `no_weather` (no weather data, and it skips without), since
+            1.14.0 `skip` (a person skipped this run) and `holiday` (the home's holiday, whose name
+            is the entry's `note`), `scene_gone`, `error`.
 
             Why a backup to the account (`cloud_backup`) was not made: `remote_off` (Remote Access
             is off in Composer), `account_unreachable` (the controller was not connected to
@@ -7991,6 +8342,10 @@ components:
               allOf:
                 - $ref: "#/components/schemas/BackupList"
               description: The home's camera order (1.12.1), camera ids under `order`, matched to the project as favorites are. A backup without it (before 1.12.1) leaves the order on the controller as it is.
+            holidays:
+              allOf:
+                - $ref: "#/components/schemas/BackupList"
+              description: The home's own holidays (1.14.0), under `items` as `/v1/holidays` gives them. A backup without them (before 1.14.0) leaves the holidays on the controller as they are.
 
     AutomaticBackupKey:
       type: object
@@ -8076,7 +8431,7 @@ components:
 
     BackupList:
       type: object
-      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids, or camera ids in camera_order), scenes or schedules."
+      description: "A store with its version and one list: keys (hashes and lock keys), profiles, order (room ids, or camera ids in camera_order), scenes, schedules, or the home's holidays (items)."
       required: [version]
       minProperties: 2
       maxProperties: 2
@@ -8233,6 +8588,9 @@ components:
             camera_order:
               type: [integer, "null"]
               description: Cameras in the home's order after the restore (1.12.1); null when the backup has none, and the order stays as it is.
+            holidays:
+              type: [integer, "null"]
+              description: The home's holidays after the restore (1.14.0); null when the backup has none, and the holidays stay as they are.
         left_out:
           type: object
           description: What the backup has that is left out, not valid or with nothing left to act on (steps whose devices or room match nothing, schedules whose scene is not in the backup).

@@ -2,14 +2,17 @@
 -- NOAA's solar calculator, after Meeus, Astronomical Algorithms (chapters 25 and 28), at sea level,
 -- with the official zenith (90°50′: refraction and the sun's radius). Hebcal's candle lighting
 -- and havdalah come from the same sunsets, to the minute (docs/CALENDAR.md). Until 1.2.0 this
--- was the Almanac for Computers method, up to a minute off. Pure: no Director, no clock, no time
--- zone.
+-- was the Almanac for Computers method, up to a minute off. Dawn and dusk (1.14.0) are civil
+-- twilight, the same calculation with the sun's centre 6° below the horizon (zenith 96°). Pure: no
+-- Director, no clock, no time zone.
 
 local Sun = {}
 
 local RAD = math.pi / 180
 local DEG = 180 / math.pi
 local ZENITH = (90 + 50 / 60) * RAD
+-- Civil twilight: dawn begins and dusk ends with the sun's centre 6° below the horizon.
+local CIVIL_ZENITH = 96 * RAD
 
 -- Days from 1970-01-01 to a Gregorian date.
 local function daysFromCivil(year, month, day)
@@ -20,8 +23,9 @@ local function daysFromCivil(year, month, day)
 end
 
 -- The sunrise or sunset around a civil date's local noon, in minutes after 0h UTC of that date,
--- with the sun where it is at Julian day `jd`; nil in polar day or night. Longitude east-positive.
-local function eventMinutes(jd, latitude, longitude, rising)
+-- with the sun where it is at Julian day `jd`, at `zenith`; nil when the sun does not reach it that
+-- day (polar day or night; for twilight, also the white nights). Longitude east-positive.
+local function eventMinutes(jd, latitude, longitude, rising, zenith)
     local t = (jd - 2451545) / 36525
     local meanLongitude = (280.46646 + t * (36000.76983 + 0.0003032 * t)) % 360
     local anomaly = (357.52911 + t * (35999.05029 - 0.0001537 * t)) * RAD
@@ -35,7 +39,7 @@ local function eventMinutes(jd, latitude, longitude, rising)
     local l0 = meanLongitude * RAD
     local equationOfTime = 4 * DEG * (y * math.sin(2 * l0) - 2 * eccentricity * math.sin(anomaly) + 4 * eccentricity * y * math.sin(anomaly) * math.cos(2 * l0) - 0.5 * y * y * math.sin(4 * l0) - 1.25 * eccentricity * eccentricity * math.sin(2 * anomaly))
     local phi = latitude * RAD
-    local cosHourAngle = math.cos(ZENITH) / (math.cos(phi) * math.cos(declination)) - math.tan(phi) * math.tan(declination)
+    local cosHourAngle = math.cos(zenith) / (math.cos(phi) * math.cos(declination)) - math.tan(phi) * math.tan(declination)
     if cosHourAngle > 1 or cosHourAngle < -1 then
         return nil
     end
@@ -47,11 +51,12 @@ local function eventMinutes(jd, latitude, longitude, rising)
 end
 
 -- Two passes: the sun at noon UTC gives an estimate, the sun at that estimate the time.
-local function eventEpoch(year, month, day, latitude, longitude, rising)
+local function eventEpoch(year, month, day, latitude, longitude, rising, zenith)
+    zenith = zenith or ZENITH
     local days = daysFromCivil(year, month, day)
     local jd0 = days + 2440587.5
-    local estimate = eventMinutes(jd0 + 0.5, latitude, longitude, rising)
-    local minutes = estimate and eventMinutes(jd0 + estimate / 1440, latitude, longitude, rising)
+    local estimate = eventMinutes(jd0 + 0.5, latitude, longitude, rising, zenith)
+    local minutes = estimate and eventMinutes(jd0 + estimate / 1440, latitude, longitude, rising, zenith)
     return minutes and days * 86400 + minutes * 60 or nil
 end
 
@@ -67,15 +72,38 @@ function Sun.sunsetEpoch(year, month, day, latitude, longitude)
     return eventEpoch(year, month, day, latitude, longitude, false)
 end
 
+-- The moment dawn begins (civil twilight, the sun 6° below the horizon) on a date, or nil when
+-- the sun does not go that low (the white nights, around midsummer far north) or rise that high.
+function Sun.dawnEpoch(year, month, day, latitude, longitude)
+    return eventEpoch(year, month, day, latitude, longitude, true, CIVIL_ZENITH)
+end
+
+-- The moment dusk ends (civil twilight) on a date, or nil, as for dawn.
+function Sun.duskEpoch(year, month, day, latitude, longitude)
+    return eventEpoch(year, month, day, latitude, longitude, false, CIVIL_ZENITH)
+end
+
+-- Minutes after local midnight, rounded to the nearest minute of the local day.
+local function localMinutes(year, month, day, offsetMinutes)
+    local midnight = daysFromCivil(year, month, day) * 86400
+    return function(epoch)
+        return epoch and math.floor(((epoch - midnight) / 60 + offsetMinutes) % 1440 + 0.5) % 1440 or nil
+    end
+end
+
 -- Minutes after local midnight of sunrise and sunset on a date, given the local offset from UTC
 -- in minutes that day, rounded to the nearest minute of the local day; either is nil in polar day
 -- or night.
 function Sun.times(year, month, day, latitude, longitude, offsetMinutes)
-    local midnight = daysFromCivil(year, month, day) * 86400
-    local function toLocal(epoch)
-        return epoch and math.floor(((epoch - midnight) / 60 + offsetMinutes) % 1440 + 0.5) % 1440 or nil
-    end
+    local toLocal = localMinutes(year, month, day, offsetMinutes)
     return toLocal(Sun.sunriseEpoch(year, month, day, latitude, longitude)), toLocal(Sun.sunsetEpoch(year, month, day, latitude, longitude))
+end
+
+-- Minutes after local midnight of dawn and dusk (civil twilight) on a date, as Sun.times; either is
+-- nil when the sun does not reach 6° below the horizon that day.
+function Sun.twilight(year, month, day, latitude, longitude, offsetMinutes)
+    local toLocal = localMinutes(year, month, day, offsetMinutes)
+    return toLocal(Sun.dawnEpoch(year, month, day, latitude, longitude)), toLocal(Sun.duskEpoch(year, month, day, latitude, longitude))
 end
 
 return Sun

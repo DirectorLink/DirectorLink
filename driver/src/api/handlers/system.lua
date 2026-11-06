@@ -196,6 +196,10 @@ function System.info(ctx)
         -- GET /v1/cameras and GET /v1/doorbells follow (1.12.1); always there.
         -- alert_screens: the home's screens of DirectorLink's notification agreement get its alerts,
         -- and admins see them in GET /v1/alerts/screens (1.13.0, ADR-086); always there.
+        -- schedule_planning: a schedule's next run skipped (POST /v1/schedules/{id}/skip), dawn and
+        -- dusk, earliest and latest times, run_late, on_holidays and the home's holidays
+        -- (/v1/holidays), and the next seven days (GET /v1/schedules/week) (1.14.0, ADR-090);
+        -- always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
@@ -215,6 +219,7 @@ function System.info(ctx)
             user_names = true,
             camera_order = true,
             alert_screens = true,
+            schedule_planning = true,
         },
     }
 end

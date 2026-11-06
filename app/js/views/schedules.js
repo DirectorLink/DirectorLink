@@ -1,9 +1,12 @@
 // Schedules (#/schedules) and the schedule editor (#/schedule/new, #/schedule/<id>; admins), under
-// the Scenes tab. A schedule runs a scene: at a time, at sunrise or sunset, when the weather turns
-// (heat, wind, rain), or when Shabbat and holidays begin or end (with the Jewish calendar on in
-// Composer), on chosen days; time, sun and Shabbat schedules may add "only if" weather conditions,
-// and time, sun and weather schedules what to do on Shabbat and holidays. The controller runs them;
-// the weather comes from Open-Meteo through it.
+// the Scenes tab. A schedule runs a scene: at a time, at sunrise or sunset (since 1.14.0 also dawn
+// or dusk, within earliest and latest times), when the weather turns (heat, wind, rain), or when
+// Shabbat and holidays begin or end (with the Jewish calendar on in Composer), on chosen days; time,
+// sun and Shabbat schedules may add "only if" weather conditions, and time, sun and weather
+// schedules what to do on Shabbat and holidays and (1.14.0) on the home's own holidays. Since 1.14.0
+// an admin also skips a schedule's next run from the list, and opens the next seven days
+// (views/schedule-week.js) and the holidays (views/holidays.js). The controller runs them; the
+// weather comes from Open-Meteo through it.
 
 import { calendarOn, holyTimes, loadCalendar, noteCalendarOff, onOneLine, showCalendarSettings, upcomingTimes } from "../calendar.js";
 import { emptyState, skeletonCards } from "../components.js";
@@ -27,6 +30,7 @@ import {
   outsideScale,
   sceneNameOf,
   scheduleIcon,
+  schedulePlanning,
   schedulesWanted,
   statusText,
   weatherNow,
@@ -43,6 +47,8 @@ const MAX_SCHEDULES = 50;
 const MESSAGE_MS = 6000;
 const WEATHER_MS = 5 * 60 * 1000;
 const OFFSETS = [-60, -30, 0, 30, 60];
+// Sunrise and sunset; with DirectorLink 1.14.0 dawn and dusk too, in the order of the day.
+const SUN_EVENTS = ["dawn", "sunrise", "sunset", "dusk"];
 // Minutes before (negative) or after candle lighting and havdalah; the API takes -360 to 360.
 const SHABBAT_OFFSETS = [-120, -60, -30, -15, 0, 15, 30, 60, 120];
 const LIMITS = { heat: [15, 45, 1], wind: [10, 150, 5] };
@@ -234,6 +240,7 @@ export function schedulesView() {
     notice(ui.schedulesMessage),
     state.schedulesPaused ? h("p", { class: "notice notice-info", role: "status" }, t("schedules.paused")) : null,
     h("p", { class: "muted-note scene-intro" }, admin ? t("schedules.helpAdmin") : t("schedules.help")),
+    planningLinks(admin),
     weatherCard(),
     calendarCard(admin),
     schedules.length
@@ -247,6 +254,45 @@ export function schedulesView() {
           : h("div", { class: "home-section scene-new" }, h("a", { class: "button button-primary", href: "#/schedule/new", dataset: { key: "schedule-new" } }, icon("plus"), t("schedules.newSchedule")))
       : null,
   ];
+}
+
+// The next seven days and the home's holidays (1.14.0), for admins of a controller that has them.
+function planningLinks(admin) {
+  if (!admin || !schedulePlanning()) return null;
+  return h(
+    "div",
+    { class: "chip-row schedule-links" },
+    h("a", { class: "button button-secondary", href: "#/schedules/week", dataset: { key: "schedules-week" } }, icon("calendar"), t("schedules.week.open")),
+    h("a", { class: "button button-secondary", href: "#/schedules/holidays", dataset: { key: "schedules-holidays" } }, icon("holiday"), t("holidays.open"))
+  );
+}
+
+// Skips the schedule's next run, or runs it after all (1.14.0).
+async function setSkip(schedule, skipping) {
+  ui.schedulesMessage = null;
+  try {
+    const answer = await api(`/v1/schedules/${schedule.id}/skip`, { method: skipping ? "POST" : "DELETE" });
+    state.schedules = state.schedules.map((item) => (item.id === schedule.id && answer?.id ? answer : item));
+    flash(skipping ? t("schedules.skipDone", { when: answer?.skip?.at ? dayAndTime(answer.skip.at) : t("schedules.skipWeather") }) : t("schedules.unskipDone"));
+  } catch (error) {
+    noteForbidden(error);
+    flash(errorText(error), "error");
+  }
+  notify();
+  await loadSchedules();
+}
+
+// "Skip next run" under a schedule that has one (or a weather rule), "Don’t skip" once skipped.
+function skipButton(schedule) {
+  if (!schedulePlanning() || schedule.enabled === false || state.schedulesPaused) return null;
+  const skipping = Boolean(schedule.skip && typeof schedule.skip === "object");
+  const weatherRule = schedule.trigger?.type === "weather";
+  if (!skipping && !schedule.next_run && !weatherRule) return null;
+  return h(
+    "button",
+    { type: "button", class: "link-button schedule-skip", dataset: { key: `schedule-skip:${schedule.id}` }, onclick: () => setSkip(schedule, !skipping) },
+    skipping ? t("schedules.unskip") : t("schedules.skipNext")
+  );
 }
 
 async function setEnabled(schedule, enabled) {
@@ -276,7 +322,8 @@ function scheduleCard(schedule, admin) {
       admin ? h("a", { class: "scene-name", href: `#/schedule/${schedule.id}`, dataset: { key: `schedule-edit:${schedule.id}` } }, when) : h("span", { class: "scene-name" }, when),
       h("span", { class: "scene-summary" }, t("schedules.runs", { scene: `⁨${sceneNameOf(schedule)}⁩` })),
       condition ? h("span", { class: "scene-summary" }, condition) : null,
-      status ? h("span", { class: "scene-result" }, status) : null
+      status ? h("span", { class: "scene-result" }, status) : null,
+      admin ? skipButton(schedule) : null
     ),
     admin
       ? h(
@@ -322,6 +369,13 @@ export function draftFor(key) {
     at: trigger.type === "time" ? trigger.at : "07:00",
     event: trigger.type === "sun" ? trigger.event : "sunset",
     offset: trigger.type === "sun" ? trigger.offset || 0 : 0,
+    // Not before, not after (1.14.0).
+    hasEarliest: trigger.type === "sun" && Boolean(trigger.earliest),
+    earliest: (trigger.type === "sun" && trigger.earliest) || "17:00",
+    hasLatest: trigger.type === "sun" && Boolean(trigger.latest),
+    latest: (trigger.type === "sun" && trigger.latest) || "22:00",
+    runLate: existing?.run_late === true,
+    holidays: ["skip", "only"].includes(existing?.on_holidays) ? existing.on_holidays : "run",
     kind: trigger.type === "weather" ? trigger.kind : "heat",
     heat: trigger.kind === "heat" ? fromCelsius(trigger.above, scale) : fromCelsius(30, scale),
     heatKept: trigger.kind === "heat" ? trigger.above : null,
@@ -372,7 +426,11 @@ function inLimits(celsius) {
 export function scheduleBody(draft) {
   let trigger;
   if (draft.type === "time") trigger = { type: "time", at: draft.at };
-  else if (draft.type === "sun") trigger = { type: "sun", event: draft.event, offset: draft.offset };
+  else if (draft.type === "sun") {
+    trigger = { type: "sun", event: draft.event, offset: draft.offset };
+    if (draft.hasEarliest) trigger.earliest = draft.earliest;
+    if (draft.hasLatest) trigger.latest = draft.latest;
+  }
   else if (draft.type === "shabbat") trigger = { type: "shabbat", event: draft.shabbatEvent, offset: draft.shabbatOffset };
   else {
     trigger = { type: "weather", kind: draft.kind, once_a_day: draft.once };
@@ -389,6 +447,11 @@ export function scheduleBody(draft) {
   }
   const body = { enabled: draft.enabled, scene_id: draft.scene_id, trigger, days: [...draftDays(draft)].sort((a, b) => a - b), only_if: onlyIf, if_no_weather: draft.ifNoWeather };
   if (calendarOn()) body.during_shabbat = draft.type === "shabbat" ? "run" : draft.during;
+  // DirectorLink 1.14.0: older drivers refuse fields they do not know.
+  if (schedulePlanning()) {
+    body.on_holidays = draft.type === "shabbat" ? "run" : draft.holidays;
+    body.run_late = (draft.type === "time" || draft.type === "sun") && draft.runLate;
+  }
   return body;
 }
 
@@ -435,7 +498,7 @@ export function stepper({ value, format, label, name = label, key, min, max, ste
   );
 }
 
-function toggle(label, on, key, onChange, help) {
+export function toggle(label, on, key, onChange, help) {
   const id = `toggle-${key}`;
   return h(
     "div",
@@ -524,17 +587,18 @@ function whenSection(draft) {
     parts.push(...shabbatChoices(draft));
   } else if (draft.type === "time") {
     parts.push(h("label", { class: "field schedule-field" }, h("span", { class: "field-label" }, t("schedules.editor.time")), timeInput(draft, draft.at, "schedule-at", t("schedules.editor.time"), (value) => { draft.at = value; })));
+    parts.push(runLateToggle(draft));
   } else if (draft.type === "sun") {
     const today = weather?.today || {};
+    // Dawn and dusk with DirectorLink 1.14.0; one set through the API on an older app stays shown.
+    const events = SUN_EVENTS.filter((event) => schedulePlanning() || event === "sunrise" || event === "sunset" || event === draft.event);
     parts.push(
       segments(
-        [
-          ["sunrise", today.sunrise ? t("schedules.editor.sunriseAt", { time: today.sunrise }) : t("schedules.editor.sunrise")],
-          ["sunset", today.sunset ? t("schedules.editor.sunsetAt", { time: today.sunset }) : t("schedules.editor.sunset")],
-        ],
+        events.map((event) => [event, today[event] ? t(`schedules.editor.${event}At`, { time: today[event] }) : t(`schedules.editor.${event}`)]),
         draft.event,
         "schedule-event",
-        (value) => change(draft, () => { draft.event = value; })
+        (value) => change(draft, () => { draft.event = value; }),
+        events.length > 2 ? "segments-four" : ""
       ),
       h(
         "div",
@@ -547,7 +611,10 @@ function whenSection(draft) {
             () => change(draft, () => { draft.offset = offset; })
           )
         )
-      )
+      ),
+      events.length > 2 ? h("p", { class: "field-help" }, t("schedules.editor.twilightHelp")) : null,
+      ...sunLimits(draft),
+      runLateToggle(draft)
     );
   } else {
     parts.push(
@@ -604,6 +671,47 @@ function whenSection(draft) {
   return section(t("schedules.editor.when"), ...parts);
 }
 
+// "Not before" and "Not after" a time of day, for a sun schedule (1.14.0): "at sunset, but not
+// before 17:30".
+function sunLimits(draft) {
+  if (!schedulePlanning()) return [];
+  const limit = (flag, value, key, label) => [
+    toggle(label, draft[flag], `schedule-${key}`, (on) => change(draft, () => { draft[flag] = on; })),
+    draft[flag]
+      ? h("label", { class: "field schedule-field" }, h("span", { class: "field-label" }, label), timeInput(draft, draft[value], `schedule-${key}-time`, label, (time) => { draft[value] = time; }))
+      : null,
+  ];
+  return [...limit("hasEarliest", "earliest", "earliest", t("schedules.editor.notBefore")), ...limit("hasLatest", "latest", "latest", t("schedules.editor.notAfter"))];
+}
+
+// Run late after a restart, up to 6 hours (1.14.0): time and sun schedules.
+function runLateToggle(draft) {
+  if (!schedulePlanning()) return null;
+  return toggle(t("schedules.editor.runLate"), draft.runLate, "schedule-run-late", (on) => change(draft, () => { draft.runLate = on; }), t("schedules.editor.runLateHelp"));
+}
+
+// On the home's own holidays (1.14.0): time, sun and weather schedules. How many there are, and
+// where to set them.
+function holidayChoices(draft) {
+  if (!schedulePlanning()) return null;
+  const count = Array.isArray(state.holidays?.items) ? state.holidays.items.length : null;
+  return [
+    h("p", { class: "field-label" }, t("schedules.editor.onHolidays")),
+    segments(
+      [
+        ["run", t("schedules.editor.holidaysRun")],
+        ["skip", t("schedules.editor.holidaysSkip")],
+        ["only", t("schedules.editor.holidaysOnly")],
+      ],
+      draft.holidays,
+      "schedule-holidays",
+      (value) => change(draft, () => { draft.holidays = value; }),
+      "segments-stack"
+    ),
+    h("p", { class: "field-help" }, count === null ? t("schedules.editor.holidaysWhere") : t("schedules.editor.holidaysCount", { count }), " ", h("a", { href: "#/schedules/holidays", dataset: { key: "schedule-holidays-link" } }, t("holidays.open"))),
+  ];
+}
+
 function daysSection(draft) {
   const has = (day) => draft.days.includes(day);
   const setDays = (days) => change(draft, () => { draft.days = [...days]; });
@@ -635,7 +743,8 @@ function daysSection(draft) {
       chip(t("schedules.days.range", { from: dayName(0), to: dayName(4) }), daysText(draft.days) === daysText(WORK_DAYS) && draft.days.length === 5, "schedule-days:work", () => setDays(WORK_DAYS)),
       chip(t("schedules.days.range", { from: dayName(5), to: dayName(6) }), daysText(draft.days) === daysText(WEEKEND) && draft.days.length === 2, "schedule-days:weekend", () => setDays(WEEKEND))
     ),
-    duringChoices(draft)
+    duringChoices(draft),
+    holidayChoices(draft)
   );
 }
 
@@ -795,6 +904,11 @@ function calendarOffEditor(schedule, draft) {
 async function saveDraft(draft) {
   if (draft.type === "weather" && draft.hours && draft.from === draft.to) {
     draft.message = { kind: "error", text: t("schedules.editor.sameHours") };
+    notify();
+    return;
+  }
+  if (draft.type === "sun" && draft.hasEarliest && draft.hasLatest && draft.earliest >= draft.latest) {
+    draft.message = { kind: "error", text: t("schedules.editor.limitsOrder") };
     notify();
     return;
   }
