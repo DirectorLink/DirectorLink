@@ -18,10 +18,10 @@
 //   GET, POST, DELETE /v1/homes/{home_id}/alerts    this browser's alerts (admins; alerts.js)
 //   /v1/homes/{home_id}/device-requests[/...]       a new device joins by approval (device-requests.js)
 //
-// All need the session cookie; they answer CORS with credentials only for the app's origins, and
-// refuse changes from any other origin.
+// All need the session cookie (renewed as they use it, accounts.js); they answer CORS with
+// credentials only for the app's origins, and refuse changes from any other origin.
 
-import { appOrigins, currentUser } from "./accounts.js";
+import { appOrigins, currentUser, keepSession } from "./accounts.js";
 import { BACKUP_ROUTES } from "./backups.js";
 import { handleHomeAlerts, homesChanged } from "./alerts.js";
 import { DEVICE_REQUEST_ROUTES } from "./device-requests.js";
@@ -868,5 +868,6 @@ export async function handleHomes(request, env, ctx) {
   if (!user) {
     return withCors(problem(401, "NOT_SIGNED_IN", "Sign in first"));
   }
-  return withCors(await handler(request, env, user, match, ctx));
+  // A session renewed by this request (ADR-089): its answer sends the cookie again.
+  return withCors(keepSession(request, await handler(request, env, user, match, ctx)));
 }

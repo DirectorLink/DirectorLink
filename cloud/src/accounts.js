@@ -17,6 +17,9 @@
 // The session is a random token in the `__Host-dl_session` cookie of api.directorlink.io; D1 keeps
 // only its SHA-256. The app calls /v1/me and /auth/logout with `credentials: "include"`; only the
 // app's own origins (APP_ORIGINS) get CORS answers, and changes are refused from any other origin.
+// A session lasts 30 days from its last use (1.13.2, ADR-089): a request that uses it a day or more
+// after its last renewal moves its end to 30 days from then, and from then on the answers that use it
+// send the cookie again (keepSession); never past a year from the sign-in.
 
 import { homesChanged } from "./alerts.js";
 import { apple } from "./apple.js";
@@ -28,7 +31,11 @@ import { accountsChanged } from "./member-keys.js";
 
 const PROVIDERS = { google, apple };
 const SESSION_COOKIE = "__Host-dl_session";
-const SESSION_SECONDS = 30 * 24 * 3600;
+// A session ends 30 days after its last renewal, which a request using it makes at most once a day,
+// and a year after its sign-in at the latest (ADR-089).
+export const SESSION_SECONDS = 30 * 24 * 3600;
+export const SESSION_RENEW_SECONDS = 24 * 3600;
+export const SESSION_MAX_SECONDS = 365 * 24 * 3600;
 const SIGN_IN_SECONDS = 10 * 60;
 // The browser keeps the sign-in's state in a cookie until the provider sends it back. Google comes
 // back with a redirect (a navigation: Lax is enough); Apple posts a form from its own site, which
@@ -327,21 +334,91 @@ async function finishSignIn(request, env, provider) {
   return backToApp(returnTo, "ok", [clearSignIn, ["Set-Cookie", setCookie(SESSION_COOKIE, token, { maxAge: SESSION_SECONDS })]], status);
 }
 
-// The account of this request's session, or null.
+// The cookie each request's answer sends again (keepSession): the session it used, once renewed.
+const renewed = new WeakMap();
+
+// The account of this request's session, or null. A session used a day or more after its last
+// renewal is renewed (renewSession). Once a session has been renewed, every answer that uses it
+// sends its cookie again with the time it has left, without writing anything: an answer that was
+// lost (a dropped connection, an error after this) costs nothing, the next one carries it. Not
+// before its first renewal: the sign-in's own cookie came with a page load, and stays as it is
+// (ADR-089: WebKit may keep a cookie a request's answer sets for 7 days only). Nor when D1 failed
+// while renewing it: it may hold a later end than this request knows, and the browser keeps the
+// cookie it has.
 export async function currentUser(request, env) {
   const token = readCookie(request, SESSION_COOKIE);
   if (!token) {
     return null;
   }
+  const hash = await sha256Hex(token);
   const row = await env.DB.prepare(
-    "SELECT users.id, users.email, users.name, users.created_at, sessions.expires_at FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_sha256 = ?"
+    "SELECT users.id, users.email, users.name, users.created_at, sessions.created_at AS session_created_at, sessions.expires_at FROM sessions JOIN users ON users.id = sessions.user_id WHERE sessions.token_sha256 = ?"
   )
-    .bind(await sha256Hex(token))
+    .bind(hash)
     .first();
-  if (!row || row.expires_at < iso(Date.now())) {
+  const now = Date.now();
+  if (!row || row.expires_at < iso(now)) {
     return null;
   }
+  const end = await renewSession(env, hash, row, now);
+  if (end === null) {
+    // It ended while this request renewed it (Sign out, Sign out everywhere, Delete account, Apple's
+    // notification): not signed in.
+    return null;
+  }
+  if (end !== undefined && end > now && end > Date.parse(row.session_created_at) + SESSION_SECONDS * 1000) {
+    renewed.set(request, setCookie(SESSION_COOKIE, token, { maxAge: Math.floor((end - now) / 1000) }));
+  }
   return { id: row.id, email: row.email, name: row.name, created_at: row.created_at, token };
+}
+
+// Moves the end of a session used a day or more after its last renewal to 30 days from `now`, and
+// never past a year from its sign-in (the last renewal reaches that day exactly). At most one D1
+// write a session a day: the write changes it only if nobody renewed it meanwhile; a request whose
+// write changed nothing reads the end the other one wrote. Best effort: when D1 fails, the write or
+// that read, the request goes on with the session, renewed at its next use if it was not. Returns
+// the session's end (ms) after this request; undefined when D1 failed, so its end is not known (it
+// may have written it, or another request may have); null when it has ended meanwhile.
+async function renewSession(env, hash, row, now) {
+  const current = Date.parse(row.expires_at);
+  const created = Date.parse(row.session_created_at);
+  const cap = Number.isFinite(created) ? created + SESSION_MAX_SECONDS * 1000 : Infinity;
+  const end = Math.min(now + SESSION_SECONDS * 1000, cap);
+  if (!(end > current) || (end - current < SESSION_RENEW_SECONDS * 1000 && end < cap)) {
+    return current;
+  }
+  let step = "write";
+  try {
+    const result = await env.DB.prepare("UPDATE sessions SET expires_at = ? WHERE token_sha256 = ? AND expires_at = ?").bind(iso(end), hash, row.expires_at).run();
+    if (result?.meta?.changes !== 0) {
+      return end;
+    }
+    // Another request renewed it first (or it was ended): its end as it is now.
+    step = "read";
+    const after = await env.DB.prepare("SELECT expires_at FROM sessions WHERE token_sha256 = ?").bind(hash).first();
+    const ends = Date.parse(after?.expires_at ?? "");
+    return Number.isFinite(ends) ? ends : null;
+  } catch (error) {
+    // `step`: the write failed (D1 may have made it all the same), or the read after a write that
+    // changed nothing.
+    log("session_not_renewed", { user: row.id, step, error: String(error?.message ?? error) });
+    return undefined;
+  }
+}
+
+// The answer to a request that used a renewed session sends its cookie again, with its Max-Age:
+// the same token, so nothing else changes. Not an answer that ends the session (it clears the
+// cookie). Returns `response`.
+export function keepSession(request, response) {
+  const cookie = renewed.get(request);
+  if (!cookie || !response) {
+    return response;
+  }
+  if (response.headers.getSetCookie().some((line) => line.startsWith(`${SESSION_COOKIE}=`))) {
+    return response;
+  }
+  response.headers.append("Set-Cookie", cookie);
+  return response;
 }
 
 // Invitations for this account's email that no other account can accept (they stay while one can).
@@ -574,7 +651,8 @@ export async function handleAccounts(request, env) {
   if (auth) {
     const provider = PROVIDERS[auth[1]];
     if (auth[2] === "start") {
-      return request.method === "GET" ? startSignIn(request, env, provider) : methodNotAllowed();
+      // Adding a provider (link=1) uses the session, which may be renewed on the way.
+      return request.method === "GET" ? keepSession(request, await startSignIn(request, env, provider)) : methodNotAllowed();
     }
     // Google redirects (GET); Apple posts a form.
     const method = provider.name === "apple" ? "POST" : "GET";
@@ -606,9 +684,9 @@ export async function handleAccounts(request, env) {
     return problem(403, "ORIGIN_NOT_ALLOWED", "Only the DirectorLink app may call this");
   }
   if (identity) {
-    return removeIdentity(request, env, headers, identity[1]);
+    return keepSession(request, await removeIdentity(request, env, headers, identity[1]));
   }
-  return path === "/v1/me" ? me(request, env, headers) : logout(request, env, headers);
+  return path === "/v1/me" ? keepSession(request, await me(request, env, headers)) : logout(request, env, headers);
 }
 
 function log(event, fields) {

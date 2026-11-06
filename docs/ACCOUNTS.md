@@ -46,6 +46,7 @@ device's key since 1.7.0, ADR-050) are in *6. Alerts* below.
 | | App (your device) | Cloud (`api.directorlink.io`) | Controller |
 | --- | --- | --- | --- |
 | Account: email, name, sign-in provider | yes | yes | no |
+| When each of the account's sessions was last used, to the day (1.13.2, ADR-089) | no | yes: a session ends 30 days after its last use, so its end tells the day | no |
 | Which homes the account belongs to | yes | yes | — |
 | Which key ids are admin keys (1.6.0; since 1.8.0 the keys of admin users) | its own role | yes (ids only) | yes |
 | Which account uses which key (`member_keys`, 0.11.0) | its own; the owner sees each account's devices | yes (ids only) | since 1.9.0 an opaque tag per account and home for each key an account uses (*Users and accounts* below): which of its keys share an account, how many accounts use a key; **never** who, the account's id or email, or anything of another home |
@@ -261,6 +262,22 @@ on iPhone and iPad) at its address. If the controller cannot be reached that way
 locked envelopes to the cloud with the account's session. The cloud checks that the account is a
 member of the home and passes the envelope to the home's relay connection. The controller unlocks
 it, runs it as that key (with that key's role), locks the answer and sends it back.
+
+The account's session lasts 30 days from the last time the app used it, at home or away (since
+1.13.2, ADR-089; 30 days from the sign-in before). Signed out (a device not used for 30 days, Sign
+out everywhere, a year after signing in), the app still works at home, except on a device with no
+way to the controller on the home network (neither its Direct HTTPS name nor, except on iPhone and
+iPad, its address), which reaches the home only through the account, at home too: an iPhone or iPad
+without Direct HTTPS, or, on a home without Direct HTTPS, a device that joined with an invitation
+and so has no controller address (as Safari on Mac and Firefox do: they cannot use `http://`). And
+the app says why it can't reach the home: Home shows "You're signed out of your account, so the app
+can't reach your home away from it." ("from here" on a device with no way to it on the home
+network) with the sign-in buttons, until hidden for that start of the app, and so does Settings →
+Account; a request through the account says "You're signed out", not that the home can't be
+reached. Sign out counts only once the account service has ended the session; until then the device
+stays signed in, says so, and sends the sign-out again once a request through the account works,
+and at its next start. After Delete account nothing asks to sign in again, which would not bring the
+home back: a request through the account says the account was deleted.
 
 ### 3. Invitations: family, and the owner's own other devices
 
@@ -678,7 +695,9 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
 
 - `users`: id, the provider and subject it began with, email, name, created (`migrations/0001`).
 - `identities`: provider, subject, account, email (`migrations/0003`).
-- `sessions`, `sign_ins`: hashes of session tokens; sign-ins in progress.
+- `sessions`, `sign_ins`: hashes of session tokens, with when each was signed in and when it ends
+  (since 1.13.2 30 days after its last use, written at most once a day, and never more than a year
+  after the sign-in; ADR-089); sign-ins in progress.
 - `homes`: home id, owner, claimed (`migrations/0002`); since 1.9.0 the owner moves to another
   account of the home when the controller says so (ADR-064).
 - `members`: home, user, added.
@@ -725,10 +744,13 @@ Cloudflare D1 (SQLite), next to the relay's Durable Objects:
   in the relay's Durable Object storage.
 
 After sign-in the cloud sets a `Secure`, `HttpOnly`, `SameSite=Strict` cookie for
-`api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days and can be ended from the
-app, on this device or on every device. Expired sessions and unfinished sign-ins are deleted every
-day. Deleting the account deletes its sessions, memberships, owned homes, invitations and requests
-to join.
+`api.directorlink.io`. The page's scripts cannot read it. It lasts 30 days from the last time the
+app used it: a request a day or more after the last renewal moves the session's end to 30 days
+from then and sends the cookie again, the same token, and from then on every answer that uses it
+sends the cookie with the time it has left (1.13.2, ADR-089); a year after the sign-in it ends all
+the same. It can be ended from the app, on this device or on every device. Expired
+sessions and unfinished sign-ins are deleted every day. Deleting the account deletes its sessions,
+memberships, owned homes, invitations and requests to join.
 
 ### What is public: DirectorLink in numbers (1.7.0, ADR-052)
 
@@ -874,8 +896,9 @@ Sign-in details:
   the server. The ID token's signature, issuer, audience, expiry, nonce and verified email are
   checked.
 - The session is a random token in the `__Host-dl_session` cookie (`Secure`, `HttpOnly`,
-  `SameSite=Strict`, 30 days); D1 keeps only its SHA-256. Sign-out and account deletion are
-  accepted only from the app's own origins.
+  `SameSite=Strict`; 30 days, since 1.13.2 from its last use and at most a year, ADR-089); D1
+  keeps only its SHA-256. Sign-out and account deletion are accepted only from the app's own
+  origins.
 
 Apple (1.3.0): the Services ID `io.directorlink.signin`, Team ID `VA4Q88T4RC`, Key ID
 `Q3WXX95K83` and the primary App ID `io.directorlink.app` are public settings; the `.p8` key is the

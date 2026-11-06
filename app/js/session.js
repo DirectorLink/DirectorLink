@@ -6,7 +6,7 @@
 // except on iPhone and iPad, its plain http:// address. Through the account they are sealed too
 // (remote.js), when the home network cannot be reached.
 
-import { loadAccount } from "./account.js";
+import { accountDeleted, loadAccount } from "./account.js";
 import {
   ApiError,
   apiCall,
@@ -436,8 +436,9 @@ export async function checkInThroughAccount(force = false) {
     await remoteCall(state.apiKey, "/v1/api-keys/current");
     localStorage.setItem(CHECK_IN_KEY, JSON.stringify({ home: remote.home, at: Date.now() }));
     return true;
-  } catch {
-    // Tried again at the next check.
+  } catch (error) {
+    // Tried again at the next check. A session that ended while the app is used at home shows now.
+    if (error instanceof RemoteError && error.code === "NOT_SIGNED_IN") noteSignedOut();
     return false;
   }
 }
@@ -644,8 +645,10 @@ function remoteErrorText(error) {
     case "UNREACHABLE":
     case "TIMEOUT":
       return t("errors.remote.unreachable");
+    // After Delete account on this device signing in again would not bring the home back: it is
+    // not asked for (1.13.2).
     case "NOT_SIGNED_IN":
-      return t("errors.remote.signIn");
+      return accountDeleted() ? t("errors.remote.accountDeleted") : t("errors.remote.signIn");
     case "HOME_OFFLINE":
     case "HOME_TIMEOUT":
     case "HOME_DISCONNECTED":
@@ -744,13 +747,19 @@ export function errorText(error) {
 }
 
 // A connection problem to show. Problems of the account connection say why (signed out, home
-// offline, …); an ended session is looked up again, so the app offers to sign in.
+// offline, …); an ended session is looked up again, so the app offers to sign in. `signedOut`: the
+// account's session ended (1.13.2): the screens say so rather than that the home can't be reached.
 function connectionNotice(error) {
   const remote = error instanceof RemoteError;
-  if (remote && error.code === "NOT_SIGNED_IN" && state.account.status === "signed-in") {
-    loadAccount();
-  }
-  return { kind: "error", text: describeError(error), remote };
+  const signedOut = remote && error.code === "NOT_SIGNED_IN";
+  if (signedOut) noteSignedOut();
+  return { kind: "error", text: describeError(error), remote, signedOut };
+}
+
+// The account service said this device's session has ended: the account is asked again, so the app
+// shows that it is signed out (views/common.js), unless it knows already or is asking.
+function noteSignedOut() {
+  if (state.account.status === "signed-in" || state.account.status === "unavailable") loadAccount();
 }
 
 function forgetRevokedKey() {

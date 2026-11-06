@@ -36,7 +36,7 @@ import { accessBody, newMemberAccess, peopleSupported, permissionsEditor } from 
 import { loadScenes } from "../scenes.js";
 import { backupPanel } from "./backup.js";
 import { historyRow } from "./history.js";
-import { notReadyState, offlineBanner, pageHeader, signInButtons } from "./common.js";
+import { notReadyState, offlineBanner, pageHeader, signInButtons, signedOutAway, signedOutText } from "./common.js";
 import { musicRoomsSection } from "./music.js";
 import { chip, stepper } from "./schedules.js";
 import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./updates.js";
@@ -1358,6 +1358,23 @@ function accountSection() {
   const notice = account.notice
     ? h("p", { class: `notice ${["deleted", "linked", "removed", "signedOutEverywhere"].includes(account.notice) ? "notice-success" : "notice-error"}`, role: "status" }, t(`settings.account.notice.${account.notice}`))
     : null;
+  // A sign-out that did not reach the account service (1.13.2): still signed in, so it is tried again
+  // here, as Sign out does (and by itself once a request through the account works, and at the next
+  // start). Also when the account service could not be asked at start: no sign-in buttons then, as
+  // if signed out.
+  const signingOut = account.notice === "signOutFailed" && (account.status === "signed-in" || account.status === "unavailable");
+  const retrySignOut = signingOut
+    ? h(
+        "div",
+        { class: "button-row" },
+        h(
+          "button",
+          { type: "button", class: "button button-secondary", dataset: { key: "account-sign-out-retry" }, disabled: account.busy, onclick: () => turnAlertsOff({ quiet: true }).finally(() => signOut()) },
+          icon("refresh"),
+          t("common.retry")
+        )
+      )
+    : null;
   let body;
   if (account.status === "signed-in") {
     body = [
@@ -1443,9 +1460,16 @@ function accountSection() {
     ];
   } else if (account.status === "unknown" || account.status === "loading") {
     body = [h("p", { class: "field-help", role: "status" }, t("common.loading"))];
+  } else if (signingOut) {
+    // The notice and its Retry say it all.
+    body = [];
   } else {
     body = [
-      h("p", { class: "field-help" }, t("settings.account.intro")),
+      // Signed out with a linked home (1.13.2): why the home can't be reached away from it (or, on a
+      // device with no way to it on the home network, from here).
+      signedOutAway()
+        ? h("p", { class: "notice notice-info", id: "account-signed-out", dataset: { key: "account-signed-out" } }, signedOutText())
+        : h("p", { class: "field-help" }, t("settings.account.intro")),
       account.status === "unavailable" ? h("p", { class: "notice notice-error", role: "status" }, t("settings.account.unavailable")) : null,
       h(
         "div",
@@ -1463,6 +1487,7 @@ function accountSection() {
     "user",
     t("settings.account.cardTitle"),
     notice,
+    retrySignOut,
     ...body,
     // An invitation link that opened elsewhere (iOS opens links in Safari, not the Home Screen app).
     pasteInvitationPanel({ key: "account" }),

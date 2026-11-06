@@ -20,7 +20,7 @@
 //
 // Errors are Problem Details (application/problem+json) with a stable `code`.
 
-import { handleAccounts, purgeAccountsWithoutSignIn } from "./accounts.js";
+import { handleAccounts, keepSession, purgeAccountsWithoutSignIn } from "./accounts.js";
 import { handleAppleNotification } from "./apple-notifications.js";
 import { purgeBackupUploads } from "./backups.js";
 import { purgeDeviceRequests } from "./device-requests.js";
@@ -92,7 +92,8 @@ export default {
       return problem(404, "NOT_FOUND", `${url.pathname} is not a DirectorLink relay endpoint`);
     } catch (error) {
       console.error(JSON.stringify({ event: "worker_error", path: url.pathname, error: String(error?.stack ?? error) }));
-      return problem(500, "INTERNAL_ERROR", "The relay failed; try again");
+      // A session this request used still sends its cookie (accounts.js, ADR-089).
+      return keepSession(request, problem(500, "INTERNAL_ERROR", "The relay failed; try again"));
     }
   },
 };

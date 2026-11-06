@@ -1,8 +1,12 @@
 // Accounts (cloud/src/accounts.js) end to end: the Worker under `wrangler dev` (worker.mjs) with its
-// D1 database, and a fake Google that signs ID tokens with a test key.
+// D1 database, and a fake Google that signs ID tokens with a test key. Sessions that renew while
+// used (1.13.2, ADR-089) here once, with D1 changed and read as the integrator reads production's;
+// every case in tests/cloud/sessions.test.mjs.
 //   node --test tests/cloud/accounts.test.mjs
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { after, before, test } from "node:test";
 
 import { CLIENT_ID, PERSON, cookiesOf, googleVars, startFakeGoogle } from "./fake-google.mjs";
@@ -32,11 +36,18 @@ after(async () => {
 
 // --- Helpers ---------------------------------------------------------------------------------------
 
+// Every request to the Worker on a connection of its own. d1() holds this process while `wrangler d1
+// execute` runs (seconds): a kept-alive connection that `wrangler dev` closed meanwhile still looks
+// open, and the next request sent on it fails ("fetch failed", seen on Linux CI).
+function call(path, init = {}) {
+  return fetch(`${worker.http}${path}`, { ...init, headers: { ...init.headers, Connection: "close" } });
+}
+
 function get(path, { cookie, origin, method = "GET" } = {}) {
   const headers = {};
   if (cookie) headers.Cookie = cookie;
   if (origin) headers.Origin = origin;
-  return fetch(`${worker.http}${path}`, { method, headers, redirect: "manual" });
+  return call(path, { method, headers, redirect: "manual" });
 }
 
 async function start(returnTo = `${APP}/#/settings`) {
@@ -67,6 +78,22 @@ async function me(cookie) {
   const response = await get("/v1/me", { cookie, origin: APP });
   return { status: response.status, headers: response.headers, json: await response.json().catch(() => null) };
 }
+
+// The Worker's D1, as the integrator reads production's (cloud/README.md), --local for --remote.
+function d1(sql) {
+  const run = spawnSync(`npx --yes wrangler@4.143.0 d1 execute directorlink --local --json --command "${sql}"`, {
+    cwd: worker.dir,
+    shell: true,
+    windowsHide: true,
+    encoding: "utf8",
+    env: { ...process.env, WRANGLER_SEND_METRICS: "false", NO_COLOR: "1", FORCE_COLOR: "0", CI: "1" },
+    timeout: STARTUP_MS,
+  });
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  return JSON.parse(run.stdout)[0].results;
+}
+
+const DAY_MS = 24 * 3600 * 1000;
 
 // --- Tests -----------------------------------------------------------------------------------------
 
@@ -186,7 +213,7 @@ test("only the app's own pages may sign out or delete an account", TEST, async (
   }
   assert.equal((await me(cookie)).status, 200, "still signed in");
 
-  const preflight = await fetch(`${worker.http}/v1/me`, {
+  const preflight = await call("/v1/me", {
     method: "OPTIONS",
     headers: { Origin: APP, "Access-Control-Request-Method": "DELETE" },
   });
@@ -194,7 +221,7 @@ test("only the app's own pages may sign out or delete an account", TEST, async (
   assert.equal(preflight.headers.get("access-control-allow-origin"), APP);
   assert.equal(preflight.headers.get("access-control-allow-credentials"), "true");
   assert.match(preflight.headers.get("access-control-allow-methods"), /DELETE/);
-  const foreignPreflight = await fetch(`${worker.http}/v1/me`, { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
+  const foreignPreflight = await call("/v1/me", { method: "OPTIONS", headers: { Origin: "https://evil.example" } });
   assert.equal(foreignPreflight.status, 403);
 });
 
@@ -210,6 +237,56 @@ test("deleting the account removes it and every session", TEST, async () => {
   assert.equal((await me(two.cookie)).status, 401, "the other device's session is gone too");
   const fresh = await me((await signIn({ person })).cookie);
   assert.notEqual(fresh.json.id, before.json.id, "signing in again starts a new account");
+});
+
+test("a session used near its end is renewed: 30 days from then, its cookie sent again; written once a day; an expired one is not", { timeout: 180_000 }, async () => {
+  const signedIn = await signIn({ person: { sub: "google-user-renew", email: "renew@example.com", name: "Renew" } });
+  const hash = createHash("sha256").update(signedIn.session.value).digest("hex");
+  const endInD1 = () => Date.parse(d1(`SELECT expires_at FROM sessions WHERE token_sha256 = '${hash}'`)[0].expires_at);
+  // As if signed in 25 days ago: 5 days left.
+  d1(`UPDATE sessions SET expires_at = '${new Date(Date.now() + 5 * DAY_MS).toISOString()}' WHERE token_sha256 = '${hash}'`);
+  const before = Date.now();
+  const renewed = await me(signedIn.cookie);
+  const after = Date.now();
+  assert.equal(renewed.status, 200);
+  const cookie = cookiesOf({ headers: renewed.headers })["__Host-dl_session"];
+  assert.equal(cookie?.value, signedIn.session.value, "the same token, sent again");
+  for (const attribute of ["path=/", "secure", "httponly", "samesite=strict", "max-age=2592000"]) {
+    assert.ok(cookie.attributes.includes(attribute), `renewed cookie: ${attribute}`);
+  }
+  assert.equal(renewed.headers.get("access-control-allow-credentials"), "true", "so the browser keeps it");
+  // The Worker's clock (workerd) and this one may differ a little: 2 s either way.
+  const end = endInD1();
+  assert.ok(end >= before + 30 * DAY_MS - 2000 && end <= after + 30 * DAY_MS + 2000, `D1: 30 days from now, not ${new Date(end).toISOString()}`);
+
+  // Again the same day: nothing written, and the answer sends the cookie with the time it has left.
+  const asked = Date.now();
+  const again = await me(signedIn.cookie);
+  const answered = Date.now();
+  assert.equal(again.status, 200);
+  const resent = cookiesOf({ headers: again.headers })["__Host-dl_session"];
+  assert.equal(resent?.value, signedIn.session.value);
+  const left = Number(resent.attributes.find((attribute) => attribute.startsWith("max-age=")).slice(8));
+  // The Worker's clock read the time between `asked` and `answered`, give or take the same 2 s; its
+  // Max-Age is rounded down to the second.
+  assert.ok(left * 1000 >= end - answered - 2000 - 1000 && left * 1000 <= end - asked + 2000, `max-age ${left}`);
+  assert.equal(endInD1(), end);
+
+  // The home routes renew it as well.
+  d1(`UPDATE sessions SET expires_at = '${new Date(Date.now() + 2 * DAY_MS).toISOString()}' WHERE token_sha256 = '${hash}'`);
+  const homes = await get("/v1/homes", { cookie: signedIn.cookie, origin: APP });
+  assert.equal(homes.status, 200);
+  assert.equal(cookiesOf(homes)["__Host-dl_session"]?.value, signedIn.session.value);
+  assert.equal(homes.headers.get("access-control-allow-credentials"), "true");
+  assert.ok(endInD1() > Date.now() + 29 * DAY_MS);
+
+  // An expired session stays expired.
+  const ended = new Date(Date.now() - 60_000).toISOString();
+  d1(`UPDATE sessions SET expires_at = '${ended}' WHERE token_sha256 = '${hash}'`);
+  const expired = await me(signedIn.cookie);
+  assert.equal(expired.status, 401);
+  assert.equal(cookiesOf({ headers: expired.headers })["__Host-dl_session"], undefined);
+  assert.equal(endInD1(), Date.parse(ended));
 });
 
 test("/v1/me without a session is 401", TEST, async () => {
@@ -235,7 +312,7 @@ test("the app is told only the sign-ins that are set up, so Apple's button stays
 });
 
 test("Apple's notifications answer 503 until the App ID is set", TEST, async () => {
-  const response = await fetch(`${worker.http}/auth/apple/notifications`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: "x.y.z" }) });
+  const response = await call("/auth/apple/notifications", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ payload: "x.y.z" }) });
   assert.equal(response.status, 503);
   assert.equal((await response.json()).code, "NOTIFICATIONS_NOT_CONFIGURED");
 });

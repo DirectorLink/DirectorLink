@@ -71,6 +71,7 @@ export const state = {
 // UI-only state (not from the controller).
 export const ui = {
   filter: null, // home summary filter: "lights" | "climate" | "blinds"
+  signedOutDismissed: false, // Home's notice that the account is signed out (1.13.2), until the next start
   // Home's Turn off all (turn-off.js): filter -> { stage: "confirm" | "running" | "done" | "partial" | "error", … }
   offRuns: {},
   editFavorites: false,

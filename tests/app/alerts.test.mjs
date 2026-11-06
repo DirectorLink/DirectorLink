@@ -177,6 +177,9 @@ globalThis.fetch = async (url, init = {}) => {
   }
   // A sealed request through the account (the device's key, told to the account service).
   if (pathname === `/v1/homes/${HOME}/e2e`) return home.online ? reply(200, await homeAnswer(init.body)) : reply(503, { code: "HOME_OFFLINE" });
+  // Who is signed in, as the test set it: an app that thinks it is signed out asks again when an
+  // answer through the account shows its session works (1.13.2, account.js sessionWorks).
+  if (pathname === "/v1/me") return state.account.status === "signed-in" ? reply(200, state.account.user) : reply(401, { code: "NOT_SIGNED_IN" });
   return reply(404, { code: "NOT_FOUND" });
 };
 const callsTo = (method) => cloud.calls.filter((call) => call.method === method && call.path === `/v1/homes/${HOME}/alerts`);

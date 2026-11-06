@@ -291,6 +291,8 @@ function signature() {
     // What this person may do (1.8.0, ADR-054).
     state.access,
     state.account,
+    // Home's notice that the account is signed out, dismissed (1.13.2, views/common.js).
+    ui.signedOutDismissed,
     // The sign-ins the account server has set up (account.js), once asked.
     signInProviders(),
     providersStatus(),
@@ -569,7 +571,8 @@ async function start() {
   restoreSaved();
   applyLanguage();
   startPwa();
-  startAccount();
+  // A device linked to its home through the account asks who is signed in at each start (1.13.2).
+  startAccount({ linked: Boolean(savedRemote()) });
   watchDeviceRequests();
   // The host and API key are kept in this browser, so a reload reconnects without pairing again.
   if (reachable()) {

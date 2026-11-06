@@ -36,6 +36,15 @@ export default {
   offline: {
     banner: "No internet. The app still works on your home network.",
   },
+  // Signed out of the account on a device that reaches its home through it (1.13.2, ADR-089): on
+  // Home until hidden, in Settings → Account, and when the home can't be reached because of it.
+  signedOut: {
+    notice: "You’re signed out of your account, so the app can’t reach your home away from it.",
+    noticeHere: "You’re signed out of your account, so the app can’t reach your home from here.",
+    title: "You’re signed out",
+    chip: "Signed out",
+    dismiss: "Hide for now",
+  },
   connect: {
     title: "Connect to your home",
     intro: "Enter your Control4 controller’s address and a pairing code. You only do this once on each device.",
@@ -129,7 +138,9 @@ export default {
     misdirected: "Use the controller’s IP address or a local name (such as director.local) as its address: DirectorLink does not answer other names.",
     sealing: "The controller at this address did not answer this device securely. If DirectorLink was reinstalled or went back to an older version, pair again (Settings → Controller).",
     remote: {
-      signIn: "Sign in to your account again (Settings → Account) to reach your home from here.",
+      signIn: "You’re signed out of your account, so the app can’t reach your home from here. Sign in again (Settings → Account).",
+      // The same, after Delete account on this device: signing in again would not bring the home back.
+      accountDeleted: "Your account was deleted, so the app can’t reach your home from here.",
       homeOffline: "Your home is not connected to DirectorLink right now. Check that the controller is online and Remote Access is on.",
       updateRequired: "Update DirectorLink: the version on your controller can no longer connect to remote access. Update it in Composer; at home the app works as before.",
       notMember: "This account does not belong to this home any more.",
@@ -2446,6 +2457,7 @@ export default {
         signedOutEverywhere: "Signed out on every device.",
         signOutEverywhereExpired: "This session had already ended, so no device was signed out. Sign in again, then sign out everywhere.",
         signOutEverywhereFailed: "The other devices could not be signed out. Check the internet connection and try again.",
+        signOutFailed: "You’re still signed in: the sign-out didn’t reach DirectorLink’s servers. Check the internet connection and try again.",
         deleted: "Your account was deleted.",
         deleteFailed: "The account could not be deleted. Try again.",
       },

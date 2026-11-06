@@ -171,7 +171,7 @@ function homeUsers() {
     items: [
       { id: "aaaa0001", name: "Dana", created_at: "2026-09-01T08:00:00Z", you: true, access: { ...ADMIN, owner: true }, accounts: 1, devices: [device("0a1b2c3d", "Chrome on Windows", { current: true, removable: false })] },
       { id: "aaaa0002", name: "Chrome on iPhone", created_at: "2026-09-02T08:00:00Z", you: false, access: { ...ADMIN }, accounts: 1, devices: [device("0a1b2c3e", "Safari on iPhone")] },
-      { id: "bbbb0003", name: "Noa", created_at: "2026-09-03T08:00:00Z", you: false, access: { ...MEMBER }, accounts: 0, devices: [device("0a1b2c3f", "Chrome on Android", { accounts: 0 }), device("0a1b2c40", "Noa's tablet", { accounts: 0, last_used_at: null })] },
+      { id: "bbbb0003", name: "Noa", created_at: "2026-09-03T08:00:00Z", you: false, access: { ...MEMBER }, accounts: 0, devices: [device("0a1b2c3f", "Chrome on Android", { accounts: 0 }), device("0a1b2c40", "Noa's tablet", { accounts: 0, last_used_at: null, created_at: new Date(Date.now() - 24 * 3600 * 1000).toISOString() })] },
     ],
     suggestions: [
       { id: "3f9a1c2e7b4d5a60", revision: "77aa77aa77aa77aa", owner: true, keep: "aaaa0001", may_confirm: true, users: [{ id: "aaaa0001", name: "Dana", role: "admin", owner: true, devices: ["0a1b2c3d"], devices_after: 2 }, { id: "aaaa0002", name: "Chrome on iPhone", role: "admin", owner: false, devices: ["0a1b2c3e"], devices_after: 2 }] },

@@ -6,7 +6,7 @@
 // pairing. The answer comes back sealed either way.
 
 import { ApiError } from "../api-client.js";
-import { ACCOUNTS_API } from "./account.js";
+import { ACCOUNTS_API, sessionWorks } from "./account.js";
 import { homeNetworkRequest } from "./direct.js";
 import { deriveLock, fromBase64, invitationLock, open, seal } from "./lock.js";
 
@@ -85,6 +85,9 @@ async function send(method, path, body, timeoutMs = TIMEOUT_MS) {
   if (!response.ok) {
     throw new RemoteError(data?.code || `HTTP_${response.status}`, data?.detail || `api.directorlink.io answered ${response.status}`, response.status);
   }
+  // Every route here needs the session: an answer means it works (account.js asks again when the
+  // app thought it signed out).
+  sessionWorks();
   return data;
 }
 
