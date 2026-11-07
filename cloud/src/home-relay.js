@@ -224,8 +224,14 @@ export class HomeRelay extends DurableObject {
     // previous one end their wait there now rather than at their timeout: a driver that connects
     // again has lost that connection, often without the relay noticing (the old socket never
     // answers the close). They fail, or (1.10.0) wait for this connection's hello to go again.
+    // A socket an earlier connection replaced may still be closing (a dead one never answers the
+    // close and stays until the runtime gives up on it, minutes later): it was handled and counted
+    // then, so `replaced` counts only the open one this connection takes over.
     let replaced = 0;
     for (const old of this.ctx.getWebSockets(DRIVER)) {
+      if (old.readyState !== OPEN) {
+        continue;
+      }
       const attachment = old.deserializeAttachment() ?? {};
       this.connectionLost(attachment, "The home connected again before it answered");
       try {
