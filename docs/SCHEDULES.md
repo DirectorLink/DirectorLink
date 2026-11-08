@@ -165,11 +165,17 @@ calendar on: when they begin or end that day), and every run at its time, or why
   A weather rule's Shabbat setting is judged by its hours that day (the whole day without hours),
   since it holds when the weather turns: only on Shabbat and holidays, it shows on the days its
   hours reach them; keeping away from them, it is `skipped` with `shabbat` on a day its hours are
-  all within them.
+  all within them. Since 1.14.1 a weather rule's day is listed only while its weather may come:
+  the saved forecast is checked over its hours that day (from now on, today) at the moments its
+  Shabbat setting allows, as the scheduler reacts to it (the threshold or past it, or rain). A day
+  the forecast rules out is not listed; one it does not reach yet (it holds 5 days from when it
+  was read), or with no forecast, is, and so is a day the rule ran on.
 - `conditions: true` for a run with `only_if`: it runs if the weather then allows, which is not
   known yet. Days a schedule does not run on at all (not in its days; only on Shabbat or the home's
   holidays, and it is not one) list nothing for it.
-- The app shows it under Scenes → Schedules → Next 7 days.
+- The app shows it under Scenes → Schedules → Next 7 days. Since 1.14.1 it leaves out the runs
+  skipped for Shabbat and holidays (`shabbat`): listed with their reason, they read as runs. The
+  day's Shabbat line says when holy time begins or ends. The API still lists them.
 
 ## The weather
 
@@ -350,6 +356,9 @@ device will both run; these properties are how to find the DirectorLink side.
   **Not after**; time and sun schedules have **Run late if missed**; and time, sun and weather
   schedules **On your holidays: Run as usual / Not on holidays / Only on holidays**, with how many
   there are. An older controller gets none of it, and the app sends none of the new fields.
+- **1.14.1**: Next 7 days lists only what may run. A run skipped for Shabbat and holidays is left
+  out (the day's Shabbat line says when they begin or end), and the controller lists a weather
+  rule only on days the forecast says its weather may come, or does not reach yet.
 - With the Jewish calendar on (1.2.0, `features.jewish_calendar` in `GET /v1/system`): a fourth
   "when", Shabbat and holidays (candle lighting or havdalah, and how long before or after; no days
   to pick), a row "On Shabbat and holidays: Run as usual / Not on Shabbat and holidays / Only on

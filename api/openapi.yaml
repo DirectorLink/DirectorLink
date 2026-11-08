@@ -1778,7 +1778,10 @@ paths:
         `during_shabbat` judged by its hours that day: `only` shows on the days they reach Shabbat
         or a holiday, `skip` is `skipped` with `shabbat` on a day they are all within one). Days a
         schedule does not run on at all (not in its `days`; only on Shabbat or the home's holidays,
-        and it is not) list nothing for it. What the weather will do is not known: a run with
+        and it is not) list nothing for it. Since 1.14.1 a weather rule's day is listed only while
+        its weather may come in its hours (from now on, today) at a moment its `during_shabbat`
+        allows, as far as the saved forecast reaches (5 days from when it was read); beyond it, or
+        without a forecast, the day is listed, and a day the rule ran on stays. A run with
         `conditions` (an `only_if`) runs if the weather then allows.
       responses:
         "200":

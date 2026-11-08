@@ -2,6 +2,18 @@
 
 ## Current release
 
+`v1.14.1` — Next 7 days shows only what may run (1141a). No Worker change; no D1 migration.
+
+## 1141a. Next 7 days, only what may run (1.14.1)
+
+On the owner's controller, from the iPhone (admin), after updating DirectorLink in Composer; the app updates by itself (Settings shows 1.14.1).
+
+1. **Shabbat.** On a Friday or Saturday, Schedules → **Next 7 days**: Saturday has no *Rooms AC Off* at 09:00 (set not to run on Shabbat), and no "Not on Shabbat and holidays" anywhere; *Rooms AC Off* at 11:00 (only on Shabbat) is listed. The Shabbat line says when it begins or ends. On Sunday, 09:00 is listed again.
+2. **Weather rules by the forecast.** *Shabat/Holiday Main AC* (hotter than 23°, only on Shabbat and holidays) is listed on Friday and Saturday only when the forecast for their holy hours reaches 23°: compare with the forecast's highs for those days. The forecast reaches 5 days ahead, so Friday is decided from Monday; until then it is listed. A rule that ran today stays listed today.
+3. Nothing else changes: the schedules run as before (History), the DoorBird, the gate, KNX. History shows "DirectorLink updated from 1.14.0 to 1.14.1".
+
+## Previous release
+
 `v1.14.0` — Schedules you can plan (1140a): skip the next run, dawn and dusk, earliest and latest times, run late if missed, the home's holidays, and the next 7 days. No Worker change; no D1 migration.
 
 ## 1140a. Planning schedules (1.14.0)

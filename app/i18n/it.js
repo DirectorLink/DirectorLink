@@ -1136,7 +1136,6 @@ export default {
       reason: {
         skip: "Saltata",
         holiday: "Non nei giorni liberi",
-        shabbat: "Non di Shabbat e festività",
         off: "Disattivata",
         paused: "In pausa in Composer",
         no_sun: "Nessun orario solare quel giorno",
