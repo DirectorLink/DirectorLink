@@ -2,8 +2,11 @@
 // six days after it, as the controller works them out (GET /v1/schedules/week): each day's dawn,
 // sunrise, sunset and dusk, the home's holiday, Shabbat and holidays (with the Jewish calendar on),
 // and every run of every schedule that day, at its time, or why it does not run (skipped, a holiday,
-// Shabbat, switched off, paused in Composer, no sunset). A weather rule is shown on its days without
-// a time; a schedule with "only if" runs if the weather allows then.
+// switched off, paused in Composer, no sunset). A weather rule is shown on its days without a time;
+// a schedule with "only if" runs if the weather allows then. Since 1.14.1 a run kept away from
+// Shabbat and holidays (`reason` "shabbat") is left out: listed with its reason it read as a run
+// (the owner took "Rooms AC Off 09:00" on a Saturday for one); the day's Shabbat line says when
+// holy time begins or ends. The controller lists a weather rule only on days its weather may come.
 
 import { emptyState, skeletonCards } from "../components.js";
 import { h } from "../dom.js";
@@ -13,7 +16,13 @@ import { findSchedule, homeZone, loadWeek, membersHaveNoSchedules, sceneNameOf, 
 import { can, state } from "../state.js";
 import { isLoading, notReadyState, offlineBanner, pageHeader, staleBanner } from "./common.js";
 
-const REASONS = ["skip", "holiday", "shabbat", "off", "paused", "no_sun"];
+const REASONS = ["skip", "holiday", "off", "paused", "no_sun"];
+
+// The runs a day lists: all but those kept away from Shabbat and holidays.
+function shownRuns(day) {
+  const runs = Array.isArray(day.runs) ? day.runs : [];
+  return runs.filter((run) => !(run.status === "skipped" && run.reason === "shabbat"));
+}
 
 // "Today · Friday 6 November", "Tomorrow · Saturday 7 November", "Sunday 8 November": the
 // controller's local dates, so read as such (noon UTC of that date, shown in UTC).
@@ -86,7 +95,7 @@ function runRow(run, admin) {
 }
 
 function dayCard(day, index, admin) {
-  const runs = Array.isArray(day.runs) ? day.runs : [];
+  const runs = shownRuns(day);
   const holy = holyLine(day);
   const sun = sunLine(day);
   return h(

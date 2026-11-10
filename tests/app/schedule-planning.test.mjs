@@ -316,6 +316,46 @@ test("Next 7 days shows each day's sun, holiday, Shabbat and runs, and why not",
   });
 });
 
+// The owner's Saturday: "Rooms AC Off" at 09:00, set not to run on Shabbat, was listed with its
+// reason and read as a run. Runs kept away from Shabbat and holidays are left out; the day's
+// Shabbat line says when holy time ends.
+test("Next 7 days leaves out runs kept away from Shabbat and holidays", () => {
+  connected();
+  const run = { schedule_id: "1234abcd", scene_id: SCENE.id, conditions: false, from: null, to: null };
+  state.scheduleWeek = {
+    paused: false,
+    days: [
+      {
+        date: "2026-11-07",
+        weekday: 6,
+        sun: {},
+        holiday: null,
+        holy: { starts_at: null, ends_at: "2026-11-07T15:28:00Z" },
+        runs: [
+          { ...run, at: "2026-11-07T07:00:00Z", status: "skipped", reason: "shabbat" },
+          { ...run, at: "2026-11-07T09:00:00Z", status: "past", reason: null },
+          { ...run, at: null, status: "skipped", reason: "shabbat", from: "08:30", to: "23:00" },
+        ],
+      },
+      {
+        date: "2026-11-08",
+        weekday: 0,
+        sun: {},
+        holiday: null,
+        holy: { starts_at: null, ends_at: null },
+        runs: [{ ...run, at: "2026-11-08T07:00:00Z", status: "skipped", reason: "shabbat" }],
+      },
+    ],
+  };
+  const days = allByClass(scheduleWeekView(), "week-day");
+  const saturday = allByClass(days[0], "week-run");
+  assert.equal(saturday.length, 1, "only the run that ran");
+  assert.equal(byClass(saturday[0], "week-run-status").textContent, "Earlier today");
+  assert.equal(byClass(days[0], "week-day-holy").textContent, "Shabbat and holidays until 15:28");
+  assert.equal(allByClass(days[1], "week-run").length, 0);
+  assert.match(text(days[1]), /Nothing runs this day\./, "a holiday whose only run keeps away from it");
+});
+
 test("Next 7 days asks an older controller to be updated, and says when it is paused", () => {
   connected({ planning: false });
   assert.match(text(scheduleWeekView()), /DirectorLink 1\.14\.0 or newer/);

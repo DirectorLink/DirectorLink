@@ -1136,7 +1136,6 @@ export default {
       reason: {
         skip: "Omitida",
         holiday: "No en días libres",
-        shabbat: "No en Shabbat y festividades",
         off: "Desactivada",
         paused: "En pausa en Composer",
         no_sun: "Sin hora solar ese día",

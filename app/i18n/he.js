@@ -1115,7 +1115,6 @@ export default {
       reason: {
         skip: "מדלג",
         holiday: "לא בימי חופש",
-        shabbat: "לא בשבתות וחגים",
         off: "כבוי",
         paused: "מושהה ב-Composer",
         no_sun: "אין שעת שמש ביום הזה",

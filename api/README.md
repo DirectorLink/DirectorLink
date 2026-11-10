@@ -269,7 +269,7 @@ curl http://<controller-ip>:41999/v1/schedules/week -H "Authorization: Bearer ak
 
 - A sun trigger's `event` may be `dawn` or `dusk` (civil twilight), and it may have `earliest` and `latest`; `GET /v1/weather` gives `dawn` and `dusk` for today and tomorrow.
 - Every schedule has `on_holidays` (`run`, `skip`, `only`), `run_late` and `skip` (`{ "at" }`, or `null`); `last_run.skipped_by` may be `skip` or `holiday`.
-- `GET /v1/schedules/week` gives seven `days`, each with `sun`, `holiday`, `holy` and `runs` (`planned`, `past`, `skipped` with a `reason`, or `weather`).
+- `GET /v1/schedules/week` gives seven `days`, each with `sun`, `holiday`, `holy` and `runs` (`planned`, `past`, `skipped` with a `reason`, or `weather`). Since 1.14.1 a weather rule is listed only on days the saved forecast says its weather may come in its hours, or that the forecast does not reach yet.
 
 ## Alarm
 

@@ -789,8 +789,10 @@ end
 
 -- The next `count` local days from today: for each, its local date (`info`), the holiday of the
 -- home that day, and each schedule's runs that day (`runs`: { schedule, at, status, reason }), or
--- why one of its days has none. A weather rule's day has no time (`status` "weather"). What the
--- weather will do is not known: a schedule with "only if" is planned, and runs if it holds.
+-- why one of its days has none. A weather rule's day has no time (`status` "weather"), and is
+-- listed only while its weather may come in its hours, as far as the saved forecast reaches
+-- (1.14.1, weatherMayCome). A schedule with "only if" is planned, and runs if the weather then
+-- allows.
 -- Days a schedule does not run on at all (not in its days; only on Shabbat or the home's holidays,
 -- and it is not) have nothing for it.
 -- A weather rule's Shabbat setting over a day's hours (the whole day without hours; hours across
@@ -825,6 +827,66 @@ local function weatherShabbat(schedule, calendar, info)
         return "shabbat"
     end
     return "run"
+end
+
+-- A quarter of an hour: every time zone's whole hours fall on it.
+local QUARTER = 15 * 60
+
+-- Whether a weather rule's weather may still come in its hours on `info` (the whole day without
+-- hours; hours across midnight end the next day), as the tick reacts to it: past its threshold
+-- (weatherActive) at a moment its Shabbat setting allows (shabbatAllows). False only when the
+-- saved forecast holds every moment of them still to come that it may run at and none passes, or
+-- none is to come and it has not run that day; true when one may pass, when the forecast does not
+-- reach them (the weather is not known yet), and on a day it ran (1.14.1). The forecast's
+-- temperature and wind are straight lines between its hours, and its rain and code change at them,
+-- so these moments decide: the hours' first and last minute, every whole hour between (on a
+-- quarter-hour grid, which holds them in every time zone), and the minute before each edge of holy
+-- time and the edge itself.
+local function weatherMayCome(schedule, runtime, calendar, info, now)
+    if runtime.fired_day == info.date then
+        return true
+    end
+    local trigger = schedule.trigger
+    local from, to = 0, 24 * 60
+    if trigger.from then
+        from, to = Schedules.minutes(trigger.from), Schedules.minutes(trigger.to)
+        if from >= to then
+            to = to + 24 * 60
+        end
+    end
+    local first = math.max(epochAt(info, from), now)
+    local last = epochAt(info, to) - 60
+    if first > last then
+        return false
+    end
+    local moments = { first, last }
+    for moment = first - first % QUARTER + QUARTER, last, QUARTER do
+        moments[#moments + 1] = moment
+    end
+    if (schedule.during_shabbat or "run") ~= "run" and calendar and calendar.status() == "ok" then
+        for _, period in ipairs(calendar.periodsBetween(first, last)) do
+            for _, edge in ipairs({ period.starts_at or first, period.ends_at or last }) do
+                for _, moment in ipairs({ edge - 60, edge }) do
+                    if moment >= first and moment <= last then
+                        moments[#moments + 1] = moment
+                    end
+                end
+            end
+        end
+    end
+    -- Only the moments it may run at count, so a day is decided as soon as the forecast reaches them.
+    local known = true
+    for _, moment in ipairs(moments) do
+        if shabbatAllows(schedule, calendar, moment) then
+            local weather = Weather.current(moment)
+            if not weather then
+                known = false
+            elseif weatherActive(trigger, weather) then
+                return true
+            end
+        end
+    end
+    return not known
 end
 
 function Scheduler.week(now, count)
@@ -872,7 +934,11 @@ function Scheduler.week(now, count)
                             elseif paused then
                                 status, reason = "skipped", "paused"
                             end
-                            entry = { schedule = schedule, status = status, reason = reason }
+                            -- Not listed on a day the forecast says its weather will not come
+                            -- (1.14.1).
+                            if status ~= "weather" or weatherMayCome(schedule, runtime, calendar, info, now) then
+                                entry = { schedule = schedule, status = status, reason = reason }
+                            end
                         elseif not onHoliday and holidayWhy == "holiday" then
                             entry = { schedule = schedule, status = "skipped", reason = "holiday" }
                         end

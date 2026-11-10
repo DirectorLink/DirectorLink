@@ -576,6 +576,75 @@ function tests.the_week_holds_weather_rules_to_shabbat()
     T.eq(runOf(days[2], allDay).status, "weather", "it may run after havdalah")
 end
 
+-- The saved forecast decides a weather rule's days (1.14.1): a day is listed while its weather may
+-- come in its hours, as far as the forecast reaches, and a day it ran on stays. (The owner's
+-- "hotter than 23°" was listed on a Saturday forecast to reach 20°.)
+function tests.the_week_lists_a_weather_rule_only_on_days_its_weather_may_come()
+    local noon = at(0, 12, 0)
+    local mock, admin, clock, Scheduler = start(noon)
+    local sceneId = scene(mock, admin)
+    local hot = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30, from = "08:00", to = "20:00" }, days = EVERY }).id
+    local mornings = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30, from = "08:00", to = "11:00" }, days = EVERY }).id
+    local rain = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "rain" }, days = EVERY }).id
+    -- 25° and dry, but 32° tomorrow at 15:00 (after the mornings' hours), and rain the day after
+    -- from 03:00 to 04:00.
+    local hotAt, wetAt = at(1, 15, 0), at(2, 3, 0)
+    mock.weather = WeatherFake.forecast(function(time)
+        return { temperature = time == hotAt and 32 or 25, rain = time == wetAt and 1 or 0 }
+    end)
+    T.eq(Scheduler.tick(), 0, "the forecast is read")
+
+    local days = T.http(mock, "GET", "/v1/schedules/week", { key = admin }).json.days
+    T.eq(runOf(days[1], hot), nil, "25° for the rest of today")
+    T.eq(runOf(days[2], hot).status, "weather", "32° tomorrow at 15:00")
+    T.eq(runOf(days[2], mornings), nil, "not in its hours")
+    T.eq(runOf(days[1], mornings), nil, "its hours are over today, and it did not run")
+    T.eq(runOf(days[3], rain).status, "weather", "rain the day after tomorrow")
+    T.eq(runOf(days[2], rain), nil)
+    for index = 3, 5 do
+        T.eq(runOf(days[index], hot), nil, "25° on " .. days[index].date)
+    end
+    -- The forecast is used for 5 days after it was read: after that the weather is not known yet.
+    T.eq(runOf(days[6], hot).status, "weather", "the forecast runs out at noon")
+    T.eq(runOf(days[7], hot).status, "weather")
+    T.eq(runOf(days[7], mornings).status, "weather")
+
+    -- Tomorrow it runs at 15:00; at 18:00 the heat is gone, but today it ran.
+    clock.set(hotAt + 30)
+    T.eq(Scheduler.tick(), 1, "hot: it runs")
+    clock.set(at(1, 18, 0))
+    days = T.http(mock, "GET", "/v1/schedules/week", { key = admin }).json.days
+    T.eq(runOf(days[1], hot).status, "weather", "it ran today")
+    T.eq(runOf(days[1], mornings), nil)
+end
+
+-- With Shabbat, the weather counts only at moments the rule may run: only on Shabbat, heat before
+-- candle lighting does not; keeping away from Shabbat, heat within it does not.
+function tests.the_week_judges_the_forecast_by_the_shabbat_setting()
+    local mock, admin, clock, Scheduler = start(Helpers.localAt(FRIDAY, 12, 0), { ["Jewish Calendar"] = "On" })
+    local sceneId = scene(mock, admin)
+    local onlyShabbat = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = EVERY, during_shabbat = "only" }).id
+    local notShabbat = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "heat", above = 30 }, days = EVERY, during_shabbat = "skip" }).id
+    local wetShabbat = schedule(mock, admin, { scene_id = sceneId, trigger = { type = "weather", kind = "rain" }, days = EVERY, during_shabbat = "only" }).id
+    -- 32° at 13:00 on Friday (before candle lighting) and at 10:00 on Saturday (in Shabbat), and
+    -- rain on Saturday from 10:00 to 11:00; 25° and dry otherwise.
+    local fridayHot, saturdayHot = Helpers.localAt(FRIDAY, 13, 0), Helpers.localAt(FRIDAY + 1, 10, 0)
+    T.truthy(fridayHot < CANDLES and saturdayHot > CANDLES and saturdayHot < HAVDALAH)
+    mock.weather = WeatherFake.forecast(function(time)
+        local hotNow = time == fridayHot or time == saturdayHot
+        return { temperature = hotNow and 32 or 25, rain = time == saturdayHot and 1 or 0 }
+    end)
+    Scheduler.tick()
+
+    local days = T.http(mock, "GET", "/v1/schedules/week", { key = admin }).json.days
+    T.eq(runOf(days[1], onlyShabbat), nil, "hot on Friday before candle lighting only")
+    T.eq(runOf(days[2], onlyShabbat).status, "weather", "hot on Saturday morning")
+    T.eq(runOf(days[1], notShabbat).status, "weather", "hot on Friday afternoon")
+    T.eq(runOf(days[2], notShabbat), nil, "hot on Saturday only in Shabbat")
+    T.eq(runOf(days[2], wetShabbat).status, "weather")
+    T.eq(runOf(days[1], wetShabbat), nil, "dry on Friday evening")
+end
+
 -- ---- Composer -------------------------------------------------------------------------------------
 
 function tests.composer_prints_the_new_choices()
