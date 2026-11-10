@@ -154,13 +154,15 @@ class DriverXml(unittest.TestCase):
 
     def test_the_alarm_status_ships_off(self):
         source = (ROOT / "driver" / "driver.xml").read_text(encoding="utf-8")
-        start = source.index("<name>Alarm Status</name>")
-        end = source.index("</property>", start)
-        block = source[start:end]
-        self.assertEqual(block.count("<default>Off</default>"), 1)
-        shipped_on = source[:start] + block.replace("<default>Off</default>", "<default>On</default>") + source[end:]
-        printed = refusal(check_package.check_driver_xml, shipped_on, "0")
-        self.assertIn("Alarm Status must default to Off", printed or "", "an alarm status that ships on passed")
+        for name in ("Alarm Status", "Alarm Control"):
+            with self.subTest(name=name):
+                start = source.index(f"<name>{name}</name>")
+                end = source.index("</property>", start)
+                block = source[start:end]
+                self.assertEqual(block.count("<default>Off</default>"), 1)
+                shipped_on = source[:start] + block.replace("<default>Off</default>", "<default>On</default>") + source[end:]
+                printed = refusal(check_package.check_driver_xml, shipped_on, "0")
+                self.assertIn(f"{name} must default to Off", printed or "", f"{name} that ships on passed")
 
     def test_sonos_ships_off(self):
         # Off: DirectorLink looks for no Sonos player and sends nothing to one (1.5.0, ADR-044).
@@ -347,16 +349,55 @@ class AlarmReadOnly(unittest.TestCase):
         self.assertIsNone(self.refused({**files, "src/api/handlers/relays.lua": commented}))
         sending = relays + '\nlocal function disarm(id) C4:SendToDevice(id, "PARTITION_DISARM", {}) end\n'
         printed = self.refused({**files, "src/api/handlers/relays.lua": sending})
-        self.assertIn("partition command", printed or "")
+        self.assertIn("only src/control4/alarm_control.lua arms and disarms", printed or "")
 
-    def test_the_api_only_reads_the_alarm(self):
+    def test_the_api_reads_arms_and_disarms_the_alarm_by_its_three_routes(self):
         files = driver_sources()
         routes = files["src/api/routes.lua"]
         read = '    { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },\n'
-        write = '    { method = "POST", path = "/v1/alarm/{partitionId}/disarm", handler = "alarm.status", role = "admin" },\n'
         self.assertIn(read, routes)
-        printed = self.refused({**files, "src/api/routes.lua": routes.replace(read, read + write)})
-        self.assertIn("the alarm is only read", printed or "")
+        for added in (
+            '    { method = "POST", path = "/v1/alarm/{partitionId}/cancel", handler = "alarm.disarm", role = "member" },\n',
+            '    { method = "PUT", path = "/v1/alarm", handler = "alarm.arm", role = "admin" },\n',
+            '    { method = "POST", path = "/v1/alarm/{partitionId}/arm", handler = "alarm.status", role = "member" },\n',
+        ):
+            with self.subTest(added=added):
+                printed = self.refused({**files, "src/api/routes.lua": routes.replace(read, read + added)})
+                self.assertIn("the alarm is only read, armed and disarmed by its three routes", printed or "")
+
+    def test_only_arm_and_disarm_with_the_typed_code_and_logging_off(self):
+        files = driver_sources()
+        control = files["src/control4/alarm_control.lua"]
+        arm = 'C4:SendToDevice(device.id, "PARTITION_ARM", params, false, false)'
+        disarm = 'C4:SendToDevice(device.id, "PARTITION_DISARM", params, false, false)'
+        self.assertIn(arm, control)
+        self.assertIn(disarm, control)
+        for number, changed in enumerate((
+            control.replace(arm, 'C4:SendToDevice(device.id, "PARTITION_ARM", params)'),
+            control.replace(arm, 'C4:SendToDevice(device.id, "PARTITION_ARM", params, false, true)'),
+            control.replace(disarm, 'C4:SendToDevice(device.id, "ARM_CANCEL", params, false, false)'),
+            control.replace(disarm, disarm + '\n        C4:SendToDevice(device.id, "PARTITION_DISARM", params, false, false)'),
+            control.replace('InterfaceID = AlarmControl.INTERFACE_ID }', 'InterfaceID = "DirectorProgramming" }', 1),
+            control.replace("local AlarmControl = {}", 'local AlarmControl = {}\nlocal Log = require("src.core.log")'),
+            control.replace("local AlarmControl = {}", "local AlarmControl = {}\nprint(\"x\")"),
+            control.replace("local AlarmControl = {}", 'local AlarmControl = {}\nlocal function f() C4:SendToProxy(5002, "PARTITION_ARM", {}) end'),
+            control.replace("local AlarmControl = {}", 'local AlarmControl = {}\nlocal function f() C4:SendToDevice(1, "EXECUTE_EMERGENCY", {}, false, false) end'),
+            control.replace("local AlarmControl = {}", "local AlarmControl = {}\nlocal function f() error(\"x\") end"),
+        )):
+            with self.subTest(change=number):
+                self.assertNotEqual(changed, control, "the test did not change the module")
+                self.assertIsNotNone(self.refused({**files, "src/control4/alarm_control.lua": changed}))
+
+    def test_only_the_alarm_handler_loads_the_module_and_it_logs_no_code(self):
+        files = driver_sources()
+        scenes = files["src/core/scenes.lua"]
+        loading = 'local AlarmControl = require("src.control4.alarm_control")\n' + scenes
+        printed = self.refused({**files, "src/core/scenes.lua": loading})
+        self.assertIn("only src/api/handlers/alarm.lua arms and disarms", printed or "")
+        handler = files["src/api/handlers/alarm.lua"]
+        logging = handler.replace("    local delivered\n", "    services.log.info(\"alarm\", \"sent\", { code = code })\n    local delivered\n", 1)
+        self.assertNotEqual(logging, handler)
+        self.assertIn("logs the code or the body", self.refused({**files, "src/api/handlers/alarm.lua": logging}) or "")
 
     def test_no_scene_step_reaches_the_alarm(self):
         files = driver_sources()

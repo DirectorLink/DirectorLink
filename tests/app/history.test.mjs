@@ -635,6 +635,54 @@ test("Direct connection at home turned on or off, in both languages", async () =
   }
 });
 
+// The alarm armed or disarmed from DirectorLink (1.15.0, ADR-091): who sent it with their code, the
+// partition and the mode (the command went; the partition's state says what the alarm did), with a
+// chip of its own on a controller that has it.
+test("the alarm armed and disarmed from DirectorLink, with a chip of its own on a 1.15.0 controller, in both languages", async () => {
+  const phone = { type: "key", key_id: "c3d4e5f6", name: "iPhone", profile: "Dana" };
+  const alarm = [
+    { id: 13, at: iso(NOW - 30 * 1000), kind: "alarm", action: "disarm", who: { ...phone, remote: true }, what: "House", ids: { device_id: 80 } },
+    { id: 12, at: iso(NOW - 60 * 1000), kind: "alarm", action: "arm", who: phone, what: "House", note: "Away", ids: { device_id: 80 } },
+    { id: 11, at: iso(NOW - 90 * 1000), kind: "alarm", action: "arm", who: phone, what: "Garage", note: "Vacation", ids: { device_id: 81 } },
+    { id: 10, at: iso(NOW - 100 * 1000), kind: "alarm", action: "arm", who: phone, what: "Garage" },
+  ];
+  home("admin");
+  const asked = controller({ items: [...alarm, ENTRIES[0]] });
+  let view = await open();
+  let rows = items(view);
+  // Sent, not done: a wrong code changes nothing, and the partition's state says what the alarm did.
+  assert.equal(line(rows[0]), "Disarm sent to House, Dana · iPhone, away from home");
+  assert.equal(line(rows[1]), "Arm sent to House (Away), Dana · iPhone");
+  assert.equal(line(rows[2]), "Arm sent to Garage (Vacation), Dana · iPhone", "a mode the app has no word for, as its driver names it");
+  assert.equal(line(rows[3]), "Arm sent to Garage, Dana · iPhone");
+  assert.equal(byClass(rows[1], "history-title")[0].textContent, "Arm sent to ⁨House⁩ (Away)", "the partition's name isolated");
+  assert.ok(byClass(rows[0], "history-icon-alarm").length && byClass(rows[1], "history-icon-alarm").length);
+  assert.equal(outcome(rows[1]), "");
+  assert.ok(hasClass(rows[1], "is-ok"));
+  // A controller before 1.15.0 has no such entries, and would refuse the kind: no chip.
+  const chips = (page) => find(page, (node) => hasClass(node, "history-filters")).children.map((chip) => chip.textContent);
+  assert.deepEqual(chips(view), ["All", "Scenes and schedules", "Doors", "Changes in Composer", "Access"]);
+  state.system = { ...state.system, features: { ...state.system.features, alarm_arming: true } };
+  view = history.historyView();
+  assert.deepEqual(chips(view), ["All", "Scenes and schedules", "Doors", "Alarm", "Changes in Composer", "Access"]);
+  byKey(view, "history-filter:alarm").dispatch("click");
+  await settle();
+  assert.ok(asked.includes("/v1/activity?limit=50&kind=alarm"), asked.join(" "));
+  view = history.historyView();
+  assert.equal(items(view).length, alarm.length);
+  assert.equal(byKey(view, "history-filter:alarm").attributes["aria-pressed"], "true");
+  await setLanguage("he");
+  try {
+    rows = items(await open());
+    assert.equal(line(rows[0]), "נשלח ניטרול ל-House, Dana · iPhone, מחוץ לבית");
+    assert.equal(line(rows[1]), "נשלחה דריכה ל-House (מלאה), Dana · iPhone");
+    assert.equal(line(rows[2]), "נשלחה דריכה ל-Garage (Vacation), Dana · iPhone");
+    assert.deepEqual(chips(history.historyView()), ["הכול", "סצנות ותזמונים", "דלתות", "אזעקה", "שינויים ב-Composer", "גישה"]);
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

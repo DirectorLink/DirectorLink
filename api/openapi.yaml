@@ -2952,11 +2952,12 @@ paths:
       tags: [Alarm]
       operationId: getAlarm
       x-directorlink-role: member
-      summary: Whether the alarm is armed (read-only)
+      summary: Whether the alarm is armed
       description: |
         Each partition of the home's alarm (an area the alarm arms on its own): armed home or away,
-        in alarm, open zones, an entry or exit delay, trouble. Read-only: nothing in this API arms or
-        disarms, which takes the user's alarm code (ADR-038).
+        in alarm, open zones, an entry or exit delay, trouble. Since 1.15.0 (ADR-091) also the modes
+        it arms in (`modes`) and whether the caller may arm and disarm it now (`control`):
+        `POST /v1/alarm/{partitionId}/arm` and `/disarm`, with the code the person types.
 
         Off by default: until an installer sets the **Alarm Status** property of DirectorLink in
         Composer to On, the answer is `{"enabled": false, "partitions": []}` and DirectorLink does
@@ -2972,6 +2973,8 @@ paths:
         A member not given the alarm's status gets 403 `FORBIDDEN` (ADR-054). Partitions the alarm
         does not use are left out. The property
         is read at every request, and `GET /v1/system` says it in `features.alarm_status`.
+        `modes` and `control` follow no state of the partition, and the padding counts `control` at
+        its longest (both false).
       responses:
         "200":
           description: The partitions, sorted by name; none while Alarm Status is Off.
@@ -2984,6 +2987,104 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+
+  /v1/alarm/{partitionId}/arm:
+    parameters:
+      - $ref: "#/components/parameters/PartitionId"
+    post:
+      tags: [Alarm]
+      operationId: armAlarm
+      x-directorlink-role: member
+      summary: Arm a partition of the alarm with a typed code
+      description: |
+        1.15.0, ADR-091. Sends the partition what a Control4 screen sends it: arm in `mode` (one of
+        the partition's `modes`, as its driver declares them in `<arm_states>`; case aside) with
+        `code`, the alarm code the person typed for this command. The alarm's driver sends it to the
+        panel, and the panel checks it: a wrong code, open zones or a panel that cannot arm now show
+        only in the partition's state, which stays as it was (`GET /v1/alarm`, read again). The code
+        is never kept, logged or answered, Director's own logging of the command is off, and no
+        problem names it. Never with a code of DirectorLink's or the driver's own, and never from a
+        scene, a schedule or a link.
+
+        Only while both the **Alarm Status** and **Alarm Control** properties of DirectorLink are On
+        in Composer (Alarm Control ships Off; 403 `ALARM_CONTROL_DISABLED`), by admins and the members
+        an admin gave it to (`alarm_control` with `alarm`; 403 `FORBIDDEN`), and only in sealed
+        requests, at home and through the account (403 `SEALED_REQUEST_REQUIRED` with
+        `Authorization: Bearer`). A partition the alarm does not use, or none, is 404. 409
+        `NO_ARM_MODES` when its driver declares no modes, `ALARM_UNAVAILABLE` when a driver of
+        DirectorLink's alarm agreement says it cannot now (`control.available` false: its panel
+        only reports, or is not connected). At most 6 commands (arm or disarm) a person in 5
+        minutes and 20 in the home in an hour: 429 `RATE_LIMITED` with `Retry-After` and
+        `retry_after` (every command counts: only the panel knows a wrong code). Each command goes
+        into the history (`alarm` `arm`, the mode in `note`), which only sealed reads show.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlarmArm"
+      responses:
+        "202":
+          description: Sent to the partition; what the alarm did shows in its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
+
+  /v1/alarm/{partitionId}/disarm:
+    parameters:
+      - $ref: "#/components/parameters/PartitionId"
+    post:
+      tags: [Alarm]
+      operationId: disarmAlarm
+      x-directorlink-role: member
+      summary: Disarm a partition of the alarm with a typed code
+      description: |
+        1.15.0, ADR-091. Sends the partition a disarm with `code`, the alarm code the person typed
+        for this command; the panel checks it. Also during an exit or entry delay, and to silence
+        an alarm. Everything else as `POST /v1/alarm/{partitionId}/arm` (without `mode`); the
+        history says `alarm` `disarm`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlarmDisarm"
+      responses:
+        "202":
+          description: Sent to the partition; what the alarm did shows in its state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmCommand"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/CommandFailed"
   /v1/music:
     get:
       tags: [Music]
@@ -4042,6 +4143,14 @@ components:
       schema:
         type: integer
         minimum: 1
+    PartitionId:
+      name: partitionId
+      in: path
+      required: true
+      description: A partition's id, as `GET /v1/alarm` lists it.
+      schema:
+        type: integer
+        minimum: 1
     CameraId:
       name: cameraId
       in: path
@@ -4120,13 +4229,13 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
     Conflict:
-      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off; `HTTPS_NOT_ALLOWED`, while its Direct HTTPS property is Off, 1.12.0 and 1.12.1), or Direct HTTPS needs Remote Access on and the home linked to an account (`REMOTE_ACCESS_NEEDED`, 1.12.0 and 1.12.1), or is switched in Composer only (`SET_IN_COMPOSER`, `PUT /v1/https` since 1.12.2).
+      description: The request conflicts with what the device supports or with current limits (`NOT_SUPPORTED`, `MODE_NOT_SUPPORTED`, `POSITION_NOT_SUPPORTED`, `STOP_NOT_SUPPORTED`, `FEATURE_NOT_SUPPORTED`, `HOLD_NOT_ALLOWED`, `KEY_LIMIT_REACHED`, `REMOTE_ACCESS_OFF`, `INVITATION_LIMIT_REACHED`, `SCENE_LIMIT_REACHED`, `SCENE_IN_USE`, `SCHEDULE_LIMIT_REACHED`, `VERSION_CONFLICT`, `LIMIT_REACHED`, `ASK_LINK_LIMIT_REACHED`, `USER_DEVICE_LIMIT` (since 1.9.0 a user has at most five devices; with `limit`, `user` and, for a caller who sees that user, `devices`), `SUGGESTION_CHANGED` (a suggestion to make devices of one account one user changed since it was shown, 1.9.0), `ALREADY_OWNER`, `NOT_AN_ADMIN`, `OWNER_NEEDS_ACCOUNT`, `OWNER_ACCOUNT_UNCLEAR`, `OWNER_ACCOUNT_SHARED` (making another admin the owner, 1.9.0, ADR-064, with `user`, and `device_names` for the last two); an open request that is over, `OPEN_REQUEST_EXPIRED`, or answered, `OPEN_REQUEST_ANSWERED`), a Sonos player refused it (`ACTION_NOT_POSSIBLE`, `FAVORITE_NOT_PLAYABLE`), or the alarm cannot be armed or disarmed from DirectorLink now (`ALARM_UNAVAILABLE`, `NO_ARM_MODES`, 1.15.0), or it needs something an installer switches on in Composer (`JEWISH_CALENDAR_OFF`, while DirectorLink's Jewish Calendar property is Off; `SONOS_OFF`, while its Sonos property is Off; `HTTPS_NOT_ALLOWED`, while its Direct HTTPS property is Off, 1.12.0 and 1.12.1), or Direct HTTPS needs Remote Access on and the home linked to an account (`REMOTE_ACCESS_NEEDED`, 1.12.0 and 1.12.1), or is switched in Composer only (`SET_IN_COMPOSER`, `PUT /v1/https` since 1.12.2).
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
     RateLimited:
-      description: Too many failed attempts (`PAIRING_RATE_LIMITED`).
+      description: Too many failed attempts (`PAIRING_RATE_LIMITED`), or too many alarm commands (`RATE_LIMITED`, 1.15.0).
       headers:
         Retry-After:
           $ref: "#/components/headers/RetryAfter"
@@ -4153,10 +4262,11 @@ components:
     Forbidden:
       description: |
         The API key's role does not allow this (`FORBIDDEN`, with `role` and `required_role`), or
-        door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or a claim token was
-        asked for through remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status or a
-        backup was asked for without sealing the request (`SEALED_REQUEST_REQUIRED`), or only the
-        home's owner may do it (`OWNER_ONLY`).
+        door control is switched off in Composer (`DOOR_CONTROL_DISABLED`), or arming and disarming
+        the alarm is (`ALARM_CONTROL_DISABLED`, 1.15.0), or a claim token was asked for through
+        remote access (`CLAIM_ONLY_ON_HOME_NETWORK`), or the alarm's status, arming or disarming it,
+        or a backup was asked for without sealing the request (`SEALED_REQUEST_REQUIRED`), or only
+        the home's owner may do it (`OWNER_ONLY`).
       content:
         application/problem+json:
           schema:
@@ -4397,6 +4507,12 @@ components:
             alarm_status:
               type: boolean
               description: The **Alarm Status** property is On; admins and the members given it can read `GET /v1/alarm` in sealed requests.
+            alarm_arming:
+              type: boolean
+              description: "1.15.0 (ADR-091): `POST /v1/alarm/{partitionId}/arm` and `/disarm`, the `alarm_control` permission, and each partition's `modes` and `control`. Always true when there."
+            alarm_control:
+              type: boolean
+              description: "1.15.0: the **Alarm Status** and **Alarm Control** properties are both On: admins and the members given it may arm and disarm."
             backup:
               type: boolean
               description: "Always true since 1.4.0: admins can make and restore backups (`GET /v1/backup`, `POST /v1/restore`, ADR-042). Missing before 1.4.0, so clients show no backup."
@@ -4699,6 +4815,9 @@ components:
         alarm:
           type: boolean
           description: Sees the alarm's status (with Alarm Status on in Composer).
+        alarm_control:
+          type: boolean
+          description: "1.15.0 (ADR-091): arms and disarms the alarm with their code (with Alarm Status and Alarm Control on in Composer); counts only with `alarm`. Off for a new member."
         scenes:
           type: array
           maxItems: 200
@@ -4709,7 +4828,7 @@ components:
 
     PersonAccess:
       type: object
-      required: [role, owner, all_rooms, rooms, kinds, cameras, doors, alarm, scenes]
+      required: [role, owner, all_rooms, rooms, kinds, cameras, doors, alarm, alarm_control, scenes]
       description: |
         A person's role and permissions (ADR-054). For an admin, what they would have as a member;
         for the caller's own (`GET /v1/api-keys/current`, `/v1/profile`) an admin's are all true and
@@ -4735,6 +4854,9 @@ components:
           type: boolean
         alarm:
           type: boolean
+        alarm_control:
+          type: boolean
+          description: Arms and disarms the alarm (1.15.0, ADR-091), with `alarm`.
         scenes:
           type: array
           items:
@@ -6903,10 +7025,50 @@ components:
           items:
             $ref: "#/components/schemas/AlarmPartition"
 
+    AlarmArm:
+      type: object
+      required: [mode, code]
+      additionalProperties: false
+      properties:
+        mode:
+          type: string
+          description: One of the partition's `modes` (case aside).
+          example: Away
+        code:
+          type: string
+          pattern: "^[0-9]{1,12}$"
+          description: The alarm code the person typed for this command. Never kept or logged.
+          example: "1234"
+
+    AlarmDisarm:
+      type: object
+      required: [code]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          pattern: "^[0-9]{1,12}$"
+          description: The alarm code the person typed for this command. Never kept or logged.
+          example: "1234"
+
+    AlarmCommand:
+      type: object
+      description: The command was sent; the partition's state says what the alarm did.
+      required: [partition_id, action, mode]
+      properties:
+        partition_id:
+          type: integer
+        action:
+          type: string
+          enum: [arm, disarm]
+        mode:
+          type: [string, "null"]
+          description: The mode as the driver declares it; null for a disarm.
+
     AlarmPartition:
       type: object
-      description: One partition of the alarm, as its panel last reported it. Read-only.
-      required: [id, name, room, state, armed, armed_mode, armed_type, alarm, alarm_type, open_zones, delay, trouble]
+      description: One partition of the alarm, as its panel last reported it.
+      required: [id, name, room, state, armed, armed_mode, armed_type, alarm, alarm_type, open_zones, delay, trouble, modes, control]
       properties:
         id:
           type: integer
@@ -6970,6 +7132,24 @@ components:
         trouble:
           type: [string, "null"]
           description: The panel's trouble text (e.g. a lost power supply or a low battery), as it writes it; null when there is none.
+        modes:
+          type: array
+          maxItems: 8
+          description: "1.15.0: the modes it arms in, as its driver declares them (`<arm_states>`), in its order, each at most 32 bytes; empty when it declares none (then it is only disarmed from DirectorLink)."
+          items:
+            type: string
+          example: [Away, Home, Night]
+        control:
+          type: object
+          description: "1.15.0 (ADR-091): arming and disarming it from DirectorLink."
+          required: [allowed, available]
+          properties:
+            allowed:
+              type: boolean
+              description: Alarm Status and Alarm Control are On and the caller may (an admin, or a member given `alarm_control`).
+            available:
+              type: boolean
+              description: Its driver can now, as far as DirectorLink can tell. False only when a driver of DirectorLink's alarm agreement says so (`DIRECTORLINK_ALARM_CONTROL` not 1; the DirectorLink · PIMA FORCE driver while its panel only reports); any other driver is taken as able.
 
     CameraList:
       type: object
@@ -7954,6 +8134,9 @@ components:
         - A device moved (1.12.0, ADR-083): `access` `moved` (the device `what`, which joined with a
           move invitation, used its key for the first time, and the device `from` it moved from, of
           the same user, was revoked; `who` is the new device).
+        - `alarm` (1.15.0, ADR-091): `arm` (the mode in `note`) and `disarm`, a command sent from
+          DirectorLink with the person's code (`what` is the partition); what the alarm did is its
+          own to say. Only in sealed reads: a request with `Authorization: Bearer` never gets them.
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -7979,10 +8162,10 @@ components:
           format: date-time
         kind:
           type: string
-          enum: [scene, schedule, door, composer, access, system]
+          enum: [scene, schedule, door, alarm, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, moved, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required, direct_https]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, arm, disarm, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, moved, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required, direct_https]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:

@@ -25,7 +25,9 @@ Samsung Refrigerator (DirectorLink) driver 1.0.0) follows its feature commands 4
 the refrigerator confirms them through Samsung's cloud; "var 140 1006 1" opens its door and
 "event 140 15" is its driver's Door Left Open.
 An alarm panel has two partitions (House, disarmed with a zone open; Garage, armed away) and a third
-it does not use; Alarm Status is On in this fake home. Type "alarm off" or "alarm on" to switch it
+it does not use; Alarm Status and (1.15.0) Alarm Control are On in this fake home, and its fake panel
+arms and disarms with the code 1234 (any other changes nothing). Type "control off" or "control on"
+to switch Alarm Control. Type "alarm off" or "alarm on" to switch Alarm Status
 as in Composer, and "var <device id> <variable id> <value>" for a partition to report a change
 (e.g. "var 80 1007 ENTRY_DELAY"; the variables are listed in driver/tests/c4mock.lua).
 The pairing code is printed at start (valid 15 minutes, works once); type "code" and Enter for a new
@@ -493,7 +495,7 @@ def main():
             print("Fahrenheit: a US home (33 minisplit, 34 Nest, 36 sensor, 37 weather driver left out)")
         if not spec.is_file():
             print("Note: run scripts/build.py first to serve the real API description.")
-        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run); "alert <camera driver> <label>"; "ring <doorbell camera driver>"; "stats".')
+        print('Type "code" + Enter for a new pairing code; "alarm off" / "alarm on"; "control off" / "control on" (Alarm Control; the fake panel\'s code is 1234); "calendar on" / "calendar off"; "sonos on" / "sonos off"; "var <device> <variable> <value>"; "event <device> <event>"; "ask <link id> <secret>" (an ask-to-open link\'s run); "alert <camera driver> <label>"; "ring <doorbell camera driver>"; "stats".')
         threading.Thread(target=server.serve_forever, daemon=True).start()
         try:
             for line in sys.stdin:
@@ -503,6 +505,9 @@ def main():
                 elif len(words) == 2 and words[0] == "alarm" and words[1] in ("on", "off"):
                     bridge.set_property("Alarm Status", words[1].capitalize())
                     print(f"Alarm Status: {words[1].capitalize()}")
+                elif len(words) == 2 and words[0] == "control" and words[1] in ("on", "off"):
+                    bridge.set_property("Alarm Control", words[1].capitalize())
+                    print(f"Alarm Control: {words[1].capitalize()}")
                 elif len(words) == 2 and words[0] == "calendar" and words[1] in ("on", "off"):
                     bridge.set_property("Jewish Calendar", words[1].capitalize())
                     print(f"Jewish Calendar: {words[1].capitalize()}")

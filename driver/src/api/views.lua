@@ -374,6 +374,11 @@ function Views.alarmPartitionLongest(view)
     form.open_zones = count
     form.delay = { type = "entry", remaining = count, total = count }
     form.trouble = string.rep('"', bytes.trouble)
+    -- Whether the caller arms and disarms, and whether the driver can now (1.15.0, ADR-091): false
+    -- is the longer word. The modes are the driver's, the same in every state.
+    if form.control ~= nil then
+        form.control = { allowed = false, available = false }
+    end
     return form
 end
 

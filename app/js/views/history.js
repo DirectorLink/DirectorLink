@@ -1,17 +1,18 @@
 // History (#/settings/history, admins; ADR-046): what the controller did and noticed, newest first
-// and by day: scenes and schedules run or skipped and why, doors and gates opened, keys and
-// invitations, changes made in Composer, backups and driver updates. The controller keeps it (the
-// newest 500 entries, 30 days at most; GET /v1/activity); this reads it a page at a time, with
-// chips for the kinds, and the newest again every 30 s while it is open. Settings → Controller
-// links to it, and so do the app's alert notifications.
+// and by day: scenes and schedules run or skipped and why, doors and gates opened, the alarm armed or
+// disarmed from DirectorLink (1.15.0), keys and invitations, changes made in Composer, backups and
+// driver updates. The controller keeps it (the newest 500 entries, 30 days at most; GET
+// /v1/activity); this reads it a page at a time, with chips for the kinds, and the newest again every
+// 30 s while it is open. Settings → Controller links to it, and so do the app's alert notifications.
 
 import { announce, h, name } from "../dom.js";
 import { currentLanguage, formatClock, formatDate, t } from "../i18n.js";
 import { icon } from "../icons.js";
+import { armModeLabel } from "../alarm.js";
 import { roomName } from "../model.js";
 import { formatOffset, homeZone, whenText } from "../schedules.js";
 import { api, errorText, noteForbidden, roleLabel } from "../session.js";
-import { can, notify, state, ui } from "../state.js";
+import { alarmArmingSupported, can, notify, state, ui } from "../state.js";
 import { notReadyState, offlineBanner, pageHeader } from "./common.js";
 
 export const HISTORY_HASH = "#/settings/history";
@@ -20,19 +21,26 @@ export const HISTORY_ROW_KEY = "settings-history";
 const PAGE = 50;
 const REFRESH_MS = 30000;
 
-// The chips, and the kinds of entries each one shows (null: all).
+// The chips, and the kinds of entries each one shows (null: all). Alarm only with a controller that
+// arms and disarms (1.15.0): an older one refuses a kind it does not know.
 export const FILTERS = {
   all: null,
   automation: "scene,schedule",
   doors: "door",
+  alarm: "alarm",
   composer: "composer",
   access: "access",
 };
 
-const ICONS = { scene: "scene", door: "door", composer: "controller", access: "key" };
+function shownFilters() {
+  return Object.keys(FILTERS).filter((filter) => filter !== "alarm" || alarmArmingSupported());
+}
+
+const ICONS = { scene: "scene", door: "door", alarm: "shield", composer: "controller", access: "key" };
 // A refrigerator door left open (1.7.0) is a door entry with the refrigerator's icon.
 // An ask-to-open link's question (1.8.0) is a door entry with a bell; its links are access entries.
-const ACTION_ICONS = { left_open: "fridge", asked: "bell", ask_link_created: "link", ask_link_replaced: "link", ask_link_removed: "link" };
+// The alarm disarmed (1.15.0) has the shield struck through.
+const ACTION_ICONS = { left_open: "fridge", asked: "bell", ask_link_created: "link", ask_link_replaced: "link", ask_link_removed: "link", disarm: "shieldOff" };
 const SYSTEM_ICONS = { backup: "archive", cloud_backup: "archive", restore: "archive", remote_away: "cloudOff", remote_update_required: "cloudOff", driver_updated: "download", driver_started: "refresh", driver_added: "plus", direct_https: "home" };
 
 let generation = 0;
@@ -240,6 +248,14 @@ function title(entry) {
     case "door.left_open":
     case "door.asked":
       return t(`history.door.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
+    // The alarm armed or disarmed from DirectorLink with a person's code (1.15.0, ADR-091): the command
+    // went; the partition's state says what the alarm did. `what` is the partition, `note` the mode.
+    case "alarm.arm": {
+      const partition = isolate(what || t("history.alarm.unnamed"));
+      return entry.note ? t("history.alarm.arm", { name: partition, mode: armModeLabel(entry.note) }) : t("history.alarm.armNoMode", { name: partition });
+    }
+    case "alarm.disarm":
+      return t("history.alarm.disarm", { name: isolate(what || t("history.alarm.unnamed")) });
     case "access.paired":
     case "access.created":
     case "access.joined":
@@ -482,7 +498,7 @@ function filterChips(current) {
   return h(
     "div",
     { class: "history-filters", role: "group", "aria-label": t("history.filters.label") },
-    Object.keys(FILTERS).map((filter) =>
+    shownFilters().map((filter) =>
       h(
         "button",
         {

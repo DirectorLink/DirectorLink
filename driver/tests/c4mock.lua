@@ -1004,6 +1004,9 @@ function Mock.withPartitions(project)
     project.devices[130] = {
         deviceName = "Alarm Panel", driverFileName = "alarm_panel.c4z", roomId = 11, roomName = "Living Room", proxies = proxies,
     }
+    -- The modes its partitions arm in (1.15.0, ADR-091), as a security driver declares them.
+    project.deviceData = project.deviceData or {}
+    project.deviceData[130] = { capabilities = "<ui_version>2</ui_version><arm_states>Away,Home,Night</arm_states><has_fire>false</has_fire>" }
     for _, partition in ipairs(partitions) do
         project.devices[partition.id] = {
             deviceName = partition.name, driverFileName = "security.c4i", roomId = partition.room,
@@ -1029,6 +1032,26 @@ end
 function Mock.setPartition(mock, id, values)
     for name, value in pairs(values) do
         Mock.changeVariable(mock, id, assert(Mock.PARTITION_NAMES[name], "no partition variable " .. name), value)
+    end
+end
+
+-- What a fake panel reports when it takes an arm (in Away: away; any other mode: home) or a disarm
+-- (ready, or not ready with a zone open), with no exit delay.
+function Mock.panelTakes(mock, id, command, params)
+    local values = mock.project.variables[id]
+    if command == "PARTITION_ARM" then
+        local away = string.lower(tostring(params.ArmType)) == "away"
+        Mock.setPartition(mock, id, {
+            HOME_STATE = away and "0" or "1", AWAY_STATE = away and "1" or "0", DISARMED_STATE = "0",
+            ARMED_TYPE = tostring(params.ArmType), PARTITION_STATE = "ARMED",
+        })
+    else
+        local open = tonumber(values[1010]) or 0
+        Mock.setPartition(mock, id, {
+            HOME_STATE = "0", AWAY_STATE = "0", DISARMED_STATE = "1", ALARM_STATE = "0", ALARM_TYPE = "",
+            ARMED_TYPE = "", DELAY_TIME_TOTAL = "0", DELAY_TIME_REMAINING = "0",
+            PARTITION_STATE = open > 0 and "DISARMED_NOT_READY" or "DISARMED_READY",
+        })
     end
 end
 
@@ -1277,8 +1300,19 @@ function Mock.install(project)
         mock.listeners = {}
     end
 
-    function C4:SendToDevice(deviceId, command, params)
-        mock.commands[#mock.commands + 1] = { device = deviceId, command = command, params = params }
+    -- `logCommand` false: Director does not log the command (DirectorLink's arming and disarming).
+    -- A device in project.sendFails refuses every command.
+    function C4:SendToDevice(deviceId, command, params, allowEmpty, logCommand)
+        if (project.sendFails or {})[deviceId] then
+            error("Director refused the command")
+        end
+        mock.commands[#mock.commands + 1] = { device = deviceId, command = command, params = params, log = logCommand }
+        -- A fake panel (project.panelCode, the dev bridge's): a partition armed or disarmed with that
+        -- code reports it, as a real alarm's driver would; any other code changes nothing.
+        if project.panelCode and (command == "PARTITION_ARM" or command == "PARTITION_DISARM")
+            and project.variables[deviceId] and type(params) == "table" and params.UserCode == project.panelCode then
+            Mock.panelTakes(mock, deviceId, command, params)
+        end
         -- A screen of DirectorLink's notification agreement (Mock.withNotifyTargets) takes it.
         local target = (project.notifyTargets or {})[deviceId]
         if target then

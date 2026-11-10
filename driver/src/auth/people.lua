@@ -5,7 +5,8 @@
 --
 -- A member's record: the rooms they see (all, or a list), the kinds of devices they use there
 -- (KINDS, each on or off), whether they see cameras, open doors and gates, see the alarm's status,
--- and the scenes they may run. Kept in a store of its own, which DirectorLink 1.7.0 never reads or
+-- arm and disarm it (alarm_control, 1.15.0, ADR-091: only with the alarm's status), and the scenes
+-- they may run. Kept in a store of its own, which DirectorLink 1.7.0 never reads or
 -- writes (it rewrites the profiles' store without what it does not know); every key keeps a 1.7.0
 -- role worked out from its person (People.legacyRole), so that 1.7.0 behaves close to it after a
 -- downgrade, and so that a person whose keys were changed meanwhile by 1.7.0 is read again from
@@ -50,7 +51,8 @@ local function allKinds(on)
     return kinds
 end
 
--- A new member: every room and kind, cameras and the alarm's status, no doors, no scenes.
+-- A new member: every room and kind, cameras and the alarm's status, no doors, no arming or
+-- disarming, no scenes.
 function People.defaults(role)
     return {
         role = role == "admin" and "admin" or "member",
@@ -60,6 +62,7 @@ function People.defaults(role)
         cameras = true,
         doors = false,
         alarm = true,
+        alarm_control = false,
         scenes = {},
     }
 end
@@ -138,7 +141,7 @@ local function clean(item)
             end
         end
     end
-    for _, field in ipairs({ "cameras", "doors", "alarm" }) do
+    for _, field in ipairs({ "cameras", "doors", "alarm", "alarm_control" }) do
         if type(item[field]) == "boolean" then
             record[field] = item[field]
         end
@@ -178,6 +181,7 @@ function People.view(record)
         cameras = record.cameras == true,
         doors = record.doors == true,
         alarm = record.alarm == true,
+        alarm_control = record.alarm_control == true,
         scenes = scenes,
     }
 end

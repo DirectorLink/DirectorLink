@@ -68,6 +68,7 @@ all of a user's devices follow one change. Before 1.8.0 each key had a role of i
 | Cameras | the cameras in their rooms, and a doorbell's picture | on |
 | Doors and gates | opening the doors and gates in their rooms (they see them and their state either way); Door Control must be on in Composer too | off |
 | Sees the alarm | the alarm's status; Alarm Status must be On in Composer too | on |
+| Arms and disarms the alarm (1.15.0) | arming and disarming the alarm from the app, with their alarm code each time; only with Sees the alarm, and Alarm Control must be On in Composer too | off |
 | Scenes they may run | those scenes, run in full: devices they could not control themselves too, doors and gates included (with Door Control on) | none |
 
 - A doorbell in a member's rooms rings for them (with its ring alert) either way; its picture shows

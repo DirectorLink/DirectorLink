@@ -1,13 +1,13 @@
 // A person's role and, for a member, what they may see and do (DirectorLink 1.8.0, ADR-054): the
 // editor that Settings → People and devices and Invite someone show. `draft` is an access object as
 // GET /v1/profiles/{id}/access answers it (role, all_rooms, rooms, kinds, cameras, doors, alarm,
-// scenes); the editor changes it in place and calls `changed()` after each change. The controller
-// enforces all of it: the app only shows a member what they may use.
+// alarm_control since 1.15.0, scenes); the editor changes it in place and calls `changed()` after each
+// change. The controller enforces all of it: the app only shows a member what they may use.
 
 import { h, name } from "../dom.js";
 import { t } from "../i18n.js";
 import { roomName } from "../model.js";
-import { state } from "../state.js";
+import { alarmArmingSupported, state } from "../state.js";
 
 // The kinds of devices a member may be given, as the controller names them.
 export const KINDS = ["light", "climate", "fan", "blind", "music", "refrigerator"];
@@ -17,9 +17,20 @@ export function peopleSupported() {
   return state.system?.features?.people_permissions === true;
 }
 
-// A new member: every room and kind, cameras and the alarm's status, no doors, no scenes.
+// A new member: every room and kind, cameras and the alarm's status, no doors, no arming or disarming
+// the alarm, no scenes.
 export function newMemberAccess() {
-  return { role: "member", all_rooms: true, rooms: [], kinds: Object.fromEntries(KINDS.map((kind) => [kind, true])), cameras: true, doors: false, alarm: true, scenes: [] };
+  return {
+    role: "member",
+    all_rooms: true,
+    rooms: [],
+    kinds: Object.fromEntries(KINDS.map((kind) => [kind, true])),
+    cameras: true,
+    doors: false,
+    alarm: true,
+    alarm_control: false,
+    scenes: [],
+  };
 }
 
 // A copy to edit, with every field there.
@@ -34,6 +45,7 @@ export function copyAccess(access) {
     cameras: typeof source.cameras === "boolean" ? source.cameras : base.cameras,
     doors: source.doors === true,
     alarm: typeof source.alarm === "boolean" ? source.alarm : base.alarm,
+    alarm_control: source.alarm_control === true,
     scenes: Array.isArray(source.scenes) ? [...source.scenes] : [],
   };
 }
@@ -50,6 +62,9 @@ export function accessBody(draft) {
     body.rooms = draft.rooms.filter((id) => rooms.has(id));
   }
   Object.assign(body, { kinds: { ...draft.kinds }, cameras: draft.cameras, doors: draft.doors, alarm: draft.alarm });
+  // Arming and disarming the alarm (1.15.0, ADR-091): only to a controller that has it (an older one
+  // refuses a field it does not know), and only with the alarm's status.
+  if (alarmArmingSupported()) body.alarm_control = draft.alarm === true && draft.alarm_control === true;
   if (Array.isArray(state.scenes)) {
     const scenes = new Set(state.scenes.map((scene) => scene.id));
     body.scenes = draft.scenes.filter((id) => scenes.has(id));
@@ -65,6 +80,7 @@ export function accessSummary(access) {
   parts.push(kinds.length === KINDS.length ? t("perm.allKinds") : kinds.length ? kinds.map((kind) => t(`perm.kindShort.${kind}`)).join(", ") : t("perm.noKinds"));
   if (access.cameras) parts.push(t("perm.summaryCameras"));
   if (access.doors) parts.push(t("perm.summaryDoors"));
+  if (access.alarm && access.alarm_control) parts.push(t("perm.summaryAlarmControl"));
   parts.push(t("perm.sceneCount", { count: (access.scenes || []).length }));
   return parts.join(" · ");
 }
@@ -105,9 +121,10 @@ function toggleIn(list, value, on) {
   return on ? [...without, value] : without;
 }
 
-// The editor: the role, then (members) rooms, kinds, cameras, doors and gates, the alarm and the
-// scenes they may run. `prefix` keeps its ids apart from another editor's; `lockedRole` (the home's
-// owner, always an admin) shows the role without a choice.
+// The editor: the role, then (members) rooms, kinds, cameras, doors and gates, the alarm (and, with a
+// 1.15.0 controller, arming and disarming it, under its status) and the scenes they may run.
+// `prefix` keeps its ids apart from another editor's; `lockedRole` (the home's owner, always an
+// admin) shows the role without a choice.
 export function permissionsEditor(draft, { prefix = "perm", changed, lockedRole = false } = {}) {
   const update = (change) => {
     change();
@@ -173,7 +190,17 @@ export function permissionsEditor(draft, { prefix = "perm", changed, lockedRole 
     ),
     switchRow(`${prefix}-cameras`, t("perm.cameras"), t("perm.camerasHelp"), draft.cameras, (on) => update(() => (draft.cameras = on))),
     switchRow(`${prefix}-doors`, t("perm.doors"), t("perm.doorsHelp"), draft.doors, (on) => update(() => (draft.doors = on))),
-    switchRow(`${prefix}-alarm`, t("perm.alarm"), t("perm.alarmHelp"), draft.alarm, (on) => update(() => (draft.alarm = on)))
+    switchRow(`${prefix}-alarm`, t("perm.alarm"), t("perm.alarmHelp"), draft.alarm, (on) =>
+      update(() => {
+        draft.alarm = on;
+        // Without the alarm's status, no arming or disarming either; turned on again, it starts off.
+        if (!on) draft.alarm_control = false;
+      })
+    ),
+    // Arms and disarms the alarm (1.15.0): only with its status, and off for a new member.
+    alarmArmingSupported() && draft.alarm
+      ? switchRow(`${prefix}-alarm-control`, t("perm.alarmControl"), t("perm.alarmControlHelp"), draft.alarm_control === true, (on) => update(() => (draft.alarm_control = on)))
+      : null
   );
   const scenes = state.scenes || [];
   parts.push(

@@ -321,7 +321,7 @@ end
 
 -- ---- a person's role and permissions (ADR-054) ------------------------------------------------
 
-local ACCESS_FIELDS = { role = true, all_rooms = true, rooms = true, kinds = true, cameras = true, doors = true, alarm = true, scenes = true }
+local ACCESS_FIELDS = { role = true, all_rooms = true, rooms = true, kinds = true, cameras = true, doors = true, alarm = true, alarm_control = true, scenes = true }
 local ROLES = { admin = true, member = true }
 
 local function isList(value)
@@ -348,7 +348,7 @@ function Profiles.readAccess(services, body, base, field)
         end
         record.role = body.role
     end
-    for _, name in ipairs({ "all_rooms", "cameras", "doors", "alarm" }) do
+    for _, name in ipairs({ "all_rooms", "cameras", "doors", "alarm", "alarm_control" }) do
         if body[name] ~= nil then
             if type(body[name]) ~= "boolean" then
                 return nil, Problem.invalidField(prefix .. name, name .. " must be true or false")
@@ -522,6 +522,7 @@ end
 
 -- PATCH /v1/profiles/{profileId}/access (admins): {"role": "member", "all_rooms": false,
 -- "rooms": [12], "kinds": {"music": false}, "cameras": true, "doors": false, "alarm": true,
+-- "alarm_control": false (1.15.0),
 -- "scenes": ["a1b2c3d4"]}, any of them; the rest stays as it is.
 function Profiles.update_access(ctx)
     local id, problem = profileParam(ctx)

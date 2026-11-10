@@ -486,8 +486,21 @@ def main():
         for key in ("readOnly", "alarmOf", "entryDelay", "exitDelay", "armedAway", "armedHome", "notReady", "openZones", "delayLeft", "trouble"):
             require(dictionary, f"{key}:", f"app/i18n/{code}.js is missing the alarm text {key}")
 
-    # The alarm's status (1.2.0, ADR-038): read-only, asked for and shown only for members and
-    # admins once the installer turned it on; nothing in the app sends the alarm anything.
+    # The alarm's status (1.2.0, ADR-038): asked for and shown only for members and admins once the
+    # installer turned it on; alarm.js and views/alarm.js only read it. Arming and disarming (1.15.0,
+    # ADR-091) are alarm-control.js's and views/alarm-control.js's alone: one request, to the two
+    # routes, with the code a person typed in its body, never kept in storage or written to the
+    # console.
+    control = (APP / "js" / "alarm-control.js").read_text(encoding="utf-8")
+    require(control, 'await api(`/v1/alarm/${id}/${action}`, { method: "POST", body });',
+            "app/js/alarm-control.js must send the arm or disarm with its body, to POST /v1/alarm/{id}/arm or /disarm")
+    require(control, "delete body.code;", "app/js/alarm-control.js must drop the code once the request is sent")
+    for path in (APP / "js" / "alarm-control.js", APP / "js" / "views" / "alarm-control.js"):
+        text = path.read_text(encoding="utf-8")
+        if re.search(r"\b(?:localStorage|sessionStorage|indexedDB|caches)\b|\bconsole\.", text):
+            fail(f"app/{path.relative_to(APP).as_posix()} must never keep the alarm code or write it to the console")
+        if len(re.findall(r"\bapi\(", text)) > (1 if path.name == "alarm-control.js" and path.parent.name == "js" else 0):
+            fail(f"app/{path.relative_to(APP).as_posix()}: only alarm-control.js sends, one request")
     alarm = (APP / "js" / "alarm.js").read_text(encoding="utf-8")
     require(alarm, 'state.system?.features?.alarm_status === true && Boolean(state.role) && can("member")',
             "the alarm must be asked for and shown only with Alarm Status on, and only for members and admins")

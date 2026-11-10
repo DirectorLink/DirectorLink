@@ -83,6 +83,8 @@ local function rules(record, profileId, everyScene)
         cameras = record.cameras == true,
         doors = record.doors == true,
         alarm = record.alarm == true,
+        -- Arming and disarming (1.15.0, ADR-091): only with the alarm's status too.
+        alarm_control = record.alarm_control == true and record.alarm == true,
         scenes = everyScene and true or scenes,
     }
 end
@@ -210,6 +212,14 @@ end
 function Access.canSeeAlarm(actor)
     local rule = resolve(actor)
     return rule ~= nil and (rule.admin == true or rule.system == true or rule.alarm == true)
+end
+
+-- May arm and disarm the alarm (1.15.0, ADR-091; when Alarm Control is On in Composer, which the
+-- handler checks): an admin, or a member given it with the alarm's status. Never DirectorLink
+-- itself: no schedule, scene or link arms or disarms, as no person types a code there.
+function Access.canControlAlarm(actor)
+    local rule = resolve(actor)
+    return rule ~= nil and rule.system ~= true and (rule.admin == true or rule.alarm_control == true)
 end
 
 -- May run the scene with this id (never edit it: that is isAdmin).
@@ -484,7 +494,7 @@ function Access.within(left, right)
         end
         return true
     end
-    for _, field in ipairs({ "cameras", "doors", "alarm" }) do
+    for _, field in ipairs({ "cameras", "doors", "alarm", "alarm_control" }) do
         if va[field] and not vb[field] then
             return false
         end
@@ -540,8 +550,9 @@ function Access.describe(actor)
     if rule.admin then
         record = People.defaults("admin")
         record.doors = true
+        record.alarm_control = true
     else
-        record = { role = "member", all_rooms = rule.all_rooms, rooms = {}, kinds = rule.kinds, cameras = rule.cameras, doors = rule.doors, alarm = rule.alarm, scenes = {} }
+        record = { role = "member", all_rooms = rule.all_rooms, rooms = {}, kinds = rule.kinds, cameras = rule.cameras, doors = rule.doors, alarm = rule.alarm, alarm_control = rule.alarm_control, scenes = {} }
         for id in pairs(rule.rooms or {}) do
             record.rooms[#record.rooms + 1] = id
         end

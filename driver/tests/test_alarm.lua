@@ -1,6 +1,7 @@
 -- The alarm's status (ADR-038): security partitions, read-only, off by default (the Composer
 -- property Alarm Status), for members and admins only, and only in sealed answers, at home and
--- through the account. Nothing is ever sent to a partition, and its state is never logged.
+-- through the account. Nothing is sent to a partition but an arm or disarm a person typed a code for
+-- (1.15.0, ADR-091, test_alarm_control.lua), and its state is never logged.
 
 local Mock = require("c4mock")
 local T = require("helpers")
@@ -396,7 +397,10 @@ function tests.nothing_is_ever_sent_to_a_partition()
     for _, method in ipairs({ "POST", "PUT", "PATCH", "DELETE" }) do
         T.eq(T.http(mock, method, "/v1/alarm", { key = key, body = { state = "disarmed", code = "1234" } }).status, 405, method .. " /v1/alarm")
     end
-    T.eq(T.http(mock, "POST", "/v1/alarm/81/disarm", { key = key }).status, 404)
+    -- Arming and disarming (1.15.0, ADR-091) only with Alarm Control On: test_alarm_control.lua.
+    local disarm = T.http(mock, "POST", "/v1/alarm/81/disarm", { key = key, body = { code = "1234" } })
+    T.eq(disarm.status, 403)
+    T.eq(disarm.json.code, "ALARM_CONTROL_DISABLED")
     T.eq(T.http(mock, "PATCH", "/v1/lights/81", { key = key, body = { on = false } }).status, 404)
     T.eq(T.http(mock, "POST", "/v1/relays/81/pulse", { key = key }).status, 404)
     -- No scene step, and so no schedule, can name a partition.

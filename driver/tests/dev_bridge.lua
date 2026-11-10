@@ -103,7 +103,8 @@ local CAMERA_NAMES = {
 
 -- The default project plus the device families of 1.1.0 (older lights, a thermostat with heat and
 -- cool setpoints, floor heating on its heat setpoint), the fans and the alarm's partitions (1.2.0),
--- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On.
+-- so the app preview shows them all. The fake home shows its (fake) alarm: Alarm Status is On, and
+-- since 1.15.0 Alarm Control too; its fake panel takes the code 1234 (Mock.panelTakes).
 -- An ask-to-open link's run ("ask", below): the relay counts as connected while it runs, and what
 -- the driver tells it (the sealed question) is kept here instead.
 local relaying = { on = false, told = {} }
@@ -158,6 +159,8 @@ local mock = Mock.startDriver(project, specText, nil, function(started)
         started.controllerAddress = "127.0.0.1"
     end
     Properties["Alarm Status"] = "On"
+    Properties["Alarm Control"] = "On"
+    started.project.panelCode = "1234"
     local Relay = require("src.cloud.relay")
     local connected, tell, mayAlert, alert = Relay.connected, Relay.tell, Relay.mayAlert, Relay.alert
     Relay.connected = function()

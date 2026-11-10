@@ -264,6 +264,51 @@ def music_parts(client):
     return {item["id"]: item["part_of_music"] for item in client.check("GET", "/v1/devices", 200)["items"] if 84 <= item["id"] <= 88}
 
 
+def alarm_control(client, bridge):
+    """Arming and disarming (1.15.0, ADR-091): only with Alarm Control On, sealed, with a typed code
+    that goes to the partition (the dev bridge's fake panel takes 1234; Mock.withPartitions' panel
+    declares Away, Home and Night)."""
+    bridge.set_property("Alarm Control", "Off")
+    features = client.check("GET", "/v1/system", 200)["features"]
+    if features.get("alarm_arming") is not True or features.get("alarm_control") is not False:
+        fail(f"GET /v1/system should say arming exists and Alarm Control is off: {features}")
+    off = client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 403, body={"code": "1234"})
+    if off["code"] != "ALARM_CONTROL_DISABLED":
+        fail(f"a disarm with Alarm Control Off should be refused with ALARM_CONTROL_DISABLED: {off}")
+    bridge.set_property("Alarm Control", "On")
+    if client.check("GET", "/v1/system", 200)["features"]["alarm_control"] is not True:
+        fail("GET /v1/system should say that Alarm Control is on")
+    garage = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]
+    if garage["modes"] != ["Away", "Home", "Night"] or garage["control"] != {"allowed": True, "available": True}:
+        fail(f"GET /v1/alarm should give Garage's modes and that the admin may arm and disarm: {garage}")
+    clear = client.check("POST", "/v1/alarm/81/disarm", 403, body={"code": "1234"})
+    if clear["code"] != "SEALED_REQUEST_REQUIRED":
+        fail(f"a disarm in the clear should be refused with SEALED_REQUEST_REQUIRED: {clear}")
+    client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 400, body={"code": "12a4"})
+    client.check_sealed(bridge, "POST", "/v1/alarm/81/arm", 400, body={"mode": "Vacation", "code": "1234"})
+    client.check_sealed(bridge, "POST", "/v1/alarm/82/disarm", 404, body={"code": "1234"})
+    wrong = client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 202, body={"code": "9999"})
+    if wrong != {"partition_id": 81, "action": "disarm", "mode": None}:
+        fail(f"a disarm should answer that it was sent: {wrong}")
+    if client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]["armed"] is not True:
+        fail("a wrong code should leave Garage armed")
+    client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 202, body={"code": "1234"})
+    garage = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]
+    if garage["armed"] is not False or garage["state"] != "disarmed_ready":
+        fail(f"the fake panel should have disarmed Garage: {garage}")
+    armed = client.check_sealed(bridge, "POST", "/v1/alarm/81/arm", 202, body={"mode": "away", "code": "1234"})
+    if armed["mode"] != "Away":
+        fail(f"an arm should answer the driver's own word for the mode: {armed}")
+    garage = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]
+    if (garage["armed"], garage["armed_mode"]) != (True, "away"):
+        fail(f"the fake panel should have armed Garage away: {garage}")
+    history = client.check_sealed(bridge, "GET", "/v1/activity?kind=alarm&limit=3", 200)["items"]
+    if [(item["action"], item.get("note")) for item in history] != [("arm", "Away"), ("disarm", None), ("disarm", None)]:
+        fail(f"the history should list the alarm commands, sealed: {history}")
+    if client.check("GET", "/v1/activity?kind=alarm", 200)["items"] != []:
+        fail("the history should never show alarm commands in the clear")
+
+
 def sonos(client, bridge):
     """Sonos (1.5.0, ADR-044) with the fake players of tests/sonos/fake-sonos.mjs (Kitchen leads
     Living Room and plays a track, Bedroom plays the radio, TV Room is paused in Spotify Connect):
@@ -613,6 +658,7 @@ def scenario(client, bridge):
         fail(f"GET /v1/alarm should show House's entry delay, fire alarm and trouble: {house}")
     if client.check("GET", "/v1/system", 200)["features"]["alarm_status"] is not True:
         fail("GET /v1/system should say that the alarm status is on")
+    alarm_control(client, bridge)
 
     sonos(client, bridge)
 

@@ -423,7 +423,8 @@ export default {
       removeLabel: "Remove {name} from this doorbell",
     },
   },
-  // The alarm, read-only (ADR-038): for members and admins, once the installer turned it on.
+  // The alarm (ADR-038): for members and admins, once the installer turned it on; since 1.15.0
+  // (ADR-091) armed and disarmed by admins and the members given it, with the code typed each time.
   alarm: {
     title: "Alarm",
     readOnly: "Read only",
@@ -459,6 +460,38 @@ export default {
     openZones: { one: "1 zone open", other: "{count} zones open" },
     trouble: "Trouble: {text}",
     summaryItem: "{name}: {state}",
+    // The modes a partition arms in that have words of the app's own (others as its driver names them).
+    modes: { away: "Away", home: "Home", night: "Night" },
+    control: {
+      arm: "Arm",
+      disarm: "Disarm",
+      armLabel: "Arm {name}",
+      disarmLabel: "Disarm {name}",
+      chooseMode: "Arm in which mode?",
+      modeLabel: "Arm {name}: {mode}",
+      armTitle: "Arm {name}: {mode}",
+      disarmTitle: "Disarm {name}",
+      codeLabel: "Alarm code",
+      codeHelp: "The code you use at the alarm’s keypad. It goes to the alarm once and is never kept.",
+      codeInvalid: "Type the alarm code: 1 to 12 digits.",
+      sending: "Sending…",
+      arming: "Arming…",
+      disarming: "Disarming…",
+      notArmed: "The alarm didn’t arm. Check the code and that no zone is open, then try again, or use the alarm’s keypad.",
+      notDisarmed: "The alarm didn’t disarm. Check the code and try again, or use the alarm’s keypad.",
+      unavailable: "Can’t be armed or disarmed from DirectorLink right now: its panel only reports to the controller, or isn’t connected.",
+      errors: {
+        rateLimited: { one: "Too many alarm commands. Try again in 1 minute.", other: "Too many alarm commands. Try again in {count} minutes." },
+        rateLimitedLater: "Too many alarm commands. Try again in a few minutes.",
+        disabled: "Arming and disarming from DirectorLink is off. An installer turns it on with Alarm Control in Composer (DirectorLink properties).",
+        forbidden: "You can’t arm or disarm the alarm. An admin can allow it in Settings → Users.",
+        noModes: "Its alarm declares no modes to arm in: DirectorLink can only disarm it.",
+        gone: "This part of the alarm is no longer in the project.",
+        invalid: "The controller refused this code or mode. Check it and try again.",
+        sealed: "Alarm commands travel only sealed, and this one was not. Reload the app and try again.",
+        failed: "The controller couldn’t pass the command to the alarm. Try again, or use the alarm’s keypad.",
+      },
+    },
   },
   music: {
     playingTitle: "Music playing",
@@ -1584,6 +1617,7 @@ export default {
       all: "All",
       automation: "Scenes and schedules",
       doors: "Doors",
+      alarm: "Alarm",
       composer: "Changes in Composer",
       access: "Access",
     },
@@ -1629,6 +1663,14 @@ export default {
       doorbell: "Opened the door at {name}",
       left_open: "The door of {name} was left open",
       asked: "Asked whether to open {name}",
+    },
+    // The alarm armed or disarmed from DirectorLink (1.15.0): the command went with the person's code;
+    // whether the alarm took it (a wrong code changes nothing) is not the history's to say.
+    alarm: {
+      arm: "Arm sent to {name} ({mode})",
+      armNoMode: "Arm sent to {name}",
+      disarm: "Disarm sent to {name}",
+      unnamed: "the alarm",
     },
     access: {
       paired: "Paired {name} with a code, as {role}",
@@ -1996,6 +2038,8 @@ export default {
     doorsHelp: "Open the doors and gates in their rooms. Door Control must be on in Composer.",
     alarm: "Sees the alarm",
     alarmHelp: "Whether the alarm is armed. Alarm Status must be on in Composer.",
+    alarmControl: "Arms and disarms the alarm",
+    alarmControlHelp: "With the alarm’s code, typed each time. Alarm Control must be on in Composer.",
     scenes: "Scenes they may run",
     scenesHelp: "They run the whole scene, and never change it.",
     noScenes: "No scenes yet.",
@@ -2005,6 +2049,7 @@ export default {
     summaryAdmin: "Everything",
     summaryCameras: "cameras",
     summaryDoors: "doors and gates",
+    summaryAlarmControl: "arms the alarm",
   },
   join: {
     title: "Invitation",
