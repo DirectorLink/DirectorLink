@@ -254,8 +254,8 @@ once.
 A connection lost less than a minute after it opened goes on with the backoff (5 s, 10 s, 30 s,
 then every 60 s), so one that fails as soon as it opens is not tried every second. Except
 (1.10.0) right after a connection up a minute was lost: the next two connections that open and
-are lost sooner are also tried again after 1 s (the home's route was seen to flip again within
-seconds, and the relay sends a request again only within 10 s, *While the driver reconnects*);
+are lost sooner are also tried again after 1 s (Cloudflare was seen to move the traffic again
+within seconds, and the relay sends a request again only within 10 s, *While the driver reconnects*);
 a third, or one after an attempt that did not open, goes on with the backoff. A connection that
 follows a lost one pings every second for its first 4 s: a second cut is found within a second,
 not at the keep-alive's first ping 5 s later.
@@ -280,13 +280,18 @@ relay kept the socket and went on sending requests into it, and the driver found
 next ping, which Director refused at once (`connection lost` with `heard_s` about one interval and
 `ping_s` 0). Its new connection then replaced the old one, and what had been sent meanwhile failed.
 
-The cause, measured on 2026-10-06 (1.10.0, ADR-072): the home's internet provider
-routes the home's traffic to Cloudflare through changing data centers (Tel
-Aviv, Geneva, Zurich, Marseille, Munich; a probe saw the data center flip between Tel Aviv and
-Geneva every few seconds). When the route moves, an open TCP connection reaches a data center that
-has no state for it and is reset there, while the one that held it never hears a close. Nothing
-on the controller or in Composer causes it (driver updates do not), and DirectorLink cannot
-prevent it: it can only notice it soon and lose nothing. So since 1.10.0 the driver pings every
+The cause, measured on 2026-11-07 (ADR-072, corrected; on 2026-10-06 it was put down to the
+internet provider). The provider delivers the home's traffic to Cloudflare in Tel Aviv over a
+steady route. But `api.directorlink.io`, a zone on Cloudflare's Free plan, is served from Europe:
+Tel Aviv hands each connection to Frankfurt or Marseille. Cloudflare moves that traffic between
+data centers as load changes, most at busy times (about 70 cuts in 34 hours, few at night). When
+it moves, an open TCP connection's next packet reaches a data center that has no state for it and
+is reset there, while the one that held it never hears a close. Two devices on the home's network
+were cut at the same second. Each reset came back after the round trip of the data center the
+traffic had moved to (about 65 or 85 ms), not of the home's router (under 1 ms). Nothing on the
+controller or in Composer causes it (driver updates do not), and DirectorLink cannot prevent it:
+it can only notice it soon and lose nothing. A paid Cloudflare plan may keep the traffic in one
+place, but Cloudflare does not promise that. So since 1.10.0 the driver pings every
 5 s, which finds a cut within 5 s, and a request already sent into the dead connection is sent
 again on the next one (*While the driver reconnects*, below).
 
@@ -434,7 +439,10 @@ Remote Status keeps the last loss after it reconnects: `Connected since 14:23 - 
 last drop 14:22 (connection lost)`. In the relay's own log (Workers Observability) the same loss
 is `driver_disconnected`, with `why` (the close code), `up_s`, `ping_s` (seconds since the runtime
 last answered the driver's ping) and `message_s`. The next `driver_connected` has `down_ms`, how
-long the home was away. A socket the driver went quiet on is `driver_stale`, with `interval_s` (from
+long the home was away, and `replaced`. `replaced` is 1 when it took over a connection the relay
+still held open, as after a cut; `down_ms` is then null, since the relay never learned when the old
+one ended. A connection replaced earlier and still closing (a dead one never answers the close) is
+not counted again. A socket the driver went quiet on is `driver_stale`, with `interval_s` (from
 the `hello`), `up_s`, `ping_s` and `message_s`. Requests sent again after a `hello` (1.10.0) are one
 `request_resent` line: how many (`count`), the most times one of them was sent again (`resent`),
 and how long after their connection was found gone (`after_ms`); never a body. An alert sent again

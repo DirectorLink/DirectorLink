@@ -542,6 +542,24 @@ test("requests sent over a connection the driver has replaced fail at once", TES
   first.destroy();
 });
 
+// A replaced connection that died without a close stays closing in the relay until the runtime
+// gives up on it, seconds to minutes later (its 4000 is never answered). `replaced` counts only
+// the open connection a new one takes over, not ones an earlier connection already closed: on the
+// owner's home, where cuts came minutes apart, it counted up to 5 for one.
+test("a new connection counts only the open one it replaces, not one still closing", TEST, async () => {
+  const { home, secret } = newHome();
+  const first = await driver({ home, secret });
+  first.socket.pause(); // never answers the relay's close, as a connection cut on the way
+  await driver({ home, secret });
+  await driver({ home, secret });
+  const connected = await eventually(() => {
+    const lines = logged("driver_connected", home);
+    return lines.length === 3 && lines;
+  }, "three connections in the log");
+  assert.deepEqual(connected.map((line) => line.replaced), [0, 1, 1]);
+  first.destroy();
+});
+
 // A connection can die without a close the relay sees: the socket stays open, but nothing reaches
 // the driver and its pings stop. Once 2.5 of the intervals its hello announced (ping_s, 1.6.0)
 // have passed without a ping, nothing is sent into that socket: requests wait for the driver's
