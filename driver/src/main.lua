@@ -337,6 +337,8 @@ local services = {
     -- The alarm's partitions are watched, and shown to members and admins (read-only), only with
     -- "Alarm Status" = On (ADR-038). Read at every request, like the door switches.
     alarmStatusEnabled = Alarm.enabled,
+    -- Arming and disarming from the app (1.15.0, ADR-091) needs "Alarm Control" = On as well.
+    alarmControlEnabled = Alarm.controlEnabled,
     -- Sonos players on the home network (ADR-044, src/sonos/sonos.lua), only with "Sonos" = On.
     sonosEnabled = Sonos.enabled,
     status = function()
@@ -935,6 +937,7 @@ local HISTORY_SETTINGS = {
     ["Door Control"] = true,
     ["Relay Hold"] = true,
     [Alarm.PROPERTY] = true,
+    [Alarm.CONTROL_PROPERTY] = true,
     [Sonos.PROPERTY] = true,
     [DirectHttps.PROPERTY] = true,
 }
@@ -995,6 +998,9 @@ function OnPropertyChanged(name)
             partitions_released = released,
         })
         publishInventory()
+    end
+    if name == Alarm.CONTROL_PROPERTY and Properties then
+        Log.info("alarm", "alarm control " .. string.lower(tostring(Properties[name])) .. " in Composer")
     end
     if (name == Sonos.PROPERTY or name == Sonos.ADDRESS_PROPERTY) and Properties and STATE.supported then
         Sonos.apply(name)

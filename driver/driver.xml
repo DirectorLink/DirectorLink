@@ -110,7 +110,17 @@
           <item>On</item>
         </items>
         <default>Off</default>
-        <tooltip>On shows members and admins in the app whether the alarm is armed, in alarm or has trouble (viewers never see it), and tells TVs that show alarms when it goes off. Read only: DirectorLink never arms or disarms. Off: DirectorLink does not watch the alarm.</tooltip>
+        <tooltip>On shows members and admins in the app whether the alarm is armed, in alarm or has trouble (viewers never see it), and tells TVs that show alarms when it goes off. Arming and disarming also needs Alarm Control. Off: DirectorLink does not watch the alarm.</tooltip>
+      </property>
+      <property>
+        <name>Alarm Control</name>
+        <type>LIST</type>
+        <items>
+          <item>Off</item>
+          <item>On</item>
+        </items>
+        <default>Off</default>
+        <tooltip>On (with Alarm Status On) lets admins, and the members they allow, arm and disarm the alarm from the app. They type their alarm code each time; it goes to the alarm, which checks it, and DirectorLink never keeps it. Off: the app only shows the alarm's state.</tooltip>
       </property>
       <property>
         <name>Remote Access</name>

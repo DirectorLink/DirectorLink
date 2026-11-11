@@ -163,7 +163,9 @@ Every remote request and every answer travels as one envelope:
   both in WebCrypto. The driver functions are native, so camera pictures stay fast.
 - The cloud sees the home id, the key id, the size and the time of each envelope (and so does the
   home network, at home). The alarm's answer is padded to a size that does not depend on whether
-  the home is armed (ADR-038).
+  the home is armed (ADR-038). Arming and disarming (1.15.0, ADR-091) are sealed requests like any
+  other: the code a person types for each command crosses no network in the clear, the cloud never
+  sees it, and the controller sends it to the alarm without keeping or logging it.
 
 ## On the home network (1.0.0)
 

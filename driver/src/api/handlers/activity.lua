@@ -1,6 +1,8 @@
 -- The controller's activity history (ADR-046, docs/HISTORY.md, src/core/activity.lua), for admins:
 -- GET /v1/activity?kind=scene,schedule&before=<id>&limit=50, newest first. Like the log, it may be
 -- read in the clear (the API console); the app's requests are sealed, at home and through the account.
+-- The alarm armed and disarmed (kind "alarm", 1.15.0, ADR-091) only in sealed reads: whether a home
+-- is armed never crosses a network in the clear (ADR-038).
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -28,12 +30,18 @@ function Handlers.list(ctx)
         kinds = {}
         for kind in tostring(query.kind):gmatch("[^,]+") do
             if not Activity.KINDS[kind] then
-                return Problem.invalidParameter("kind", "kind is one or more of scene, schedule, door, composer, access, system, separated by commas")
+                return Problem.invalidParameter("kind", "kind is one or more of scene, schedule, door, alarm, composer, access, system, separated by commas")
             end
             kinds[kind] = true
         end
     end
-    local items, nextBefore = Activity.list({ kinds = kinds, before = before, limit = limit or Handlers.DEFAULT_LIMIT })
+    local sealed = ctx.request ~= nil and ctx.request.principal ~= nil
+    local items, nextBefore = Activity.list({
+        kinds = kinds,
+        without = not sealed and { alarm = true } or nil,
+        before = before,
+        limit = limit or Handlers.DEFAULT_LIMIT,
+    })
     return 200, { items = items, next_before = nextBefore or Json.null }
 end
 

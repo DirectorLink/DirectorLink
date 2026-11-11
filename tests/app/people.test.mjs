@@ -207,7 +207,7 @@ function connect({ access = { ...permissions.newMemberAccess(), role: "admin", o
 test("a member's access, as the editor keeps it and the controller takes it", () => {
   connect();
   const fresh = permissions.newMemberAccess();
-  assert.deepEqual(fresh, { role: "member", all_rooms: true, rooms: [], kinds: { light: true, climate: true, fan: true, blind: true, music: true, refrigerator: true }, cameras: true, doors: false, alarm: true, scenes: [] });
+  assert.deepEqual(fresh, { role: "member", all_rooms: true, rooms: [], kinds: { light: true, climate: true, fan: true, blind: true, music: true, refrigerator: true }, cameras: true, doors: false, alarm: true, alarm_control: false, scenes: [] });
   const draft = permissions.copyAccess({ ...MEMBER_ACCESS, rooms: [11, 99], scenes: [NIGHT, "deadbeef"] });
   draft.rooms.push(10);
   assert.deepEqual(MEMBER_ACCESS.rooms, [11], "a copy: the person's access is untouched");
@@ -394,6 +394,73 @@ test("Invite someone: an admin, or a member and what they may do", async () => {
   const older = settingsView({ page: "account" });
   assert.ok(byKey(older, "invite-role"));
   assert.equal(byKey(older, "invite-access"), null);
+  stored.delete("directorlink.remote");
+  ui.inviteForm = false;
+});
+
+// Arming and disarming the alarm (1.15.0, ADR-091): a permission of its own, under the alarm's status
+// and only with it, off for a new member, and never sent to an older controller.
+test("Arms and disarms the alarm: a choice under Sees the alarm, only with a 1.15.0 controller", async () => {
+  // A controller before 1.15.0: no such choice, and nothing of it is sent.
+  connect();
+  setLanguage("en");
+  accessView({});
+  await settle();
+  await press(accessView({}), "access-edit-bbbb0002");
+  let editor = byKey(accessView({}), "access-editor-bbbb0002");
+  assert.ok(byKey(editor, "perm-bbbb0002-alarm"));
+  assert.equal(byKey(editor, "perm-bbbb0002-alarm-control"), null, "an older controller has no such permission");
+  await press(accessView({}), "access-save-bbbb0002");
+  assert.equal("alarm_control" in calls("PATCH", "/v1/profiles/bbbb0002/access").at(-1).body, false, "never sent to it");
+  assert.equal("alarm_control" in permissions.accessBody(permissions.newMemberAccess()), false);
+
+  // A 1.15.0 controller.
+  connect();
+  state.system.features.alarm_arming = true;
+  accessView({});
+  await settle();
+  await press(accessView({}), "access-edit-bbbb0002");
+  editor = byKey(accessView({}), "access-editor-bbbb0002");
+  const toggle = byKey(editor, "perm-bbbb0002-alarm-control");
+  assert.ok(toggle, "under Sees the alarm");
+  assert.equal(toggle.attributes.role, "switch");
+  assert.equal(toggle.attributes["aria-checked"], "false", "off until an admin turns it on");
+  assert.match(textOf(editor), /Arms and disarms the alarm/);
+  assert.match(textOf(editor), /With the alarm’s code, typed each time\. Alarm Control must be on in Composer\./);
+  await press(editor, "perm-bbbb0002-alarm-control");
+  assert.equal(byKey(accessView({}), "perm-bbbb0002-alarm-control").attributes["aria-checked"], "true");
+  await press(accessView({}), "access-save-bbbb0002");
+  let body = calls("PATCH", "/v1/profiles/bbbb0002/access").at(-1).body;
+  assert.equal(body.alarm, true);
+  assert.equal(body.alarm_control, true);
+  assert.equal(permissions.accessSummary({ ...MEMBER_ACCESS, alarm_control: true }), "1 room · lights, fans, blinds, music, refrigerators · cameras · arms the alarm · no scenes");
+  assert.equal(permissions.accessSummary({ ...MEMBER_ACCESS, alarm: false, alarm_control: true }), "1 room · lights, fans, blinds, music, refrigerators · cameras · no scenes", "only with the alarm's status");
+
+  // Without the alarm's status no arming either: the choice goes, and off is sent for both.
+  controller.profiles[1].access = { ...MEMBER_ACCESS, alarm_control: true };
+  await press(accessView({}), "access-edit-bbbb0002");
+  assert.equal(byKey(accessView({}), "perm-bbbb0002-alarm-control").attributes["aria-checked"], "true", "as the controller has it");
+  await press(accessView({}), "perm-bbbb0002-alarm");
+  assert.equal(byKey(accessView({}), "perm-bbbb0002-alarm-control"), null);
+  // Turned on again, the alarm's status comes back without arming.
+  await press(accessView({}), "perm-bbbb0002-alarm");
+  assert.equal(byKey(accessView({}), "perm-bbbb0002-alarm-control").attributes["aria-checked"], "false");
+  await press(accessView({}), "perm-bbbb0002-alarm");
+  await press(accessView({}), "access-save-bbbb0002");
+  body = calls("PATCH", "/v1/profiles/bbbb0002/access").at(-1).body;
+  assert.equal(body.alarm, false);
+  assert.equal(body.alarm_control, false);
+
+  // A new member (Add a user, an invitation, a pairing code): off. An admin is an admin.
+  assert.equal(permissions.accessBody(permissions.newMemberAccess()).alarm_control, false);
+  assert.deepEqual(permissions.accessBody({ ...permissions.newMemberAccess(), role: "admin", alarm_control: true }), { role: "admin" });
+
+  // Invite someone has the same choice.
+  ui.inviteForm = true;
+  stored.set("directorlink.remote", JSON.stringify({ home: "ab".repeat(16), keyId: "0a1b2c3d" }));
+  state.account = { status: "signed-in", user: { email: "dana@example.com", providers: ["google"] }, notice: null, busy: false };
+  const form = byKey(settingsView({ page: "account" }), "invite-access");
+  assert.equal(byKey(form, "invite-alarm-control")?.attributes["aria-checked"], "false");
   stored.delete("directorlink.remote");
   ui.inviteForm = false;
 });

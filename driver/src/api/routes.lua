@@ -139,9 +139,12 @@ return {
     { method = "GET", path = "/v1/refrigerators/{refrigeratorId}", handler = "refrigerators.get", role = "member" },
     { method = "PATCH", path = "/v1/refrigerators/{refrigeratorId}", handler = "refrigerators.update", role = "member" },
 
-    -- Read-only, and only for those who see the alarm's status (ADR-038, ADR-054): no route arms,
-    -- disarms or sends anything to the alarm; scripts/check_package.py fails the build if one does.
+    -- Read by those who see the alarm's status (ADR-038, ADR-054). Armed and disarmed (1.15.0,
+    -- ADR-091) only by these two routes, with Alarm Control On, by admins and the members given it,
+    -- sealed, with a typed code; scripts/check_package.py fails the build on any other.
     { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
+    { method = "POST", path = "/v1/alarm/{partitionId}/arm", handler = "alarm.arm", role = "member" },
+    { method = "POST", path = "/v1/alarm/{partitionId}/disarm", handler = "alarm.disarm", role = "member" },
 
     -- Sonos (ADR-044): read and played by those given music (ADR-054), placed in a room by admins;
     -- nothing while the Composer property Sonos is Off. A request names a Sonos room, never an address.

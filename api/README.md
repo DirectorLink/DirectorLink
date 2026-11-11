@@ -273,7 +273,7 @@ curl http://<controller-ip>:41999/v1/schedules/week -H "Authorization: Bearer ak
 
 ## Alarm
 
-`GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed. It is read-only: nothing in the API arms or disarms, which takes the user's alarm code (ADR-038).
+`GET /v1/alarm` (since 1.2.0) says whether each partition of the home's alarm is armed (ADR-038). Since 1.15.0 (ADR-091) `POST /v1/alarm/{partitionId}/arm` and `/disarm` arm and disarm it with the code the person types for each command.
 
 - Off by default. Until an installer sets **Alarm Status** to On in Composer, the answer is `{"enabled": false, "partitions": []}`, and DirectorLink does not watch the alarm. `GET /v1/system` says which in `features.alarm_status`.
 - For admins and the members given the alarm's status (ADR-054); others get `403 FORBIDDEN`.
@@ -303,6 +303,17 @@ curl http://<controller-ip>:41999/v1/schedules/week -H "Authorization: Bearer ak
 
 (`room` left out.) `state` is the panel's word in lower case: `disarmed_ready`, `disarmed_not_ready`, `armed`, `exit_delay`, `entry_delay`, `alarm`, `confirmation_required`, `offline`, or another a panel reports. `armed_type` and `alarm_type` are the panel's own words (e.g. `Stay`, `Fire`), `null` unless armed or in alarm. `delay` is `null` unless an entry or exit delay is counting down, in seconds as the panel last reported. Partitions the alarm does not use are left out. In `/v1/devices` a partition stays a device of type `other`.
 
+
+### Arming and disarming (1.15.0, ADR-091)
+
+- `POST /v1/alarm/{partitionId}/arm` `{"mode": "Away", "code": "1234"}` and `/disarm` `{"code": "1234"}`: `202 {"partition_id", "action", "mode"}`, sent; what the alarm did shows in `GET /v1/alarm` read again (a wrong code changes nothing).
+- Only with the Composer properties **Alarm Status** and **Alarm Control** both On (Alarm Control ships Off; `403 ALARM_CONTROL_DISABLED`); `features.alarm_control` in `GET /v1/system` says so, and `features.alarm_arming` that the controller has the routes.
+- By admins and the members given `alarm_control` (with `alarm`) in their permissions; others get `403 FORBIDDEN`. Never from scenes, schedules or links.
+- Only sealed, like reading it (`403 SEALED_REQUEST_REQUIRED` with `Authorization: Bearer`).
+- `mode`: one of the partition's `modes`, as its driver declares them (`<arm_states>`); `code`: 1 to 12 digits, sent to the alarm as typed, which checks it. DirectorLink never keeps or logs it, and Director does not log the command.
+- At most 6 commands a person in 5 minutes and 20 in the home in an hour: `429 RATE_LIMITED` with `Retry-After`.
+- `409 ALARM_UNAVAILABLE` when the alarm's driver says it cannot now (`control.available` false; [docs/ALARM_DRIVERS.md](../docs/ALARM_DRIVERS.md)), `409 NO_ARM_MODES` when it declares no modes.
+- Each command is in the history (`kind` `alarm`), which only sealed reads show.
 ## Music (Sonos)
 
 Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home network, with the local protocol the Sonos app uses (UPnP/SOAP on port 1400, which Sonos does not document; ADR-044, [`docs/SONOS.md`](../docs/SONOS.md)).

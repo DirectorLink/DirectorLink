@@ -49,7 +49,7 @@ Backup.MAX_UPLOADS = 3
 -- References that match nothing, listed one by one in a preview (all are counted).
 Backup.MAX_LISTED = 100
 -- DirectorLink's Composer properties: listed in the preview, never restored.
-Backup.COMPOSER = { "Door Control", "Relay Hold", "Schedules", "Jewish Calendar", "Alarm Status", "Remote Access", "Log Level" }
+Backup.COMPOSER = { "Door Control", "Relay Hold", "Schedules", "Jewish Calendar", "Alarm Status", "Alarm Control", "Remote Access", "Log Level" }
 
 -- Each section: the newest version of its store this driver reads (an older one is read as an
 -- update reads it), and what it is. An `optional` one may be missing (a backup made before it

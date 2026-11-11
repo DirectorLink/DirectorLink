@@ -1,8 +1,9 @@
 -- Requests the relay may send again (1.10.0, ADR-072, docs/RELAY.md "While the driver
--- reconnects"). The home's internet provider moves its route to Cloudflare now and then, which
--- cuts the relay connection without a close; a request already on its way is then lost. The relay
--- keeps such a request and sends it again, the same frame with the same id, once this driver says
--- hello on its next connection. Each request still runs at most once: the driver remembers, by
+-- reconnects"). Cloudflare moves the home's traffic between its data centers now and then (measured
+-- 2026-11-07, ADR-072's correction), which cuts the relay connection without a close; a request
+-- already on its way is then lost. The relay keeps such a request and sends it again, the same
+-- frame with the same id, once this driver says hello on its next connection. Each request still
+-- runs at most once: the driver remembers, by
 -- the relay's id, every request it got, and once it is answered its answer, and gives that answer
 -- again instead of running the request a second time.
 --

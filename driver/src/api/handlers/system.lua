@@ -200,9 +200,14 @@ function System.info(ctx)
         -- dusk, earliest and latest times, run_late, on_holidays and the home's holidays
         -- (/v1/holidays), and the next seven days (GET /v1/schedules/week) (1.14.0, ADR-090);
         -- always there.
+        -- alarm_arming: the alarm armed and disarmed from the app (POST /v1/alarm/{id}/arm and
+        -- /disarm), the alarm_control permission and the partitions' modes and control (1.15.0,
+        -- ADR-091); always there. alarm_control: Alarm Status and Alarm Control both On now.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
+            alarm_arming = true,
+            alarm_control = services.alarmControlEnabled ~= nil and services.alarmControlEnabled() == true,
             backup = true,
             sonos = services.sonosEnabled ~= nil and services.sonosEnabled() == true,
             automatic_backup = true,

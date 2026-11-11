@@ -2,8 +2,9 @@
 //
 // API calls made by the modules (see api/openapi.yaml): "/v1/system", "/v1/rooms", "/v1/devices",
 // "/v1/lights", "/v1/thermostats", "/v1/fans", "/v1/blinds", "/v1/cameras", "/v1/relays", "/v1/scenes", "/v1/schedules",
-// "/v1/weather", "/v1/calendar", "/v1/alarm" (read-only), "/v1/music" (Sonos), "/v1/auth/pair" —
-// device changes use method: "PATCH" and are confirmed by re-reading.
+// "/v1/weather", "/v1/calendar", "/v1/alarm" (and since 1.15.0 its arm and disarm, js/alarm-control.js),
+// "/v1/music" (Sonos), "/v1/auth/pair" — device changes use method: "PATCH" and are confirmed by
+// re-reading.
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
 import { alarmSignature, startAlarm } from "./js/alarm.js";
@@ -300,8 +301,10 @@ function signature() {
     state.relays,
     state.doorbells,
     state.refrigerators,
-    // The alarm (read-only), and the seconds an entry or exit delay has left.
+    // The alarm, and the seconds an entry or exit delay has left.
     alarmSignature(),
+    // Arming and disarming it (1.15.0): the modes shown, "Arming…", what went wrong (never the code).
+    ui.alarmControl,
     // The Sonos rooms, their pictures and favorites (js/music.js).
     musicSignature(),
     // Rings stop being recent, and "3 minutes ago" moves on, without new data.
@@ -575,7 +578,7 @@ whenConnected(() => syncProfile(applyLanguage));
 // The home's scenes, for the Scenes tab and the ones shown on Home.
 whenConnected(loadScenes);
 whenConnected(loadSchedules);
-// Members and admins: the alarm, read-only, when the installer turned it on; then every 10 s.
+// Members and admins: the alarm, when the installer turned it on; then every 10 s.
 whenConnected(startAlarm);
 // The Jewish calendar, while it is on in Composer: read now, then every 10 minutes (js/calendar.js).
 whenConnected(keepCalendar);

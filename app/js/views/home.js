@@ -84,7 +84,8 @@ export function homeView({ openCamera, openFavoritesPicker }) {
     // The weather at home (1.12.1, ADR-084).
     weatherLine(),
     calendarLine(),
-    // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
+    // Members and admins: the alarm, when the installer turned it on (ADR-038); Arm and Disarm for
+    // admins and the members given it (1.15.0, ADR-091).
     alarmSection(),
     summaryChips(),
     // Sonos (1.5.0, ADR-044): what plays, one line per group.

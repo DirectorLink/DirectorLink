@@ -1,6 +1,7 @@
 -- The controller's activity history (ADR-046, docs/HISTORY.md): what DirectorLink did and what it
 -- noticed, for admins (Settings → Controller → History in the app, GET /v1/activity). Scenes run,
--- schedules run or skipped and why, doors and gates opened, keys paired, revoked and changed,
+-- schedules run or skipped and why, doors and gates opened, the alarm armed or disarmed from
+-- DirectorLink (1.15.0, ADR-091; only sealed reads show these), keys paired, revoked and changed,
 -- invitations accepted, changes made in Composer, backups and restores, driver updates, and the
 -- remote connection when it was away for more than a minute.
 -- Each entry says when, who (a key's device and person, a schedule, Composer or DirectorLink itself),
@@ -30,7 +31,7 @@ Activity.MAX_CHANGES = 20
 -- second or two, then back, is not news; the log has every one).
 Activity.AWAY_SECONDS = 60
 -- What an entry is about; GET /v1/activity filters by them.
-Activity.KINDS = { scene = true, schedule = true, door = true, composer = true, access = true, system = true }
+Activity.KINDS = { scene = true, schedule = true, door = true, alarm = true, composer = true, access = true, system = true }
 Activity.COMPOSER = { type = "composer" }
 
 local PAGE_KEY = "directorlink_activity_" -- .. the page's slot, 1 to MAX_ENTRIES / PAGE_SIZE
@@ -431,7 +432,8 @@ function Activity.list(options)
         local page = state.pages[pageIndex]
         for index = #page.items, 1, -1 do
             local entry = page.items[index]
-            if entry.at >= oldest and (not options.before or entry.id < options.before) and (not options.kinds or options.kinds[entry.kind]) then
+            if entry.at >= oldest and (not options.before or entry.id < options.before) and (not options.kinds or options.kinds[entry.kind])
+                and not (options.without and options.without[entry.kind]) then
                 if #items >= limit then
                     more = true
                     break

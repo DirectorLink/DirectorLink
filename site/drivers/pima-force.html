@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f5f5f4" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1012" media="(prefers-color-scheme: dark)" />
+    <meta
+      name="description"
+      content="DirectorLink · PIMA FORCE for Control4: a free, open-source driver for PIMA FORCE alarm panels. Arm and disarm from Control4, alarms, troubles, zones with their names, bypass and outputs, on PIMA's local JSON interface. Local network, no cloud."
+    />
+    <meta name="referrer" content="no-referrer" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/site.css" />
+    <title>DirectorLink · PIMA FORCE for Control4</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="header">
+      <a class="brand" href="/" aria-label="DirectorLink home">
+        <img src="/icons/icon.svg" alt="" width="36" height="36" />
+        <span>DirectorLink</span>
+      </a>
+      <nav aria-label="Links">
+        <ul class="nav">
+          <li><a href="/try/">Try it</a></li>
+          <li><a href="https://app.directorlink.io">App</a></li>
+          <li><a href="/drivers/" aria-current="page">Drivers</a></li>
+          <li><a href="https://console.directorlink.io">API console</a></li>
+          <li><a href="https://github.directorlink.io" rel="noreferrer">GitHub</a></li>
+        </ul>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1" class="drivers">
+      <section class="page-intro" aria-labelledby="driver-title">
+        <p class="crumbs"><a href="/drivers/">DirectorLink Drivers</a></p>
+        <h1 id="driver-title">DirectorLink · PIMA FORCE <span>for Control4</span></h1>
+        <p class="lead">
+          A free, open-source Control4 driver for PIMA FORCE alarm panels (FORCE, FORCE 32C, FORCE 16). The
+          panel connects to the driver on the controller the way it connects to a monitoring station, with
+          PIMA's local JSON interface: arm and disarm from Control4, alarms, troubles, zones with their names,
+          bypass and outputs. It works on your local network: no cloud, no extra hardware and no
+          subscription.
+        </p>
+        <p class="pledge">Free. No subscription, no license key, no account with us.</p>
+        <div class="actions">
+          <a class="button button-primary" href="/drivers/pima-force/download">Download the driver</a>
+          <a class="button button-secondary" href="/drivers/pima-force/releases" rel="noreferrer">Release notes and checksums</a>
+          <a class="button button-secondary" href="/drivers/pima-force/source" rel="noreferrer">Source and full guide</a>
+        </div>
+        <p class="note">
+          Made by DirectorLink, the open-source management layer for Control4 homes. Works on its own:
+          DirectorLink is not required.
+        </p>
+        <p class="note">
+          <strong>Field reports wanted.</strong> Tested on a FORCE 32C with firmware 1.5.1, in receive-only
+          mode: arming Away and disarming showed in the partition each time. The JSON interface (arming and
+          disarming from Control4, zones, bypass) follows PIMA's specification and passes its tests against a
+          simulated panel, but no panel with JSON firmware has reported on it yet. If yours has it, please
+          <a href="/drivers/pima-force/issues" rel="noreferrer">send a report</a>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="features-title">
+        <h2 id="features-title">What you get</h2>
+        <div class="table-wrap">
+          <table class="feature-table">
+            <thead>
+              <tr>
+                <th scope="col">Feature</th>
+                <th scope="col">With the JSON interface</th>
+                <th scope="col">Receive only (no JSON in the firmware)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">The alarm's state</th>
+                <td>Armed Away, Home or Night, disarmed, the exit delay</td>
+                <td>Armed and disarmed, from the panel's reports</td>
+              </tr>
+              <tr>
+                <th scope="row">Arm and disarm from Control4</th>
+                <td>Away is Full arm, Home is Home 1, Night is Home 2. Disarming needs a typed code, which the panel checks</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <th scope="row">Alarms</th>
+                <td>Burglary, fire, gas, water, panic, medical and duress</td>
+                <td>The same</td>
+              </tr>
+              <tr>
+                <th scope="row">Troubles</th>
+                <td>AC loss, low battery, tamper, communication, from the panel's fault list</td>
+                <td>The same, from the panel's reports</td>
+              </tr>
+              <tr>
+                <th scope="row">Zones</th>
+                <td>Open and closed, live, with the names in the panel (Hebrew too)</td>
+                <td>Open and closed when the panel reports them; names set in Composer</td>
+              </tr>
+              <tr>
+                <th scope="row">Bypass and outputs</th>
+                <td>Bypass a zone; outputs 1 to 8 on and off</td>
+                <td>No</td>
+              </tr>
+              <tr>
+                <th scope="row">Programming</th>
+                <td>Communication Lost and Restored, Siren Active and Inactive, Access Denied, and the partitions' own events</td>
+                <td>The same</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">
+          In Composer the driver adds a Security Panel and four partitions, Control4's standard security
+          devices, so every Control4 app shows the alarm. Each zone also has a Zone contact connection: bind a
+          Control4 contact driver, such as Door Contact or Motion Sensor, to use the zone in rooms and
+          programming. PIMA's interface has no command to raise a panic, fire or medical alarm, so the driver
+          offers no such buttons.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="firmware-title">
+        <h2 id="firmware-title">Panel firmware</h2>
+        <p>
+          The JSON interface is not in every FORCE firmware: PIMA wrote its specification for 1.6.x and
+          later, and 1.8.x is current. To upgrade, enter the master code on the keypad, then Communication →
+          Remote Service → Upgrade/Update, choose Firmware: Latest version, then Over Network. Afterwards
+          Users &amp; Codes has a Smart Home code, and a CMS network path offers Protocol = JSON. If the
+          upgrade server offers nothing, ask your installer or PIMA support for FORCE firmware with the Smart
+          Home (JSON) interface.
+        </p>
+        <p class="note">
+          Older firmware, like 1.5.1, works in receive-only mode. The panel sends its normal monitoring
+          reports (SIA DC-09, with Contact-ID or SIA codes and encryption off), and the driver shows arming,
+          disarming, alarms, troubles and zones in Control4. It can't arm, disarm, bypass or read zone names,
+          and the partition's state is unknown until the panel's first arm or disarm report. When JSON
+          firmware arrives, set the CMS path to JSON: the driver switches to full control by itself.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="needs-title">
+        <h2 id="needs-title">What it needs</h2>
+        <ul class="plain-list">
+          <li>A Control4 controller on OS 3.0 or newer, with a fixed IP address, and Composer Pro.</li>
+          <li>A PIMA FORCE panel on the home network, with a free monitoring station path: CMS 2 or 3, never one a monitoring company uses.</li>
+          <li>For full control, panel firmware with the JSON interface. Older firmware works receive only.</li>
+          <li>The panel reaching the controller on the driver's Listen Port, 7780 by default. The panel dials out: it opens no port of its own.</li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="setup-title">
+        <h2 id="setup-title">Setup in three steps</h2>
+        <ol class="steps">
+          <li class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <h3>Point the panel at the controller</h3>
+            <p>With the installer code: System Programming → CMS &amp; Communication → Monitoring Stations → CMS 2 (or 3) → Comm. Paths → Network. Enter the controller's IP address, port 7780 and any Account ID. Protocol JSON (or the panel's normal report protocol, for receive only), Encryption off, Life signal on. Turn on Zone/Output Toggle in event reporting, and Remote Disarm in the user menu.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <h3>Add the driver</h3>
+            <p>In Composer Pro, add <strong>DirectorLink · PIMA FORCE</strong> to a room. Leave Account ID empty: the driver learns it from the panel's first report. Enter the master or Smart Home code in Panel User Code (not the installer code), and the panel's address in Panel IP Address, so connections from anywhere else are refused.</p>
+          </li>
+          <li class="step">
+            <span class="step-number" aria-hidden="true">3</span>
+            <h3>Choose the partitions</h3>
+            <p>Set Partitions In Use and each partition's zones, for example <code>1-8,12</code> or <code>all</code>. Connection Status ends at <em>Connected</em> to the panel's address, or <em>Receive only (SIA DC-09)</em>. Zones and their names load by themselves.</p>
+          </li>
+        </ol>
+        <p class="note">
+          The panel may take a few minutes to dial. What each Connection Status means, and every property,
+          are on the driver's Documentation tab in Composer and in the
+          <a href="/drivers/pima-force/source" rel="noreferrer">full guide</a>. Composer lists the driver as
+          <strong>DirectorLink · PIMA FORCE</strong>; the file is <code>DirectorLink-PIMA-Force.c4z</code>.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="dl-title">
+        <h2 id="dl-title">With DirectorLink</h2>
+        <p>
+          The partitions are Control4's standard ones, so <a href="/">DirectorLink</a>, with its Alarm Status
+          property on, shows each partition's state on Home in the app, and the home's TVs with the
+          <a href="/drivers/lg-tv">LG TV</a> or <a href="/drivers/android-tv">Android TV</a> Notifications
+          driver say when the alarm goes off.
+        </p>
+        <p>
+          From DirectorLink 1.15.0, with its Alarm Control property on too, admins and the members they allow
+          can arm and disarm from the DirectorLink app. They type their alarm code each time: it goes to the
+          panel as typed, the panel checks it, and DirectorLink never keeps it. The driver never uses its
+          Panel User Code for them. It tells DirectorLink when arming and disarming can work: while the JSON
+          interface is connected, not in receive-only mode or without the panel.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="ideas-title">
+        <h2 id="ideas-title">Ideas for programming</h2>
+        <ul class="feature-list">
+          <li>
+            <h3>Lights when the siren sounds</h3>
+            <p>On Siren Active, turn on the lights inside and outside the house.</p>
+          </li>
+          <li>
+            <h3>The panel went quiet</h3>
+            <p>On Communication Lost, send a push notification, so a cut cable or a panel off the network does not go unnoticed.</p>
+          </li>
+          <li>
+            <h3>A wrong code</h3>
+            <p>On Access Denied, send a notification: the panel reported an invalid code, or a code used outside its allowed time.</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="driver-section" aria-labelledby="trust-title">
+        <h2 id="trust-title">Privacy and support</h2>
+        <ul class="plain-list">
+          <li>The driver talks only to the panel on your home network. It sends nothing to DirectorLink or to PIMA's cloud and collects no usage data. Codes stay in your Control4 project, and no log line, status or report ever shows one.</li>
+          <li>An alarm system protects people and property: test arming, disarming and alarms after installing, and keep the panel's own keypad and monitoring as they are.</li>
+          <li>Keep the exact file name: a browser's <code>… (1).c4z</code> copy installs as a separate driver instead of updating. An update keeps the settings, connections and programming. The earlier <code>PimaForce.c4z</code> test builds are a different driver for Composer: remove it, add <strong>DirectorLink · PIMA FORCE</strong> and set its properties again.</li>
+          <li>Community-supported, best effort. <a href="/drivers/pima-force/issues" rel="noreferrer">Report a problem</a> with the panel model and firmware, your Control4 OS version, the Driver Version, Connection Status and Panel Info properties, and the log with Debug Mode on. Reports that a panel works are welcome too.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>DirectorLink is an independent project, not affiliated with Control4 or Snap One.</p>
+      <p>Not affiliated with or endorsed by PIMA Electronic Systems. Product names are trademarks of their owners.</p>
+      <p>
+        Licensed under Apache-2.0 ·
+        <a href="https://github.directorlink.io" rel="noreferrer">github.directorlink.io</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
+    </footer>
+  </body>
+</html>

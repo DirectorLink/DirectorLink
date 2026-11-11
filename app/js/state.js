@@ -51,13 +51,16 @@ export const state = {
   relays: [], // doors and gates; [] on drivers without /v1/relays
   doorbells: [], // DoorBird doorstations; [] on drivers without /v1/doorbells
   refrigerators: [], // Samsung refrigerators (1.7.0); [] on drivers without /v1/refrigerators
-  alarm: null, // GET /v1/alarm (alarm.js): { enabled, partitions }, read-only; null when not shown
+  // GET /v1/alarm (alarm.js): { enabled, partitions }; null when not shown. Since 1.15.0 each partition
+  // also says its modes and whether this person may arm and disarm it now (alarm-control.js).
+  alarm: null,
   music: null, // GET /v1/music (music.js): { enabled, status, items }, the Sonos rooms; null when not shown
   // This key's role (GET /v1/api-keys/current): viewer < member < doors < admin.
   // Drivers without roles answer 404 there; their keys can do everything, so "admin".
   role: null,
   // What this person may do (1.8.0, ADR-054: GET /v1/api-keys/current `access`): { role: "admin" |
-  // "member", rooms, kinds, cameras, doors, alarm, scenes, ... }; null with older drivers.
+  // "member", rooms, kinds, cameras, doors, alarm, alarm_control (1.15.0), scenes, ... }; null with
+  // older drivers.
   access: null,
   lastUpdated: null,
   // Per device ("light:22"): short inline error after a failed command.
@@ -97,6 +100,9 @@ export const ui = {
   find: null, // Find my controller on the pairing screen (views/find.js): { stage, range, controllers }
   relayStage: {}, // door/gate Open button: relayId -> "confirm" | "sending" | "sent"
   doorbellStage: {}, // doorbell Open gate button: doorbellId -> "confirm" | "sending" | "sent"
+  // Arming and disarming (1.15.0, alarm-control.js): partitionId -> { stage: "choose" | "sending" |
+  // "pending" | null, action, mode, message }. Never the code, which only the dialog's field holds.
+  alarmControl: {},
   doorbellLinks: null, // a doorbell's screen, an admin linking doors (1.11.0): { id, busy, message, choice }
   ringCamera: null, // a ring's screen opened by its notification: { doorbell, camera } asked for before the doorbells are read
   featuredCamera: null, // Cameras tab: id of the large picture
@@ -159,6 +165,12 @@ export function can(role) {
 // The alarm's status: with 1.8.0 admins and the members given it (ADR-054); before, members and up.
 export function canSeeAlarm() {
   return state.access ? state.access.role === "admin" || state.access.alarm === true : can("member");
+}
+
+// Arming and disarming from the app (1.15.0, ADR-091): the controller has the API and the permission
+// (GET /v1/system features.alarm_arming). Each partition's `control` says whether this person may now.
+export function alarmArmingSupported() {
+  return state.system?.features?.alarm_arming === true;
 }
 
 export function deviceKey(kind, id) {

@@ -27,8 +27,10 @@ REQUIRED_PROPERTIES = (
     "Door Control",
     # Holding a relay closed, which holds a door or gate open (1.1.1, ADR-036).
     "Relay Hold",
-    # Whether the alarm is armed, shown read-only to members and admins (1.2.0, ADR-038).
+    # Whether the alarm is armed, shown to members and admins (1.2.0, ADR-038).
     "Alarm Status",
+    # Arming and disarming it from the app with a typed code (1.15.0, ADR-091).
+    "Alarm Control",
     "Remote Access",
     "Remote Status",
     # The API over HTTPS on port 28443 under the home's own name (1.12.0, ADR-082): the installer's
@@ -57,8 +59,8 @@ REQUIRED_PROPERTIES = (
 # the alarm's status: with it off the driver does not watch the alarm (ADR-038). And Sonos: with it
 # off the driver looks for no player and sends nothing to one (ADR-044). And Direct HTTPS: with it
 # off the driver makes no key and opens no TLS server (ADR-082).
-SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off", "Alarm Status": "Off", "Sonos": "Off",
-                 "Direct HTTPS": "Off"}
+SAFE_DEFAULTS = {"Door Control": "Disabled", "Relay Hold": "Not allowed", "Jewish Calendar": "Off", "Alarm Status": "Off",
+                 "Alarm Control": "Off", "Sonos": "Off", "Direct HTTPS": "Off"}
 
 # Refresh Project (1.1.0) reads the project again after changes in Composer, without a restart.
 # Remove All Scene Links (1.7.0, ADR-051) ends every scene's link at once.
@@ -285,10 +287,16 @@ SECURITY_CONTRACT = {
         "if ctx.apiKey.remote then",
     ),
     # The alarm's status (ADR-038): nothing while Alarm Status is Off, then only for members and
-    # admins, and only in sealed answers. Read-only: check_alarm_read_only.
+    # admins, and only in sealed answers. Armed and disarmed (1.15.0, ADR-091) only by people who may,
+    # with Alarm Control On, sealed, with a typed code, and limited: check_alarm_control.
     "src/api/handlers/alarm.lua": (
         "if not services.alarmStatusEnabled() then\n        return 200, { enabled = false, partitions = Json.array() }",
         "if not (ctx.request and ctx.request.principal) then",
+        "if not Access.canSeeAlarm(ctx.apiKey) or not Access.canControlAlarm(ctx.apiKey) then",
+        "if not services.alarmControlEnabled() then",
+        "if type(code) ~= \"string\" or #code > Alarm.CODE_MAX or not code:match(Alarm.CODE_PATTERN) then",
+        "local ok, wait = room(sent.people[person], now, Alarm.PERSON_LIMIT, Alarm.PERSON_SECONDS)",
+        "ok, wait = room(sent.home, now, Alarm.HOME_LIMIT, Alarm.HOME_SECONDS)",
     ),
     "src/api/routes.lua": (
         '{ method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },',
@@ -296,6 +304,11 @@ SECURITY_CONTRACT = {
     "src/adapters/alarm.lua": (
         'return driver == "security.c4i" and Alarm.enabled()',
         'return Properties ~= nil and Properties[Alarm.PROPERTY] == "On"',
+        'return Alarm.enabled() and Properties[Alarm.CONTROL_PROPERTY] == "On"',
+    ),
+    "src/auth/access.lua": (
+        "return rule ~= nil and rule.system ~= true and (rule.admin == true or rule.alarm_control == true)",
+        "alarm_control = record.alarm_control == true and record.alarm == true,",
     ),
     # Sonos (ADR-044): off by default; only home network addresses DirectorLink was given by the
     # players or the installer, only port 1400 (check_sonos).
@@ -646,14 +659,31 @@ def lua_code(text, strings=True):
     return "".join(out)
 
 
-# The alarm is read-only (ADR-038): arming and disarming take the user's alarm code, which needs a
-# stronger design than an API key. The adapter may only read and watch its partitions' variables,
-# with nothing else loaded or logged; no Lua in the package names a partition command; the API
-# only reads the alarm, and no scene or schedule step can reach it.
+# The alarm's adapter only reads (ADR-038): it may only read and watch its partitions' variables,
+# with nothing else loaded or logged, and no scene or schedule step can reach the alarm. Arming and
+# disarming (1.15.0, ADR-091) take the code a person types for each command: one module sends them
+# (ALARM_CONTROL), only PARTITION_ARM and PARTITION_DISARM, with Director's logging of the command
+# off, nothing else of the security proxy's (no exit-delay cancel, emergency, key press or default
+# code, and never programming's InterfaceID, with which a driver may use a code of its own), and it
+# logs nothing; only the alarm handler loads it, from the two routes that arm and disarm.
 ALARM_ADAPTER = "src/adapters/alarm.lua"
 ALARM_DIRECTOR_CALLS = ("GetVariable", "RegisterVariableListener", "UnregisterVariableListener")
 PARTITION_COMMANDS = re.compile(r"\bPARTITION_(?:ARM|DISARM)\b")
 ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
+ALARM_CONTROL = "src/control4/alarm_control.lua"
+ALARM_CONTROL_MODULE = "src.control4.alarm_control"
+ALARM_CONTROL_HANDLER = "src/api/handlers/alarm.lua"
+ALARM_CONTROL_CALLS = ("SendToDevice", "GetDeviceData", "GetDeviceVariables")
+ALARM_CONTROL_SENDS = re.compile(
+    r'C4:SendToDevice\(device\.id, "PARTITION_(?:ARM|DISARM)", params, false, false\)')
+ALARM_FORBIDDEN_WORDS = re.compile(
+    r"ARM_CANCEL|EXECUTE_EMERGENCY|EXECUTE_FUNCTION|KEY_PRESS|ADDITIONAL_INFO|SEND_CONFIRMATION|"
+    r"DEFAULT_USER_CODE|DirectorProgramming")
+ALARM_ROUTES = {
+    ("GET", "/v1/alarm"): "alarm.status",
+    ("POST", "/v1/alarm/{partitionId}/arm"): "alarm.arm",
+    ("POST", "/v1/alarm/{partitionId}/disarm"): "alarm.disarm",
+}
 
 
 # An ask-to-open link (ADR-058) asks; it never opens. Its modules send no command to a device:
@@ -752,11 +782,14 @@ def check_alarm_read_only(files):
         if re.search(pattern, code):
             fail(f"{ALARM_ADAPTER} must not {what}")
     for name, text in sorted(files.items()):
-        if name.endswith(".lua") and PARTITION_COMMANDS.search(lua_code(text)):
-            fail(f"{name} names a partition command (PARTITION_ARM / PARTITION_DISARM): the alarm is read-only")
-    for method, path in re.findall(r'\bmethod\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)"', files.get("src/api/routes.lua", "")):
-        if path.startswith("/v1/alarm") and method != "GET":
-            fail(f"{method} {path} in src/api/routes.lua: the alarm is only read")
+        if name.endswith(".lua") and name != ALARM_CONTROL and PARTITION_COMMANDS.search(lua_code(text)):
+            fail(f"{name} names a partition command (PARTITION_ARM / PARTITION_DISARM): only {ALARM_CONTROL} arms and disarms")
+    routes = files.get("src/api/routes.lua", "")
+    for method, path, handler in re.findall(
+            r'\bmethod\s*=\s*"([A-Z]+)",\s*path\s*=\s*"([^"]+)",\s*handler\s*=\s*"([^"]+)"', routes):
+        if path.startswith("/v1/alarm") and ALARM_ROUTES.get((method, path)) != handler:
+            fail(f"{method} {path} in src/api/routes.lua: the alarm is only read, armed and disarmed by its three routes")
+    check_alarm_control(files)
     for name, pattern in (
         ("src/core/scenes.lua", r"^Scenes\.TYPES = \{([^}]*)\}"),
         ("src/api/handlers/scenes.lua", r"^local KINDS = \{([^}]*)\}"),
@@ -767,6 +800,43 @@ def check_alarm_read_only(files):
             fail(f"could not read the scene step types in {name}")
         if ALARM_WORDS.search(match.group(1)):
             fail(f"{name}: scene steps must never reach the alarm ({match.group(0).strip()})")
+
+
+def check_alarm_control(files):
+    control = files.get(ALARM_CONTROL)
+    if control is None:
+        fail(f"{ALARM_CONTROL} is missing")
+    code = lua_code(control)
+    for match in re.finditer(r"\bC4\b", code):
+        call = re.match(r"C4:(\w+)\s*\(", code[match.start():])
+        if not call or call.group(1) not in ALARM_CONTROL_CALLS:
+            found = code[match.start():match.start() + 40].split("\n", 1)[0]
+            fail(f"{ALARM_CONTROL} may only call {', '.join(ALARM_CONTROL_CALLS)}; found {found!r}")
+    sends = re.findall(r"C4:SendToDevice\([^\n]*", code)
+    if len(sends) != 2 or not all(ALARM_CONTROL_SENDS.match(send) for send in sends):
+        fail(f"{ALARM_CONTROL} sends only PARTITION_ARM and PARTITION_DISARM, each once, to the partition, "
+             "with Director's logging of the command off (..., params, false, false)")
+    for pattern, what in (
+        (r"\brequire\b", "load other modules (it logs nothing)"),
+        (r"\bprint\s*\(", "print (the code is never logged)"),
+        (r"\b(?:_G|_ENV|getfenv|setfenv|rawget|loadstring|load|dofile)\b", "reach Director or the log another way"),
+        (r"\berror\s*\(", "raise errors (one could name the code)"),
+    ):
+        if re.search(pattern, code):
+            fail(f"{ALARM_CONTROL} must not {what}")
+    if ALARM_FORBIDDEN_WORDS.search(code):
+        fail(f"{ALARM_CONTROL} names {ALARM_FORBIDDEN_WORDS.search(code).group(0)}: only arming and disarming "
+             "with a typed code are sent")
+    for name, text in sorted(files.items()):
+        if not name.endswith(".lua") or name == ALARM_CONTROL:
+            continue
+        loads = re.search(r"require\s*\(?\s*[\"']" + re.escape(ALARM_CONTROL_MODULE) + r"[\"']", lua_code(text))
+        if loads and name != ALARM_CONTROL_HANDLER:
+            fail(f"{name} loads {ALARM_CONTROL_MODULE}: only {ALARM_CONTROL_HANDLER} arms and disarms")
+    handler = lua_code(files.get(ALARM_CONTROL_HANDLER, ""))
+    for line in handler.splitlines():
+        if re.search(r"\blog\.\w+\s*\(", line) and re.search(r"\b(?:code|body)\b", line):
+            fail(f"{ALARM_CONTROL_HANDLER} logs the code or the body: {line.strip()!r}")
 
 
 # Sonos (ADR-044): one file talks to the players, the actions it may send are listed, and an address

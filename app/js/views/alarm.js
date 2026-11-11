@@ -1,11 +1,15 @@
-// The alarm's status on Home and in Settings → Controller (js/alarm.js): read-only, for members and
-// admins, and only when an installer turned it on in Composer. There is nothing to press.
+// The alarm's status on Home and in Settings → Controller (js/alarm.js), for members and admins, and
+// only when an installer turned it on in Composer. Since 1.15.0 (ADR-091) Home's rows also have Arm
+// and Disarm for the partitions the controller says this person may arm and disarm
+// (views/alarm-control.js, which alone sends the alarm anything); otherwise the alarm is read only.
 
 import { h, name } from "../dom.js";
 import { t } from "../i18n.js";
 import { icon } from "../icons.js";
 import { roomName } from "../model.js";
 import { alarmDetails, alarmPartitions, alarmStateText, alarmSummary, alarmTone } from "../alarm.js";
+import { controlAllowed } from "../alarm-control.js";
+import { alarmControls } from "./alarm-control.js";
 
 function partitionRow(partition, now) {
   const tone = alarmTone(partition);
@@ -25,7 +29,9 @@ function partitionRow(partition, now) {
       ),
       h("span", { class: "alarm-state", dir: "auto" }, alarmStateText(partition))
     ),
-    details.length ? h("p", { class: "alarm-details" }, details.join(" · ")) : null
+    details.length ? h("p", { class: "alarm-details" }, details.join(" · ")) : null,
+    // Arm, Disarm, "Arming…", or why it can't now (1.15.0).
+    alarmControls(partition)
   );
 }
 
@@ -40,7 +46,8 @@ export function alarmSection(now = Date.now()) {
       "div",
       { class: "section-head" },
       h("h2", { id: "home-alarm-title", class: "section-title" }, icon("shield"), t("alarm.title")),
-      h("span", { class: "alarm-read-only" }, t("alarm.readOnly"))
+      // Read only, unless this person may arm or disarm a partition (1.15.0).
+      partitions.some(controlAllowed) ? null : h("span", { class: "alarm-read-only" }, t("alarm.readOnly"))
     ),
     h("ul", { class: "device-list alarm-list" }, partitions.map((partition) => partitionRow(partition, now)))
   );

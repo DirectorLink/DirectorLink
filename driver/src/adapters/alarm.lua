@@ -5,11 +5,12 @@
 -- 1004 is not read, as in #15. A partition the panel does not use says IS_ACTIVE = 0 and is left
 -- out of the lists; the panel may connect after Director starts, so that is followed as it changes.
 --
--- Nothing is ever sent to a partition: arming and disarming (PARTITION_ARM / PARTITION_DISARM)
--- take the user's alarm code, which needs a stronger design than an API key. Nor is the state
--- logged, at any level: GET /v1/logs can be read without a seal, and the state is only ever sent
--- sealed. scripts/check_package.py fails the build if this file asks Director for anything but
--- reading and watching variables.
+-- Nothing is ever sent to a partition from here. Arming and disarming (PARTITION_ARM /
+-- PARTITION_DISARM, 1.15.0, ADR-091) take the code a person types for each command and are sent by
+-- src/control4/alarm_control.lua alone, from POST /v1/alarm/{id}/arm and /disarm, only with Alarm
+-- Control On too (Alarm.controlEnabled). Nor is the state logged, at any level: GET /v1/logs can be
+-- read without a seal, and the state is only ever sent sealed. scripts/check_package.py fails the
+-- build if this file asks Director for anything but reading and watching variables.
 --
 -- One thing goes further (1.13.0, the owner's decision of 2026-10-12, ADR-086): a partition that
 -- goes into alarm is told to Alarm.onTriggered's listener (main.lua: the home's screens, on the
@@ -18,6 +19,9 @@
 local Alarm = {}
 
 Alarm.PROPERTY = "Alarm Status"
+-- Arming and disarming from DirectorLink (1.15.0, ADR-091): ships Off, and counts only with Alarm
+-- Status On.
+Alarm.CONTROL_PROPERTY = "Alarm Control"
 
 local HOME_STATE = 1000
 local AWAY_STATE = 1001
@@ -62,6 +66,11 @@ local triggeredListener = nil
 -- Read at every discovery and whenever Composer changes it (Manager.onPropertyChanged).
 function Alarm.enabled()
     return Properties ~= nil and Properties[Alarm.PROPERTY] == "On"
+end
+
+-- Read at every request, like the door switches.
+function Alarm.controlEnabled()
+    return Alarm.enabled() and Properties[Alarm.CONTROL_PROPERTY] == "On"
 end
 
 function Alarm.matches(device)

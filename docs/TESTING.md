@@ -2,6 +2,27 @@
 
 ## Current release
 
+`v1.15.0` — Arm and disarm the alarm from the app, with a code typed each time (1150a); the relay's `replaced` count (1150b). The Worker is deployed by hand (1150b); no D1 migration.
+
+## 1150a. Arm and disarm the alarm (1.15.0)
+
+On the owner's controller, after updating DirectorLink to 1.15.0 and DirectorLink · PIMA FORCE to 1.0.0 in Composer (remove the PimaForce test build first: its CHANGELOG says how). From the iPhone (admin); the app updates by itself (Settings shows 1.15.0).
+
+1. **Off as it ships.** With Alarm Status On and Alarm Control Off, Home's alarm card shows the state and no Arm or Disarm. Settings → Users → a member: *Arms and disarms the alarm* is there, under *Sees the alarm*, and off.
+2. **Receive only.** Set **Alarm Control** On in Composer (History: "Alarm Control On"). While the panel only reports (firmware 1.5.1, SIA DC-09), the card says it can't be armed or disarmed from DirectorLink right now, with no buttons; Composer's PIMA driver shows the variable `DIRECTORLINK_ALARM_CONTROL` = 0.
+3. **With the panel's JSON interface** (after its firmware upgrade, the CMS path on JSON): `DIRECTORLINK_ALARM_CONTROL` = 1, and the card shows **Arm**. Arm → Away → type the code: "Arming…", then the exit delay and Armed away, on the card and on the keypad. **Disarm** with the code: Disarmed. Arm in Home and Night too.
+4. **A wrong code.** Disarm with a wrong code: after about 20 s the card says the alarm didn't disarm; the alarm stays armed. History lists "Disarm sent to …" for each command, with who sent it; the code appears nowhere (History, the log in Settings → Controller, Composer's Lua output with the PIMA driver's Debug Mode on).
+5. **Away.** On mobile data, away from home: arm and disarm work the same.
+6. **A member.** Turn on *Arms and disarms the alarm* for a member: their phone shows Arm and Disarm. Turn off *Sees the alarm*: both go.
+7. **Limits.** Seven commands in a row within 5 minutes: the seventh says to try again in a few minutes.
+8. Nothing else changes: the schedules, the DoorBird, the gate, KNX, the TVs' alarm notice. History shows "DirectorLink updated from 1.14.1 to 1.15.0".
+
+## 1150b. The relay's count (1.15.0, the Worker)
+
+After `npx wrangler@4.143.0 deploy` in `cloud/`: in the Worker's logs, a `driver_connected` after a cut says `replaced: 1` (not 2 to 5), and `down_ms` stays null for it, as docs/RELAY.md says.
+
+## Previous release
+
 `v1.14.1` — Next 7 days shows only what may run (1141a). No Worker change; no D1 migration.
 
 ## 1141a. Next 7 days, only what may run (1.14.1)

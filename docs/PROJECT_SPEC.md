@@ -81,7 +81,7 @@ Supported device families (1.2.0):
 5. Doors and gates on KNX Contact/Relay devices, and since 1.10.0 on Control4's Relay Door, Gate and Garage Door Controllers, whatever relay they drive (ADR-069)
 6. DoorBird doorbells (rings, and opening their door)
 7. Fans (the Control4 fan proxy: on, off and four speeds; 1.2.0)
-8. The alarm's status (security partitions), read-only and off by default (1.2.0, ADR-038)
+8. The alarm's status (security partitions), off by default (1.2.0, ADR-038); armed and disarmed with a typed code, with Alarm Control On (1.15.0, ADR-091)
 9. Samsung refrigerators through the Samsung Refrigerator (DirectorLink) driver: temperatures, the door, the water filter, and Power Cool, Power Freeze, Sabbath Mode and the ice maker (1.7.0, ADR-049)
 
 Policy for everything else:
@@ -331,8 +331,14 @@ unsupported as before):
   panel reports), `armed`, `armed_mode` (`home`/`away`), `armed_type` and `alarm_type` (the panel's
   words, only while armed or in alarm), `open_zones`, `delay` (`entry`/`exit`, seconds left and in
   all) and `trouble`.
-- Nothing is sent to a partition, and its state is never logged; `scripts/check_package.py` keeps
-  the adapter to `C4:GetVariable`, `C4:RegisterVariableListener` and `C4:UnregisterVariableListener`.
+- Nothing is sent to a partition from the adapter, and its state is never logged;
+  `scripts/check_package.py` keeps the adapter to `C4:GetVariable`, `C4:RegisterVariableListener`
+  and `C4:UnregisterVariableListener`.
+- Arming and disarming (1.15.0, ADR-091): `src/control4/alarm_control.lua` alone sends the
+  partition `PARTITION_ARM` (`ArmType`, `UserCode`, `InterfaceID` `DirectorLink`) or
+  `PARTITION_DISARM` (`UserCode`, `InterfaceID`), with Director's logging of the command off, from
+  `POST /v1/alarm/{id}/arm` and `/disarm`; the modes are the driver's `<arm_states>`, and a driver
+  of DirectorLink's alarm agreement says when it cannot (docs/ALARM_DRIVERS.md).
 - Admins, and members given the alarm's status (ADR-054), read it, only in sealed answers
   (`403 SEALED_REQUEST_REQUIRED` in the clear); others get `403`.
 

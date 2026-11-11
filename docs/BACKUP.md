@@ -36,7 +36,7 @@ remote identity the relay never accepted (Remote Access never on, or never conne
 backup either, and none is made for one: restored, it would replace a home that is linked now.
 
 **DirectorLink's Composer properties** are listed, never restored: Door Control, Relay Hold,
-Schedules, Jewish Calendar, Alarm Status, Remote Access and Log Level. The restore screen shows how
+Schedules, Jewish Calendar, Alarm Status, Alarm Control (1.15.0), Remote Access and Log Level. The restore screen shows how
 each was set when the backup was made and how it is now, so the installer can set them again in
 Composer. A file must never switch a safety setting on.
 

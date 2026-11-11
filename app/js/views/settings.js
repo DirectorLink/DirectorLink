@@ -941,7 +941,7 @@ function controllerSection(navigate) {
             .join(" · "),
         ]
       : null,
-    // Members and admins: the alarm, read-only, when the installer turned it on (ADR-038).
+    // Members and admins: the alarm's status, when the installer turned it on (ADR-038).
     alarmFact(),
   ].filter(Boolean);
 

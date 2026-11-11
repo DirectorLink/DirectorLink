@@ -2603,7 +2603,7 @@ select:disabled {
   color: var(--onText);
 }
 
-/* ---- Alarm (read-only; js/views/alarm.js) ------------------------------------------------- */
+/* ---- Alarm (js/views/alarm.js; arming and disarming, js/views/alarm-control.js) ---------- */
 
 .alarm-list {
   margin: 0;
@@ -2672,6 +2672,79 @@ select:disabled {
 
 .alarm-partition.is-alarm .alarm-details {
   color: var(--errText);
+}
+
+/* Arm and Disarm (1.15.0; js/views/alarm-control.js): under the name, like the details. */
+.alarm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-start: 10px;
+  padding-inline-start: 50px;
+}
+
+.alarm-modes-title {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.alarm-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 0;
+  padding-inline-start: 50px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+/* It turns while the alarm is asked (not with reduced motion: the rule at the top). */
+.alarm-pending .icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  color: var(--muted);
+  animation: alarm-pending-turn 1.2s linear infinite;
+}
+
+@keyframes alarm-pending-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.alarm-note,
+.alarm-partition > .alarm-message {
+  margin: 8px 0 0;
+  padding-inline-start: 50px;
+  overflow-wrap: anywhere;
+}
+
+/* The code's dialog: one field and its buttons. */
+.alarm-dialog {
+  width: min(420px, calc(100% - 24px));
+}
+
+/* Its title is the app's words around a partition's name: it wraps rather than being cut. */
+.dialog-title.alarm-dialog-title {
+  overflow: visible;
+  white-space: normal;
+}
+
+.alarm-code-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Digits read left to right in every language. */
+.alarm-code-form input[type="password"] {
+  direction: ltr;
+  text-align: center;
+  letter-spacing: 0.3em;
+  font-size: max(1.25rem, 16px);
 }
 
 /* ---- Music (Sonos; js/views/music.js) ----------------------------------------------------- */
