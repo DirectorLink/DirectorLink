@@ -192,11 +192,11 @@
           or without the panel.
         </p>
         <p>
-          From driver 1.2.0 and DirectorLink 1.16.0, each arm and disarm is sealed to the driver, which alone
-          can open it, so the code never appears in Control4's own logs. If you choose, the driver's
-          DirectorLink Without Code property and DirectorLink's admins together can allow arming, or arming
-          and disarming, without a code; the driver then uses its Panel User Code, and DirectorLink tells its
-          admins each time the alarm is disarmed without one.
+          Driver 1.2.0 and 1.2.1 sealed each command from DirectorLink 1.16.0 to the driver, so that Control4's
+          own debug log never saw the code. On a controller, opening it took about 14 seconds, so 1.2.2 takes
+          the typed code again, as 1.1.0 did: like any command between Control4 drivers, it then passes through
+          Control4's debug log, which only the controller's root user can read and which is gone within a few
+          hours.
         </p>
       </section>
 

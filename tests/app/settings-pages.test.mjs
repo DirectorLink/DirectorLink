@@ -533,7 +533,7 @@ test("Settings → Alarm (1.16.0): admins choose a code every time, arming, or a
     assert.deepEqual(checked(view), ["none"]);
     assert.match(textOf(view), /Every time \(default\).*Arm without a code.*Arm and disarm without a code/s);
     assert.equal(byKey(view, "alarm-settings-save").attributes.disabled, "", "nothing chosen yet");
-    assert.equal(byKey(view, "alarm-settings-driver").textContent, "This works only as far as the alarm’s own driver allows it too: for a PIMA alarm, an installer turns on “DirectorLink Without Code” in the DirectorLink · PIMA FORCE driver’s properties in Composer. Without a code, the driver uses the code stored in it.");
+    assert.equal(byKey(view, "alarm-settings-driver").textContent, "This works only as far as the alarm’s own driver allows it too, and then the driver uses the code stored in it. DirectorLink · PIMA FORCE doesn’t (since 1.2.2): a code is typed each time.");
     assert.equal(byKey(view, "alarm-settings-warning"), null);
     assert.equal(byKey(view, "alarm-settings-held"), null);
 
@@ -561,10 +561,10 @@ test("Settings → Alarm (1.16.0): admins choose a code every time, arming, or a
     assert.match(textOf(view), /Saved\./);
     assert.equal(byKey(view, "alarm-settings-save").attributes.disabled, "");
     assert.equal(rowStatus("alarm"), "Arms and disarms without a code");
-    // Its driver does not allow it yet: the code is still asked, and the page says what to change.
+    // Its driver does not allow it: the code is still asked, and the page says so (1.16.1: no PIMA property to point at).
     assert.equal(
       byKey(view, "alarm-settings-held").textContent,
-      "The alarm’s driver doesn’t allow this yet, so a code is still needed. An installer turns on “DirectorLink Without Code” in its properties in Composer."
+      "The alarm’s driver doesn’t allow this, so a code is still needed each time."
     );
     controller.driver = "arm_disarm";
     await loadAlarm();
@@ -598,7 +598,8 @@ test("Settings → Alarm (1.16.0): admins choose a code every time, arming, or a
       const text = textOf(view);
       for (const label of [none, arm, both]) assert.ok(text.includes(label), `${language}: ${label}`);
       assert.ok(byKey(view, "alarm-settings-warning"), `${language}: the warning, as arming and disarming is saved`);
-      assert.ok(text.includes("DirectorLink Without Code"), language);
+      assert.ok(text.includes("DirectorLink · PIMA FORCE") && text.includes("1.2.2"), `${language}: PIMA no longer allows it`);
+      assert.ok(!text.includes("DirectorLink Without Code"), `${language}: no property that is gone`);
       assert.equal(rowStatus("alarm"), status, language);
     }
   } finally {
