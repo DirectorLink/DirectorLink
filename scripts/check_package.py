@@ -296,6 +296,7 @@ SECURITY_CONTRACT = {
         "if not services.alarmControlEnabled() then",
         "if type(code) ~= \"string\" or #code > Alarm.CODE_MAX or not code:match(Alarm.CODE_PATTERN) then",
         "local ok, wait = room(sent.people[person], now, Alarm.PERSON_LIMIT, Alarm.PERSON_SECONDS)",
+        "if not AlarmControl.allows(withoutCode(device), action) then",
         "ok, wait = room(sent.home, now, Alarm.HOME_LIMIT, Alarm.HOME_SECONDS)",
     ),
     "src/api/routes.lua": (
@@ -673,7 +674,10 @@ ALARM_WORDS = re.compile(r"alarm|security|partition", re.I)
 ALARM_CONTROL = "src/control4/alarm_control.lua"
 ALARM_CONTROL_MODULE = "src.control4.alarm_control"
 ALARM_CONTROL_HANDLER = "src/api/handlers/alarm.lua"
-ALARM_CONTROL_CALLS = ("SendToDevice", "GetDeviceData", "GetDeviceVariables")
+ALARM_CONTROL_CALLS = ("SendToDevice", "GetDeviceData", "GetDeviceVariables", "HMAC", "Encrypt")
+# What it may load: the pieces of the sealed command of the agreement's version 2 (1.16.0, ADR-092),
+# nothing that logs.
+ALARM_CONTROL_REQUIRES = {"src.core.base64", "src.core.json", "src.core.random", "src.core.x25519"}
 ALARM_CONTROL_SENDS = re.compile(
     r'C4:SendToDevice\(device\.id, "PARTITION_(?:ARM|DISARM)", params, false, false\)')
 ALARM_FORBIDDEN_WORDS = re.compile(
@@ -683,6 +687,8 @@ ALARM_ROUTES = {
     ("GET", "/v1/alarm"): "alarm.status",
     ("POST", "/v1/alarm/{partitionId}/arm"): "alarm.arm",
     ("POST", "/v1/alarm/{partitionId}/disarm"): "alarm.disarm",
+    ("GET", "/v1/alarm/settings"): "alarm.settings",
+    ("PUT", "/v1/alarm/settings"): "alarm.set_settings",
 }
 
 
@@ -816,8 +822,10 @@ def check_alarm_control(files):
     if len(sends) != 2 or not all(ALARM_CONTROL_SENDS.match(send) for send in sends):
         fail(f"{ALARM_CONTROL} sends only PARTITION_ARM and PARTITION_DISARM, each once, to the partition, "
              "with LogCommand false (..., params, false, false)")
+    for module in re.findall(r"""\brequire\s*\(?\s*["']([^"']+)["']""", lua_code(control)):
+        if module not in ALARM_CONTROL_REQUIRES:
+            fail(f"{ALARM_CONTROL} may load only {', '.join(sorted(ALARM_CONTROL_REQUIRES))} (it logs nothing); found {module}")
     for pattern, what in (
-        (r"\brequire\b", "load other modules (it logs nothing)"),
         (r"\bprint\s*\(", "print (the code is never logged)"),
         (r"\b(?:_G|_ENV|getfenv|setfenv|rawget|loadstring|load|dofile)\b", "reach Director or the log another way"),
         (r"\berror\s*\(", "raise errors (one could name the code)"),

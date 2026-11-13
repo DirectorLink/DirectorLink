@@ -1304,7 +1304,7 @@ end
 -- timer of its own, in real time); at most twenty alerts and 128 KB, the oldest let go first; and
 -- what goes again goes oldest first.
 function tests.alerts_are_kept_a_minute_or_two_and_at_most_twenty()
-    T.same(require("src.cloud.alerts").KEEP_SECONDS, { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120 })
+    T.same(require("src.cloud.alerts").KEEP_SECONDS, { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120, alarm_disarmed = 120 })
     local home = home(nil, Mock.withHikvisionCameras(Mock.project()))
     home.on("admin", { camera = true })
     answersAlerts()

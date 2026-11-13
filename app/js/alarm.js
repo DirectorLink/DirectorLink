@@ -13,9 +13,9 @@ import { can, canSeeAlarm, notify, state } from "./state.js";
 export const ALARM_POLL_MS = 10000;
 // The partition's own word for how it is armed, when it only repeats the mode.
 const MODE_WORDS = { away: ["away"], home: ["home", "stay"] };
-// The modes a driver declares (`modes`, 1.15.0) that have words of the app's own; others are shown
-// as the driver names them.
-const ARM_MODES = ["away", "home", "night"];
+// The modes a driver declares (`modes`, 1.15.0) that have words of the app's own (Shabbat: the
+// DirectorLink · PIMA FORCE driver's, 1.16.0); others are shown as the driver names them.
+const ARM_MODES = ["away", "home", "night", "shabbat"];
 // Kinds of alarm with a word of their own; others are shown as the panel writes them.
 const ALARM_TYPES = {
   fire: "fire",
@@ -125,8 +125,8 @@ function panelWord(value) {
   return isolate(text.charAt(0).toUpperCase() + text.slice(1));
 }
 
-// A mode the partition arms in (1.15.0): "Away", "Home" and "Night" in the app's language, any other
-// as its driver names it (isolated). What is sent is always the driver's own word.
+// A mode the partition arms in (1.15.0): "Away", "Home", "Night" and "Shabbat" in the app's language,
+// any other as its driver names it (isolated). What is sent is always the driver's own word.
 export function armModeLabel(mode) {
   const word = String(mode ?? "").trim();
   return ARM_MODES.includes(word.toLowerCase()) ? t(`alarm.modes.${word.toLowerCase()}`) : isolate(word);

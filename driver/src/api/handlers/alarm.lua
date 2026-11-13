@@ -15,6 +15,12 @@
 -- know, so every command counts). The answer says the command was sent, not what the alarm did: the
 -- partition's state, read again, says that. Each command goes into the history (kind "alarm"),
 -- which only sealed reads show.
+--
+-- Without a code (1.16.0, ADR-092): an admin's setting (GET and PUT /v1/alarm/settings,
+-- src/core/alarm_settings.lua) and the alarm's driver (its Composer property, said in
+-- DIRECTORLINK_ALARM_WITHOUT_CODE) both decide how far: "none", "arm" or "arm_disarm"; the lower of
+-- the two counts. Then `code` may be left out of an arm or a disarm it covers, and the driver uses
+-- its own code. Such a disarm is said to the admins' phones (src/cloud/alerts.lua, alarm_disarmed).
 
 local Json = require("src.core.json")
 local Problem = require("src.api.problem")
@@ -23,6 +29,7 @@ local Views = require("src.api.views")
 local Access = require("src.auth.access")
 local Activity = require("src.core.activity")
 local AlarmControl = require("src.control4.alarm_control")
+local AlarmSettings = require("src.core.alarm_settings")
 
 local Alarm = {}
 
@@ -51,6 +58,11 @@ end
 -- Whether the caller arms and disarms from DirectorLink now, and whether the partition's driver says
 -- it can (DirectorLink's alarm agreement); with the modes it arms in. None of it follows the
 -- partition's state, so the padding still holds.
+-- How far the partition goes without a code: the lower of the admins' setting and its driver's.
+local function withoutCode(device)
+    return AlarmControl.lower(AlarmSettings.withoutCode(), AlarmControl.driverWithoutCode(device))
+end
+
 local function controlView(ctx, device)
     local modes = Json.array()
     for _, mode in ipairs(AlarmControl.modes(device)) do
@@ -59,6 +71,7 @@ local function controlView(ctx, device)
     return modes, {
         allowed = ctx.services.alarmControlEnabled() and Access.canControlAlarm(ctx.apiKey),
         available = AlarmControl.available(device),
+        without_code = withoutCode(device),
     }
 end
 
@@ -141,6 +154,10 @@ local function readCode(body)
     return code
 end
 
+local function absent(value)
+    return value == nil or value == Json.null
+end
+
 local function command(ctx, action)
     local services = ctx.services
     if not Access.canSeeAlarm(ctx.apiKey) or not Access.canControlAlarm(ctx.apiKey) then
@@ -175,9 +192,16 @@ local function command(ctx, action)
         end
     end
     local code
-    code, problem = readCode(body)
-    if not code then
-        return problem
+    if absent(body.code) then
+        -- Without a code, only as far as both the admins and the alarm's driver allow (ADR-092).
+        if not AlarmControl.allows(withoutCode(device), action) then
+            return Problem.new(400, "CODE_REQUIRED", "This alarm needs a code to " .. action .. ": type it, or an admin allows it without one")
+        end
+    else
+        code, problem = readCode(body)
+        if not code then
+            return problem
+        end
     end
     if not AlarmControl.available(device) then
         return Problem.new(409, "ALARM_UNAVAILABLE",
@@ -211,9 +235,10 @@ local function command(ctx, action)
         what = device.name,
         room = device.room_name,
         note = mode,
+        reason = code == nil and "without_code" or nil,
         ids = { device_id = device.id, room_id = device.room_id },
     })
-    return 202, { partition_id = device.id, action = action, mode = mode or Json.null }
+    return 202, { partition_id = device.id, action = action, mode = mode or Json.null, without_code = code == nil }
 end
 
 -- POST /v1/alarm/{partitionId}/arm {"mode": "Away", "code": "1234"}
@@ -224,6 +249,31 @@ end
 -- POST /v1/alarm/{partitionId}/disarm {"code": "1234"}
 function Alarm.disarm(ctx)
     return command(ctx, "disarm")
+end
+
+-- GET /v1/alarm/settings (admins): { without_code }.
+function Alarm.settings(ctx)
+    return 200, { without_code = AlarmSettings.withoutCode() }
+end
+
+-- PUT /v1/alarm/settings (admins): { "without_code": "none" | "arm" | "arm_disarm" }.
+function Alarm.set_settings(ctx)
+    local body = ctx.body
+    local problem = Validate.body(body, { without_code = true }, true)
+    if problem then
+        return problem
+    end
+    if not AlarmSettings.LEVELS[body.without_code] then
+        return Problem.invalidField("without_code", "without_code is none, arm or arm_disarm")
+    end
+    local before = AlarmSettings.withoutCode()
+    if not AlarmSettings.setWithoutCode(body.without_code) then
+        return Problem.internal("The alarm settings could not be saved")
+    end
+    if before ~= body.without_code then
+        Activity.record("alarm", "settings", { by = ctx.apiKey, from = before, to = body.without_code })
+    end
+    return 200, { without_code = AlarmSettings.withoutCode() }
 end
 
 return Alarm

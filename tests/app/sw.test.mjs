@@ -219,8 +219,8 @@ test("install saves every page under each path, without redirects", async () => 
 });
 
 test("activate removes caches from older versions", async () => {
-  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v32", "directorlink-shell-v54", "directorlink-shell-v55"] });
-  assert.deepEqual(await storage.keys(), ["directorlink-shell-v56"]);
+  const { storage } = await startWorker({ oldCaches: ["directorlink-shell-v24", "directorlink-shell-v32", "directorlink-shell-v55", "directorlink-shell-v56"] });
+  assert.deepEqual(await storage.keys(), ["directorlink-shell-v57"]);
 });
 
 test("online page loads come from the network and refresh the saved copy", async () => {
@@ -441,6 +441,65 @@ test("a sealed alert opens with this device's alert key and says what happened, 
     assert.equal(last.options.body, body, detail.kind);
     assert.equal(last.options.tag, tag, detail.kind);
     assert.equal(last.options.data.url, url, detail.kind);
+  }
+});
+
+// The alarm disarmed from DirectorLink without a code (1.16.0, ADR-092), to admins: which part, by
+// whom (a person's device, as for a door, or a schedule) and when; each one shown, opening the history.
+test("the alarm disarmed without a code says which part, by whom and when, in the app's words in every language", async () => {
+  const shown = [];
+  const opened = [];
+  const { storage, push, notificationClick } = await startWorker({ shown, opened });
+  await keepAlertKey(storage);
+  const at = "2026-10-03T19:14:00Z";
+  const dana = { type: "key", name: "iPhone", profile: "Dana", remote: true };
+  for (const [who, body] of [
+    [dana, `House was disarmed without a code by Dana (iPhone) at ${sealedClock(at)}.`],
+    [{ type: "key", name: "Kids phone", profile: "Kids phone" }, `House was disarmed without a code by Kids phone at ${sealedClock(at)}.`],
+    [{ type: "key" }, `House was disarmed without a code by a removed device at ${sealedClock(at)}.`],
+    [{ type: "schedule" }, `House was disarmed without a code by a schedule at ${sealedClock(at)}.`],
+    [{ type: "something_newer", name: "X" }, `House was disarmed without a code at ${sealedClock(at)}.`],
+    [undefined, `House was disarmed without a code at ${sealedClock(at)}.`],
+  ]) {
+    await push(sealedPush(sealDetail({ v: 1, kind: "alarm_disarmed", at, id: 80, name: "House", who })));
+    const last = shown.at(-1);
+    assert.equal(last.title, "Alarm disarmed", JSON.stringify(who));
+    assert.equal(last.options.body, body, JSON.stringify(who));
+    assert.equal(last.options.tag, "alarm-disarmed-80", "one notification a partition");
+    assert.equal(last.options.renotify, true, "each one is said");
+    assert.equal(last.options.data.url, "/#/settings/history");
+  }
+  await notificationClick(shown[0].options.data);
+  assert.deepEqual(opened, [`${ORIGIN}/#/settings/history`]);
+  // Without the partition's name: the general words.
+  await push(sealedPush(sealDetail({ v: 1, kind: "alarm_disarmed", at, id: 80, who: dana })));
+  assert.equal(shown.at(-1).options.body, GENERAL);
+
+  // The app's words, in each language (js/alerts.js keeps them as its dictionaries have them).
+  const expected = {
+    en: ["Alarm disarmed", `House was disarmed without a code by Dana (iPhone) at ${sealedClock(at, "en")}.`, `House was disarmed without a code by a schedule at ${sealedClock(at, "en")}.`],
+    he: ["האזעקה נוטרלה", `ניטרול של House בלי קוד על ידי Dana (iPhone) ב-${sealedClock(at, "he")}.`, `ניטרול של House בלי קוד על ידי תזמון ב-${sealedClock(at, "he")}.`],
+    es: ["Alarma desarmada", `Dana (iPhone) desarmó House sin código a las ${sealedClock(at, "es")}.`, `Una programación desarmó House sin código a las ${sealedClock(at, "es")}.`],
+    it: ["Allarme disinserito", `Dana (iPhone) ha disinserito House senza codice alle ${sealedClock(at, "it")}.`, `Una programmazione ha disinserito House senza codice alle ${sealedClock(at, "it")}.`],
+  };
+  for (const [code, [title, person, schedule]] of Object.entries(expected)) {
+    const { default: words } = await import(`../../app/i18n/${code}.js`);
+    await (await storage.open("directorlink-alerts")).put("/alert-texts.json", new Response(JSON.stringify({
+      lang: code,
+      dir: code === "he" ? "rtl" : "ltr",
+      title: "DirectorLink",
+      who: words.alerts.who,
+      alarm_disarmed_title: words.alerts.alarmDisarmedTitle,
+      alarm_disarmed: words.alerts.alarmDisarmed,
+      alarm_disarmed_nobody: words.alerts.alarmDisarmedNoWho,
+      who_schedule: words.alerts.bySchedule,
+    })));
+    await push(sealedPush(sealDetail({ v: 1, kind: "alarm_disarmed", at, id: 80, name: "House", who: dana })));
+    assert.equal(shown.at(-1).title, title, code);
+    assert.equal(shown.at(-1).options.body, person, code);
+    assert.equal(shown.at(-1).options.lang, code);
+    await push(sealedPush(sealDetail({ v: 1, kind: "alarm_disarmed", at, id: 80, name: "House", who: { type: "schedule" } })));
+    assert.equal(shown.at(-1).options.body, schedule, code);
   }
 });
 

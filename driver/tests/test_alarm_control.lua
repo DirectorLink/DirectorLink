@@ -363,4 +363,189 @@ function tests.the_driver_modes_are_read_from_its_capabilities()
     T.eq(#AlarmControl.parseModes("<arm_states>" .. string.rep("x", 50) .. "</arm_states>")[1], AlarmControl.MODE_BYTES)
 end
 
+
+-- ---- version 2 of the agreement: the command sealed to the driver, and without a code (1.16.0) --
+
+local Base64 = require("src.core.base64")
+local X25519 = require("src.core.x25519")
+
+-- The fake alarm driver's (130) key pair: a fixed private key, as a driver keeps its own.
+local DRIVER_SECRET = string.rep(string.char(77), 32)
+
+local function hmacHex(keyHex, data)
+    return C4:HMAC("SHA256", keyHex, data, { key_encoding = "HEX", data_encoding = "NONE", return_encoding = "HEX" }):lower()
+end
+
+-- Driver 130 keeps the agreement's version `version` (2 with its key), able now, and lets
+-- DirectorLink go without a code as far as `level` says.
+local function agreement(version, level)
+    return function(m)
+        local public = Base64.toHex(X25519.publicKey(DRIVER_SECRET))
+        m.project.variables[130] = { [1] = tostring(version), [2] = "1", [3] = version >= 2 and public or "", [4] = level or "none" }
+        m.project.variableNames = m.project.variableNames or {}
+        m.project.variableNames[130] = {
+            [1] = "DIRECTORLINK_ALARM", [2] = "DIRECTORLINK_ALARM_CONTROL",
+            [3] = "DIRECTORLINK_ALARM_KEY", [4] = "DIRECTORLINK_ALARM_WITHOUT_CODE",
+        }
+    end
+end
+
+-- Opens a sealed command as the driver does: its fields, after the MAC checked out.
+local function openToken(token)
+    T.eq(token:sub(1, 4), "dl2:", "a sealed command")
+    local raw = assert(Base64.decode(token:sub(5)))
+    local public, iv = raw:sub(1, 32), raw:sub(33, 48)
+    local ct, mac = raw:sub(49, #raw - 32), raw:sub(#raw - 31)
+    local shared = assert(X25519.shared(DRIVER_SECRET, public))
+    local prk = hmacHex(Base64.toHex(shared), "DirectorLink alarm v2" .. public .. X25519.publicKey(DRIVER_SECRET))
+    local encKey, macKey = hmacHex(prk, "enc"), hmacHex(prk, "mac")
+    T.eq(hmacHex(macKey, public .. iv .. ct), Base64.toHex(mac), "the MAC checks out")
+    local plaintext = C4:Decrypt("AES-256-CBC", encKey, Base64.toHex(iv), Base64.toHex(ct), {
+        key_encoding = "HEX", iv_encoding = "HEX", data_encoding = "HEX", return_encoding = "NONE", padding = true,
+    })
+    return Json.decode(plaintext), public
+end
+
+local function admin(mock, key, path, body)
+    return T.http(mock, path and "PUT" or "GET", "/v1/alarm/settings", { key = key, body = body })
+end
+
+function tests.a_driver_of_version_2_gets_every_command_sealed_never_the_code()
+    local mock, key, keyId = start(true, agreement(2, "none"))
+    local before = #mock.commands
+    local started = os.time()
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/arm", { mode = "away", code = CODE }).status, 202)
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/disarm", { code = CODE }).status, 202)
+    local sent = sentTo(mock, before)
+    T.eq(#sent, 2)
+    T.eq(sent[1].params.ArmType, "Away")
+    T.eq(sent[1].params.InterfaceID, "DirectorLink")
+    T.eq(sent[1].log, false)
+    local arm, armKey = openToken(sent[1].params.UserCode)
+    local disarm, disarmKey = openToken(sent[2].params.UserCode)
+    T.eq(arm.v, 2)
+    T.eq(arm.a, "arm")
+    T.eq(arm.m, "Away")
+    T.eq(arm.c, CODE)
+    T.eq(#arm.n, 16)
+    -- Pure-Lua X25519 is slow: the time is between the test's start and now, however long that took.
+    T.eq(arm.t >= started and arm.t <= os.time(), true, "the controller's time")
+    T.eq(disarm.a, "disarm")
+    T.eq(isNull(disarm.m), true)
+    T.eq(disarm.c, CODE)
+    T.eq(armKey ~= disarmKey, true, "a fresh key each command")
+    T.eq(arm.n ~= disarm.n, true, "a fresh nonce each command")
+    for _, command in ipairs(sent) do
+        T.notContains(Json.encode(command.params), CODE, "the code is in no parameter Director sees")
+    end
+end
+
+function tests.without_a_code_only_as_far_as_the_admins_and_the_driver_both_allow()
+    local mock, key, keyId = start(true, agreement(2, "arm"))
+    -- The admins' setting ships "none": a code each time.
+    T.same(admin(mock, key).json, { without_code = "none" })
+    T.eq(partition(mock, key, keyId, 80).control.without_code, "none")
+    local refused = post(mock, key, keyId, "/v1/alarm/80/arm", { mode = "Away" })
+    T.eq(refused.status, 400)
+    T.eq(refused.json.code, "CODE_REQUIRED")
+    -- The admins allow both; the driver allows arming only: arming only.
+    T.same(admin(mock, key, true, { without_code = "arm_disarm" }).json, { without_code = "arm_disarm" })
+    T.eq(partition(mock, key, keyId, 80).control.without_code, "arm")
+    local before = #mock.commands
+    local armed = post(mock, key, keyId, "/v1/alarm/80/arm", { mode = "Home" })
+    T.eq(armed.status, 202, armed.body)
+    T.eq(armed.json.without_code, true)
+    local command = openToken(sentTo(mock, before)[1].params.UserCode)
+    T.eq(isNull(command.c), true, "no code: the driver uses its own")
+    T.eq(command.m, "Home")
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/disarm", {}).json.code, "CODE_REQUIRED")
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/disarm", { code = CODE }).status, 202, "a typed code still goes")
+    -- The driver allows both too: disarming without a code.
+    mock.project.variables[130][4] = "arm_disarm"
+    require("src.control4.alarm_control").reset()
+    T.eq(partition(mock, key, keyId, 80).control.without_code, "arm_disarm")
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/disarm", { code = Json.null }).status, 202)
+    -- The admins narrow it again: arming only.
+    admin(mock, key, true, { without_code = "arm" })
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/disarm", {}).json.code, "CODE_REQUIRED")
+    local history = sealed(mock, key, keyId, { method = "GET", path = "/v1/activity?kind=alarm" }).json.items
+    local reasons = {}
+    for _, item in ipairs(history) do
+        reasons[#reasons + 1] = item.action .. ":" .. tostring(item.reason)
+    end
+    T.same(reasons, { "settings:nil", "disarm:without_code", "disarm:nil", "arm:without_code", "settings:nil" })
+end
+
+function tests.a_driver_of_version_1_never_gets_a_command_without_a_code()
+    local mock, key, keyId = start(true, agreement(1, "arm_disarm"))
+    admin(mock, key, true, { without_code = "arm_disarm" })
+    T.eq(partition(mock, key, keyId, 80).control.without_code, "none", "no key, no sealed command")
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/arm", { mode = "Away" }).json.code, "CODE_REQUIRED")
+    local before = #mock.commands
+    T.eq(post(mock, key, keyId, "/v1/alarm/80/arm", { mode = "Away", code = CODE }).status, 202)
+    T.eq(sentTo(mock, before)[1].params.UserCode, CODE, "as 1.15.0 sent it")
+end
+
+function tests.the_settings_are_the_admins()
+    local mock, key = start(true)
+    local member = T.http(mock, "POST", "/v1/api-keys", { key = key, body = { name = "Kid", role = "member", access = { alarm_control = true } } }).json.key
+    T.eq(admin(mock, member).status, 403)
+    T.eq(admin(mock, member, true, { without_code = "arm" }).status, 403)
+    T.eq(admin(mock, key, true, { without_code = "always" }).status, 400)
+    T.eq(admin(mock, key, true, {}).status, 400)
+    T.eq(admin(mock, key, true, { without_code = "arm", other = 1 }).status, 400)
+    T.same(admin(mock, key).json, { without_code = "none" })
+    local AlarmSettings = require("src.core.alarm_settings")
+    T.eq(admin(mock, key, true, { without_code = "arm" }).status, 200)
+    AlarmSettings.reset()
+    T.eq(AlarmSettings.withoutCode(), "arm", "kept across a restart")
+end
+
+function tests.a_disarm_without_a_code_is_told_to_the_admins_only()
+    local Harness = require("relay_harness")
+    local mock, key, keyId = start(true, agreement(2, "arm_disarm"))
+    local _, connection = Harness.connected({ mock = mock })
+    admin(mock, key, true, { without_code = "arm_disarm" })
+    local member, memberId = member(mock, key, { alarm_control = true })
+    T.eq(T.http(mock, "PUT", "/v1/alerts/choices", { key = key, body = { on = true } }).status, 200)
+    local memberChoices = T.http(mock, "PUT", "/v1/alerts/choices", { key = member, body = { on = true, kinds = { alarm_disarmed = true } } }).json
+    T.eq(memberChoices.kinds.alarm_disarmed, nil, "admins only")
+    T.eq(T.http(mock, "GET", "/v1/alerts/choices", { key = key }).json.kinds.alarm_disarmed, true, "on unless turned off")
+    connection.sent = ""
+    T.eq(post(mock, member, memberId, "/v1/alarm/81/disarm", {}).status, 202)
+    local notified = {}
+    for _, frame in ipairs(Harness.clientFrames(connection.sent)) do
+        local message = Json.decode(frame.payload)
+        if type(message) == "table" and message.type == "notify" then
+            notified[#notified + 1] = message
+        end
+    end
+    T.eq(#notified, 1)
+    local recipients = 0
+    for id in pairs(notified[1]["for"]) do
+        recipients = recipients + 1
+        T.eq(id, keyId, "the admin")
+    end
+    T.eq(recipients, 1)
+    -- With a typed code: nothing to tell.
+    connection.sent = ""
+    T.eq(post(mock, member, memberId, "/v1/alarm/81/disarm", { code = CODE }).status, 202)
+    for _, frame in ipairs(Harness.clientFrames(connection.sent)) do
+        local message = Json.decode(frame.payload)
+        T.eq(type(message) == "table" and message.type == "notify", false, "no alert for a typed code")
+    end
+end
+
+function tests.the_sealed_command_matches_the_shared_vector()
+    local file = assert(io.open("tests/vectors/alarm_command.json", "rb"))
+    local vector = Json.decode(file:read("*a"))
+    file:close()
+    start(true)
+    local token = require("src.control4.alarm_control").token(vector.driver_public,
+        { a = vector.fields.a, m = vector.fields.m, c = vector.fields.c },
+        Base64.fromHex(vector.ephemeral_secret), Base64.fromHex(vector.iv), vector.fields.n, vector.fields.t)
+    T.eq(token, vector.token)
+    T.eq(Base64.toHex(X25519.publicKey(DRIVER_SECRET)), vector.driver_public)
+end
+
 return tests

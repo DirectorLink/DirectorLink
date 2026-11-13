@@ -203,11 +203,14 @@ function System.info(ctx)
         -- alarm_arming: the alarm armed and disarmed from the app (POST /v1/alarm/{id}/arm and
         -- /disarm), the alarm_control permission and the partitions' modes and control (1.15.0,
         -- ADR-091); always there. alarm_control: Alarm Status and Alarm Control both On now.
+        -- alarm_without_code: GET and PUT /v1/alarm/settings, arming and disarming without a code
+        -- and the alarm_disarmed alert (1.16.0, ADR-092); always there.
         features = {
             jewish_calendar = services.calendarEnabled ~= nil and services.calendarEnabled() == true,
             alarm_status = services.alarmStatusEnabled ~= nil and services.alarmStatusEnabled() == true,
             alarm_arming = true,
             alarm_control = services.alarmControlEnabled ~= nil and services.alarmControlEnabled() == true,
+            alarm_without_code = true,
             backup = true,
             sonos = services.sonosEnabled ~= nil and services.sonosEnabled() == true,
             automatic_backup = true,

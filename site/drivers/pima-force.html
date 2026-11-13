@@ -77,12 +77,12 @@
             <tbody>
               <tr>
                 <th scope="row">The alarm's state</th>
-                <td>Armed Away, Home or Night, disarmed, the exit delay</td>
+                <td>Armed Away, Home, Night or Shabbat, disarmed, the exit delay</td>
                 <td>Armed and disarmed, from the panel's reports</td>
               </tr>
               <tr>
                 <th scope="row">Arm and disarm from Control4</th>
-                <td>Away is Full arm, Home is Home 1, Night is Home 2. Disarming needs a typed code, which the panel checks</td>
+                <td>Away is Full arm, Home is Home 1, Night is Home 2, Shabbat is PIMA's Shabbat arming. Disarming needs a typed code, which the panel checks</td>
                 <td>No</td>
               </tr>
               <tr>
@@ -97,7 +97,7 @@
               </tr>
               <tr>
                 <th scope="row">Zones</th>
-                <td>Open and closed, live, with the names in the panel (Hebrew too)</td>
+                <td>Open and closed, live, with the names in the panel (Hebrew too); kept from Control4 while armed for Shabbat</td>
                 <td>Open and closed when the panel reports them; names set in Composer</td>
               </tr>
               <tr>
@@ -125,12 +125,10 @@
       <section class="driver-section" aria-labelledby="firmware-title">
         <h2 id="firmware-title">Panel firmware</h2>
         <p>
-          The JSON interface is not in every FORCE firmware: PIMA wrote its specification for 1.6.x and
-          later, and 1.8.x is current. To upgrade, enter the master code on the keypad, then Communication →
-          Remote Service → Upgrade/Update, choose Firmware: Latest version, then Over Network. Afterwards
-          Users &amp; Codes has a Smart Home code, and a CMS network path offers Protocol = JSON. If the
-          upgrade server offers nothing, ask your installer or PIMA support for FORCE firmware with the Smart
-          Home (JSON) interface.
+          The JSON interface is a special FORCE firmware that PIMA provides (tested: 3.0.19 on a FORCE 32C).
+          To check, press and hold 0 on the keypad: FW is the version, and a firmware with JSON names the
+          system HAC Force (32 zones) or HA1 Force (144 zones). Without it, ask PIMA support or your installer
+          for the JSON (smart home) firmware.
         </p>
         <p class="note">
           Older firmware, like 1.5.1, works in receive-only mode. The panel sends its normal monitoring
@@ -145,7 +143,7 @@
         <h2 id="needs-title">What it needs</h2>
         <ul class="plain-list">
           <li>A Control4 controller on OS 3.0 or newer, with a fixed IP address, and Composer Pro.</li>
-          <li>A PIMA FORCE panel on the home network, with a free monitoring station path: CMS 2 or 3, never one a monitoring company uses.</li>
+          <li>A PIMA FORCE panel on the home network, with a free monitoring station path: CMS 1, 2 or 3, never one a monitoring company uses.</li>
           <li>For full control, panel firmware with the JSON interface. Older firmware works receive only.</li>
           <li>The panel reaching the controller on the driver's Listen Port, 7780 by default. The panel dials out: it opens no port of its own.</li>
         </ul>
@@ -157,7 +155,7 @@
           <li class="step">
             <span class="step-number" aria-hidden="true">1</span>
             <h3>Point the panel at the controller</h3>
-            <p>With the installer code: System Programming → CMS &amp; Communication → Monitoring Stations → CMS 2 (or 3) → Comm. Paths → Network. Enter the controller's IP address, port 7780 and any Account ID. Protocol JSON (or the panel's normal report protocol, for receive only), Encryption off, Life signal on. Turn on Zone/Output Toggle in event reporting, and Remote Disarm in the user menu.</p>
+            <p>As PIMA's JSON guide gives it, with the installer code: System Programming → CMS &amp; Communication → Monitoring Stations → CMS 1 (2 or 3 if a monitoring company uses 1). In Event Reporting, mark Zone/Output Change. Under Comm. Paths → Network (Ethernet): any account number, the controller's IP address and port 7780, then Protocol JSON with Disable Encryption marked and the life signal on. Back in CMS &amp; Communication → General Settings, mark Remote Disarm.</p>
           </li>
           <li class="step">
             <span class="step-number" aria-hidden="true">2</span>
@@ -189,9 +187,27 @@
         <p>
           From DirectorLink 1.15.0, with its Alarm Control property on too, admins and the members they allow
           can arm and disarm from the DirectorLink app. They type their alarm code each time: it goes to the
-          panel as typed, the panel checks it, and DirectorLink never keeps it. The driver never uses its
-          Panel User Code for them. It tells DirectorLink when arming and disarming can work: while the JSON
-          interface is connected, not in receive-only mode or without the panel.
+          panel as typed, the panel checks it, and DirectorLink never keeps it. The driver tells DirectorLink
+          when arming and disarming can work: while the JSON interface is connected, not in receive-only mode
+          or without the panel.
+        </p>
+        <p>
+          From driver 1.2.0 and DirectorLink 1.16.0, each arm and disarm is sealed to the driver, which alone
+          can open it, so the code never appears in Control4's own logs. If you choose, the driver's
+          DirectorLink Without Code property and DirectorLink's admins together can allow arming, or arming
+          and disarming, without a code; the driver then uses its Panel User Code, and DirectorLink tells its
+          admins each time the alarm is disarmed without one.
+        </p>
+      </section>
+
+      <section class="driver-section" aria-labelledby="shabbat-title">
+        <h2 id="shabbat-title">Shabbat</h2>
+        <p>
+          PIMA sells the FORCE in Israel as a Shabbat and holiday system, approved by the Zomet Institute.
+          On such a panel the driver offers Shabbat next to Away, Home and Night. While a partition is armed
+          for Shabbat, its zones opening and closing are not passed to Control4, so people moving in the house
+          cause nothing in its programming; an alarm is still reported, and the zones are reported again once
+          Shabbat arming ends.
         </p>
       </section>
 

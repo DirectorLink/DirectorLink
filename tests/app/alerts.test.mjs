@@ -721,6 +721,55 @@ test("a controller that does not know this device has alerts on is told: switche
 
 // ---- DirectorLink 1.8.0: camera alerts (ADR-056) ------------------------------------------------
 
+// 1.16.0 (ADR-092): admins are told when the alarm is disarmed from DirectorLink without a code; on
+// unless turned off, and only where the controller offers it (Alarm Control on, an alarm in the home).
+test("an admin chooses the alarm disarmed without a code where the controller offers it (1.16.0)", async () => {
+  await turnAlertsOff();
+  withChoices("admin", { doorbell: true, door_opened: false, schedule_failed: true });
+  await press();
+  assert.equal(isOn(), true);
+  assert.equal(kindSwitch("alarm_disarmed"), null, "not offered: no Alarm Control, no alarm, or a controller before 1.16.0");
+  await turnAlertsOff();
+  withChoices("admin", { doorbell: true, door_opened: false, schedule_failed: true, alarm_disarmed: true });
+  await press();
+  assert.equal(kindSwitch("alarm_disarmed").attributes["aria-checked"], "true", "on unless turned off");
+  assert.match(alertsPanel().textContent, /A schedule has a problemThe alarm is disarmed without a code/, "after the schedules, as the controller lists them");
+  await pressKind("alarm_disarmed");
+  assert.deepEqual(toHome("PUT", "/v1/alerts/choices").at(-1).body, { kinds: { alarm_disarmed: false } });
+  assert.equal(kindSwitch("alarm_disarmed").attributes["aria-checked"], "false");
+  // The service worker's words for it.
+  const texts = savedTexts();
+  assert.equal(texts.alarm_disarmed_title, "Alarm disarmed");
+  assert.equal(texts.alarm_disarmed, "{name} was disarmed without a code by {who} at {time}.");
+  assert.equal(texts.who_schedule, "a schedule");
+  await turnAlertsOff();
+});
+
+test("the alarm disarmed without a code has its words for the service worker, in every language", async () => {
+  const { t } = await import("../../app/js/i18n.js");
+  const fill = (template, values) => template.replace(/\{(\w+)\}/g, (_, name) => values[name] ?? "");
+  const expected = {
+    en: ["Alarm disarmed", "House was disarmed without a code by Dana (iPhone) at 21:14.", "House was disarmed without a code by a schedule at 21:14.", "House was disarmed without a code at 21:14.", "The alarm is disarmed without a code"],
+    he: ["האזעקה נוטרלה", "ניטרול של House בלי קוד על ידי Dana (iPhone) ב-21:14.", "ניטרול של House בלי קוד על ידי תזמון ב-21:14.", "ניטרול של House בלי קוד ב-21:14.", "האזעקה מנוטרלת בלי קוד"],
+    es: ["Alarma desarmada", "Dana (iPhone) desarmó House sin código a las 21:14.", "Una programación desarmó House sin código a las 21:14.", "Se desarmó House sin código a las 21:14.", "Se desarma la alarma sin código"],
+    it: ["Allarme disinserito", "Dana (iPhone) ha disinserito House senza codice alle 21:14.", "Una programmazione ha disinserito House senza codice alle 21:14.", "Disinserimento di House senza codice alle 21:14.", "L’allarme viene disinserito senza codice"],
+  };
+  try {
+    for (const [language, [title, person, schedule, nobody, kind]] of Object.entries(expected)) {
+      await setLanguage(language);
+      const texts = alertTexts();
+      const who = fill(texts.who, { person: "Dana", device: "iPhone" });
+      assert.equal(texts.alarm_disarmed_title, title, language);
+      assert.equal(fill(texts.alarm_disarmed, { name: "House", who, time: "21:14" }), person, language);
+      assert.equal(fill(texts.alarm_disarmed, { name: "House", who: texts.who_schedule, time: "21:14" }), schedule, language);
+      assert.equal(fill(texts.alarm_disarmed_nobody, { name: "House", time: "21:14" }), nobody, language);
+      assert.equal(t("alerts.settings.kinds.alarm_disarmed"), kind, language);
+    }
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("camera alerts are offered only with a controller that has them, off until chosen, saying what they are", async () => {
   await turnAlertsOff();
   withChoices("viewer", { doorbell: true, camera: false });

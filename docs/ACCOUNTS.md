@@ -165,7 +165,10 @@ Every remote request and every answer travels as one envelope:
   home network, at home). The alarm's answer is padded to a size that does not depend on whether
   the home is armed (ADR-038). Arming and disarming (1.15.0, ADR-091) are sealed requests like any
   other: the code a person types for each command crosses no network in the clear, the cloud never
-  sees it, and DirectorLink sends it to the alarm without keeping or logging it. Control4's
+  sees it, and DirectorLink sends it to the alarm without keeping or logging it. Since 1.16.0
+  (ADR-092) it goes sealed to a driver of the alarm agreement's version 2 (DirectorLink · PIMA
+  FORCE 1.2.0), so Director's own log sees no code either; the alert `alarm_disarmed` (a disarm
+  without a code) is sealed to admin keys like any other. Control4's
   Director, logging at its debug level, does write each command it passes between drivers into its
   own log, the code with it: a root-only file in the controller's memory, rotated away within about
   2 to 3 hours and gone at a restart (ADR-091, corrected 2026-11-13).

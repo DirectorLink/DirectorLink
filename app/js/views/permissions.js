@@ -197,9 +197,16 @@ export function permissionsEditor(draft, { prefix = "perm", changed, lockedRole 
         if (!on) draft.alarm_control = false;
       })
     ),
-    // Arms and disarms the alarm (1.15.0): only with its status, and off for a new member.
+    // Arms and disarms the alarm (1.15.0): only with its status, and off for a new member. Since
+    // 1.16.0 an admin may let it go without the code (Settings → Alarm), which the help says.
     alarmArmingSupported() && draft.alarm
-      ? switchRow(`${prefix}-alarm-control`, t("perm.alarmControl"), t("perm.alarmControlHelp"), draft.alarm_control === true, (on) => update(() => (draft.alarm_control = on)))
+      ? switchRow(
+          `${prefix}-alarm-control`,
+          t("perm.alarmControl"),
+          t(state.system?.features?.alarm_without_code === true ? "perm.alarmControlHelpWithoutCode" : "perm.alarmControlHelp"),
+          draft.alarm_control === true,
+          (on) => update(() => (draft.alarm_control = on))
+        )
       : null
   );
   const scenes = state.scenes || [];

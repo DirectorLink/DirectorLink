@@ -7,6 +7,11 @@
 // fill nor to save, in a dialog of its own outside the screen (redraws never touch it). The field's
 // value is read once, when it is sent; then the field is emptied and the dialog taken out of the page.
 // It is never kept, logged, put in `ui` or `state`, or shown.
+//
+// Since 1.16.0 (ADR-092), where the partition goes without a code (`control.without_code`): Arm (and
+// its mode) sends at once; Disarm asks "Disarm House?" first, in the same dialog without a field, so
+// that a tap by mistake disarms nothing. When the controller asks for the code after all, the
+// dialog asks for it, saying why.
 
 import { h, iconButton } from "../dom.js";
 import { t } from "../i18n.js";
@@ -14,6 +19,7 @@ import { icon } from "../icons.js";
 import { armModeLabel } from "../alarm.js";
 import {
   CODE_MAX,
+  CODE_NEEDED,
   CODE_PATTERN,
   alarmActions,
   alarmPartition,
@@ -27,6 +33,7 @@ import {
   statusKey,
   takeFocus,
   wantFocus,
+  withoutCode,
 } from "../alarm-control.js";
 import { whenForgotten } from "../session.js";
 
@@ -81,7 +88,7 @@ function modeChoice(partition, modes) {
             class: "button button-secondary button-small alarm-mode",
             "aria-label": t("alarm.control.modeLabel", { name: partition.name, mode: armModeLabel(mode) }),
             dataset: { key },
-            onclick: () => openCodeDialog(id, "arm", mode, key),
+            onclick: () => command(id, "arm", mode, key),
           },
           h("span", { dir: "auto" }, armModeLabel(mode))
         )
@@ -123,7 +130,7 @@ export function alarmControls(partition) {
       actionButton(partition, "arm", () => {
         clearMessage(id);
         if (modes.length === 1) {
-          openCodeDialog(id, "arm", modes[0], `alarm:${id}:arm`);
+          command(id, "arm", modes[0], `alarm:${id}:arm`);
         } else {
           wantFocus(`alarm:${id}:mode:0`);
           chooseMode(id);
@@ -135,7 +142,7 @@ export function alarmControls(partition) {
     buttons.push(
       actionButton(partition, "disarm", () => {
         clearMessage(id);
-        openCodeDialog(id, "disarm", null, `alarm:${id}:disarm`);
+        command(id, "disarm", null, `alarm:${id}:disarm`);
       })
     );
   }
@@ -144,12 +151,40 @@ export function alarmControls(partition) {
 
 // ---- the code ------------------------------------------------------------------------------
 
+// Arm in `mode`, or Disarm, pressed: the code asked for, or (1.16.0) none where the partition goes
+// without one: arming goes at once, disarming once confirmed.
+function command(id, action, mode, opener) {
+  const partition = alarmPartition(id);
+  if (!withoutCode(partition, action)) {
+    openCodeDialog(id, action, mode, opener);
+  } else if (action === "disarm") {
+    openCodeDialog(id, action, mode, opener, { confirm: true });
+  } else {
+    sendWithoutCode(id, action, mode);
+  }
+}
+
+// "Sending…", then "Arming…", has the keyboard. The controller asked for the code after all (an
+// admin changed Settings → Alarm meanwhile): the dialog asks for it.
+async function sendWithoutCode(id, action, mode) {
+  wantFocus(statusKey(id));
+  if ((await sendAlarmCommand({ id, action, mode, code: null })) === CODE_NEEDED) {
+    openCodeDialog(id, action, mode, `alarm:${id}:${action}`, { needed: true });
+  }
+}
+
 // The dialog for arming partition `id` in `mode`, or disarming it. `opener`: the data-key of the
-// button that opened it, which gets the keyboard back when it is closed without sending.
-export function openCodeDialog(id, action, mode, opener) {
+// button that opened it, which gets the keyboard back when it is closed without sending. `confirm`
+// (1.16.0): a disarm without a code, only confirmed ("Disarm House?"), no field. `needed`: the
+// controller asked for the code of a command sent without one; the dialog says so.
+export function openCodeDialog(id, action, mode, opener, { confirm = false, needed = false } = {}) {
   closeCodeDialog();
   const partition = alarmPartition(id);
   if (!controlAvailable(partition)) return;
+  if (confirm) {
+    openConfirmDialog(id, partition, opener);
+    return;
+  }
   const title =
     action === "arm"
       ? t("alarm.control.armTitle", { name: isolate(partition.name), mode: armModeLabel(mode) })
@@ -201,6 +236,7 @@ export function openCodeDialog(id, action, mode, opener) {
     h(
       "div",
       { class: "field" },
+      needed ? h("p", { class: "notice notice-info", role: "status", dataset: { key: "alarm-code-needed" } }, t("alarm.control.codeNeeded")) : null,
       h("label", { class: "field-label", for: "alarm-code" }, t("alarm.control.codeLabel")),
       input,
       h("p", { id: "alarm-code-help", class: "field-help" }, t("alarm.control.codeHelp")),
@@ -218,13 +254,48 @@ export function openCodeDialog(id, action, mode, opener) {
       h("button", { type: "button", class: "button button-quiet", dataset: { key: "alarm-code-cancel" }, onclick: () => closeCodeDialog() }, t("common.cancel"))
     )
   );
+  showDialog(title, form, input, opener);
+  input.focus();
+}
+
+// Disarm without a code (1.16.0): "Disarm House?", Disarm or Cancel, so that a tap by mistake
+// disarms nothing. Nothing to type: the alarm's driver uses its own code.
+function openConfirmDialog(id, partition, opener) {
+  const send = h(
+    "button",
+    { type: "submit", class: "button button-primary", dataset: { key: "alarm-confirm-send" } },
+    icon("shieldOff"),
+    h("span", {}, t("alarm.control.disarm"))
+  );
+  const confirmed = (event) => {
+    event.preventDefault();
+    closeCodeDialog({ sent: true });
+    sendWithoutCode(id, "disarm", null);
+  };
+  const form = h(
+    "form",
+    { class: "alarm-code-form", novalidate: true, onsubmit: confirmed },
+    h("p", { class: "field-help", dataset: { key: "alarm-confirm-help" } }, t("alarm.control.disarmConfirmHelp")),
+    h(
+      "div",
+      { class: "button-row" },
+      send,
+      h("button", { type: "button", class: "button button-quiet", dataset: { key: "alarm-code-cancel" }, onclick: () => closeCodeDialog() }, t("common.cancel"))
+    )
+  );
+  showDialog(t("alarm.control.disarmConfirmTitle", { name: isolate(partition.name) }), form, null, opener);
+  send.focus();
+}
+
+// The dialog, outside the screen. A tap on the backdrop, Escape or Close: closed, and the code typed
+// so far is gone.
+function showDialog(title, form, input, opener) {
   const dialog = h(
     "dialog",
     { id: "alarm-dialog", class: "dialog alarm-dialog", "aria-labelledby": "alarm-dialog-title" },
     h("div", { class: "dialog-head" }, h("h2", { id: "alarm-dialog-title", class: "dialog-title alarm-dialog-title" }, title), iconButton("close", t("common.close"), { onclick: () => closeCodeDialog() })),
     form
   );
-  // A tap on the backdrop, Escape or Close: closed, and the code typed so far is gone.
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) closeCodeDialog();
   });
@@ -232,7 +303,6 @@ export function openCodeDialog(id, action, mode, opener) {
   document.body.append(dialog);
   open = { dialog, input, opener };
   dialog.showModal();
-  input.focus();
 }
 
 // Empties the field and takes the dialog out of the page. `sent`: the code went; the keyboard goes to
@@ -241,7 +311,7 @@ export function closeCodeDialog({ sent = false } = {}) {
   if (!open) return;
   const { dialog, input, opener } = open;
   open = null;
-  input.value = "";
+  if (input) input.value = "";
   if (dialog.open) dialog.close();
   dialog.remove();
   if (!sent && opener) window.setTimeout(() => focusKey(opener), 0);

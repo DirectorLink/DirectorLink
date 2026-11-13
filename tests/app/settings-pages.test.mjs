@@ -94,6 +94,8 @@ const { SETTINGS_PAGES, settingsRowKey, settingsView } = await import("../../app
 const { accessView } = await import("../../app/js/views/access.js");
 const { updateBanner } = await import("../../app/js/views/updates.js");
 const { APP_VERSION } = await import("../../app/js/version.js");
+const { loadAlarmSettings, resetAlarmSettings } = await import("../../app/js/alarm-settings.js");
+const { loadAlarm } = await import("../../app/js/alarm.js");
 
 // ---- what a screen holds -----------------------------------------------------------------------
 
@@ -409,7 +411,7 @@ test("at home, This home says Update DirectorLink when the account service turne
 
 test("every page opens with its title and Back to Settings' list", () => {
   home("admin");
-  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", account: "Account", alerts: "Alerts", appearance: "Appearance and language", app: "App", about: "About" };
+  const titles = { controller: "Controller", rooms: "Rooms", calendar: "Shabbat and holidays", alarm: "Alarm", account: "Account", alerts: "Alerts", appearance: "Appearance and language", app: "App", about: "About" };
   assert.deepEqual(Object.keys(titles).sort(), [...SETTINGS_PAGES].sort());
   for (const page of SETTINGS_PAGES) {
     const view = settingsView({ page });
@@ -442,7 +444,8 @@ test("Back: in-app history goes back; the list then focuses the row that opened 
   assert.deepEqual(assigned, []);
   // app.js focuses this row when the list follows one of its pages.
   const list = settingsView({});
-  for (const page of SETTINGS_PAGES.filter((name) => name !== "calendar" || rows(list).includes("settings-row:calendar"))) {
+  // Shabbat and holidays and (1.16.0) Alarm only where the controller has them.
+  for (const page of SETTINGS_PAGES.filter((name) => !["calendar", "alarm"].includes(name) || rows(list).includes(`settings-row:${name}`))) {
     const key = settingsRowKey({ name: "settings", page, tab: "settings" });
     assert.ok(byKey(list, key), `${page}: ${key} is on the list`);
   }
@@ -450,6 +453,160 @@ test("Back: in-app history goes back; the list then focuses the row that opened 
   assert.ok(byKey(list, "settings-row:access"));
   assert.equal(settingsRowKey({ name: "settings", page: null }), null, "the list itself: its title");
   assert.equal(settingsRowKey({ name: "home", tab: "home" }), null);
+});
+
+// Settings → Alarm (1.16.0, ADR-092): admins of a controller that has it, while Alarm Control is on,
+// choose how far the alarm goes without a code (GET and PUT /v1/alarm/settings); arming and
+// disarming without one says who can then disarm it, and that admins are told each time; the alarm's
+// own driver must allow it too, and a note says when it does not yet.
+test("Settings → Alarm (1.16.0): admins choose a code every time, arming, or arming and disarming without one", async () => {
+  const offline = globalThis.fetch;
+  const calls = [];
+  const controller = { level: "none", driver: "none", refuse: null };
+  // A 1.16.0 controller that does not seal (as before 1.0.0): its setting, and one partition whose
+  // `control.without_code` is the lower of the setting and its driver's.
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    const method = options.method || "GET";
+    const body = options.body ? JSON.parse(options.body) : null;
+    calls.push({ method, path, body });
+    const reply = (status, data) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+    if (path === "/v1/sealed") return reply(404, { code: "NOT_FOUND" });
+    if (path === "/v1/alarm/settings" && method === "GET") return reply(200, { without_code: controller.level });
+    if (path === "/v1/alarm/settings" && method === "PUT") {
+      if (controller.refuse) return reply(controller.refuse, { status: controller.refuse, code: "INTERNAL_ERROR", title: "The alarm settings could not be saved" });
+      controller.level = body.without_code;
+      return reply(200, { without_code: controller.level });
+    }
+    if (path === "/v1/alarm") {
+      const levels = ["none", "arm", "arm_disarm"];
+      const lower = levels[Math.min(levels.indexOf(controller.level), levels.indexOf(controller.driver))];
+      return reply(200, { enabled: true, partitions: [{ id: 80, name: "House", state: "disarmed_ready", armed: false, modes: ["Away"], control: { allowed: true, available: true, without_code: lower } }] });
+    }
+    return reply(404, { code: "NOT_FOUND" });
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+  const page = () => settingsView({ page: "alarm" });
+  const checked = (view) => ["none", "arm", "arm_disarm"].filter((level) => byKey(view, `alarm-without-code-${level}`)?.attributes.checked !== undefined);
+  const choose = (level) => byKey(page(), `alarm-without-code-${level}`).dispatch("change");
+  const enter = async () => {
+    resetAlarmSettings();
+    await loadAlarmSettings();
+  };
+  try {
+    // A controller before 1.16.0, or Alarm Control off: no row, nothing asked, and the page says why.
+    home("admin");
+    ui.alarmSettings = null;
+    state.alarm = null;
+    assert.ok(!rows().includes("settings-row:alarm"));
+    state.system.features.alarm_without_code = true;
+    assert.ok(!rows().includes("settings-row:alarm"), "Alarm Control off: nothing to arm or disarm");
+    await loadAlarmSettings();
+    assert.deepEqual(calls, []);
+    assert.match(textOf(page()), /Only admins change this, with DirectorLink 1\.16\.0 or later on the controller and Alarm Control on in Composer\./);
+
+    // A member: neither.
+    home("member");
+    Object.assign(state.system.features, { alarm_without_code: true, alarm_control: true, alarm_status: true });
+    assert.ok(!rows().includes("settings-row:alarm"));
+    await loadAlarmSettings();
+    assert.deepEqual(calls, [], "members are not asked (the controller says 403)");
+    assert.equal(byKey(page(), "alarm-settings-save"), null);
+
+    // An admin: the row, after Shabbat and holidays; the setting read as the list opens.
+    home("admin");
+    Object.assign(state.system.features, { alarm_without_code: true, alarm_control: true, alarm_status: true });
+    assert.deepEqual(rows().slice(0, 4), ["settings-row:controller", "settings-row:rooms", "settings-row:calendar", "settings-row:alarm"]);
+    const row = byKey(settingsView({}), "settings-row:alarm");
+    assert.equal(row.attributes.href, "#/settings/alarm");
+    assert.equal(byClass(row, "settings-row-title").textContent, "Alarm");
+    assert.equal(rowStatus("alarm"), null, "not read yet");
+    assert.match(textOf(page()), /Loading…/);
+    await loadAlarmSettings();
+    assert.deepEqual(calls.map((call) => `${call.method} ${call.path}`).filter((line) => line.includes("/alarm")), ["GET /v1/alarm/settings"]);
+    assert.equal(rowStatus("alarm"), "A code every time");
+
+    // As it ships: a code every time; nothing to save.
+    await enter();
+    let view = page();
+    assert.equal(byClass(view, "page-title").textContent, "Alarm");
+    assert.deepEqual(checked(view), ["none"]);
+    assert.match(textOf(view), /Every time \(default\).*Arm without a code.*Arm and disarm without a code/s);
+    assert.equal(byKey(view, "alarm-settings-save").attributes.disabled, "", "nothing chosen yet");
+    assert.equal(byKey(view, "alarm-settings-driver").textContent, "This works only as far as the alarm’s own driver allows it too: for a PIMA alarm, an installer turns on “DirectorLink Without Code” in the DirectorLink · PIMA FORCE driver’s properties in Composer. Without a code, the driver uses the code stored in it.");
+    assert.equal(byKey(view, "alarm-settings-warning"), null);
+    assert.equal(byKey(view, "alarm-settings-held"), null);
+
+    // Arm without a code: no warning yet.
+    choose("arm");
+    view = page();
+    assert.deepEqual(checked(view), ["arm"]);
+    assert.equal(byKey(view, "alarm-settings-warning"), null);
+    assert.equal(byKey(view, "alarm-settings-save").attributes.disabled, undefined);
+    // Arm and disarm without a code: who can then disarm it, and that admins are told each time.
+    choose("arm_disarm");
+    view = page();
+    assert.equal(
+      byKey(view, "alarm-settings-warning").textContent,
+      "Anyone allowed to arm and disarm the alarm (Settings → Users) can then disarm it without the code, at home or away. Admins get an alert each time it is disarmed without a code."
+    );
+    calls.length = 0;
+    byKey(view, "alarm-settings-save").dispatch("click");
+    assert.match(textOf(page()), /Saving…/);
+    await settle();
+    assert.deepEqual(calls.filter((call) => call.method === "PUT"), [{ method: "PUT", path: "/v1/alarm/settings", body: { without_code: "arm_disarm" } }]);
+    assert.ok(calls.some((call) => call.method === "GET" && call.path === "/v1/alarm"), "the partitions read again: Home follows");
+    view = page();
+    assert.deepEqual(checked(view), ["arm_disarm"]);
+    assert.match(textOf(view), /Saved\./);
+    assert.equal(byKey(view, "alarm-settings-save").attributes.disabled, "");
+    assert.equal(rowStatus("alarm"), "Arms and disarms without a code");
+    // Its driver does not allow it yet: the code is still asked, and the page says what to change.
+    assert.equal(
+      byKey(view, "alarm-settings-held").textContent,
+      "The alarm’s driver doesn’t allow this yet, so a code is still needed. An installer turns on “DirectorLink Without Code” in its properties in Composer."
+    );
+    controller.driver = "arm_disarm";
+    await loadAlarm();
+    assert.equal(byKey(page(), "alarm-settings-held"), null, "its driver allows it: no note");
+
+    // Not saved: said, and the choice stays to try again.
+    controller.refuse = 500;
+    choose("none");
+    byKey(page(), "alarm-settings-save").dispatch("click");
+    await settle();
+    view = page();
+    const refused = byClass(view, "notice-error");
+    assert.ok(refused?.textContent && refused.attributes.role === "alert", "said");
+    assert.doesNotMatch(textOf(view), /Saved\./);
+    assert.deepEqual(checked(view), ["none"]);
+    assert.equal(controller.level, "arm_disarm");
+    assert.equal(rowStatus("alarm"), "Arms and disarms without a code");
+    controller.refuse = null;
+
+    // In Hebrew, Spanish and Italian.
+    const words = {
+      he: ["אזעקה", "בכל פעם (ברירת מחדל)", "דריכה בלי קוד", "דריכה וניטרול בלי קוד", "דריכה וניטרול בלי קוד"],
+      es: ["Alarma", "Cada vez (predeterminado)", "Armar sin código", "Armar y desarmar sin código", "Se arma y desarma sin código"],
+      it: ["Allarme", "Ogni volta (predefinito)", "Inserisci senza codice", "Inserisci e disinserisci senza codice", "Si inserisce e disinserisce senza codice"],
+    };
+    for (const [language, [title, none, arm, both, status]] of Object.entries(words)) {
+      await setLanguage(language);
+      await enter();
+      view = page();
+      assert.equal(byClass(view, "page-title").textContent, title, language);
+      const text = textOf(view);
+      for (const label of [none, arm, both]) assert.ok(text.includes(label), `${language}: ${label}`);
+      assert.ok(byKey(view, "alarm-settings-warning"), `${language}: the warning, as arming and disarming is saved`);
+      assert.ok(text.includes("DirectorLink Without Code"), language);
+      assert.equal(rowStatus("alarm"), status, language);
+    }
+  } finally {
+    await setLanguage("en");
+    globalThis.fetch = offline;
+    ui.alarmSettings = null;
+    state.alarm = null;
+  }
 });
 
 test("Settings → Rooms: show or hide for everyone; the order and the names for admins", () => {

@@ -377,7 +377,7 @@ function Views.alarmPartitionLongest(view)
     -- Whether the caller arms and disarms, and whether the driver can now (1.15.0, ADR-091): false
     -- is the longer word. The modes are the driver's, the same in every state.
     if form.control ~= nil then
-        form.control = { allowed = false, available = false }
+        form.control = { allowed = false, available = false, without_code = "arm_disarm" }
     end
     return form
 end

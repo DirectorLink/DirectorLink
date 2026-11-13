@@ -4,7 +4,8 @@
 // views/alerts.js), Appearance and language (language, theme, colours and text size, 1.10.0), App
 // and About. Since 1.12.0 (ADR-083) a user still named after a device is asked their name once, at
 // the top of the list; Account no longer invites someone (Settings → Users → Add a user does), and
-// a Safari tab on iPhone or iPad moves to the Home Screen app there (views/move.js).
+// a Safari tab on iPhone or iPad moves to the Home Screen app there (views/move.js). Since 1.16.0
+// (ADR-092) admins choose on Alarm how far the alarm is armed and disarmed without a code.
 
 import { deleteAccount, loadAccount, removeProvider, signIn, signInProviders, signOut } from "../account.js";
 import { turnAlertsOff } from "../alerts.js";
@@ -25,6 +26,8 @@ import { api, checkInThroughAccount, connect, errorText, noteForbidden, revokeAn
 import { linksMadeBy, linksSupported } from "../scene-links.js";
 import { PALETTES, TEXT_SIZES, THEMES, palettePreference, textSizePreference, themePreference } from "../theme.js";
 import { can, notify, state, ui } from "../state.js";
+import { alarmPartitions } from "../alarm.js";
+import { WITHOUT_CODE_LEVELS, alarmSettingsSupported, chooseAlarmLevel, levelRank, loadAlarmSettings, saveAlarmSettings } from "../alarm-settings.js";
 import { alarmFact } from "./alarm.js";
 import { alertsPage, alertsStatus } from "./alerts.js";
 import { screensCard } from "./alert-screens.js";
@@ -43,7 +46,7 @@ import { updateCheckButton, updateFact, updatePanel, updateSummary } from "./upd
 import { APP_VERSION } from "../version.js";
 
 // The pages under Settings (#/settings/<page>); app.js routes them.
-export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "account", "alerts", "appearance", "app", "about"];
+export const SETTINGS_PAGES = ["controller", "rooms", "calendar", "alarm", "account", "alerts", "appearance", "app", "about"];
 
 // `page`: one of SETTINGS_PAGES, or null for the main list.
 export function settingsView({ page = null, onPalette, onTheme, onLanguage, onTextSize, navigate }) {
@@ -54,6 +57,8 @@ export function settingsView({ page = null, onPalette, onTheme, onLanguage, onTe
       return subpage(t("settings.rooms.title"), roomsSection(), roomNamesSection(), musicSection());
     case "calendar":
       return subpage(t("calendar.settings.title"), calendarSection() || calendarUnavailable());
+    case "alarm":
+      return subpage(t("alarm.settings.title"), alarmSettingsSection() || alarmSettingsUnavailable());
     case "account":
       return subpage(t("settings.account.title"), accountSection());
     case "alerts":
@@ -223,7 +228,7 @@ function pageRows() {
   return h(
     "nav",
     { class: "settings-pages", "aria-label": t("settings.rows.label") },
-    h("ul", { class: "card settings-rows" }, controllerRow(), roomsRow(), calendarRow(), accessRow()),
+    h("ul", { class: "card settings-rows" }, controllerRow(), roomsRow(), calendarRow(), alarmRow(), accessRow()),
     h("ul", { class: "card settings-rows" }, accountRow(), alertsRow(), appearanceRow(), appRow(), aboutRow())
   );
 }
@@ -256,6 +261,14 @@ function calendarRow() {
   if (!settings) return null;
   const status = t("settings.rows.calendar", { candles: settings.candle_lighting_minutes, havdalah: settings.havdalah_minutes });
   return pageRow({ page: "calendar", iconName: "candles", title: t("calendar.settings.title"), status });
+}
+
+// Admins of a 1.16.0 controller, while Alarm Control is on (as its page, below): how far the alarm
+// goes without a code, once read.
+function alarmRow() {
+  if (!state.loaded || !alarmSettingsSupported()) return null;
+  const level = ui.alarmSettings?.level;
+  return pageRow({ page: "alarm", iconName: "shield", title: t("alarm.settings.title"), status: level ? t(`alarm.settings.row.${level}`) : null });
 }
 
 // Admins manage who has access: devices, invitations and, for the owner, accounts. Since 1.9.0
@@ -859,6 +872,70 @@ function calendarSection() {
 function calendarUnavailable() {
   if (!state.loaded) return notReadyState() || h("p", { class: "field-help", role: "status" }, t("common.loading"));
   return h("p", { class: "notice notice-info" }, t("calendar.settings.unavailable"));
+}
+
+// ---- the alarm without a code (1.16.0, ADR-092) ---------------------------------------------
+
+const LEVEL_WORDS = { none: ["none", "noneHelp"], arm: ["arm", "armHelp"], arm_disarm: ["armDisarm", "armDisarmHelp"] };
+
+// Admins: a code every time (as it ships), arming without one, or arming and disarming without one;
+// saved with Save (js/alarm-settings.js). What the alarm's own driver must allow too, and, for
+// arming and disarming, who can then disarm it and that admins are told each time.
+function alarmSettingsSection() {
+  if (!state.loaded || !alarmSettingsSupported()) return null;
+  const settings = ui.alarmSettings;
+  if (!settings || settings.level === null) {
+    const error = settings?.error;
+    return card(
+      "alarm",
+      "shield",
+      t("alarm.settings.cardTitle"),
+      error
+        ? [
+            h("p", { class: "notice notice-error", role: "alert" }, error),
+            h("div", { class: "button-row" }, h("button", { type: "button", class: "button button-secondary", dataset: { key: "alarm-settings-retry" }, onclick: () => loadAlarmSettings() }, icon("refresh"), t("common.retry"))),
+          ]
+        : h("p", { class: "field-help", role: "status" }, t("common.loading"))
+    );
+  }
+  const chosen = settings.draft ?? settings.level;
+  // The alarm's driver allows less than the saved level for a partition: a code is still asked there.
+  const held = (alarmPartitions() || []).some((partition) => typeof partition.control?.without_code === "string" && levelRank(partition.control.without_code) < levelRank(settings.level));
+  const message = settings.message;
+  return card(
+    "alarm",
+    "shield",
+    t("alarm.settings.cardTitle"),
+    radioGroup({
+      legend: t("alarm.settings.legend"),
+      groupName: "alarm-without-code",
+      className: "radio-stack",
+      value: chosen,
+      onChange: chooseAlarmLevel,
+      options: WITHOUT_CODE_LEVELS.map((level) => ({ value: level, label: t(`alarm.settings.${LEVEL_WORDS[level][0]}`), help: t(`alarm.settings.${LEVEL_WORDS[level][1]}`) })),
+    }),
+    chosen === "arm_disarm" ? h("p", { class: "notice notice-warning", dataset: { key: "alarm-settings-warning" } }, t("alarm.settings.warning")) : null,
+    h("p", { class: "field-help", dataset: { key: "alarm-settings-driver" } }, t("alarm.settings.driver")),
+    held && settings.level !== "none" ? h("p", { class: "notice notice-info", dataset: { key: "alarm-settings-held" } }, t("alarm.settings.stillCode")) : null,
+    message ? h("p", { class: `notice notice-${message.kind}`, role: message.kind === "error" ? "alert" : "status" }, message.text) : null,
+    h(
+      "div",
+      { class: "button-row" },
+      h(
+        "button",
+        { type: "button", class: "button button-primary", disabled: settings.busy || chosen === settings.level, dataset: { key: "alarm-settings-save" }, onclick: () => saveAlarmSettings() },
+        icon("check"),
+        settings.busy ? t("common.saving") : t("alarm.settings.save")
+      )
+    )
+  );
+}
+
+// Settings → Alarm for anyone else (a link kept from an admin device), an older controller, or with
+// Alarm Control off: why there is nothing to change.
+function alarmSettingsUnavailable() {
+  if (!state.loaded) return notReadyState() || h("p", { class: "field-help", role: "status" }, t("common.loading"));
+  return h("p", { class: "notice notice-info" }, t("alarm.settings.unavailable"));
 }
 
 // ---- controller ----------------------------------------------------------------------------
