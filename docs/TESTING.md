@@ -2,7 +2,22 @@
 
 ## Current release
 
-`v1.15.0` — Arm and disarm the alarm from the app, with a code typed each time (1150a); the relay's `replaced` count (1150b). The Worker is deployed by hand (1150b); no D1 migration.
+`v1.16.0` — The alarm's code sealed to its driver, and arming or disarming without a code (1160a). No Worker change; no D1 migration.
+
+## 1160a. Sealed code and without a code (1.16.0)
+
+On the owner's controller, with DirectorLink 1.16.0 and DirectorLink · PIMA FORCE 1.2.0 updated in Composer; the app updates by itself (Settings shows 1.16.0).
+
+1. **Sealed.** In Composer the PIMA driver's variables show `DIRECTORLINK_ALARM` = 2 and a 64-digit `DIRECTORLINK_ALARM_KEY`. Arm Away from the app with the code, then disarm: both work as in 1.15.0. On the controller, `director.log` and `journalctl` show the commands with `UserCode` starting `dl2:`, never the code.
+2. **Shabbat.** Arm → Shabbat with the code: the keypad shows the Shabbat arming (if the panel is a "Shabbat system"); zones opening in the house cause nothing in Control4. Disarm with the code.
+3. **Without a code, arming.** PIMA's **DirectorLink Without Code** → Arm only; the app's Settings → Alarm → Arm without a code. Arm Away: no code asked. Disarm still asks.
+4. **Without a code, disarming.** Both on Arm and disarm. Disarm: the app asks to confirm, then disarms; the admin's phone gets "Alarm disarmed" with who and when; History says "without a code".
+5. **Back.** Settings → Alarm → Every time: a code is asked again. Set PIMA's property back to No.
+6. **Schedules:** with no holidays in Schedules → Holidays, the editor has no "On your holidays"; add one and it appears.
+
+## Previous release
+
+`v1.15.0` — Arm and disarm the alarm from the app, with a code typed each time (1150a); the relay's `replaced` count (1150b).
 
 ## 1150a. Arm and disarm the alarm (1.15.0)
 

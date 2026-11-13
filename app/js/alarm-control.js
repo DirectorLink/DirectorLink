@@ -10,6 +10,12 @@
 // storage, the console or the page once sent. The panel checks it: a 202 says only that the command
 // went, so the partition is read again (2 to 20 s after), and when it did not change as asked the app
 // says the alarm didn't take it. Nothing here runs by itself: only a person's press and their code.
+//
+// Since 1.16.0 (ADR-092) a partition's `control.without_code` says how far it goes without a code
+// ("none", "arm" or "arm_disarm": the lower of the admins' setting, Settings → Alarm, and its
+// driver's). An arm or disarm it covers is sent without one ({ mode } or {}), and the driver uses its
+// own; a disarm is still confirmed first (views/alarm-control.js). When the controller answers
+// CODE_REQUIRED (the setting changed meanwhile), the partitions are read again and the code is asked.
 
 import { alarmStateText, alarmTone, loadAlarm } from "./alarm.js";
 import { announce } from "./dom.js";
@@ -27,6 +33,8 @@ export const FOLLOW_MS = [2000, 2000, 3000, 3000, 4000, 6000];
 export const MESSAGE_MS = 60000;
 // Refusals after which the partitions are read again: what may be done changed meanwhile.
 const READ_AGAIN = new Set(["ALARM_UNAVAILABLE", "NO_ARM_MODES", "ALARM_CONTROL_DISABLED", "FORBIDDEN"]);
+// What sendAlarmCommand answers when a command sent without a code needs one after all.
+export const CODE_NEEDED = "code";
 
 const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 const isolate = (text) => `⁨${text}⁩`;
@@ -51,6 +59,13 @@ export function controlAllowed(partition) {
 // …and its driver can now.
 export function controlAvailable(partition) {
   return controlAllowed(partition) && partition.control.available !== false;
+}
+
+// It may be armed (`action` "arm") or disarmed without a code now (1.16.0, ADR-092).
+export function withoutCode(partition, action) {
+  const level = partition?.control?.without_code;
+  if (action === "arm") return level === "arm" || level === "arm_disarm";
+  return action === "disarm" && level === "arm_disarm";
 }
 
 // The modes it arms in, as its driver declares them (none: it is only disarmed from DirectorLink).
@@ -163,14 +178,19 @@ export function alarmCommandError(error) {
   }
 }
 
-// Sends what the person asked, with the code they typed for it (views/alarm-control.js), then reads the
-// partition until it shows the alarm took it, or 20 s pass. Returns whether the controller sent it.
-export async function sendAlarmCommand({ id, action, mode = null, code }) {
+// Sends what the person asked, with the code they typed for it (views/alarm-control.js), or (`code`
+// null, 1.16.0) without one where the partition goes without; then reads the partition until it shows
+// the alarm took it, or 20 s pass. Returns whether the controller sent it, or CODE_NEEDED when it
+// asked for the code after all (the partitions read again by then).
+export async function sendAlarmCommand({ id, action, mode = null, code = null }) {
   const partition = alarmPartition(id);
+  const noCode = code === null;
   // Its state may have changed while the code was typed: the alarm sorts that out. Only a partition it
-  // may still be sent, in a mode its driver declares, with a code of digits, goes.
+  // may still be sent, in a mode its driver declares, with a code of digits (or none where it goes
+  // without), goes.
   const fits = action === "arm" ? armModes(partition).includes(mode) : action === "disarm";
-  if (!controlAvailable(partition) || !fits || !CODE_PATTERN.test(String(code ?? ""))) {
+  const coded = noCode ? withoutCode(partition, action) : CODE_PATTERN.test(String(code));
+  if (!controlAvailable(partition) || !fits || !coded) {
     setControl(id, null);
     return false;
   }
@@ -179,7 +199,8 @@ export async function sendAlarmCommand({ id, action, mode = null, code }) {
   const since = keyGeneration();
   window.clearTimeout(messageTimers.get(id));
   setControl(id, { stage: "sending", action, mode });
-  const body = action === "arm" ? { mode, code } : { code };
+  const body = action === "arm" ? { mode } : {};
+  if (!noCode) body.code = code;
   const current = () => since === keyGeneration() && latest.get(id) === command;
   try {
     await api(`/v1/alarm/${id}/${action}`, { method: "POST", body });
@@ -191,6 +212,13 @@ export async function sendAlarmCommand({ id, action, mode = null, code }) {
       return false;
     }
     noteForbidden(error);
+    if (noCode && error?.code === "CODE_REQUIRED") {
+      // Settings → Alarm (or the alarm's driver) asks for the code again since the partition was
+      // read: read it again, and the view asks for the code.
+      setControl(id, null);
+      await loadAlarm();
+      return current() ? CODE_NEEDED : false;
+    }
     fail(id, alarmCommandError(error), action);
     if (READ_AGAIN.has(error?.code) || error?.status === 404) loadAlarm();
     return false;
@@ -200,12 +228,13 @@ export async function sendAlarmCommand({ id, action, mode = null, code }) {
   }
   if (!current()) return false;
   setControl(id, { stage: "pending", action, mode });
-  follow(id, action, current);
+  follow(id, action, current, noCode);
   return true;
 }
 
-// Reads the partitions again until this one shows what was asked; after 20 s, says it did not.
-async function follow(id, action, current) {
+// Reads the partitions again until this one shows what was asked; after 20 s, says it did not (without
+// a code: nothing about checking it).
+async function follow(id, action, current, noCode) {
   for (const wait of FOLLOW_MS) {
     await sleep(wait);
     if (!current()) return;
@@ -224,7 +253,8 @@ async function follow(id, action, current) {
       return;
     }
   }
-  fail(id, t(action === "arm" ? "alarm.control.notArmed" : "alarm.control.notDisarmed"), action);
+  const words = action === "arm" ? (noCode ? "alarm.control.notArmedNoCode" : "alarm.control.notArmed") : noCode ? "alarm.control.notDisarmedNoCode" : "alarm.control.notDisarmed";
+  fail(id, t(words), action);
 }
 
 // This device's key forgotten: no command follows on, and nothing of one stays.

@@ -314,6 +314,7 @@ curl http://<controller-ip>:41999/v1/schedules/week -H "Authorization: Bearer ak
 - At most 6 commands a person in 5 minutes and 20 in the home in an hour: `429 RATE_LIMITED` with `Retry-After`.
 - `409 ALARM_UNAVAILABLE` when the alarm's driver says it cannot now (`control.available` false; [docs/ALARM_DRIVERS.md](../docs/ALARM_DRIVERS.md)), `409 NO_ARM_MODES` when it declares no modes.
 - Each command is in the history (`kind` `alarm`), which only sealed reads show.
+- Since 1.16.0 (ADR-092): `GET`/`PUT /v1/alarm/settings` (admins) `{without_code: none | arm | arm_disarm}`; each partition's `control.without_code` is the lower of that and its driver's. Then `code` may be left out of an action it covers (else `400 CODE_REQUIRED`), and the driver uses its own code. A driver of the alarm agreement's version 2 gets every command sealed to its key. Admins get the `alarm_disarmed` alert each time the alarm is disarmed without a code.
 ## Music (Sonos)
 
 Since 1.5.0 DirectorLink talks to the home's Sonos speakers itself, on the home network, with the local protocol the Sonos app uses (UPnP/SOAP on port 1400, which Sonos does not document; ADR-044, [`docs/SONOS.md`](../docs/SONOS.md)).

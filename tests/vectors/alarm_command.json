@@ -1,0 +1,17 @@
+{
+  "note": "A command sealed to an alarm driver of DirectorLink's alarm agreement, version 2 (ADR-092), computed with Node's crypto. Shared with DirectorLink · PIMA FORCE's tests.",
+  "driver_secret": "4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d",
+  "driver_public": "f24a1450d7f84eb6112dfc800c8ee33dd74139f6b66ef2b5f03d2cd7de76f93b",
+  "ephemeral_secret": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0fa5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5",
+  "ephemeral_public": "be66fe4bf9d8d0adc9a0196b17e0b8585c0443f007a794ff6d689a828ab2c728",
+  "iv": "000102030405060708090a0b0c0d0e0f",
+  "fields": {
+    "a": "arm",
+    "m": "Away",
+    "c": "2580",
+    "n": "0123456789abcdef",
+    "t": 1794560000
+  },
+  "plaintext": "{\"a\":\"arm\",\"c\":\"2580\",\"m\":\"Away\",\"n\":\"0123456789abcdef\",\"t\":1794560000,\"v\":2}",
+  "token": "dl2:vmb+S/nY0K3JoBlrF+C4WFwEQ/AHp5T/bWiagoqyxygAAQIDBAUGBwgJCgsMDQ4PXJelg3APwH4dfK1rX7okYq118YagigISIXM1Ak6W4J24WdycuPcOwRGVMG4etJ+sgm2tGIa8VPqDw6aZ3HJzRMt40qq6Z+KYub/wPr1/Ip5r9Ktn6KrMdRpqDdLxjIfphO0YMaKMheolzKYWCWMR1w=="
+}

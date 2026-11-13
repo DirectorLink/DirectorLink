@@ -461,7 +461,7 @@ export default {
     trouble: "Trouble: {text}",
     summaryItem: "{name}: {state}",
     // The modes a partition arms in that have words of the app's own (others as its driver names them).
-    modes: { away: "Away", home: "Home", night: "Night" },
+    modes: { away: "Away", home: "Home", night: "Night", shabbat: "Shabbat" },
     control: {
       arm: "Arm",
       disarm: "Disarm",
@@ -471,6 +471,9 @@ export default {
       modeLabel: "Arm {name}: {mode}",
       armTitle: "Arm {name}: {mode}",
       disarmTitle: "Disarm {name}",
+      disarmConfirmTitle: "Disarm {name}?",
+      disarmConfirmHelp: "No code needed: the alarm’s driver uses its own.",
+      codeNeeded: "The alarm now needs its code for this: the setting changed meanwhile.",
       codeLabel: "Alarm code",
       codeHelp: "The code you use at the alarm’s keypad. It goes to the alarm once and is never kept.",
       codeInvalid: "Type the alarm code: 1 to 12 digits.",
@@ -479,6 +482,8 @@ export default {
       disarming: "Disarming…",
       notArmed: "The alarm didn’t arm. Check the code and that no zone is open, then try again, or use the alarm’s keypad.",
       notDisarmed: "The alarm didn’t disarm. Check the code and try again, or use the alarm’s keypad.",
+      notArmedNoCode: "The alarm didn’t arm. Check that no zone is open, then try again, or use the alarm’s keypad.",
+      notDisarmedNoCode: "The alarm didn’t disarm. Try again, or use the alarm’s keypad.",
       unavailable: "Can’t be armed or disarmed from DirectorLink right now: its panel only reports to the controller, or isn’t connected.",
       errors: {
         rateLimited: { one: "Too many alarm commands. Try again in 1 minute.", other: "Too many alarm commands. Try again in {count} minutes." },
@@ -491,6 +496,25 @@ export default {
         sealed: "Alarm commands travel only sealed, and this one was not. Reload the app and try again.",
         failed: "The controller couldn’t pass the command to the alarm. Try again, or use the alarm’s keypad.",
       },
+    },
+    // Settings → Alarm (1.16.0, ADR-092): admins choose how far the alarm goes without a code.
+    settings: {
+      title: "Alarm",
+      row: { none: "A code every time", arm: "Arms without a code", arm_disarm: "Arms and disarms without a code" },
+      cardTitle: "Arming and disarming",
+      legend: "Code",
+      none: "Every time (default)",
+      noneHelp: "Arming and disarming from DirectorLink always ask for the alarm’s code.",
+      arm: "Arm without a code",
+      armHelp: "Arming needs no code; disarming still does.",
+      armDisarm: "Arm and disarm without a code",
+      armDisarmHelp: "Neither needs a code. Disarming is still confirmed with a tap.",
+      warning: "Anyone allowed to arm and disarm the alarm (Settings → Users) can then disarm it without the code, at home or away. Admins get an alert each time it is disarmed without a code.",
+      driver: "This works only as far as the alarm’s own driver allows it too: for a PIMA alarm, an installer turns on “DirectorLink Without Code” in the DirectorLink · PIMA FORCE driver’s properties in Composer. Without a code, the driver uses the code stored in it.",
+      stillCode: "The alarm’s driver doesn’t allow this yet, so a code is still needed. An installer turns on “DirectorLink Without Code” in its properties in Composer.",
+      save: "Save",
+      saved: "Saved.",
+      unavailable: "Only admins change this, with DirectorLink 1.16.0 or later on the controller and Alarm Control on in Composer.",
     },
   },
   music: {
@@ -1503,6 +1527,12 @@ export default {
     who: "{person} ({device})",
     fridgeDoor: "{name} – the door has been open for at least {minutes} min ({time}).",
     fridgeDoorNow: "{name} – the door was left open ({time}).",
+    // The alarm disarmed from DirectorLink without a code (1.16.0, ADR-092): admins. {who} is a
+    // person (who) or bySchedule.
+    alarmDisarmedTitle: "Alarm disarmed",
+    alarmDisarmed: "{name} was disarmed without a code by {who} at {time}.",
+    alarmDisarmedNoWho: "{name} was disarmed without a code at {time}.",
+    bySchedule: "a schedule",
     // The home's alarm going off (1.13.0, ADR-086): said only on the home's TVs, never on a phone;
     // the controller copies these (driver/src/core/notify_words.lua). {type} is one of alarm.types,
     // with a capital letter where it begins the sentence.
@@ -1565,6 +1595,7 @@ export default {
         door_opened: "A door or gate is opened",
         fridge_door: "The refrigerator door is left open",
         schedule_failed: "A schedule has a problem",
+        alarm_disarmed: "The alarm is disarmed without a code",
       },
       choicesFailed: "Couldn’t save that. Check the connection and try again.",
       turnedOn: "Alerts are on for this device.",
@@ -1671,6 +1702,11 @@ export default {
       armNoMode: "Arm sent to {name}",
       disarm: "Disarm sent to {name}",
       unnamed: "the alarm",
+      armWithoutCode: "Arm sent to {name} ({mode}) without a code",
+      armNoModeWithoutCode: "Arm sent to {name} without a code",
+      disarmWithoutCode: "Disarm sent to {name} without a code",
+      settings: "Alarm without a code: {level}",
+      levels: { none: "off, a code every time", arm: "arm only", arm_disarm: "arm and disarm" },
     },
     access: {
       paired: "Paired {name} with a code, as {role}",
@@ -2040,6 +2076,7 @@ export default {
     alarmHelp: "Whether the alarm is armed. Alarm Status must be on in Composer.",
     alarmControl: "Arms and disarms the alarm",
     alarmControlHelp: "With the alarm’s code, typed each time. Alarm Control must be on in Composer.",
+    alarmControlHelpWithoutCode: "With the alarm’s code, unless an admin allows it without one in Settings → Alarm. Alarm Control must be on in Composer.",
     scenes: "Scenes they may run",
     scenesHelp: "They run the whole scene, and never change it.",
     noScenes: "No scenes yet.",

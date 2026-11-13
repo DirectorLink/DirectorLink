@@ -2988,6 +2988,63 @@ paths:
           $ref: "#/components/responses/Forbidden"
 
 
+  /v1/alarm/settings:
+    get:
+      tags: [Alarm]
+      operationId: getAlarmSettings
+      x-directorlink-role: admin
+      summary: How far the alarm is armed and disarmed without a code
+      description: |
+        1.16.0, ADR-092. `without_code`: `none` (as it ships: a code each time), `arm` (arming
+        without one) or `arm_disarm`. It never goes further than the alarm's driver allows (its
+        Composer property, `DIRECTORLINK_ALARM_WITHOUT_CODE`, a driver of the agreement's version 2);
+        each partition's `control.without_code` in `GET /v1/alarm` is the lower of the two. Without a
+        code the driver uses its own: DirectorLink keeps none. Not in backups.
+      responses:
+        "200":
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmSettings"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Alarm]
+      operationId: setAlarmSettings
+      x-directorlink-role: admin
+      summary: Set how far the alarm is armed and disarmed without a code
+      description: |
+        1.16.0, ADR-092. The history says it (`alarm` `settings`, `from`, `to`); each disarm without a
+        code then reaches the admins who keep the `alarm_disarmed` alert on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlarmSettings"
+      responses:
+        "200":
+          description: The setting now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlarmSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          description: The setting could not be saved; nothing changed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
   /v1/alarm/{partitionId}/arm:
     parameters:
       - $ref: "#/components/parameters/PartitionId"
@@ -3763,7 +3820,8 @@ paths:
         Whether this key's device switched alerts on, and which of the kinds its role may get, of
         those this home has, it wants. Until it chooses: every kind but `door_opened` and `camera`. A
         doorbell goes to every role, `camera` (1.8.0) to the keys that may see that camera's pictures,
-        `fridge_door` to members and up, `door_opened` and `schedule_failed` to admins.
+        `fridge_door` to members and up, `door_opened`, `schedule_failed` and (1.16.0) `alarm_disarmed`
+        to admins.
       responses:
         "200":
           description: This key's choices.
@@ -4213,7 +4271,7 @@ components:
 
   responses:
     BadRequest:
-      description: The request is invalid (`INVALID_REQUEST`, `INVALID_FIELD`, `INVALID_PARAMETER`, `INVALID_JSON`).
+      description: The request is invalid (`INVALID_REQUEST`, `INVALID_FIELD`, `INVALID_PARAMETER`, `INVALID_JSON`), or an arm or disarm without a code that may not go without one (`CODE_REQUIRED`, 1.16.0).
       content:
         application/problem+json:
           schema:
@@ -4515,6 +4573,9 @@ components:
             alarm_control:
               type: boolean
               description: "1.15.0: the **Alarm Status** and **Alarm Control** properties are both On: admins and the members given it may arm and disarm."
+            alarm_without_code:
+              type: boolean
+              description: "1.16.0 (ADR-092): `GET`/`PUT /v1/alarm/settings`, `control.without_code`, arming and disarming without a code, the `alarm_disarmed` alert. Always true when there."
             backup:
               type: boolean
               description: "Always true since 1.4.0: admins can make and restore backups (`GET /v1/backup`, `POST /v1/restore`, ADR-042). Missing before 1.4.0, so clients show no backup."
@@ -7029,7 +7090,7 @@ components:
 
     AlarmArm:
       type: object
-      required: [mode, code]
+      required: [mode]
       additionalProperties: false
       properties:
         mode:
@@ -7037,21 +7098,29 @@ components:
           description: One of the partition's `modes` (case aside).
           example: Away
         code:
-          type: string
+          type: [string, "null"]
           pattern: "^[0-9]{1,12}$"
-          description: The alarm code the person typed for this command. Never kept or logged by DirectorLink (Director's debug log on the controller has it for a while; ADR-091).
+          description: "The alarm code the person typed for this command. Never kept or logged by DirectorLink. Since 1.16.0 (ADR-092) it may be left out (or null) when `control.without_code` covers the action; a driver of the agreement's version 2 gets it sealed, so Director's debug log never sees it."
           example: "1234"
 
     AlarmDisarm:
       type: object
-      required: [code]
       additionalProperties: false
       properties:
         code:
-          type: string
+          type: [string, "null"]
           pattern: "^[0-9]{1,12}$"
-          description: The alarm code the person typed for this command. Never kept or logged by DirectorLink (Director's debug log on the controller has it for a while; ADR-091).
+          description: "The alarm code the person typed for this command. Never kept or logged by DirectorLink. Since 1.16.0 (ADR-092) it may be left out (or null) when `control.without_code` covers the action; a driver of the agreement's version 2 gets it sealed, so Director's debug log never sees it."
           example: "1234"
+
+    AlarmSettings:
+      type: object
+      required: [without_code]
+      additionalProperties: false
+      properties:
+        without_code:
+          type: string
+          enum: [none, arm, arm_disarm]
 
     AlarmCommand:
       type: object
@@ -7066,6 +7135,9 @@ components:
         mode:
           type: [string, "null"]
           description: The mode as the driver declares it; null for a disarm.
+        without_code:
+          type: boolean
+          description: "1.16.0: sent without a code, with the driver's own (ADR-092)."
 
     AlarmPartition:
       type: object
@@ -7146,6 +7218,10 @@ components:
           description: "1.15.0 (ADR-091): arming and disarming it from DirectorLink."
           required: [allowed, available]
           properties:
+            without_code:
+              type: string
+              enum: [none, arm, arm_disarm]
+              description: "1.16.0 (ADR-092): how far it is armed and disarmed without a code: the lower of the admins' setting (`/v1/alarm/settings`) and its driver's (`DIRECTORLINK_ALARM_WITHOUT_CODE`, a driver of the agreement's version 2 with a key; any other: none). The padding counts it at its longest."
             allowed:
               type: boolean
               description: Alarm Status and Alarm Control are On and the caller may (an admin, or a member given `alarm_control`).
@@ -8016,6 +8092,9 @@ components:
               type: boolean
             schedule_failed:
               type: boolean
+            alarm_disarmed:
+              type: boolean
+              description: "1.16.0 (ADR-092): the alarm was disarmed from DirectorLink without a code; admins, on unless turned off, only with Alarm Control on and an alarm here."
           additionalProperties: false
 
     AlertScreens:
@@ -8072,6 +8151,8 @@ components:
             fridge_door:
               type: boolean
             schedule_failed:
+              type: boolean
+            alarm_disarmed:
               type: boolean
 
     ActivityList:
@@ -8137,8 +8218,10 @@ components:
           move invitation, used its key for the first time, and the device `from` it moved from, of
           the same user, was revoked; `who` is the new device).
         - `alarm` (1.15.0, ADR-091): `arm` (the mode in `note`) and `disarm`, a command sent from
-          DirectorLink with the person's code (`what` is the partition); what the alarm did is its
-          own to say. Only in sealed reads: a request with `Authorization: Bearer` never gets them.
+          DirectorLink with the person's code (`what` is the partition); since 1.16.0 (ADR-092)
+          `reason` `without_code` when sent without one, and `settings` (`from`, `to`: the admins'
+          level without a code). What the alarm did is its own to say. Only in sealed reads: a
+          request with `Authorization: Bearer` never gets them.
         - `composer`: `project` (devices and rooms removed, added, renamed or moved, in `changes`),
           `setting` (a DirectorLink property changed in Composer: `what` is its name, `to` its value).
         - `system`: `backup`, `restore` (`from`: when the backup was made), `cloud_backup` (an
@@ -8167,7 +8250,7 @@ components:
           enum: [scene, schedule, door, alarm, composer, access, system]
         action:
           type: string
-          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, arm, disarm, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, moved, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required, direct_https]
+          enum: [run, "off", pulse, hold, release, doorbell, left_open, asked, arm, disarm, settings, paired, created, role_changed, permissions_changed, room_hidden, room_shown, revoked, forgotten, expired, joined, all_revoked, link_created, link_replaced, link_removed, links_removed, ask_link_created, ask_link_replaced, ask_link_removed, pairing_code, users_merged, merge_suggested, owner_changed, moved, project, setting, backup, restore, cloud_backup, remote_away, driver_updated, driver_started, driver_added, remote_update_required, direct_https]
         who:
           $ref: "#/components/schemas/ActivityWho"
         what:

@@ -145,6 +145,9 @@ return {
     { method = "GET", path = "/v1/alarm", handler = "alarm.status", role = "member" },
     { method = "POST", path = "/v1/alarm/{partitionId}/arm", handler = "alarm.arm", role = "member" },
     { method = "POST", path = "/v1/alarm/{partitionId}/disarm", handler = "alarm.disarm", role = "member" },
+    -- How far arming and disarming go without a code (1.16.0, ADR-092): admins.
+    { method = "GET", path = "/v1/alarm/settings", handler = "alarm.settings", role = "admin" },
+    { method = "PUT", path = "/v1/alarm/settings", handler = "alarm.set_settings", role = "admin" },
 
     -- Sonos (ADR-044): read and played by those given music (ADR-054), placed in a room by admins;
     -- nothing while the Composer property Sonos is Off. A request names a Sonos room, never an address.

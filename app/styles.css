@@ -1007,6 +1007,12 @@ select:disabled {
   color: var(--okText);
 }
 
+/* Settings → Alarm (1.16.0): what arming and disarming without a code lets others do. */
+.notice-warning {
+  background: var(--onBg);
+  color: var(--onText);
+}
+
 /* A newer DirectorLink is out (admins; js/views/updates.js). On Home the whole text leads to the
    steps, and the close button hides it until the next version. */
 .banner-update {

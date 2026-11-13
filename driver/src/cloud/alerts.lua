@@ -27,6 +27,7 @@
 -- whose service worker keeps only that alert key (never the lock key or the API key).
 
 local Access = require("src.auth.access")
+local AlarmAdapter = require("src.adapters.alarm")
 local Base64 = require("src.core.base64")
 local Clock = require("src.core.clock")
 local CameraAdapter = require("src.adapters.camera")
@@ -42,15 +43,16 @@ local Alerts = {}
 
 Alerts.LABEL = "DirectorLink alert v1"
 -- In the order the app lists them.
-Alerts.KINDS = { "doorbell", "camera", "door_opened", "fridge_door", "schedule_failed" }
+Alerts.KINDS = { "doorbell", "camera", "door_opened", "fridge_door", "schedule_failed", "alarm_disarmed" }
 -- The kinds only admins get (ADR-054); a doorbell's ring and the refrigerator's door go to whoever
 -- sees that doorbell or refrigerator (Access.canSee), a camera's alert to whoever may see that
 -- camera's pictures (the sender's `allowed`), whatever their role.
-Alerts.ADMINS_ONLY = { door_opened = true, schedule_failed = true }
+-- alarm_disarmed (1.16.0, ADR-092): the alarm disarmed from DirectorLink without a code.
+Alerts.ADMINS_ONLY = { door_opened = true, schedule_failed = true, alarm_disarmed = true }
 -- The device a kind is about.
 local DEVICE_KIND = { doorbell = "doorbell", fridge_door = "refrigerator" }
 -- A key that never chose gets these. Cameras can be busy: off until chosen.
-Alerts.DEFAULTS = { doorbell = true, camera = false, door_opened = false, fridge_door = true, schedule_failed = true }
+Alerts.DEFAULTS = { doorbell = true, camera = false, door_opened = false, fridge_door = true, schedule_failed = true, alarm_disarmed = true }
 -- At most one alert per doorbell in RING_SECONDS, per camera in CAMERA_SECONDS, per door in
 -- DOOR_SECONDS, per refrigerator in FRIDGE_SECONDS; CAMERA_PER_HOUR camera alerts (busy cameras
 -- leave room for the rest), SCHEDULE_PER_HOUR schedule alerts, and PER_HOUR alerts in all, an hour.
@@ -86,7 +88,7 @@ Alerts.DETAIL_BYTES = 496
 -- others two minutes: worth knowing late too (a camera at night, a door opened, the refrigerator,
 -- a schedule), but kept only through a reconnect (seconds) or a short outage; a home away longer
 -- is the account service's offline alert (ADR-047), and its history says what happened.
-Alerts.KEEP_SECONDS = { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120 }
+Alerts.KEEP_SECONDS = { doorbell = 60, open_request = 60, camera = 120, door_opened = 120, fridge_door = 120, schedule_failed = 120, alarm_disarmed = 120 }
 Alerts.KEEP_DEFAULT_SECONDS = 60
 
 local STORE_KEY = "directorlink_alert_choices"
@@ -295,6 +297,9 @@ function Alerts.start(deps)
                     end
                 end
                 return false
+            elseif kind == "alarm_disarmed" then
+                -- Arming and disarming from DirectorLink (1.16.0, ADR-092): Alarm Control on, an alarm here.
+                return AlarmAdapter.controlEnabled() and #registry.alarmList() > 0
             elseif kind == "door_opened" then
                 -- A doorbell camera opens nothing (ADR-065): a DoorBird's doorstation does.
                 if #registry.relayList() > 0 then
@@ -811,7 +816,30 @@ local OPENINGS = { pulse = true, hold = true, doorbell = true }
 function Alerts.recorded(entry)
     if type(entry) == "table" and entry.kind == "door" and OPENINGS[entry.action] then
         Alerts.doorOpened(entry, entry.at)
+    elseif type(entry) == "table" and entry.kind == "alarm" and entry.action == "disarm" and entry.reason == "without_code" then
+        Alerts.alarmDisarmed(entry, entry.at)
     end
+end
+
+-- The history recorded the alarm disarmed from DirectorLink without a code (1.16.0, ADR-092): its
+-- admins, if they chose it (on unless they turned it off), each time. Never the home's screens:
+-- they show only the alarm going off (ADR-086), as whether a home is armed says when it is empty.
+function Alerts.alarmDisarmed(entry, now)
+    now = now or Clock.now()
+    local ids = entry.ids or {}
+    local who = entry.who or {}
+    local detail = {
+        kind = "alarm_disarmed",
+        id = tonumber(ids.device_id),
+        name = cut(entry.what, Alerts.MAX_NAME),
+        who = {
+            type = who.type,
+            name = cut(who.name, Alerts.MAX_NAME),
+            profile = who.type == "key" and cut(who.profile, Alerts.MAX_NAME) or nil,
+            remote = who.remote == true or nil,
+        },
+    }
+    return sent("alarm_disarmed", send(detail, now))
 end
 
 -- A device's event that its adapter took (src/adapters/manager.lua; `before`: the device's state

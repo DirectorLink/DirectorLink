@@ -683,6 +683,57 @@ test("the alarm armed and disarmed from DirectorLink, with a chip of its own on 
   }
 });
 
+// 1.16.0 (ADR-092): a command sent without a code says so (`reason` without_code), and an admin's
+// change of how far the alarm goes without one (`settings`, `to`) says the new level, by whom.
+test("the alarm armed and disarmed without a code, and the level an admin set, in every language", async () => {
+  const phone = { type: "key", key_id: "c3d4e5f6", name: "iPhone", profile: "Dana" };
+  const schedule = { type: "schedule", schedule_id: "1234abcd", trigger: { type: "time", at: "07:00" }, days: [0, 1, 2, 3, 4, 5, 6] };
+  home("admin");
+  controller({
+    items: [
+      { id: 26, at: iso(NOW - 10 * 1000), kind: "alarm", action: "disarm", reason: "without_code", who: { ...phone, remote: true }, what: "House", ids: { device_id: 80 } },
+      { id: 25, at: iso(NOW - 20 * 1000), kind: "alarm", action: "arm", reason: "without_code", who: phone, what: "House", note: "Shabbat", ids: { device_id: 80 } },
+      { id: 24, at: iso(NOW - 30 * 1000), kind: "alarm", action: "arm", reason: "without_code", who: phone, what: "Garage" },
+      { id: 23, at: iso(NOW - 40 * 1000), kind: "alarm", action: "settings", who: phone, from: "none", to: "arm_disarm" },
+      { id: 22, at: iso(NOW - 50 * 1000), kind: "alarm", action: "settings", who: phone, from: "arm_disarm", to: "arm" },
+      { id: 21, at: iso(NOW - 60 * 1000), kind: "alarm", action: "settings", who: phone, from: "arm", to: "none" },
+      { id: 20, at: iso(NOW - 70 * 1000), kind: "alarm", action: "disarm", reason: "without_code", who: schedule, what: "House", ids: { device_id: 80 } },
+    ],
+  });
+  let rows = items(await open());
+  assert.equal(line(rows[0]), "Disarm sent to House without a code, Dana · iPhone, away from home");
+  assert.equal(line(rows[1]), "Arm sent to House (Shabbat) without a code, Dana · iPhone");
+  assert.equal(line(rows[2]), "Arm sent to Garage without a code, Dana · iPhone");
+  assert.equal(line(rows[3]), "Alarm without a code: arm and disarm, Dana · iPhone");
+  assert.equal(line(rows[4]), "Alarm without a code: arm only, Dana · iPhone");
+  assert.equal(line(rows[5]), "Alarm without a code: off, a code every time, Dana · iPhone");
+  assert.match(line(rows[6]), /^Disarm sent to House without a code, /);
+  assert.ok(byClass(rows[3], "history-icon-alarm").length, "the alarm's icon");
+  assert.equal(outcome(rows[0]), "");
+  const expected = {
+    he: ["נשלח ניטרול ל-House בלי קוד, Dana · iPhone, מחוץ לבית", "נשלחה דריכה ל-House (שבת) בלי קוד, Dana · iPhone", "אזעקה בלי קוד: דריכה וניטרול, Dana · iPhone"],
+    es: ["Desarmado enviado a House sin código", "Armado enviado a House (Shabat) sin código", "Alarma sin código: armar y desarmar"],
+    it: ["Disinserimento inviato a House senza codice", "Inserimento inviato a House (Shabbat) senza codice", "Allarme senza codice: inserimento e disinserimento"],
+  };
+  try {
+    for (const [language, [disarm, arm, settings]] of Object.entries(expected)) {
+      await setLanguage(language);
+      rows = items(await open());
+      if (language === "he") {
+        assert.equal(line(rows[0]), disarm);
+        assert.equal(line(rows[1]), arm);
+        assert.equal(line(rows[3]), settings);
+      } else {
+        assert.ok(line(rows[0]).startsWith(`${disarm},`), `${language}: ${line(rows[0])}`);
+        assert.ok(line(rows[1]).startsWith(`${arm},`), `${language}: ${line(rows[1])}`);
+        assert.ok(line(rows[3]).startsWith(`${settings},`), `${language}: ${line(rows[3])}`);
+      }
+    }
+  } finally {
+    await setLanguage("en");
+  }
+});
+
 test("every string the page uses is in both languages", async () => {
   const { default: en } = await import("../../app/i18n/en.js");
   const { default: he } = await import("../../app/i18n/he.js");

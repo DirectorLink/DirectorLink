@@ -248,14 +248,20 @@ function title(entry) {
     case "door.left_open":
     case "door.asked":
       return t(`history.door.${entry.action}`, { name: placed(entry, what || t("history.unnamed")) });
-    // The alarm armed or disarmed from DirectorLink with a person's code (1.15.0, ADR-091): the command
-    // went; the partition's state says what the alarm did. `what` is the partition, `note` the mode.
+    // The alarm armed or disarmed from DirectorLink with a person's code (1.15.0, ADR-091), or since
+    // 1.16.0 without one (`reason` without_code, ADR-092): the command went; the partition's state
+    // says what the alarm did. `what` is the partition, `note` the mode.
     case "alarm.arm": {
       const partition = isolate(what || t("history.alarm.unnamed"));
-      return entry.note ? t("history.alarm.arm", { name: partition, mode: armModeLabel(entry.note) }) : t("history.alarm.armNoMode", { name: partition });
+      const free = entry.reason === "without_code";
+      if (!entry.note) return t(free ? "history.alarm.armNoModeWithoutCode" : "history.alarm.armNoMode", { name: partition });
+      return t(free ? "history.alarm.armWithoutCode" : "history.alarm.arm", { name: partition, mode: armModeLabel(entry.note) });
     }
     case "alarm.disarm":
-      return t("history.alarm.disarm", { name: isolate(what || t("history.alarm.unnamed")) });
+      return t(entry.reason === "without_code" ? "history.alarm.disarmWithoutCode" : "history.alarm.disarm", { name: isolate(what || t("history.alarm.unnamed")) });
+    // An admin changed how far the alarm goes without a code (Settings → Alarm, 1.16.0): `to`.
+    case "alarm.settings":
+      return t("history.alarm.settings", { level: t(`history.alarm.levels.${["arm", "arm_disarm"].includes(entry.to) ? entry.to : "none"}`) });
     case "access.paired":
     case "access.created":
     case "access.joined":

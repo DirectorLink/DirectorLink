@@ -376,6 +376,9 @@ export function draftFor(key) {
     latest: (trigger.type === "sun" && trigger.latest) || "22:00",
     runLate: existing?.run_late === true,
     holidays: ["skip", "only"].includes(existing?.on_holidays) ? existing.on_holidays : "run",
+    // Saved as "Not on holidays" or "Only on holidays": the choice stays shown, so that it can be
+    // changed back, even while the home has no holidays.
+    holidaysSet: ["skip", "only"].includes(existing?.on_holidays),
     kind: trigger.type === "weather" ? trigger.kind : "heat",
     heat: trigger.kind === "heat" ? fromCelsius(trigger.above, scale) : fromCelsius(30, scale),
     heatKept: trigger.kind === "heat" ? trigger.above : null,
@@ -691,10 +694,15 @@ function runLateToggle(draft) {
 }
 
 // On the home's own holidays (1.14.0): time, sun and weather schedules. How many there are, and
-// where to set them.
+// where to set them. Only once the home has holidays (GET /v1/holidays): without any it means
+// nothing, so it waits until they are read and is not shown while there are none (2026-11-13, the
+// owner's request), unless this schedule was saved with another choice than Run as usual. Shown when
+// they could not be read, as before.
 function holidayChoices(draft) {
   if (!schedulePlanning()) return null;
   const count = Array.isArray(state.holidays?.items) ? state.holidays.items.length : null;
+  const unknown = count === null && !state.holidaysError;
+  if ((count === 0 || unknown) && !draft.holidaysSet) return null;
   return [
     h("p", { class: "field-label" }, t("schedules.editor.onHolidays")),
     segments(

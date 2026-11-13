@@ -103,6 +103,8 @@ export const ui = {
   // Arming and disarming (1.15.0, alarm-control.js): partitionId -> { stage: "choose" | "sending" |
   // "pending" | null, action, mode, message }. Never the code, which only the dialog's field holds.
   alarmControl: {},
+  // Settings → Alarm (1.16.0, alarm-settings.js): { level, draft, busy, error, message }.
+  alarmSettings: null,
   doorbellLinks: null, // a doorbell's screen, an admin linking doors (1.11.0): { id, busy, message, choice }
   ringCamera: null, // a ring's screen opened by its notification: { doorbell, camera } asked for before the doorbells are read
   featuredCamera: null, // Cameras tab: id of the large picture

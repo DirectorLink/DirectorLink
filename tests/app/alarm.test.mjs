@@ -97,7 +97,7 @@ for (const level of ["log", "info", "warn", "error", "debug"]) {
 const { state, ui } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
 const { forgetKey } = await import("../../app/js/session.js");
-const { alarmDetails, alarmStateText, alarmSummary, loadAlarm, startAlarm } = await import("../../app/js/alarm.js");
+const { alarmDetails, alarmStateText, alarmSummary, armModeLabel, loadAlarm, startAlarm } = await import("../../app/js/alarm.js");
 const { FOLLOW_MS, commandTook } = await import("../../app/js/alarm-control.js");
 const { alarmFact, alarmSection } = await import("../../app/js/views/alarm.js");
 const { default: en } = await import("../../app/i18n/en.js");
@@ -802,4 +802,193 @@ test("the key forgotten while the code is typed or the alarm is asked: the dialo
   assert.deepEqual(ui.alarmControl, {});
   await advance(t, 20000);
   assert.equal(fake.reads(), reads, "not read again for a forgotten key");
+});
+
+// ---- without a code (1.16.0, ADR-092) ------------------------------------------------------------
+
+// A partition of a 1.16.0 controller that goes without a code this far (`control.without_code`).
+const free = (partition, level) => ({ ...partition, control: { ...partition.control, without_code: level } });
+const SHABBAT_MODES = ["Away", "Home", "Shabbat"];
+
+test("arming without a code: the mode, then exactly { mode } goes, with no dialog; Arming… as before", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const level of ["arm", "arm_disarm"]) {
+    const fake = await armingHome([free(READY, level)]);
+    press(alarmSection(), "alarm:80:arm");
+    assert.equal(ui.alarmControl[80].stage, "choose", `${level}: the mode is still chosen`);
+    press(alarmSection(), "alarm:80:mode:2");
+    assert.equal(shownDialog(), null, `${level}: no code asked`);
+    await settle();
+    assert.deepEqual(fake.posts(), [{ path: "/v1/alarm/80/arm", search: "", body: { mode: "Night" } }], `${level}: no code in the body`);
+    assert.equal(plain(byKey(alarmSection(), "alarm:80:status").textContent), "Arming…");
+    // The alarm didn't take it: nothing about a code that was not typed.
+    await advance(t, 20000);
+    assert.equal(byKey(alarmSection(), "alarm:80:message").textContent, "The alarm didn’t arm. Check that no zone is open, then try again, or use the alarm’s keypad.");
+    forgetKey();
+  }
+  // A single mode: Arm sends at once.
+  const fake = await armingHome([free({ ...READY, modes: ["Away"] }, "arm")]);
+  fake.reportAfter(1, [free({ ...ARMED, modes: ["Away"] }, "arm")]);
+  press(alarmSection(), "alarm:80:arm");
+  assert.equal(shownDialog(), null);
+  await settle();
+  assert.deepEqual(fake.posts().map((post) => post.body), [{ mode: "Away" }]);
+  await advance(t, 2000);
+  assert.equal(ui.alarmControl[80], undefined, "it took it");
+  assert.ok(byKey(alarmSection(), "alarm:80:disarm"));
+  forgetKey();
+});
+
+test("a code is still typed where the partition does not go without one: none, or a disarm when only arming goes", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [partition, action, why] of [
+    [free(READY, "none"), "arm", "none"],
+    [{ ...READY, control: { allowed: true, available: true } }, "arm", "a controller before 1.16.0"],
+    [free(ARMED, "arm"), "disarm", "only arming goes without one"],
+    [free(ARMED, "none"), "disarm", "none"],
+  ]) {
+    const fake = await armingHome([partition]);
+    press(alarmSection(), `alarm:80:${action}`);
+    if (action === "arm") press(alarmSection(), "alarm:80:mode:0");
+    assert.ok(byKey(shownDialog(), "alarm-code"), `${why}: the code is asked`);
+    typeAndSend(CODE);
+    await settle();
+    assert.deepEqual(fake.posts().at(-1).body, action === "arm" ? { mode: "Away", code: CODE } : { code: CODE }, why);
+    forgetKey();
+  }
+});
+
+test("disarming without a code: Disarm House? first, then exactly {} goes; Cancel, Escape and the backdrop send nothing", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const fake = await armingHome([free(ARMED, "arm_disarm")]);
+  // Cancel, Escape and a tap on the backdrop: nothing sent.
+  for (const close of [(dialog) => press(dialog, "alarm-code-cancel"), (dialog) => dialog.close(), (dialog) => dialog.dispatch("click", { target: dialog })]) {
+    press(alarmSection(), "alarm:80:disarm");
+    const dialog = shownDialog();
+    assert.ok(dialog?.open, "a confirmation first");
+    close(dialog);
+    assert.equal(shownDialog(), null);
+  }
+  await settle();
+  assert.deepEqual(fake.posts(), [], "nothing sent");
+
+  press(alarmSection(), "alarm:80:disarm");
+  const dialog = shownDialog();
+  assert.equal(plain(find(dialog, (node) => node.attributes.id === "alarm-dialog-title").textContent), "Disarm House?");
+  assert.equal(byKey(dialog, "alarm-code"), null, "no code field");
+  assert.equal(byKey(dialog, "alarm-confirm-help").textContent, "No code needed: the alarm’s driver uses its own.");
+  const send = byKey(dialog, "alarm-confirm-send");
+  assert.equal(plain(send.textContent), "Disarm");
+  assert.equal(document.activeElement, send, "Disarm has the keyboard");
+  fake.reportAfter(1, [free(READY, "arm_disarm")]);
+  find(dialog, (node) => node.tagName === "FORM").dispatch("submit");
+  assert.equal(shownDialog(), null);
+  await settle();
+  assert.deepEqual(fake.posts(), [{ path: "/v1/alarm/80/disarm", search: "", body: {} }], "no code: an empty body");
+  assert.equal(plain(byKey(alarmSection(), "alarm:80:status").textContent), "Disarming…");
+  await advance(t, 2000);
+  assert.equal(ui.alarmControl[80], undefined);
+  assert.ok(byKey(alarmSection(), "alarm:80:arm"), "disarmed: Arm again");
+
+  // Not taken: nothing about a code.
+  state.alarm = { enabled: true, partitions: [free(ARMED, "arm_disarm")] };
+  fake.partitions = [free(ARMED, "arm_disarm")];
+  press(alarmSection(), "alarm:80:disarm");
+  find(shownDialog(), (node) => node.tagName === "FORM").dispatch("submit");
+  await settle();
+  await advance(t, 20000);
+  assert.equal(byKey(alarmSection(), "alarm:80:message").textContent, "The alarm didn’t disarm. Try again, or use the alarm’s keypad.");
+  forgetKey();
+});
+
+test("CODE_REQUIRED (the setting changed meanwhile): the partitions read again, and the code asked after all", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  for (const [shown, action, sent] of [
+    [free(READY, "arm"), "arm", { mode: "Away" }],
+    [free(ARMED, "arm_disarm"), "disarm", {}],
+  ]) {
+    const fake = await armingHome([shown]);
+    // An admin chose a code every time since the partitions were read.
+    fake.partitions = [free(shown, "none")];
+    fake.refuse = [400, { code: "CODE_REQUIRED", title: "This alarm needs a code" }];
+    press(alarmSection(), `alarm:80:${action}`);
+    if (action === "arm") press(alarmSection(), "alarm:80:mode:0");
+    else find(shownDialog(), (node) => node.tagName === "FORM").dispatch("submit");
+    const reads = fake.reads();
+    await settle();
+    assert.deepEqual(fake.posts().map((post) => post.body), [sent], `${action}: sent without a code first`);
+    assert.ok(fake.reads() > reads, `${action}: the partitions read again`);
+    assert.equal(byKey(alarmSection(), "alarm:80:message"), null, `${action}: no error, the code is asked instead`);
+    const dialog = shownDialog();
+    assert.ok(byKey(dialog, "alarm-code"), `${action}: the code field`);
+    assert.equal(byKey(dialog, "alarm-code-needed").textContent, "The alarm now needs its code for this: the setting changed meanwhile.");
+    assert.equal(plain(find(dialog, (node) => node.attributes.id === "alarm-dialog-title").textContent), action === "arm" ? "Arm House: Away" : "Disarm House");
+    fake.refuse = null;
+    typeAndSend(CODE);
+    await settle();
+    assert.deepEqual(fake.posts().at(-1).body, { ...sent, code: CODE }, `${action}: then with the code typed`);
+    assert.ok(!JSON.stringify([state, ui]).includes(CODE));
+    forgetKey();
+  }
+  // Pressed again after the read, the code is asked at once.
+  await armingHome([free(READY, "none")]);
+  press(alarmSection(), "alarm:80:arm");
+  press(alarmSection(), "alarm:80:mode:0");
+  assert.ok(byKey(shownDialog(), "alarm-code"));
+  assert.equal(byKey(shownDialog(), "alarm-code-needed"), null, "no note when nothing changed");
+  forgetKey();
+});
+
+test("Shabbat, the PIMA driver's mode, has a word in every language; what is sent is the driver's own", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const words = { en: "Shabbat", he: "שבת", es: "Shabat", it: "Shabbat" };
+  try {
+    for (const [language, word] of Object.entries(words)) {
+      await setLanguage(language);
+      const fake = await armingHome([free({ ...READY, modes: SHABBAT_MODES }, "arm")]);
+      press(alarmSection(), "alarm:80:arm");
+      assert.equal(plain(byKey(alarmSection(), "alarm:80:mode:2").textContent), word, language);
+      press(alarmSection(), "alarm:80:mode:2");
+      await settle();
+      assert.deepEqual(fake.posts().at(-1).body, { mode: "Shabbat" }, language);
+      forgetKey();
+    }
+  } finally {
+    await setLanguage("en");
+  }
+  assert.equal(armModeLabel("SHABBAT"), "Shabbat");
+});
+
+test("without a code in Hebrew, Spanish and Italian: the confirmation, the note and the messages", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const words = {
+    he: { title: "לנטרל את House?", disarm: "ניטרול", notDisarmed: "האזעקה לא נוטרלה. נסו שוב, או השתמשו בלוח המקשים של האזעקה." },
+    es: { title: "¿Desarmar House?", disarm: "Desarmar", notDisarmed: "La alarma no se desarmó. Vuelve a intentarlo, o usa el teclado de la alarma." },
+    it: { title: "Disinserire House?", disarm: "Disinserisci", notDisarmed: "L’allarme non si è disinserito. Riprova, oppure usa la tastiera dell’allarme." },
+  };
+  try {
+    for (const [language, expected] of Object.entries(words)) {
+      await setLanguage(language);
+      await armingHome([free(ARMED, "arm_disarm")]);
+      press(alarmSection(), "alarm:80:disarm");
+      const dialog = shownDialog();
+      assert.equal(plain(find(dialog, (node) => node.attributes.id === "alarm-dialog-title").textContent), expected.title, language);
+      assert.equal(plain(byKey(dialog, "alarm-confirm-send").textContent), expected.disarm, language);
+      assert.ok(!byKey(dialog, "alarm-confirm-help").textContent.includes("alarm.control"), language);
+      find(dialog, (node) => node.tagName === "FORM").dispatch("submit");
+      await settle();
+      await advance(t, 20000);
+      assert.equal(byKey(alarmSection(), "alarm:80:message").textContent, expected.notDisarmed, language);
+      forgetKey();
+    }
+    // The partition's name stays in one piece inside the Hebrew question.
+    await setLanguage("he");
+    await armingHome([free(ARMED, "arm_disarm")]);
+    press(alarmSection(), "alarm:80:disarm");
+    assert.equal(find(shownDialog(), (node) => node.attributes.id === "alarm-dialog-title").textContent, `לנטרל את ${iso("House")}?`);
+    press(shownDialog(), "alarm-code-cancel");
+  } finally {
+    await setLanguage("en");
+    forgetKey();
+  }
 });

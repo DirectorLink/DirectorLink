@@ -8,6 +8,7 @@
 
 import { providersStatus, signInProviders, startAccount } from "./js/account.js";
 import { alarmSignature, startAlarm } from "./js/alarm.js";
+import { loadAlarmSettings, resetAlarmSettings } from "./js/alarm-settings.js";
 import { alertsSignature } from "./js/alerts.js";
 import { keepCalendar, loadCalendar } from "./js/calendar.js";
 import { attachCameraImages, closeFullView, openFullView } from "./js/camera-feed.js";
@@ -140,6 +141,11 @@ export function navigate(hash) {
   }
 }
 
+// Settings' list and Settings → Alarm show how far the alarm goes without a code (1.16.0).
+function alarmSettingsRoute(where) {
+  return where.name === "settings" && (!where.page || where.page === "alarm");
+}
+
 window.addEventListener("hashchange", () => {
   // Entries reached inside the app: the Back button can use history.back().
   window.history.replaceState({ directorlinkInApp: true }, "");
@@ -159,6 +165,11 @@ window.addEventListener("hashchange", () => {
   if (previous.name === "cameras" && route.name !== "cameras") ui.cameraOrder = null;
   // Shabbat and holidays opens with the controller's settings.
   if (route.page === "calendar" && previous.page !== "calendar") resetCalendarSettings();
+  // Settings → Alarm opens with the controller's setting, which Settings' list says too (1.16.0).
+  if (alarmSettingsRoute(route) && (previous.name !== "settings" || previous.page !== route.page)) {
+    if (route.page === "alarm") resetAlarmSettings();
+    loadAlarmSettings();
+  }
   // The weather is read while Schedules is open.
   if (SCHEDULE_ROUTES.includes(route.name) && !SCHEDULE_ROUTES.includes(previous.name)) enterSchedules();
   // Next 7 days is read each time it opens; Holidays opens with an empty new holiday (1.14.0).
@@ -397,6 +408,8 @@ function signature() {
     route.name === "access" ? ui.access : 0,
     route.name === "history" ? ui.history : 0,
     route.name === "settings" ? ui.calendarSettings : 0,
+    // Settings → Alarm (1.16.0): the level saved and the one chosen.
+    route.name === "settings" ? ui.alarmSettings : 0,
     // Settings → Controller → Backup (its passwords and file are not in `ui`: views/backup.js).
     route.name === "settings" ? ui.backup : 0,
     // Its automatic backups to the account (passwords in views/cloud-backup.js, not in `ui`).
@@ -594,6 +607,7 @@ whenConnected(() => {
   // Opened there (a reload): what the screen shows, once connected (1.14.0).
   if (route.name === "scheduleWeek") loadWeek();
   if (route.name === "holidays" || route.name === "schedule") loadHolidays();
+  if (alarmSettingsRoute(route)) loadAlarmSettings();
 });
 watchSystemTheme(() => render(true));
 window.addEventListener("pointerup", () => window.setTimeout(() => render(), 0));

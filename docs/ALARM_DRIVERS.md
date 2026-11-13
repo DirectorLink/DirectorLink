@@ -8,8 +8,9 @@ allows, type their alarm code for each command, at home or away (ADR-091). It do
 Control4's standard security partition proxy (`security.c4i`), the way a Control4 screen does, so
 **any Control4 alarm driver works without anything of its own for DirectorLink.**
 
-This page is the **DirectorLink alarm agreement, version 1**: what an alarm driver may add so that
-DirectorLink knows when arming and disarming can work, and what DirectorLink sends and promises.
+This page is the **DirectorLink alarm agreement, versions 1 and 2**: what an alarm driver may add so
+that DirectorLink knows when arming and disarming can work, how DirectorLink 1.16.0 seals the code to
+a driver of version 2 so that Control4's logs never see it, and what DirectorLink sends and promises.
 [DirectorLink · PIMA FORCE](https://directorlink.io/drivers/pima-force), for PIMA FORCE panels,
 follows it. A driver that follows it works the same without DirectorLink.
 
@@ -29,8 +30,10 @@ From the protocol driver behind the partition:
 
 | Variable | Type | Value |
 | --- | --- | --- |
-| `DIRECTORLINK_ALARM` | STRING | `1`: the agreement's version. Set at every start. A higher whole number is read as version 1; anything else is no marker. |
+| `DIRECTORLINK_ALARM` | STRING | `1` or `2`: the agreement's version. Set at every start. Anything else is no marker. |
 | `DIRECTORLINK_ALARM_CONTROL` | STRING | `1` while arming and disarming can work now; `0` while they cannot (a panel that only reports, a panel not connected). Changed as it changes. |
+| `DIRECTORLINK_ALARM_KEY` | STRING | Version 2: the driver's X25519 public key, 64 hex digits. DirectorLink 1.16.0 seals every command to it (below). |
+| `DIRECTORLINK_ALARM_WITHOUT_CODE` | STRING | Version 2: how far DirectorLink may arm and disarm without a typed code, as the installer set it: `none`, `arm` or `arm_disarm`. DirectorLink's admins must allow it too; the lower counts. |
 
 Without `DIRECTORLINK_ALARM`, DirectorLink takes the driver as able to arm and disarm: what a command
 did shows in the partition's state. With it and `DIRECTORLINK_ALARM_CONTROL` not `1`, the app shows
@@ -61,11 +64,38 @@ DirectorLink does not wait for an answer: the app reads the partition's state ag
 person whether it changed. A driver's `ARM_FAILED` and `DISARM_FAILED` notifications go to Control4's
 screens as always.
 
+## Version 2: the code sealed to the driver (DirectorLink 1.16.0)
+
+Control4's Director, logging at its debug level, writes every command one driver sends another into
+its log, parameters included. So for a driver that publishes `DIRECTORLINK_ALARM_KEY`, `UserCode` is
+not the code but a sealed command, `dl2:` followed by the base64 of:
+
+| Bytes | |
+| --- | --- |
+| 32 | A fresh X25519 public key (one per command) |
+| 16 | The IV |
+| n × 16 | AES-256-CBC (PKCS#7) of the command's JSON |
+| 32 | HMAC-SHA256 over the three above |
+
+With `shared` = X25519(the driver's private key, the fresh public key): `prk` = HMAC-SHA256(key
+`shared`, `"DirectorLink alarm v2"` + the fresh public key + the driver's public key), the AES key =
+HMAC-SHA256(`prk`, `"enc"`), the MAC key = HMAC-SHA256(`prk`, `"mac"`). The JSON is
+`{"a": "arm" | "disarm", "c": "1234" | null, "m": "Away" | null, "n": "<16 hex digits>", "t": <the
+controller's time>, "v": 2}`.
+
+The driver must check the MAC before it decrypts, refuse a command whose action or mode is not the
+command it came in (`PARTITION_ARM` and its `ArmType`, or `PARTITION_DISARM`), whose `t` is more than
+60 s from its clock, or whose `n` it has seen; then use `c`, the code a person typed. With `c` null,
+only as far as `DIRECTORLINK_ALARM_WITHOUT_CODE` says, the driver uses its own code. It logs none of
+it. `tests/vectors/alarm_command.json` in DirectorLink's repository is a command sealed with Node's
+crypto, to check a driver against.
+
 ## What a driver of the agreement must do
 
 - **Send the typed code to the panel as typed,** and let the panel check it. Never carry out a command
   with `InterfaceID` `DirectorLink` with a code of the driver's own (a stored master code, a default
-  code), also when the code is empty: refuse it.
+  code), also when the code is empty: refuse it. The one exception is version 2's sealed command
+  without a code, and only as far as `DIRECTORLINK_ALARM_WITHOUT_CODE` allows.
 - **Never log the code**, typed or stored, at any debug level.
 - **Keep `DIRECTORLINK_ALARM_CONTROL` true to what a command would do:** `1` only while an arm or
   disarm can reach the panel.
@@ -76,7 +106,8 @@ screens as always.
 | DirectorLink | |
 | --- | --- |
 | 1.2.0 to 1.14.x | Reads the partitions' state only. The agreement's variables are not read. |
-| 1.15.0 and later | Arms and disarms; reads `<arm_states>` and the agreement, version 1. |
+| 1.15.0 | Arms and disarms; reads `<arm_states>` and the agreement, version 1 (a version 2 driver is read as version 1 and gets typed codes). |
+| 1.16.0 and later | Version 2: seals each command to a driver with a key; arms and disarms without a code where both the driver and the admins allow it. |
 
 ## Trying a driver
 

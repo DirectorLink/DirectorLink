@@ -4,7 +4,7 @@
 // Requests to the controller are cross-origin and are never intercepted.
 // It also shows alerts (push), and opens the app where a notification's tap leads.
 
-const CACHE_NAME = "directorlink-shell-v56";
+const CACHE_NAME = "directorlink-shell-v57";
 const NETWORK_TIMEOUT_MS = 3000;
 
 // Each page is stored under every path that serves it: Cloudflare redirects /index.html -> /,
@@ -22,6 +22,7 @@ const ASSETS = [
   "/js/views/alert-screens.js",
   "/js/alarm.js",
   "/js/alarm-control.js",
+  "/js/alarm-settings.js",
   "/js/music.js",
   "/js/views/music.js",
   "/js/backup.js",
@@ -218,9 +219,10 @@ self.addEventListener("activate", (event) => {
 // that the servers cannot read it: { kind: "sealed", home, key, at, sealed: { iv, ct, mac } }; this
 // opens it with the alert key js/alerts.js keeps here, and says what happened and where (a doorbell
 // rang, a camera saw someone or something, a door or gate was opened and by whom, the refrigerator's
-// door was left open, a schedule failed). The words are the app's, in its language (js/alerts.js
-// keeps them here); English when there are none, and the general words when the detail is missing
-// or does not open. Every push shows a notification (browsers revoke a subscription that does not).
+// door was left open, a schedule failed, the alarm was disarmed without a code (1.16.0, ADR-092)).
+// The words are the app's, in its language (js/alerts.js keeps them here); English when there are
+// none, and the general words when the detail is missing or does not open. Every push shows a
+// notification (browsers revoke a subscription that does not).
 // Tapping a doorbell's opens its own screen (1.11.0, ADR-078: its live picture and "Open <door>" for
 // the doors at it this user may open; Home's banner before), a camera's its full view, a
 // refrigerator's its room, any other the home's history. Where the browser shows a notification's
@@ -258,6 +260,10 @@ const ALERT_TEXTS = {
   unknown_device: "a removed device",
   fridge_door: "{name} – the door has been open for at least {minutes} min ({time}).",
   fridge_door_now: "{name} – the door was left open ({time}).",
+  alarm_disarmed_title: "Alarm disarmed",
+  alarm_disarmed: "{name} was disarmed without a code by {who} at {time}.",
+  alarm_disarmed_nobody: "{name} was disarmed without a code at {time}.",
+  who_schedule: "a schedule",
   device_request: "A new device asks to join your home. Open DirectorLink to approve or decline it.",
   open_request_title: "Open {name}?",
   open_request: "Your link “{via}” asked at {time}. Tap to answer.",
@@ -397,6 +403,19 @@ function sealedNotice(detail, texts, home) {
     }
     case "schedule_failed":
       return { title: texts.title, body: fill(name ? texts.schedule_failed_named : texts.schedule_failed, { name, time }), tag: `alert-schedule_failed-${home}`, url: HISTORY_URL };
+    case "alarm_disarmed": {
+      // The alarm disarmed from DirectorLink without a code (1.16.0, ADR-092), to admins: which part,
+      // by whom (a person's device, as for a door, or a schedule) and when. Each one is said.
+      if (!name) return null;
+      const by = detail.who || {};
+      const who = by.type === "key" ? whoText(by, texts) : by.type === "schedule" ? texts.who_schedule : null;
+      return {
+        title: texts.alarm_disarmed_title,
+        body: fill(who ? texts.alarm_disarmed : texts.alarm_disarmed_nobody, { name, who, time }),
+        tag: `alarm-disarmed-${id}`,
+        url: HISTORY_URL,
+      };
+    }
     case "open_request": {
       // An ask-to-open link asks this person (ADR-058). The question lasts `seconds` from now on this
       // device's clock (the push service keeps it a minute at most); the controller decides anyway.

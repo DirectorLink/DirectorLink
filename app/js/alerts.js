@@ -4,11 +4,11 @@
 //
 // With DirectorLink 1.7.0 on the controller (features.alert_choices), every role may have them: the
 // controller decides who gets what (a doorbell rang, a camera saw someone (1.8.0), a door or gate
-// was opened, the refrigerator's door was left open, a schedule failed) by each key's role and its
-// own choices, which this device keeps on the controller (GET and PUT /v1/alerts/choices), and
-// sends each alert sealed to the keys it is for. The browser is registered with this device's key
-// id; admins may also have the servers' own alert when the home is offline (`offline`), and (1.8.0)
-// their push when a new device of their account asks to join (`device_requests`, on by default).
+// was opened, the refrigerator's door was left open, a schedule failed, the alarm was disarmed
+// without a code (1.16.0, ADR-092)) by each key's role and its own choices, which this device keeps
+// on the controller (GET and PUT /v1/alerts/choices), and sends each alert sealed to the keys it is
+// for. The browser is registered with this device's key id; admins may also have the servers' own
+// alert when the home is offline (`offline`), and (1.8.0) their push when a new device of their account asks to join (`device_requests`, on by default).
 // For the service worker (sw.js) this keeps, in
 // Cache Storage, the words in this device's language and this device's alert key, which opens what
 // was sealed to it and nothing else: never the lock key or the API key. With an older controller,
@@ -36,7 +36,7 @@ export const KEY_PATH = "/alert-key.json";
 // The alert key of a device: HMAC-SHA256(its lock key, ALERT_LABEL) (driver: src/cloud/alerts.lua).
 export const ALERT_LABEL = "DirectorLink alert v1";
 // What the controller alerts about, in the order Settings lists them; offline is the servers' own.
-export const ALERT_KINDS = ["doorbell", "camera", "door_opened", "fridge_door", "schedule_failed"];
+export const ALERT_KINDS = ["doorbell", "camera", "door_opened", "fridge_door", "schedule_failed", "alarm_disarmed"];
 // What a camera alert can say it saw (the labels of DirectorLink's camera agreement, ADR-065, and
 // the DirectorLink · Hikvision Camera driver's detections, ADR-056; since 1.11.0 the sounds a camera
 // hears, ADR-080); anything else is "other".
@@ -213,6 +213,11 @@ export function alertTexts() {
     unknown_device: t("history.who.unknownDevice"),
     fridge_door: t("alerts.fridgeDoor"),
     fridge_door_now: t("alerts.fridgeDoorNow"),
+    // The alarm disarmed from DirectorLink without a code (1.16.0, ADR-092): admins.
+    alarm_disarmed_title: t("alerts.alarmDisarmedTitle"),
+    alarm_disarmed: t("alerts.alarmDisarmed"),
+    alarm_disarmed_nobody: t("alerts.alarmDisarmedNoWho"),
+    who_schedule: t("alerts.bySchedule"),
     device_request: t("alerts.deviceRequest"),
     // Ask before opening (1.8.0, ADR-058): the question an ask-to-open link sends its person.
     open_request_title: t("alerts.openRequestTitle"),

@@ -245,6 +245,68 @@ test("the editor offers dawn and dusk, limits, run late and the holidays, and se
   assert.equal(scheduleBody(draft).trigger.earliest, undefined);
 });
 
+// The owner's request (1.16.0): "On your holidays" means nothing while the home has no holidays, so
+// it is not shown then (nor before they are read), unless the schedule was saved with Not on or Only
+// on holidays, which can then be changed back. Shown when they could not be read, as before.
+test("the editor shows On your holidays only once the home has holidays, or when the schedule uses it", async () => {
+  const holidaysShown = (view) => Boolean(byKey(view, "schedule-holidays:skip")) && text(view).includes("On your holidays");
+  for (const [holidays, error, why] of [
+    [{ items: [], version: 0 }, null, "no holidays"],
+    [null, null, "not read yet"],
+  ]) {
+    for (const key of ["1234abcd", "new"]) {
+      connected();
+      state.holidays = holidays;
+      state.holidaysError = error;
+      const view = scheduleEditorView(key);
+      assert.equal(holidaysShown(view), false, `${why}, ${key}`);
+      assert.doesNotMatch(text(view), /holiday/i, `${why}, ${key}: no word of it`);
+      assert.equal(scheduleBody(draftFor(key)).on_holidays, "run", `${why}, ${key}: Run as usual is still sent`);
+    }
+  }
+  // The home has one: shown, as before.
+  connected();
+  state.holidays = { items: [{ name: "Trip", from: "2027-02-01", to: "2027-02-07", yearly: false }], version: 1 };
+  assert.equal(holidaysShown(scheduleEditorView("1234abcd")), true);
+  assert.equal(holidaysShown(scheduleEditorView("new")), true);
+  // They could not be read: shown, saying what they are.
+  connected();
+  state.holidaysError = "The controller didn’t answer.";
+  let view = scheduleEditorView("new");
+  assert.equal(holidaysShown(view), true);
+  assert.match(text(view), /Your holidays are days you choose, such as school breaks or a trip\./);
+  state.holidaysError = null;
+
+  // Saved as Not on holidays while the home has none (they were deleted since): still shown, and
+  // still shown once changed back to Run as usual in this editor.
+  for (const choice of ["skip", "only"]) {
+    connected({ schedules: [schedule({ on_holidays: choice })] });
+    state.holidays = { items: [], version: 2 };
+    view = scheduleEditorView("1234abcd");
+    assert.equal(holidaysShown(view), true, choice);
+    assert.equal(byKey(view, `schedule-holidays:${choice}`).attributes["aria-pressed"], "true");
+    assert.match(text(view), /You haven’t added any holidays yet\./);
+    const draft = draftFor("1234abcd");
+    draft.holidays = "run";
+    assert.equal(holidaysShown(scheduleEditorView("1234abcd")), true, `${choice}: changed back, still there`);
+    assert.equal(scheduleBody(draft).on_holidays, "run");
+  }
+  // In every language: nothing of it without holidays; its title once the schedule uses it.
+  const titles = { en: "On your holidays", he: "בימי החופש שלכם", es: "En tus días libres", it: "Nei tuoi giorni liberi" };
+  await inEvery(async (language) => {
+    connected();
+    state.holidays = { items: [], version: 0 };
+    let shown = scheduleEditorView("1234abcd");
+    assert.equal(byKey(shown, "schedule-holidays:skip"), null, language);
+    assert.ok(!text(shown).includes(titles[language]), language);
+    connected({ schedules: [schedule({ on_holidays: "only" })] });
+    state.holidays = { items: [], version: 0 };
+    shown = scheduleEditorView("1234abcd");
+    assert.ok(byKey(shown, "schedule-holidays:only"), language);
+    assert.ok(text(shown).includes(titles[language]), `${language}: ${titles[language]}`);
+  });
+});
+
 test("an older controller gets none of the new fields, and only sunrise and sunset", () => {
   connected({ planning: false, schedules: [schedule({ trigger: { type: "sun", event: "sunset", offset: 0 } })] });
   const view = scheduleEditorView("1234abcd");

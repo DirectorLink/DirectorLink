@@ -279,7 +279,7 @@ def alarm_control(client, bridge):
     if client.check("GET", "/v1/system", 200)["features"]["alarm_control"] is not True:
         fail("GET /v1/system should say that Alarm Control is on")
     garage = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]
-    if garage["modes"] != ["Away", "Home", "Night"] or garage["control"] != {"allowed": True, "available": True}:
+    if garage["modes"] != ["Away", "Home", "Night"] or garage["control"] != {"allowed": True, "available": True, "without_code": "none"}:
         fail(f"GET /v1/alarm should give Garage's modes and that the admin may arm and disarm: {garage}")
     clear = client.check("POST", "/v1/alarm/81/disarm", 403, body={"code": "1234"})
     if clear["code"] != "SEALED_REQUEST_REQUIRED":
@@ -288,7 +288,7 @@ def alarm_control(client, bridge):
     client.check_sealed(bridge, "POST", "/v1/alarm/81/arm", 400, body={"mode": "Vacation", "code": "1234"})
     client.check_sealed(bridge, "POST", "/v1/alarm/82/disarm", 404, body={"code": "1234"})
     wrong = client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 202, body={"code": "9999"})
-    if wrong != {"partition_id": 81, "action": "disarm", "mode": None}:
+    if wrong != {"partition_id": 81, "action": "disarm", "mode": None, "without_code": False}:
         fail(f"a disarm should answer that it was sent: {wrong}")
     if client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]["armed"] is not True:
         fail("a wrong code should leave Garage armed")
@@ -307,6 +307,23 @@ def alarm_control(client, bridge):
         fail(f"the history should list the alarm commands, sealed: {history}")
     if client.check("GET", "/v1/activity?kind=alarm", 200)["items"] != []:
         fail("the history should never show alarm commands in the clear")
+
+    # Without a code (1.16.0, ADR-092): the admins' setting, never further than the alarm's driver
+    # allows; the dev bridge's panel keeps the agreement's version 1, so a code stays needed.
+    if client.check("GET", "/v1/system", 200)["features"].get("alarm_without_code") is not True:
+        fail("GET /v1/system should say that arming without a code exists")
+    if client.check("GET", "/v1/alarm/settings", 200) != {"without_code": "none"}:
+        fail("GET /v1/alarm/settings should ship none")
+    client.check("PUT", "/v1/alarm/settings", 400, body={"without_code": "always"})
+    if client.check("PUT", "/v1/alarm/settings", 200, body={"without_code": "arm_disarm"}) != {"without_code": "arm_disarm"}:
+        fail("PUT /v1/alarm/settings should take arm_disarm")
+    garage = client.check_sealed(bridge, "GET", "/v1/alarm", 200)["partitions"][0]
+    if garage["control"].get("without_code") != "none":
+        fail(f"a driver without the agreement's key should never go without a code: {garage['control']}")
+    refused = client.check_sealed(bridge, "POST", "/v1/alarm/81/disarm", 400, body={})
+    if refused["code"] != "CODE_REQUIRED":
+        fail(f"a disarm without a code should be refused with CODE_REQUIRED: {refused}")
+    client.check("PUT", "/v1/alarm/settings", 200, body={"without_code": "none"})
 
 
 def sonos(client, bridge):
