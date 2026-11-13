@@ -2,9 +2,23 @@
 
 ## Current release
 
-`v1.16.0` — The alarm's code sealed to its driver, and arming or disarming without a code (1160a). No Worker change; no D1 migration.
+`v1.16.1` — Disarm on the first tap during an exit delay; the countdown counts every second (1161a). With DirectorLink · PIMA FORCE 1.2.3 (the typed code again since 1.2.2; no Armed flash on a disarm during the exit delay). No Worker change; no D1 migration.
+
+## 1161a. The exit delay's countdown (1.16.1)
+
+On the owner's controller with DirectorLink · PIMA FORCE 1.2.3; the app updates by itself (Settings shows 1.16.1).
+
+1. **Arm Away** from the app with the code: within a second or two the card says **Exit delay** and the seconds left count down every second.
+2. **Disarm** during the countdown: the first tap opens the code; the code's Disarm sends it on the first tap. The card shows **Ready** without showing Armed first.
+3. Director's log has no "Command took too long" for the PIMA driver.
+
+## Previous release
+
+`v1.16.0` — The alarm's code sealed to its driver, and arming or disarming without a code (1160a).
 
 ## 1160a. Sealed code and without a code (1.16.0)
+
+Only with DirectorLink · PIMA FORCE 1.2.0 or 1.2.1: 1.2.2 no longer seals (ADR-092's correction).
 
 On the owner's controller, with DirectorLink 1.16.0 and DirectorLink · PIMA FORCE 1.2.0 updated in Composer; the app updates by itself (Settings shows 1.16.0).
 

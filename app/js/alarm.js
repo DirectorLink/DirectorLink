@@ -198,8 +198,11 @@ export function alarmSummary(partitions) {
   return partitions.map((partition) => t("alarm.summaryItem", { name: isolate(partition.name), state: alarmStateText(partition) })).join(" · ");
 }
 
-// For the renderer's signature (app.js): what is shown, and the seconds a delay has left.
+// For the renderer's signature (app.js): what is shown, and whether a delay still counts. Not the
+// seconds it has left (1.16.1): app.js redraws after every tap when the signature changed, so during a
+// countdown every tap replaced the buttons under the finger, and a tap on Disarm was lost.
+// views/alarm.js counts the seconds down in place instead.
 export function alarmSignature(now = Date.now()) {
   const partitions = alarmPartitions();
-  return partitions ? [partitions, partitions.map((partition) => delaySecondsLeft(partition, now))] : null;
+  return partitions ? [partitions, partitions.map((partition) => (delaySecondsLeft(partition, now) || 0) > 0)] : null;
 }

@@ -97,9 +97,9 @@ for (const level of ["log", "info", "warn", "error", "debug"]) {
 const { state, ui } = await import("../../app/js/state.js");
 const { setLanguage } = await import("../../app/js/i18n.js");
 const { forgetKey } = await import("../../app/js/session.js");
-const { alarmDetails, alarmStateText, alarmSummary, armModeLabel, loadAlarm, startAlarm } = await import("../../app/js/alarm.js");
+const { alarmDetails, alarmSignature, alarmStateText, alarmSummary, armModeLabel, loadAlarm, startAlarm } = await import("../../app/js/alarm.js");
 const { FOLLOW_MS, commandTook } = await import("../../app/js/alarm-control.js");
-const { alarmFact, alarmSection } = await import("../../app/js/views/alarm.js");
+const { alarmFact, alarmSection, tickAlarmDelays } = await import("../../app/js/views/alarm.js");
 const { default: en } = await import("../../app/i18n/en.js");
 const { default: he } = await import("../../app/i18n/he.js");
 const { default: es } = await import("../../app/i18n/es.js");
@@ -358,6 +358,50 @@ test("an entry or exit delay counts down between reads, whether or not the panel
   assert.deepEqual(alarmDetails(shown(), start + 12000), ["7 seconds left"]);
   assert.deepEqual(alarmDetails(shown(), start + 11000 + 60000), [], "none once it has run out");
   assert.equal(alarmDetails(partition({ delay: { type: "exit", remaining: 1, total: 30 } }), 0)[0], "1 second left");
+});
+
+// Elements of a fake tree whose dataset has `key`.
+function findAll(node, key, found = []) {
+  if (node && node.dataset && node.dataset[key] !== undefined) found.push(node);
+  for (const child of node?.children || []) findAll(child, key, found);
+  return found;
+}
+
+test("a countdown changes nothing the renderer compares, so a tap during it does not redraw the buttons (1.16.1)", async () => {
+  home();
+  const start = 2_000_000;
+  const leaving = partition({ id: 80, name: "House", state: "exit_delay", delay: { type: "exit", remaining: 180, total: 180 } });
+  controller({ enabled: true, partitions: [leaving] });
+  await loadAlarm(start);
+  const first = JSON.stringify(alarmSignature(start));
+  assert.equal(JSON.stringify(alarmSignature(start + 1000)), first, "a second later: the same");
+  assert.equal(JSON.stringify(alarmSignature(start + 179000)), first, "near the end: the same");
+  assert.notEqual(JSON.stringify(alarmSignature(start + 181000)), first, "once it has run out: redrawn, once");
+});
+
+test("the countdown is counted down in place, its row's buttons untouched (1.16.1)", async () => {
+  home();
+  const start = Date.now();
+  const leaving = partition({ id: 80, name: "House", state: "exit_delay", delay: { type: "exit", remaining: 175, total: 180 } });
+  controller({ enabled: true, partitions: [leaving] });
+  await loadAlarm(start);
+  const section = alarmSection(start);
+  const [countdown] = findAll(section, "alarmDelay");
+  assert.ok(countdown, "the countdown has an element of its own");
+  assert.equal(countdown.dataset.alarmDelay, "80");
+  assert.equal(countdown.textContent, "175 seconds left");
+  const buttons = findAll(section, "key").filter((element) => element.tagName === "BUTTON");
+  const realQuery = document.querySelectorAll;
+  document.querySelectorAll = (selector) => (selector === "[data-alarm-delay]" ? [countdown] : []);
+  try {
+    assert.equal(tickAlarmDelays(start + 5000), 1, "still counting");
+    assert.equal(countdown.textContent, "170 seconds left");
+    assert.deepEqual(findAll(section, "key").filter((element) => element.tagName === "BUTTON"), buttons, "the same buttons");
+    assert.equal(tickAlarmDelays(start + 200000), 0, "run out: the timer stops");
+    assert.equal(countdown.textContent, "");
+  } finally {
+    document.querySelectorAll = realQuery;
+  }
 });
 
 test("in Hebrew", async () => {
