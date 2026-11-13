@@ -662,8 +662,8 @@ def lua_code(text, strings=True):
 # The alarm's adapter only reads (ADR-038): it may only read and watch its partitions' variables,
 # with nothing else loaded or logged, and no scene or schedule step can reach the alarm. Arming and
 # disarming (1.15.0, ADR-091) take the code a person types for each command: one module sends them
-# (ALARM_CONTROL), only PARTITION_ARM and PARTITION_DISARM, with Director's logging of the command
-# off, nothing else of the security proxy's (no exit-delay cancel, emergency, key press or default
+# (ALARM_CONTROL), only PARTITION_ARM and PARTITION_DISARM, with LogCommand false (Director's INFO
+# line off; its debug log still has them, ADR-091's correction), nothing else of the security proxy's (no exit-delay cancel, emergency, key press or default
 # code, and never programming's InterfaceID, with which a driver may use a code of its own), and it
 # logs nothing; only the alarm handler loads it, from the two routes that arm and disarm.
 ALARM_ADAPTER = "src/adapters/alarm.lua"
@@ -815,7 +815,7 @@ def check_alarm_control(files):
     sends = re.findall(r"C4:SendToDevice\([^\n]*", code)
     if len(sends) != 2 or not all(ALARM_CONTROL_SENDS.match(send) for send in sends):
         fail(f"{ALARM_CONTROL} sends only PARTITION_ARM and PARTITION_DISARM, each once, to the partition, "
-             "with Director's logging of the command off (..., params, false, false)")
+             "with LogCommand false (..., params, false, false)")
     for pattern, what in (
         (r"\brequire\b", "load other modules (it logs nothing)"),
         (r"\bprint\s*\(", "print (the code is never logged)"),

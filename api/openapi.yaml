@@ -3002,8 +3002,10 @@ paths:
         `code`, the alarm code the person typed for this command. The alarm's driver sends it to the
         panel, and the panel checks it: a wrong code, open zones or a panel that cannot arm now show
         only in the partition's state, which stays as it was (`GET /v1/alarm`, read again). The code
-        is never kept, logged or answered, Director's own logging of the command is off, and no
-        problem names it. Never with a code of DirectorLink's or the driver's own, and never from a
+        is never kept, logged or answered by DirectorLink, and no problem names it; Control4's
+        Director, logging at its debug level, writes each command it passes into its own log on the
+        controller, with the code (root-only, in memory, gone within about 2 to 3 hours and at a
+        restart; ADR-091, corrected 2026-11-13). Never with a code of DirectorLink's or the driver's own, and never from a
         scene, a schedule or a link.
 
         Only while both the **Alarm Status** and **Alarm Control** properties of DirectorLink are On
@@ -7037,7 +7039,7 @@ components:
         code:
           type: string
           pattern: "^[0-9]{1,12}$"
-          description: The alarm code the person typed for this command. Never kept or logged.
+          description: The alarm code the person typed for this command. Never kept or logged by DirectorLink (Director's debug log on the controller has it for a while; ADR-091).
           example: "1234"
 
     AlarmDisarm:
@@ -7048,7 +7050,7 @@ components:
         code:
           type: string
           pattern: "^[0-9]{1,12}$"
-          description: The alarm code the person typed for this command. Never kept or logged.
+          description: The alarm code the person typed for this command. Never kept or logged by DirectorLink (Director's debug log on the controller has it for a while; ADR-091).
           example: "1234"
 
     AlarmCommand:

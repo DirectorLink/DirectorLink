@@ -51,8 +51,11 @@ Each comes from one person's command in the app, with the code they typed for it
 sealed end to end. DirectorLink never sends `ARM_CANCEL`, `EXECUTE_EMERGENCY`, `EXECUTE_FUNCTION`,
 `KEY_PRESS`, `ADDITIONAL_INFO`, `SEND_CONFIRMATION` or a default user code, never Composer's
 programming InterfaceID (`DirectorProgramming`), and never arms or disarms from a scene, a schedule,
-a link or by itself. It sends the commands with Director's own logging of them off, and never keeps
-or logs the code. At most 6 commands a person in 5 minutes and 20 in the home in an hour.
+a link or by itself. It never keeps or logs the code, and sends the commands with `LogCommand`
+false. That only drops Director's ordinary line for them: Director, logging at its debug level,
+still writes each command it passes between drivers into its own log, the code with it (a root-only
+file in the controller's memory, gone within about 2 to 3 hours and at a restart). At most 6
+commands a person in 5 minutes and 20 in the home in an hour.
 
 DirectorLink does not wait for an answer: the app reads the partition's state again and tells the
 person whether it changed. A driver's `ARM_FAILED` and `DISARM_FAILED` notifications go to Control4's

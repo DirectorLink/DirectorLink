@@ -14,8 +14,11 @@
 -- disarm with a code of its own: every command here carries the code a person typed for it.
 --
 -- The code is never kept, logged or put in an error: it goes into the command's parameters and
--- nowhere else, and the command is sent with Director's own logging of it off (SendToDevice's
--- fifth argument, as DirectorLink · DoorBird sends a camera's login). Nothing here logs at all.
+-- nowhere else, and the command is sent with LogCommand false (SendToDevice's fifth argument, as
+-- DirectorLink · DoorBird sends a camera's login), which drops Director's INFO line for it. Director
+-- logging at its debug level still writes the command with its parameters into director.log, the
+-- code with it (seen on the owner's controller, 2026-11-13: root-only, in memory, rotated away
+-- within 2 to 3 hours, never on flash): ADR-091's correction. Nothing here logs at all.
 --
 -- What it reads, for GET /v1/alarm: the modes a partition arms in (its driver's <arm_states>, read
 -- again after MODES_SECONDS, so that a driver updated in Composer is followed), and whether arming and disarming can work now, as a driver

@@ -336,7 +336,8 @@ unsupported as before):
   and `C4:UnregisterVariableListener`.
 - Arming and disarming (1.15.0, ADR-091): `src/control4/alarm_control.lua` alone sends the
   partition `PARTITION_ARM` (`ArmType`, `UserCode`, `InterfaceID` `DirectorLink`) or
-  `PARTITION_DISARM` (`UserCode`, `InterfaceID`), with Director's logging of the command off, from
+  `PARTITION_DISARM` (`UserCode`, `InterfaceID`), with `LogCommand` false (Director's debug log
+  still records them, the code with it: ADR-091, corrected 2026-11-13), from
   `POST /v1/alarm/{id}/arm` and `/disarm`; the modes are the driver's `<arm_states>`, and a driver
   of DirectorLink's alarm agreement says when it cannot (docs/ALARM_DRIVERS.md).
 - Admins, and members given the alarm's status (ADR-054), read it, only in sealed answers
