@@ -340,7 +340,9 @@ async function untilCodeAsked() {
   approverDevice();
   await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
-  await until(() => request.approver_key, "the other device's key");
+  // The other device makes its key with WebCrypto, then answers; on a loaded machine its answer can
+  // wait behind the page's 2 s poll (ANSWER_POLL_MS), which only a tick fires (failed twice in CI).
+  await untilTicking(2000, () => request.approver_key, "the other device's key");
   await untilTicking(2000, () => request.device_key && byKey(joinFromAnotherDevice(), "device-join-code"), "the new device's code");
   const code = byKey(joinFromAnotherDevice(), "device-join-code").textContent.replace(/\D/g, "");
   await untilTicking(2000, () => byKey(deviceRequestNotice(), `device-request-code-${request.id}`), "the field on the other device");
@@ -384,7 +386,9 @@ test("the new device asks and shows a code, the other types it, Approve seals a 
   assert.match(deviceRequestNotice().textContent, /DirectorLink app on iPhone wants to join your home/);
   assert.match(deviceRequestNotice().textContent, /Didn’t ask\? Decline it and sign out everywhere in Settings → Account\./);
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
-  await until(() => request.approver_key, "the other device's key");
+  // The other device makes its key with WebCrypto, then answers; on a loaded machine its answer can
+  // wait behind the page's 2 s poll (ANSWER_POLL_MS), which only a tick fires (failed twice in CI).
+  await untilTicking(2000, () => request.approver_key, "the other device's key");
 
   // The new device shows its key (the one it committed to) and its code; the other device asks for
   // it, and does not show its own.
@@ -443,7 +447,9 @@ test("keys swapped on the way stop both devices: no code to approve, and the new
   approverDevice();
   await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
-  await until(() => request.approver_key, "the other device's key");
+  // The other device makes its key with WebCrypto, then answers; on a loaded machine its answer can
+  // wait behind the page's 2 s poll (ANSWER_POLL_MS), which only a tick fires (failed twice in CI).
+  await untilTicking(2000, () => request.approver_key, "the other device's key");
   await untilTicking(2000, () => request.device_key, "the new device's key");
   await untilTicking(2000, () => /doesn’t match what it sent first/.test(deviceRequestNotice()?.textContent || ""), "the other device to refuse it");
   assert.equal(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`), null, "no Approve");
@@ -466,7 +472,9 @@ test("a key swapped after the code was shown takes the code and Approve away", a
   approverDevice();
   await untilTicking(60000, () => enabled(byKey(deviceRequestNotice(), `device-request-show-${request.id}`)), "the request on the other device");
   click(byKey(deviceRequestNotice(), `device-request-show-${request.id}`));
-  await until(() => request.approver_key, "the other device's key");
+  // The other device makes its key with WebCrypto, then answers; on a loaded machine its answer can
+  // wait behind the page's 2 s poll (ANSWER_POLL_MS), which only a tick fires (failed twice in CI).
+  await untilTicking(2000, () => request.approver_key, "the other device's key");
   await untilTicking(2000, () => request.device_key, "the new device's key");
   await untilTicking(2000, () => enabled(byKey(deviceRequestNotice(), `device-request-approve-${request.id}`)), "Approve with the code");
   // Now the account service shows another key in the new device's place.
