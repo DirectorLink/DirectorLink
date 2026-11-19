@@ -554,6 +554,37 @@ function tests.refusals_wait_longer_and_say_why()
     T.contains(mock.properties["Remote Status"], "HOME_SECRET_MISMATCH")
 end
 
+-- The relay pauses a home that connects again too often (429 RECONNECTING_TOO_OFTEN, ADR-093).
+local function pausedFor(retryAfter)
+    OnConnectionStatusChanged(BINDING, 443, "ONLINE")
+    local body = '{"type":"about:blank","title":"Too Many Requests","status":429,"code":"RECONNECTING_TOO_OFTEN"}'
+    ReceivedFromNetwork(BINDING, 443, "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/problem+json\r\n"
+        .. (retryAfter and ("Retry-After: " .. retryAfter .. "\r\n") or "")
+        .. "Content-Length: " .. #body .. "\r\n\r\n" .. body)
+end
+
+function tests.a_home_the_relay_pauses_waits_as_long_as_it_says_within_bounds()
+    for _, case in ipairs({
+        { after = "1800", seconds = 1800, why = "as the relay says" },
+        { after = nil, seconds = 60, why = "no Retry-After: the backoff's longest" },
+        { after = "5", seconds = 60, why = "never sooner than the backoff's longest" },
+        { after = "999999", seconds = 4 * 3600 + 60, why = "never longer than four hours and a minute" },
+    }) do
+        local mock = Mock.startDriver()
+        Properties["Remote Access"] = "On"
+        OnPropertyChanged("Remote Access")
+        pausedFor(case.after)
+        T.truthy(lastTimer(mock, case.seconds * 1000), case.why)
+        T.contains(mock.properties["Remote Status"], "Reconnecting in " .. case.seconds .. " s")
+        T.contains(mock.properties["Remote Status"], "RECONNECTING_TOO_OFTEN")
+        local logged = false
+        for _, line in ipairs(mock.debugLog) do
+            logged = logged or line:find("connected again too often", 1, true) ~= nil
+        end
+        T.truthy(logged, "the log says why")
+    end
+end
+
 -- The account service's minimum version (ADR-059): 426 DRIVER_UPDATE_REQUIRED to the upgrade.
 local function refusedAsTooOld(minimum)
     OnConnectionStatusChanged(BINDING, 443, "ONLINE")

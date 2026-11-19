@@ -66,6 +66,19 @@ const NULL_BODY_STATUS = new Set([204, 205, 304]);
 // RECONNECT_WAIT_MS for it to connect again (it does within seconds: docs/RELAY.md), rather than
 // failing with HOME_OFFLINE. Longer gone, the home is offline and the answer is immediate.
 const RECONNECT_GRACE_MS = 30000;
+// A home that keeps connecting again (ADR-093): THROTTLE_CONNECTS accepted connections within
+// THROTTLE_WINDOW_MS, as no home's driver makes while it works (the owner's worst hour, Cloudflare
+// moving the connection between data centres, was 18), and its next ones are refused for
+// THROTTLE_BASE_MS, twice as long at each repeat up to THROTTLE_MAX_MS; THROTTLE_FORGET_MS after a
+// pause ended without another, it starts over. Each accepted connection wakes this object (the
+// upgrade, the hello, the key list, the replaced socket's close), and on Workers Free its time a day
+// is shared by every home: on 2026-11-16 one driver reconnecting every 90 s used it up, and every
+// home was refused for two hours. The tests set them with RELAY_THROTTLE_* in .dev.vars.
+const THROTTLE_CONNECTS = 30;
+const THROTTLE_WINDOW_MS = 60 * 60 * 1000;
+const THROTTLE_BASE_MS = 30 * 60 * 1000;
+const THROTTLE_MAX_MS = 4 * 60 * 60 * 1000;
+const THROTTLE_FORGET_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_RECONNECT_WAIT_MS = 8000;
 // A socket on which the driver has not been heard (a ping answered, or a message) for
 // STALE_PINGS of its ping intervals is stale. Drivers before 1.6.0 announce no interval: 25 s.
@@ -219,6 +232,11 @@ export class HomeRelay extends DurableObject {
       log("wrong_secret", { home: homeId });
       return problem(401, "WRONG_HOME_SECRET", "This home_id is registered with a different home_secret");
     }
+    // Paused for connecting again too often (ADR-093): refused before anything else is done.
+    const paused = await this.ctx.storage.get("throttle");
+    if (paused && Date.now() < paused.until) {
+      return throttled(paused.until);
+    }
 
     // One driver connection per home: a new one replaces the previous. Requests sent over the
     // previous one end their wait there now rather than at their timeout: a driver that connects
@@ -256,7 +274,25 @@ export class HomeRelay extends DurableObject {
     await this.ctx.storage.put({ connected_at: at, last_seen: at, version });
     await this.alerts.connected(homeId);
     log("driver_connected", { home: homeId, version, replaced, down_ms: Number.isFinite(downMs) ? downMs : null });
+    await this.countConnection(homeId, now, paused, version);
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // Counts an accepted connection; at throttleConnects(env) within throttleWindowMs(env), the next
+  // ones are refused for a while (ADR-093). This one stays: it may be the one that works.
+  async countConnection(homeId, now, before, version) {
+    const window = throttleWindowMs(this.env);
+    const limit = throttleConnects(this.env);
+    const recent = ((await this.ctx.storage.get("connects")) ?? []).filter((at) => Number.isFinite(at) && now - at < window && at <= now);
+    recent.push(now);
+    if (recent.length < limit) {
+      await this.ctx.storage.put("connects", recent.slice(-limit));
+      return;
+    }
+    const strikes = before && now - before.until < THROTTLE_FORGET_MS ? (before.strikes ?? 0) + 1 : 1;
+    const ms = Math.min(throttleBaseMs(this.env) * 2 ** (strikes - 1), throttleMaxMs(this.env));
+    await this.ctx.storage.put({ throttle: { until: now + ms, strikes, since: now }, connects: [] });
+    log("driver_throttled", { home: homeId, version, connects: recent.length, window_min: Math.round(window / 60000), pause_min: Math.round(ms / 60000), strikes });
   }
 
   // Without Cloudflare's invocation logs (ADR-081) an error thrown here would leave no line: it is
@@ -1085,6 +1121,27 @@ function staleAfterMs(ws) {
 function takesResend({ features, instance } = {}) {
   return Array.isArray(features) && features.includes(RESEND_FEATURE) && typeof instance === "string" && instance ? instance : null;
 }
+
+// The answer while a home is paused (ADR-093): 429 with Retry-After, which drivers from 1.17.0 wait
+// for; older ones retry within 60 s, and index.js answers those from its cache without waking this
+// object. X-DirectorLink-Retry-Until (milliseconds) tells index.js how long to keep it.
+function throttled(until) {
+  const seconds = Math.max(1, Math.ceil((until - Date.now()) / 1000));
+  return problem(429, "RECONNECTING_TOO_OFTEN", `This home connected again too often; connect again in ${seconds} s`, {
+    "Retry-After": String(seconds),
+    "X-DirectorLink-Retry-Until": String(until),
+  });
+}
+
+function positiveSetting(env, name, fallback) {
+  const value = Number(env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+const throttleConnects = (env) => positiveSetting(env, "RELAY_THROTTLE_CONNECTS", THROTTLE_CONNECTS);
+const throttleWindowMs = (env) => positiveSetting(env, "RELAY_THROTTLE_WINDOW_MS", THROTTLE_WINDOW_MS);
+const throttleBaseMs = (env) => positiveSetting(env, "RELAY_THROTTLE_MS", THROTTLE_BASE_MS);
+const throttleMaxMs = (env) => positiveSetting(env, "RELAY_THROTTLE_MAX_MS", THROTTLE_MAX_MS);
 
 function reconnectWaitMs(env) {
   const value = Number(env.RECONNECT_WAIT_MS);

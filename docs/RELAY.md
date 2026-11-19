@@ -149,6 +149,38 @@ Content-Type: application/problem+json
 - Setting or changing the var is a deploy, which ends every driver's connection: each is checked
   again as it reconnects. The home network is never affected.
 
+### A home that connects again too often (ADR-093)
+
+Each connection the relay takes wakes the home's Durable Object several times (the upgrade, the
+hello, the key list, the replaced socket's close), and on Workers Free the objects' time a day is
+shared by every home. So a home whose driver keeps connecting again is paused:
+
+- **30 accepted connections within an hour** (a working driver makes far fewer: the owner's
+  worst hour, with Cloudflare moving the connection between data centres, had 18) pause it for
+  **30 minutes**; the next pause within a day of the last lasts twice as long, up to 4 hours. The
+  connection that reached the limit is kept: it may be the one that works. A connection refused
+  for its secret does not count.
+- While paused, the home's connections are answered before anything is done:
+
+  ```
+  HTTP/1.1 429 Too Many Requests
+  Retry-After: 1795
+  Content-Type: application/problem+json
+
+  {"type":"about:blank","title":"Too Many Requests","status":429,"code":"RECONNECTING_TOO_OFTEN",
+   "detail":"This home connected again too often; connect again in 1795 s"}
+  ```
+
+  The Worker keeps the pause in its data centre's cache (`/__relay_throttle/{home_id}`) and answers
+  from there, so an attempt during a pause does not wake the object.
+- **Drivers from 1.17.0** wait as long as `Retry-After` says (at least 60 s, at most 4 h and a
+  minute), log why, and say in Remote Status `Reconnecting in … s (paused by the relay: …)`.
+  **Older drivers** take it as any other refusal and try again with their backoff (every 60 s),
+  answered from the cache.
+- The relay logs `driver_throttled` (`connects`, `pause_min`, `strikes`) once per pause. The limits
+  are the Worker vars `RELAY_THROTTLE_CONNECTS`, `RELAY_THROTTLE_WINDOW_MS`, `RELAY_THROTTLE_MS` and
+  `RELAY_THROTTLE_MAX_MS` when set (the tests make them small); unset, the values above.
+
 ## Messages
 
 All frames are **text**. Apart from the keep-alive words below, each is one JSON object with a
