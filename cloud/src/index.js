@@ -68,7 +68,7 @@ export default {
         return await handleStats(request, env);
       }
       if (url.pathname === "/relay/connect") {
-        return await connect(request, env);
+        return await connect(request, env, ctx);
       }
       const test = TEST_ROUTE.exec(url.pathname);
       if (test) {
@@ -105,7 +105,39 @@ function homeRelay(env, homeId) {
 // The driver's WebSocket. The home's Durable Object checks the secret (trust on first use) and
 // accepts the socket. A driver below the minimum version (ADR-059) is refused first, without asking
 // the object: it tries again every minute or hour, and that must cost little.
-async function connect(request, env) {
+// A home the relay paused for connecting again too often (ADR-093) is refused here, from this data
+// centre's cache, without waking its object: drivers before 1.17.0 try again within 60 s.
+function throttleKey(request, homeId) {
+  return new URL(`/__relay_throttle/${homeId}`, request.url).toString();
+}
+
+async function pausedHome(request, homeId) {
+  try {
+    const cached = await caches.default.match(throttleKey(request, homeId));
+    const until = Number(cached?.headers.get("X-DirectorLink-Retry-Until"));
+    if (!Number.isFinite(until) || until <= Date.now()) {
+      return null;
+    }
+    const seconds = Math.max(1, Math.ceil((until - Date.now()) / 1000));
+    return problem(429, "RECONNECTING_TOO_OFTEN", `This home connected again too often; connect again in ${seconds} s`, {
+      "Retry-After": String(seconds),
+    });
+  } catch {
+    return null; // no cache here: the object answers
+  }
+}
+
+function rememberPause(request, homeId, response, ctx) {
+  const until = Number(response.headers.get("X-DirectorLink-Retry-Until"));
+  const seconds = Math.ceil((until - Date.now()) / 1000);
+  if (response.status !== 429 || !Number.isFinite(until) || seconds < 1) {
+    return;
+  }
+  const kept = new Response(null, { headers: { "Cache-Control": `max-age=${seconds}`, "X-DirectorLink-Retry-Until": String(until) } });
+  ctx?.waitUntil?.(caches.default.put(throttleKey(request, homeId), kept).catch(() => {}));
+}
+
+async function connect(request, env, ctx) {
   if (request.method !== "GET") {
     return methodNotAllowed();
   }
@@ -126,7 +158,13 @@ async function connect(request, env) {
     console.log(JSON.stringify({ event: "driver_refused", home: homeId, version: String(version ?? "").slice(0, 32) || null, minimum }));
     return refusal(version, minimum);
   }
-  return homeRelay(env, homeId).fetch(request);
+  const paused = await pausedHome(request, homeId);
+  if (paused) {
+    return paused;
+  }
+  const response = await homeRelay(env, homeId).fetch(request);
+  rememberPause(request, homeId, response, ctx);
+  return response;
 }
 
 // Version 0 test endpoints: one shared token (the TEST_TOKEN secret) until accounts exist.

@@ -253,7 +253,8 @@ function WebSocket:handleHandshake()
         self.state = "closed"
         self.buffer = ""
         self:close(nil, true)
-        self.onClose("refused", status, rest)
+        -- The headers too (1.17.0): a 429's Retry-After says when to try again.
+        self.onClose("refused", status, rest, headers)
         return false
     end
 

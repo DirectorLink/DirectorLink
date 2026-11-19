@@ -30,6 +30,9 @@ Relay.KEEPALIVE_MS = 5000
 Relay.SILENCE_TICKS = 3
 Relay.BACKOFF_SECONDS = { 5, 10, 30, 60 }
 Relay.REFUSED_RETRY_SECONDS = 300
+-- The relay pauses a home that connects again too often (429 RECONNECTING_TOO_OFTEN, ADR-093) and
+-- says for how long in Retry-After: waited, at least the backoff's 60 s and at most this long.
+Relay.PAUSED_RETRY_MAX_SECONDS = 4 * 3600 + 60
 -- The account service no longer takes this version (426 DRIVER_UPDATE_REQUIRED, ADR-059): a flaw
 -- was found in the remote protocol, and only an update fixes it. Asked again once an hour, in case
 -- the minimum is lowered again; Remote Status says what to do.
@@ -711,7 +714,7 @@ local function closedByRelay(code)
     return quickRetry()
 end
 
-local function onClose(reason, status, body)
+local function onClose(reason, status, body, headers)
     if not state.enabled then
         return
     end
@@ -720,6 +723,17 @@ local function onClose(reason, status, body)
         local detail = type(problem) == "table" and (problem.code or problem.detail) or ("HTTP " .. tostring(status))
         if tonumber(status) == 426 or detail == "DRIVER_UPDATE_REQUIRED" then
             updateRequired(problem, status)
+            return
+        end
+        -- Paused for connecting again too often (1.17.0, ADR-093): back when the relay says.
+        if tonumber(status) == 429 then
+            local after = tonumber(type(headers) == "table" and headers["retry-after"] or nil)
+            local seconds = math.max(Relay.BACKOFF_SECONDS[#Relay.BACKOFF_SECONDS], math.min(math.floor(after or 0), Relay.PAUSED_RETRY_MAX_SECONDS))
+            scheduleReconnect("paused by the relay: " .. tostring(detail), seconds, {
+                level = "warn",
+                message = "the relay paused this home's connections: it connected again too often",
+                data = { status = 429, retry_after = after, detail = tostring(detail) },
+            })
             return
         end
         -- The owner may have approved a waiting replacement: try each once, newest first.
